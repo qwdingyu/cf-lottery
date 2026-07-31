@@ -15,6 +15,20 @@ import { signJwt } from "../middleware/auth";
 
 export const authRoute = new Hono<AppEnv>();
 
+/** 简单内存限流：同一 IP 每分钟最多 5 次登录/注册 */
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(ip: string, limit = 5, windowMs = 60000): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= limit) return false;
+  entry.count++;
+  return true;
+}
+
 /** 用户名正则：只允许字母数字和下划线，2-40 字符 */
 const USERNAME_RE = /^[a-zA-Z0-9_]{2,40}$/;
 
@@ -29,6 +43,12 @@ function getJwtSecret(c: any): string {
 
 /** 用户注册（自动创建默认租户） */
 authRoute.post("/register", async (c) => {
+  // 限流检查
+  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  if (!checkRateLimit(`register:${ip}`, 3, 60000)) {
+    return c.json({ ok: false, message: "注册过于频繁，请稍后再试" }, 429);
+  }
+
   const db = getDb(c);
   const body = await c.req.json<{ username: string; password: string; email?: string }>();
   const username = String(body.username || "").trim();
@@ -73,6 +93,12 @@ authRoute.post("/register", async (c) => {
 
 /** 登录 */
 authRoute.post("/login", async (c) => {
+  // 限流检查
+  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  if (!checkRateLimit(`login:${ip}`, 5, 60000)) {
+    return c.json({ ok: false, message: "登录过于频繁，请稍后再试" }, 429);
+  }
+
   const db = getDb(c);
   const body = await c.req.json<{ username: string; password: string }>();
   const username = String(body.username || "").trim();
