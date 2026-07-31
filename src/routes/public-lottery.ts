@@ -16,6 +16,20 @@ import { hashAccessPassword } from "../services/lottery-service";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
+/** 简单内存限流：同一 IP 每分钟最多 10 次参与 */
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(ip: string, limit = 10, windowMs = 60000): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= limit) return false;
+  entry.count++;
+  return true;
+}
+
 /** 生成 6 位数字验证码 */
 function generateCode(): string {
   const bytes = new Uint8Array(4);
@@ -91,6 +105,11 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
+  // 限流：同一 IP 每分钟最多 3 次请求验证码
+  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  if (!checkRateLimit(`access-code:${ip}`, 3, 60000)) {
+    return fail(c, "请求过于频繁，请稍后再试", 429);
+  }
   const db = getDb(c);
   const slug = c.req.param("slug");
   const body = await c.req.json<{ email: string }>();
@@ -162,6 +181,11 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
+  // 限流：同一 IP 每分钟最多 10 次参与
+  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  if (!checkRateLimit(`join:${ip}`, 10, 60000)) {
+    return fail(c, "参与过于频繁，请稍后再试", 429);
+  }
   const db = getDb(c);
   const slug = c.req.param("slug");
   const body = await c.req.json<{ email: string; code: string; accessPassword?: string; inviteCode?: string }>();
@@ -256,6 +280,11 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/join", async (c) => {
+  // 限流：同一 IP 每分钟最多 10 次参与
+  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  if (!checkRateLimit(`join:${ip}`, 10, 60000)) {
+    return fail(c, "参与过于频繁，请稍后再试", 429);
+  }
   const db = getDb(c);
   const body = await c.req.json<{ email: string }>();
   const email = String(body.email || "").trim().toLowerCase();
