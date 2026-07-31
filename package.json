@@ -1,72 +1,25 @@
 {
-  "name": "cf-shop",
-  "version": "0.1.0",
+  "name": "acctbox-h5",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
-  "workspaces": [
-    "frontend"
-  ],
   "scripts": {
-    "deps:install": "node scripts/install-dependencies.mjs install",
-    "deps:ci": "node scripts/install-dependencies.mjs ci",
-    "dev": "wrangler dev --port 8787",
-    "deploy": "npm run frontend:build && node -e \"if (!process.env.APP_ORIGIN) throw new Error('Missing APP_ORIGIN')\" && npx wrangler deploy --var \"APP_ORIGIN:$APP_ORIGIN\"",
-    "type-check": "tsc --noEmit",
-    "type-check:frontend": "npm --workspace frontend run type-check",
-    "type-check:all": "npm run type-check && npm run type-check:frontend",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "frontend:build": "npm --workspace frontend run build && node scripts/15-sync-frontend-assets.mjs",
-    "verify:whitespace": "git diff --check",
-    "verify:delivery": "npm run security:scan && npm run type-check && npm run test && npm run frontend:build && npm run verify:whitespace && node scripts/01-check.mjs && npm run verify:core && npm run verify:architecture && npm run verify:lightweight && npm run verify:admin-styles && npm run verify:money-units",
-    "verify:remotes": "node scripts/29-verify-git-remotes.mjs",
-    "verify:freeze-boundary": "node scripts/30-verify-freeze-boundary.mjs",
-    "release:private:check": "npm run verify:remotes && npm run verify:freeze-boundary && npm run verify:delivery",
-    "verify:core": "node scripts/17-verify-core-coverage.mjs",
-    "verify:architecture": "node scripts/23-verify-light-architecture.mjs",
-    "verify:lightweight": "node scripts/24-verify-lightweight-principles.mjs",
-    "verify:admin-styles": "node scripts/27-verify-admin-styles.mjs",
-    "verify:money-units": "node scripts/28-verify-money-units.mjs",
-    "verify:launch": "node scripts/16-verify-launch.mjs",
-    "browser:chromium-path": "node scripts/resolve-local-chromium.mjs",
-    "check": "node scripts/01-check.mjs",
-    "security:scan": "node scripts/25-scan-secrets.mjs",
-    "oss:export": "bash scripts/oss/ossctl.sh export",
-    "oss:sync": "bash scripts/oss/ossctl.sh sync",
-    "deploy:full": "node scripts/02-deploy-full.mjs",
-    "db:migrate": "node scripts/migrate.mjs",
-    "db:migrate:turso": "node scripts/migrate.mjs",
-    "db:migrate:remote": "node scripts/migrate.mjs",
-    "db:seed:remote": "node -e \"console.log('cf-shop: no default remote seed; skip')\"",
-    "domain:bind": "node scripts/03-bind-domain.mjs",
-    "verify:domain": "node scripts/07-verify-domain.mjs",
-    "smoke:readonly": "node scripts/04-smoke-readonly.mjs",
-    "smoke:frontend-assets": "node scripts/26-smoke-frontend-assets.mjs",
-    "smoke:admin": "node scripts/05-smoke-admin.mjs",
-    "smoke:write": "node scripts/06-smoke-write.mjs",
-    "smoke:legacy-guards": "node scripts/20-smoke-legacy-guards.mjs",
-    "smoke:catalog-admin": "node scripts/18-smoke-catalog-admin.mjs",
-    "smoke:ops": "node scripts/19-smoke-ops-crud.mjs",
-    "smoke:inventory": "node scripts/21-smoke-inventory-closure.mjs"
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "type-check": "vue-tsc -b --pretty false",
+    "preview": "vite preview",
+    "deploy": "vite build && node ../scripts/15-sync-frontend-assets.mjs"
   },
   "dependencies": {
-    "@libsql/client": "^0.14.0",
-    "@usethink/cf-core": "^0.3.8",
-    "drizzle-orm": "0.45.2",
-    "hono": "^4.12.22",
-    "zod": "3.25.76"
+    "vue": "^3.5.13",
+    "vue-i18n": "^11.4.8",
+    "vue-router": "^4.5.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260726.1",
-    "@vitest/coverage-v8": "4.1.7",
-    "drizzle-zod": "0.7.1",
-    "typescript": "5.7.3",
-    "vite": "6.4.3",
-    "vitest": "4.1.7",
-    "wrangler": "4.114.0"
-  },
-  "overrides": {
-    "hono": "$hono",
-    "@libsql/client": "$@libsql/client"
+    "@types/node": "^22.10.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.7.0",
+    "vite": "^6.0.0",
+    "vue-tsc": "^3.3.8"
   }
 }

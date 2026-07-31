@@ -1,0 +1,434 @@
+/* ═══════════════════════════════════════════════════════
+   Shop — Base Design Tokens
+   简洁大方，暗色为主，Telegram 主题自动适配
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+  /* ── 色彩（H5 默认暗色主题，Telegram 会通过 JS 覆盖） ── */
+  --tg-bg: #0a0e17;
+  --tg-bg-rgb: 10, 14, 23;
+  --tg-text: #f0f2f5;
+  --tg-hint: #9aa4b2;
+  --tg-link: #3b82f6;
+  --tg-btn: #60a5fa;
+  --tg-btn-text: #ffffff;
+  --tg-secondary-bg: #151b28;
+  --tg-secondary-bg-rgb: 21, 27, 40;
+  --tg-header-bg: #0a0e17;
+  --tg-bottom-bar-bg: #111827;
+  --tg-top-bar-bg: #0a0e17;
+  --tg-destructive: #ef4444;
+  --tg-section-bg: #151b28;
+
+  /* ── 语义表面 / 边框（暗色主题默认；禁止再用浅色 #fff/#e5e7eb 作暗色 fallback） ── */
+  --admin-sidebar-w: 160px;
+  --border: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-2: rgba(255, 255, 255, 0.07);
+  --surface-hover: rgba(255, 255, 255, 0.10);
+  --overlay: rgba(0, 0, 0, 0.55);
+  /* Admin 快捷筛选 / Tab / 提示：与 /admin/cards 橙色体系对齐（暗底高对比） */
+  --admin-accent: #f59e0b;
+  --admin-accent-soft: rgba(245, 158, 11, 0.14);
+  --admin-accent-border: rgba(245, 158, 11, 0.38);
+  --admin-accent-hover: rgba(245, 158, 11, 0.22);
+  --admin-accent-text: #fbbf24;
+  /* 语义状态字色（暗底可读；禁止再用 #1d4ed8 等浅色主题蓝） */
+  --admin-success: #6ee7b7;
+  --admin-success-soft: rgba(52, 211, 153, 0.12);
+  --admin-success-border: rgba(52, 211, 153, 0.28);
+  --admin-danger: #fca5a5;
+  --admin-danger-soft: rgba(248, 113, 113, 0.12);
+  --admin-danger-border: rgba(248, 113, 113, 0.28);
+  --admin-warning: #fbbf24;
+  --admin-warning-soft: rgba(251, 191, 36, 0.12);
+  --admin-warning-border: rgba(251, 191, 36, 0.28);
+  /* info 在暗色 Admin 中与 accent 对齐，避免弱蓝字 */
+  --admin-info: var(--admin-accent-text);
+  --admin-info-soft: var(--admin-accent-soft);
+  --admin-info-border: var(--admin-accent-border);
+  /* 店面货架促销（成交向）：暖玫红，与品牌冷蓝按钮区分，引导价格锚点 */
+  --shop-sale: #fb7185;
+  --shop-sale-strong: #f43f5e;
+  --shop-sale-soft: rgba(244, 63, 94, 0.16);
+  --shop-sale-border: rgba(244, 63, 94, 0.42);
+  --shop-sale-text: #fecdd3;
+  /* 店面工具栏吸顶：贴在 Header 下方（TG 移动端无顶栏 → 0） */
+  --shop-sticky-top: 0px;
+  /* 兼容旧别名：ConfirmDialog 等曾引用未定义的 --tg-surface-2 / --tg-muted */
+  --tg-surface-2: var(--surface-2);
+  --tg-border: var(--border);
+  --tg-muted: var(--tg-hint);
+
+  /* ── 圆角 ── */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-full: 9999px;
+
+  /* ── 阴影 ── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.5);
+
+  /* ── 动画 ── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+
+  /* ── 字体 ── */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+
+  /* ── 管理后台尺寸变量（在 @media 中覆盖） ──
+   * 表格主字号 / 行高：偏紧凑（13 / 11 + 较小 cell pad），勿再把 base 抬回 14px。
+   * 间距铁律（docs/049）：页面区块只靠 .admin-page gap，禁止再叠 margin-bottom。
+   */
+  --admin-content-pad: 10px;
+  --admin-card-pad: 10px;
+  --admin-cell-pad: 6px 8px;
+  --admin-font-base: 13px;
+  --admin-font-sm: 11px;
+  /* 垂直区块间距：工具栏 / notice / chip 条 / 表格之间 */
+  --admin-stack-gap: 8px;
+  /* 行内控件：chip、按钮组、筛选条 */
+  --admin-inline-gap: 8px;
+  /* 工具栏 filters / actions 控件间距 */
+  --admin-control-gap: 8px;
+  /* 卡片/表单内部字段间距 */
+  --admin-card-gap: 10px;
+  /* 控件高度：工具栏 34；分页等紧凑条 26（覆盖全局 select min-height:34） */
+  --admin-control-height: 34px;
+  --admin-control-height-sm: 26px;
+
+  /* ── 前端页面尺寸变量（在 @media 中覆盖） ── */
+  --content-pad: 16px;
+  --card-pad: 16px;
+  --grid-gap: 12px;
+  --section-mb: 28px;
+  --font-section-title: 20px;
+}
+
+/* ── 小桌面断点（对应 sidebar Always-visible 的最小宽度 + 24px 冗余） ── */
+@media (min-width: 770px) {
+  :root {
+    --admin-content-pad: 12px;
+    --admin-card-pad: 12px;
+    /* 表格保持紧凑，勿放大 cell pad */
+    --admin-cell-pad: 6px 10px;
+    /* 大屏略松一点，但禁止再抬到 14–16px（历史曾导致控件间空白过大） */
+    --admin-stack-gap: 10px;
+    --admin-control-gap: 10px;
+    --admin-inline-gap: 8px;
+    --admin-card-gap: 12px;
+
+    /* 前端页面 */
+    --content-pad: 20px;
+    --card-pad: 18px;
+    --grid-gap: 16px;
+    --font-section-title: 22px;
+  }
+}
+
+/* ── 大桌面断点 ── */
+@media (min-width: 1024px) {
+  :root {
+    --admin-content-pad: 12px;
+    --admin-card-pad: 12px;
+    --admin-cell-pad: 6px 10px;
+    --admin-font-base: 13px;
+    --admin-font-sm: 11px;
+    /* 与 770 保持同一 stack，勿在 1024 再放大 gap */
+    --admin-stack-gap: 10px;
+    --admin-control-gap: 10px;
+    --admin-inline-gap: 8px;
+    --admin-card-gap: 12px;
+
+    /* 前端页面 */
+    --content-pad: 20px;
+    --card-pad: 18px;
+    --grid-gap: 16px;
+    --section-mb: 28px;
+  }
+}
+
+/* ── Reset ── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /*
+   * 整站默认暗色原生控件。
+   * 单独给 select 设置 color-scheme 对“关闭态”有效，但 macOS/Chromium 的展开面板
+   * 仍可能参考根节点/系统主题；根节点也声明 dark 可减少白底黑字的原生下拉概率。
+   */
+  color-scheme: dark;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  color-scheme: dark;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+a {
+  color: var(--tg-link);
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: var(--tg-text, #f0f2f5);
+}
+
+/*
+ * ── 下拉框主题适配 ──
+ * 暗色 UI 必须 color-scheme: dark，否则系统原生 option 面板按浅色渲染，
+ * 出现「选中项/列表项字色发灰、看不清、选中反白异常」。
+ * 关闭态控件使用不透明 background-color + 单独 background-image（勿用 background 简写冲掉箭头）。
+ */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  color-scheme: dark;
+  box-sizing: border-box;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--r-md, 8px);
+  color: var(--tg-text, #f0f2f5);
+  /* 强制填充色：部分 WebKit 在半透明底上会把 value 画成系统灰 */
+  -webkit-text-fill-color: var(--tg-text, #f0f2f5);
+  /*
+   * 垂直居中：勿用上下 padding + 继承 body line-height:1.6。
+   * Admin 工具栏在 admin.css 用 height:34px + line-height:32px 覆盖；
+   * 此处默认用适中 line-height，避免关闭态字被圆角裁切。
+   */
+  min-height: 34px;
+  padding: 0 32px 0 12px;
+  line-height: 32px;
+  background-color: var(--tg-secondary-bg, #151b28);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa4b2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  -webkit-text-fill-color: var(--tg-hint, #9aa4b2);
+}
+
+/* 展开列表：实色底 + 主字色；checked 用 accent 软底（系统仍可能覆盖部分属性） */
+option {
+  background-color: var(--tg-secondary-bg, #151b28);
+  color: var(--tg-text, #f0f2f5);
+}
+
+option:checked,
+option:focus,
+option:hover {
+  background-color: var(--admin-accent-soft, rgba(245, 158, 11, 0.22));
+  color: var(--tg-text, #f0f2f5);
+}
+
+/* ── 复选框/单选框主题适配（紧凑尺寸；禁止被文本框规则撑大） ── */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--tg-btn, #60a5fa);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+/* ── 通用工具类 ── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ── 输入框 ── */
+input[type="text"],
+input[type="email"],
+input[type="search"],
+input[type="password"],
+input[type="number"],
+input[type="datetime-local"],
+input[type="date"],
+input[type="time"],
+input[inputmode="numeric"],
+textarea {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--tg-text);
+  font-size: 15px;
+  line-height: 1.5;
+  transition: border-color var(--duration-fast) var(--ease-out);
+  outline: none;
+  /* color-scheme 不是继承属性，必须显式声明，否则原生日历/时间选择器按浅色渲染 */
+  color-scheme: dark;
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--tg-btn);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--tg-hint);
+}
+
+/* ── 按钮 ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--r-md);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.btn-primary {
+  background: var(--tg-btn);
+  color: var(--tg-btn-text);
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--tg-text);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--tg-hint);
+  border: 1px solid transparent;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  color: var(--tg-text);
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+/* ── 骨架屏 ── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface) 25%,
+    var(--surface-hover) 50%,
+    var(--surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--r-md);
+}
+
+/* ── 淡入动画 ── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-up {
+  animation: fadeInUp var(--duration-slow) var(--ease-out) forwards;
+}
+
+/* ── 状态色 ── */
+.status-success { color: #22c55e; }
+.status-warning { color: #f59e0b; }
+.status-error { color: #ef4444; }
+.status-info { color: var(--tg-link); }
+
+/* ── 结果提示框 ── */
+.result-box {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 14px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.result-box:empty {
+  display: none;
+}

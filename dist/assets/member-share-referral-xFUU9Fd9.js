@@ -1,0 +1,1 @@
+const r="member_share_referral_code";function o(){try{return String(localStorage.getItem(r)||"").trim().toLowerCase()}catch{return""}}function a(e){const t=String(e||"").trim().toLowerCase();try{t?localStorage.setItem(r,t):localStorage.removeItem(r)}catch{}}function n(){const e=o();return e?{referralCode:e}:{}}export{o as g,n as r,a as s};

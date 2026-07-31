@@ -1,0 +1,1350 @@
+<template>
+  <div class="lottery-view">
+    <header class="page-header">
+      <div class="page-header-main">
+        <h1>{{ $t('lottery.title') }}</h1>
+        <p class="page-subtitle">{{ $t('lottery.pageHint') }}</p>
+        <div v-if="isDeepLinked" class="deep-link-bar">
+          <RouterLink class="btn btn-ghost btn-sm" to="/lottery">
+            {{ $t('lottery.backToAllDraws') }}
+          </RouterLink>
+          <button
+            v-if="draws[0]"
+            type="button"
+            class="btn btn-ghost btn-sm"
+            @click="handleCopyPublicLink(draws[0].id)"
+          >
+            {{ $t('lottery.copyShareLink') }}
+          </button>
+        </div>
+      </div>
+      <div class="session-bar">
+        <template v-if="sessionEmail">
+          <span class="session-email" :title="sessionEmail">{{ sessionEmail }}</span>
+          <button type="button" class="btn btn-ghost btn-sm" @click="handleLogout">
+            {{ $t('lottery.logout') }}
+          </button>
+        </template>
+        <button
+          v-else
+          type="button"
+          class="btn btn-primary btn-sm"
+          @click="openLogin()"
+        >
+          {{ $t('lottery.loginFirst') }}
+        </button>
+      </div>
+    </header>
+
+    <!-- 我的记录：登录后汇总参与/中奖，不必逐卡展开 -->
+    <section v-if="lotteryToken" class="my-records" aria-labelledby="lottery-my-records">
+      <div class="section-head">
+        <h2 id="lottery-my-records" class="section-title">{{ $t('lottery.myRecords') }}</h2>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          :disabled="recordsLoading"
+          @click="fetchMyRecords"
+        >
+          {{ recordsLoading ? $t('shop.loading') : $t('lottery.refreshRecords') }}
+        </button>
+      </div>
+
+      <div v-if="recordsLoading && sortedMyEntries.length === 0" class="records-empty">
+        {{ $t('shop.loading') }}
+      </div>
+      <div v-else-if="sortedMyEntries.length === 0" class="records-empty">
+        {{ $t('lottery.noMyRecords') }}
+      </div>
+      <ul v-else class="records-list">
+        <li v-for="row in sortedMyEntries" :key="row.drawId" class="record-row">
+          <div class="record-main">
+            <span class="record-name">{{ row.drawName || row.drawId }}</span>
+            <span class="chip" :class="'chip-' + (row.drawStatus || 'open')">
+              {{ statusLabel(row.drawStatus || 'open') }}
+            </span>
+            <span
+              v-if="myWonById[row.drawId]"
+              class="chip chip-won"
+            >{{ $t('lottery.won') }}</span>
+            <span
+              v-else-if="row.drawStatus === 'drawn'"
+              class="chip chip-muted"
+            >{{ $t('lottery.notWon') }}</span>
+            <span
+              v-else
+              class="chip chip-muted"
+            >{{ $t('lottery.joined') }}</span>
+          </div>
+          <div class="record-meta">
+            <span v-if="row.joinedAt">{{ $t('lottery.joinedAt') }}: {{ formatTime(row.joinedAt) }}</span>
+            <span v-if="row.drawTime">{{ $t('lottery.drawTime') }}: {{ formatTime(row.drawTime) }}</span>
+            <RouterLink
+              v-if="myWonById[row.drawId]?.orderToken"
+              class="order-link"
+              :to="{ path: '/order', query: { token: myWonById[row.drawId].orderToken } }"
+              @click.stop
+            >
+              {{ $t('lottery.checkOrder') }}
+            </RouterLink>
+            <button
+              v-else
+              type="button"
+              class="btn btn-ghost btn-xs"
+              @click="focusDraw(row.drawId)"
+            >
+              {{ $t('lottery.viewDraw') }}
+            </button>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <div v-else class="login-banner">
+      <p>{{ $t('lottery.loginBanner') }}</p>
+      <button type="button" class="btn btn-primary btn-sm" @click="openLogin()">
+        {{ $t('lottery.loginFirst') }}
+      </button>
+    </div>
+
+    <!-- 加载中 -->
+    <div v-if="loading" class="loading-state">{{ $t('shop.loading') }}</div>
+
+    <!-- 活动列表 -->
+    <div v-else-if="draws.length === 0" class="empty-state">
+      <p>{{ $t('lottery.noDraws') }}</p>
+    </div>
+
+    <div v-else class="draw-list">
+      <div
+        v-for="draw in draws"
+        :key="draw.id"
+        class="draw-card"
+        :class="{ expanded: expandedId === draw.id }"
+        :id="'draw-' + draw.id"
+      >
+        <div class="draw-card-header" @click="toggleExpand(draw.id)">
+          <div class="draw-card-info">
+            <h3 class="draw-name">{{ draw.name }}</h3>
+            <span class="chip" :class="'chip-' + draw.status">
+              {{ statusLabel(draw.status) }}
+            </span>
+            <span v-if="hasEnded(draw)" class="chip chip-muted">{{ $t('lottery.ended') }}</span>
+            <!-- 已满员标记（参与人数达上限） -->
+            <span v-else-if="draw.maxParticipants && (draw.entryCount ?? 0) >= draw.maxParticipants" class="chip chip-muted">{{ $t('lottery.full') }}</span>
+            <!-- 折叠态也展示个人状态，减少二次点击 -->
+            <span v-if="myWonById[draw.id]" class="chip chip-won">{{ $t('lottery.won') }}</span>
+            <span v-else-if="myJoinedById[draw.id]" class="chip chip-joined">{{ $t('lottery.joined') }}</span>
+          </div>
+          <div class="draw-card-meta">
+            <span
+              v-if="draw.productTitle || draw.productId"
+              class="draw-prize"
+            >{{ $t('lottery.product') }}: {{ draw.productTitle || draw.productId }}</span>
+            <span v-if="draw.showWinners" class="draw-count">{{ $t('lottery.drawCount', { count: draw.entryCount ?? 0 }) }}</span>
+            <span class="draw-time">{{ $t('lottery.drawTime') }}: {{ formatTime(draw.drawTime) }}</span>
+            <span
+              v-if="countdownText(draw)"
+              class="draw-countdown"
+            >{{ $t('lottery.countdown') }}: {{ countdownText(draw) }}</span>
+            <span
+              v-if="draw.status === 'drawn' && draw.showWinners && draw.winnerCount !== undefined && draw.winnerCount > 0"
+              class="draw-winners"
+            >{{ $t('lottery.actualWinnerCount') }}: {{ draw.winnerCount }}</span>
+          </div>
+        </div>
+
+        <!-- 折叠态快捷操作：不必展开即可参与/查单 -->
+        <div class="draw-card-quick" @click.stop>
+          <template v-if="draw.status === 'drawn'">
+            <RouterLink
+              v-if="myWonById[draw.id]?.orderToken"
+              class="btn btn-primary btn-sm"
+              :to="{ path: '/order', query: { token: myWonById[draw.id].orderToken } }"
+            >
+              {{ $t('lottery.checkOrder') }}
+            </RouterLink>
+            <span v-else-if="lotteryToken && myJoinedById[draw.id]" class="not-won">
+              {{ $t('lottery.notWon') }}
+            </span>
+            <button
+              v-else-if="!lotteryToken"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              @click="openLogin()"
+            >
+              {{ $t('lottery.loginToCheck') }}
+            </button>
+          </template>
+          <template v-else-if="draw.status === 'drawing'">
+            <span class="drawing-state">{{ $t('lottery.statusDrawing') }}</span>
+          </template>
+          <template v-else-if="draw.status === 'open'">
+            <span v-if="myJoinedById[draw.id]" class="joined-badge">{{ $t('lottery.joined') }} · {{ $t('lottery.waitDraw') }}</span>
+            <button
+              v-else-if="!lotteryToken"
+              type="button"
+              class="btn btn-primary btn-sm"
+              @click="openLogin(draw.id)"
+            >
+              {{ $t('lottery.loginFirst') }}
+            </button>
+            <button
+              v-else
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="joiningId === draw.id"
+              @click="handleJoin(draw.id)"
+            >
+              {{ joiningId === draw.id ? $t('shop.loading') : $t('lottery.join') }}
+            </button>
+          </template>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            @click="toggleExpand(draw.id)"
+          >
+            {{ expandedId === draw.id ? $t('lottery.collapse') : $t('lottery.expand') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            :title="$t('lottery.copyShareLink')"
+            @click="handleCopyPublicLink(draw.id)"
+          >
+            {{ $t('lottery.copyShareLink') }}
+          </button>
+        </div>
+
+        <!-- 展开详情 -->
+        <div v-if="expandedId === draw.id" class="draw-card-body">
+          <p v-if="draw.description" class="draw-desc">{{ draw.description }}</p>
+          <div class="draw-detail-grid">
+            <div v-if="draw.productTitle || draw.productId" class="detail-item">
+              <span class="detail-label">{{ $t('lottery.product') }}</span>
+              <span class="detail-value">{{ draw.productTitle || draw.productId }}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">{{ $t('lottery.joinTime') }}</span>
+              <span class="detail-value">{{ formatTime(draw.startTime) }} ~ {{ formatTime(draw.endTime) }}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">{{ $t('lottery.drawTime') }}</span>
+              <span class="detail-value">{{ formatTime(draw.drawTime) }}</span>
+            </div>
+            <div v-if="draw.showWinners" class="detail-item">
+              <span class="detail-label">{{ $t('lottery.winnerCount') }}</span>
+              <span class="detail-value">
+                <template v-if="draw.status === 'drawn' && draw.showWinners && draw.winnerCount !== undefined">
+                  {{ $t('lottery.actualWinnerCount') }}: {{ draw.winnerCount }}
+                </template>
+                <template v-else-if="draw.status !== 'drawn'">
+                  {{ $t('lottery.maxWinnerCount') }}: {{ draw.maxWinners }}
+                </template>
+              </span>
+            </div>
+            <div v-if="draw.showWinners && draw.maxParticipants" class="detail-item">
+              <span class="detail-label">{{ $t('lottery.maxParticipants') }}</span>
+              <span class="detail-value">{{ draw.entryCount ?? 0 }} / {{ draw.maxParticipants }}</span>
+            </div>
+          </div>
+
+          <div class="draw-actions">
+            <div v-if="draw.status === 'drawn'" class="result-section">
+              <span class="chip chip-drawn">{{ $t('lottery.drawResult') }}</span>
+              <template v-if="lotteryToken">
+                <div v-if="myWonById[draw.id]" class="won-badge">
+                  {{ $t('lottery.won') }}
+                  <RouterLink
+                    v-if="myWonById[draw.id].orderToken"
+                    class="order-link"
+                    :to="{ path: '/order', query: { token: myWonById[draw.id].orderToken } }"
+                  >
+                    {{ $t('lottery.checkOrder') }}
+                  </RouterLink>
+                </div>
+                <div v-else class="not-won">{{ $t('lottery.notWon') }}</div>
+              </template>
+              <div v-else class="login-prompt">
+                <button type="button" class="btn btn-primary btn-sm" @click="openLogin()">
+                  {{ $t('lottery.loginToCheck') }}
+                </button>
+              </div>
+            </div>
+
+            <div v-else-if="draw.status === 'drawing'" class="drawing-state">
+              {{ $t('lottery.statusDrawing') }}
+            </div>
+
+            <div v-else-if="draw.status === 'open'" class="join-section">
+              <div v-if="myJoinedById[draw.id]" class="joined-badge">
+                {{ $t('lottery.joined') }} · {{ $t('lottery.waitDraw') }}
+              </div>
+              <div v-else-if="!lotteryToken" class="login-prompt">
+                <button type="button" class="btn btn-primary" @click="openLogin(draw.id)">
+                  {{ $t('lottery.loginFirst') }}
+                </button>
+              </div>
+              <div v-else>
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  :disabled="joiningId === draw.id"
+                  @click="handleJoin(draw.id)"
+                >
+                  {{ joiningId === draw.id ? $t('shop.loading') : $t('lottery.join') }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 登录弹窗 -->
+    <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLogin">
+      <div class="modal-content" role="dialog" aria-modal="true" :aria-label="$t('lottery.emailVerify')">
+        <h3 class="modal-title">{{ $t('lottery.emailVerify') }}</h3>
+        <p class="modal-hint">{{ $t('lottery.emailVerifyHint') }}</p>
+        <div class="modal-form">
+          <label>
+            <span>{{ $t('lottery.emailPlaceholder') }}</span>
+            <input
+              v-model="loginEmail"
+              type="email"
+              autocomplete="email"
+              inputmode="email"
+              @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
+            />
+          </label>
+          <div v-if="verifiedSessionForLoginEmail" class="verified-email-row">
+            <span>已验证邮箱 {{ verifiedSessionForLoginEmail.email }}</span>
+            <button type="button" class="btn btn-primary btn-sm" :disabled="verifyingCode" @click="handleVerifyCode">
+              一键继续
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" @click="clearVerifiedEmail">
+              切换邮箱
+            </button>
+          </div>
+          <Turnstile container-id="lottery-turnstile" />
+          <div v-if="codeSent" class="code-row">
+            <label class="code-label">
+              <span>{{ $t('lottery.codePlaceholder') }}</span>
+              <input
+                v-model="loginCode"
+                type="text"
+                inputmode="numeric"
+                maxlength="6"
+                class="code-input"
+                autocomplete="one-time-code"
+                @keyup.enter="handleVerifyCode"
+              />
+            </label>
+            <span class="code-timer">{{ codeCooldown > 0 ? codeCooldown + 's' : '' }}</span>
+          </div>
+          <div class="modal-actions">
+            <button
+              v-if="!codeSent"
+              type="button"
+              class="btn btn-primary"
+              :disabled="sendingCode"
+              @click="handleSendCode"
+            >
+              {{ sendingCode ? $t('shop.loading') : $t('lottery.sendCode') }}
+            </button>
+            <template v-else>
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="verifyingCode"
+                @click="handleVerifyCode"
+              >
+                {{ verifyingCode ? $t('shop.loading') : $t('lottery.verifyAndJoin') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                :disabled="sendingCode || codeCooldown > 0"
+                @click="handleSendCode"
+              >
+                {{ codeCooldown > 0 ? $t('lottery.resendIn', { s: codeCooldown }) : $t('lottery.sendCode') }}
+              </button>
+            </template>
+            <button type="button" class="btn btn-ghost" @click="closeLogin">
+              {{ $t('productConfirm.cancel') }}
+            </button>
+          </div>
+          <p v-if="loginError" class="form-error">{{ loginError }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+/**
+ * 用户端抽奖页。
+ *
+ * 体验要点：
+ * - 顶栏会话 +「我的记录」汇总中奖/参与（/lottery/my）
+ * - 卡片折叠态即可参与、查单，减少二次点击
+ * - 登录后可选自动加入 pendingDrawId
+ * - 订单链接使用 history 模式 /order?token=（禁止 hash 路由伪链接）
+ * - 个人状态用普通对象（非 Map.set 原地修改）保证 Vue 响应式
+ */
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast'
+import { useTurnstile } from '@/composables/useTurnstile'
+import { useEmailSession } from '@/composables/useEmailSession'
+import { writeClipboardText } from '@/composables/useClipboard'
+import { buildLotteryPublicShareUrl, sortLotteryMyEntries } from '@/lib/lottery-ops'
+import Turnstile from '@/components/Turnstile.vue'
+
+const { t, locale } = useI18n()
+const { showToast } = useToast()
+const { getResponse, reset: resetTurnstile } = useTurnstile()
+const { getEmailSession, sessionForEmail, saveEmailSession, clearEmailSession } = useEmailSession()
+
+const props = defineProps<{ id?: string }>()
+const router = useRouter()
+
+/** 深链 /lottery/:id 时只展示单活动，需提供返回全部入口 */
+const isDeepLinked = computed(() => Boolean(props.id && String(props.id).trim()))
+
+const API_BASE = '/api'
+// 后端 ok()/fail()：成功 { ok:true, ...fields } 顶层展开；失败 { ok:false, error }。禁止再套 data 包装层。
+
+const LOTTERY_TOKEN_KEY = 'lottery_token'
+const LOTTERY_EMAIL_KEY = 'lottery_email'
+
+type LotteryDraw = {
+  id: string
+  name: string
+  description?: string
+  status: string
+  startTime: string
+  endTime: string
+  drawTime: string
+  maxWinners?: number
+  maxParticipants?: number | null
+  entryCount?: number
+  winnerCount?: number
+  showWinners?: number
+  /** 公开列表/详情联表 products.title */
+  productTitle?: string | null
+  productId?: string
+}
+
+type MyEntry = {
+  drawId: string
+  joinedAt?: string
+  drawName?: string
+  drawStatus?: string
+  drawTime?: string
+}
+
+type MyWinner = {
+  drawId: string
+  orderToken?: string
+  productId?: string
+  drawnAt?: string
+}
+
+const loading = ref(true)
+const recordsLoading = ref(false)
+const draws = ref<LotteryDraw[]>([])
+const expandedId = ref<string | null>(null)
+const lotteryToken = ref(localStorage.getItem(LOTTERY_TOKEN_KEY))
+const sessionEmail = ref(localStorage.getItem(LOTTERY_EMAIL_KEY) || '')
+/** 用 plain object 保证 Vue 3 对 key 增删可追踪；禁止 Map.set 原地改而不替换引用 */
+const myJoinedById = ref<Record<string, true>>({})
+const myWonById = ref<Record<string, { orderToken: string }>>({})
+const myEntryList = ref<MyEntry[]>([])
+
+/** 中奖优先，再按参与时间新→旧（纯函数，便于单测） */
+const sortedMyEntries = computed(() =>
+  sortLotteryMyEntries(myEntryList.value, new Set(Object.keys(myWonById.value))),
+)
+
+const joiningId = ref('')
+/** 登录成功后自动参与的活动 id */
+const pendingJoinDrawId = ref<string | null>(null)
+/** 驱动倒计时每秒刷新 */
+const nowMs = ref(Date.now())
+
+const showLoginModal = ref(false)
+const loginEmail = ref('')
+const loginCode = ref('')
+const verifiedSessionForLoginEmail = computed(() => loginEmail.value.trim() ? sessionForEmail(loginEmail.value) : null)
+const codeSent = ref(false)
+const sendingCode = ref(false)
+const verifyingCode = ref(false)
+const codeCooldown = ref(0)
+const loginError = ref('')
+let cooldownTimer: ReturnType<typeof setInterval> | null = null
+let countdownTimer: ReturnType<typeof setInterval> | null = null
+
+function statusLabel(status: string): string {
+  const map: Record<string, string> = {
+    open: 'statusOpen',
+    drawn: 'statusDrawn',
+    drawing: 'statusDrawing',
+    paused: 'statusPaused',
+  }
+  return t('lottery.' + (map[status] || 'statusOpen'))
+}
+
+function formatTime(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  try {
+    return d.toLocaleString(locale.value || undefined)
+  } catch {
+    return d.toLocaleString()
+  }
+}
+
+/** 距开奖/参与结束的可读倒计时；已过期返回空 */
+function countdownText(draw: LotteryDraw): string {
+  const targetIso = draw.status === 'open' ? draw.drawTime : ''
+  if (!targetIso) return ''
+  const target = new Date(targetIso).getTime()
+  if (!Number.isFinite(target)) return ''
+  const diff = target - nowMs.value
+  if (diff <= 0) return ''
+  const totalSec = Math.floor(diff / 1000)
+  const days = Math.floor(totalSec / 86400)
+  const hours = Math.floor((totalSec % 86400) / 3600)
+  const minutes = Math.floor((totalSec % 3600) / 60)
+  const seconds = totalSec % 60
+  const parts: string[] = []
+  if (days > 0) parts.push(`${days}${t('lottery.days')}`)
+  parts.push(`${hours}${t('lottery.hours')}`)
+  parts.push(`${minutes}${t('lottery.minutes')}`)
+  if (days === 0) parts.push(`${seconds}${t('lottery.seconds')}`)
+  return parts.join(' ')
+}
+
+/** 活动是否已结束（drawn/cancelled，或 open 态但 drawTime 已过） */
+function hasEnded(draw: LotteryDraw): boolean {
+  if (draw.status === 'drawn' || draw.status === 'cancelled') return true
+  // open 态但 drawTime 已过 → 后端懒开奖还未触发，用户端标记已过期
+  // 只对 open 态做时间判断：draft 未开始、paused 可能恢复，都不应标记结束
+  if (draw.status === 'open' && draw.drawTime) {
+    const t = new Date(draw.drawTime).getTime()
+    if (Number.isFinite(t) && t < nowMs.value) return true
+  }
+  return false
+}
+
+/** 从 ok() 展开响应中剥掉协议字段，剩余即业务 payload */
+function payloadOf(data: Record<string, unknown>) {
+  const { ok: _ok, error: _error, details: _details, ...rest } = data
+  return rest
+}
+
+function clearSession() {
+  lotteryToken.value = null
+  sessionEmail.value = ''
+  localStorage.removeItem(LOTTERY_TOKEN_KEY)
+  localStorage.removeItem(LOTTERY_EMAIL_KEY)
+  myJoinedById.value = {}
+  myWonById.value = {}
+  myEntryList.value = []
+}
+
+function openLogin(drawId?: string) {
+  pendingJoinDrawId.value = drawId || null
+  loginError.value = ''
+  if (!loginEmail.value.trim()) {
+    const session = getEmailSession()
+    if (session?.email) loginEmail.value = session.email
+  }
+  showLoginModal.value = true
+}
+
+function closeLogin() {
+  showLoginModal.value = false
+  pendingJoinDrawId.value = null
+  loginError.value = ''
+}
+
+function clearVerifiedEmail() {
+  clearEmailSession()
+  loginCode.value = ''
+  codeSent.value = false
+}
+
+function handleLogout() {
+  clearSession()
+  showToast(t('lottery.loggedOut'))
+}
+
+function toggleExpand(id: string) {
+  expandedId.value = expandedId.value === id ? null : id
+  // 展开详情时调用 GET /lottery/draws/:id 触发懒开奖
+  if (expandedId.value === id) {
+    void fetchDrawDetail(id)
+  }
+}
+
+function focusDraw(drawId: string) {
+  // 列表页无该卡片时（例如仅深链其它活动），跳到该活动深链页
+  if (!draws.value.some((d) => d.id === drawId)) {
+    void router.push('/lottery/' + encodeURIComponent(drawId))
+    return
+  }
+  expandedId.value = drawId
+  void fetchDrawDetail(drawId)
+  requestAnimationFrame(() => {
+    document.getElementById('draw-' + drawId)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  })
+}
+
+async function handleCopyPublicLink(drawId: string) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const url = buildLotteryPublicShareUrl(origin, drawId)
+  try {
+    await writeClipboardText(url)
+    showToast(t('lottery.shareLinkCopied'))
+  } catch {
+    showToast(t('lottery.shareLinkCopyFailed'))
+  }
+}
+
+async function fetchDrawDetail(id: string) {
+  try {
+    const res = await fetch(API_BASE + '/lottery/draws/' + encodeURIComponent(id))
+    const data = await res.json() as Record<string, unknown> & { ok?: boolean }
+    if (data.ok) {
+      const idx = draws.value.findIndex((d) => d.id === id)
+      if (idx !== -1) {
+        draws.value[idx] = { ...draws.value[idx], ...payloadOf(data) } as LotteryDraw
+      }
+      if (lotteryToken.value) {
+        await fetchMyRecords()
+      }
+    }
+  } catch (e) {
+    console.error('[lottery] fetch draw detail failed:', e)
+  }
+}
+
+async function fetchDraws() {
+  loading.value = true
+  try {
+    if (props.id) {
+      const res = await fetch(API_BASE + '/lottery/draws/' + encodeURIComponent(props.id))
+      const data = await res.json() as Record<string, unknown>
+      if (data.ok && data.id) {
+        draws.value = [payloadOf(data) as LotteryDraw]
+        expandedId.value = props.id
+        // 直达页设置标题为活动名，便于分享时标签页可读
+        const name = String(data.name || '').trim()
+        if (name) document.title = name + ' - ' + t('lottery.title')
+        // 直达页立即拉详情，顺带触发懒开奖
+        void fetchDrawDetail(props.id)
+      } else {
+        draws.value = []
+      }
+    } else {
+      const res = await fetch(API_BASE + '/lottery/draws')
+      const data = await res.json() as { ok?: boolean; draws?: LotteryDraw[] }
+      draws.value = data.ok && Array.isArray(data.draws) ? data.draws : []
+    }
+  } catch (e) {
+    console.error('[lottery] fetch draws failed:', e)
+    draws.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+async function fetchMyRecords() {
+  if (!lotteryToken.value) return
+  recordsLoading.value = true
+  try {
+    const res = await fetch(API_BASE + '/lottery/my', {
+      headers: { Authorization: 'Bearer ' + lotteryToken.value },
+    })
+    // ok(c, { entries, winners }) → 顶层展开
+    const data = await res.json() as {
+      ok?: boolean
+      entries?: MyEntry[]
+      winners?: MyWinner[]
+      error?: string
+    }
+    if (res.status === 401) {
+      clearSession()
+      showToast(t('lottery.loginExpired'))
+      return
+    }
+    if (data.ok) {
+      const joined: Record<string, true> = {}
+      for (const e of data.entries || []) {
+        if (e.drawId) joined[e.drawId] = true
+      }
+      myJoinedById.value = joined
+      myEntryList.value = data.entries || []
+
+      const won: Record<string, { orderToken: string }> = {}
+      for (const w of data.winners || []) {
+        if (w.drawId && w.orderToken) {
+          won[w.drawId] = { orderToken: w.orderToken }
+        }
+      }
+      myWonById.value = won
+    }
+  } catch (e) {
+    console.error('[lottery] fetch my records failed:', e)
+  } finally {
+    recordsLoading.value = false
+  }
+}
+
+async function handleJoin(drawId: string) {
+  if (!lotteryToken.value || joiningId.value) return
+  joiningId.value = drawId
+  try {
+    const res = await fetch(API_BASE + '/lottery/entries', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + lotteryToken.value,
+      },
+      body: JSON.stringify({ drawId }),
+    })
+    const data = await res.json() as { ok?: boolean; entryCount?: number; error?: string }
+    if (data.ok) {
+      showToast(t('lottery.joinSuccess'))
+      // 替换引用以触发响应式
+      myJoinedById.value = { ...myJoinedById.value, [drawId]: true }
+      const idx = draws.value.findIndex((d) => d.id === drawId)
+      if (idx !== -1 && data.entryCount !== undefined) {
+        draws.value[idx] = { ...draws.value[idx], entryCount: data.entryCount }
+      }
+      // 同步「我的记录」活动名/状态
+      await fetchMyRecords()
+      // localStorage 标记已参与，防止重复刷（后端 UNIQUE 兜底）
+      localStorage.setItem(`lottery_joined_${drawId}`, '1')
+    } else if (res.status === 401) {
+      clearSession()
+      showToast(t('lottery.loginExpired'))
+    } else {
+      showToast(data.error || t('lottery.joinFailed'))
+    }
+  } catch {
+    showToast(t('lottery.joinFailed'))
+  } finally {
+    joiningId.value = ''
+  }
+}
+
+function startCooldown(seconds: number) {
+  if (cooldownTimer) {
+    clearInterval(cooldownTimer)
+    cooldownTimer = null
+  }
+  codeCooldown.value = seconds
+  cooldownTimer = setInterval(() => {
+    codeCooldown.value -= 1
+    if (codeCooldown.value <= 0 && cooldownTimer) {
+      clearInterval(cooldownTimer)
+      cooldownTimer = null
+      codeCooldown.value = 0
+    }
+  }, 1000)
+}
+
+async function handleSendCode() {
+  if (!loginEmail.value.includes('@')) {
+    loginError.value = t('lottery.invalidEmail')
+    return
+  }
+  sendingCode.value = true
+  loginError.value = ''
+  try {
+    const res = await fetch(API_BASE + '/lottery/access-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: loginEmail.value.trim(),
+        turnstileToken: getResponse() || undefined,
+      }),
+    })
+    const data = await res.json() as { ok?: boolean; error?: string; resendCooldownSeconds?: number }
+    if (data.ok) {
+      codeSent.value = true
+      startCooldown(typeof data.resendCooldownSeconds === 'number' ? data.resendCooldownSeconds : 60)
+      showToast(t('lottery.codeSent'))
+    } else {
+      loginError.value = data.error || t('lottery.sendFailed')
+      resetTurnstile()
+    }
+  } catch {
+    loginError.value = t('lottery.sendFailed')
+    resetTurnstile()
+  } finally {
+    sendingCode.value = false
+  }
+}
+
+async function handleVerifyCode() {
+  const emailSession = verifiedSessionForLoginEmail.value
+  if (!emailSession && (!loginCode.value || loginCode.value.length !== 6)) {
+    loginError.value = t('lottery.invalidCode')
+    return
+  }
+  verifyingCode.value = true
+  loginError.value = ''
+  try {
+    const res = await fetch(API_BASE + '/lottery/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: loginEmail.value.trim(),
+        code: emailSession ? undefined : loginCode.value.trim(),
+        emailSessionToken: emailSession?.token,
+      }),
+    })
+    // ok(c, { token, email, expiresInSeconds }) → 顶层 token
+    const data = await res.json() as {
+      ok?: boolean
+      token?: string
+      email?: string
+      emailSession?: { token: string; email: string; expiresInSeconds?: number }
+      error?: string
+    }
+    if (data.ok && typeof data.token === 'string' && data.token) {
+      const email = (data.email || loginEmail.value).trim().toLowerCase()
+      lotteryToken.value = data.token
+      sessionEmail.value = email
+      localStorage.setItem(LOTTERY_TOKEN_KEY, data.token)
+      localStorage.setItem(LOTTERY_EMAIL_KEY, email)
+      saveEmailSession(data.emailSession)
+
+      const autoJoinId = pendingJoinDrawId.value
+      showLoginModal.value = false
+      pendingJoinDrawId.value = null
+      loginEmail.value = ''
+      loginCode.value = ''
+      codeSent.value = false
+      resetTurnstile()
+      showToast(t('lottery.loginSuccess'))
+
+      await fetchMyRecords()
+      // 从某活动点「登录」进来：验证后自动参与，减少一步
+      if (autoJoinId && !myJoinedById.value[autoJoinId]) {
+        await handleJoin(autoJoinId)
+      }
+    } else if (res.status === 429) {
+      loginError.value = t('lottery.verifyTooMany')
+    } else {
+      loginError.value = data.error || t('lottery.verifyFailed')
+    }
+  } catch {
+    loginError.value = t('lottery.verifyFailed')
+  } finally {
+    verifyingCode.value = false
+  }
+}
+
+onMounted(async () => {
+  countdownTimer = setInterval(() => {
+    nowMs.value = Date.now()
+  }, 1000)
+  await fetchDraws()
+  if (lotteryToken.value) {
+    await fetchMyRecords()
+  }
+})
+
+onUnmounted(() => {
+  if (cooldownTimer) {
+    clearInterval(cooldownTimer)
+    cooldownTimer = null
+  }
+  if (countdownTimer) {
+    clearInterval(countdownTimer)
+    countdownTimer = null
+  }
+})
+</script>
+
+<style scoped>
+/* 暗色主题：全部使用 base.css 的 CSS 变量，不写死颜色值 */
+
+.lottery-view {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 16px;
+  color: var(--tg-text);
+}
+
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.page-header h1 {
+  font-size: 1.5rem;
+  margin: 0;
+  color: var(--tg-text);
+}
+
+.page-subtitle {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--tg-hint);
+}
+
+.deep-link-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.session-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.session-email {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--tg-hint);
+}
+
+.login-banner,
+.my-records {
+  background: var(--tg-secondary-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.login-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.login-banner p {
+  margin: 0;
+  color: var(--tg-hint);
+  font-size: 0.9rem;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.records-empty {
+  color: var(--tg-hint);
+  font-size: 0.9rem;
+  padding: 8px 0;
+}
+
+.records-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.record-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.record-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.record-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.record-name {
+  font-weight: 500;
+  color: var(--tg-text);
+}
+
+.record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--tg-hint);
+}
+
+.loading-state,
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: var(--tg-hint);
+}
+
+/* ── 活动卡片 ── */
+.draw-card {
+  background: var(--tg-secondary-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  margin-bottom: 12px;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+  overflow: hidden;
+}
+.draw-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+.draw-card.expanded {
+  border-color: var(--border-strong);
+}
+
+.draw-card-header {
+  padding: 16px 16px 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.draw-card-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.draw-name {
+  font-size: 1.1rem;
+  margin: 0;
+  color: var(--tg-text);
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--r-full);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.chip-open {
+  background: var(--admin-info-soft);
+  color: var(--admin-info);
+  border: 1px solid var(--admin-info-border);
+}
+.chip-drawn {
+  background: var(--admin-success-soft);
+  color: var(--admin-success);
+  border: 1px solid var(--admin-success-border);
+}
+.chip-drawing {
+  background: var(--admin-warning-soft);
+  color: var(--admin-warning);
+  border: 1px solid var(--admin-warning-border);
+}
+.chip-paused {
+  background: var(--surface);
+  color: var(--tg-hint);
+  border: 1px solid var(--border);
+}
+.chip-won {
+  background: var(--admin-warning-soft);
+  color: var(--admin-warning);
+  border: 1px solid var(--admin-warning-border);
+}
+.chip-joined {
+  background: var(--admin-success-soft);
+  color: var(--admin-success);
+  border: 1px solid var(--admin-success-border);
+}
+.chip-muted {
+  background: var(--surface);
+  color: var(--tg-hint);
+  border: 1px solid var(--border);
+}
+
+.draw-card-meta {
+  text-align: right;
+  font-size: 0.85rem;
+  color: var(--tg-hint);
+  flex: 0 0 auto;
+}
+.draw-prize {
+  color: var(--tg-hint);
+  font-size: 0.85rem;
+}
+
+.draw-count,
+.draw-time,
+.draw-countdown {
+  display: block;
+}
+.draw-time,
+.draw-countdown {
+  margin-top: 4px;
+}
+.draw-countdown {
+  color: var(--admin-warning);
+  font-variant-numeric: tabular-nums;
+}
+
+.draw-card-quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+
+.draw-card-body {
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.draw-desc {
+  color: var(--tg-hint);
+  margin: 12px 0;
+}
+
+.draw-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.detail-item .detail-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--tg-hint);
+}
+.detail-item .detail-value {
+  font-size: 0.9rem;
+  color: var(--tg-text);
+}
+
+.draw-actions {
+  margin-top: 12px;
+}
+
+/* ── 按钮 ── */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background var(--duration-fast) ease, opacity var(--duration-fast) ease;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-sm {
+  padding: 5px 12px;
+  font-size: 0.8rem;
+}
+.btn-xs {
+  padding: 3px 8px;
+  font-size: 0.75rem;
+}
+.btn-primary {
+  background: var(--tg-btn);
+  color: var(--tg-btn-text);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--tg-text);
+}
+.btn-ghost:hover {
+  background: var(--surface-hover);
+}
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── 状态标识 ── */
+.joined-badge {
+  color: var(--admin-success);
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+.won-badge {
+  color: var(--admin-warning);
+  font-weight: 500;
+}
+.not-won {
+  color: var(--tg-hint);
+  font-size: 0.9rem;
+}
+.drawing-state {
+  color: var(--admin-warning);
+  font-size: 0.9rem;
+}
+.order-link {
+  color: var(--tg-link);
+  text-decoration: none;
+  font-weight: 500;
+}
+.order-link:hover {
+  text-decoration: underline;
+}
+
+/* ── 模态框 ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+.modal-content {
+  background: var(--tg-secondary-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-xl);
+  padding: 24px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: var(--shadow-lg);
+}
+.modal-title {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+  color: var(--tg-text);
+}
+.modal-hint {
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  color: var(--tg-hint);
+}
+
+/* ── 表单 ── */
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modal-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--tg-text);
+}
+.modal-form label span {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--tg-hint);
+}
+.modal-form input:not([type='checkbox']):not([type='radio']) {
+  box-sizing: border-box;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background-color: var(--tg-secondary-bg);
+  color: var(--tg-text);
+  -webkit-text-fill-color: var(--tg-text);
+  font-size: 13px;
+  color-scheme: dark;
+  line-height: 32px;
+}
+
+.code-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.code-label {
+  flex: 1;
+}
+.code-input {
+  letter-spacing: 2px;
+  font-family: var(--font-mono);
+}
+.code-timer {
+  min-width: 30px;
+  color: var(--tg-hint);
+  padding-bottom: 6px;
+  font-size: 13px;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.form-error {
+  color: var(--admin-danger);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+@media (max-width: 520px) {
+  .draw-card-header {
+    flex-direction: column;
+  }
+  .draw-card-meta {
+    text-align: left;
+  }
+  .draw-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
