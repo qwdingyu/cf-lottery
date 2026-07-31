@@ -5,7 +5,7 @@
 
     <!-- 侧边栏：小屏时默认隐藏，通过 hamburger 切换 -->
     <aside class="admin-sidebar" :class="{ 'sidebar-open': sidebarOpen }">
-      <div class="sidebar-brand">{{ shopName }}</div>
+      <div class="sidebar-brand">{{ $t('app.title') }}</div>
       <nav class="sidebar-nav" @click="isMobile && (sidebarOpen = false)">
         <a
           v-for="item in menuItems"
@@ -42,10 +42,6 @@
           <h1 class="admin-header-title">{{ pageTitle }}</h1>
         </div>
         <div class="admin-header-actions">
-          <select class="lang-select" :value="locale" @change="handleLanguageChange">
-            <option value="zh-CN">{{ $t('nav.languageZh') }}</option>
-            <option value="en">{{ $t('nav.languageEn') }}</option>
-          </select>
           <button
             class="btn btn-ghost header-logout"
             type="button"
@@ -71,15 +67,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
-import { useShopConfig } from '@/composables/useShopConfig'
-import { switchLanguage } from '@/i18n'
 
 const route = useRoute()
 const router = useRouter()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { clearToken } = useAdminAuth()
 const { showToast } = useToast()
-const { shopName, loadShopConfig } = useShopConfig()
 
 // ── 侧边栏响应式控制 ──
 /** 是否小屏（<1024px），侧边栏默认隐藏，通过 hamburger 切换 */
@@ -97,7 +90,6 @@ function onMqChange(e: MediaQueryListEvent | MediaQueryList) {
 }
 
 onMounted(() => {
-  loadShopConfig()
   mql = window.matchMedia('(max-width: 1023px)')
   onMqChange(mql)
   mql.addEventListener('change', onMqChange)
@@ -111,25 +103,14 @@ function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
 }
 
-// ── 菜单数据（响应式：语言切换时自动更新） ──
+// ── 菜单数据（抽奖 SaaS 专属） ──
 const menuItems = computed(() => [
   { name: 'AdminDashboard', to: '/admin', label: t('adminLayout.menuDashboard'), icon: '&#x1F4CA;' },
-  { name: 'AdminProducts', to: '/admin/products', label: t('adminLayout.menuProducts'), icon: '&#x1F6D2;' },
-  { name: 'AdminStorefronts', to: '/admin/storefronts', label: t('adminLayout.menuStorefronts'), icon: '&#x1F5C2;' },
-  { name: 'AdminCards', to: '/admin/cards', label: t('adminLayout.menuCards'), icon: '&#x1F3B3;' },
-  { name: 'AdminOrders', to: '/admin/orders', label: t('adminLayout.menuOrders'), icon: '&#x1F4CB;' },
-  { name: 'AdminCoupons', to: '/admin/coupons', label: t('adminLayout.menuCoupons'), icon: '&#x1F3AB;' },
-  { name: 'AdminReferralCodes', to: '/admin/referral-codes', label: t('adminLayout.menuReferralCodes'), icon: '&#x1F517;' },
-  { name: 'AdminCampaigns', to: '/admin/campaigns', label: t('adminLayout.menuCampaigns'), icon: '&#x1F3AF;' },
-  { name: 'AdminPromotions', to: '/admin/promotions', label: t('adminLayout.menuPromotions'), icon: '&#x1F381;' },
-  { name: 'AdminVouchers', to: '/admin/vouchers', label: t('adminLayout.menuVouchers'), icon: '&#x1F39F;' },
-  { name: 'AdminBalance', to: '/admin/balance', label: t('adminLayout.menuBalance'), icon: '&#x1F4B0;' },
-  { name: 'AdminRecharges', to: '/admin/recharges', label: t('adminLayout.menuRecharges'), icon: '&#x1F4B5;' },
+  { name: 'AdminLottery', to: '/admin/draws', label: t('adminLayout.menuLottery'), icon: '&#x1F3B0;' },
+  { name: 'AdminPrizes', to: '/admin/prizes', label: '奖品管理', icon: '&#x1F381;' },
   { name: 'AdminConfig', to: '/admin/config', label: t('adminLayout.menuConfig'), icon: '&#x2699;&#xFE0F;' },
-  { name: 'AdminPayment', to: '/admin/payment', label: t('adminLayout.menuPayment'), icon: '&#x1F4B3;' },
   { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '&#x1F4DD;' },
   { name: 'AdminEmailLogs', to: '/admin/email-logs', label: t('adminLayout.menuEmailLogs'), icon: '&#x1F4E7;' },
-  { name: 'AdminLottery', to: '/admin/lottery', label: t('adminLayout.menuLottery'), icon: '&#x1F3B0;' },
 ])
 
 const currentName = computed(() => {
@@ -147,11 +128,6 @@ const pageTitle = computed(() => {
 function onNavClick(to: string) {
   if (route.fullPath === to) return
   router.push(to)
-}
-
-function handleLanguageChange(e: Event) {
-  const lang = (e.target as HTMLSelectElement).value as 'zh-CN' | 'en'
-  switchLanguage(lang)
 }
 
 function handleLogout() {

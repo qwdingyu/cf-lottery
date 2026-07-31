@@ -1,14 +1,13 @@
 {
-  "name": "acctbox-h5",
+  "name": "cf-lottery-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc -b && vite build",
+    "build": "vite build",
     "type-check": "vue-tsc -b --pretty false",
-    "preview": "vite preview",
-    "deploy": "vite build && node ../scripts/15-sync-frontend-assets.mjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "vue": "^3.5.13",

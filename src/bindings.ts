@@ -9,7 +9,6 @@ export type Bindings = {
   // 数据库连接（必填）
   TURSO_URL: string;
   TURSO_TOKEN?: string;
-  ASSETS: Fetcher;
   // JWT 签名密钥（必填，生产环境通过 wrangler secret put 设置）
   JWT_SECRET?: string;
   /**
@@ -31,7 +30,6 @@ export type AppEnv = {
   Bindings: Bindings;
   Variables: {
     db: DbType | undefined;
-    executionCtx: ExecutionContext<unknown>;
     /** 登录用户 ID（requireAuth 中间件注入） */
     userId: string;
     /** 登录用户所属租户 ID（requireAuth 中间件注入） */

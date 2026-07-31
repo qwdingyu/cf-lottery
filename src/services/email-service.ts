@@ -62,7 +62,7 @@ export interface SendEmailResult {
 
 /** 发送邮件（通过 Resend API） */
 export async function sendEmail(
-  db: any,
+  _db: any,
   emailEnv: { resendApiKey?: string; emailFrom?: string },
   input: SendEmailInput,
 ): Promise<SendEmailResult> {

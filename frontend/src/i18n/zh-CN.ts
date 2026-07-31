@@ -6,8 +6,8 @@
 export default {
   // ── 应用级别 ─────────────────────────────────────────
   app: {
-    title: "发卡商城",
-    footer: "Powered by cf-shop",
+    title: "抽奖活动平台",
+    footer: "Powered by cf-lottery",
   },
 
   // ── 导航 ─────────────────────────────────────────────

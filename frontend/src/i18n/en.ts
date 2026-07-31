@@ -5,8 +5,8 @@
  */
 export default {
   app: {
-    title: "Shop",
-    footer: "Powered by cf-shop",
+    title: "Lottery Platform",
+    footer: "Powered by cf-lottery",
   },
 
   nav: {

@@ -19,8 +19,8 @@ export function ok(c: Context<AppEnv>, data: Record<string, unknown>) {
 /**
  * 失败响应
  */
-export function fail(c: Context<AppEnv>, message: string, status: number = 400) {
-  return c.json({ ok: false, message }, status);
+export function fail(c: Context<AppEnv>, message: string, status = 400) {
+  return c.json({ ok: false, message }, status as any);
 }
 
 /**

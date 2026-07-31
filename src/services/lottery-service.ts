@@ -391,8 +391,8 @@ export async function performDraw(
     const selected = await randomSelect(entries, totalWinners);
 
     // 3-4. 事务内写入中奖记录
+    let entryIndex = 0;
     await withDbTransaction(db, async (tx) => {
-      let entryIndex = 0;
 
       // 如果没有配置多奖项，创建一个默认奖项
       const effectiveTiers = tiers.length > 0 ? tiers : [{
