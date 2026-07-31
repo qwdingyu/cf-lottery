@@ -314,10 +314,11 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
 // 查询参与结果
 // ═════════════════════════════════════════════════════════
 
-publicLotteryRoute.get("/draws/:slug/result", async (c) => {
+publicLotteryRoute.post("/draws/:slug/result", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
-  const email = c.req.query("email") || "";
+  const body = await c.req.json<{ email: string }>();
+  const email = String(body.email || "").trim().toLowerCase();
 
   if (!email) return fail(c, "请提供邮箱地址", 400);
 

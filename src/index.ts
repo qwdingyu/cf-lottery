@@ -85,10 +85,8 @@ app.get("/api/cron/draw", async (c) => {
       errors: result.errors.length > 0 ? result.errors.slice(0, 5) : undefined,
     });
   } catch (err) {
-    return c.json({
-      ok: false,
-      message: err instanceof Error ? err.message : "Cron 执行失败",
-    }, 500);
+    console.error("[cron] draw failed:", err);
+    return c.json({ ok: false, message: "定时任务执行失败" }, 500);
   }
 });
 

@@ -126,6 +126,7 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CREDENTIALS_ENCRYPTION_KEY: ${{ secrets.CREDENTIALS_ENCRYPTION_KEY }}
         run: |
           umask 077
           secrets_file="$RUNNER_TEMP/cf-lottery-secrets.env"
@@ -138,7 +139,7 @@ jobs:
             fi
             return 0
           }
-          for name in TURSO_URL TURSO_TOKEN JWT_SECRET RESEND_API_KEY CRON_SECRET; do
+          for name in TURSO_URL TURSO_TOKEN JWT_SECRET RESEND_API_KEY CRON_SECRET CREDENTIALS_ENCRYPTION_KEY; do
             append_secret "$name"
           done
 
