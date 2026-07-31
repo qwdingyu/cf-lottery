@@ -199,6 +199,13 @@
               {{ joiningId === draw.id ? '加载中…' : $t('lottery.join') }}
             </button>
           </template>
+          <component
+            :is="getGameComponent(draw.participationMode || 'open')"
+            v-if="expandedId === draw.id && draw.status === 'open'"
+            :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || '奖品', color: '' }))"
+            :disabled="joiningId === draw.id"
+            @play="handleJoin(draw.id)"
+          />
           <button
             type="button"
             class="btn btn-ghost btn-sm"
@@ -414,6 +421,7 @@ import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
+import { getGameComponent } from '@/components/games/GameRegistry'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()

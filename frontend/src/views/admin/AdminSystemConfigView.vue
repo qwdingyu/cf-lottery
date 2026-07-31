@@ -175,6 +175,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -451,20 +452,8 @@ async function clearBusinessData() {
   }
 }
 
-const turnstileBannerClass = computed(() => {
-  if (!turnstileStatus.value?.enabled) return 'status-banner-info'
-  return turnstileStatus.value.complete ? 'status-banner-success' : 'status-banner-error'
-})
-
-const turnstileBannerText = computed(() => {
-  if (!turnstileStatus.value?.enabled) {
-    return t('adminConfig.turnstileDisabled')
-  }
-  if (turnstileStatus.value.complete) {
-    return t('adminConfig.turnstileEnabled')
-  }
-  return t('adminConfig.turnstileIncomplete')
-})
+const turnstileBannerClass = 'status-banner-info'
+const turnstileBannerText = ''
 
 async function reset(key: string) {
   const def = definitions.value.find((d) => d.key === key)
