@@ -12,6 +12,7 @@ import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
 import { systemConfigRoute } from "./routes/system-config";
+import { adminSystemConfigRoute } from "./routes/admin-system-config";
 import { processDueDraws } from "./services/lottery-service";
 
 const app = new Hono<AppEnv>();
@@ -49,6 +50,7 @@ app.route("/api/auth", authRoute);
 app.route("/api/admin", adminLotteryRoute);
 app.route("/api/public", publicLotteryRoute);
 app.route("/api/system-config", systemConfigRoute);
+app.route("/api/admin/system-config", adminSystemConfigRoute);
 
 // 健康检查
 app.get("/api/health", (c) => c.json({ ok: true, db: !!c.get("db") }));
