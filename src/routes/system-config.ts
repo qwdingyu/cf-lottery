@@ -28,9 +28,6 @@ systemConfigRoute.get("/system-config", async (c) => {
     .where(inArray(systemConfig.key, PUBLIC_SYSTEM_CONFIG_KEYS));
 
   const config = buildSystemConfigMap(rows, PUBLIC_SYSTEM_CONFIG_KEYS);
-  if (!config.turnstile_site_key && c.env?.TURNSTILE_SITE_KEY) {
-    config.turnstile_site_key = c.env.TURNSTILE_SITE_KEY;
-  }
   
   return ok(c, { config });
 });

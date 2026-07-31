@@ -248,6 +248,17 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "draft") return fail(c, "只有草稿状态的活动可以编辑", 400);
 
+  // 校验时间顺序（如果一起修改了时间）
+  const startAt = body.startAt ?? draw.startAt;
+  const endAt = body.endAt ?? draw.endAt;
+  const drawAt = body.drawAt ?? draw.drawAt;
+  if (new Date(startAt) >= new Date(endAt)) {
+    return fail(c, "参与开始时间必须早于结束时间", 400);
+  }
+  if (drawAt && new Date(endAt) >= new Date(drawAt)) {
+    return fail(c, "开奖时间必须在参与结束后", 400);
+  }
+
   await db
     .update(lotteryDraws)
     .set({

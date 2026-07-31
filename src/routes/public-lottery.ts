@@ -240,7 +240,10 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       return fail(c, "访问密码错误", 403);
     }
   }
-  if (draw.participationMode === "invite_code" && body.inviteCode) {
+  if (draw.participationMode === "invite_code") {
+    if (!body.inviteCode) {
+      return fail(c, "请输入邀请码", 400);
+    }
     // CAS 更新邀请码使用次数
     const updated = await db
       .update(lotteryInviteCodes)

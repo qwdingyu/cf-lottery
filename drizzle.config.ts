@@ -3,10 +3,9 @@ export default {
   dialect: "sqlite",
   schema: "./src/db/schema.ts",
   out: "./migrations",
-  driver: "d1-http",
+  driver: "turso",
   dbCredentials: {
-    accountId: process.env.CLOUDFLARE_ACCOUNT_ID || "",
-    databaseId: process.env.DATABASE_ID || "",
-    token: process.env.DATABASE_TOKEN || "",
+    url: process.env.TURSO_URL || "",
+    authToken: process.env.TURSO_TOKEN || "",
   },
 };

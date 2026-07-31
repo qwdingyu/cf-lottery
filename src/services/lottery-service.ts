@@ -106,11 +106,13 @@ export async function getDraw(db: DbType, drawId: string, tenantId: string) {
 /**
  * 获取候选池总数（不含租户隔离，用于公开页展示）。
  */
-export async function getDrawEntriesCount(db: DbType, drawId: string): Promise<number> {
+export async function getDrawEntriesCount(db: DbType, drawId: string, tenantId?: string): Promise<number> {
+  const conditions = [eq(lotteryEntries.drawId, drawId)];
+  if (tenantId) conditions.push(eq(lotteryEntries.tenantId, tenantId));
   const [{ total }] = await db
     .select({ total: count() })
     .from(lotteryEntries)
-    .where(eq(lotteryEntries.drawId, drawId));
+    .where(and(...conditions));
   return Number(total);
 }
 
