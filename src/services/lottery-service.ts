@@ -75,6 +75,18 @@ export async function randomSelect<T>(candidates: T[], count: number): Promise<T
   return result.slice(0, n);
 }
 
+/* ── 密码工具 ────────────────────────────────────────────── */
+
+/**
+ * 对访问密码做 SHA-256 hash。
+ * 避免在数据库中明文存储密码。
+ */
+export async function hashAccessPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(password));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 /* ── 查询函数 ────────────────────────────────────────────── */
 
 /**
@@ -181,7 +193,7 @@ export async function createDraw(
     startAt: data.startAt,
     endAt: data.endAt,
     drawAt: data.drawAt || null,
-    accessPassword: data.accessPassword || "",
+    accessPassword: data.accessPassword ? await hashAccessPassword(data.accessPassword) : "",
     maxParticipants: data.maxParticipants || null,
     winnerCount: data.winnerCount || 1,
     showParticipantCount: data.showParticipantCount ?? 1,
@@ -335,13 +347,14 @@ export async function joinDraw(
     }
   }
 
-  // 密码模式：校验访问密码
+  // 密码模式：校验访问密码（hash 比较）
   if (draw.participationMode === "password") {
     if (!options?.accessPassword) {
       return { joined: false, message: "请输入访问密码" };
     }
-    // 注意：当前密码为明文存储，生产环境应改为 bcrypt hash
-    if (options.accessPassword !== draw.accessPassword) {
+    // 对输入的密码做 SHA-256 hash 后与存储的 hash 比较
+    const inputHash = await hashAccessPassword(options.accessPassword);
+    if (inputHash !== draw.accessPassword) {
       return { joined: false, message: "访问密码错误" };
     }
   }
@@ -463,9 +476,21 @@ export async function performDraw(
       .limit(1);
 
     if (!draw) throw new Error("活动不存在");
-    // 已开奖活动再次开奖 → 幂等返回已有结果
+    // 已开奖活动再次开奖 → 幂等返回实际数据
     if (draw.status === "drawn") {
-      return { drawId, winnerCount: 0, candidateCount: 0 };
+      const actualWinnerCount = await db
+        .select({ total: count() })
+        .from(lotteryWinners)
+        .where(eq(lotteryWinners.drawId, drawId));
+      const actualCandidateCount = await db
+        .select({ total: count() })
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.drawId, drawId));
+      return {
+        drawId,
+        winnerCount: Number(actualWinnerCount[0]?.total ?? 0),
+        candidateCount: Number(actualCandidateCount[0]?.total ?? 0),
+      };
     }
     throw new Error("开奖权已被其他进程夺取，请稍后重试");
   }
@@ -477,7 +502,7 @@ export async function performDraw(
     const seedHash = await hashDrawSeed(seed);
     await db
       .update(lotteryDraws)
-      .set({ drawSeedHash: seedHash, algorithmVersion: "uniform_v1", updatedAt: now })
+      .set({ drawSeedHash: seedHash, drawSeed: seed, algorithmVersion: "uniform_v1", updatedAt: now })
       .where(eq(lotteryDraws.id, drawId));
 
     // 3. 读取候选池（所有参与者）
@@ -536,18 +561,30 @@ export async function performDraw(
           entryIndex++;
 
           // 原子锁码：如果奖项配置了奖品，从奖品码池中取一条 available 的记录
+          // 【关键】先 SELECT 获取一条可用码的 ID，再按 ID 执行 UPDATE
+          // 不能直接 UPDATE ... WHERE status='available'（会更新所有可用码，导致数据损坏）
           let prizeCodeId = "";
           if (tier.prizeId) {
-            // 条件 UPDATE：原子性保证同一码不会被两个中奖者同时锁定
-            // WHERE status = 'available' 是 CAS 条件
-            const lockResult = await tx
-              .update(prizeCodes)
-              .set({ status: "issued", winnerId: entry.id, issuedAt: now })
+            // 步骤 1: SELECT 获取一条可用码（原子操作，配合事务保证并发安全）
+            const [availableCode] = await tx
+              .select({ id: prizeCodes.id, code: prizeCodes.code })
+              .from(prizeCodes)
               .where(and(
                 eq(prizeCodes.prizeId, tier.prizeId),
                 eq(prizeCodes.status, "available"),
                 eq(prizeCodes.tenantId, tenantId),
-              ));
+              ))
+              .limit(1);
+
+            if (availableCode) {
+              // 步骤 2: 按 ID 原子锁定（仅更新该条码）
+              const lockResult = await tx
+                .update(prizeCodes)
+                .set({ status: "issued", winnerId: entry.id, issuedAt: now })
+                .where(and(
+                  eq(prizeCodes.id, availableCode.id),
+                  eq(prizeCodes.status, "available"),
+                ));
 
             // rowsAffected = 0 表示码已用完（被其他中奖者锁定）
             if ((lockResult.rowsAffected ?? 0) > 0) {

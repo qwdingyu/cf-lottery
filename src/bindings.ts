@@ -26,6 +26,8 @@ export type Bindings = {
   APP_ORIGIN?: string;
   // 用于把真实 IP 哈希化后写入 audit_logs，避免日志里保存明文 IP
   RATE_LIMIT_SALT?: string;
+  // Cron 调用的认证密钥，防止未授权触发定时开奖
+  CRON_SECRET?: string;
 };
 
 export type AppEnv = {

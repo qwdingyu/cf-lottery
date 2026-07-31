@@ -12,6 +12,7 @@ import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lottery
 import { eq, and, count, sql } from "drizzle-orm";
 import { joinDraw } from "../services/lottery-service";
 import { sendAccessCode } from "../services/email-service";
+import { hashAccessPassword } from "../services/lottery-service";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
@@ -209,8 +210,11 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     .where(eq(emailAccessCodes.id, validCode.id));
 
   // 校验参与模式：password 和 invite_code
-  if (draw.participationMode === "password" && body.accessPassword !== draw.accessPassword) {
-    return fail(c, "访问密码错误", 403);
+  if (draw.participationMode === "password") {
+    const inputHash = await hashAccessPassword(body.accessPassword || "");
+    if (inputHash !== draw.accessPassword) {
+      return fail(c, "访问密码错误", 403);
+    }
   }
   if (draw.participationMode === "invite_code" && body.inviteCode) {
     // CAS 更新邀请码使用次数

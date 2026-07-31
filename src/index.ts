@@ -52,9 +52,24 @@ app.route("/api/public", publicLotteryRoute);
 app.get("/api/health", (c) => c.json({ ok: true, db: !!c.get("db") }));
 
 // Cron 定时开奖：每 5 分钟执行一次，处理到期活动
+// 安全：需要通过 CRON_SECRET 认证，防止未授权触发
 app.get("/api/cron/draw", async (c) => {
   const db = c.get("db");
   if (!db) return c.json({ ok: false, message: "数据库未配置" }, 500);
+
+  // CRON_SECRET 认证：Cloudflare Cron Triggers 不支持自定义 header，
+  // 因此使用查询参数 ?secret=xxx 作为认证方式。
+  // 生产环境应配合 Cloudflare WAF 限制仅允许 Cloudflare IP 访问。
+  const cronSecret = c.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = c.req.header("Authorization") || "";
+    const querySecret = c.req.query("secret") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim() || querySecret;
+    if (token !== cronSecret) {
+      return c.json({ ok: false, message: "未授权" }, 403);
+    }
+  }
+
   try {
     const result = await processDueDraws(db, { limit: 20 });
     return c.json({

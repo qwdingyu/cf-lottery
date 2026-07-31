@@ -8,8 +8,8 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, users, tenants } from "../db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, users, tenants } from "../db/schema";
+import { eq, and, desc, sql } from "drizzle-orm";
 import {
   createDraw,
   publishDraw,
@@ -364,4 +364,146 @@ adminLotteryRoute.delete("/draws/:id", async (c) => {
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
 
   return ok(c, { deleted: true });
+});
+
+// ═════════════════════════════════════════════════════════
+// P0 运营工具：补发码 + 重发通知 + 发布前校验
+// ═════════════════════════════════════════════════════════
+
+/** 补发奖品码（中奖者无码时运营手动补发） */
+adminLotteryRoute.post("/draws/:id/winners/:winnerId/retry-code", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const [winner] = await db
+    .select()
+    .from(lotteryWinners)
+    .where(and(eq(lotteryWinners.id, c.req.param("winnerId")), eq(lotteryWinners.tenantId, tenantId)))
+    .limit(1);
+
+  if (!winner) return fail(c, "中奖记录不存在", 404);
+  if (winner.prizeCodeId) return fail(c, "已有奖品码，无需补发", 400);
+
+  // 获取奖项配置，找到对应的奖品 ID
+  const [tier] = await db
+    .select({ prizeId: lotteryPrizeTiers.prizeId })
+    .from(lotteryPrizeTiers)
+    .where(eq(lotteryPrizeTiers.id, winner.tierId))
+    .limit(1);
+
+  if (!tier?.prizeId) return fail(c, "未配置奖品，无法补发", 400);
+
+  // 原子锁码：从奖品码池中取一条 available 的记录
+  const lockResult = await db
+    .update(prizeCodes)
+    .set({ status: "issued", winnerId: winner.entryId, issuedAt: new Date().toISOString() })
+    .where(and(
+      eq(prizeCodes.prizeId, tier.prizeId),
+      eq(prizeCodes.status, "available"),
+      eq(prizeCodes.tenantId, tenantId),
+    ));
+
+  if ((lockResult.rowsAffected ?? 0) === 0) {
+    return fail(c, "奖品码库存不足", 400);
+  }
+
+  // 查询刚锁定的码
+  const [lockedCode] = await db
+    .select({ id: prizeCodes.id })
+    .from(prizeCodes)
+    .where(and(
+      eq(prizeCodes.prizeId, tier.prizeId),
+      eq(prizeCodes.winnerId, winner.entryId),
+      eq(prizeCodes.tenantId, tenantId),
+    ))
+    .limit(1);
+
+  // 更新中奖记录的 prize_code_id
+  await db
+    .update(lotteryWinners)
+    .set({ prizeCodeId: lockedCode?.id || "" })
+    .where(eq(lotteryWinners.id, winner.id));
+
+  return ok(c, { prizeCodeId: lockedCode?.id || "" });
+});
+
+/** 重发中奖通知 */
+adminLotteryRoute.post("/draws/:id/winners/:winnerId/resend", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const [winner] = await db
+    .select()
+    .from(lotteryWinners)
+    .where(and(eq(lotteryWinners.id, c.req.param("winnerId")), eq(lotteryWinners.tenantId, tenantId)))
+    .limit(1);
+
+  if (!winner) return fail(c, "中奖记录不存在", 404);
+
+  // 重置通知状态
+  await db
+    .update(lotteryWinners)
+    .set({ notificationStatus: "pending", notificationError: "" })
+    .where(eq(lotteryWinners.id, winner.id));
+
+  return ok(c, { retry: true });
+});
+
+/** 发布前校验 */
+adminLotteryRoute.get("/draws/:id/publish-check", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const draw = await getDraw(db, drawId, tenantId);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  const warnings: string[] = [];
+  const errors: string[] = [];
+
+  // 基础校验
+  if (!draw.title) errors.push("活动标题不能为空");
+  if (!draw.startAt || !draw.endAt) errors.push("请设置活动时间");
+  if (draw.drawTrigger === "scheduled" && !draw.drawAt) errors.push("定时开奖必须设置开奖时间");
+
+  // 参与模式校验
+  if (draw.participationMode === "roster") {
+    const [rosterRow] = await db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(lotteryRosterMembers)
+      .where(eq(lotteryRosterMembers.drawId, drawId));
+    if (Number(rosterRow?.count || 0) === 0) errors.push("名单模式需要导入参与者名单");
+  }
+
+  if (draw.participationMode === "invite_code") {
+    const [inviteRow] = await db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(lotteryInviteCodes)
+      .where(eq(lotteryInviteCodes.drawId, drawId));
+    if (Number(inviteRow?.count || 0) === 0) errors.push("邀请码模式需要生成邀请码");
+  }
+
+  // 奖项校验
+  const tiers = await db
+    .select()
+    .from(lotteryPrizeTiers)
+    .where(eq(lotteryPrizeTiers.drawId, drawId));
+
+  if (tiers.length > 0) {
+    for (const tier of tiers) {
+      if (tier.prizeId) {
+        const [codeRow] = await db
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(prizeCodes)
+          .where(and(eq(prizeCodes.prizeId, tier.prizeId), eq(prizeCodes.status, "available")));
+        if (Number(codeRow?.count || 0) < tier.winnerCount) {
+          warnings.push(`奖项"${tier.tierName}"可用码 ${codeRow?.count || 0} 个，中奖名额 ${tier.winnerCount} 个，码可能不足`);
+        }
+      }
+    }
+  }
+
+  return ok(c, {
+    canPublish: errors.length === 0,
+    errors,
+    warnings,
+  });
 });

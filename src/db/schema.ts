@@ -89,6 +89,7 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   drawnAt: text("drawn_at"),
   failureReason: text("failure_reason").notNull().default(""),
   drawSeedHash: text("draw_seed_hash").notNull().default(""),
+  drawSeed: text("draw_seed").notNull().default(""),
   algorithmVersion: text("algorithm_version").notNull().default("uniform_v1"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
