@@ -10,6 +10,7 @@ import { createDb } from "./db/client";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
+import { processDueDraws } from "./services/lottery-service";
 
 const app = new Hono<AppEnv>();
 
@@ -30,12 +31,24 @@ app.route("/api/public", publicLotteryRoute);
 // 健康检查
 app.get("/api/health", (c) => c.json({ ok: true }));
 
-// Cron 定时开奖
+// Cron 定时开奖：每 5 分钟执行一次，处理到期活动
 app.get("/api/cron/draw", async (c) => {
   const db = c.get("db");
   if (!db) return c.json({ ok: false, message: "数据库未配置" }, 500);
-  const processed = await processDueDraws(db, 10);
-  return c.json({ ok: true, processed });
+  try {
+    const result = await processDueDraws(db, { limit: 20 });
+    return c.json({
+      ok: true,
+      processed: result.processed,
+      failed: result.failed,
+      errors: result.errors.length > 0 ? result.errors.slice(0, 5) : undefined,
+    });
+  } catch (err) {
+    return c.json({
+      ok: false,
+      message: err instanceof Error ? err.message : "Cron 执行失败",
+    }, 500);
+  }
 });
 
 export default app;

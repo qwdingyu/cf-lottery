@@ -75,6 +75,11 @@ authRoute.post("/login", async (c) => {
   return c.json({ ok: true, token, tenantId });
 });
 
+/** 注销（前端清除 token 即可，后端不做 session 存储） */
+authRoute.post("/logout", async (c) => {
+  return c.json({ ok: true, message: "已注销" });
+});
+
 /**
  * 密码 hash（bcrypt 简化版，使用 Web Crypto PBKDF2）
  * 生产环境应使用 bcrypt 或 Argon2id

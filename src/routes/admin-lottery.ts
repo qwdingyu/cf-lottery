@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes } from "../db/schema";
+import { lotteryDraws, prizes, users, tenants } from "../db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import {
   createDraw,

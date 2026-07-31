@@ -1,25 +1,32 @@
 {
-  "name": "acctbox-h5",
-  "private": true,
+  "name": "cf-lottery",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc -b && vite build",
-    "type-check": "vue-tsc -b --pretty false",
-    "preview": "vite preview",
-    "deploy": "vite build && node ../scripts/15-sync-frontend-assets.mjs"
+    "dev": "wrangler dev --port 8787",
+    "deploy": "npx wrangler deploy",
+    "type-check": "tsc --noEmit",
+    "type-check:frontend": "npm --workspace frontend run type-check",
+    "type-check:all": "npm run type-check && npm run type-check:frontend",
+    "test": "vitest run",
+    "frontend:build": "npm --workspace frontend run build",
+    "verify:delivery": "npm run type-check && npm run test && npm run frontend:build"
   },
   "dependencies": {
-    "vue": "^3.5.13",
-    "vue-i18n": "^11.4.8",
-    "vue-router": "^4.5.0"
+    "@libsql/client": "^0.14.0",
+    "drizzle-orm": "0.45.2",
+    "hono": "^4.12.22"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "@vitejs/plugin-vue": "^5.2.1",
-    "typescript": "~5.7.0",
-    "vite": "^6.0.0",
-    "vue-tsc": "^3.3.8"
+    "@cloudflare/workers-types": "5.20260726.1",
+    "@vitest/coverage-v8": "4.1.7",
+    "typescript": "5.7.3",
+    "vite": "6.4.3",
+    "vitest": "4.1.7",
+    "wrangler": "4.114.0"
   }
 }
