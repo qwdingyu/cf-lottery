@@ -590,15 +590,16 @@ const buildLotteryWinnersCsvRows = (winners: LotteryWinner[], labels: any) => {
   return [header, ...rows];
 };
 const buildLotteryDuplicateDraft = (draw: any, opts: { nameSuffix: string; defaultName: string }) => ({
-  name: draw.name ? `${draw.name}${opts.nameSuffix}` : opts.defaultName,
+  name: draw.title ? `${draw.title}${opts.nameSuffix}` : opts.defaultName,
   description: draw.description || '',
-  productId: draw.productId || draw.id || '',
-  startTime: draw.startTime ? toDateTimeLocalValue(new Date(draw.startTime)) : '',
-  endTime: draw.endTime ? toDateTimeLocalValue(new Date(draw.endTime)) : '',
-  drawTime: draw.drawTime ? toDateTimeLocalValue(new Date(draw.drawTime)) : '',
-  maxWinners: draw.winnerCount || 1,
+  prizeName: '',
+  startTime: draw.startAt ? toDateTimeLocalValue(new Date(draw.startAt)) : '',
+  endTime: draw.endAt ? toDateTimeLocalValue(new Date(draw.endAt)) : '',
+  drawTime: draw.drawAt ? toDateTimeLocalValue(new Date(draw.drawAt)) : '',
+  winnerCount: draw.winnerCount || 1,
   maxParticipants: draw.maxParticipants || null,
-  expectedParticipants: draw.expectedParticipants || 0,
+  participationMode: draw.participationMode || 'open',
+  accessPassword: '',
 });
 const buildLotteryDrawConfirmMessage = (draw: any, labels: any) => `${labels.title}\n${labels.name}${draw.title}\n${labels.pool}${draw.entryCount || 0}\n${labels.willDraw}${Math.min(Number(draw.entryCount)||0, draw.winnerCount)}`;
 
@@ -665,14 +666,14 @@ const emptyForm = () => ({
   id: '',
   name: '',
   description: '',
-  productId: '',
+  prizeName: '',
   startTime: '',
   endTime: '',
   drawTime: '',
-  maxWinners: 1,
+  winnerCount: 1,
   maxParticipants: null as number | null,
-  expectedParticipants: 0,
-  showWinners: true,
+  participationMode: 'open',
+  accessPassword: '',
 })
 
 const form = ref(emptyForm())
@@ -796,13 +797,13 @@ function visibilityLabel(draw: LotteryDraw): string {
 }
 
 function publicShareUrl(drawId: string): string {
-  const origin = typeof window !== 'undefined' ? window.location.origin : ''
-  return buildLotteryPublicShareUrl(origin, drawId)
+  const origin = typeof window !== 'undefined' ? window.location.origin : '/lottery/'
+  return `${origin.replace(/\/+$/, '')}/lottery/${drawId}`
 }
 
 async function handleCopyShareLink(draw: LotteryDraw) {
   try {
-    await writeClipboardText(publicShareUrl(draw.id))
+    await writeClipboardText(publicShareUrl(draw.publicSlug))
     showToast(t('lottery.adminLinkCopied'), 'success')
   } catch {
     showToast(t('lottery.adminLinkCopyFailed'), 'error')
@@ -811,7 +812,7 @@ async function handleCopyShareLink(draw: LotteryDraw) {
 
 /** 新标签打开用户端活动页，便于运营自检 */
 function handleOpenPublic(draw: LotteryDraw) {
-  const path = buildLotteryPublicPath(draw.id)
+  const path = `/lottery/${draw.publicSlug}`
   if (typeof window !== 'undefined') {
     window.open(path, '_blank', 'noopener,noreferrer')
   }
@@ -837,23 +838,23 @@ function handleExportWinners() {
 }
 
 function handleDuplicate(draw: LotteryDraw) {
-  const draft = buildLotteryDuplicateDraft(draw, { nameSuffix: t('lottery.adminDuplicateSuffix'), defaultName: t('lottery.title') })
+  const draft = buildLotteryDuplicateDraft(draw, { nameSuffix: '(副本)', defaultName: '新活动' })
   form.value = {
     id: '',
     name: draft.name,
     description: draft.description,
-    productId: draft.productId,
+    prizeName: draft.prizeName,
     startTime: draft.startTime,
     endTime: draft.endTime,
     drawTime: draft.drawTime,
-    maxWinners: draft.maxWinners,
+    winnerCount: draft.winnerCount,
     maxParticipants: draft.maxParticipants,
-    expectedParticipants: draft.expectedParticipants,
-    showWinners: true,
+    participationMode: draft.participationMode,
+    accessPassword: draft.accessPassword,
   }
   isEditing.value = false
   showCreateModal.value = true
-  showToast(t('lottery.adminDuplicateReady'), 'success')
+  showToast('已复制活动，请确认后创建', 'success')
 }
 
 /** 列表内失败原因截断，完整内容放 title；避免 SQL 整段撑爆表格 */
@@ -902,14 +903,6 @@ function applyTimePreset(kind: '5m' | '10m' | '20m' | '30m' | '1h' | '1d' | '3d'
     endTime: toLocalInput(end),
     drawTime: toLocalInput(draw),
   }
-}
-
-function requireToken(): string {
-  if (!token.value) {
-    showToast(t('lottery.adminFailed'), 'error')
-    throw new Error('missing admin token')
-  }
-  return token.value
 }
 
 function closeEditor() {
@@ -1212,8 +1205,8 @@ async function handleRecover(id: string) {
 }
 
 async function handleCreate() {
-  if (!form.value.name || !form.value.productId || !form.value.startTime || !form.value.endTime || !form.value.drawTime) {
-    showToast(t('lottery.adminFillRequired'), 'error')
+  if (!form.value.name || !form.value.startTime || !form.value.endTime) {
+    showToast('请填写活动名称和参与时间', 'error')
     return
   }
   if (timeOrderError.value) {
@@ -1222,50 +1215,47 @@ async function handleCreate() {
   }
   creating.value = true
   try {
+    // 注意：后端 API 使用 title/startAt/endAt/drawAt/winnerCount 字段名
+    // 前端 form 使用 name/startTime/endTime/drawTime/maxWinners 需要映射
     const payload = {
-      name: form.value.name,
+      title: form.value.name,
       description: form.value.description,
-      productId: form.value.productId,
-      startTime: dateTimeLocalToIso(form.value.startTime),
-      endTime: dateTimeLocalToIso(form.value.endTime),
-      drawTime: dateTimeLocalToIso(form.value.drawTime),
-      maxWinners: form.value.maxWinners,
-      maxParticipants: form.value.maxParticipants || undefined,
-      expectedParticipants: form.value.expectedParticipants,
-      showWinners: form.value.showWinners ? 1 : 0,
-      limitPerEmail: 1,
+      startAt: dateTimeLocalToIso(form.value.startTime),
+      endAt: dateTimeLocalToIso(form.value.endTime),
+      drawAt: form.value.drawTime ? dateTimeLocalToIso(form.value.drawTime) : undefined,
+      winnerCount: Number(form.value.winnerCount) || 1,
+      maxParticipants: form.value.maxParticipants ? Number(form.value.maxParticipants) : undefined,
+      participationMode: form.value.participationMode || 'open',
+      accessPassword: form.value.accessPassword || '',
     }
     if (isEditing.value && form.value.id) {
-      // DevTools 防御：编辑按钮仅 draft 可见，但表单提交时二次校验
-      // 从本地列表查找当前活动状态，避免跨状态编辑（如已开奖的活动被篡改 isEditing 后提交）
       const current = draws.value.find((d) => d.id === form.value.id)
       if (current && current.status !== 'draft') {
-        showToast(t('lottery.adminEditNonDraft'), 'error')
+        showToast('只有草稿状态的活动可以编辑', 'error')
         closeEditor()
         form.value = emptyForm()
         return
       }
       await updateLotteryDraw(requireToken(), form.value.id, payload)
-      showToast(t('lottery.adminDrawUpdated'), 'success')
+      showToast('活动已更新', 'success')
     } else {
       const created = await createLotteryDraw(requireToken(), payload)
-      // 创建成功后复制投放链接（草稿开启前也可预填投放）；复制失败不阻断主流程
       if (created?.id) {
         try {
-          await writeClipboardText(publicShareUrl(created.id))
-          showToast(t('lottery.adminCreatedWithLink'), 'success')
+          await writeClipboardText(buildPublicShareUrl(created.publicSlug || created.id))
+          showToast('活动已创建，链接已复制', 'success')
         } catch {
-          showToast(t('lottery.adminDrawCreated'), 'success')
+          showToast('活动已创建', 'success')
         }
       } else {
-        showToast(t('lottery.adminDrawCreated'), 'success')
+        showToast('活动已创建', 'success')
       }
     }
     closeEditor()
     form.value = emptyForm()
     await loadData()
   } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+    showToast(e?.message || '创建失败', 'error')
   } finally {
     creating.value = false
   }

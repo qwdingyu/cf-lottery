@@ -379,6 +379,7 @@ async function update(key: string, value: string) {
   fieldStatus[key] = 'saving'
   try {
     const res = await adminRequest<any>('/api/admin/system-config', {
+    })
     config[key] = res.value
     const publicConfigSynced = await refreshPublicConfig(definitions.value.find((item) => item.key === key)?.scope)
     if (res.configured !== undefined) {
