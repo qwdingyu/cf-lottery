@@ -15,5 +15,5 @@
     "noEmit": true,
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", ".wrangler", "frontend", "drizzle.config.ts", "src/lib/secret-config.ts", "src/lib/system-config-registry.ts", "src/routes/system-config.ts", "src/services/admin/system-config.ts"]
+  "exclude": ["node_modules", "dist", ".wrangler", "frontend", "drizzle.config.ts", "src/lib/secret-config.ts", "src/lib/system-config-registry.ts", "src/routes/system-config.ts", "src/routes/admin-system-config.ts", "src/services/admin/system-config.ts"]
 }

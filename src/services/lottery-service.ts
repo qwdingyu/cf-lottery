@@ -454,6 +454,7 @@ export async function performDraw(
   tenantId: string,
   drawId: string,
   operatorUserId: string,  // 操作者用户 ID（用于审计日志）
+  emailEnv?: { resendApiKey: string; emailFrom: string },  // 邮件通知配置（可选，未配置时跳过通知）
 ): Promise<DrawResult> {
   const now = new Date().toISOString();
 
@@ -646,6 +647,14 @@ export async function performDraw(
       createdAt: now,
     });
 
+    // 异步发送中奖通知邮件（不阻塞主流程，失败不影响开奖结果）
+    // 仅在邮件配置可用时发送
+    if (emailEnv?.resendApiKey) {
+      void sendWinnerNotifications(db, tenantId, drawId, emailEnv).catch((err) => {
+        console.error(`[lottery] sendWinnerNotifications failed for ${drawId}:`, err);
+      });
+    }
+
     return { drawId, winnerCount: entryIndex, candidateCount };
   } catch (error) {
     // 开奖失败：恢复为 open 状态并记录失败原因
@@ -802,6 +811,7 @@ export async function processDueDraws(
 ): Promise<{ processed: number; failed: number; errors: Array<{ drawId: string; message: string }> }> {
   // 单次最多处理 50 个，默认 20 个
   const limit = Math.max(1, Math.min(50, options?.limit ?? 20));
+  const emailEnv = options?.emailEnv;
   const now = new Date().toISOString();
 
   // 查询到期且未开奖的定时活动

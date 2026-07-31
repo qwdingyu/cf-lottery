@@ -278,7 +278,10 @@ adminLotteryRoute.post("/draws/:id/draw", async (c) => {
   const drawId = c.req.param("id");
 
   try {
-    const result = await performDraw(db, tenantId, drawId, userId);
+    const result = await performDraw(db, tenantId, drawId, userId, {
+      resendApiKey: c.env.RESEND_API_KEY || "",
+      emailFrom: c.env.EMAIL_FROM || "",
+    });
     return ok(c, result);
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "开奖失败", 400);
