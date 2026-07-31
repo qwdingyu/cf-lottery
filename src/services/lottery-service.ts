@@ -905,6 +905,18 @@ export async function processDueDraws(
   let failed = 0;
   const errors: Array<{ drawId: string; message: string }> = [];
 
+  // 先治愈卡在 drawing 状态的活动（借鉴 cf-shop 的 healStaleDrawings）
+  const staleDrawings = await db
+    .select()
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.status, "drawing"))
+    .limit(10);
+  for (const draw of staleDrawings) {
+    try {
+      await healDrawingState(db, draw.id, draw.tenantId);
+    } catch { /* 治愈失败不影响后续流程 */ }
+  }
+
   for (const draw of due) {
     try {
       // Cron 调用时 operatorUserId 为 "system"

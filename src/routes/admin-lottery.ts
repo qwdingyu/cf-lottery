@@ -31,6 +31,59 @@ export const adminLotteryRoute = new Hono<AppEnv>();
 adminLotteryRoute.use("*", requireAuth);
 
 // ═════════════════════════════════════════════════════════
+// 运营台概览
+// ═════════════════════════════════════════════════════════
+
+/** 运营台概览：活动统计 + 待处理事项 */
+adminLotteryRoute.get("/dashboard", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const now = new Date().toISOString();
+
+  // 活动状态统计
+  const [openRow] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "open")));
+  const [draftRow] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "draft")));
+  const [drawnRow] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "drawn")));
+
+  // 到期待开奖的定时活动
+  const [dueRow] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(lotteryDraws)
+    .where(and(
+      eq(lotteryDraws.tenantId, tenantId),
+      eq(lotteryDraws.status, "open"),
+      eq(lotteryDraws.drawTrigger, "scheduled"),
+      sql`${lotteryDraws.drawAt} <= ${now}`,
+    ));
+
+  // 通知失败的中奖者
+  const [failedNotifyRow] = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(lotteryWinners)
+    .where(and(
+      eq(lotteryWinners.tenantId, tenantId),
+      eq(lotteryWinners.notificationStatus, "failed"),
+    ));
+
+  return ok(c, {
+    openCount: Number(openRow?.count || 0),
+    draftCount: Number(draftRow?.count || 0),
+    drawnCount: Number(drawnRow?.count || 0),
+    dueCount: Number(dueRow?.count || 0),
+    failedNotifyCount: Number(failedNotifyRow?.count || 0),
+  });
+});
+
+// ═════════════════════════════════════════════════════════
 // 当前用户
 // ═════════════════════════════════════════════════════════
 
