@@ -408,6 +408,38 @@
             </div>
           </section>
 
+          <!-- 导流配置：关联商品推广（借力 cf-shop 模式，参照 AdminProductsView 弹窗设计） -->
+          <section class="form-section" aria-labelledby="lottery-traffic">
+            <header class="form-section-head">
+              <h4 id="lottery-traffic" class="form-section-title">导流配置</h4>
+              <p class="form-section-desc">关联商品链接，参与者在参与后可见商品卡片</p>
+            </header>
+            <div class="form-grid two-cols">
+              <label class="field-span-2">
+                <input v-model="form.enableProductLink" type="checkbox" class="checkbox-inline" />
+                <span>关联商品推广</span>
+              </label>
+              <template v-if="form.enableProductLink">
+                <label class="field-span-2">
+                  <span>商品链接 *</span>
+                  <input v-model="form.productLink.url" type="url" placeholder="https://shop.example.com/product/123" />
+                </label>
+                <label>
+                  <span>商品名称 *</span>
+                  <input v-model="form.productLink.title" maxlength="100" placeholder="AI 智能音箱 Pro Max" />
+                </label>
+                <label>
+                  <span>展示价格</span>
+                  <input v-model="form.productLink.price" placeholder="¥299" />
+                </label>
+                <label class="field-span-2">
+                  <span>商品图片 URL</span>
+                  <input v-model="form.productLink.imageUrl" type="url" placeholder="https://img.example.com/xxx.jpg" />
+                </label>
+              </template>
+            </div>
+          </section>
+
           <section class="form-section" aria-labelledby="lottery-prizes">
             <header class="form-section-head">
               <h4 id="lottery-prizes" class="form-section-title">{{ $t('lottery.adminSectionPrizes') }}</h4>
@@ -707,6 +739,9 @@ const emptyForm = () => ({
   maxParticipants: null as number | null,
   participationMode: 'open',
   accessPassword: '',
+  // 导流配置
+  enableProductLink: false,
+  productLink: { url: '', title: '', imageUrl: '', price: '' },
 })
 
 const form = ref(emptyForm())
@@ -1264,6 +1299,10 @@ async function handleCreate() {
       maxParticipants: form.value.maxParticipants ? Number(form.value.maxParticipants) : undefined,
       participationMode: form.value.participationMode || 'open',
       accessPassword: form.value.accessPassword || '',
+      // 导流：商品链接（启用时发送，关闭时发送 null 以清空）
+      productLink: form.value.enableProductLink && form.value.productLink.url
+        ? form.value.productLink
+        : undefined,
     }
     if (isEditing.value && form.value.id) {
       const current = draws.value.find((d) => d.id === form.value.id)

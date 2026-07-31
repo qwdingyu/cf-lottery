@@ -280,6 +280,24 @@
               <div v-if="myJoinedById[draw.id]" class="joined-badge">
                 {{ $t('lottery.joined') }} · {{ $t('lottery.waitDraw') }}
               </div>
+              <!-- 导流：参与成功后展示商品卡片 -->
+              <div v-if="myJoinedById[draw.id] && draw.productLink" class="product-card">
+                <div class="product-card-inner">
+                  <div v-if="draw.productLink.imageUrl" class="product-card-img">
+                    <img :src="draw.productLink.imageUrl" :alt="draw.productLink.title" loading="lazy" />
+                  </div>
+                  <div class="product-card-body">
+                    <h4 class="product-card-title">{{ draw.productLink.title }}</h4>
+                    <p v-if="draw.productLink.price" class="product-card-price">{{ draw.productLink.price }}</p>
+                    <a
+                      :href="productUtmUrl(draw.productLink.url, draw.id)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="btn btn-primary btn-sm"
+                    >查看商品</a>
+                  </div>
+                </div>
+              </div>
               <div v-else-if="!lotteryToken" class="login-prompt">
                 <button type="button" class="btn btn-primary" @click="openLogin(draw.id)">
                   {{ $t('lottery.loginFirst') }}
@@ -527,6 +545,19 @@ function clearSession() {
   myJoinedById.value = {}
   myWonById.value = {}
   myEntryList.value = []
+}
+
+/** 生成带 UTM 追踪参数的商品链接 */
+function productUtmUrl(url: string, drawId: string): string {
+  try {
+    const u = new URL(url)
+    u.searchParams.set('utm_source', 'lottery')
+    u.searchParams.set('utm_medium', 'draw')
+    u.searchParams.set('utm_campaign', drawId)
+    return u.toString()
+  } catch {
+    return url
+  }
 }
 
 function openLogin(drawId?: string) {
@@ -1206,5 +1237,56 @@ onUnmounted(() => {
   .draw-detail-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* 导流商品卡片 */
+.product-card {
+  margin-top: 12px;
+  background: var(--tg-secondary-bg, #151b28);
+  border-radius: var(--r-md, 8px);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  overflow: hidden;
+}
+.product-card-inner {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+}
+.product-card-img {
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--tg-bg, #0a0e17);
+}
+.product-card-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.product-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.product-card-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tg-text, #f0f2f5);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.product-card-price {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--admin-accent, #f59e0b);
 }
 </style>
