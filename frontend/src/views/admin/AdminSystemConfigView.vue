@@ -437,6 +437,7 @@ async function clearBusinessData() {
   try {
     const confirmationText = t('adminConfig.clearProfiles.' + profile.id + '.confirmation')
     const result = await adminRequest<any>('/api/admin/system-config', {
+    })
     clearBusinessConfirmText.value = ''
     clearBusinessDataStatus.value = t('adminConfig.clearData.result', {
       profile: result.profile,
