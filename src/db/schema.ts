@@ -1,0 +1,179 @@
+/**
+ * cf-lottery 数据库 Schema
+ *
+ * 从 cf-shop 抽取，只保留抽奖核心表，新增 SaaS 多租户表。
+ * 不包含：products、orders、cards、coupons、referral、voucher、storefront。
+ */
+import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import {
+  idempotencyKeys,
+} from "@usethink/cf-core/db/schema";
+export { idempotencyKeys };
+
+// ── SaaS 多租户 ──
+export const tenants = sqliteTable("tenants", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  plan: text("plan").notNull().default("free"),
+  status: text("status").notNull().default("active"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),
+  username: text("username").notNull().unique(),
+  email: text("email").notNull().default(""),
+  passwordHash: text("password_hash").notNull(),
+  status: text("status").notNull().default("active"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const tenantMembers = sqliteTable("tenant_members", {
+  tenantId: text("tenant_id").notNull(),
+  userId: text("user_id").notNull(),
+  role: text("role").notNull().default("owner"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  pk: uniqueIndex("pk_tenant_members").on(t.tenantId, t.userId),
+}));
+
+// ── 奖品与码池 ──
+export const prizes = sqliteTable("prizes", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  imageUrl: text("image_url").notNull().default(""),
+  prizeType: text("prize_type").notNull().default("code"),
+  totalCount: integer("total_count").notNull().default(0),
+  usedCount: integer("used_count").notNull().default(0),
+  active: integer("active").notNull().default(1),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const prizeCodes = sqliteTable("prize_codes", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  prizeId: text("prize_id").notNull(),
+  code: text("code").notNull(),
+  secret: text("secret").notNull().default(""),
+  note: text("note").notNull().default(""),
+  status: text("status").notNull().default("available"),
+  winnerId: text("winner_id").default(""),
+  issuedAt: text("issued_at"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  prizeStatusIdx: uniqueIndex("idx_prize_codes_prize_status").on(t.tenantId, t.prizeId, t.status, t.createdAt),
+}));
+
+// ── 抽奖活动 ──
+export const lotteryDraws = sqliteTable("lottery_draws", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  publicSlug: text("public_slug").notNull().unique(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  status: text("status").notNull().default("draft"),
+  participationMode: text("participation_mode").notNull().default("open"),
+  drawTrigger: text("draw_trigger").notNull().default("manual"),
+  startAt: text("start_at").notNull(),
+  endAt: text("end_at").notNull(),
+  drawAt: text("draw_at"),
+  accessPassword: text("access_password").notNull().default(""),
+  maxParticipants: integer("max_participants"),
+  winnerCount: integer("winner_count").notNull().default(1),
+  showParticipantCount: integer("show_participant_count").notNull().default(1),
+  showWinnerCount: integer("show_winner_count").notNull().default(1),
+  showWinnerList: integer("show_winner_list").notNull().default(0),
+  drawnAt: text("drawn_at"),
+  failureReason: text("failure_reason").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  tenantStatusIdx: uniqueIndex("idx_draws_tenant_status").on(t.tenantId, t.status, t.createdAt),
+  dueIdx: uniqueIndex("idx_draws_due").on(t.status, t.drawAt),
+}));
+
+export const lotteryPrizeTiers = sqliteTable("lottery_prize_tiers", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  prizeId: text("prize_id").notNull(),
+  tierName: text("tier_name").notNull().default("中奖"),
+  winnerCount: integer("winner_count").notNull().default(1),
+  sortOrder: integer("sort_order").notNull().default(100),
+});
+
+// ── 参与资格 ──
+export const lotteryRosterMembers = sqliteTable("lottery_roster_members", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  identityType: text("identity_type").notNull().default("email"),
+  identityValue: text("identity_value").notNull(),
+  displayName: text("display_name").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  unique: uniqueIndex("idx_roster_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
+}));
+
+export const lotteryInviteCodes = sqliteTable("lottery_invite_codes", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  code: text("code").notNull(),
+  maxUses: integer("max_uses").notNull().default(1),
+  usedCount: integer("used_count").notNull().default(0),
+  active: integer("active").notNull().default(1),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  unique: uniqueIndex("idx_invite_unique").on(t.tenantId, t.drawId, t.code),
+}));
+
+// ── 候选池与中奖记录 ──
+export const lotteryEntries = sqliteTable("lottery_entries", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  identityType: text("identity_type").notNull().default("email"),
+  identityValue: text("identity_value").notNull(),
+  displayName: text("display_name").notNull().default(""),
+  inviteCodeId: text("invite_code_id").default(""),
+  ipHash: text("ip_hash").notNull().default(""),
+  joinedAt: text("joined_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
+  identityIdx: uniqueIndex("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),
+}));
+
+export const lotteryWinners = sqliteTable("lottery_winners", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  tierId: text("tier_id").notNull(),
+  entryId: text("entry_id").notNull(),
+  identityType: text("identity_type").notNull(),
+  identityValue: text("identity_value").notNull(),
+  prizeCodeId: text("prize_code_id").default(""),
+  drawnAt: text("drawn_at").notNull().default(sql`(datetime('now'))`),
+  notificationStatus: text("notification_status").notNull().default("pending"),
+  notificationError: text("notification_error").notNull().default(""),
+}, (t) => ({
+  unique: uniqueIndex("idx_winners_unique").on(t.tenantId, t.drawId, t.entryId),
+}));
+
+// ── 审计日志 ──
+export const auditLogs = sqliteTable("audit_logs", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  actorUserId: text("actor_user_id").notNull(),
+  action: text("action").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull(),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+});

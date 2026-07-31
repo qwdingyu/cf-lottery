@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    // 按域抽取服务层时产生过 20 处失效导入，靠人工/启发式检查既误报又漏报；
+    // 交给编译器常驻把关，后续重构不会再沉淀死代码。
+    "noUnusedLocals": true,
+    "noEmit": true,
+  },
+  "include": ["src/**/*.ts", "shared/**/*.ts"],
+  "exclude": ["node_modules", "dist", ".wrangler"]
+}
