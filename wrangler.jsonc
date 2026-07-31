@@ -40,6 +40,8 @@
   //   JWT_SECRET                     — JWT 签名密钥
   //   RESEND_API_KEY                 — 邮件发送 API Key
   //   EMAIL_FROM                     — 发件邮箱地址
+  //   CRON_SECRET                    — Cron 定时开奖认证密钥
+  //   CREDENTIALS_ENCRYPTION_KEY     — 敏感配置加密密钥（64 位 hex）
   //
   // 本地开发时写入 .dev.vars 文件（已加入 .gitignore）
   // ═══════════════════════════════════════════════════════════════

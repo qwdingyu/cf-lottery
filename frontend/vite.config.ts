@@ -11,7 +11,7 @@ export default defineConfig({
   },
   build: {
     target: 'es2020',
-    outDir: 'dist',
+    outDir: '../public',
     assetsDir: 'assets',
     rollupOptions: {
       output: {
