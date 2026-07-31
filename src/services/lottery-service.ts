@@ -478,6 +478,24 @@ export async function performDraw(
       .limit(1);
 
     if (!draw) throw new Error("活动不存在");
+    // 卡在 drawing 状态的活动：尝试治愈
+    if (draw.status === "drawing") {
+      const healed = await healDrawingState(db, drawId, tenantId);
+      if (healed === "drawn") {
+        return { drawId, winnerCount: 0, candidateCount: 0 };
+      }
+      if (healed === "open") {
+        // 治愈成功，状态已回滚为 open，重新尝试夺取开奖权
+        const retryResult = await db
+          .update(lotteryDraws)
+          .set({ status: "drawing", updatedAt: new Date().toISOString() })
+          .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "open")));
+        if ((retryResult.rowsAffected ?? 0) === 0) {
+          throw new Error("开奖权已被其他进程夺取，请稍后重试");
+        }
+        // 继续执行开奖流程
+      }
+    }
     // 已开奖活动再次开奖 → 幂等返回实际数据
     if (draw.status === "drawn") {
       const actualWinnerCount = await db
@@ -740,6 +758,63 @@ export async function sendWinnerNotifications(
         .where(eq(lotteryWinners.id, winner.winnerId));
     }
   }
+}
+
+/**
+ * 治愈卡死的 drawing 状态。
+ *
+ * 背景：如果一个开奖因 Worker 崩溃/超时卡在 drawing 状态，
+ * 后续无法再次开奖。此函数检查 drawing 状态的活动：
+ * - 如果已有中奖记录 → 补设为 drawn（开奖实际已完成）
+ * - 如果无中奖记录且超时 → 回滚为 open（允许重新开奖）
+ *
+ * 借鉴 cf-shop 的 healDrawingState 模式。
+ */
+export async function healDrawingState(
+  db: DbType,
+  drawId: string,
+  tenantId: string,
+  options?: { staleMs?: number },
+): Promise<"drawn" | "open" | null> {
+  const staleMs = options?.staleMs ?? 300000; // 默认 5 分钟超时
+
+  const [draw] = await db
+    .select()
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+
+  if (!draw || draw.status !== "drawing") return null;
+
+  // 检查是否已有中奖记录
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(lotteryWinners)
+    .where(eq(lotteryWinners.drawId, drawId));
+
+  const nowIso = new Date().toISOString();
+
+  if (Number(total) > 0) {
+    // 中奖已落库但状态未 drawn：补状态
+    await db
+      .update(lotteryDraws)
+      .set({ status: "drawn", drawnAt: draw.drawnAt || nowIso, updatedAt: nowIso, failureReason: "" })
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.status, "drawing")));
+    return "drawn";
+  }
+
+  // 无中奖记录：检查是否超时
+  const updatedAt = new Date(draw.updatedAt || draw.createdAt).getTime();
+  if (Date.now() - updatedAt > staleMs) {
+    // 超时且无中奖：回滚为 open
+    await db
+      .update(lotteryDraws)
+      .set({ status: "open", failureReason: "开奖超时，已自动回滚", updatedAt: nowIso })
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.status, "drawing")));
+    return "open";
+  }
+
+  return null;
 }
 
 /* ── 奖品管理 ────────────────────────────────────────────── */
