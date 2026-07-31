@@ -375,6 +375,39 @@
             </p>
           </section>
 
+          <section class="form-section" aria-labelledby="lottery-mode">
+            <header class="form-section-head">
+              <h4 id="lottery-mode" class="form-section-title">参与模式</h4>
+              <p class="form-section-desc">选择参与者如何加入活动</p>
+            </header>
+            <div class="form-grid two-cols">
+              <label class="field-span-2">
+                <span>参与模式</span>
+                <select v-model="form.participationMode">
+                  <option value="open">公开参与（任何人都可参与）</option>
+                  <option value="roster">限定名单（仅导入的邮箱可参与）</option>
+                  <option value="password">访问密码（输入密码后可参与）</option>
+                  <option value="invite_code">邀请码（输入邀请码后可参与）</option>
+                </select>
+              </label>
+              <label v-if="form.participationMode === 'password'" class="field-span-2">
+                <span>访问密码</span>
+                <input v-model="form.accessPassword" type="text" maxlength="20" placeholder="设置活动访问密码" />
+                <small class="field-hint">参与者需要输入此密码才能参与活动</small>
+              </label>
+              <label v-if="form.participationMode === 'roster'" class="field-span-2">
+                <span>导入名单（每行一个邮箱）</span>
+                <textarea v-model="rosterInput" rows="5" placeholder="user1@example.com&#10;user2@example.com&#10;user3@example.com" />
+                <small class="field-hint">导入后将在创建活动时自动添加名单，已存在的邮箱会被跳过</small>
+              </label>
+              <label v-if="form.participationMode === 'invite_code'" class="field-span-2">
+                <span>生成邀请码数量</span>
+                <input v-model.number="inviteCodeCount" type="number" min="1" max="1000" step="1" />
+                <small class="field-hint">创建活动后将自动生成指定数量的邀请码，每码可使用 1 次</small>
+              </label>
+            </div>
+          </section>
+
           <section class="form-section" aria-labelledby="lottery-prizes">
             <header class="form-section-head">
               <h4 id="lottery-prizes" class="form-section-title">{{ $t('lottery.adminSectionPrizes') }}</h4>
@@ -678,6 +711,8 @@ const emptyForm = () => ({
 
 const form = ref(emptyForm())
 const isEditing = ref(false)
+const rosterInput = ref('')
+const inviteCodeCount = ref(10)
 
 /** 后端约束：drawTime > endTime > startTime */
 const timeOrderError = computed(() => {

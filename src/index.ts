@@ -51,6 +51,20 @@ app.route("/api/public", publicLotteryRoute);
 // 健康检查
 app.get("/api/health", (c) => c.json({ ok: true, db: !!c.get("db") }));
 
+// 前端静态资源：所有非 /api 请求返回 index.html（SPA）
+app.get("*", async (c) => {
+  try {
+    const asset = await c.env.ASSETS.fetch(c.req.raw);
+    if (asset.status === 404) {
+      // SPA fallback: 返回 index.html
+      return c.env.ASSETS.fetch(new Request(new URL("/index.html", c.req.url)));
+    }
+    return asset;
+  } catch {
+    return c.env.ASSETS.fetch(new Request(new URL("/index.html", c.req.url)));
+  }
+});
+
 // Cron 定时开奖：每 5 分钟执行一次，处理到期活动
 // 安全：需要通过 CRON_SECRET 认证，防止未授权触发
 app.get("/api/cron/draw", async (c) => {
