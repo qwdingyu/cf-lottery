@@ -343,3 +343,25 @@ adminLotteryRoute.get("/draws/:id/export", async (c) => {
     "Content-Disposition": `attachment; filename="draw-${drawId}.csv"`,
   });
 });
+
+/** 删除活动（仅草稿状态可删除） */
+adminLotteryRoute.delete("/draws/:id", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const [draw] = await db
+    .select({ status: lotteryDraws.status })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.status !== "draft") return fail(c, "仅草稿状态的活动可删除", 400);
+
+  await db
+    .delete(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+
+  return ok(c, { deleted: true });
+});
