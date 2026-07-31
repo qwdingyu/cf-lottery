@@ -375,33 +375,26 @@ export async function joinDraw(
     return { joined: false, message: "不在参与时间内" };
   }
 
-  // ── 最大参与人数校验 ──
-  // 注意：先 count 再 insert 存在竞态窗口，但 UNIQUE 约束兜底
-  // 如果两个并发请求同时通过 count 检查，后执行的 INSERT 会因 UNIQUE 约束失败
-  if (draw.maxParticipants) {
-    const [{ total }] = await db
-      .select({ total: count() })
-      .from(lotteryEntries)
-      .where(eq(lotteryEntries.drawId, draw.id));
-    if (Number(total) >= draw.maxParticipants) {
-      return { joined: false, message: "参与人数已达上限" };
-    }
-  }
-
+  // ── 最大参与人数校验（原子写入，防竞态） ──
+  // 使用 INSERT ... SELECT 合并容量检查与写入，避免先 count 再 insert 的竞态窗口
+  const effectiveMax = draw.maxParticipants ?? 50000;
   const nowIso = now.toISOString();
 
-  // ── 原子写入候选池 ──
-  // 利用 UNIQUE(tenant_id, draw_id, identity_type, identity_value) 约束防止重复参与
-  await db.insert(lotteryEntries).values({
-    id: crypto.randomUUID(),
-    tenantId: draw.tenantId,
-    drawId: draw.id,
-    identityType,
-    identityValue: normalizedValue,
-    inviteCodeId: options?.inviteCode || "",
-    ipHash: options?.ipHash || "",
-    joinedAt: nowIso,
-  });
+  try {
+    // 原子写入：利用 INSERT ... SELECT 合并容量检查
+    // 如果候选池已满，SELECT 不返回行，INSERT 不会执行
+    await db.run(sql`
+      INSERT INTO lottery_entries (id, tenant_id, draw_id, identity_type, identity_value, invite_code_id, ip_hash, joined_at)
+      SELECT ${crypto.randomUUID()}, ${draw.tenantId}, ${draw.id}, ${identityType}, ${normalizedValue}, ${options?.inviteCode || ""}, ${options?.ipHash || ""}, ${nowIso}
+      WHERE (SELECT COUNT(*) FROM lottery_entries WHERE draw_id = ${draw.id}) < ${effectiveMax}
+    `);
+  } catch (err: any) {
+    // UNIQUE 约束冲突：同一参与者重复提交
+    if (err.message?.includes("UNIQUE constraint")) {
+      return { joined: false, message: "您已参与此活动" };
+    }
+    throw err;
+  }
 
   return { joined: true };
 }

@@ -8,12 +8,16 @@
   ],
   "scripts": {
     "dev": "wrangler dev --port 8787",
-    "deploy": "npx wrangler deploy",
+    "deploy": "npm run frontend:build && npx wrangler deploy",
     "type-check": "tsc --noEmit",
     "type-check:frontend": "npm --workspace frontend run type-check",
     "type-check:all": "npm run type-check && npm run type-check:frontend",
     "test": "vitest run",
+    "test:watch": "vitest",
     "frontend:build": "npm --workspace frontend run build",
+    "db:generate": "npx drizzle-kit generate",
+    "db:migrate": "npx drizzle-kit migrate",
+    "db:studio": "npx drizzle-kit studio",
     "verify:delivery": "npm run type-check && npm run test && npm run frontend:build"
   },
   "dependencies": {
@@ -24,6 +28,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260726.1",
     "@vitest/coverage-v8": "4.1.7",
+    "drizzle-kit": "^0.30.0",
     "typescript": "5.7.3",
     "vite": "6.4.3",
     "vitest": "4.1.7",
