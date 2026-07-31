@@ -174,6 +174,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -216,9 +217,7 @@ function groupNameKey(name: string): string {
 }
 
 const { showToast } = useToast()
-const { t } = useI18n()
 const { token } = useAdminAuth()
-const { loadShopConfig } = useShopConfig()
 const route = useRoute()
 const router = useRouter()
 
@@ -226,8 +225,7 @@ const loading = ref(false)
 const loadError = ref('')
 const config = reactive<Record<string, string>>({})
 const fieldStatus = reactive<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
-const definitions = ref<AdminSystemConfigDefinition[]>([])
-const turnstileStatus = ref<AdminSystemConfigResult['turnstileStatus']>()
+const definitions = ref<any[]>([])
 const testEmailTo = ref('')
 const sendingTestEmail = ref(false)
 const testEmailStatus = ref('')
@@ -366,10 +364,9 @@ async function loadData() {
     }
   } catch (err: any) {
     definitions.value = []
-    turnstileStatus.value = undefined
     for (const key of Object.keys(config)) delete config[key]
-    loadError.value = err.message || t('adminConfig.loadFailed')
-    showToast(err.message || t('adminConfig.loadFailed'), 'error')
+    loadError.value = err.message || '加载失败'
+    showToast(err.message || '加载失败', 'error')
   } finally {
     loading.value = false
   }
