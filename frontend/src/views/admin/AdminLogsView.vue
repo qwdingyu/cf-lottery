@@ -155,7 +155,29 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted } from 'vue'
-import { batchDeleteAdminLogs, clearAllAdminLogs, fetchAdminLogs } from '@/api/admin'
+import { ref, computed, onMounted } from 'vue'
+import { useAdminAuth } from '@/composables/useAdminAuth'
+import { useToast } from '@/composables/useToast'
+import { writeClipboardText } from '@/composables/useClipboard'
+import { formatDate } from '@/composables/useFormat'
+import AdminPagination from '@/components/AdminPagination.vue'
+import AdminModal from '@/components/AdminModal.vue'
+
+/** 管理端 API 请求封装 */
+async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = (() => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } })();
+  const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(path, { ...options, headers });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || `请求失败: ${res.status}`);
+  return data as T;
+}
+
+const { token } = useAdminAuth()
+const { showToast } = useToast()
+const items = ref<any[]>([])
+const loading = ref(false)
 import type { AdminAuditLog, AdminAuditLogFilter } from '@/types/admin'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'

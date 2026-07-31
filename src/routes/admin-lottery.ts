@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, users, tenants } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, auditLogs, users, tenants } from "../db/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import {
   createDraw,
@@ -506,4 +506,30 @@ adminLotteryRoute.get("/draws/:id/publish-check", async (c) => {
     errors,
     warnings,
   });
+});
+
+// ═════════════════════════════════════════════════════════
+// 审计日志
+// ═════════════════════════════════════════════════════════
+
+/** 审计日志列表（支持按操作类型筛选） */
+adminLotteryRoute.get("/logs", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const action = c.req.query("action") || "";
+  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
+  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+
+  const conditions = [eq(auditLogs.tenantId, tenantId)];
+  if (action) conditions.push(eq(auditLogs.action, action));
+
+  const rows = await db
+    .select()
+    .from(auditLogs)
+    .where(and(...conditions))
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  return ok(c, { logs: rows });
 });
