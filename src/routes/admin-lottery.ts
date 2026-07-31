@@ -275,6 +275,7 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       ...(body.showParticipantCount !== undefined ? { showParticipantCount: body.showParticipantCount ? 1 : 0 } : {}),
       ...(body.showWinnerCount !== undefined ? { showWinnerCount: body.showWinnerCount ? 1 : 0 } : {}),
       ...(body.showWinnerList !== undefined ? { showWinnerList: body.showWinnerList ? 1 : 0 } : {}),
+      ...(body.productLink !== undefined ? { productLink: typeof body.productLink === "string" ? body.productLink : JSON.stringify(body.productLink) } : {}),
       updatedAt: new Date().toISOString(),
     })
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));

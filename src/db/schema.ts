@@ -91,6 +91,8 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   drawSeedHash: text("draw_seed_hash").notNull().default(""),
   drawSeed: text("draw_seed").notNull().default(""),
   algorithmVersion: text("algorithm_version").notNull().default("uniform_v1"),
+  // 导流：关联商品推广链接（JSON 格式：{url, title, imageUrl, price}）
+  productLink: text("product_link").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({

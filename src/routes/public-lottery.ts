@@ -86,6 +86,8 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     showWinnerCount: draw.showWinnerCount,
     participantCount: draw.showParticipantCount ? Number(total) : undefined,
     winnerCount: draw.showWinnerCount ? draw.winnerCount : undefined,
+    // 导流：关联商品链接（仅在活动中开放时返回）
+    productLink: draw.productLink && draw.productLink !== "{}" ? tryParseJson(draw.productLink) : undefined,
   };
 
   // 开奖后展示中奖名单
@@ -355,3 +357,7 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
 
   return ok(c, result);
 });
+/** 安全解析 JSON 字符串 */
+function tryParseJson(s: string): any {
+  try { return JSON.parse(s); } catch { return undefined; }
+}
