@@ -6,10 +6,6 @@
  */
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
-import {
-  idempotencyKeys,
-} from "@usethink/cf-core/db/schema";
-export { idempotencyKeys };
 
 // ── SaaS 多租户 ──
 export const tenants = sqliteTable("tenants", {
@@ -48,6 +44,7 @@ export const prizes = sqliteTable("prizes", {
   description: text("description").notNull().default(""),
   imageUrl: text("image_url").notNull().default(""),
   prizeType: text("prize_type").notNull().default("code"),
+  fulfillmentNote: text("fulfillment_note").notNull().default(""),
   totalCount: integer("total_count").notNull().default(0),
   usedCount: integer("used_count").notNull().default(0),
   active: integer("active").notNull().default(1),
@@ -91,6 +88,8 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   showWinnerList: integer("show_winner_list").notNull().default(0),
   drawnAt: text("drawn_at"),
   failureReason: text("failure_reason").notNull().default(""),
+  drawSeedHash: text("draw_seed_hash").notNull().default(""),
+  algorithmVersion: text("algorithm_version").notNull().default("uniform_v1"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
