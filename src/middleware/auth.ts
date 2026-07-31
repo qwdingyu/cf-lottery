@@ -36,31 +36,26 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
 }
 
 /**
- * JWT 签名和验证（简化版，复刻 cf-shop 的 signJwt/verifyJwt 模式）
+ * JWT 签名和验证（使用 Web Crypto API，Cloudflare Workers 原生支持）
  */
-import { subtle } from "crypto";
-
 async function verifyJwt(token: string, secret: string): Promise<Record<string, any> | null> {
   try {
     const [headerB64, payloadB64, signatureB64] = token.split(".");
     if (!headerB64 || !payloadB64 || !signatureB64) return null;
 
-    // 验证签名
     const encoder = new TextEncoder();
-    const key = await subtle.importKey(
+    const key = await crypto.subtle.importKey(
       "raw", encoder.encode(secret),
       { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
     );
     const data = encoder.encode(`${headerB64}.${payloadB64}`);
     const signature = Uint8Array.from(atob(signatureB64.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
-    const valid = await subtle.verify("HMAC", key, signature, data);
+    const valid = await crypto.subtle.verify("HMAC", key, signature, data);
     if (!valid) return null;
 
-    // 解码 payload
     const payloadJson = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
     const payload = JSON.parse(payloadJson);
 
-    // 检查过期
     if (payload.exp && payload.exp * 1000 < Date.now()) return null;
 
     return payload;
@@ -79,11 +74,11 @@ export async function signJwt(payload: Record<string, any>, secret: string, ttlS
   const payloadB64 = btoa(JSON.stringify(fullPayload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   const data = encoder.encode(`${headerB64}.${payloadB64}`);
 
-  const key = await subtle.importKey(
+  const key = await crypto.subtle.importKey(
     "raw", encoder.encode(secret),
     { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
   );
-  const signature = await subtle.sign("HMAC", key, data);
+  const signature = await crypto.subtle.sign("HMAC", key, data);
   const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
     .replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 

@@ -7,8 +7,8 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, prizes, prizeCodes } from "../db/schema";
-import { eq, and, desc, count } from "drizzle-orm";
+import { lotteryDraws, lotteryEntries, lotteryWinners, prizes } from "../db/schema";
+import { eq, and, desc } from "drizzle-orm";
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 

@@ -5,7 +5,8 @@
  */
 import { Hono } from "hono";
 import type { AppEnv } from "./bindings";
-import { initDatabase } from "./db/client";
+import { createClient } from "@libsql/client";
+import { createDb } from "./db/client";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
@@ -14,7 +15,10 @@ const app = new Hono<AppEnv>();
 
 // 数据库初始化中间件
 app.use("*", async (c, next) => {
-  c.set("db", initDatabase(c.env));
+  if (c.env.TURSO_URL) {
+    const client = createClient({ url: c.env.TURSO_URL, authToken: c.env.TURSO_TOKEN });
+    c.set("db", createDb(client));
+  }
   await next();
 });
 
@@ -29,9 +33,9 @@ app.get("/api/health", (c) => c.json({ ok: true }));
 // Cron 定时开奖
 app.get("/api/cron/draw", async (c) => {
   const db = c.get("db");
-  // 处理到期活动，每次最多 10 个
-  // TODO: 实现 processDueLotteryDraws
-  return c.json({ ok: true, processed: 0 });
+  if (!db) return c.json({ ok: false, message: "数据库未配置" }, 500);
+  const processed = await processDueDraws(db, 10);
+  return c.json({ ok: true, processed });
 });
 
 export default app;
