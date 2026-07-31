@@ -416,7 +416,7 @@
             <div class="form-grid two-cols">
               <label>
                 <span>{{ $t('lottery.winnerCount') }}</span>
-                <input v-model.number="form.maxWinners" type="number" min="1" max="9999" step="1" required />
+                <input v-model.number="form.winnerCount" type="number" min="1" max="9999" step="1" required />
                 <small class="field-hint">{{ $t('lottery.winnerCountHint') }}</small>
               </label>
               <label>
@@ -1276,8 +1276,33 @@ async function handleCreate() {
     } else {
       const created = await createLotteryDraw(requireToken(), payload)
       if (created?.id) {
+        // 如果是 roster 模式，导入名单
+        if (form.value.participationMode === 'roster' && rosterInput.value.trim()) {
+          const emails = rosterInput.value
+            .split('\n')
+            .map(l => l.trim())
+            .filter(Boolean)
+            .map(email => ({ email }))
+          if (emails.length > 0) {
+            try {
+              await adminRequest(`/api/admin/draws/${created.id}/roster`, {
+                method: 'POST',
+                body: JSON.stringify({ members: emails }),
+              })
+            } catch { /* 导入失败不阻断主流程 */ }
+          }
+        }
+        // 如果是 invite_code 模式，生成邀请码
+        if (form.value.participationMode === 'invite_code' && inviteCodeCount.value > 0) {
+          try {
+            await adminRequest(`/api/admin/draws/${created.id}/invite-codes`, {
+              method: 'POST',
+              body: JSON.stringify({ count: inviteCodeCount.value, maxUses: 1 }),
+            })
+          } catch { /* 生成失败不阻断主流程 */ }
+        }
         try {
-          await writeClipboardText(buildPublicShareUrl(created.publicSlug || created.id))
+          await writeClipboardText(publicShareUrl(created.publicSlug || created.id))
           showToast('活动已创建，链接已复制', 'success')
         } catch {
           showToast('活动已创建', 'success')
