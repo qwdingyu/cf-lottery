@@ -8,4 +8,4 @@ public/
 *.db-wal
 *.db-shm
 .DS_Store
-*.log
+*.lognode_modules/
