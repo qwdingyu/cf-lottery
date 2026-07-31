@@ -21,6 +21,7 @@
  */
 import { withDbTransaction, type DbType } from "../db/client";
 import { and, eq, count, sql } from "drizzle-orm";
+import { buildLotteryWinnerTemplateData, sendEmail } from "./email-service";
 import {
   lotteryDraws,          // 抽奖活动表
   lotteryEntries,        // 候选池表
@@ -655,6 +656,80 @@ export async function performDraw(
       .set({ status: "open", failureReason: reason, updatedAt: new Date().toISOString() })
       .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
     throw error;
+  }
+}
+
+/**
+ * 异步发送中奖通知邮件。
+ * 在开奖完成后调用，不阻塞主流程。
+ * 每个中奖者独立发送，失败不影响其他人。
+ */
+export async function sendWinnerNotifications(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  emailEnv: { resendApiKey?: string; emailFrom?: string },
+) {
+  const [draw] = await db
+    .select()
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+  if (!draw) return;
+
+  const winners = await db
+    .select({
+      winnerId: lotteryWinners.id,
+      email: lotteryWinners.identityValue,
+      prizeCodeId: lotteryWinners.prizeCodeId,
+      notificationStatus: lotteryWinners.notificationStatus,
+    })
+    .from(lotteryWinners)
+    .where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
+
+  for (const winner of winners) {
+    if (winner.notificationStatus === "sent") continue;
+
+    let accountLabel = "";
+    let deliverySecret = "";
+
+    if (winner.prizeCodeId) {
+      const [code] = await db
+        .select({ code: prizeCodes.code, secret: prizeCodes.secret })
+        .from(prizeCodes)
+        .where(eq(prizeCodes.id, winner.prizeCodeId))
+        .limit(1);
+      if (code) { accountLabel = code.code; deliverySecret = code.secret; }
+    }
+
+    try {
+      const result = await sendEmail(db, emailEnv, {
+        to: winner.email,
+        template: "lottery_winner",
+        templateData: buildLotteryWinnerTemplateData({
+          drawName: draw.title,
+          productName: draw.title,
+          accountLabel,
+          deliverySecret,
+        }),
+      });
+
+      await db
+        .update(lotteryWinners)
+        .set({
+          notificationStatus: result.ok ? "sent" : "failed",
+          notificationError: result.ok ? "" : (result.message || "").slice(0, 500),
+        })
+        .where(eq(lotteryWinners.id, winner.winnerId));
+    } catch (err) {
+      await db
+        .update(lotteryWinners)
+        .set({
+          notificationStatus: "failed",
+          notificationError: (err as Error).message.slice(0, 500),
+        })
+        .where(eq(lotteryWinners.id, winner.winnerId));
+    }
   }
 }
 
