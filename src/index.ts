@@ -71,7 +71,13 @@ app.get("/api/cron/draw", async (c) => {
   }
 
   try {
-    const result = await processDueDraws(db, { limit: 20 });
+    const result = await processDueDraws(db, {
+      limit: 20,
+      emailEnv: {
+        resendApiKey: c.env.RESEND_API_KEY || "",
+        emailFrom: c.env.EMAIL_FROM || "",
+      },
+    });
     return c.json({
       ok: true,
       processed: result.processed,

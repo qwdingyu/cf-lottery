@@ -173,30 +173,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ref, computed, onMounted } from 'vue'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import ConfigField from '@/components/admin/ConfigField.vue'
-import type { AdminClearBusinessDataProfile } from '@/api/admin'
-import type { AdminSystemConfigResult, AdminSystemConfigDefinition } from '@/types/admin'
-import { useToast } from '@/composables/useToast'
-import { useAdminAuth } from '@/composables/useAdminAuth'
-import i18n from '@/i18n'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
-import { useConfirmDialog } from '@/composables/useConfirmDialog'
-import ConfigField from '@/components/admin/ConfigField.vue'
-import { useShopConfig } from '@/composables/useShopConfig'
 import {
   SYSTEM_CONFIG_SECTIONS,
   getSystemConfigSection,
   resolveSystemConfigSectionId,
   type SystemConfigSectionId,
 } from './system-config-sections'
+
+/** 管理端 API 请求封装 */
+async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = (() => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } })();
+  const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(path, { ...options, headers });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || `请求失败: ${res.status}`);
+  return data as T;
+}
 
 /** 将后端配置分组名映射为 i18n 键名 */
 function groupNameKey(name: string): string {
@@ -359,10 +358,9 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const res: AdminSystemConfigResult = await fetchAdminSystemConfig(token.value)
+    const res = await adminRequest<any>('/api/admin/system-config')
     Object.assign(config, res.config)
     definitions.value = res.definitions
-    turnstileStatus.value = res.turnstileStatus
     if (!testEmailTo.value.trim() && res.config.support_email) {
       testEmailTo.value = res.config.support_email
     }
@@ -380,7 +378,7 @@ async function loadData() {
 async function update(key: string, value: string) {
   fieldStatus[key] = 'saving'
   try {
-    const res = await updateAdminSystemConfig(token.value, { key, value })
+    const res = await adminRequest<any>('/api/admin/system-config', {
     config[key] = res.value
     const publicConfigSynced = await refreshPublicConfig(definitions.value.find((item) => item.key === key)?.scope)
     if (res.configured !== undefined) {
@@ -437,7 +435,7 @@ async function clearBusinessData() {
   clearBusinessDataStatus.value = ''
   try {
     const confirmationText = t('adminConfig.clearProfiles.' + profile.id + '.confirmation')
-    const result = await clearAdminBusinessData(token.value, confirmationText, profile.id)
+    const result = await adminRequest<any>('/api/admin/system-config', {
     clearBusinessConfirmText.value = ''
     clearBusinessDataStatus.value = t('adminConfig.clearData.result', {
       profile: result.profile,
@@ -476,7 +474,7 @@ async function reset(key: string) {
   if (!(await askConfirm(t('adminConfig.resetConfirm', { key })))) return
   fieldStatus[key] = 'saving'
   try {
-    const res = await updateAdminSystemConfig(token.value, {
+    const res = await adminRequest<any>('/api/admin/system-config', {
       key: resetKey,
       value: def.defaultValue || '',
     })

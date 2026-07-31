@@ -195,7 +195,7 @@ export async function createDraw(
     endAt: data.endAt,
     drawAt: data.drawAt || null,
     accessPassword: data.accessPassword ? await hashAccessPassword(data.accessPassword) : "",
-    maxParticipants: data.maxParticipants || null,
+    maxParticipants: data.maxParticipants || 5000, // 默认上限 5000，防止候选池过大导致 Worker OOM
     winnerCount: data.winnerCount || 1,
     showParticipantCount: data.showParticipantCount ?? 1,
     showWinnerCount: data.showWinnerCount ?? 1,

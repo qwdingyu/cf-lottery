@@ -140,16 +140,17 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { batchDeleteAdminEmailLogs, fetchAdminEmailLogs } from '@/api/admin'
-import type { AdminEmailLog, AdminEmailLogFilter } from '@/types/admin'
+import { ref, computed, onMounted } from 'vue'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { formatDate } from '@/composables/useFormat'
-import { downloadCsv } from '@/lib/csv-export'
-/** 下载 CSV（内联实现，替代 @/lib/csv-export） */
+import AdminPagination from '@/components/AdminPagination.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+
+/** 下载 CSV（内联实现） */
 function downloadCsv(filename: string, rows: string[][]) {
   const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -157,10 +158,19 @@ function downloadCsv(filename: string, rows: string[][]) {
   const a = document.createElement('a'); a.href = url; a.download = filename;
   a.click(); URL.revokeObjectURL(url);
 }
-import AdminPagination from '@/components/AdminPagination.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
-const route = useRoute()
+/** 管理端 API 请求封装 */
+async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = (() => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } })();
+  const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(path, { ...options, headers });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || `请求失败: ${res.status}`);
+  return data as T;
+}
+
+const { token } = useAdminAuth()
 const router = useRouter()
 const { t } = useI18n()
 const { token } = useAdminAuth()

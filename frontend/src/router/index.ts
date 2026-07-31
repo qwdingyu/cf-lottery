@@ -57,11 +57,6 @@ const router = createRouter({
           name: 'AdminLogs',
           component: () => import('@/views/admin/AdminLogsView.vue'),
         },
-        {
-          path: 'email-logs',
-          name: 'AdminEmailLogs',
-          component: () => import('@/views/admin/AdminEmailLogsView.vue'),
-        },
       ],
     },
     {
