@@ -181,9 +181,10 @@ describe("performDraw", () => {
     const id = await insertDraw({status:"draft"});
     await expect(performDraw(db,TENANT_ID,id,USER_ID)).rejects.toThrow();
   });
-  it("drawn 不能再次开奖", async () => {
+  it("drawn 应返回已有结果（幂等）", async () => {
     const id = await insertDraw({status:"drawn"});
-    await expect(performDraw(db,TENANT_ID,id,USER_ID)).rejects.toThrow();
+    const r = await performDraw(db,TENANT_ID,id,USER_ID);
+    expect(r.drawId).toBe(id);
   });
 });
 
