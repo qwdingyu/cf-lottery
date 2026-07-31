@@ -9,3 +9,4 @@ public/
 *.db-shm
 .DS_Store
 *.lognode_modules/
+coverage/
