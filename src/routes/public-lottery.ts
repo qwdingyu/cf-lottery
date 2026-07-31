@@ -11,6 +11,7 @@ import { getDb, ok, fail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryInviteCodes } from "../db/schema";
 import { eq, and, count, sql } from "drizzle-orm";
 import { joinDraw } from "../services/lottery-service";
+import { sendAccessCode } from "../services/email-service";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 

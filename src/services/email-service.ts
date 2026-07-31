@@ -100,3 +100,49 @@ export async function sendEmail(
     return { ok: false, message: err.message || "网络错误" };
   }
 }
+
+/**
+ * 发送邮箱验证码。
+ * 通过 Resend 发送 6 位数字验证码到用户邮箱。
+ */
+export async function sendAccessCode(
+  emailEnv: { resendApiKey: string; emailFrom: string },
+  to: string,
+  drawName: string,
+  code: string,
+): Promise<{ ok: boolean; message: string }> {
+  const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+    <h2>验证码</h2>
+    <p>您参与的 <strong>${escapeHtml(drawName)}</strong> 需要邮箱验证。</p>
+    <div style="background:#f5f5f5;padding:20px;border-radius:8px;text-align:center;margin:15px 0">
+      <span style="font-size:32px;font-weight:bold;letter-spacing:8px">${escapeHtml(code)}</span>
+    </div>
+    <p style="color:#888;font-size:12px">验证码 10 分钟内有效，请勿泄露给他人。</p>
+  </div>`;
+
+  if (!emailEnv.resendApiKey) {
+    console.warn("[email] RESEND_API_KEY not configured");
+    return { ok: false, message: "邮件服务未配置" };
+  }
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${emailEnv.resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: emailEnv.emailFrom || "noreply@resend.dev",
+        to,
+        subject: "您的抽奖验证码",
+        html,
+      }),
+    });
+    const body = await res.json() as any;
+    if (res.ok) return { ok: true, message: "发送成功" };
+    return { ok: false, message: body.message || "发送失败" };
+  } catch (err: any) {
+    return { ok: false, message: err.message || "网络错误" };
+  }
+}
