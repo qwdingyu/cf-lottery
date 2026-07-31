@@ -943,6 +943,8 @@ function applyTimePreset(kind: '5m' | '10m' | '20m' | '30m' | '1h' | '1d' | '3d'
 function closeEditor() {
   showCreateModal.value = false
   isEditing.value = false
+  rosterInput.value = ''
+  inviteCodeCount.value = 10
 }
 
 function openCreate() {
