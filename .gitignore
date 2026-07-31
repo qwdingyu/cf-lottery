@@ -10,3 +10,4 @@ public/
 .DS_Store
 *.lognode_modules/
 coverage/
+.env
