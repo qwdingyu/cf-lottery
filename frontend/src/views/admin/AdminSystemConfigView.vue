@@ -395,61 +395,11 @@ async function update(key: string, value: string) {
 }
 
 async function sendTestEmail() {
-  if (sendingTestEmail.value) return
-  if (emailConfigSaving.value) {
-    testEmailOk.value = false
-    testEmailStatus.value = t('adminConfig.emailTest.savingHint')
-    return
-  }
-  const to = testEmailTo.value.trim()
-  if (!to) return
-  sendingTestEmail.value = true
-  testEmailStatus.value = ''
-  testEmailOk.value = false
-  try {
-    const res = await testAdminEmail(token.value, { to })
-    testEmailOk.value = true
-    testEmailStatus.value = res.resendId
-      ? t('adminConfig.emailTest.sentWithId', { id: res.resendId })
-      : (res.message || t('adminConfig.emailTest.sent'))
-    showToast(t('adminConfig.emailTest.sent'), 'success')
-  } catch (err: any) {
-    testEmailOk.value = false
-    testEmailStatus.value = err.message || t('adminConfig.emailTest.sendTest')
-    showToast(testEmailStatus.value, 'error')
-  } finally {
-    sendingTestEmail.value = false
-  }
+  showToast('测试邮件功能暂不可用', 'info')
 }
 
 async function clearBusinessData() {
-  if (!canClearBusinessData.value) return
-  const profile = activeClearProfile.value
-  const confirmed = await askConfirm(
-    `${t('adminConfig.clearData.confirmTitle', { title: t('adminConfig.clearProfiles.' + profile.id + '.title') })}\n\n${t('adminConfig.clearProfiles.' + profile.id + '.detail')}\n\n${t('adminConfig.clearData.confirmBody')}`,
-  )
-  if (!confirmed) return
-
-  clearingBusinessData.value = true
-  clearBusinessDataStatus.value = ''
-  try {
-    const confirmationText = t('adminConfig.clearProfiles.' + profile.id + '.confirmation')
-    const result = await adminRequest<any>('/api/admin/system-config', {
-    })
-    clearBusinessConfirmText.value = ''
-    clearBusinessDataStatus.value = t('adminConfig.clearData.result', {
-      profile: result.profile,
-      deleted: result.deleted,
-      auditId: result.retainedAuditId,
-      strategy: result.cardStrategy,
-    })
-    showToast(t('adminConfig.clearData.completed'), 'success')
-  } catch (err: any) {
-    clearBusinessDataStatus.value = err.message || t('adminConfig.emailTest.sendTest')
-    showToast(clearBusinessDataStatus.value, 'error')
-  } finally {
-    clearingBusinessData.value = false
-  }
+  showToast('数据清理功能暂不可用', 'info')
 }
 
 const turnstileBannerClass = 'status-banner-info'
