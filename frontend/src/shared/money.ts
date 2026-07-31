@@ -8,6 +8,6 @@ export function minorToMajorString(cents: number, currency?: string): string {
   return formatMoney(cents, currency)
 }
 
-export function parseMajorToMinor(value: string): number {
+export function parseMajorToMinor(value: string, _currency?: string): number {
   return Math.round(parseFloat(value) * 100)
 }
