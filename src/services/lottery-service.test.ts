@@ -286,6 +286,11 @@ describe("开奖核心流程", () => {
     const { id: prizeId } = await createPrize(db, TENANT, { name: "奖品", prizeType: "code" });
     await importPrizeCodes(db, TENANT, prizeId, [{ code: "C1", secret: "S1" }]);
     const { id, publicSlug } = await setupDraw("open", { winnerCount: 5 });
+    // 创建奖项关联到奖品
+    await client.execute({
+      sql: "INSERT INTO lottery_prize_tiers (id, tenant_id, draw_id, prize_id, winner_count) VALUES (?,?,?,?,?)",
+      args: [crypto.randomUUID(), TENANT, id, prizeId, 5],
+    });
     await joinDraw(db, publicSlug, "u1@t.com");
     await joinDraw(db, publicSlug, "u2@t.com");
     const result = await performDraw(db, TENANT, id, USER);
