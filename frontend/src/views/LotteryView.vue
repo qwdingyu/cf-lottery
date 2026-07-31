@@ -46,12 +46,12 @@
           :disabled="recordsLoading"
           @click="fetchMyRecords"
         >
-          {{ recordsLoading ? $t('shop.loading') : $t('lottery.refreshRecords') }}
+          {{ recordsLoading ? '加载中…' : $t('lottery.refreshRecords') }}
         </button>
       </div>
 
       <div v-if="recordsLoading && sortedMyEntries.length === 0" class="records-empty">
-        {{ $t('shop.loading') }}
+        {{ '加载中…' }}
       </div>
       <div v-else-if="sortedMyEntries.length === 0" class="records-empty">
         {{ $t('lottery.noMyRecords') }}
@@ -108,7 +108,7 @@
     </div>
 
     <!-- 加载中 -->
-    <div v-if="loading" class="loading-state">{{ $t('shop.loading') }}</div>
+    <div v-if="loading" class="loading-state">{{ '加载中…' }}</div>
 
     <!-- 活动列表 -->
     <div v-else-if="draws.length === 0" class="empty-state">
@@ -196,7 +196,7 @@
               :disabled="joiningId === draw.id"
               @click="handleJoin(draw.id)"
             >
-              {{ joiningId === draw.id ? $t('shop.loading') : $t('lottery.join') }}
+              {{ joiningId === draw.id ? '加载中…' : $t('lottery.join') }}
             </button>
           </template>
           <button
@@ -292,7 +292,7 @@
                   :disabled="joiningId === draw.id"
                   @click="handleJoin(draw.id)"
                 >
-                  {{ joiningId === draw.id ? $t('shop.loading') : $t('lottery.join') }}
+                  {{ joiningId === draw.id ? '加载中…' : $t('lottery.join') }}
                 </button>
               </div>
             </div>
@@ -349,7 +349,7 @@
               :disabled="sendingCode"
               @click="handleSendCode"
             >
-              {{ sendingCode ? $t('shop.loading') : $t('lottery.sendCode') }}
+              {{ sendingCode ? '加载中…' : $t('lottery.sendCode') }}
             </button>
             <template v-else>
               <button
@@ -358,7 +358,7 @@
                 :disabled="verifyingCode"
                 @click="handleVerifyCode"
               >
-                {{ verifyingCode ? $t('shop.loading') : $t('lottery.verifyAndJoin') }}
+                {{ verifyingCode ? '加载中…' : $t('lottery.verifyAndJoin') }}
               </button>
               <button
                 type="button"
@@ -370,7 +370,7 @@
               </button>
             </template>
             <button type="button" class="btn btn-ghost" @click="closeLogin">
-              {{ $t('productConfirm.cancel') }}
+              {{ '取消' }}
             </button>
           </div>
           <p v-if="loginError" class="form-error">{{ loginError }}</p>
@@ -419,7 +419,6 @@ type LotteryDraw = {
 type MyEntry = {
   drawId: string; joinedAt?: string; drawName?: string; drawStatus?: string; drawTime?: string;
 };
-}
 
 type MyWinner = {
   drawId: string

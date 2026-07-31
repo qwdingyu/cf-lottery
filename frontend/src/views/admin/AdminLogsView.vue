@@ -154,14 +154,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted } from 'vue'
 import { ref, computed, onMounted } from 'vue'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
+import { useTableSelection } from '@/composables/useTableSelection'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { formatDate } from '@/composables/useFormat'
 import AdminPagination from '@/components/AdminPagination.vue'
 import AdminModal from '@/components/AdminModal.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 /** 管理端 API 请求封装 */
 async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
@@ -174,16 +176,7 @@ async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> 
   return data as T;
 }
 
-const { token } = useAdminAuth()
-const { showToast } = useToast()
-const items = ref<any[]>([])
-const loading = ref(false)
-import type { AdminAuditLog, AdminAuditLogFilter } from '@/types/admin'
-import { useAdminAuth } from '@/composables/useAdminAuth'
-import { useToast } from '@/composables/useToast'
-import { useTableSelection } from '@/composables/useTableSelection'
-import { useConfirmDialog } from '@/composables/useConfirmDialog'
-/** 下载 CSV（内联实现，替代 @/lib/csv-export） */
+/** 下载 CSV */
 function downloadCsv(filename: string, rows: string[][]) {
   const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -191,18 +184,11 @@ function downloadCsv(filename: string, rows: string[][]) {
   const a = document.createElement('a'); a.href = url; a.download = filename;
   a.click(); URL.revokeObjectURL(url);
 }
-import { writeClipboardText } from '@/composables/useClipboard'
-import i18n from '@/i18n'
-import { formatDate, formatIpFingerprint } from '@/composables/useFormat'
-import AdminPagination from '@/components/AdminPagination.vue'
-import AdminModal from '@/components/AdminModal.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const { token } = useAdminAuth()
 const { showToast } = useToast()
-const items = ref<AdminAuditLog[]>([])
+const items = ref<any[]>([])
 const loading = ref(false)
-const batchDeleting = ref(false)
 const clearingAll = ref(false)
 const logsMutating = computed(() => batchDeleting.value || clearingAll.value)
 const snapshotAt = ref('')
