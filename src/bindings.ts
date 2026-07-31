@@ -28,6 +28,8 @@ export type Bindings = {
   RATE_LIMIT_SALT?: string;
   // Cron 调用的认证密钥，防止未授权触发定时开奖
   CRON_SECRET?: string;
+  // 敏感配置加密密钥（64 位 hex 字符串），用于加密存储敏感配置项
+  CREDENTIALS_ENCRYPTION_KEY?: string;
 };
 
 export type AppEnv = {

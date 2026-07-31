@@ -564,6 +564,78 @@ adminLotteryRoute.get("/draws/:id/publish-check", async (c) => {
   });
 });
 
+/** 导入名单成员（roster 模式） */
+adminLotteryRoute.post("/draws/:id/roster", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+  const body = await c.req.json<{ members: Array<{ email: string; name?: string }> }>();
+
+  if (!body.members || body.members.length === 0) {
+    return fail(c, "请提供至少一个成员", 400);
+  }
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, status: lotteryDraws.status })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.status !== "draft") return fail(c, "仅草稿状态的活动可导入名单", 400);
+
+  let imported = 0;
+  for (const m of body.members) {
+    try {
+      await db.insert(lotteryRosterMembers).values({
+        id: crypto.randomUUID(),
+        tenantId,
+        drawId,
+        identityValue: m.email.trim().toLowerCase(),
+        displayName: m.name || "",
+      });
+      imported++;
+    } catch { /* 重复跳过 */ }
+  }
+
+  return ok(c, { imported });
+});
+
+/** 生成邀请码（invite_code 模式） */
+adminLotteryRoute.post("/draws/:id/invite-codes", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+  const body = await c.req.json<{ count?: number; maxUses?: number }>();
+
+  const count = Math.min(body.count || 10, 1000);
+  const maxUses = body.maxUses || 1;
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, status: lotteryDraws.status })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.status !== "draft") return fail(c, "仅草稿状态的活动可生成邀请码", 400);
+
+  const codes: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const code = crypto.randomUUID().slice(0, 8).toUpperCase();
+    await db.insert(lotteryInviteCodes).values({
+      id: crypto.randomUUID(),
+      tenantId,
+      drawId,
+      code,
+      maxUses,
+    });
+    codes.push(code);
+  }
+
+  return ok(c, { codes, count: codes.length });
+});
+
 // ═════════════════════════════════════════════════════════
 // 审计日志
 // ═════════════════════════════════════════════════════════
