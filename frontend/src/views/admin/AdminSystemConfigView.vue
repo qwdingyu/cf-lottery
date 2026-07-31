@@ -336,10 +336,10 @@ function selectSection(id: SystemConfigSectionId) {
   void router.replace({ query: nextQuery })
 }
 
-async function refreshPublicConfig(scope?: AdminSystemConfigDefinition['scope']): Promise<boolean> {
+async function refreshPublicConfig(scope?: string): Promise<boolean> {
   if (scope !== 'public') return true
   try {
-    await loadShopConfig(true)
+    const res = await adminRequest<any>('/api/system-config')
     return true
   } catch {
     return false
@@ -351,7 +351,7 @@ function showSavedStatus(message: string, publicConfigSynced: boolean) {
     showToast(message, 'success')
     return
   }
-  showToast(`${message}${t('adminConfig.notSynced')}`, 'info', 5000)
+  showToast(`${message}（公开配置未同步）`, 'info', 5000)
 }
 
 async function loadData() {
@@ -378,20 +378,19 @@ async function update(key: string, value: string) {
   fieldStatus[key] = 'saving'
   try {
     const res = await adminRequest<any>('/api/admin/system-config', {
+      method: 'PUT',
+      body: JSON.stringify({ key, value }),
     })
     config[key] = res.value
-    const publicConfigSynced = await refreshPublicConfig(definitions.value.find((item) => item.key === key)?.scope)
-    if (res.configured !== undefined) {
-      const definition = definitions.value.find((item) => item.key === key)
-      if (definition) definition.configured = res.configured
+    const definition = definitions.value.find((item) => item.key === key)
+    if (res.configured !== undefined && definition) {
+      definition.configured = res.configured
     }
-    if (res.turnstileStatus) turnstileStatus.value = res.turnstileStatus
     fieldStatus[key] = 'saved'
-    markEmailTestStale(key)
-    showSavedStatus(t('adminConfig.saved'), publicConfigSynced)
+    showToast('已保存', 'success')
   } catch (err: any) {
     fieldStatus[key] = 'error'
-    showToast(err.message || t('adminConfig.saveFailed'), 'error')
+    showToast(err.message || '保存失败', 'error')
   }
 }
 
@@ -473,10 +472,8 @@ async function reset(key: string) {
       const definition = definitions.value.find((item) => item.key === resetKey)
       if (definition) definition.configured = res.configured
     }
-    if (res.turnstileStatus) turnstileStatus.value = res.turnstileStatus
     fieldStatus[key] = 'saved'
-    markEmailTestStale(key)
-    showSavedStatus(t('adminConfig.resetSuccess'), publicConfigSynced)
+    showSavedStatus('已重置', publicConfigSynced)
   } catch (err: any) {
     fieldStatus[key] = 'error'
     showToast(err.message || t('adminConfig.resetFailed'), 'error')

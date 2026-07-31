@@ -10,8 +10,8 @@ import { defineAsyncComponent, type Component } from 'vue'
 const GAME_MAP: Record<string, () => Promise<Component>> = {
   'open':        () => import('./WheelGame.vue'),      // 大转盘
   'invite_code': () => import('./SlotGame.vue'),       // 老虎机
-  'password':    () => import('./SlotGame.vue'),       // 暂用老虎机
-  'roster':      () => import('./WheelGame.vue'),      // 暂用大转盘
+  'password':    () => import('./ScratchGame.vue'),    // 刮刮卡
+  'roster':      () => import('./CardGame.vue'),       // 卡片翻转
 }
 
 /**
