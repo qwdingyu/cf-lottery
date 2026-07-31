@@ -62,7 +62,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
 /** 参与抽奖 */
 publicLotteryRoute.post("/draws/:slug/join", async (c) => {
   const db = getDb(c);
-  const body = await c.req.json<{ email: string; accessPassword?: string }>();
+  const body = await c.req.json<{ email: string; accessPassword?: string; inviteCode?: string }>();
   const email = String(body.email || "").trim().toLowerCase();
 
   if (!email || !email.includes("@")) {
@@ -72,6 +72,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
   try {
     const result = await joinDraw(db, c.req.param("slug"), email, "email", {
       accessPassword: body.accessPassword,
+      inviteCode: body.inviteCode,
     });
     if (!result.joined) {
       return fail(c, result.message || "参与失败", 400);

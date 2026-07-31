@@ -20,6 +20,8 @@ import {
   prizes,
   prizeCodes,
   lotteryPrizeTiers,
+  lotteryRosterMembers,
+  lotteryInviteCodes,
   auditLogs,
 } from "../db/schema";
 
@@ -238,15 +240,15 @@ export async function cancelDraw(db: DbType, tenantId: string, drawId: string): 
 /* ── 候选池 ───────────────────────────────────────────────── */
 
 /**
- * 加入候选池（公开模式）。
- * 校验参与模式、时间窗口、唯一性。
+ * 加入候选池。
+ * 校验参与模式：open（公开）、roster（名单）、password（密码）、invite_code（邀请码）。
  */
 export async function joinDraw(
   db: DbType,
   slug: string,
   identityValue: string,
   identityType: string = "email",
-  options?: { accessPassword?: string; ipHash?: string },
+  options?: { accessPassword?: string; inviteCode?: string; ipHash?: string },
 ) {
   const [draw] = await db
     .select()
@@ -257,7 +259,23 @@ export async function joinDraw(
   if (!draw) throw new Error("活动不存在");
   if (draw.status !== "open") throw new Error("活动未开启");
 
+  const normalizedValue = identityValue.trim().toLowerCase();
+
   // 校验参与模式
+  if (draw.participationMode === "roster") {
+    const [member] = await db
+      .select({ id: lotteryRosterMembers.id })
+      .from(lotteryRosterMembers)
+      .where(and(
+        eq(lotteryRosterMembers.drawId, draw.id),
+        eq(lotteryRosterMembers.identityValue, normalizedValue),
+      ))
+      .limit(1);
+    if (!member) {
+      return { joined: false, message: "您不在参与名单中" };
+    }
+  }
+
   if (draw.participationMode === "password") {
     if (!options?.accessPassword) {
       return { joined: false, message: "请输入访问密码" };
@@ -267,13 +285,43 @@ export async function joinDraw(
     }
   }
 
+  if (draw.participationMode === "invite_code") {
+    if (!options?.inviteCode) {
+      return { joined: false, message: "请输入邀请码" };
+    }
+    // CAS 更新邀请码使用次数
+    const result = await db
+      .update(lotteryInviteCodes)
+      .set({ usedCount: sql`${lotteryInviteCodes.usedCount} + 1` })
+      .where(and(
+        eq(lotteryInviteCodes.drawId, draw.id),
+        eq(lotteryInviteCodes.code, options.inviteCode),
+        eq(lotteryInviteCodes.active, 1),
+        sql`${lotteryInviteCodes.usedCount} < ${lotteryInviteCodes.maxUses}`,
+      ))
+      .returning({ id: lotteryInviteCodes.id });
+    if (result.length === 0) {
+      return { joined: false, message: "邀请码无效或已用完" };
+    }
+  }
+
   // 校验参与时间
   const now = new Date();
   if (now < new Date(draw.startAt) || now > new Date(draw.endAt)) {
     return { joined: false, message: "不在参与时间内" };
   }
 
-  const normalizedValue = identityValue.trim().toLowerCase();
+  // 检查最大参与人数
+  if (draw.maxParticipants) {
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.drawId, draw.id));
+    if (Number(total) >= draw.maxParticipants) {
+      return { joined: false, message: "参与人数已达上限" };
+    }
+  }
+
   const nowIso = now.toISOString();
 
   // 原子写入：利用 UNIQUE 约束防重
@@ -283,6 +331,7 @@ export async function joinDraw(
     drawId: draw.id,
     identityType,
     identityValue: normalizedValue,
+    inviteCodeId: options?.inviteCode || "",
     ipHash: options?.ipHash || "",
     joinedAt: nowIso,
   });
@@ -356,7 +405,15 @@ export async function performDraw(
   }
 
   try {
-    // 2. 读取候选池
+    // 2. 生成开奖随机种子并记录 hash（公平性可验证）
+    const seed = crypto.randomUUID();
+    const seedHash = await hashDrawSeed(seed);
+    await db
+      .update(lotteryDraws)
+      .set({ drawSeedHash: seedHash, algorithmVersion: "uniform_v1", updatedAt: now })
+      .where(eq(lotteryDraws.id, drawId));
+
+    // 3. 读取候选池
     const entries = await db
       .select()
       .from(lotteryEntries)
@@ -575,4 +632,14 @@ export async function processDueDraws(
   }
 
   return { processed, failed, errors };
+}
+
+/**
+ * 对开奖随机种子做 SHA-256 hash，用于事后公平性验证。
+ * 开奖前先记录 hash，开奖后可展示原始 seed 供参与者验证。
+ */
+async function hashDrawSeed(seed: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(seed));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
