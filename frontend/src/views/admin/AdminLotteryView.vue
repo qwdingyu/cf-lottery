@@ -112,8 +112,7 @@
             </td>
             <td>
               <div class="relation-cell">
-                <span>{{ draw.productTitle || draw.productId || '-' }}</span>
-                <small v-if="draw.productTitle && draw.productId">{{ draw.productId }}</small>
+                <span>{{ draw.title }}</span>
               </div>
             </td>
             <td class="col-status">
@@ -288,12 +287,10 @@
               </label>
               <label class="field-span-2">
                 <span>{{ $t('lottery.product') }}</span>
-                <AdminProductSelect
-                  v-model="form.productId"
-                  :placeholder="$t('lottery.adminProductPlaceholder')"
-                  :aria-label="$t('lottery.product')"
-                  fulfillment-mode="card"
-                  required
+                <input
+                  v-model="form.productName"
+                  placeholder="奖品名称（选填）"
+                  maxlength="100"
                 />
                 <small class="field-hint">{{ $t('lottery.adminProductHint') }}</small>
               </label>
@@ -515,14 +512,9 @@
 
 <script setup lang="ts">
 /**
- * 抽奖管理页。
- * 【样式】只复用 admin.css primitives（tag / table-actions / modal-form / relation-cell /
- * notice-card / filters select / empty-text / table-error / form-section / form-grid），
- * 禁止自造状态 chip 或 warning 按钮变体。
- * 【商品下拉】必须显式 import AdminProductSelect（无组件自动注册）；抽奖仅 card 履约。
- * 【安全】全部走 @/api/admin 的 adminRequest（Bearer），禁止裸 fetch。
+ * 抽奖管理页 — cf-lottery 适配版。
  */
-import { computed, ref, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -531,43 +523,95 @@ import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
 import { writeClipboardText } from '@/composables/useClipboard'
-import {
-  buildLotteryDrawConfirmMessage,
-  buildLotteryDuplicateDraft,
-  buildLotteryPublicPath,
-  buildLotteryPublicShareUrl,
-  buildLotteryWinnersCsvRows,
-  countLotteryEmailFailures,
-  filterAndSortAdminLotteryDraws,
-  formatLotteryEntryProgress,
-  formatLotteryVisibilityLabel,
-} from '@/lib/lottery-ops'
-import { downloadCsv } from '@/lib/csv-export'
 import AdminModal from '@/components/AdminModal.vue'
-import AdminProductSelect from '@/components/AdminProductSelect.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
-import {
-  createAdminLotteryDraw,
-  fetchAdminLotteryDraws,
-  fetchAdminLotteryWinners,
-  fetchAdminLottery,
-  updateAdminLotteryDraw,
-  openAdminLotteryDraw,
-  performAdminLotteryDraw,
-  cancelAdminLotteryDraw,
-  deleteAdminLotteryDraw,
-  retryAdminLotteryEmail,
-  recoverAdminLotteryDraw,
-  type AdminLotteryDraw,
-  type AdminLotteryWinner,
-} from '@/api/admin'
+
+/** 管理端 API 请求封装 */
+async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = (() => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } })();
+  const headers: Record<string,string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(path, { ...options, headers });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.message || `请求失败: ${res.status}`);
+  return data as T;
+}
+
+type LotteryDraw = {
+  id: string; tenantId: string; publicSlug: string; title: string; description: string;
+  status: string; participationMode: string; drawTrigger: string;
+  startAt: string; endAt: string; drawAt: string | null;
+  winnerCount: number; maxParticipants: number | null;
+  showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
+  drawnAt: string | null; failureReason: string;
+  createdAt: string; updatedAt: string;
+};
+
+type LotteryWinner = {
+  id: string; drawId: string; tierId: string; entryId: string;
+  identityType: string; identityValue: string; prizeCodeId: string;
+  drawnAt: string; notificationStatus: string; notificationError: string;
+};
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
 const { token } = useAdminAuth()
 const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 
-const draws = ref<AdminLotteryDraw[]>([])
+// ── 兼容旧 API 调用（适配到新后端） ──
+const requireToken = () => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } };
+const fetchLotteryDraws = async (t: string) => adminRequest<{ draws: LotteryDraw[] }>('/api/admin/draws');
+const createLotteryDraw = async (t: string, body: any) => adminRequest('/api/admin/draws', { method: 'POST', body: JSON.stringify(body) });
+const updateLotteryDraw = async (t: string, id: string, body: any) => adminRequest(`/api/admin/draws/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+const openLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/publish`, { method: 'POST' });
+const performLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/draw`, { method: 'POST' });
+const cancelLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/cancel`, { method: 'POST' });
+const deleteLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}`, { method: 'DELETE' });
+const fetchLotteryWinners = async (t: string, id: string) => adminRequest<{ winners: LotteryWinner[] }>(`/api/admin/draws/${id}/winners`);
+const fetchAdminLottery = async (t: string, path: string, method: string) => adminRequest(path, { method });
+const retryAdminLotteryEmail = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/retry-email`, { method: 'POST' });
+const recoverLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/recover`, { method: 'POST' });
+
+// ── 内联 lottery-ops 函数 ──
+const filterAndSortLotteryDraws = (draws: LotteryDraw[], opts: { status: string; query: string }) => {
+  let r = draws;
+  if (opts.status) r = r.filter(d => d.status === opts.status);
+  if (opts.query) { const q = opts.query.toLowerCase(); r = r.filter(d => d.title.toLowerCase().includes(q) || d.id.toLowerCase().includes(q)); }
+  return r.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+};
+const countLotteryEmailFailures = (winners: LotteryWinner[]) => winners.filter(w => w.notificationStatus === 'failed').length;
+const formatLotteryEntryProgress = (count?: number | null, max?: number | null) => max ? `${count ?? 0} / ${max}` : `${count ?? 0}`;
+const formatLotteryVisibilityLabel = (visible: number | undefined | null, labels: { public: string; hidden: string }) => visible ? labels.public : labels.hidden;
+const buildLotteryPublicPath = (id: string) => `/lottery/${id}`;
+const buildLotteryPublicShareUrl = (origin: string | null | undefined, id: string) => `${(origin || '').replace(/\/+$/, '')}${buildLotteryPublicPath(id)}`;
+const buildLotteryWinnersCsvRows = (winners: LotteryWinner[], labels: any) => {
+  const header = [labels.email, labels.emailStatus];
+  const rows = winners.map((w: any) => [w.identityValue, w.notificationStatus === 'sent' ? labels.sent : w.notificationStatus === 'failed' ? labels.failed : labels.pending]);
+  return [header, ...rows];
+};
+const buildLotteryDuplicateDraft = (draw: any, opts: { nameSuffix: string; defaultName: string }) => ({
+  name: draw.name ? `${draw.name}${opts.nameSuffix}` : opts.defaultName,
+  description: draw.description || '',
+  productId: draw.productId || draw.id || '',
+  startTime: draw.startTime ? toDateTimeLocalValue(new Date(draw.startTime)) : '',
+  endTime: draw.endTime ? toDateTimeLocalValue(new Date(draw.endTime)) : '',
+  drawTime: draw.drawTime ? toDateTimeLocalValue(new Date(draw.drawTime)) : '',
+  maxWinners: draw.winnerCount || 1,
+  maxParticipants: draw.maxParticipants || null,
+  expectedParticipants: draw.expectedParticipants || 0,
+});
+const buildLotteryDrawConfirmMessage = (draw: any, labels: any) => `${labels.title}\n${labels.name}${draw.title}\n${labels.pool}${draw.entryCount || 0}\n${labels.willDraw}${Math.min(Number(draw.entryCount)||0, draw.winnerCount)}`;
+
+/** 下载 CSV */
+function downloadCsv(filename: string, rows: string[][]) {
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+const draws = ref<LotteryDraw[]>([])
 const statusFilter = ref('')
 /** 名称 / 奖品 / id 本地模糊搜索 */
 const listQuery = ref('')
@@ -575,7 +619,7 @@ const loading = ref(false)
 const loadError = ref('')
 const showCreateModal = ref(false)
 const showWinnersModal = ref(false)
-const winners = ref<AdminLotteryWinner[]>([])
+const winners = ref<LotteryWinner[]>([])
 const winnersLoading = ref(false)
 /** 中奖弹窗对应的活动 id，便于弹窗内一键重发失败邮件 */
 const winnersModalDrawId = ref('')
@@ -590,7 +634,7 @@ let winnersStatusInFlight = false
 const MAX_WINNERS_STATUS_REFRESHES = 10
 
 const filteredDraws = computed(() =>
-  filterAndSortAdminLotteryDraws(draws.value, {
+  filterAndSortLotteryDraws(draws.value, {
     status: statusFilter.value,
     query: listQuery.value,
   }),
@@ -674,17 +718,17 @@ function statusClass(status: string): string {
   return 'tag-muted'
 }
 
-function canDeleteDraw(draw: AdminLotteryDraw): boolean {
+function canDeleteDraw(draw: LotteryDraw): boolean {
   return draw.status === 'draft' || draw.status === 'paused' || draw.status === 'drawn' || draw.status === 'cancelled'
 }
 
-function emailStatusLabel(w: AdminLotteryWinner): string {
+function emailStatusLabel(w: LotteryWinner): string {
   if (Number(w.emailSent) === 1) return t('lottery.adminEmailSent')
   if (w.emailError) return t('lottery.adminEmailFailed')
   return t('lottery.adminEmailPending')
 }
 
-function emailStatusClass(w: AdminLotteryWinner): string {
+function emailStatusClass(w: LotteryWinner): string {
   if (Number(w.emailSent) === 1) return 'tag-success'
   if (w.emailError) return 'tag-danger'
   return 'tag-warning'
@@ -703,7 +747,7 @@ async function refreshWinnersStatus(id: string) {
   if (winnersStatusInFlight || !showWinnersModal.value || winnersModalDrawId.value !== id) return
   winnersStatusInFlight = true
   try {
-    const data = await fetchAdminLotteryWinners(requireToken(), id)
+    const data = await fetchLotteryWinners(requireToken(), id)
     winners.value = data.winners || []
     winnersStatusRefreshes += 1
     if (winnersEmailPendingCount.value === 0 || winnersStatusRefreshes >= MAX_WINNERS_STATUS_REFRESHES) {
@@ -729,7 +773,7 @@ function startWinnersStatusPolling(id: string) {
   }, 2000)
 }
 
-function participantsMeta(draw: AdminLotteryDraw): string {
+function participantsMeta(draw: LotteryDraw): string {
   const parts: string[] = []
   if (draw.expectedParticipants !== undefined && draw.expectedParticipants !== null) {
     parts.push(`${t('lottery.expectedCount')} ${draw.expectedParticipants}`)
@@ -740,11 +784,11 @@ function participantsMeta(draw: AdminLotteryDraw): string {
   return parts.join(' · ')
 }
 
-function entryProgress(draw: AdminLotteryDraw): string {
+function entryProgress(draw: LotteryDraw): string {
   return formatLotteryEntryProgress(draw.entryCount, draw.maxParticipants)
 }
 
-function visibilityLabel(draw: AdminLotteryDraw): string {
+function visibilityLabel(draw: LotteryDraw): string {
   return formatLotteryVisibilityLabel(draw.visible, {
     public: t('lottery.adminVisibilityPublic'),
     hidden: t('lottery.adminVisibilityHidden'),
@@ -756,7 +800,7 @@ function publicShareUrl(drawId: string): string {
   return buildLotteryPublicShareUrl(origin, drawId)
 }
 
-async function handleCopyShareLink(draw: AdminLotteryDraw) {
+async function handleCopyShareLink(draw: LotteryDraw) {
   try {
     await writeClipboardText(publicShareUrl(draw.id))
     showToast(t('lottery.adminLinkCopied'), 'success')
@@ -766,7 +810,7 @@ async function handleCopyShareLink(draw: AdminLotteryDraw) {
 }
 
 /** 新标签打开用户端活动页，便于运营自检 */
-function handleOpenPublic(draw: AdminLotteryDraw) {
+function handleOpenPublic(draw: LotteryDraw) {
   const path = buildLotteryPublicPath(draw.id)
   if (typeof window !== 'undefined') {
     window.open(path, '_blank', 'noopener,noreferrer')
@@ -792,7 +836,7 @@ function handleExportWinners() {
   showToast(t('lottery.adminExportWinnersDone'), 'success')
 }
 
-function handleDuplicate(draw: AdminLotteryDraw) {
+function handleDuplicate(draw: LotteryDraw) {
   const draft = buildLotteryDuplicateDraft(draw, { nameSuffix: t('lottery.adminDuplicateSuffix'), defaultName: t('lottery.title') })
   form.value = {
     id: '',
@@ -897,7 +941,7 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await fetchAdminLotteryDraws(requireToken())
+    const data = await fetchLotteryDraws(requireToken())
     if (sequence !== loadSequence) return
     draws.value = data.draws || []
   } catch (e: any) {
@@ -913,7 +957,7 @@ async function loadData() {
 async function handleOpen(id: string) {
   operatingId.value = id
   try {
-    await openAdminLotteryDraw(requireToken(), id)
+    await openLotteryDraw(requireToken(), id)
     // 开启后立刻把投放链接放进剪贴板，少一步手动复制
     try {
       await writeClipboardText(publicShareUrl(id))
@@ -929,7 +973,7 @@ async function handleOpen(id: string) {
   }
 }
 
-async function handleDraw(draw: AdminLotteryDraw) {
+async function handleDraw(draw: LotteryDraw) {
   // 开奖前展示池子/名额/将抽出人数，降低误操作；不改服务端开奖语义
   const summary = buildLotteryDrawConfirmMessage(draw, {
     title: t('lottery.adminConfirmDrawTitle'),
@@ -945,7 +989,7 @@ async function handleDraw(draw: AdminLotteryDraw) {
   operatingId.value = draw.id
   let drawOk = false
   try {
-    await performAdminLotteryDraw(requireToken(), draw.id)
+    await performLotteryDraw(requireToken(), draw.id)
     drawOk = true
     showToast(t('lottery.adminDrawDone'), 'success')
     await loadData()
@@ -968,7 +1012,7 @@ async function viewWinners(id: string) {
   showWinnersModal.value = true
   operatingId.value = id
   try {
-    const data = await fetchAdminLotteryWinners(requireToken(), id)
+    const data = await fetchLotteryWinners(requireToken(), id)
     winners.value = data.winners || []
     startWinnersStatusPolling(id)
   } catch (e: any) {
@@ -993,7 +1037,7 @@ async function handleCancel(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmCancel')))) return
   operatingId.value = id
   try {
-    await cancelAdminLotteryDraw(requireToken(), id)
+    await cancelLotteryDraw(requireToken(), id)
     showToast(t('lottery.adminDrawCancelled'), 'success')
     await loadData()
   } catch (e: any) {
@@ -1010,7 +1054,7 @@ async function handleDelete(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmDelete', { name: draw.name, status: statusLabel(draw.status) })))) return
   operatingId.value = id
   try {
-    await deleteAdminLotteryDraw(requireToken(), id)
+    await deleteLotteryDraw(requireToken(), id)
     showToast(t('lottery.adminDrawDeleted'), 'success')
     await loadData()
   } catch (e: any) {
@@ -1033,7 +1077,7 @@ async function batchDeleteDraws() {
     let failed = 0
     for (const id of selectedDraws.map((draw) => draw.id)) {
       try {
-        await deleteAdminLotteryDraw(requireToken(), id)
+        await deleteLotteryDraw(requireToken(), id)
         success++
       } catch {
         failed++
@@ -1082,7 +1126,7 @@ async function handleResume(id: string) {
   }
 }
 
-async function handleEdit(draw: AdminLotteryDraw) {
+async function handleEdit(draw: LotteryDraw) {
   // 与后端 PATCH 一致：仅 draft 可改配置；paused 需先恢复或复制活动
   if (draw.status !== 'draft') {
     showToast(t('lottery.adminEditNonDraft'), 'error')
@@ -1109,7 +1153,7 @@ async function handleToggleVisibility(id: string, visible: number | undefined) {
   if (!(await askConfirm(t('lottery.adminConfirmToggleVisibility')))) return
   operatingId.value = id
   try {
-    await updateAdminLotteryDraw(requireToken(), id, { visible: visible ? 0 : 1 })
+    await updateLotteryDraw(requireToken(), id, { visible: visible ? 0 : 1 })
     showToast(visible ? t('lottery.adminHidden') : t('lottery.adminShown'), 'success')
     await loadData()
   } catch (e: any) {
@@ -1131,7 +1175,7 @@ async function handleRetryEmail(id: string) {
     // 若中奖弹窗正打开同一活动，刷新名单上的发送态
     if (showWinnersModal.value && winnersModalDrawId.value === id) {
       try {
-        const data = await fetchAdminLotteryWinners(requireToken(), id)
+        const data = await fetchLotteryWinners(requireToken(), id)
         winners.value = data.winners || []
       } catch {
         /* 列表刷新失败不阻断主提示 */
@@ -1153,7 +1197,7 @@ async function handleRecover(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmRecover')))) return
   operatingId.value = id
   try {
-    const result = await recoverAdminLotteryDraw(requireToken(), id)
+    const result = await recoverLotteryDraw(requireToken(), id)
     if (result.healed === 'drawn') {
       showToast(t('lottery.adminRecoverDoneDrawn'), 'success')
     } else {
@@ -1201,10 +1245,10 @@ async function handleCreate() {
         form.value = emptyForm()
         return
       }
-      await updateAdminLotteryDraw(requireToken(), form.value.id, payload)
+      await updateLotteryDraw(requireToken(), form.value.id, payload)
       showToast(t('lottery.adminDrawUpdated'), 'success')
     } else {
-      const created = await createAdminLotteryDraw(requireToken(), payload)
+      const created = await createLotteryDraw(requireToken(), payload)
       // 创建成功后复制投放链接（草稿开启前也可预填投放）；复制失败不阻断主流程
       if (created?.id) {
         try {
