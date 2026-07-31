@@ -37,7 +37,7 @@
     </header>
 
     <!-- 我的记录：登录后汇总参与/中奖，不必逐卡展开 -->
-    <section v-if="lotteryToken" class="my-records" aria-labelledby="lottery-my-records">
+    <section v-if="sessionEmail" class="my-records" aria-labelledby="lottery-my-records">
       <div class="section-head">
         <h2 id="lottery-my-records" class="section-title">{{ $t('lottery.myRecords') }}</h2>
         <button
@@ -164,11 +164,11 @@
             >
               {{ $t('lottery.checkOrder') }}
             </RouterLink>
-            <span v-else-if="lotteryToken && myJoinedById[draw.id]" class="not-won">
+            <span v-else-if="sessionEmail && myJoinedById[draw.id]" class="not-won">
               {{ $t('lottery.notWon') }}
             </span>
             <button
-              v-else-if="!lotteryToken"
+              v-else-if="!sessionEmail"
               type="button"
               class="btn btn-ghost btn-sm"
               @click="openLogin()"
@@ -182,7 +182,7 @@
           <template v-else-if="draw.status === 'open'">
             <span v-if="myJoinedById[draw.id]" class="joined-badge">{{ $t('lottery.joined') }} · {{ $t('lottery.waitDraw') }}</span>
             <button
-              v-else-if="!lotteryToken"
+              v-else-if="!sessionEmail"
               type="button"
               class="btn btn-primary btn-sm"
               @click="openLogin(draw.id)"
@@ -252,7 +252,7 @@
           <div class="draw-actions">
             <div v-if="draw.status === 'drawn'" class="result-section">
               <span class="chip chip-drawn">{{ $t('lottery.drawResult') }}</span>
-              <template v-if="lotteryToken">
+              <template v-if="sessionEmail">
                 <div v-if="myWonById[draw.id]" class="won-badge">
                   {{ $t('lottery.won') }}
                   <RouterLink
@@ -298,7 +298,7 @@
                   </div>
                 </div>
               </div>
-              <div v-else-if="!lotteryToken" class="login-prompt">
+              <div v-else-if="!sessionEmail" class="login-prompt">
                 <button type="button" class="btn btn-primary" @click="openLogin(draw.id)">
                   {{ $t('lottery.loginFirst') }}
                 </button>
