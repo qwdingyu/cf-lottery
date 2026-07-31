@@ -5,13 +5,16 @@
  * 配置通过 wrangler secret put 设置 RESEND_API_KEY / EMAIL_FROM。
  */
 import lotteryWinnerHtml from "./templates/lottery_winner";
+import emailAccessCodeHtml from "./templates/email_access_code";
 
 const templates: Record<string, string> = {
   lottery_winner: lotteryWinnerHtml,
+  email_access_code: emailAccessCodeHtml,
 };
 
 const templateSubjects: Record<string, string> = {
   lottery_winner: "🎉 恭喜中奖！奖品卡密已发放",
+  email_access_code: "您的抽奖验证码",
 };
 
 /** 构建中奖邮件模板数据 */

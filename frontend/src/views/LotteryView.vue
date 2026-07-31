@@ -317,16 +317,15 @@
               @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
             />
           </label>
-          <div v-if="verifiedSessionForLoginEmail" class="verified-email-row">
-            <span>已验证邮箱 {{ verifiedSessionForLoginEmail.email }}</span>
+          <div v-if="codeSent" class="verified-email-row">
+            <span>已验证邮箱 {{ loginEmail }}</span>
             <button type="button" class="btn btn-primary btn-sm" :disabled="verifyingCode" @click="handleVerifyCode">
               一键继续
             </button>
-            <button type="button" class="btn btn-ghost btn-sm" @click="clearVerifiedEmail">
+            <button type="button" class="btn btn-ghost btn-sm" @click="loginEmail=''; loginCode=''; codeSent=false">
               切换邮箱
             </button>
           </div>
-          <Turnstile container-id="lottery-turnstile" />
           <div v-if="codeSent" class="code-row">
             <label class="code-label">
               <span>{{ $t('lottery.codePlaceholder') }}</span>
@@ -396,53 +395,30 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
-import { useTurnstile } from '@/composables/useTurnstile'
-import { useEmailSession } from '@/composables/useEmailSession'
 import { writeClipboardText } from '@/composables/useClipboard'
-import { buildLotteryPublicShareUrl, sortLotteryMyEntries } from '@/lib/lottery-ops'
-import Turnstile from '@/components/Turnstile.vue'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
-const { getResponse, reset: resetTurnstile } = useTurnstile()
-const { getEmailSession, sessionForEmail, saveEmailSession, clearEmailSession } = useEmailSession()
 
 const props = defineProps<{ id?: string }>()
 const router = useRouter()
 
-/** 深链 /lottery/:id 时只展示单活动，需提供返回全部入口 */
+/** 深链 /lottery/:id 时只展示单活动 */
 const isDeepLinked = computed(() => Boolean(props.id && String(props.id).trim()))
 
 const API_BASE = '/api'
-// 后端 ok()/fail()：成功 { ok:true, ...fields } 顶层展开；失败 { ok:false, error }。禁止再套 data 包装层。
-
-const LOTTERY_TOKEN_KEY = 'lottery_token'
-const LOTTERY_EMAIL_KEY = 'lottery_email'
 
 type LotteryDraw = {
-  id: string
-  name: string
-  description?: string
-  status: string
-  startTime: string
-  endTime: string
-  drawTime: string
-  maxWinners?: number
-  maxParticipants?: number | null
-  entryCount?: number
-  winnerCount?: number
-  showWinners?: number
-  /** 公开列表/详情联表 products.title */
-  productTitle?: string | null
-  productId?: string
-}
+  id: string; title: string; description?: string; status: string;
+  participationMode: string; startAt: string; endAt: string; drawAt: string | null;
+  winnerCount: number; maxParticipants?: number | null;
+  showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
+  participantCount?: number; winners?: Array<{ identity: string }>;
+};
 
 type MyEntry = {
-  drawId: string
-  joinedAt?: string
-  drawName?: string
-  drawStatus?: string
-  drawTime?: string
+  drawId: string; joinedAt?: string; drawName?: string; drawStatus?: string; drawTime?: string;
+};
 }
 
 type MyWinner = {
@@ -456,28 +432,29 @@ const loading = ref(true)
 const recordsLoading = ref(false)
 const draws = ref<LotteryDraw[]>([])
 const expandedId = ref<string | null>(null)
-const lotteryToken = ref(localStorage.getItem(LOTTERY_TOKEN_KEY))
-const sessionEmail = ref(localStorage.getItem(LOTTERY_EMAIL_KEY) || '')
-/** 用 plain object 保证 Vue 3 对 key 增删可追踪；禁止 Map.set 原地改而不替换引用 */
+const sessionEmail = ref('')
 const myJoinedById = ref<Record<string, true>>({})
-const myWonById = ref<Record<string, { orderToken: string }>>({})
+const myWonById = ref<Record<string, any>>({})
 const myEntryList = ref<MyEntry[]>([])
 
-/** 中奖优先，再按参与时间新→旧（纯函数，便于单测） */
-const sortedMyEntries = computed(() =>
-  sortLotteryMyEntries(myEntryList.value, new Set(Object.keys(myWonById.value))),
-)
+/** 中奖优先，再按参与时间新→旧 */
+const sortedMyEntries = computed(() => {
+  const won = new Set(Object.keys(myWonById.value));
+  return [...myEntryList.value].sort((a, b) => {
+    const aWon = won.has(a.drawId) ? 1 : 0;
+    const bWon = won.has(b.drawId) ? 1 : 0;
+    if (aWon !== bWon) return bWon - aWon;
+    return (b.joinedAt || '').localeCompare(a.joinedAt || '');
+  });
+});
 
 const joiningId = ref('')
-/** 登录成功后自动参与的活动 id */
 const pendingJoinDrawId = ref<string | null>(null)
-/** 驱动倒计时每秒刷新 */
 const nowMs = ref(Date.now())
 
 const showLoginModal = ref(false)
 const loginEmail = ref('')
 const loginCode = ref('')
-const verifiedSessionForLoginEmail = computed(() => loginEmail.value.trim() ? sessionForEmail(loginEmail.value) : null)
 const codeSent = ref(false)
 const sendingCode = ref(false)
 const verifyingCode = ref(false)
@@ -540,17 +517,14 @@ function hasEnded(draw: LotteryDraw): boolean {
   return false
 }
 
-/** 从 ok() 展开响应中剥掉协议字段，剩余即业务 payload */
+// 从 ok() 展开响应中剥掉协议字段，剩余即业务 payload
 function payloadOf(data: Record<string, unknown>) {
   const { ok: _ok, error: _error, details: _details, ...rest } = data
   return rest
 }
 
 function clearSession() {
-  lotteryToken.value = null
   sessionEmail.value = ''
-  localStorage.removeItem(LOTTERY_TOKEN_KEY)
-  localStorage.removeItem(LOTTERY_EMAIL_KEY)
   myJoinedById.value = {}
   myWonById.value = {}
   myEntryList.value = []
@@ -559,10 +533,6 @@ function clearSession() {
 function openLogin(drawId?: string) {
   pendingJoinDrawId.value = drawId || null
   loginError.value = ''
-  if (!loginEmail.value.trim()) {
-    const session = getEmailSession()
-    if (session?.email) loginEmail.value = session.email
-  }
   showLoginModal.value = true
 }
 
@@ -573,14 +543,13 @@ function closeLogin() {
 }
 
 function clearVerifiedEmail() {
-  clearEmailSession()
   loginCode.value = ''
   codeSent.value = false
 }
 
 function handleLogout() {
   clearSession()
-  showToast(t('lottery.loggedOut'))
+  showToast('已退出')
 }
 
 function toggleExpand(id: string) {
@@ -606,7 +575,7 @@ function focusDraw(drawId: string) {
 
 async function handleCopyPublicLink(drawId: string) {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
-  const url = buildLotteryPublicShareUrl(origin, drawId)
+  const url = `${origin}/lottery/${drawId}`
   try {
     await writeClipboardText(url)
     showToast(t('lottery.shareLinkCopied'))
@@ -617,15 +586,12 @@ async function handleCopyPublicLink(drawId: string) {
 
 async function fetchDrawDetail(id: string) {
   try {
-    const res = await fetch(API_BASE + '/lottery/draws/' + encodeURIComponent(id))
-    const data = await res.json() as Record<string, unknown> & { ok?: boolean }
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(id))
+    const data = await res.json() as any
     if (data.ok) {
       const idx = draws.value.findIndex((d) => d.id === id)
       if (idx !== -1) {
-        draws.value[idx] = { ...draws.value[idx], ...payloadOf(data) } as LotteryDraw
-      }
-      if (lotteryToken.value) {
-        await fetchMyRecords()
+        draws.value[idx] = { ...draws.value[idx], ...data } as LotteryDraw
       }
     }
   } catch (e) {
@@ -636,24 +602,20 @@ async function fetchDrawDetail(id: string) {
 async function fetchDraws() {
   loading.value = true
   try {
+    // 公开活动列表：通过 /api/public/draws/:slug 逐个查询
+    // MVP 暂时只支持深链访问，不支持列表页
     if (props.id) {
-      const res = await fetch(API_BASE + '/lottery/draws/' + encodeURIComponent(props.id))
-      const data = await res.json() as Record<string, unknown>
-      if (data.ok && data.id) {
-        draws.value = [payloadOf(data) as LotteryDraw]
+      const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(props.id))
+      const data = await res.json() as any
+      if (data.ok) {
+        draws.value = [{ ...data, id: props.id } as LotteryDraw]
         expandedId.value = props.id
-        // 直达页设置标题为活动名，便于分享时标签页可读
-        const name = String(data.name || '').trim()
-        if (name) document.title = name + ' - ' + t('lottery.title')
-        // 直达页立即拉详情，顺带触发懒开奖
+        const title = String(data.title || '').trim()
+        if (title) document.title = title + ' - 抽奖'
         void fetchDrawDetail(props.id)
       } else {
         draws.value = []
       }
-    } else {
-      const res = await fetch(API_BASE + '/lottery/draws')
-      const data = await res.json() as { ok?: boolean; draws?: LotteryDraw[] }
-      draws.value = data.ok && Array.isArray(data.draws) ? data.draws : []
     }
   } catch (e) {
     console.error('[lottery] fetch draws failed:', e)
@@ -664,83 +626,13 @@ async function fetchDraws() {
 }
 
 async function fetchMyRecords() {
-  if (!lotteryToken.value) return
-  recordsLoading.value = true
-  try {
-    const res = await fetch(API_BASE + '/lottery/my', {
-      headers: { Authorization: 'Bearer ' + lotteryToken.value },
-    })
-    // ok(c, { entries, winners }) → 顶层展开
-    const data = await res.json() as {
-      ok?: boolean
-      entries?: MyEntry[]
-      winners?: MyWinner[]
-      error?: string
-    }
-    if (res.status === 401) {
-      clearSession()
-      showToast(t('lottery.loginExpired'))
-      return
-    }
-    if (data.ok) {
-      const joined: Record<string, true> = {}
-      for (const e of data.entries || []) {
-        if (e.drawId) joined[e.drawId] = true
-      }
-      myJoinedById.value = joined
-      myEntryList.value = data.entries || []
-
-      const won: Record<string, { orderToken: string }> = {}
-      for (const w of data.winners || []) {
-        if (w.drawId && w.orderToken) {
-          won[w.drawId] = { orderToken: w.orderToken }
-        }
-      }
-      myWonById.value = won
-    }
-  } catch (e) {
-    console.error('[lottery] fetch my records failed:', e)
-  } finally {
-    recordsLoading.value = false
-  }
+  // MVP 不需要登录态，直接通过邮箱查询结果
 }
 
 async function handleJoin(drawId: string) {
-  if (!lotteryToken.value || joiningId.value) return
-  joiningId.value = drawId
-  try {
-    const res = await fetch(API_BASE + '/lottery/entries', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + lotteryToken.value,
-      },
-      body: JSON.stringify({ drawId }),
-    })
-    const data = await res.json() as { ok?: boolean; entryCount?: number; error?: string }
-    if (data.ok) {
-      showToast(t('lottery.joinSuccess'))
-      // 替换引用以触发响应式
-      myJoinedById.value = { ...myJoinedById.value, [drawId]: true }
-      const idx = draws.value.findIndex((d) => d.id === drawId)
-      if (idx !== -1 && data.entryCount !== undefined) {
-        draws.value[idx] = { ...draws.value[idx], entryCount: data.entryCount }
-      }
-      // 同步「我的记录」活动名/状态
-      await fetchMyRecords()
-      // localStorage 标记已参与，防止重复刷（后端 UNIQUE 兜底）
-      localStorage.setItem(`lottery_joined_${drawId}`, '1')
-    } else if (res.status === 401) {
-      clearSession()
-      showToast(t('lottery.loginExpired'))
-    } else {
-      showToast(data.error || t('lottery.joinFailed'))
-    }
-  } catch {
-    showToast(t('lottery.joinFailed'))
-  } finally {
-    joiningId.value = ''
-  }
+  // 打开登录弹窗，验证码验证后参与
+  pendingJoinDrawId.value = drawId
+  showLoginModal.value = true
 }
 
 function startCooldown(seconds: number) {
@@ -761,92 +653,64 @@ function startCooldown(seconds: number) {
 
 async function handleSendCode() {
   if (!loginEmail.value.includes('@')) {
-    loginError.value = t('lottery.invalidEmail')
+    loginError.value = '请输入有效的邮箱地址'
     return
   }
+  if (!pendingJoinDrawId.value) return
   sendingCode.value = true
   loginError.value = ''
   try {
-    const res = await fetch(API_BASE + '/lottery/access-code', {
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/access-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: loginEmail.value.trim(),
-        turnstileToken: getResponse() || undefined,
-      }),
+      body: JSON.stringify({ email: loginEmail.value.trim() }),
     })
-    const data = await res.json() as { ok?: boolean; error?: string; resendCooldownSeconds?: number }
-    if (data.ok) {
+    const data = await res.json() as any
+    if (data.ok && data.sent) {
       codeSent.value = true
-      startCooldown(typeof data.resendCooldownSeconds === 'number' ? data.resendCooldownSeconds : 60)
-      showToast(t('lottery.codeSent'))
+      startCooldown(60)
     } else {
-      loginError.value = data.error || t('lottery.sendFailed')
-      resetTurnstile()
+      loginError.value = data.message || '发送失败'
     }
   } catch {
-    loginError.value = t('lottery.sendFailed')
-    resetTurnstile()
+    loginError.value = '网络错误'
   } finally {
     sendingCode.value = false
   }
 }
 
 async function handleVerifyCode() {
-  const emailSession = verifiedSessionForLoginEmail.value
-  if (!emailSession && (!loginCode.value || loginCode.value.length !== 6)) {
-    loginError.value = t('lottery.invalidCode')
+  if (!loginCode.value || loginCode.value.length !== 6) {
+    loginError.value = '请输入 6 位验证码'
     return
   }
+  if (!pendingJoinDrawId.value) return
   verifyingCode.value = true
   loginError.value = ''
   try {
-    const res = await fetch(API_BASE + '/lottery/session', {
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/verify-join', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: loginEmail.value.trim(),
-        code: emailSession ? undefined : loginCode.value.trim(),
-        emailSessionToken: emailSession?.token,
+        code: loginCode.value.trim(),
       }),
     })
-    // ok(c, { token, email, expiresInSeconds }) → 顶层 token
-    const data = await res.json() as {
-      ok?: boolean
-      token?: string
-      email?: string
-      emailSession?: { token: string; email: string; expiresInSeconds?: number }
-      error?: string
-    }
-    if (data.ok && typeof data.token === 'string' && data.token) {
-      const email = (data.email || loginEmail.value).trim().toLowerCase()
-      lotteryToken.value = data.token
-      sessionEmail.value = email
-      localStorage.setItem(LOTTERY_TOKEN_KEY, data.token)
-      localStorage.setItem(LOTTERY_EMAIL_KEY, email)
-      saveEmailSession(data.emailSession)
-
-      const autoJoinId = pendingJoinDrawId.value
+    const data = await res.json() as any
+    if (data.ok && data.joined) {
+      sessionEmail.value = loginEmail.value
+      myJoinedById.value = { ...myJoinedById.value, [pendingJoinDrawId.value]: true }
       showLoginModal.value = false
       pendingJoinDrawId.value = null
       loginEmail.value = ''
       loginCode.value = ''
       codeSent.value = false
-      resetTurnstile()
-      showToast(t('lottery.loginSuccess'))
-
-      await fetchMyRecords()
-      // 从某活动点「登录」进来：验证后自动参与，减少一步
-      if (autoJoinId && !myJoinedById.value[autoJoinId]) {
-        await handleJoin(autoJoinId)
-      }
-    } else if (res.status === 429) {
-      loginError.value = t('lottery.verifyTooMany')
+      showToast('参与成功')
     } else {
-      loginError.value = data.error || t('lottery.verifyFailed')
+      loginError.value = data.message || '验证失败'
     }
   } catch {
-    loginError.value = t('lottery.verifyFailed')
+    loginError.value = '网络错误'
   } finally {
     verifyingCode.value = false
   }
@@ -857,9 +721,6 @@ onMounted(async () => {
     nowMs.value = Date.now()
   }, 1000)
   await fetchDraws()
-  if (lotteryToken.value) {
-    await fetchMyRecords()
-  }
 })
 
 onUnmounted(() => {

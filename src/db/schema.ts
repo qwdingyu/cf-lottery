@@ -176,3 +176,16 @@ export const auditLogs = sqliteTable("audit_logs", {
   metadataJson: text("metadata_json").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
+
+// ── 邮箱验证码 ──
+export const emailAccessCodes = sqliteTable("email_access_codes", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull(),
+  drawId: text("draw_id").notNull(),
+  codeHash: text("code_hash").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  used: integer("used").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  emailDrawIdx: uniqueIndex("idx_email_code_draw").on(t.email, t.drawId, t.used),
+}));
