@@ -601,6 +601,7 @@ export async function performDraw(
               prizeCodeId = lockedCode?.id || "";
             }
             // 码不足时跳过（prizeCodeId 保持空字符串），中奖者仍记录但无码
+            }
           }
 
           // 写入中奖记录

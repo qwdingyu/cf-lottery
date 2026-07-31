@@ -190,3 +190,10 @@ export const emailAccessCodes = sqliteTable("email_access_codes", {
 }, (t) => ({
   emailDrawIdx: uniqueIndex("idx_email_code_draw").on(t.email, t.drawId, t.used),
 }));
+
+// ── 系统配置（key-value 存储，供管理后台动态配置） ──
+export const systemConfig = sqliteTable("system_config", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull().default(""),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});

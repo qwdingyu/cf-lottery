@@ -1,0 +1,172 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# cf-lottery CI/CD 部署流水线
+# 基于 cf-shop 的 deploy.yml 适配，只保留 Worker 部署模式
+# ═══════════════════════════════════════════════════════════════════════════════
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy.yml'
+      - 'src/**'
+      - 'scripts/**'
+      - 'frontend/**'
+      - 'public/**'
+      - 'migrations/**'
+      - 'wrangler.jsonc'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'vitest.config.ts'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Validate deployment configuration
+        env:
+          APP_ORIGIN: ${{ vars.APP_ORIGIN }}
+          WORKER_NAME: ${{ vars.WORKER_NAME }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TURSO_URL: ${{ secrets.TURSO_URL }}
+          TURSO_TOKEN: ${{ secrets.TURSO_TOKEN }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          missing=()
+          for name in APP_ORIGIN WORKER_NAME CLOUDFLARE_API_TOKEN TURSO_URL TURSO_TOKEN JWT_SECRET; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required deployment configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          node -e 'const u = new URL(process.env.APP_ORIGIN); if (u.protocol !== "https:" || u.pathname !== "/") process.exit(1)'
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Unit tests
+        run: npm run test
+
+      # ── 构建前端 ─────────────────────────────────────────────────────────
+      - name: Build frontend
+        run: npm run frontend:build
+
+      # ── 数据库迁移 ───────────────────────────────────────────────────────
+      - name: Apply database migrations
+        run: |
+          if [ -f "scripts/migrate.mjs" ]; then
+            node scripts/migrate.mjs
+          elif [ -d "migrations" ]; then
+            echo "Running migrations from migrations/ directory"
+            node -e "
+              const { createClient } = require('@libsql/client');
+              const fs = require('fs');
+              const path = require('path');
+              const c = createClient({ url: process.env.TURSO_URL, authToken: process.env.TURSO_TOKEN });
+              (async () => {
+                const applied = new Set();
+                try { const r = await c.execute('SELECT name FROM schema_migrations'); for (const row of r.rows) applied.add(row.name); } catch(e) {}
+                const files = fs.readdirSync('migrations').filter(f => f.endsWith('.sql')).sort();
+                let count = 0;
+                for (const file of files) {
+                  const name = file.replace(/^\d+_/, '').replace(/\.sql$/, '');
+                  if (applied.has(name)) continue;
+                  const sql = fs.readFileSync(path.join('migrations', file), 'utf8').split('-- DOWN')[0];
+                  const stmts = sql.split(';').map(s => s.trim()).filter(Boolean);
+                  for (const stmt of stmts) {
+                    try { await c.execute(stmt); } catch(e) {
+                      if (!e.message.includes('already exists') && !e.message.includes('UNIQUE')) {
+                        console.error('Migration error [' + file + ']:', String(e.message).substring(0, 120));
+                      }
+                    }
+                  }
+                  try { await c.execute('INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)', [name]); } catch(e) {}
+                  count++;
+                }
+                if (count > 0) console.log('Applied ' + count + ' new migrations');
+                else console.log('No pending migrations');
+              })();
+            "
+          fi
+        env:
+          TURSO_URL: ${{ secrets.TURSO_URL }}
+          TURSO_TOKEN: ${{ secrets.TURSO_TOKEN }}
+
+      # ── 部署 Worker ──────────────────────────────────────────────────────
+      - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          APP_ORIGIN: ${{ vars.APP_ORIGIN }}
+          EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          TURSO_URL: ${{ secrets.TURSO_URL }}
+          TURSO_TOKEN: ${{ secrets.TURSO_TOKEN }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          umask 077
+          secrets_file="$RUNNER_TEMP/cf-lottery-secrets.env"
+          trap 'rm -f "$secrets_file"' EXIT
+          : > "$secrets_file"
+          append_secret() {
+            local name="$1" value="${!1:-}"
+            if [ -n "$value" ]; then
+              printf '%s=%s\n' "$name" "$value" >> "$secrets_file"
+            fi
+            return 0
+          }
+          for name in TURSO_URL TURSO_TOKEN JWT_SECRET RESEND_API_KEY CRON_SECRET; do
+            append_secret "$name"
+          done
+
+          deploy_args=(--secrets-file="$secrets_file" --var "APP_ORIGIN:$APP_ORIGIN")
+          [ -n "$EMAIL_FROM" ] && deploy_args+=(--var "EMAIL_FROM:$EMAIL_FROM")
+          npx wrangler deploy "${deploy_args[@]}"
+
+      # ── 冒烟测试 ──────────────────────────────────────────────────────
+      - name: Smoke test
+        env:
+          BASE_URL: ${{ vars.APP_ORIGIN }}
+        run: |
+          echo "Smoke testing: $BASE_URL"
+          sleep 5
+          # 健康检查
+          curl -sS "$BASE_URL/api/health" -o /dev/null -w "Health: HTTP %{http_code}\n"
+          # 首页
+          curl -sS "$BASE_URL/" -o /dev/null -w "Homepage: HTTP %{http_code}\n"
+
+      # ── 部署报告 ──────────────────────────────────────────────────────
+      - name: Deploy summary
+        if: always()
+        run: |
+          echo "## 🚀 cf-lottery 部署报告" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 项目 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|----|" >> $GITHUB_STEP_SUMMARY
+          echo "| 分支 | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 提交 | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 时间 | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "| Worker | ${{ vars.WORKER_NAME }} |" >> $GITHUB_STEP_SUMMARY

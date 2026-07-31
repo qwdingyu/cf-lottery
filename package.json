@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "wrangler dev --port 8787",
     "deploy": "npm run frontend:build && npx wrangler deploy",
+    "deps:ci": "npm ci",
     "type-check": "tsc --noEmit",
     "type-check:frontend": "npm --workspace frontend run type-check",
     "type-check:all": "npm run type-check && npm run type-check:frontend",
