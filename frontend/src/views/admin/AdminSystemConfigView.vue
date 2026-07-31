@@ -218,6 +218,7 @@ function groupNameKey(name: string): string {
 }
 
 const { showToast } = useToast()
+const { t } = useI18n()
 const { token } = useAdminAuth()
 const route = useRoute()
 const router = useRouter()
