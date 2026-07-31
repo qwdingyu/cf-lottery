@@ -149,6 +149,14 @@ import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { formatDate } from '@/composables/useFormat'
 import { downloadCsv } from '@/lib/csv-export'
+/** 下载 CSV（内联实现，替代 @/lib/csv-export） */
+function downloadCsv(filename: string, rows: string[][]) {
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  a.click(); URL.revokeObjectURL(url);
+}
 import AdminPagination from '@/components/AdminPagination.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 

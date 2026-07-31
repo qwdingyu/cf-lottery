@@ -1,9 +1,4 @@
 import { inArray } from "drizzle-orm";
-import type { EmailPolicyConfig } from "../../shared/email-policy";
-import {
-  normalizeEmailDomainWhitelistInput,
-  parseEmailDomainWhitelist,
-} from "../../shared/email-policy";
 import type { DbType } from "../db/client";
 import { systemConfig } from "../db/schema";
 import definitions from "./system-config-definitions.json";
@@ -121,7 +116,15 @@ export function normalizeSystemConfigValue(key: string, value: string): { ok: tr
   }
   // 邮箱域名白名单：保存时规范化 + 合法性校验（与运行时 parse 共用规则）。
   if (key === "email_domain_whitelist") {
-    return normalizeEmailDomainWhitelistInput(trimmed);
+    // 简化的域名白名单处理：按逗号/空格/换行分割，去空去重
+    return {
+      ok: true as const,
+      value: trimmed
+        .split(/[,;\s\n]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean)
+        .join(","),
+    };
   }
   return { ok: true, value: trimmed };
 }
@@ -337,6 +340,26 @@ export async function getIpRateLimitConfig(db: DbType): Promise<IpRateLimitConfi
     "ip_rate_free_claim_window_seconds",
   ]);
   return buildIpRateLimitConfig(config);
+}
+
+/**
+ * 邮箱运营策略配置（cf-lottery 精简版，移除 shared/email-policy 依赖）
+ */
+export type EmailPolicyConfig = {
+  domainRestrictionEnabled: boolean;
+  aliasBlockEnabled: boolean;
+  allowedDomains: string[];
+};
+
+/**
+ * 解析域名白名单字符串为数组（cf-lottery 内联版，替代 shared/email-policy）
+ */
+function parseEmailDomainWhitelist(input: string | undefined): string[] {
+  if (!input) return [];
+  return input
+    .split(/[,;\s\n]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 /**
