@@ -807,7 +807,7 @@ export async function importPrizeCodes(
  */
 export async function processDueDraws(
   db: DbType,
-  options?: { limit?: number },
+  options?: { limit?: number; emailEnv?: { resendApiKey: string; emailFrom: string } },
 ): Promise<{ processed: number; failed: number; errors: Array<{ drawId: string; message: string }> }> {
   // 单次最多处理 50 个，默认 20 个
   const limit = Math.max(1, Math.min(50, options?.limit ?? 20));
@@ -833,7 +833,7 @@ export async function processDueDraws(
   for (const draw of due) {
     try {
       // Cron 调用时 operatorUserId 为 "system"
-      await performDraw(db, draw.tenantId, draw.id, "system");
+      await performDraw(db, draw.tenantId, draw.id, "system", emailEnv);
       processed++;
     } catch (err) {
       failed++;
