@@ -140,8 +140,8 @@
             </button>
           </div>
           <div class="adjust-row">
-            <input v-model.number="adjustForm.extraActivityQuota" type="number" min="0" placeholder="追加活动次数" :disabled="adjusting" />
-            <input v-model.number="adjustForm.extraParticipantQuota" type="number" min="0" placeholder="追加参与人数" :disabled="adjusting" />
+            <input v-model.number="adjustForm.extraActivityQuota" type="number" min="1" step="1" placeholder="追加活动次数" :disabled="adjusting" />
+            <input v-model.number="adjustForm.extraParticipantQuota" type="number" min="1" step="1" placeholder="追加参与人数" :disabled="adjusting" />
           </div>
           <small class="field-hint">套餐和状态即时生效；额外额度为追加（累加）</small>
         </div>

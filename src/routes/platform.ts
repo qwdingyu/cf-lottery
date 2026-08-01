@@ -29,10 +29,16 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
   return Math.min(Math.max(Math.trunc(parsed), min), max);
 }
 
-function isSafeQuotaDelta(value: unknown): boolean {
+const PLATFORM_ROLES = ["platform_owner", "platform_operator", "platform_support"];
+const TENANT_PLANS = ["free", "pro", "team", "enterprise"];
+const TENANT_STATUSES = ["active", "suspended", "disabled"];
+
+function isSafeQuotaIncrement(value: unknown): boolean {
   if (value === undefined) return true;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && Math.abs(parsed) <= 1_000_000;
+  return typeof value === "number"
+    && Number.isInteger(value)
+    && value >= 1
+    && value <= 1_000_000;
 }
 
 // ═════════════════════════════════════════════════════════
@@ -54,9 +60,9 @@ platformRoute.get("/members", requirePlatformMember(["platform_owner"]), async (
 platformRoute.post("/members", requirePlatformMember(["platform_owner"]), async (c) => {
   const db = getDb(c);
   const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
   const body = await c.req.json<{ username?: string; email?: string; role?: string }>();
   const role = String(body.role || "platform_operator");
-  const PLATFORM_ROLES = ["platform_owner", "platform_operator", "platform_support"];
   if (!PLATFORM_ROLES.includes(role)) return fail(c, "无效的平台角色", 400);
 
   // 按用户名或邮箱查找用户
@@ -76,21 +82,22 @@ platformRoute.post("/members", requirePlatformMember(["platform_owner"]), async 
     .limit(1);
   if (existing) return fail(c, "该用户已是平台成员", 409);
 
-  // 加入平台成员表
-  await db.insert(platformMembers).values({
-    userId: user.id,
-    role,
-    status: "active",
-  });
+  await withDbTransaction(db, async (tx) => {
+    // 加入平台成员和审计必须同事务完成；平台权限变更不能出现“变了但无审计”的状态。
+    await tx.insert(platformMembers).values({
+      userId: user.id,
+      role,
+      status: "active",
+    });
 
-  // 平台审计：添加平台成员是敏感操作，必须留痕
-  await writePlatformAudit(db, {
-    actorUserId,
-    actorRole: "platform_owner",
-    action: "platform.member.create",
-    targetType: "platform_member",
-    targetId: user.id,
-    metadata: { username: user.username, role },
+    await writePlatformAudit(tx, {
+      actorUserId,
+      actorRole,
+      action: "platform.member.create",
+      targetType: "platform_member",
+      targetId: user.id,
+      metadata: { username: user.username, role },
+    });
   });
 
   return ok(c, { userId: user.id, username: user.username, role });
@@ -100,6 +107,7 @@ platformRoute.post("/members", requirePlatformMember(["platform_owner"]), async 
 platformRoute.patch("/members/:userId", requirePlatformMember(["platform_owner"]), async (c) => {
   const db = getDb(c);
   const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
   const targetUserId = c.req.param("userId");
   if (!targetUserId) return fail(c, "缺少用户 ID", 400);
   const body = await c.req.json<{ role?: string; status?: string }>();
@@ -107,9 +115,9 @@ platformRoute.patch("/members/:userId", requirePlatformMember(["platform_owner"]
   // 不能修改自己的角色（防止 owner 自降级导致平台失控）
   if (targetUserId === actorUserId) return fail(c, "不能修改自己的平台角色", 400);
 
-  const PLATFORM_ROLES = ["platform_owner", "platform_operator", "platform_support"];
-  if (body.role && !PLATFORM_ROLES.includes(body.role)) return fail(c, "无效的平台角色", 400);
-  if (body.status && !["active", "disabled"].includes(body.status)) return fail(c, "无效的状态", 400);
+  if (body.role !== undefined && (typeof body.role !== "string" || !PLATFORM_ROLES.includes(body.role))) return fail(c, "无效的平台角色", 400);
+  if (body.status !== undefined && (typeof body.status !== "string" || !["active", "disabled"].includes(body.status))) return fail(c, "无效的状态", 400);
+  if (body.role === undefined && body.status === undefined) return fail(c, "请提供要更新的角色或状态", 400);
 
   const [existing] = await db
     .select()
@@ -118,21 +126,23 @@ platformRoute.patch("/members/:userId", requirePlatformMember(["platform_owner"]
     .limit(1);
   if (!existing) return fail(c, "平台成员不存在", 404);
 
-  await db.update(platformMembers)
-    .set({
-      ...(body.role ? { role: body.role } : {}),
-      ...(body.status ? { status: body.status } : {}),
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(platformMembers.userId, targetUserId));
+  await withDbTransaction(db, async (tx) => {
+    await tx.update(platformMembers)
+      .set({
+        ...(body.role !== undefined ? { role: body.role } : {}),
+        ...(body.status !== undefined ? { status: body.status } : {}),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(platformMembers.userId, targetUserId));
 
-  await writePlatformAudit(db, {
-    actorUserId,
-    actorRole: "platform_owner",
-    action: "platform.member.update",
-    targetType: "platform_member",
-    targetId: targetUserId,
-    metadata: { role: body.role, status: body.status },
+    await writePlatformAudit(tx, {
+      actorUserId,
+      actorRole,
+      action: "platform.member.update",
+      targetType: "platform_member",
+      targetId: targetUserId,
+      metadata: { role: body.role, status: body.status },
+    });
   });
 
   return ok(c, { updated: true });
@@ -142,20 +152,30 @@ platformRoute.patch("/members/:userId", requirePlatformMember(["platform_owner"]
 platformRoute.delete("/members/:userId", requirePlatformMember(["platform_owner"]), async (c) => {
   const db = getDb(c);
   const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
   const targetUserId = c.req.param("userId");
   if (!targetUserId) return fail(c, "缺少用户 ID", 400);
 
   // 不能移除自己（防止平台无人管理）
   if (targetUserId === actorUserId) return fail(c, "不能移除自己", 400);
 
-  await db.delete(platformMembers).where(eq(platformMembers.userId, targetUserId));
+  const [existing] = await db
+    .select({ userId: platformMembers.userId })
+    .from(platformMembers)
+    .where(eq(platformMembers.userId, targetUserId))
+    .limit(1);
+  if (!existing) return fail(c, "平台成员不存在", 404);
 
-  await writePlatformAudit(db, {
-    actorUserId,
-    actorRole: "platform_owner",
-    action: "platform.member.delete",
-    targetType: "platform_member",
-    targetId: targetUserId,
+  await withDbTransaction(db, async (tx) => {
+    await tx.delete(platformMembers).where(eq(platformMembers.userId, targetUserId));
+
+    await writePlatformAudit(tx, {
+      actorUserId,
+      actorRole,
+      action: "platform.member.delete",
+      targetType: "platform_member",
+      targetId: targetUserId,
+    });
   });
 
   return ok(c, { deleted: true });
@@ -257,19 +277,28 @@ platformRoute.patch("/tenants/:id", requirePlatformMember(["platform_owner"]), a
   const [tenant] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
   if (!tenant) return fail(c, "租户不存在", 404);
 
-  const PLAN_SET = ["free", "pro", "team", "enterprise"];
-  if (body.plan && !PLAN_SET.includes(body.plan)) return fail(c, "无效的套餐", 400);
-  if (body.status && !["active", "suspended", "disabled"].includes(body.status)) return fail(c, "无效的状态", 400);
-  if (!isSafeQuotaDelta(body.extraActivityQuota)) return fail(c, "额外活动次数必须是 -1000000 到 1000000 的整数", 400);
-  if (!isSafeQuotaDelta(body.extraParticipantQuota)) return fail(c, "额外参与人数必须是 -1000000 到 1000000 的整数", 400);
-  if (body.extraQuotaExpiresAt && Number.isNaN(new Date(body.extraQuotaExpiresAt).getTime())) {
+  if (body.plan !== undefined && (typeof body.plan !== "string" || !TENANT_PLANS.includes(body.plan))) return fail(c, "无效的套餐", 400);
+  if (body.status !== undefined && (typeof body.status !== "string" || !TENANT_STATUSES.includes(body.status))) return fail(c, "无效的状态", 400);
+  if (!isSafeQuotaIncrement(body.extraActivityQuota)) return fail(c, "额外活动次数必须是 1 到 1000000 的整数", 400);
+  if (!isSafeQuotaIncrement(body.extraParticipantQuota)) return fail(c, "额外参与人数必须是 1 到 1000000 的整数", 400);
+  if (body.extraQuotaExpiresAt !== undefined
+    && body.extraQuotaExpiresAt !== null
+    && (typeof body.extraQuotaExpiresAt !== "string" || !body.extraQuotaExpiresAt.trim() || Number.isNaN(new Date(body.extraQuotaExpiresAt).getTime()))) {
     return fail(c, "额外额度到期时间格式无效", 400);
   }
 
+  const hasMeaningfulUpdate = body.plan !== undefined
+    || body.status !== undefined
+    || body.extraActivityQuota !== undefined
+    || body.extraParticipantQuota !== undefined
+    || body.extraQuotaExpiresAt !== undefined;
+  if (!hasMeaningfulUpdate) return fail(c, "请提供要调整的套餐、状态或额度", 400);
+
   const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
-  if (body.plan) updates.plan = body.plan;
-  if (body.status) updates.status = body.status;
-  // 额外额度：按追加方式累加（便于运营者一次性增加）
+  if (body.plan !== undefined) updates.plan = body.plan;
+  if (body.status !== undefined) updates.status = body.status;
+  // 额外额度：只允许追加，不支持隐式扣减。
+  // 扣减/回收属于高风险运营动作，未来如确实需要应设计独立接口和二次确认。
   if (typeof body.extraActivityQuota === "number") updates.extraActivityQuota = sql`${tenants.extraActivityQuota} + ${body.extraActivityQuota}`;
   if (typeof body.extraParticipantQuota === "number") updates.extraParticipantQuota = sql`${tenants.extraParticipantQuota} + ${body.extraParticipantQuota}`;
   if (body.extraQuotaExpiresAt !== undefined) updates.extraQuotaExpiresAt = body.extraQuotaExpiresAt;

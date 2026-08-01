@@ -316,6 +316,117 @@ describe("RBAC-lite 路由分层", () => {
     expect(audit?.targetType).toBe("redemption_code_batch");
   });
 
+  it("平台成员更新会拒绝非法角色字段，避免静默忽略错误权限参数", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values([
+      { userId: PLATFORM_ID, role: "platform_owner" },
+      { userId: INVITEE_ID, role: "platform_operator" },
+    ]);
+    const app = createTestApp();
+
+    const res = await app.request(`/api/platform/members/${INVITEE_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ role: "", status: "disabled" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(400);
+    const [member] = await db.select().from(platformMembers).where(eq(platformMembers.userId, INVITEE_ID)).limit(1);
+    expect(member.status).toBe("active");
+    expect(member.role).toBe("platform_operator");
+  });
+
+  it("平台 owner 可调整租户套餐/状态/额外额度，且额度按追加累计并写入平台审计", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+    const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+
+    const first = await app.request(`/api/platform/tenants/${TENANT_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({
+        plan: "pro",
+        status: "suspended",
+        extraActivityQuota: 3,
+        extraParticipantQuota: 100,
+        extraQuotaExpiresAt: expiresAt,
+      }),
+    }, TEST_ENV);
+    expect(first.status).toBe(200);
+
+    const second = await app.request(`/api/platform/tenants/${TENANT_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ extraActivityQuota: 2, extraParticipantQuota: 50 }),
+    }, TEST_ENV);
+    expect(second.status).toBe(200);
+
+    const [tenant] = await db.select().from(tenants).where(eq(tenants.id, TENANT_ID)).limit(1);
+    expect(tenant).toMatchObject({
+      plan: "pro",
+      status: "suspended",
+      extraActivityQuota: 5,
+      extraParticipantQuota: 150,
+      extraQuotaExpiresAt: expiresAt,
+    });
+
+    const audits = await db
+      .select()
+      .from(platformAuditLogs)
+      .where(eq(platformAuditLogs.action, "platform.tenant.update"));
+    expect(audits).toHaveLength(2);
+    expect(audits[0]?.tenantId).toBe(TENANT_ID);
+    expect(audits[0]?.targetType).toBe("tenant");
+  });
+
+  it("平台 operator/support 不能调整租户套餐和额度", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_operator" });
+    const app = createTestApp();
+
+    const res = await app.request(`/api/platform/tenants/${TENANT_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ plan: "pro", extraActivityQuota: 1 }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(403);
+    const [tenant] = await db.select().from(tenants).where(eq(tenants.id, TENANT_ID)).limit(1);
+    expect(tenant.plan).toBe("free");
+    expect(tenant.extraActivityQuota).toBe(0);
+  });
+
+  it("平台租户调整会拒绝非法套餐、状态、额度和日期", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    const invalidCases = [
+      { plan: "vip" },
+      { status: "paused" },
+      { extraActivityQuota: -1 },
+      { extraActivityQuota: 0 },
+      { extraActivityQuota: "5" },
+      { extraParticipantQuota: 1_000_001 },
+      { extraActivityQuota: 1.5 },
+      { extraQuotaExpiresAt: "not-a-date" },
+      {},
+    ];
+
+    for (const body of invalidCases) {
+      const res = await app.request(`/api/platform/tenants/${TENANT_ID}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+        body: JSON.stringify(body),
+      }, TEST_ENV);
+      expect(res.status).toBe(400);
+    }
+
+    const [tenant] = await db.select().from(tenants).where(eq(tenants.id, TENANT_ID)).limit(1);
+    expect(tenant).toMatchObject({ plan: "free", status: "active", extraActivityQuota: 0, extraParticipantQuota: 0 });
+  });
+
   it("平台 owner/operator 可手动重试 Webhook 投递且写入平台审计", async () => {
     await seedUsers();
     await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_operator" });
