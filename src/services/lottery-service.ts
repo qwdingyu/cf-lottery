@@ -218,7 +218,7 @@ export function getTenantPlanLimits(plan?: string | null): TenantPlanLimits {
 
 /**
  * 系统配置中套餐额度相关 key 的列表。
- * 平台运营者可在 /admin/config 页面修改这些值，动态覆盖硬编码的 PLAN_LIMITS。
+ * 平台运营者可在 /platform/config 页面修改这些值，动态覆盖硬编码的 PLAN_LIMITS。
  */
 const PLAN_LIMITS_CONFIG_KEYS: string[] = [
   "plan_free_max_activities",
@@ -277,7 +277,7 @@ async function loadDynamicPlanLimits(db: DbType): Promise<Record<string, Omit<Te
 }
 
 export async function getTenantUsage(db: DbType, tenantId: string) {
-  // 读取动态套餐额度配置（平台运营者在 /admin/config 中设置），覆盖硬编码默认值
+  // 读取动态套餐额度配置（平台运营者在 /platform/config 中设置），覆盖硬编码默认值。
   const dynamicPlanLimits = await loadDynamicPlanLimits(db);
   // 查询租户信息，含兑换码购买的额外额度
   const [tenant] = await db
@@ -292,7 +292,7 @@ export async function getTenantUsage(db: DbType, tenantId: string) {
     .limit(1);
   const rawPlan = String(tenant?.plan || "free").trim().toLowerCase();
   const plan = PLAN_LIMITS[rawPlan] ? rawPlan : "free";
-  // 优先使用动态套餐额度（平台运营者在 /admin/config 中设置），兜底用硬编码默认值
+  // 优先使用动态套餐额度（平台运营者在 /platform/config 中设置），兜底用硬编码默认值。
   const dynamicPlan = dynamicPlanLimits[plan] || PLAN_LIMITS[plan] || PLAN_LIMITS.free!;
   const limits: TenantPlanLimits = { plan, ...dynamicPlan };
 

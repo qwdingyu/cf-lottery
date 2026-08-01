@@ -152,6 +152,8 @@ function statusClass(status: string): string {
   return map[status] || 'tag-muted'
 }
 
+const PLATFORM_REDEMPTION_CODES_API = '/api/platform/redemption-codes'
+
 async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const token = (() => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } })();
   const headers: Record<string,string> = { 'Content-Type': 'application/json' };
@@ -165,10 +167,10 @@ async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> 
 async function loadData() {
   loading.value = true
   try {
-    const path = statusFilter.value ? `/api/admin/redemption-codes?status=${statusFilter.value}` : '/api/admin/redemption-codes'
+    const path = statusFilter.value ? `${PLATFORM_REDEMPTION_CODES_API}?status=${statusFilter.value}` : PLATFORM_REDEMPTION_CODES_API
     const [data, statsData] = await Promise.all([
       adminRequest<{ codes: any[] }>(path),
-      adminRequest<any>('/api/admin/redemption-codes/stats'),
+      adminRequest<any>(`${PLATFORM_REDEMPTION_CODES_API}/stats`),
     ])
     codes.value = data.codes || []
     stats.value = statsData
@@ -186,7 +188,7 @@ async function handleBatch() {
   }
   submitting.value = true
   try {
-    const data = await adminRequest<any>('/api/admin/redemption-codes/batch', {
+    const data = await adminRequest<any>(`${PLATFORM_REDEMPTION_CODES_API}/batch`, {
       method: 'POST',
       body: JSON.stringify(form.value),
     })

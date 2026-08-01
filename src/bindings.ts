@@ -43,5 +43,9 @@ export type AppEnv = {
     userId: string;
     /** 登录用户所属租户 ID（requireAuth 中间件注入） */
     tenantId: string;
+    /** 租户内角色（requireTenantMember 中间件注入） */
+    tenantRole?: string;
+    /** 平台角色（requirePlatformMember 中间件注入） */
+    platformRole?: string;
   };
 };

@@ -134,8 +134,40 @@ publicLotteryRoute.post("/draws/:slug/events", async (c) => {
     metadata?: Record<string, unknown>;
   }>();
 
+  // ── 事件类型白名单校验 ──
   if (!PUBLIC_EVENT_TYPES.has(body.eventType)) {
     return fail(c, "活动事件类型无效", 400);
+  }
+
+  // ── 字段长度限制（防止滥用大 payload 消耗 rows written） ──
+  if ((body.source?.length ?? 0) > 200) return fail(c, "source 过长", 400);
+  if ((body.medium?.length ?? 0) > 200) return fail(c, "medium 过长", 400);
+  if ((body.campaign?.length ?? 0) > 200) return fail(c, "campaign 过长", 400);
+  if ((body.refCode?.length ?? 0) > 200) return fail(c, "refCode 过长", 400);
+  if ((body.entryId?.length ?? 0) > 80) return fail(c, "entryId 过长", 400);
+  if (body.metadata && JSON.stringify(body.metadata).length > 2048) {
+    return fail(c, "metadata 过长", 400);
+  }
+
+  // ── 限流：同一 IP 每分钟最多 30 次事件上报 ──
+  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  if (!checkRateLimit(`events:${ip}`, 30, 60000)) {
+    return fail(c, "请求过于频繁，请稍后再试", 429);
+  }
+
+  // ── 按事件类型限流：page_view 可更频繁，其他事件限制更严 ──
+  const eventTypeLimits: Record<string, number> = {
+    page_view: 30,
+    participation_started: 10,
+    participation_completed: 10,
+    cta_impression: 20,
+    cta_click: 10,
+    share_click: 5,
+    external_conversion_reported: 5,
+  };
+  const typeLimit = eventTypeLimits[body.eventType] ?? 10;
+  if (!checkRateLimit(`events:${ip}:${body.eventType}`, typeLimit, 60000)) {
+    return fail(c, "该事件类型上报过于频繁", 429);
   }
 
   const [draw] = await db

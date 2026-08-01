@@ -41,6 +41,27 @@ export const tenantMembers = sqliteTable("tenant_members", {
   pk: uniqueIndex("pk_tenant_members").on(t.tenantId, t.userId),
 }));
 
+/**
+ * 平台成员表（L3 平台运营者）
+ *
+ * 与 tenant_members 分离，独立管理平台运营者身份。
+ * 一个用户可以同时是某租户的成员（通过 tenant_members）和平台运营者（通过 platform_members），
+ * 两者互不冲突。
+ *
+ * role 创建时必须显式写入，不留模糊默认值。
+ * 取值：platform_owner | platform_operator | platform_support
+ *   - platform_owner: 管理平台成员、系统配置、套餐、兑换码、租户状态
+ *   - platform_operator: 查看租户、生成兑换码、查看用量和失败投递
+ *   - platform_support: 只读查看指定租户数据
+ */
+export const platformMembers = sqliteTable("platform_members", {
+  userId: text("user_id").primaryKey(),
+  role: text("role").notNull(),  // 必须显式写入，不留默认值
+  status: text("status").notNull().default("active"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
 // ── 奖品与码池 ──
 export const prizes = sqliteTable("prizes", {
   id: text("id").primaryKey(),

@@ -313,6 +313,7 @@ const canClearBusinessData = computed(() =>
 
 const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 let resetKey: string | null = null
+const PLATFORM_SYSTEM_CONFIG_API = '/api/platform/system-config'
 
 function selectSection(id: SystemConfigSectionId) {
   if (activeSection.value === id && route.query.tab === id) return
@@ -324,7 +325,7 @@ function selectSection(id: SystemConfigSectionId) {
 async function refreshPublicConfig(scope?: string): Promise<boolean> {
   if (scope !== 'public') return true
   try {
-    await adminRequest<any>('/api/system-config')
+    await adminRequest<any>('/api/system-config/system-config')
     return true
   } catch {
     return false
@@ -343,7 +344,7 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await adminRequest<any>('/api/admin/system-config')
+    const res = await adminRequest<any>(PLATFORM_SYSTEM_CONFIG_API)
     Object.assign(config, res.config)
     definitions.value = res.definitions
     if (!testEmailTo.value.trim() && res.config.support_email) {
@@ -362,7 +363,7 @@ async function loadData() {
 async function update(key: string, value: string) {
   fieldStatus[key] = 'saving'
   try {
-    const res = await adminRequest<any>('/api/admin/system-config', {
+    const res = await adminRequest<any>(PLATFORM_SYSTEM_CONFIG_API, {
       method: 'PUT',
       body: JSON.stringify({ key, value }),
     })
@@ -394,7 +395,7 @@ async function reset(key: string) {
   if (!(await askConfirm(t('adminConfig.resetConfirm', { key })))) return
   fieldStatus[key] = 'saving'
   try {
-    const res = await adminRequest<any>('/api/admin/system-config', {
+    const res = await adminRequest<any>(PLATFORM_SYSTEM_CONFIG_API, {
       method: 'PUT',
       body: JSON.stringify({ key: resetKey, value: def.defaultValue || '' }),
     })

@@ -14,12 +14,15 @@
   ],
 
   // 静态资源配置
+  // SPA 模式：not_found_handling 将不存在的路径回退到 index.html，Vue Router 接管路由。
+  // run_worker_first 只让 API 路径进 Worker，静态资源（JS/CSS/字体/图片）走 Cloudflare 资产网络，
+  // 不消耗 Workers Free 的 100,000 requests/day 额度。
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
     "html_handling": "none",
-    "not_found_handling": "none",
-    "run_worker_first": true
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
   },
 
   // 可观测性

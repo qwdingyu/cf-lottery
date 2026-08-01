@@ -103,16 +103,14 @@ function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
 }
 
-// ── 菜单数据（抽奖 SaaS 专属） ──
+// ── 菜单数据（租户后台 L2 专属，平台后台功能迁移到 /platform/*） ──
 const menuItems = computed(() => [
   { name: 'AdminDashboard', to: '/admin', label: t('adminLayout.menuDashboard'), icon: '&#x1F4CA;' },
   { name: 'AdminLottery', to: '/admin/draws', label: t('adminLayout.menuLottery'), icon: '&#x1F3B0;' },
   { name: 'AdminPrizes', to: '/admin/prizes', label: '奖品管理', icon: '&#x1F381;' },
-  { name: 'AdminConfig', to: '/admin/config', label: t('adminLayout.menuConfig'), icon: '&#x2699;&#xFE0F;' },
   { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '&#x1F4DD;' },
   { name: 'AdminMembers', to: '/admin/members', label: '团队成员', icon: '&#x1F465;' },
   { name: 'AdminBlacklist', to: '/admin/blacklist', label: '黑名单', icon: '&#x1F6AB;' },
-  { name: 'AdminRedemptionCodes', to: '/admin/redemption-codes', label: '兑换码', icon: '&#x1F3B5;' },
 ])
 
 const currentName = computed(() => {

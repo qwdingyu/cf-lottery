@@ -5,8 +5,9 @@
  * 使用 lottery-service 处理核心业务逻辑。
  */
 import { Hono } from "hono";
+import type { Context, Next } from "hono";
 import type { AppEnv } from "../bindings";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
 import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
@@ -68,8 +69,40 @@ const RESULT_MODES = new Set([
 ]);
 const ALLOCATION_POLICIES = new Set(["capacity", "waitlist", "fifo", "priority", "random", "weighted_random", "approval"]);
 
-// 所有管理端路由需要登录
-adminLotteryRoute.use("*", requireAuth);
+/**
+ * 租户后台能力门禁。
+ *
+ * 这不是完整 RBAC，也不查数据库权限矩阵；只按 026 基线做路由级能力判断：
+ * - GET/HEAD 是租户只读后台能力，owner/admin/viewer 都可访问。
+ * - 成员变更会影响租户安全边界，只允许 owner。
+ * - 其他写操作只允许 owner/admin。
+ *
+ * 这样每个 /api/admin/* 请求只多一次 tenant_members 组合索引查询，
+ * 避免把权限判断散落到每个业务处理器里，也不会引入重型权限系统。
+ */
+async function requireTenantRouteCapability(c: Context<AppEnv>, next: Next) {
+  const role = c.get("tenantRole");
+  const method = c.req.method.toUpperCase();
+  const path = new URL(c.req.url).pathname;
+
+  if (method === "GET" || method === "HEAD") {
+    await next();
+    return;
+  }
+
+  if (path.includes("/members") && role !== "owner") {
+    return fail(c, "只有租户 owner 可以管理团队成员", 403);
+  }
+
+  if (role !== "owner" && role !== "admin") {
+    return fail(c, "权限不足", 403);
+  }
+
+  await next();
+}
+
+// 所有租户后台路由都必须同时满足：已登录 + 仍是当前租户成员 + 命中轻量能力门禁。
+adminLotteryRoute.use("*", requireAuth, requireTenantMember(), requireTenantRouteCapability);
 
 // ═════════════════════════════════════════════════════════
 // 运营台概览
@@ -1380,7 +1413,7 @@ adminLotteryRoute.post("/members", async (c) => {
   const [existing] = await db.select({ userId: tenantMembers.userId }).from(tenantMembers).where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, user.id))).limit(1);
   if (existing) return fail(c, "该用户已是成员", 409);
 
-  await db.insert(tenantMembers).values({ tenantId, userId: user.id, role: body.role || "operator" });
+  await db.insert(tenantMembers).values({ tenantId, userId: user.id, role: body.role || "admin" });
   return ok(c, { invited: true });
 });
 
@@ -1411,98 +1444,16 @@ adminLotteryRoute.delete("/members/:userId", async (c) => {
 
 /** 生成唯一兑换码 */
 
-/** 兑换码列表 */
-adminLotteryRoute.get("/redemption-codes", async (c) => {
-  const db = getDb(c);
-  const tenantId = c.get("tenantId") as string;
-  const status = c.req.query("status") || "";
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+// 兑换码平台管理入口已迁移到 /api/platform/redemption-codes。
+// 租户侧只保留兑换接口：/api/admin/redemption-codes/redeem
 
-  const conditions = [eq(redemptionCodes.createdBy, tenantId)];
-  if (status) conditions.push(eq(redemptionCodes.status, status));
-
-  const rows = await db
-    .select()
-    .from(redemptionCodes)
-    .where(and(...conditions))
-    .orderBy(desc(redemptionCodes.createdAt))
-    .limit(limit).offset(offset);
-
-  return ok(c, { codes: rows });
-});
-
-/** 批量生成兑换码 */
-adminLotteryRoute.post("/redemption-codes/batch", async (c) => {
-  const db = getDb(c);
-  const tenantId = c.get("tenantId") as string;
-  const body = await c.req.json<{
-    count: number;           // 生成数量（1-100）
-    activityQuota: number;   // 活动次数
-    participantQuota: number; // 参与人数
-    durationDays: number;    // 有效天数
-    maxUses?: number;        // 最大使用次数
-    note?: string;           // 备注
-  }>();
-
-  const count = Math.min(Math.max(1, body.count || 1), 100);
-  const activityQuota = Math.max(0, body.activityQuota || 0);
-  const participantQuota = Math.max(0, body.participantQuota || 0);
-  const durationDays = Math.max(1, body.durationDays || 30);
-
-  if (activityQuota === 0 && participantQuota === 0) {
-    return fail(c, "活动次数和参与人数不能同时为 0", 400);
-  }
-
-  const now = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + durationDays * 86400000).toISOString();
-  const codes: string[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const code = generateCode();
-    await db.insert(redemptionCodes).values({
-      id: crypto.randomUUID(), code,
-      plan: "custom",
-      activityQuota, participantQuota, durationDays,
-      maxUses: body.maxUses || 1,
-      note: body.note || "",
-      createdBy: tenantId,
-      createdAt: now, expiresAt, updatedAt: now,
-    });
-    codes.push(code);
-  }
-
-  return ok(c, { codes, count, activityQuota, participantQuota, durationDays });
-});
-
-/** 兑换码统计 */
-adminLotteryRoute.get("/redemption-codes/stats", async (c) => {
-  const db = getDb(c);
-  const tenantId = c.get("tenantId") as string;
-
-  const [total] = await db
-    .select({ total: count() })
-    .from(redemptionCodes)
-    .where(eq(redemptionCodes.createdBy, tenantId));
-
-  const [used] = await db
-    .select({ total: count() })
-    .from(redemptionCodes)
-    .where(and(eq(redemptionCodes.createdBy, tenantId), eq(redemptionCodes.status, "used")));
-
-  const [active] = await db
-    .select({ total: count() })
-    .from(redemptionCodes)
-    .where(and(eq(redemptionCodes.createdBy, tenantId), eq(redemptionCodes.status, "active")));
-
-  return ok(c, {
-    total: Number(total?.total ?? 0),
-    used: Number(used?.total ?? 0),
-    active: Number(active?.total ?? 0),
-  });
-});
-
-/** 兑换码兑换（租户侧：输入兑换码，获得额度） */
+/** 兑换码兑换（租户侧：输入兑换码，获得额度）
+ *
+ * 使用 CAS（条件更新）防止并发超发：
+ *   UPDATE redemption_codes SET used_count = used_count + 1
+ *   WHERE id = ? AND used_count < max_uses AND status = 'active'
+ * 如果影响行数为 0，说明兑换码已被用完或失效。
+ */
 adminLotteryRoute.post("/redemption-codes/redeem", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
@@ -1520,22 +1471,27 @@ adminLotteryRoute.post("/redemption-codes/redeem", async (c) => {
 
   if (!codeRecord) return fail(c, "兑换码不存在", 404);
   if (codeRecord.status !== "active") return fail(c, "兑换码已失效", 400);
-  if (codeRecord.usedCount >= codeRecord.maxUses) return fail(c, "兑换码已用完", 400);
   if (new Date() > new Date(codeRecord.expiresAt)) return fail(c, "兑换码已过期", 400);
 
-  // 获取租户信息
-  const [tenant] = await db
-    .select({ name: tenants.name })
-    .from(tenants)
-    .where(eq(tenants.id, tenantId))
-    .limit(1);
+  // CAS 条件更新：原子性地递增 used_count，只有未用完时才更新成功
+  const updateResult = await db.update(redemptionCodes)
+    .set({
+      usedCount: sql`used_count + 1`,
+      status: sql`CASE WHEN used_count + 1 >= max_uses THEN 'used' ELSE 'active' END`,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(
+      and(
+        eq(redemptionCodes.id, codeRecord.id),
+        eq(redemptionCodes.status, "active"),
+        sql`used_count < max_uses`
+      )
+    );
 
-  // 更新兑换码使用次数
-  await db.update(redemptionCodes).set({
-    usedCount: codeRecord.usedCount + 1,
-    status: codeRecord.usedCount + 1 >= codeRecord.maxUses ? "used" : "active",
-    updatedAt: new Date().toISOString(),
-  }).where(eq(redemptionCodes.id, codeRecord.id));
+  // 如果影响行数为 0，说明并发下已被其他请求用完
+  if ((updateResult.rowsAffected ?? 0) === 0) {
+    return fail(c, "兑换码已被使用", 409);
+  }
 
   // 更新租户额外额度
   const now = new Date().toISOString();
@@ -1547,6 +1503,13 @@ adminLotteryRoute.post("/redemption-codes/redeem", async (c) => {
     extraQuotaExpiresAt: expiresAt,
     updatedAt: now,
   }).where(eq(tenants.id, tenantId));
+
+  // 获取租户名称用于记录
+  const [tenant] = await db
+    .select({ name: tenants.name })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .limit(1);
 
   // 记录兑换记录
   await db.insert(redemptionRecords).values({
@@ -1569,16 +1532,3 @@ adminLotteryRoute.post("/redemption-codes/redeem", async (c) => {
     expiresAt,
   });
 });
-
-// ═════════════════════════════════════════════════════════
-// 兑换码管理（运营者生成，租户兑换
-// ═════════════════════════════════════════════════════════
-
-/** 生成唯一兑换码（LK-XXXX-XXXX 格式） */
-function generateCode(): string {
-  const seg1 = crypto.randomUUID().slice(0, 4).toUpperCase();
-  const seg2 = crypto.randomUUID().slice(0, 4).toUpperCase();
-  return `LK-${seg1}-${seg2}`;
-}
-
-/** 兑换码列表 */

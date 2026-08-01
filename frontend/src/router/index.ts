@@ -7,6 +7,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AdminLoginView from '@/views/AdminLoginView.vue'
 import AdminRegisterView from '@/views/AdminRegisterView.vue'
 import AdminLayout from '@/views/AdminLayout.vue'
+import PlatformLayout from '@/views/PlatformLayout.vue'
 import LandingView from '@/views/LandingView.vue'
 import { readAdminToken } from '@/composables/useAdminAuth'
 
@@ -57,11 +58,6 @@ const router = createRouter({
           component: () => import('@/views/admin/AdminPrizesView.vue'),
         },
         {
-          path: 'config',
-          name: 'AdminConfig',
-          component: () => import('@/views/admin/AdminSystemConfigView.vue'),
-        },
-        {
           path: 'logs',
           name: 'AdminLogs',
           component: () => import('@/views/admin/AdminLogsView.vue'),
@@ -76,9 +72,26 @@ const router = createRouter({
           name: 'AdminBlacklist',
           component: () => import('@/views/admin/AdminBlacklistView.vue'),
         },
+      ],
+    },
+    // 平台运营后台（L3），与租户后台（/admin）路由分离
+    {
+      path: '/platform',
+      component: PlatformLayout,
+      meta: { requiresAuth: true },
+      children: [
+        {
+          path: '',
+          redirect: '/platform/config',
+        },
+        {
+          path: 'config',
+          name: 'PlatformConfig',
+          component: () => import('@/views/admin/AdminSystemConfigView.vue'),
+        },
         {
           path: 'redemption-codes',
-          name: 'AdminRedemptionCodes',
+          name: 'PlatformRedemptionCodes',
           component: () => import('@/views/admin/AdminRedemptionCodesView.vue'),
         },
       ],

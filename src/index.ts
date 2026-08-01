@@ -13,7 +13,8 @@ import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
 import { integrationRoute } from "./routes/integration";
 import { systemConfigRoute } from "./routes/system-config";
-import { adminSystemConfigRoute } from "./routes/admin-system-config";
+import { platformSystemConfigRoute } from "./routes/platform-system-config";
+import { platformRedemptionCodesRoute } from "./routes/platform-redemption-codes";
 import {
   processDueDraws,
   processPendingWebhookDeliveriesForAllTenants,
@@ -86,7 +87,9 @@ app.route("/api/admin", adminLotteryRoute);
 app.route("/api/public", publicLotteryRoute);
 app.route("/api/integration", integrationRoute);
 app.route("/api/system-config", systemConfigRoute);
-app.route("/api/admin/system-config", adminSystemConfigRoute);
+// 平台运营后台路由（L3）
+app.route("/api/platform/system-config", platformSystemConfigRoute);
+app.route("/api/platform/redemption-codes", platformRedemptionCodesRoute);
 
 // 健康检查
 app.get("/api/health", (c) => c.json({ ok: true, db: !!c.get("db") }));
