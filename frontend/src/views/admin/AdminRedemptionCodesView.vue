@@ -2,6 +2,7 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
+        <input v-model="searchQuery" type="search" placeholder="搜索兑换码" @keyup.enter="loadData" />
         <select v-model="statusFilter" @change="loadData">
           <option value="">全部状态</option>
           <option value="active">有效</option>
@@ -9,10 +10,11 @@
           <option value="expired">已过期</option>
           <option value="disabled">已禁用</option>
         </select>
-        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">刷新</button>
+        <button class="btn btn-primary btn-sm" :disabled="loading" @click="loadData">查询</button>
       </div>
       <div class="toolbar-actions">
         <button class="btn btn-primary btn-sm" @click="showBatch = true">批量生成</button>
+        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">刷新</button>
       </div>
     </div>
 
@@ -32,6 +34,11 @@
       </div>
     </div>
 
+    <div v-if="loadError" class="table-error" role="alert">
+      <span>{{ loadError }}</span>
+      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">重试</button>
+    </div>
+
     <!-- 兑换码列表 -->
     <div class="table-wrap">
       <table class="admin-table">
@@ -47,7 +54,12 @@
             <th>创建时间</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody v-if="loading">
+          <tr v-for="i in 5" :key="'sk' + i" class="skeleton-row">
+            <td :colspan="8"><div class="skeleton-cell" /></td>
+          </tr>
+        </tbody>
+        <tbody v-else>
           <tr v-for="code in codes" :key="code.id">
             <td><code class="code-text">{{ code.code }}</code></td>
             <td>{{ code.activityQuota }}</td>
@@ -64,6 +76,19 @@
         </tbody>
       </table>
     </div>
+
+    <AdminPagination
+      v-if="pagination.total.value > 0"
+      :page="pagination.page.value"
+      :total="pagination.total.value"
+      :total-pages="pagination.totalPages.value"
+      :limit="pagination.limit.value"
+      :disabled="loading"
+      @prev="pagination.prevPage(); loadData()"
+      @next="pagination.nextPage(); loadData()"
+      @jump="pagination.setPage($event); loadData()"
+      @update:limit="pagination.setLimit($event); loadData()"
+    />
 
     <!-- 批量生成弹窗 -->
     <AdminModal v-model="showBatch" title="批量生成兑换码" max-width="560px">
@@ -123,15 +148,20 @@ import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/composables/useFormat'
 import { writeClipboardText } from '@/composables/useClipboard'
 import AdminModal from '@/components/AdminModal.vue'
+import AdminPagination from '@/components/AdminPagination.vue'
+import { useTablePagination } from '@/composables/useTablePagination'
 
 const { showToast } = useToast()
 const codes = ref<any[]>([])
 const loading = ref(false)
+const loadError = ref('')
 const submitting = ref(false)
 const statusFilter = ref('')
+const searchQuery = ref('')
 const showBatch = ref(false)
 const showResult = ref(false)
 const generatedCodes = ref<string[]>([])
+const pagination = useTablePagination({ initialLimit: 50 })
 
 const stats = ref({ total: 0, active: 0, used: 0 })
 
@@ -166,16 +196,20 @@ async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> 
 
 async function loadData() {
   loading.value = true
+  loadError.value = ''
   try {
-    const path = statusFilter.value ? `${PLATFORM_REDEMPTION_CODES_API}?status=${statusFilter.value}` : PLATFORM_REDEMPTION_CODES_API
+    const params = new URLSearchParams({ limit: String(pagination.limit.value), offset: String((pagination.page.value - 1) * pagination.limit.value) })
+    if (statusFilter.value) params.set('status', statusFilter.value)
+    if (searchQuery.value) params.set('search', searchQuery.value)
     const [data, statsData] = await Promise.all([
-      adminRequest<{ codes: any[] }>(path),
+      adminRequest<{ codes: any[] }>(`${PLATFORM_REDEMPTION_CODES_API}?${params}`),
       adminRequest<any>(`${PLATFORM_REDEMPTION_CODES_API}/stats`),
     ])
     codes.value = data.codes || []
     stats.value = statsData
+    pagination.setTotal(data.codes?.length === pagination.limit.value ? pagination.page.value * pagination.limit.value + 1 : (pagination.page.value - 1) * pagination.limit.value + (data.codes?.length || 0))
   } catch (err: any) {
-    showToast(err.message || '加载失败', 'error')
+    loadError.value = err.message || '加载失败'
   } finally {
     loading.value = false
   }
