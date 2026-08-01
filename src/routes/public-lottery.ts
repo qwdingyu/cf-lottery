@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig } from "../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
 import { eq, and, count, sql, asc } from "drizzle-orm";
 import { getActivityOutcome, joinDraw, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
 import { sendAccessCode } from "../services/email-service";
@@ -410,6 +410,98 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     }
     return fail(c, "参与失败，请稍后重试", 400);
   }
+});
+
+// ═════════════════════════════════════════════════════════
+// 查询我的结果（输入邮箱+验证码，查看中奖卡密/安慰奖券）
+// ═════════════════════════════════════════════════════════
+
+publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+  const body = await c.req.json<{ email: string; code: string }>();
+  const email = String(body.email || "").trim().toLowerCase();
+  const code = String(body.code || "").trim();
+
+  if (!email || !code) return fail(c, "请输入邮箱和验证码", 400);
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  // 验证码校验（复用邮箱验证码机制，防止他人用邮箱枚举查询结果）
+  const codeHash = await hashCode(code);
+  const now = new Date().toISOString();
+  const [validCode] = await db
+    .select()
+    .from(emailAccessCodes)
+    .where(and(
+      eq(emailAccessCodes.email, email),
+      eq(emailAccessCodes.drawId, draw.id),
+      eq(emailAccessCodes.codeHash, codeHash),
+      eq(emailAccessCodes.used, 0),
+      sql`${emailAccessCodes.expiresAt} > ${now}`,
+    ))
+    .limit(1);
+  if (!validCode) {
+    return fail(c, "验证码无效或已过期", 400);
+  }
+  // 查询类操作不消耗验证码（与参与不同），仅校验身份
+
+  const [entry] = await db
+    .select({ id: lotteryEntries.id })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+      eq(lotteryEntries.identityValue, email),
+    ))
+    .limit(1);
+
+  // 1. 是否中奖 + 中奖卡密
+  let won = false;
+  let prizeCode: string | null = null;
+  if (entry) {
+    const [winner] = await db
+      .select({ prizeCodeId: lotteryWinners.prizeCodeId, identityValue: lotteryWinners.identityValue })
+      .from(lotteryWinners)
+      .where(and(
+        eq(lotteryWinners.tenantId, draw.tenantId),
+        eq(lotteryWinners.drawId, draw.id),
+        eq(lotteryWinners.entryId, entry.id),
+      ))
+      .limit(1);
+    if (winner) {
+      won = true;
+      if (winner.prizeCodeId) {
+        const [pc] = await db
+          .select({ code: prizeCodes.code, secret: prizeCodes.secret })
+          .from(prizeCodes)
+          .where(eq(prizeCodes.id, winner.prizeCodeId))
+          .limit(1);
+        if (pc) prizeCode = pc.secret ? `${pc.code}:${pc.secret}` : pc.code;
+      }
+    }
+  }
+
+  // 2. 安慰奖（未中奖自动发券）
+  let consolationCoupon: string | null = null;
+  const [coupon] = await db
+    .select({ code: couponCodes.code, status: couponCodes.status })
+    .from(couponCodes)
+    .where(and(
+      eq(couponCodes.tenantId, draw.tenantId),
+      eq(couponCodes.recipientEmail, email),
+    ))
+    .limit(1);
+  if (coupon && coupon.status === "issued") {
+    consolationCoupon = coupon.code;
+  }
+
+  return ok(c, { joined: !!entry, won, prizeCode, consolationCoupon });
 });
 
 // ═════════════════════════════════════════════════════════

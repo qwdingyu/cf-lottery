@@ -167,6 +167,15 @@
             >
               {{ $t('lottery.loginToCheck') }}
             </button>
+            <!-- 查询我的结果：输入邮箱+验证码查看中奖卡密/安慰奖券 -->
+            <button
+              v-if="draw.showWinners"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              @click="openMyResult(draw)"
+            >
+              查询结果
+            </button>
           </template>
           <template v-else-if="draw.status === 'drawing'">
             <span class="drawing-state">{{ $t('lottery.statusDrawing') }}</span>
@@ -473,6 +482,64 @@
     :show="showResult"
     @close="showResult = false"
   />
+
+  <!-- 查询我的结果弹窗 -->
+  <Teleport to="body">
+    <div v-if="showMyResultModal" class="game-result-overlay" @click.self="showMyResultModal = false">
+      <div class="game-result-modal">
+        <button class="result-close" @click="showMyResultModal = false">✕</button>
+        <div class="result-icon">🎫</div>
+        <h2 class="result-title">查询我的结果</h2>
+
+        <!-- 查询表单 -->
+        <div v-if="!myResultData" class="result-form">
+          <input
+            v-model="myResultEmail"
+            type="email"
+            placeholder="参与时填写的邮箱"
+            maxlength="120"
+            :disabled="myResultLoading"
+          />
+          <input
+            v-model="myResultCode"
+            type="text"
+            placeholder="邮箱验证码"
+            maxlength="10"
+            :disabled="myResultLoading"
+          />
+          <p class="result-hint">验证码需先在参与/登录时获取（或联系运营），用于验证邮箱归属</p>
+          <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
+          <button class="btn btn-primary" :disabled="myResultLoading" @click="queryMyResult">
+            {{ myResultLoading ? '查询中…' : '查询' }}
+          </button>
+        </div>
+
+        <!-- 查询结果 -->
+        <div v-else class="result-detail">
+          <template v-if="myResultData.won">
+            <div class="result-line">🎉 <strong>恭喜中奖！</strong></div>
+            <div v-if="myResultData.prizeCode" class="result-code-block">
+              <span class="result-code-label">奖品码：</span>
+              <code class="result-code" @click="copyMyResult(myResultData.prizeCode)">{{ myResultData.prizeCode }}</code>
+              <small class="result-hint">点击复制</small>
+            </div>
+          </template>
+          <template v-else-if="myResultData.consolationCoupon">
+            <div class="result-line">🎁 <strong>获得安慰奖！</strong></div>
+            <div class="result-code-block">
+              <span class="result-code-label">优惠券：</span>
+              <code class="result-code" @click="copyMyResult(myResultData.consolationCoupon)">{{ myResultData.consolationCoupon }}</code>
+              <small class="result-hint">点击复制</small>
+            </div>
+          </template>
+          <template v-else>
+            <div class="result-line">😊 感谢参与，本次活动未获得奖品</div>
+          </template>
+          <button class="btn btn-ghost" @click="showMyResultModal = false">知道了</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -599,6 +666,56 @@ const sortedMyEntries = computed(() => {
 
 const joiningId = ref('')
 const showResult = ref(false)
+
+// ── 查询我的结果（中奖卡密/安慰奖券） ──
+const showMyResultModal = ref(false)
+const myResultDraw = ref<LotteryDraw | null>(null)
+const myResultEmail = ref('')
+const myResultCode = ref('')
+const myResultLoading = ref(false)
+const myResultData = ref<{ joined: boolean; won: boolean; prizeCode: string | null; consolationCoupon: string | null } | null>(null)
+const myResultError = ref('')
+
+function openMyResult(draw: LotteryDraw) {
+  myResultDraw.value = draw
+  myResultEmail.value = sessionEmail.value || ''
+  myResultCode.value = ''
+  myResultData.value = null
+  myResultError.value = ''
+  showMyResultModal.value = true
+}
+
+async function queryMyResult() {
+  if (!myResultDraw.value || !myResultEmail.value.trim() || !myResultCode.value.trim()) {
+    myResultError.value = '请输入邮箱和验证码'
+    return
+  }
+  myResultLoading.value = true
+  myResultError.value = ''
+  try {
+    const res = await fetch(`/api/public/draws/${myResultDraw.value.publicSlug}/my-result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: myResultEmail.value.trim(), code: myResultCode.value.trim() }),
+    })
+    const data = await res.json()
+    if (data.ok) {
+      myResultData.value = data
+    } else {
+      myResultError.value = data.message || '查询失败'
+    }
+  } catch {
+    myResultError.value = '网络错误'
+  } finally {
+    myResultLoading.value = false
+  }
+}
+
+function copyMyResult(text: string) {
+  if (!text) return
+  writeClipboardText(text)
+  showToast('已复制', 'success')
+}
 const pendingJoinDrawId = ref<string | null>(null)
 const nowMs = ref(Date.now())
 
@@ -1677,4 +1794,20 @@ onUnmounted(() => {
   font-weight: 700;
   color: var(--admin-accent, #f59e0b);
 }
+
+/* 查询我的结果弹窗 */
+.game-result-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.game-result-modal { background: var(--tg-bg, #1f2937); border-radius: 16px; padding: 32px 24px; max-width: 360px; width: 90%; text-align: center; position: relative; animation: modalIn .3s ease; }
+.result-close { position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--tg-hint, #9aa4b2); }
+.result-icon { font-size: 48px; margin-bottom: 12px; }
+.result-title { font-size: 22px; font-weight: 700; margin-bottom: 16px; }
+.result-form { display: flex; flex-direction: column; gap: 10px; }
+.result-form input { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border, rgba(255,255,255,.1)); background: var(--tg-secondary-bg, #151b28); color: var(--tg-text, #f0f2f5); font-size: 14px; }
+.result-hint { font-size: 12px; color: var(--tg-hint, #9aa4b2); margin: 0; }
+.result-error { font-size: 13px; color: #ef4444; margin: 0; }
+.result-detail { display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.result-line { font-size: 16px; }
+.result-code-block { display: flex; flex-direction: column; gap: 4px; align-items: center; background: var(--tg-secondary-bg, #151b28); padding: 12px; border-radius: 8px; width: 100%; }
+.result-code-label { font-size: 12px; color: var(--tg-hint, #9aa4b2); }
+.result-code { font-size: 16px; font-weight: 700; color: var(--admin-accent, #f59e0b); cursor: pointer; word-break: break-all; }
 </style>
