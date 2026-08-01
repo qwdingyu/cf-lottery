@@ -50,6 +50,15 @@
       </div>
     </div>
 
+    <div v-if="recentDraws.length === 0" class="section">
+      <div class="empty-onboard">
+        <p>还没有活动？从模板开始，3 分钟搭建第一个活动。</p>
+        <button class="btn btn-primary" type="button" @click="router.push('/admin/draws?new=true')">
+          选择模板创建活动
+        </button>
+      </div>
+    </div>
+
     <div v-if="recentDraws.length > 0" class="section">
       <h3 class="section-title">{{ $t('adminDashboard.recentActivities') }}</h3>
       <div class="table-wrap">

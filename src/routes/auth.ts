@@ -83,7 +83,15 @@ authRoute.post("/register", async (c) => {
     }
 
     const db = getDb(c);
-    // 数据库级限流：多实例下全局一致
+
+    // 平台运营者可关闭公开注册用于 MVP 内测/邀请制。
+    // 这个检查放在数据库级限流写入之前，避免注册关闭期间的无效请求持续写 rate_limit_log。
+    const [regCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "enable_registration")).limit(1);
+    if (regCfg && regCfg.value === "false") {
+      return c.json({ ok: false, message: "当前暂不开放公开注册" }, 403);
+    }
+
+    // 数据库级限流：多实例下全局一致；只对真正可能进入注册流程的请求落库。
     if (!(await checkDbRateLimit(db, `register:${ip}`, 3, 60000))) {
       return c.json({ ok: false, message: "注册过于频繁，请稍后再试" }, 429);
     }

@@ -229,6 +229,8 @@ const PLAN_LIMITS_CONFIG_KEYS: string[] = [
   "plan_team_max_participants_per_activity",
   "plan_enterprise_max_activities",
   "plan_enterprise_max_participants_per_activity",
+  // MVP 推广期允许平台运营者单独调整 Free 套餐的 Webhook 数量，给用户试用体验。
+  "free_plan_max_webhooks",
 ] as const;
 
 /**
@@ -270,6 +272,17 @@ async function loadDynamicPlanLimits(db: DbType): Promise<Record<string, Omit<Te
       if (!Number.isNaN(parsed) && parsed > 0) {
         merged[planName].maxParticipantsPerActivity = parsed;
       }
+    }
+  }
+
+  // Free 套餐的 Webhook 数量通过系统配置单独覆盖（MVP 推广期给试用体验）
+  const freeWebhooksVal = configMap["free_plan_max_webhooks"];
+  if (freeWebhooksVal !== undefined && merged["free"]) {
+    const parsed = parseInt(freeWebhooksVal, 10);
+    if (!Number.isNaN(parsed) && parsed >= 0) {
+      // Webhook 数量的 0 表示不允许创建，不等同于 maxActivities 中的“不限”。
+      // Free 层如果误把 0 当作 null，会直接绕过套餐限制并放大外部投递成本。
+      merged["free"].maxWebhooks = parsed;
     }
   }
 

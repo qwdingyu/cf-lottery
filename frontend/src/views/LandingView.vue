@@ -12,6 +12,7 @@
       <p class="hero-subtitle">面向站长、社群运营和活动负责人，用模板、规则校验、二维码和数据复盘快速完成留资、发券、报名、抽奖和导流目标。</p>
       <div class="hero-actions">
         <RouterLink to="/admin/register" class="btn btn-primary btn-lg">免费注册，开始使用</RouterLink>
+        <RouterLink to="/lottery/demo" class="btn btn-ghost btn-lg">查看示例活动</RouterLink>
         <p class="hero-note">无需信用卡，先用免费套餐验证活动目标</p>
       </div>
     </header>

@@ -319,14 +319,28 @@
                   :placeholder="$t('lottery.adminNamePlaceholder')"
                 />
               </label>
-              <label class="field-span-2">
-                <span>{{ $t('lottery.product') }}</span>
-                <input
-                  v-model="form.productName"
-                  placeholder="奖品名称（选填）"
-                  maxlength="100"
-                />
-                <small class="field-hint">{{ $t('lottery.adminProductHint') }}</small>
+              <label class="field-span-2" v-if="form.activityKind === 'lottery'">
+                <span>奖项配置</span>
+                <div class="tier-list">
+                  <div v-for="(tier, idx) in form.tiers" :key="idx" class="tier-row">
+                    <select v-model="tier.prizeId" class="tier-prize" :disabled="creating">
+                      <option value="">选择奖品</option>
+                      <option v-for="p in prizeOptions" :key="p.id" :value="p.id">{{ p.name }}</option>
+                    </select>
+                    <input v-model="tier.tierName" class="tier-name" placeholder="奖项名称" maxlength="50" />
+                    <input v-model.number="tier.winnerCount" type="number" class="tier-count" min="1" max="1000" placeholder="名额" />
+                    <button type="button" class="btn btn-ghost btn-xs" @click="removeTier(idx)">✕</button>
+                  </div>
+                  <div class="tier-actions">
+                    <button type="button" class="btn btn-ghost btn-xs" :disabled="form.tiers.length >= 10" @click="addTier">
+                      + 添加奖项
+                    </button>
+                    <button v-if="prizeOptions.length === 0" type="button" class="btn btn-ghost btn-xs" @click="goToPrizes">
+                      去创建奖品
+                    </button>
+                    <small class="field-hint">最多 10 个奖项，中奖名额总和不能超过参与人数</small>
+                  </div>
+                </div>
               </label>
               <label class="field-span-2">
                 <span>{{ $t('lottery.adminDescription') }}</span>
@@ -415,7 +429,7 @@
               <p class="form-section-desc">选择参与者如何加入活动</p>
             </header>
             <div class="form-grid two-cols">
-              <label class="field-span-2">
+              <label v-if="showAdvanced || isEditing" class="field-span-2">
                 <span>活动类型</span>
                 <select v-model="form.activityKind" @change="handleActivityKindChange">
                   <option value="lottery">抽奖</option>
@@ -438,7 +452,7 @@
                   <option value="invite_code">邀请码（输入邀请码后可参与）</option>
                 </select>
               </label>
-              <label class="field-span-2">
+              <label v-if="showAdvanced || isEditing" class="field-span-2">
                 <span>互动体验</span>
                 <select v-model="form.experienceType">
                   <option value="wheel">大转盘</option>
@@ -457,7 +471,7 @@
                 </select>
                 <small class="field-hint">互动体验只影响活动页展示，不决定参与资格或开奖结果</small>
               </label>
-              <label v-if="form.activityKind === 'signup_chain'" class="field-span-2">
+              <label v-if="form.activityKind === 'signup_chain' && (showAdvanced || isEditing)" class="field-span-2">
                 <span>名额策略</span>
                 <select v-model="form.allocationPolicy">
                   <option value="capacity">满额后拒绝</option>
@@ -566,6 +580,14 @@
         <div class="lottery-editor-footer modal-actions">
           <button
             type="button"
+            class="btn btn-ghost btn-xs"
+            @click="showAdvanced = !showAdvanced"
+          >
+            {{ showAdvanced ? '收起高级设置 ▲' : '⚙️ 高级设置' }}
+          </button>
+          <span style="flex:1" />
+          <button
+            type="button"
             class="btn btn-ghost btn-sm"
             :disabled="creating"
             @click="closeEditor"
@@ -592,11 +614,6 @@
           <span class="template-name">{{ tpl.name }}</span>
           <span class="template-desc">{{ tpl.description }}</span>
           <span class="template-category tag" :class="'tag-' + tpl.category">{{ categoryLabel(tpl.category) }}</span>
-        </button>
-        <button class="template-card template-card--blank" @click="openCreate">
-          <span class="template-icon">📄</span>
-          <span class="template-name">空白活动</span>
-          <span class="template-desc">从零开始创建，所有选项手动配置</span>
         </button>
       </div>
     </AdminModal>
@@ -812,7 +829,7 @@
  * 抽奖管理页 — cf-lottery 适配版。
  */
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
@@ -886,6 +903,8 @@ type ExternalConversion = {
 };
 
 const { t, locale } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const { showToast } = useToast()
 useAdminAuth()
 const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
@@ -1061,6 +1080,8 @@ const emptyForm = () => ({
   allocationPolicy: 'capacity',
   accessPassword: '',
   showWinners: false,
+  // 奖项配置（抽奖活动专用）：选择奖品库中的奖品，设置中奖名额
+  tiers: [] as Array<{ prizeId: string; tierName: string; winnerCount: number }>,
   // 导流配置
   enableProductLink: false,
   productLink: { url: '', title: '', imageUrl: '', price: '' },
@@ -1068,8 +1089,35 @@ const emptyForm = () => ({
 
 const form = ref(emptyForm())
 const isEditing = ref(false)
+// 高级设置默认折叠：模板已预设正确的活动类型/互动体验/名额策略，99% 用户无需修改。
+const showAdvanced = ref(false)
 const rosterInput = ref('')
 const inviteCodeCount = ref(10)
+/** 奖品库（用于奖项配置下拉选择） */
+const prizeOptions = ref<any[]>([])
+
+/** 加载奖品库 */
+async function loadPrizeOptions() {
+  try {
+    const data = await adminRequest<{ prizes: any[] }>('/api/admin/prizes')
+    prizeOptions.value = data.prizes || []
+  } catch { prizeOptions.value = [] }
+}
+
+/** 添加一个奖项（最多 10 个） */
+function addTier() {
+  if (form.value.tiers.length >= 10) return
+  form.value.tiers.push({ prizeId: '', tierName: `奖项 ${form.value.tiers.length + 1}`, winnerCount: 1 })
+}
+
+/** 移除一个奖项 */
+function removeTier(idx: number) {
+  form.value.tiers.splice(idx, 1)
+}
+
+function goToPrizes() {
+  void router.push('/admin/prizes')
+}
 
 /** 后端约束：drawTime > endTime > startTime */
 const timeOrderError = computed(() => {
@@ -1677,24 +1725,6 @@ function applyTemplate(tpl: any) {
   showCreateModal.value = true
 }
 
-function openCreate() {
-  const base = emptyForm()
-  form.value = base
-  isEditing.value = false
-  // 默认填 1 天档，避免空白 datetime-local 难用；再保留 emptyForm 的业务默认值
-  applyTimePreset('1d')
-  form.value = {
-    ...form.value,
-    id: '',
-    name: '',
-    description: '',
-    maxWinners: 1,
-    maxParticipants: null,
-    expectedParticipants: 0,
-  }
-  showCreateModal.value = true
-}
-
 async function loadData() {
   const sequence = ++loadSequence
   loading.value = true
@@ -2067,6 +2097,24 @@ async function handleCreate() {
             })
           } catch { /* 生成失败不阻断主流程 */ }
         }
+        // 抽奖活动：创建成功后保存奖项配置（选择奖品库中的奖品 + 中奖名额）
+        if (form.value.activityKind === 'lottery' && form.value.tiers.some(t => t.prizeId)) {
+          const validTiers = form.value.tiers
+            .filter(t => t.prizeId)
+            .map((t, i) => ({
+              prizeId: t.prizeId,
+              tierName: t.tierName || `奖项 ${i + 1}`,
+              winnerCount: Math.max(1, Number(t.winnerCount) || 1),
+            }))
+          if (validTiers.length > 0) {
+            try {
+              await adminRequest(`/api/admin/draws/${created.id}/tiers`, {
+                method: 'POST',
+                body: JSON.stringify({ tiers: validTiers }),
+              })
+            } catch { /* 奖项保存失败不阻断主流程，用户可在编辑时重试 */ }
+          }
+        }
         try {
           await writeClipboardText(publicShareUrl(created.publicSlug || created.id))
         } catch { /* 剪贴板写入失败不阻断 */ }
@@ -2093,7 +2141,14 @@ async function handleCreate() {
   }
 }
 
-onMounted(loadData)
+onMounted(() => {
+  loadData()
+  loadPrizeOptions()
+  // 从运营台空状态跳转过来时，自动打开模板选择弹窗。
+  if (route.query.new === 'true') {
+    openTemplatePicker()
+  }
+})
 </script>
 
 <style>
@@ -2306,4 +2361,12 @@ onMounted(loadData)
   padding: 2px 8px;
   border-radius: 4px;
 }
+
+/* 奖项配置 */
+.tier-list { display: flex; flex-direction: column; gap: 8px; }
+.tier-row { display: flex; gap: 8px; align-items: center; }
+.tier-prize { flex: 2; min-width: 0; }
+.tier-name { flex: 1.5; min-width: 0; }
+.tier-count { flex: 0.5; min-width: 70px; }
+.tier-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
 </style>
