@@ -6,6 +6,7 @@ export type SystemConfigSectionId =
   | 'general'
   | 'security'
   | 'ops'
+  | 'plans'
 
 export type SystemConfigSectionDef = {
   id: SystemConfigSectionId
@@ -33,6 +34,12 @@ export const SYSTEM_CONFIG_SECTIONS: readonly SystemConfigSectionDef[] = [
     label: '数据维护',
     description: '数据保留天数等运维参数。',
     groups: ['数据维护'],
+  },
+  {
+    id: 'plans',
+    label: '套餐额度',
+    description: '各套餐的活动次数上限和单活动参与人数上限；活动次数填 0 表示不限，单活动参与上限必须大于 0。',
+    groups: ['套餐额度'],
   },
 ] as const
 

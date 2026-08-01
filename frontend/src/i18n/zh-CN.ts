@@ -2215,6 +2215,7 @@ export default {
       email: "邮件与通知",
       referral: "分销与返佣",
       ops: "数据与运维",
+      plans: "套餐额度",
     },
     sectionDescriptions: {
       general: "用户端展示的品牌与客服联系方式。",
@@ -2223,6 +2224,7 @@ export default {
       email: "Resend 发信与库存预警；OTP/交付邮件依赖此处配置。",
       referral: "自动返佣总开关、全员推广码佣金模板；用户购后自动一码，前台 /refer 查看。",
       ops: "日志与限流等保留天数；下方为不可恢复的业务数据清理。",
+      plans: "各套餐的活动次数上限和单活动参与人数上限；活动次数填 0 表示不限，单活动参与上限必须大于 0。",
     },
     groupNames: {
       basic: "基础信息",
@@ -2236,6 +2238,7 @@ export default {
       referral_commission: "分销与返佣",
       data_retention: "数据保留与清理",
       other: "其他",
+      plan_limits: "套餐额度",
     },
     paymentCrosslink: "余额/充值开关与「支付」页同步，改任一处即可。",
     paymentPageLink: "打开支付页",

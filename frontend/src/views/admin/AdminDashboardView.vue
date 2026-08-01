@@ -29,9 +29,9 @@
         <span class="stat-value">{{ quotaText }}</span>
         <span class="stat-label">活动用量</span>
       </div>
-      <!-- 参与人数用量：当前显示 0 / ∞ 占位符。
-           因 Turso rows read 和请求延迟约束，热路径不做租户级实时 COUNT。
-           未来通过快照表（定时任务预聚合）自动填充。
+      <!-- 参与人数用量：后台低频概览允许展示租户级累计 COUNT。
+           因 Turso rows read 和请求延迟约束，公开热路径不做租户级实时 COUNT。
+           未来强额度/账单通过快照表（定时任务预聚合）自动填充。
            详见 docs/023_Cloudflare免费版与Turso约束下认证和运行安全方案_2026-08-01.md -->
       <div class="stat-card">
         <span class="stat-value">{{ participantQuotaText }}</span>
@@ -154,11 +154,9 @@ async function loadData() {
       plan: statsData.plan || 'free',
       activityUsage: statsData.usage?.activities ?? statsData.totalDraws ?? 0,
       activityLimit: statsData.limits?.maxActivities ?? null,
-      // 参与人数用量：硬编码 0 / null 占位。因 Turso rows read 和请求延迟约束，
-      // 热路径不做租户级实时 COUNT，累计用量未来通过快照表（定时任务预聚合）自动填充。
-      // 详见 docs/023_Cloudflare免费版与Turso约束下认证和运行安全方案_2026-08-01.md
-      participantUsage: 0,
-      participantLimit: null,
+      // 后台概览是低频查询，可以显示租户累计参与人数；真正的额度强约束仍等待快照/计数器。
+      participantUsage: statsData.usage?.participants ?? statsData.totalParticipants ?? 0,
+      participantLimit: statsData.limits?.maxTotalParticipants ?? null,
     }
   } catch (err: any) {
     showToast(err.message || '加载失败', 'error')

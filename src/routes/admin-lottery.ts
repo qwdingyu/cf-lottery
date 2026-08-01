@@ -1052,6 +1052,13 @@ adminLotteryRoute.get("/stats", async (c) => {
     .from(lotteryEntries)
     .where(and(eq(lotteryEntries.tenantId, tenantId), sql`${lotteryEntries.joinedAt} >= ${sevenDaysAgo}`));
 
+  // 后台低频概览允许做租户级 COUNT：它消耗 Turso rows read 和等待时间，
+  // 但不应被误判为 Worker CPU 热点。公开参与热路径仍禁止依赖该类累计统计。
+  const [totalEntries] = await db
+    .select({ total: count() })
+    .from(lotteryEntries)
+    .where(eq(lotteryEntries.tenantId, tenantId));
+
   const [winnerCount] = await db
     .select({ total: count() })
     .from(lotteryWinners)
@@ -1061,11 +1068,12 @@ adminLotteryRoute.get("/stats", async (c) => {
     totalDraws: Number(drawCount?.total ?? 0),
     openDraws: Number(openCount?.total ?? 0),
     drawnDraws: Number(drawnCount?.total ?? 0),
+    totalParticipants: Number(totalEntries?.total ?? 0),
     recentParticipants: Number(recentEntries?.total ?? 0),
     totalWinners: Number(winnerCount?.total ?? 0),
     plan: tenantUsage.plan,
     limits: tenantUsage.limits,
-    usage: tenantUsage.usage,
+    usage: { ...tenantUsage.usage, participants: Number(totalEntries?.total ?? 0) },
   });
 });
 

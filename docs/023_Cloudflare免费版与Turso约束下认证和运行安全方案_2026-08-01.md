@@ -10,7 +10,7 @@
 
 ### 1.1 Cloudflare Workers Free
 
-Cloudflare Workers 官方限制页当前明确：
+截至 2026-08-01 核对 Cloudflare Workers 官方限制页，免费层关键约束如下。后续如果官方套餐变更，以官方页面为准：
 
 | 项 | Free |
 |---|---:|
@@ -31,7 +31,7 @@ Cloudflare Workers 官方限制页当前明确：
 
 ### 1.2 Turso/libSQL Free
 
-Turso 官方价格页当前 Free 层公开信息：
+截至 2026-08-01 核对 Turso 官方价格页和 Usage & Billing 文档，Free 层关键约束如下。后续如果官方套餐变更，以官方页面为准：
 
 | 项 | Free |
 |---|---:|
@@ -40,7 +40,7 @@ Turso 官方价格页当前 Free 层公开信息：
 | Monthly Rows Read | 500 Million |
 | Monthly Rows Written | 10 Million |
 
-Turso 使用量文档说明，带配额的 plan 会按 rows read、rows written、storage 统计；超限查询会失败并返回 `BLOCKED`。
+Turso Usage & Billing 文档说明，带配额的 plan 会按 rows read、rows written、storage 统计；超限查询会失败并返回 `BLOCKED`。该文档还明确：`count`、`avg`、`min`、`max`、`sum` 等聚合函数会对参与聚合的每一行产生 row scan。
 
 官方参考：
 
@@ -129,11 +129,13 @@ PASSWORD_PEPPER || JWT_SECRET
 - 按 `tenant_id + draw_id` 查询活动参与、事件、结果。
 - 有索引的分页列表。
 - 小批量后台操作。
+- 后台低频概览中的租户级 `COUNT`，但必须接受 rows read 成本，并准备迁移到快照表。
 
 避免：
 
 - 管理后台首页实时扫描全部活动事件。
 - 每次公开页打开都 count 大表。
+- 用户参与热路径中做租户级累计 `COUNT`。
 - 无上限导出。
 - 无索引按 JSON 字段查询。
 
@@ -195,6 +197,7 @@ PASSWORD_PEPPER || JWT_SECRET
 - 旧 SHA-256 密码兼容登录，并在登录成功后升级。
 - 旧低迭代 PBKDF2 `salt:hash` 兼容验证并升级；不在默认登录热路径尝试 `PBKDF2 x 100000`。
 - 活动漏斗和外部转化查询均按单活动读取，不在公开页做实时重统计。
+- 后台 `/api/admin/stats` 允许低频展示租户累计参与人数；这是 Turso rows read/延迟成本，不是 Worker CPU 热点。
 - `PASSWORD_PEPPER` 已写入 `.env.example`、`README.md` 和 `local-deploy.sh`。
 
 仍需补：

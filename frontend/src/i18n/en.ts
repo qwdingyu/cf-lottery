@@ -2191,6 +2191,7 @@ export default {
       email: "Email & Notification",
       referral: "Referral & Commission",
       ops: "Data & Maintenance",
+      plans: "Plan Limits",
     },
     sectionDescriptions: {
       general: "Brand and customer contact info displayed on the storefront.",
@@ -2199,6 +2200,7 @@ export default {
       email: "Resend email service and stock alerts; OTP/delivery emails depend on this configuration.",
       referral: "Auto-referral toggle, commission template; each user gets a code after purchase, viewable at /refer.",
       ops: "Log and rate-limit retention days; irreversible business data cleanup below.",
+      plans: "Activity count and per-activity participant limits per plan. Activity count 0 means unlimited; participant limits must be greater than 0.",
     },
     groupNames: {
       basic: "Basic Info",
@@ -2212,6 +2214,7 @@ export default {
       referral_commission: "Referral & Commission",
       data_retention: "Data Retention & Cleanup",
       other: "Other",
+      plan_limits: "Plan Limits",
     },
     paymentCrosslink: "Balance/top-up toggle syncs with the Payment page; changing either works.",
     paymentPageLink: "Open Payment Page",

@@ -20,7 +20,7 @@
  * - 锁码防重：条件 UPDATE WHERE status = 'available'
  */
 import { withDbTransaction, type DbType, type DbWriteScope } from "../db/client";
-import { and, eq, count, sql } from "drizzle-orm";
+import { and, eq, count, inArray, sql } from "drizzle-orm";
 import { buildLotteryWinnerTemplateData, sendEmail } from "./email-service";
 import {
   lotteryDraws,          // 抽奖活动表
@@ -36,6 +36,7 @@ import {
   activityOutcomes,      // 接龙/预约等活动的统一结果
   tenants,               // SaaS 租户与套餐
   tenantMembers,         // 团队成员配额统计
+  systemConfig,          // 系统配置（含动态套餐额度）
   apiKeys,               // 外部集成 API Key
   webhookConfigs,        // Webhook 配额统计
   webhookDeliveries,     // Webhook 投递生命周期
@@ -215,7 +216,69 @@ export function getTenantPlanLimits(plan?: string | null): TenantPlanLimits {
   return { plan: PLAN_LIMITS[normalized] ? normalized : "free", ...limits };
 }
 
+/**
+ * 系统配置中套餐额度相关 key 的列表。
+ * 平台运营者可在 /admin/config 页面修改这些值，动态覆盖硬编码的 PLAN_LIMITS。
+ */
+const PLAN_LIMITS_CONFIG_KEYS: string[] = [
+  "plan_free_max_activities",
+  "plan_free_max_participants_per_activity",
+  "plan_pro_max_activities",
+  "plan_pro_max_participants_per_activity",
+  "plan_team_max_activities",
+  "plan_team_max_participants_per_activity",
+  "plan_enterprise_max_activities",
+  "plan_enterprise_max_participants_per_activity",
+] as const;
+
+/**
+ * 从 system_config 表读取动态套餐额度配置，与硬编码 PLAN_LIMITS 合并。
+ * 读取 system_config 是后台管理/配额校验操作，当前不在公开参与热路径。
+ * max_activities 的 0 表示不限（对应 null）；单活动参与上限必须大于 0。
+ * 未配置或非法的套餐项继续使用 PLAN_LIMITS 默认值。
+ */
+async function loadDynamicPlanLimits(db: DbType): Promise<Record<string, Omit<TenantPlanLimits, "plan">>> {
+  const rows = await db
+    .select({ key: systemConfig.key, value: systemConfig.value })
+    .from(systemConfig)
+    .where(inArray(systemConfig.key, PLAN_LIMITS_CONFIG_KEYS));
+
+  const configMap: Record<string, string> = {};
+  for (const row of rows) {
+    configMap[row.key] = row.value;
+  }
+
+  // 深拷贝硬编码默认值
+  const merged: Record<string, Omit<TenantPlanLimits, "plan">> = {};
+  for (const [planName, planValues] of Object.entries(PLAN_LIMITS)) {
+    merged[planName] = { ...planValues };
+  }
+
+  // 用系统配置中的值覆盖（如果存在且有效）
+  for (const planName of ["free", "pro", "team", "enterprise"] as const) {
+    const maxActivitiesVal = configMap[`plan_${planName}_max_activities`];
+    const maxParticipantsVal = configMap[`plan_${planName}_max_participants_per_activity`];
+
+    if (maxActivitiesVal !== undefined && merged[planName]) {
+      const parsed = parseInt(maxActivitiesVal, 10);
+      if (!Number.isNaN(parsed) && parsed >= 0) {
+        merged[planName].maxActivities = parsed === 0 ? null : parsed;
+      }
+    }
+    if (maxParticipantsVal !== undefined && merged[planName]) {
+      const parsed = parseInt(maxParticipantsVal, 10);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        merged[planName].maxParticipantsPerActivity = parsed;
+      }
+    }
+  }
+
+  return merged;
+}
+
 export async function getTenantUsage(db: DbType, tenantId: string) {
+  // 读取动态套餐额度配置（平台运营者在 /admin/config 中设置），覆盖硬编码默认值
+  const dynamicPlanLimits = await loadDynamicPlanLimits(db);
   // 查询租户信息，含兑换码购买的额外额度
   const [tenant] = await db
     .select({
@@ -227,8 +290,11 @@ export async function getTenantUsage(db: DbType, tenantId: string) {
     .from(tenants)
     .where(eq(tenants.id, tenantId))
     .limit(1);
-  const plan = tenant?.plan || "free";
-  const limits = getTenantPlanLimits(plan);
+  const rawPlan = String(tenant?.plan || "free").trim().toLowerCase();
+  const plan = PLAN_LIMITS[rawPlan] ? rawPlan : "free";
+  // 优先使用动态套餐额度（平台运营者在 /admin/config 中设置），兜底用硬编码默认值
+  const dynamicPlan = dynamicPlanLimits[plan] || PLAN_LIMITS[plan] || PLAN_LIMITS.free!;
+  const limits: TenantPlanLimits = { plan, ...dynamicPlan };
 
   const [{ total: activityCount }] = await db
     .select({ total: count() })

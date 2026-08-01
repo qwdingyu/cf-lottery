@@ -172,6 +172,18 @@ beforeAll(async () => {
     occurred_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(tenant_id, source, external_event_id)
   )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS system_config (
+    key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  // 插入默认套餐额度配置（与硬编码 PLAN_LIMITS 一致，确保测试可重复）
+  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_free_max_activities", "10"] });
+  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_free_max_participants_per_activity", "200"] });
+  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_pro_max_activities", "200"] });
+  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_pro_max_participants_per_activity", "5000"] });
+  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_team_max_activities", "1000"] });
+  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_team_max_participants_per_activity", "20000"] });
+  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_enterprise_max_activities", "0"] });
+  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_enterprise_max_participants_per_activity", "100000"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)", args: [USER, "test", "hash"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO tenant_members (tenant_id, user_id) VALUES (?, ?)", args: [TENANT, USER] });
@@ -194,6 +206,16 @@ afterEach(async () => {
   await client.execute("DELETE FROM activity_events");
   await client.execute("DELETE FROM share_records");
   await client.execute("DELETE FROM external_conversions");
+  await client.execute("DELETE FROM system_config");
+  // 恢复默认套餐额度配置
+  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_free_max_activities", "10"] });
+  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_free_max_participants_per_activity", "200"] });
+  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_pro_max_activities", "200"] });
+  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_pro_max_participants_per_activity", "5000"] });
+  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_team_max_activities", "1000"] });
+  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_team_max_participants_per_activity", "20000"] });
+  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_enterprise_max_activities", "0"] });
+  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_enterprise_max_participants_per_activity", "100000"] });
   await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["free", TENANT] });
 });
 
@@ -471,6 +493,42 @@ describe("SaaS 套餐配额", () => {
     expect(usage.usage.members).toBe(1);
     expect(usage.usage.webhooks).toBe(0);
     expect(usage.limits.maxActivities).toBe(10);
+  });
+
+  it("系统配置可动态覆盖套餐活动数和单活动参与上限", async () => {
+    await client.execute({ sql: "UPDATE system_config SET value = ? WHERE key = ?", args: ["2", "plan_free_max_activities"] });
+    await client.execute({ sql: "UPDATE system_config SET value = ? WHERE key = ?", args: ["50", "plan_free_max_participants_per_activity"] });
+
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.limits.maxActivities).toBe(2);
+    expect(usage.limits.maxParticipantsPerActivity).toBe(50);
+
+    await expect(createDraw(db, TENANT, {
+      title: "超出动态参与上限",
+      startAt: new Date().toISOString(),
+      endAt: new Date(Date.now() + 3600000).toISOString(),
+      maxParticipants: 51,
+      winnerCount: 1,
+    })).rejects.toThrow("最多允许 50 人参与");
+  });
+
+  it("未知套餐继续按 free 归一化，避免返回未知 plan 名称", async () => {
+    await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["unknown_plan", TENANT] });
+
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.plan).toBe("free");
+    expect(usage.limits.maxActivities).toBe(10);
+    expect(usage.limits.maxParticipantsPerActivity).toBe(200);
+  });
+
+  it("单活动参与上限配置为 0 时忽略，避免误把活动容量变成 0", async () => {
+    await client.execute({
+      sql: "UPDATE system_config SET value = ? WHERE key = ?",
+      args: ["0", "plan_free_max_participants_per_activity"],
+    });
+
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.limits.maxParticipantsPerActivity).toBe(200);
   });
 
   it("pro：允许更高的单活动参与上限", async () => {
