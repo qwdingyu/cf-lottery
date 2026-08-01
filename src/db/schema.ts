@@ -296,3 +296,18 @@ export const couponCodes = sqliteTable("coupon_codes", {
   couponTenantIdx: index("idx_coupon_tenant").on(t.tenantId, t.status, t.createdAt),
   couponCodeUnique: uniqueIndex("idx_coupon_code").on(t.tenantId, t.code),
 }));
+
+// ── 分享裂变记录（追踪分享带来的新参与） ──
+export const shareRecords = sqliteTable("share_records", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  sharerEntryId: text("sharer_entry_id").notNull(),
+  shareCode: text("share_code").notNull().unique(),
+  clickedCount: integer("clicked_count").notNull().default(0),
+  joinedCount: integer("joined_count").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  shareDrawIdx: index("idx_share_draw").on(t.tenantId, t.drawId, t.createdAt),
+  shareCodeUnique: uniqueIndex("idx_share_code").on(t.shareCode),
+}));

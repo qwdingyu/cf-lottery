@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers } from "../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords } from "../db/schema";
 import { eq, and, count, sql } from "drizzle-orm";
 import { getActivityOutcome, joinDraw } from "../services/lottery-service";
 import { sendAccessCode } from "../services/email-service";
@@ -400,4 +400,40 @@ publicLotteryRoute.get("/draws/:slug/signup-list", async (c) => {
   }));
 
   return ok(c, { entries: masked, total: entries.length });
+});
+
+/** 生成分享码（参与者分享活动链接） */
+publicLotteryRoute.post("/draws/:slug/share", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+  const body = await c.req.json<{ entryId: string }>();
+  if (!body.entryId) return fail(c, "缺少参与记录 ID", 400);
+
+  const [draw] = await db.select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId }).from(lotteryDraws).where(eq(lotteryDraws.publicSlug, slug)).limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  const shareCode = crypto.randomUUID().slice(0, 12);
+  await db.insert(shareRecords).values({
+    id: crypto.randomUUID(),
+    tenantId: draw.tenantId,
+    drawId: draw.id,
+    sharerEntryId: body.entryId,
+    shareCode,
+  });
+
+  return ok(c, { shareCode, shareUrl: `/${slug}?ref=${shareCode}` });
+});
+
+/** 通过分享链接打开活动（记录点击） */
+publicLotteryRoute.get("/draws/:slug/ref/:shareCode", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+  const shareCode = c.req.param("shareCode");
+
+  const [share] = await db.select().from(shareRecords).where(eq(shareRecords.shareCode, shareCode)).limit(1);
+  if (share) {
+    await db.update(shareRecords).set({ clickedCount: share.clickedCount + 1 }).where(eq(shareRecords.id, share.id));
+  }
+
+  return c.redirect(`/${slug}`);
 });

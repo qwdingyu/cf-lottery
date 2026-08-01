@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, auditLogs, tenantMembers, users, tenants } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, auditLogs, tenantMembers, users, tenants } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
@@ -1135,4 +1135,23 @@ adminLotteryRoute.put("/brand", async (c) => {
   };
   await db.update(tenants).set({ brandConfig: JSON.stringify(config), updatedAt: new Date().toISOString() }).where(eq(tenants.id, tenantId));
   return ok(c, { config });
+});
+
+// ═════════════════════════════════════════════════════════
+// 分享裂变统计
+// ═════════════════════════════════════════════════════════
+
+/** 分享统计 */
+adminLotteryRoute.get("/draws/:id/shares", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+  const rows = await db
+    .select()
+    .from(shareRecords)
+    .where(and(eq(shareRecords.tenantId, tenantId), eq(shareRecords.drawId, drawId)))
+    .orderBy(desc(shareRecords.createdAt));
+  const totalClicks = rows.reduce((s, r) => s + r.clickedCount, 0);
+  const totalJoins = rows.reduce((s, r) => s + r.joinedCount, 0);
+  return ok(c, { shares: rows, totalClicks, totalJoins, sharerCount: rows.length });
 });
