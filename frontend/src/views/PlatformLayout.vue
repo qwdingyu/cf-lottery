@@ -52,6 +52,7 @@ const { showToast } = useToast()
 /** 平台运营后台菜单（仅 L3 功能） */
 const menuItems = computed(() => [
   { name: 'PlatformTenants', to: '/platform/tenants', label: t('platformLayout.menuTenants'), icon: '&#x1F3E2;' },
+  { name: 'PlatformMembers', to: '/platform/members', label: t('platformLayout.menuMembers'), icon: '&#x1F465;' },
   { name: 'PlatformConfig', to: '/platform/config', label: t('platformLayout.menuConfig'), icon: '&#x2699;&#xFE0F;' },
   { name: 'PlatformRedemptionCodes', to: '/platform/redemption-codes', label: t('platformLayout.menuRedemptionCodes'), icon: '&#x1F3B5;' },
   { name: 'PlatformAuditLogs', to: '/platform/audit-logs', label: t('platformLayout.menuAuditLogs'), icon: '&#x1F4DD;' },

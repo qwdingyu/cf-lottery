@@ -96,6 +96,11 @@ const router = createRouter({
           component: () => import('@/views/platform/PlatformTenantsView.vue'),
         },
         {
+          path: 'members',
+          name: 'PlatformMembers',
+          component: () => import('@/views/platform/PlatformMembersView.vue'),
+        },
+        {
           path: 'config',
           name: 'PlatformConfig',
           component: () => import('@/views/admin/AdminSystemConfigView.vue'),

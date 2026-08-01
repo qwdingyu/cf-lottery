@@ -57,6 +57,7 @@ export default {
   platformLayout: {
     title: "平台运营",
     menuTenants: "租户管理",
+    menuMembers: "成员管理",
     menuConfig: "系统配置",
     menuRedemptionCodes: "兑换码",
     menuAuditLogs: "审计日志",

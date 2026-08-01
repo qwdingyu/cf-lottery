@@ -6,6 +6,7 @@
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
+import { withDbTransaction } from "../db/client";
 import { fail, getDb, ok } from "../lib/http";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
 import { tenants, platformMembers, users, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws } from "../db/schema";
@@ -26,6 +27,12 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.trunc(parsed), min), max);
+}
+
+function isSafeQuotaDelta(value: unknown): boolean {
+  if (value === undefined) return true;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && Math.abs(parsed) <= 1_000_000;
 }
 
 // ═════════════════════════════════════════════════════════
@@ -224,6 +231,66 @@ platformRoute.get("/tenants/:id/summary", async (c) => {
   });
 });
 
+/** 调整租户套餐/状态/额外额度（平台运营者用于人工售卖、补偿、暂停租户）
+ *
+ * 可调整字段：
+ * - plan: 套餐（free/pro/team/enterprise）
+ * - status: 状态（active/suspended/disabled）
+ * - extraActivityQuota: 额外活动次数（追加）
+ * - extraParticipantQuota: 额外参与人数（追加）
+ * - extraQuotaExpiresAt: 额外额度到期时间
+ */
+platformRoute.patch("/tenants/:id", requirePlatformMember(["platform_owner"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
+  const tenantId = c.req.param("id");
+  if (!tenantId) return fail(c, "缺少租户 ID", 400);
+  const body = await c.req.json<{
+    plan?: string;
+    status?: string;
+    extraActivityQuota?: number;
+    extraParticipantQuota?: number;
+    extraQuotaExpiresAt?: string | null;
+  }>();
+
+  const [tenant] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+  if (!tenant) return fail(c, "租户不存在", 404);
+
+  const PLAN_SET = ["free", "pro", "team", "enterprise"];
+  if (body.plan && !PLAN_SET.includes(body.plan)) return fail(c, "无效的套餐", 400);
+  if (body.status && !["active", "suspended", "disabled"].includes(body.status)) return fail(c, "无效的状态", 400);
+  if (!isSafeQuotaDelta(body.extraActivityQuota)) return fail(c, "额外活动次数必须是 -1000000 到 1000000 的整数", 400);
+  if (!isSafeQuotaDelta(body.extraParticipantQuota)) return fail(c, "额外参与人数必须是 -1000000 到 1000000 的整数", 400);
+  if (body.extraQuotaExpiresAt && Number.isNaN(new Date(body.extraQuotaExpiresAt).getTime())) {
+    return fail(c, "额外额度到期时间格式无效", 400);
+  }
+
+  const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+  if (body.plan) updates.plan = body.plan;
+  if (body.status) updates.status = body.status;
+  // 额外额度：按追加方式累加（便于运营者一次性增加）
+  if (typeof body.extraActivityQuota === "number") updates.extraActivityQuota = sql`${tenants.extraActivityQuota} + ${body.extraActivityQuota}`;
+  if (typeof body.extraParticipantQuota === "number") updates.extraParticipantQuota = sql`${tenants.extraParticipantQuota} + ${body.extraParticipantQuota}`;
+  if (body.extraQuotaExpiresAt !== undefined) updates.extraQuotaExpiresAt = body.extraQuotaExpiresAt;
+
+  await withDbTransaction(db, async (tx) => {
+    await tx.update(tenants).set(updates).where(eq(tenants.id, tenantId));
+    // 平台审计：调整租户套餐是敏感操作，必须和业务更新同事务写入。
+    await writePlatformAudit(tx, {
+      actorUserId,
+      actorRole,
+      action: "platform.tenant.update",
+      targetType: "tenant",
+      targetId: tenantId,
+      tenantId,
+      metadata: { plan: body.plan, status: body.status, extraActivityQuota: body.extraActivityQuota, extraParticipantQuota: body.extraParticipantQuota },
+    });
+  });
+
+  return ok(c, { updated: true });
+});
+
 // ═════════════════════════════════════════════════════════
 // 平台审计日志
 // ═════════════════════════════════════════════════════════
@@ -313,6 +380,7 @@ platformRoute.post("/webhook-deliveries/:id/retry", requirePlatformMember(["plat
   const actorUserId = c.get("userId") as string;
   const actorRole = c.get("platformRole") as string;
   const deliveryId = c.req.param("id");
+  if (!deliveryId) return fail(c, "缺少 Webhook 投递记录 ID", 400);
 
   const [delivery] = await db
     .select({

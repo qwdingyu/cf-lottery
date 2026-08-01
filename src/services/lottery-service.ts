@@ -44,6 +44,7 @@ import {
   activityEvents,        // 活动事件与导流漏斗
   shareRecords,          // 分享裂变归因
   externalConversions,   // 外部成交/核销/注册回传事实
+  activitySubmissions,   // 动态表单提交 payload
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
@@ -1216,6 +1217,8 @@ export async function joinDraw(
     ipHash?: string;               // 参与者 IP hash（用于轻量防刷）
     refCode?: string;              // 分享码。只有成功入库的新参与才计为有效邀请。
     userAgent?: string;
+    /** 动态表单提交 payload（问卷答案/投票选项/资料请求等）。与 entry 同事务写入。 */
+    submissionPayload?: Record<string, unknown>;
   },
 ) {
   // 通过 public_slug 查找活动（不暴露活动 ID）
@@ -1344,6 +1347,21 @@ export async function joinDraw(
         return { joined: false, message: acceptsWaitlist ? "参与失败，请稍后重试" : "活动名额已满" };
       }
 
+      // 提交 payload（问卷/投票/资料领取等）：与 entry 同事务写入，保证原子性。
+      // 当 UNIQUE(tenant_id, draw_id, entry_id) 冲突时会抛异常，事务回滚。
+      let submissionId: string | undefined;
+      if (options?.submissionPayload) {
+        submissionId = crypto.randomUUID();
+        await tx.insert(activitySubmissions).values({
+          id: submissionId,
+          tenantId: draw.tenantId,
+          drawId: draw.id,
+          entryId,
+          payloadJson: JSON.stringify(options.submissionPayload),
+          idempotencyKey: String((options.submissionPayload as any)._idempotencyKey || ""),
+        });
+      }
+
       if (draw.activityKind !== "signup_chain") {
         const attribution = await recordAttributedJoin(tx, {
           tenantId: draw.tenantId,
@@ -1353,7 +1371,7 @@ export async function joinDraw(
           ipHash: options?.ipHash,
           userAgent: options?.userAgent,
         });
-        return { joined: true, entryId, activityKind: draw.activityKind, attribution };
+        return { joined: true, entryId, activityKind: draw.activityKind, attribution, submissionId };
       }
 
       const [{ total }] = await tx

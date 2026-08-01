@@ -453,6 +453,30 @@ export const activityEvents = sqliteTable("activity_events", {
   refIdx: index("idx_activity_events_ref").on(t.tenantId, t.drawId, t.refCode, t.createdAt),
 }));
 
+// ── 活动提交（问卷答案、投票选项、资料领取请求等动态表单 payload） ──
+// 033 基线要求：所有玩法的动态表单答案统一走 activity_submissions，
+// 不做独立的 forms / votes / claims 表。一个 entry 最多一条 submission（UNIQUE 约束），
+// 保证"参与即提交"的原子语义。
+export const activitySubmissions = sqliteTable("activity_submissions", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  entryId: text("entry_id").notNull(),
+  /** 动态表单答案（JSON 格式，字段由 activity_config 定义） */
+  payloadJson: text("payload_json").notNull().default("{}"),
+  /** 幂等键（P2 阶段启用，防止网络重试导致重复提交） */
+  idempotencyKey: text("idempotency_key").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  // 一个 entry 最多一条提交；join/verify-and-join 同事务写入时利用此约束防重复
+  entryUnique: uniqueIndex("idx_activity_submissions_entry").on(t.tenantId, t.drawId, t.entryId),
+  // 后台查询某个活动下所有提交记录
+  drawIdx: index("idx_activity_submissions_draw").on(t.tenantId, t.drawId, t.createdAt),
+  // 幂等键索引（P2）
+  idempotencyIdx: index("idx_activity_submissions_idempotency").on(t.tenantId, t.drawId, t.idempotencyKey),
+}));
+
 // ── 外部转化回传（成交、核销、注册等外部系统事实） ──
 // 只有外部系统通过 API Key 回传后，平台才可把它展示为外部转化；UTM、点击和参与不能替代本表。
 export const externalConversions = sqliteTable("external_conversions", {

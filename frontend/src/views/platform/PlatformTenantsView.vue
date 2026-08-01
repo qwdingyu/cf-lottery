@@ -119,6 +119,32 @@
           <span class="detail-label">快照日期</span>
           <span class="detail-value">{{ detailUsage.snapshotDate ?? '无快照' }}</span>
         </div>
+
+        <!-- 套餐调整（仅平台 owner 可见的操作区） -->
+        <div class="detail-actions">
+          <h4 class="detail-actions-title">套餐调整</h4>
+          <div class="adjust-row">
+            <select v-model="adjustForm.plan" :disabled="adjusting">
+              <option value="free">Free</option>
+              <option value="pro">Pro</option>
+              <option value="team">Team</option>
+              <option value="enterprise">Enterprise</option>
+            </select>
+            <select v-model="adjustForm.status" :disabled="adjusting">
+              <option value="active">正常</option>
+              <option value="suspended">暂停</option>
+              <option value="disabled">禁用</option>
+            </select>
+            <button class="btn btn-primary btn-sm" :disabled="adjusting" @click="handleAdjust">
+              {{ adjusting ? '保存中…' : '保存调整' }}
+            </button>
+          </div>
+          <div class="adjust-row">
+            <input v-model.number="adjustForm.extraActivityQuota" type="number" min="0" placeholder="追加活动次数" :disabled="adjusting" />
+            <input v-model.number="adjustForm.extraParticipantQuota" type="number" min="0" placeholder="追加参与人数" :disabled="adjusting" />
+          </div>
+          <small class="field-hint">套餐和状态即时生效；额外额度为追加（累加）</small>
+        </div>
       </div>
     </AdminModal>
   </div>
@@ -185,6 +211,8 @@ const detailLoading = ref(false)
 async function showDetail(t: any) {
   detailTenant.value = t
   detailUsage.value = null
+  // 初始化调整表单
+  adjustForm.value = { plan: t.plan || 'free', status: t.status || 'active', extraActivityQuota: 0, extraParticipantQuota: 0 }
   showDetailModal.value = true
   detailLoading.value = true
   try {
@@ -192,6 +220,27 @@ async function showDetail(t: any) {
     detailUsage.value = data.usage
   } catch { /* 忽略 */ }
   detailLoading.value = false
+}
+
+// ── 套餐调整 ──
+const adjustForm = ref({ plan: 'free', status: 'active', extraActivityQuota: 0, extraParticipantQuota: 0 })
+const adjusting = ref(false)
+
+async function handleAdjust() {
+  if (!detailTenant.value || adjusting.value) return
+  adjusting.value = true
+  try {
+    const body: Record<string, unknown> = { plan: adjustForm.value.plan, status: adjustForm.value.status }
+    if (adjustForm.value.extraActivityQuota > 0) body.extraActivityQuota = adjustForm.value.extraActivityQuota
+    if (adjustForm.value.extraParticipantQuota > 0) body.extraParticipantQuota = adjustForm.value.extraParticipantQuota
+    await adminRequest(`/api/platform/tenants/${detailTenant.value.id}`, { method: 'PATCH', body: JSON.stringify(body) })
+    showDetailModal.value = false
+    await loadData()
+  } catch (err: any) {
+    loadError.value = err.message || '调整失败'
+  } finally {
+    adjusting.value = false
+  }
 }
 </script>
 
@@ -201,4 +250,8 @@ async function showDetail(t: any) {
 .detail-label { font-size: 13px; color: var(--tg-hint, #9aa4b2); }
 .detail-value { font-size: 13px; font-weight: 500; }
 .time-cell { white-space: nowrap; font-size: 12px; }
+.detail-actions { border-top: 1px solid var(--border, rgba(255,255,255,0.1)); padding-top: 12px; }
+.detail-actions-title { font-size: 14px; margin-bottom: 8px; }
+.adjust-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.adjust-row select, .adjust-row input { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--tg-bg, #1f2937); color: var(--tg-text, #f3f4f6); }
 </style>

@@ -55,6 +55,7 @@ export default {
   platformLayout: {
     title: "Platform",
     menuTenants: "Tenants",
+    menuMembers: "Members",
     menuConfig: "Config",
     menuRedemptionCodes: "Redemption Codes",
     menuAuditLogs: "Audit Logs",
