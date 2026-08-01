@@ -529,6 +529,105 @@
             </div>
           </section>
 
+          <section
+            v-if="form.activityKind === 'survey' || form.activityKind === 'vote'"
+            class="form-section"
+            aria-labelledby="activity-config"
+          >
+            <header class="form-section-head">
+              <h4 id="activity-config" class="form-section-title">活动内容配置</h4>
+              <p class="form-section-desc">配置参与者实际要填写或选择的内容，发布前会由后端再次校验</p>
+            </header>
+
+            <div v-if="form.activityKind === 'survey'" class="activity-config-list">
+              <div
+                v-for="(field, index) in form.activityConfig.fields"
+                :key="field.id"
+                class="activity-config-row"
+              >
+                <div class="form-grid two-cols">
+                  <label>
+                    <span>字段名称</span>
+                    <input v-model="field.label" maxlength="80" placeholder="如 公司名称 / 需求说明" />
+                  </label>
+                  <label>
+                    <span>字段类型</span>
+                    <select v-model="field.type" @change="normalizeSurveyFieldOptions(field)">
+                      <option value="text">短文本</option>
+                      <option value="email">邮箱</option>
+                      <option value="phone">手机号</option>
+                      <option value="textarea">长文本</option>
+                      <option value="select">下拉选择</option>
+                      <option value="radio">单选</option>
+                      <option value="checkbox">多选</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>最大长度</span>
+                    <input v-model.number="field.maxLength" type="number" min="1" max="2000" step="1" />
+                  </label>
+                  <label class="checkbox-label">
+                    <input v-model="field.required" type="checkbox" />
+                    <span>必填</span>
+                  </label>
+                </div>
+                <div v-if="isChoiceSurveyField(field)" class="choice-options">
+                  <label
+                    v-for="option in field.options"
+                    :key="option.id"
+                    class="choice-option-row"
+                  >
+                    <span>选项</span>
+                    <input v-model="option.label" maxlength="80" placeholder="选项名称" />
+                    <button type="button" class="btn btn-ghost btn-xs" @click="removeSurveyOption(field, option.id)">删除</button>
+                  </label>
+                  <button type="button" class="btn btn-ghost btn-xs" @click="addSurveyOption(field)">添加选项</button>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs"
+                  :disabled="form.activityConfig.fields.length <= 1"
+                  @click="removeSurveyField(Number(index))"
+                >
+                  删除字段
+                </button>
+              </div>
+              <button type="button" class="btn btn-ghost btn-sm" @click="addSurveyField">添加字段</button>
+            </div>
+
+            <div v-else class="activity-config-list">
+              <div
+                v-for="(option, index) in form.activityConfig.options"
+                :key="option.id"
+                class="activity-config-row"
+              >
+                <div class="form-grid two-cols">
+                  <label>
+                    <span>选项名称</span>
+                    <input v-model="option.label" maxlength="80" placeholder="如 方案 A" />
+                  </label>
+                  <label>
+                    <span>图片 URL</span>
+                    <input v-model="option.imageUrl" type="url" maxlength="2000" placeholder="可选，http/https 图片地址" />
+                  </label>
+                  <label class="field-span-2">
+                    <span>说明</span>
+                    <input v-model="option.description" maxlength="300" placeholder="可选，展示给参与者的补充说明" />
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs"
+                  :disabled="form.activityConfig.options.length <= 2"
+                  @click="removeVoteOption(Number(index))"
+                >
+                  删除选项
+                </button>
+              </div>
+              <button type="button" class="btn btn-ghost btn-sm" @click="addVoteOption">添加投票选项</button>
+            </div>
+          </section>
+
           <section class="form-section" aria-labelledby="lottery-prizes">
             <header class="form-section-head">
               <h4 id="lottery-prizes" class="form-section-title">{{ $t('lottery.adminSectionPrizes') }}</h4>
@@ -852,8 +951,23 @@ type LotteryDraw = {
   maxWinners?: number; expectedParticipants?: number; entryCount?: number; visible?: number;
   showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
   drawnAt: string | null; failureReason: string;
+  activityConfig?: ActivityConfigForm;
   createdAt: string; updatedAt: string;
 };
+
+type SurveyFieldType = 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'radio' | 'checkbox'
+type SurveyFieldForm = {
+  id: string;
+  label: string;
+  type: SurveyFieldType;
+  required: boolean;
+  maxLength: number;
+  options: Array<{ id: string; label: string }>;
+}
+type ActivityConfigForm =
+  | { version: 1; kind: 'survey'; fields: SurveyFieldForm[] }
+  | { version: 1; kind: 'vote'; selection: 'single'; options: Array<{ id: string; label: string; description: string; imageUrl: string }> }
+  | { version?: 1; kind?: string; fields?: SurveyFieldForm[]; options?: Array<{ id: string; label: string; description?: string; imageUrl?: string }> };
 
 type LotteryWinner = {
   id: string; drawId: string; tierId: string; entryId: string;
@@ -967,6 +1081,7 @@ const buildLotteryDuplicateDraft = (draw: any, opts: { nameSuffix: string; defau
   allocationPolicy: draw.allocationPolicy || 'capacity',
   experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'),
   resultMode: draw.resultMode || defaultResultModeForActivity(draw.activityKind || 'lottery'),
+  activityConfig: normalizeActivityConfig(draw.activityKind || 'lottery', draw.activityConfig),
   accessPassword: '',
 });
 const buildLotteryDrawConfirmMessage = (draw: any, labels: any) => `${labels.title}\n${labels.name}${draw.title}\n${labels.pool}${draw.entryCount || 0}\n${labels.willDraw}${Math.min(Number(draw.entryCount)||0, draw.winnerCount)}`;
@@ -1074,6 +1189,66 @@ const externalConversionRate = computed(() => percent(
   analyticsStats.value?.events.ctaClicks || 0,
 ))
 
+function makeStableId(prefix: string) {
+  return `${prefix}_${crypto.randomUUID().slice(0, 8)}`
+}
+
+function defaultActivityConfigForKind(kind: string): ActivityConfigForm {
+  if (kind === 'survey') {
+    return {
+      version: 1,
+      kind: 'survey',
+      fields: [
+        { id: 'contact_email', label: '联系邮箱', type: 'email', required: true, maxLength: 120, options: [] },
+        { id: 'feedback', label: '反馈内容', type: 'textarea', required: true, maxLength: 1000, options: [] },
+      ],
+    }
+  }
+  if (kind === 'vote') {
+    return {
+      version: 1,
+      kind: 'vote',
+      selection: 'single',
+      options: [
+        { id: 'option_a', label: '选项 A', description: '', imageUrl: '' },
+        { id: 'option_b', label: '选项 B', description: '', imageUrl: '' },
+      ],
+    }
+  }
+  return { version: 1, kind }
+}
+
+function normalizeActivityConfig(kind: string, config: any): ActivityConfigForm {
+  if (!config || typeof config !== 'object' || config.kind !== kind) return defaultActivityConfigForKind(kind)
+  if (kind === 'survey') {
+    const fields = Array.isArray(config.fields) && config.fields.length > 0
+      ? config.fields.map((field: any) => ({
+          id: String(field.id || makeStableId('field')),
+          label: String(field.label || '未命名字段'),
+          type: (['text', 'email', 'phone', 'textarea', 'select', 'radio', 'checkbox'].includes(field.type) ? field.type : 'text') as SurveyFieldType,
+          required: Boolean(field.required),
+          maxLength: Number(field.maxLength || 120),
+          options: Array.isArray(field.options)
+            ? field.options.map((option: any) => ({ id: String(option.id || makeStableId('opt')), label: String(option.label || '选项') }))
+            : [],
+        }))
+      : (defaultActivityConfigForKind('survey') as any).fields
+    return { version: 1, kind: 'survey', fields }
+  }
+  if (kind === 'vote') {
+    const options = Array.isArray(config.options) && config.options.length >= 2
+      ? config.options.map((option: any) => ({
+          id: String(option.id || makeStableId('opt')),
+          label: String(option.label || '选项'),
+          description: String(option.description || ''),
+          imageUrl: String(option.imageUrl || ''),
+        }))
+      : (defaultActivityConfigForKind('vote') as any).options
+    return { version: 1, kind: 'vote', selection: 'single', options }
+  }
+  return defaultActivityConfigForKind(kind)
+}
+
 const emptyForm = () => ({
   id: '',
   name: '',
@@ -1099,6 +1274,8 @@ const emptyForm = () => ({
   // 导流配置
   enableProductLink: false,
   productLink: { url: '', title: '', imageUrl: '', price: '' },
+  // 玩法配置：问卷/投票共用 activity_config，避免再拆 forms/votes 重表。
+  activityConfig: defaultActivityConfigForKind('lottery') as any,
 })
 
 const form = ref(emptyForm())
@@ -1210,10 +1387,70 @@ function handleActivityKindChange() {
   form.value.resultMode = defaultResultModeForActivity(kind)
   form.value.allocationPolicy = kind === 'signup_chain' ? 'waitlist' : kind === 'approval' ? 'approval' : 'capacity'
   form.value.winnerCount = kind === 'lottery' ? Math.max(1, Number(form.value.winnerCount) || 1) : 0
+  form.value.activityConfig = normalizeActivityConfig(kind, form.value.activityConfig) as any
 }
 
 function handleParticipationModeChange() {
   form.value.experienceType = defaultExperienceForActivity(form.value.activityKind || 'lottery', form.value.participationMode || 'open')
+}
+
+function isChoiceSurveyField(field: SurveyFieldForm) {
+  return ['select', 'radio', 'checkbox'].includes(field.type)
+}
+
+function normalizeSurveyFieldOptions(field: SurveyFieldForm) {
+  if (isChoiceSurveyField(field) && field.options.length === 0) {
+    field.options = [
+      { id: makeStableId('opt'), label: '选项 1' },
+      { id: makeStableId('opt'), label: '选项 2' },
+    ]
+  }
+  if (!isChoiceSurveyField(field)) field.options = []
+  field.maxLength = field.type === 'textarea' ? Math.max(Number(field.maxLength) || 1000, 200) : Math.min(Number(field.maxLength) || 120, 500)
+}
+
+function addSurveyField() {
+  const config = normalizeActivityConfig('survey', form.value.activityConfig) as Extract<ActivityConfigForm, { kind: 'survey' }>
+  config.fields.push({
+    id: makeStableId('field'),
+    label: '新字段',
+    type: 'text',
+    required: false,
+    maxLength: 120,
+    options: [],
+  })
+  form.value.activityConfig = config as any
+}
+
+function removeSurveyField(index: number) {
+  const config = normalizeActivityConfig('survey', form.value.activityConfig) as Extract<ActivityConfigForm, { kind: 'survey' }>
+  if (config.fields.length <= 1) return
+  config.fields.splice(index, 1)
+  form.value.activityConfig = config as any
+}
+
+function addSurveyOption(field: SurveyFieldForm) {
+  if (!isChoiceSurveyField(field) || field.options.length >= 20) return
+  field.options.push({ id: makeStableId('opt'), label: `选项 ${field.options.length + 1}` })
+}
+
+function removeSurveyOption(field: SurveyFieldForm, optionId: string) {
+  if (field.options.length <= 1) return
+  field.options = field.options.filter((option) => option.id !== optionId)
+}
+
+function addVoteOption() {
+  const config = normalizeActivityConfig('vote', form.value.activityConfig) as Extract<ActivityConfigForm, { kind: 'vote' }>
+  if (config.options.length >= 50) return
+  config.options.push({ id: makeStableId('option'), label: `选项 ${config.options.length + 1}`, description: '', imageUrl: '' })
+  form.value.activityConfig = config as any
+}
+
+function removeVoteOption(index: number) {
+  const config = normalizeActivityConfig('vote', form.value.activityConfig) as Extract<ActivityConfigForm, { kind: 'vote' }>
+  if (config.options.length <= 2) return
+  config.options.splice(index, 1)
+  form.value.activityConfig = config as any
 }
 
 function activityKindLabel(kind: string): string {
@@ -1635,6 +1872,7 @@ function handleDuplicate(draw: LotteryDraw) {
     allocationPolicy: draft.allocationPolicy || 'capacity',
     experienceType: draft.experienceType,
     resultMode: draft.resultMode,
+    activityConfig: normalizeActivityConfig(draft.activityKind || 'lottery', draft.activityConfig),
     accessPassword: draft.accessPassword,
     enableProductLink: false,
     productLink: { url: '', title: '', imageUrl: '', price: '' },
@@ -1739,6 +1977,7 @@ function applyTemplate(tpl: any) {
     winnerCount: tpl.defaults.winnerCount,
     maxParticipants: null,
     expectedParticipants: 0,
+    activityConfig: defaultActivityConfigForKind(tpl.defaults.activityKind) as any,
   }
   isEditing.value = false
   applyTimePreset('1d')
@@ -1972,6 +2211,7 @@ async function handleEdit(draw: LotteryDraw) {
     allocationPolicy: draw.allocationPolicy || 'capacity',
     experienceType: draw.experienceType || defaultExperienceForActivity(draw.activityKind || 'lottery', draw.participationMode || 'open'),
     resultMode: draw.resultMode || defaultResultModeForActivity(draw.activityKind || 'lottery'),
+    activityConfig: normalizeActivityConfig(draw.activityKind || 'lottery', draw.activityConfig) as any,
   }
   isEditing.value = true
   showCreateModal.value = true
@@ -2067,6 +2307,9 @@ async function handleCreate() {
       // 模板和活动类型默认值必须原样传给后端，否则问卷/签到/资料领取会被误建成 manual 抽奖语义。
       resultMode: form.value.resultMode || defaultResultModeForActivity(form.value.activityKind || 'lottery'),
       allocationPolicy: form.value.allocationPolicy || 'capacity',
+      activityConfig: ['survey', 'vote'].includes(form.value.activityKind || '')
+        ? normalizeActivityConfig(form.value.activityKind || 'lottery', form.value.activityConfig)
+        : undefined,
       accessPassword: form.value.accessPassword || '',
       // 导流：商品链接（启用时发送，关闭时发送 undefined）
       productLink: form.value.enableProductLink && form.value.productLink.url

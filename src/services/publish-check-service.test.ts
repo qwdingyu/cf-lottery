@@ -31,7 +31,7 @@ const DDL = [
     drawn_at TEXT, failure_reason TEXT NOT NULL DEFAULT '',
     draw_seed_hash TEXT NOT NULL DEFAULT '', draw_seed TEXT NOT NULL DEFAULT '',
     algorithm_version TEXT NOT NULL DEFAULT 'uniform_v1',
-    product_link TEXT NOT NULL DEFAULT '{}', promotion_config TEXT NOT NULL DEFAULT '{}',
+    product_link TEXT NOT NULL DEFAULT '{}', promotion_config TEXT NOT NULL DEFAULT '{}', activity_config TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `CREATE TABLE IF NOT EXISTS prizes (
@@ -122,6 +122,7 @@ function makeDraw(overrides: Record<string, unknown> = {}) {
     algorithmVersion: "uniform_v1",
     productLink: "{}",
     promotionConfig: "{}",
+    activityConfig: "{}",
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     ...overrides,
@@ -244,10 +245,37 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.errors.some((item) => item.code === "webhook.events.invalid")).toBe(true);
   });
 
-  it("问卷和投票配置器未完成前禁止正式发布", async () => {
+  it("问卷和投票缺少有效配置时禁止正式发布", async () => {
     const survey = await buildPublishCheckForDraw(db, TENANT, makeDraw({ activityKind: "survey", winnerCount: 0 }) as any);
     const vote = await buildPublishCheckForDraw(db, TENANT, makeDraw({ activityKind: "vote", winnerCount: 0 }) as any);
     expect(survey.errors.some((item) => item.code === "survey.config.missing")).toBe(true);
     expect(vote.errors.some((item) => item.code === "vote.options.missing")).toBe(true);
+  });
+
+  it("有效问卷和投票配置允许通过 activity_config 发布闸门", async () => {
+    const survey = await buildPublishCheckForDraw(db, TENANT, makeDraw({
+      activityKind: "survey",
+      winnerCount: 0,
+      activityConfig: JSON.stringify({
+        version: 1,
+        kind: "survey",
+        fields: [{ id: "feedback", label: "反馈", type: "textarea", required: true, maxLength: 500, options: [] }],
+      }),
+    }) as any);
+    const vote = await buildPublishCheckForDraw(db, TENANT, makeDraw({
+      activityKind: "vote",
+      winnerCount: 0,
+      activityConfig: JSON.stringify({
+        version: 1,
+        kind: "vote",
+        selection: "single",
+        options: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+      }),
+    }) as any);
+
+    expect(survey.errors.some((item) => item.section === "activity_config")).toBe(false);
+    expect(vote.errors.some((item) => item.section === "activity_config")).toBe(false);
+    expect(survey.infos.some((item) => item.code === "survey.config.ready")).toBe(true);
+    expect(vote.infos.some((item) => item.code === "vote.config.ready")).toBe(true);
   });
 });

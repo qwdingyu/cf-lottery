@@ -17,6 +17,7 @@ import {
   prizes,
   webhookConfigs,
 } from "../db/schema";
+import { validateActivityConfigForPublish } from "../lib/activity-config";
 
 export type PublishCheckSection =
   | "basic"
@@ -269,13 +270,12 @@ async function validateWebhooks(db: DbType, tenantId: string, result: PublishChe
 }
 
 function validateActivityConfig(draw: LotteryDraw, result: PublishCheckResult) {
-  // 当前版本只有 activity_submissions 存储骨架和后台查询基础，还没有 activity_config 配置器和公开提交校验。
-  // 问卷/投票如果直接正式发布，会让运营者误以为已经具备字段、选项、提交明细闭环，因此必须先阻断。
-  if (draw.activityKind === "survey") {
-    add(result.errors, "activity_config", "survey.config.missing", "问卷字段配置器和提交校验尚未完成，不能作为正式问卷发布");
+  const validation = validateActivityConfigForPublish(draw.activityKind, draw.activityConfig);
+  for (const item of validation.issues) {
+    add(result.errors, "activity_config", item.code, item.message);
   }
-  if (draw.activityKind === "vote") {
-    add(result.errors, "activity_config", "vote.options.missing", "投票选项配置器和投票提交校验尚未完成，不能作为正式投票发布");
+  if ((draw.activityKind === "survey" || draw.activityKind === "vote") && validation.ok) {
+    add(result.infos, "activity_config", `${draw.activityKind}.config.ready`, "活动配置已完成，公开提交会按后端规则校验");
   }
 }
 

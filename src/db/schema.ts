@@ -193,6 +193,9 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   productLink: text("product_link").notNull().default("{}"),
   // 活动引擎导流配置（版本化 JSON）。productLink 保留为旧字段兼容。
   promotionConfig: text("promotion_config").notNull().default("{}"),
+  // 活动玩法配置（版本化 JSON）。问卷字段、投票选项等低成本玩法的规则源统一放这里，
+  // 提交时由后端按该配置做白名单校验，避免把选项塞进 identity_value 或让前端自说自话。
+  activityConfig: text("activity_config").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({

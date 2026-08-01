@@ -12,6 +12,7 @@ import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lottery
 import { eq, and, count, sql, asc } from "drizzle-orm";
 import { getActivityOutcome, joinDraw, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
 import { sendAccessCode } from "../services/email-service";
+import { parseActivityConfig, validateSubmissionPayload } from "../lib/activity-config";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
@@ -106,6 +107,8 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     // 导流：关联商品链接（仅在活动中开放时返回）
     productLink: draw.productLink && draw.productLink !== "{}" ? tryParseJson(draw.productLink) : undefined,
     promotionConfig: draw.promotionConfig && draw.promotionConfig !== "{}" ? tryParseJson(draw.promotionConfig) : undefined,
+    // 公开端只接收经过后端白名单解析的配置；无效配置会由发布闸门阻断，不在这里暴露半成品。
+    activityConfig: parseActivityConfig(draw.activityConfig) || undefined,
   };
 
   if (draw.activityKind === "lottery") {
@@ -360,6 +363,11 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     .where(eq(emailAccessCodes.id, validCode.id));
 
   try {
+    const submission = validateSubmissionPayload(draw.activityKind, draw.activityConfig, body.submission);
+    if (!submission.ok) {
+      await db.update(emailAccessCodes).set({ used: 0 }).where(eq(emailAccessCodes.id, validCode.id));
+      return fail(c, submission.message || "提交内容无效", 400);
+    }
     const result = await joinDraw(db, slug, email, "email", {
       accessPassword: body.accessPassword,
       inviteCode: body.inviteCode,
@@ -367,7 +375,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       refCode: body.refCode,
       userAgent: c.req.header("User-Agent") || "",
       // 传递动态表单提交 payload（问卷/投票/资料领取等）
-      submissionPayload: body.submission,
+      submissionPayload: submission.payload,
     });
     if (!result.joined) {
       // 参与失败（容量满/名单不匹配/邀请码无效等）：恢复验证码，允许用户修改条件后重试
@@ -409,11 +417,21 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
   }
 
   try {
+    const [draw] = await db
+      .select({ activityKind: lotteryDraws.activityKind, activityConfig: lotteryDraws.activityConfig })
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.publicSlug, c.req.param("slug")))
+      .limit(1);
+    if (!draw) return fail(c, "活动不存在", 404);
+
+    const submission = validateSubmissionPayload(draw.activityKind, draw.activityConfig, body.submission);
+    if (!submission.ok) return fail(c, submission.message || "提交内容无效", 400);
+
     const result = await joinDraw(db, c.req.param("slug"), email, "email", {
       ipHash: ip,
       refCode: body.refCode,
       userAgent: c.req.header("User-Agent") || "",
-      submissionPayload: body.submission,
+      submissionPayload: submission.payload,
     });
     if (!result.joined) {
       return fail(c, result.message || "参与失败", 400);

@@ -40,6 +40,7 @@ import {
 import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
 import { readSystemConfigMap } from "../lib/system-config-registry";
 import { buildPublishCheck } from "../services/publish-check-service";
+import { parseActivityConfig } from "../lib/activity-config";
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 
@@ -456,10 +457,30 @@ adminLotteryRoute.post("/draws/:id/copy", async (c) => {
     showWinnerCount: draw.showWinnerCount,
     showWinnerList: draw.showWinnerList,
     promotionConfig: draw.promotionConfig,
+    activityConfig: draw.activityConfig,
     status: "draft",
     createdAt: now,
     updatedAt: now,
   });
+
+  // 复制奖项配置（抽奖活动）：复制 lottery_prize_tiers 到新活动
+  if (draw.activityKind === "lottery") {
+    const tiers = await db
+      .select()
+      .from(lotteryPrizeTiers)
+      .where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)));
+    for (const tier of tiers) {
+      await db.insert(lotteryPrizeTiers).values({
+        id: crypto.randomUUID(),
+        tenantId,
+        drawId: newId,
+        prizeId: tier.prizeId,
+        tierName: tier.tierName,
+        winnerCount: tier.winnerCount,
+        sortOrder: tier.sortOrder,
+      });
+    }
+  }
 
   return ok(c, { id: newId, publicSlug: newSlug, title: `${draw.title}（副本）` });
 });
@@ -511,6 +532,9 @@ adminLotteryRoute.post("/draws", async (c) => {
       winnerCount: body.winnerCount !== undefined ? Number(body.winnerCount) : undefined,
       productLink: body.productLink ? JSON.stringify(body.productLink) : "{}",
       promotionConfig: body.promotionConfig && typeof body.promotionConfig === "object" ? JSON.stringify(body.promotionConfig) : "{}",
+      activityConfig: body.activityConfig !== undefined
+        ? (typeof body.activityConfig === "string" ? body.activityConfig : JSON.stringify(body.activityConfig))
+        : "{}",
     });
     return ok(c, { id, publicSlug });
   } catch (err) {
@@ -581,6 +605,7 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       ...(body.showWinnerList !== undefined ? { showWinnerList: body.showWinnerList ? 1 : 0 } : {}),
       ...(body.productLink !== undefined ? { productLink: typeof body.productLink === "string" ? body.productLink : JSON.stringify(body.productLink) } : {}),
       ...(body.promotionConfig !== undefined ? { promotionConfig: typeof body.promotionConfig === "string" ? body.promotionConfig : JSON.stringify(body.promotionConfig) } : {}),
+      ...(body.activityConfig !== undefined ? { activityConfig: typeof body.activityConfig === "string" ? body.activityConfig : JSON.stringify(body.activityConfig) } : {}),
       updatedAt: new Date().toISOString(),
     })
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
@@ -799,11 +824,10 @@ adminLotteryRoute.get("/draws/:id/submissions", async (c) => {
   return ok(c, { submissions: rows, total: Number(totalCount) });
 });
 
-/** 投票统计：按选项统计票数（仅 vote 活动可用）
+/** 投票统计：按活动配置中的固定选项统计票数（仅 vote 活动可用）
  *
- * 投票活动（vote）的 identity_value 存储的是用户选择的选项。
- * 此 API 按 identity_value 分组 COUNT，得出每个选项的得票数。
- * 使用降序排列，得票最多的选项排第一。
+ * 投票参与者身份仍然是邮箱/手机号，不能再用 lottery_entries.identity_value 当选项统计。
+ * 正式投票选择只允许来自 activity_config.options，并保存到 activity_submissions.payload_json.optionId。
  */
 adminLotteryRoute.get("/draws/:id/tally", async (c) => {
   const db = getDb(c);
@@ -815,18 +839,36 @@ adminLotteryRoute.get("/draws/:id/tally", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.activityKind !== "vote") return fail(c, "仅投票活动支持票数统计", 400);
 
-  // 按参与者身份标识（即投票选项）分组统计票数
+  const config = parseActivityConfig(draw.activityConfig);
+  if (!config || config.kind !== "vote") return fail(c, "投票选项配置无效", 400);
+  const optionIds = new Set(config.options.map((option) => option.id));
+
+  // 管理后台统计是低频查询，允许数据库侧 GROUP BY；热路径提交不做此类聚合。
   const rows = await db
     .select({
-      option: lotteryEntries.identityValue,  // 投票选项（用户提交时 identity_value 填的选项值）
-      count: count(),                        // 该选项获得的票数
+      optionId: sql<string>`json_extract(${activitySubmissions.payloadJson}, '$.optionId')`,
+      count: count(),
     })
-    .from(lotteryEntries)
-    .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId)))
-    .groupBy(lotteryEntries.identityValue)
+    .from(activitySubmissions)
+    .where(and(eq(activitySubmissions.tenantId, tenantId), eq(activitySubmissions.drawId, drawId)))
+    .groupBy(sql`json_extract(${activitySubmissions.payloadJson}, '$.optionId')`)
     .orderBy(desc(count()));
 
-  return ok(c, { tally: rows, total: rows.reduce((s, r) => s + Number(r.count), 0) });
+  const tally = config.options.map((option) => {
+    const row = rows.find((item) => String(item.optionId || "") === option.id);
+    return {
+      optionId: option.id,
+      label: option.label,
+      description: option.description,
+      imageUrl: option.imageUrl,
+      count: Number(row?.count || 0),
+    };
+  });
+  const unknown = rows
+    .filter((row) => row.optionId && !optionIds.has(String(row.optionId)))
+    .map((row) => ({ optionId: String(row.optionId), count: Number(row.count || 0) }));
+
+  return ok(c, { tally, unknown, total: tally.reduce((sum, row) => sum + row.count, 0) });
 });
 
 /** 外部转化回传列表：只展示外部系统显式回传的事实 */

@@ -975,6 +975,7 @@ export async function createDraw(
     showWinnerList?: number;       // 是否公开中奖名单（0/1）
     productLink?: string;          // 旧导流配置，JSON 字符串
     promotionConfig?: string;      // 活动引擎导流配置，JSON 字符串
+    activityConfig?: string;       // 活动玩法配置，JSON 字符串
   },
 ) {
   const requestedMaxParticipants = data.maxParticipants ? Number(data.maxParticipants) : undefined;
@@ -1044,6 +1045,7 @@ export async function createDraw(
     showWinnerList: data.showWinnerList ?? 0,
     productLink: data.productLink || "{}",
     promotionConfig: data.promotionConfig || "{}",
+    activityConfig: data.activityConfig || "{}",
     status: "draft",
     createdAt: now,
     updatedAt: now,

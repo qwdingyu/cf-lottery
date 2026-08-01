@@ -193,7 +193,7 @@
           </template>
           <component
             :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
-            v-if="expandedId === draw.id && draw.status === 'open'"
+            v-if="expandedId === draw.id && draw.status === 'open' && !requiresActivitySubmission(draw)"
             :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || '奖品', color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
             :disabled="joiningId === draw.id"
             @play="handleJoin(draw.id)"
@@ -289,6 +289,67 @@
             <div v-else-if="draw.status === 'open'" class="join-section">
               <div v-if="myJoinedById[draw.id]" class="joined-badge">
                 {{ joinedStatusText(draw) }}
+              </div>
+              <div
+                v-else-if="requiresActivitySubmission(draw)"
+                class="activity-submission"
+              >
+                <template v-if="draw.activityConfig?.kind === 'vote'">
+                  <label
+                    v-for="option in draw.activityConfig.options"
+                    :key="option.id"
+                    class="vote-option"
+                  >
+                    <input
+                      v-model="submissionDrafts[draw.id].optionId"
+                      type="radio"
+                      :name="'vote-' + draw.id"
+                      :value="option.id"
+                    />
+                    <span>
+                      <strong>{{ option.label }}</strong>
+                      <small v-if="option.description">{{ option.description }}</small>
+                    </span>
+                  </label>
+                </template>
+                <template v-else-if="draw.activityConfig?.kind === 'survey'">
+                  <label
+                    v-for="field in draw.activityConfig.fields"
+                    :key="field.id"
+                    class="survey-field"
+                  >
+                    <span>{{ field.label }}<em v-if="field.required">*</em></span>
+                    <textarea
+                      v-if="field.type === 'textarea'"
+                      v-model="submissionDrafts[draw.id].fields[field.id]"
+                      :maxlength="field.maxLength"
+                      rows="3"
+                    />
+                    <select
+                      v-else-if="field.type === 'select' || field.type === 'radio'"
+                      v-model="submissionDrafts[draw.id].fields[field.id]"
+                    >
+                      <option value="">请选择</option>
+                      <option v-for="option in field.options" :key="option.id" :value="option.id">{{ option.label }}</option>
+                    </select>
+                    <div v-else-if="field.type === 'checkbox'" class="checkbox-stack">
+                      <label v-for="option in field.options" :key="option.id" class="checkbox-option">
+                        <input
+                          v-model="submissionDrafts[draw.id].fields[field.id]"
+                          type="checkbox"
+                          :value="option.id"
+                        />
+                        <span>{{ option.label }}</span>
+                      </label>
+                    </div>
+                    <input
+                      v-else
+                      v-model="submissionDrafts[draw.id].fields[field.id]"
+                      :type="field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : 'text'"
+                      :maxlength="field.maxLength"
+                    />
+                  </label>
+                </template>
               </div>
               <!-- 导流：参与成功后展示商品卡片 -->
               <div v-if="myJoinedById[draw.id] && draw.productLink" class="product-card">
@@ -456,7 +517,28 @@ type LotteryDraw = {
   prizes?: Array<{ name?: string; tierName?: string; description?: string; imageUrl?: string; valueText?: string; winnerCount?: number }>;
   productId?: string; productTitle?: string;
   productLink?: { url: string; title: string; imageUrl?: string; price?: string };
+  activityConfig?: ActivityConfig;
 };
+
+type ActivityConfig =
+  | {
+      version: 1;
+      kind: 'survey';
+      fields: Array<{
+        id: string;
+        label: string;
+        type: 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'radio' | 'checkbox';
+        required: boolean;
+        maxLength: number;
+        options: Array<{ id: string; label: string }>;
+      }>;
+    }
+  | {
+      version: 1;
+      kind: 'vote';
+      selection: 'single';
+      options: Array<{ id: string; label: string; description: string; imageUrl: string }>;
+    };
 
 const DEFAULT_PRIZE_IMAGE = `data:image/svg+xml,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
@@ -502,6 +584,7 @@ const myJoinedById = ref<Record<string, true>>({})
 const myWonById = ref<Record<string, any>>({})
 const myOutcomeById = ref<Record<string, ActivityOutcome>>({})
 const myEntryList = ref<MyEntry[]>([])
+const submissionDrafts = ref<Record<string, { optionId: string; fields: Record<string, any> }>>({})
 
 /** 中奖优先，再按参与时间新→旧 */
 const sortedMyEntries = computed(() => {
@@ -552,6 +635,49 @@ const loginError = ref('')
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 const trackedPageViews = new Set<string>()
+
+function ensureSubmissionDraft(draw: LotteryDraw) {
+  if (!requiresActivitySubmission(draw) || submissionDrafts.value[draw.id]) return
+  const fields: Record<string, any> = {}
+  if (draw.activityConfig?.kind === 'survey') {
+    for (const field of draw.activityConfig.fields) {
+      fields[field.id] = field.type === 'checkbox' ? [] : ''
+    }
+  }
+  submissionDrafts.value = {
+    ...submissionDrafts.value,
+    [draw.id]: { optionId: '', fields },
+  }
+}
+
+function requiresActivitySubmission(draw: LotteryDraw) {
+  return draw.activityConfig?.kind === 'survey' || draw.activityConfig?.kind === 'vote'
+}
+
+function buildSubmissionPayload(draw: LotteryDraw): Record<string, unknown> | undefined {
+  if (!requiresActivitySubmission(draw)) return undefined
+  ensureSubmissionDraft(draw)
+  const draft = submissionDrafts.value[draw.id]
+  if (draw.activityConfig?.kind === 'vote') return { optionId: draft.optionId }
+  return { fields: draft.fields }
+}
+
+function validateSubmissionDraft(draw: LotteryDraw): string {
+  if (!requiresActivitySubmission(draw)) return ''
+  ensureSubmissionDraft(draw)
+  const draft = submissionDrafts.value[draw.id]
+  if (draw.activityConfig?.kind === 'vote') {
+    return draft.optionId ? '' : '请选择一个投票选项'
+  }
+  if (draw.activityConfig?.kind === 'survey') {
+    for (const field of draw.activityConfig.fields) {
+      const value = draft.fields[field.id]
+      const empty = value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
+      if (field.required && empty) return `请填写：${field.label}`
+    }
+  }
+  return ''
+}
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
@@ -724,6 +850,8 @@ function toggleExpand(id: string) {
   expandedId.value = expandedId.value === id ? null : id
   // 展开详情时调用 GET /lottery/draws/:id 触发懒开奖
   if (expandedId.value === id) {
+    const draw = draws.value.find((item) => item.id === id)
+    if (draw) ensureSubmissionDraft(draw)
     void fetchDrawDetail(id)
   }
 }
@@ -762,6 +890,7 @@ async function fetchDrawDetail(id: string) {
       const idx = draws.value.findIndex((d) => d.id === id)
       if (idx !== -1) {
         draws.value[idx] = { ...draws.value[idx], ...data } as LotteryDraw
+        ensureSubmissionDraft(draws.value[idx]!)
       }
     }
   } catch (e) {
@@ -779,6 +908,7 @@ async function fetchDraws() {
       const data = await res.json() as any
       if (data.ok) {
         draws.value = [{ ...data, id: props.id } as LotteryDraw]
+        ensureSubmissionDraft(draws.value[0]!)
         expandedId.value = props.id
         trackPageView(draws.value[0]!)
         const title = String(data.title || '').trim()
@@ -797,6 +927,16 @@ async function fetchDraws() {
 }
 
 async function handleJoin(drawId: string) {
+  const draw = draws.value.find((item) => item.id === drawId)
+  if (draw) {
+    ensureSubmissionDraft(draw)
+    const message = validateSubmissionDraft(draw)
+    if (message) {
+      showToast(message, 'error')
+      expandedId.value = drawId
+      return
+    }
+  }
   // 打开登录弹窗，验证码验证后参与
   pendingJoinDrawId.value = drawId
   void recordActivityEvent(drawId, 'participation_started')
@@ -825,6 +965,14 @@ async function handleSendCode() {
     return
   }
   if (!pendingJoinDrawId.value) return
+  const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
+  if (draw) {
+    const message = validateSubmissionDraft(draw)
+    if (message) {
+      loginError.value = message
+      return
+    }
+  }
   sendingCode.value = true
   loginError.value = ''
   try {
@@ -853,6 +1001,14 @@ async function handleVerifyCode() {
     return
   }
   if (!pendingJoinDrawId.value) return
+  const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
+  if (draw) {
+    const message = validateSubmissionDraft(draw)
+    if (message) {
+      loginError.value = message
+      return
+    }
+  }
   verifyingCode.value = true
   loginError.value = ''
   try {
@@ -863,6 +1019,7 @@ async function handleVerifyCode() {
         email: loginEmail.value.trim(),
         code: loginCode.value.trim(),
         refCode: routeParam('ref'),
+        submission: draw ? buildSubmissionPayload(draw) : undefined,
       }),
     })
     const data = await res.json() as any
@@ -1295,6 +1452,48 @@ onUnmounted(() => {
   color: var(--admin-success);
   font-weight: 500;
   font-size: 0.9rem;
+}
+.activity-submission {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 10px;
+}
+.vote-option,
+.survey-field,
+.checkbox-option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.vote-option,
+.survey-field {
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--tg-secondary-bg);
+}
+.vote-option {
+  flex-direction: row;
+}
+.vote-option small,
+.survey-field em {
+  display: block;
+  color: var(--tg-hint);
+  font-style: normal;
+  font-size: 0.78rem;
+}
+.survey-field input,
+.survey-field textarea,
+.survey-field select {
+  width: 100%;
+}
+.checkbox-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .won-badge {
   color: var(--admin-warning);
