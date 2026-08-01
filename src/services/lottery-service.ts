@@ -1211,6 +1211,10 @@ export async function joinDraw(
       const entryId = crypto.randomUUID();
       const effectiveMax = draw.maxParticipants ?? 50000;
       const acceptsWaitlist = draw.activityKind === "signup_chain" && draw.allocationPolicy === "waitlist";
+      // 容量检查：仅按活动维度（draw_id）校验，不做租户级累计参与人数 COUNT。
+      // 原因：租户级 COUNT 会扩大 Turso rows read 和请求延迟，不适合放在用户参与热路径。
+      // 租户级累计参与人数额度未来通过快照表（定时任务预聚合）实现。
+      // 详见 docs/023_Cloudflare免费版与Turso约束下认证和运行安全方案_2026-08-01.md
       const capacityClause = acceptsWaitlist
         ? sql`1 = 1`
         : sql`(SELECT COUNT(*) FROM lottery_entries WHERE tenant_id = ${draw.tenantId} AND draw_id = ${draw.id}) < ${effectiveMax}`;

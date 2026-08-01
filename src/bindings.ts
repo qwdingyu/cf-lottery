@@ -13,6 +13,8 @@ export type Bindings = {
   ASSETS: Fetcher;
   // JWT 签名密钥（必填，生产环境通过 wrangler secret put 设置）
   JWT_SECRET?: string;
+  // 密码 pepper（推荐独立于 JWT_SECRET 配置），用于降低数据库单独泄漏后的离线撞库风险。
+  PASSWORD_PEPPER?: string;
   /**
    * 可选：抽奖 JWT 签名材料。未配置时回退 JWT_SECRET 派生。
    * 配置后抽奖会话与 Admin 密钥隔离。

@@ -51,6 +51,7 @@ npx wrangler deploy
 wrangler secret put TURSO_URL
 wrangler secret put TURSO_TOKEN
 wrangler secret put JWT_SECRET
+wrangler secret put PASSWORD_PEPPER
 wrangler secret put RESEND_API_KEY
 wrangler secret put EMAIL_FROM
 wrangler secret put CRON_SECRET

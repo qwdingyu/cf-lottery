@@ -485,6 +485,27 @@ describe("SaaS 套餐配额", () => {
     const draw = await getDraw(db, id, TENANT);
     expect(draw?.maxParticipants).toBe(1000);
   });
+
+  it("兑换码额外参与人数累加到单活动上限", async () => {
+    const future = new Date(Date.now() + 86400000).toISOString();
+    await client.execute({
+      sql: "UPDATE tenants SET extra_participant_quota = ?, extra_quota_expires_at = ? WHERE id = ?",
+      args: [500, future, TENANT],
+    });
+    const usage = await getTenantUsage(db, TENANT);
+    // free 基础 200 + 额外 500 = 700
+    expect(usage.limits.maxParticipantsPerActivity).toBe(700);
+  });
+
+  it("已过期兑换码额度不参与额度计算", async () => {
+    const past = new Date(Date.now() - 86400000).toISOString();
+    await client.execute({
+      sql: "UPDATE tenants SET extra_participant_quota = ?, extra_quota_expires_at = ? WHERE id = ?",
+      args: [500, past, TENANT],
+    });
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.limits.maxParticipantsPerActivity).toBe(200); // 基础值，不加额外
+  });
 });
 
 describe("活动引擎默认规则", () => {

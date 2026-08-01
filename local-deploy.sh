@@ -100,7 +100,7 @@ append_secret() {
 }
 
 # 写入 wrangler 需要的 secrets
-for name in TURSO_URL TURSO_TOKEN JWT_SECRET RESEND_API_KEY EMAIL_FROM CRON_SECRET; do
+for name in TURSO_URL TURSO_TOKEN JWT_SECRET PASSWORD_PEPPER RESEND_API_KEY EMAIL_FROM CRON_SECRET; do
   append_secret "$name"
 done
 

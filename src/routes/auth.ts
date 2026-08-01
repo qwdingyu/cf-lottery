@@ -5,7 +5,7 @@
  * - 注册必须提供邮箱，注册后发送验证码，验证通过后账号才可登录
  * - 登录使用用户名+密码（已验证邮箱后的账号）
  * - JWT_SECRET 必须通过 wrangler secret put 设置
- * - 密码使用 PBKDF2 + SHA-256 × 100000 迭代
+ * - 免费 Workers CPU 时间有限，密码采用带服务端 pepper 的 HMAC-SHA256 存储
  * - 登录/注册接口包含基本限流（通过 IP hash 识别）
  */
 import { Hono } from "hono";
@@ -33,13 +33,23 @@ function checkRateLimit(ip: string, limit = 5, windowMs = 60000): boolean {
 }
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{2,40}$/;
-const PASSWORD_HASH_ITERATIONS = 100;
+const PASSWORD_HASH_ALGORITHM = "hmac_sha256_v1";
+// 免费 Workers 的登录热路径不能默认尝试高迭代 PBKDF2；当前仓库已发布过的旧格式使用 100 次。
+const LEGACY_PBKDF2_ITERATIONS = [100];
 const LEGACY_SHA256_RE = /^[a-f0-9]{64}$/i;
 
 function getJwtSecret(c: any): string {
   const secret = c.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET 未配置");
   return secret;
+}
+
+function getPasswordPepper(c: any): string {
+  const pepper = c.env.PASSWORD_PEPPER || c.env.JWT_SECRET;
+  if (!pepper || String(pepper).length < 16) {
+    throw new Error("PASSWORD_PEPPER 或 JWT_SECRET 未配置");
+  }
+  return String(pepper);
 }
 
 /** 生成 6 位验证码 */
@@ -54,7 +64,7 @@ function generateCode(): string {
 async function hashCode(code: string): Promise<string> {
   const encoder = new TextEncoder();
   const hash = await crypto.subtle.digest("SHA-256", encoder.encode(code));
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return bytesToHex(new Uint8Array(hash));
 }
 
 // 数据库存储验证码（替代内存 Map，确保跨 Worker 实例可用）
@@ -103,7 +113,7 @@ authRoute.post("/register", async (c) => {
     }
 
     // 生成密码 hash
-    const passwordHash = await hashPassword(password);
+    const passwordHash = await hashPassword(password, getPasswordPepper(c));
 
     // 创建用户（未验证邮箱）
     const userId = crypto.randomUUID();
@@ -207,10 +217,11 @@ authRoute.post("/login", async (c) => {
   const [user] = await db.select().from(users).where(eq(users.username, username)).limit(1);
   if (!user) return c.json({ ok: false, message: "用户名或密码错误" }, 401);
 
-  const valid = await verifyPassword(password, user.passwordHash);
+  const passwordPepper = getPasswordPepper(c);
+  const valid = await verifyPassword(password, user.passwordHash, passwordPepper);
   if (!valid) return c.json({ ok: false, message: "用户名或密码错误" }, 401);
-  if (isLegacySha256Hash(user.passwordHash)) {
-    await db.update(users).set({ passwordHash: await hashPassword(password), updatedAt: new Date().toISOString() }).where(eq(users.id, user.id));
+  if (!isCurrentPasswordHash(user.passwordHash)) {
+    await db.update(users).set({ passwordHash: await hashPassword(password, passwordPepper), updatedAt: new Date().toISOString() }).where(eq(users.id, user.id));
   }
 
   if (user.status !== "active") return c.json({ ok: false, message: "账号已被禁用" }, 403);
@@ -252,21 +263,22 @@ authRoute.post("/logout", async (c) => {
   return c.json({ ok: true, message: "已注销" });
 });
 
-/** 密码 hash（PBKDF2 + SHA-256 × 100000） */
-async function hashPassword(password: string): Promise<string> {
+/** 密码 hash：带服务端 pepper 的 HMAC-SHA256，避免免费 Worker 内做高 CPU KDF。 */
+async function hashPassword(password: string, pepper: string): Promise<string> {
   const salt = new Uint8Array(16);
   crypto.getRandomValues(salt);
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
-  const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: PASSWORD_HASH_ITERATIONS, hash: "SHA-256" },
-    key,
-    256,
-  );
-  return `${bytesToHex(salt)}:${bytesToHex(new Uint8Array(hash))}`;
+  const hash = await hmacPassword(password, salt, pepper);
+  return `${PASSWORD_HASH_ALGORITHM}:${bytesToHex(salt)}:${hash}`;
 }
 
-async function verifyPassword(password: string, stored: string): Promise<boolean> {
+async function verifyPassword(password: string, stored: string, pepper: string): Promise<boolean> {
+  if (isCurrentPasswordHash(stored)) {
+    const [, saltHex, hashHex] = stored.split(":");
+    const salt = saltHex ? hexToBytes(saltHex) : null;
+    if (!salt || !hashHex || !/^[a-f0-9]{64}$/i.test(hashHex)) return false;
+    return await hmacPassword(password, salt, pepper) === hashHex.toLowerCase();
+  }
+
   if (isLegacySha256Hash(stored)) {
     return await legacySha256PasswordHash(password) === stored;
   }
@@ -276,14 +288,36 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
   const salt = hexToBytes(saltHex);
   if (!salt || !/^[a-f0-9]{64}$/i.test(hashHex)) return false;
 
+  for (const iterations of LEGACY_PBKDF2_ITERATIONS) {
+    if (await legacyPbkdf2PasswordHash(password, salt, iterations) === hashHex.toLowerCase()) return true;
+  }
+  return false;
+}
+
+function isCurrentPasswordHash(stored: string): boolean {
+  return stored.startsWith(`${PASSWORD_HASH_ALGORITHM}:`);
+}
+
+async function hmacPassword(password: string, salt: Uint8Array, pepper: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const passwordBytes = encoder.encode(password);
+  const payload = new Uint8Array(salt.length + passwordBytes.length);
+  payload.set(salt);
+  payload.set(passwordBytes, salt.length);
+  const key = await crypto.subtle.importKey("raw", encoder.encode(pepper), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = await crypto.subtle.sign("HMAC", key, payload);
+  return bytesToHex(new Uint8Array(mac));
+}
+
+async function legacyPbkdf2PasswordHash(password: string, salt: Uint8Array, iterations: number): Promise<string> {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
   const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: PASSWORD_HASH_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
     key,
     256,
   );
-  return bytesToHex(new Uint8Array(hash)) === hashHex.toLowerCase();
+  return bytesToHex(new Uint8Array(hash));
 }
 
 function isLegacySha256Hash(stored: string): boolean {

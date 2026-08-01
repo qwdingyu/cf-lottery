@@ -97,6 +97,19 @@ async function legacySha256(password: string): Promise<string> {
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+async function legacyPbkdf2(password: string, salt: Uint8Array, iterations = 100): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
+  const hash = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    key,
+    256,
+  );
+  const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
+  const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return `${saltHex}:${hashHex}`;
+}
+
 /* ── 测试：注册 ──────────────────────────────────────────── */
 
 // 由于 Hono 测试需要完整的应用上下文和 JWT 密钥，
@@ -104,7 +117,7 @@ async function legacySha256(password: string): Promise<string> {
 // 完整的路由层测试需要集成测试环境。
 
 describe("用户注册数据完整性", () => {
-  it("注册路由使用 PBKDF2 salt:hash 存储密码，并创建邮箱验证码", async () => {
+  it("注册路由使用低 CPU 的 pepper HMAC 存储密码，并创建邮箱验证码", async () => {
     const app = createAuthTestApp();
     const res = await app.request("/auth/register", {
       method: "POST",
@@ -114,12 +127,12 @@ describe("用户注册数据完整性", () => {
 
     expect(res.status).toBe(200);
     const [user] = await db.select().from(users).where(eq(users.username, "routeuser")).limit(1);
-    expect(user?.passwordHash).toMatch(/^[a-f0-9]{32}:[a-f0-9]{64}$/);
+    expect(user?.passwordHash).toMatch(/^hmac_sha256_v1:[a-f0-9]{32}:[a-f0-9]{64}$/);
     const [code] = await db.select().from(emailAccessCodes).where(eq(emailAccessCodes.email, "route@test.com")).limit(1);
     expect(code).toBeTruthy();
   });
 
-  it("旧 SHA-256 密码登录成功后自动升级为 PBKDF2 格式", async () => {
+  it("旧 SHA-256 密码登录成功后自动升级为 pepper HMAC 格式", async () => {
     const app = createAuthTestApp();
     const userId = crypto.randomUUID();
     const tenantId = crypto.randomUUID();
@@ -141,7 +154,32 @@ describe("用户注册数据完整性", () => {
 
     expect(res.status).toBe(200);
     const [upgraded] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-    expect(upgraded?.passwordHash).toMatch(/^[a-f0-9]{32}:[a-f0-9]{64}$/);
+    expect(upgraded?.passwordHash).toMatch(/^hmac_sha256_v1:[a-f0-9]{32}:[a-f0-9]{64}$/);
+  });
+
+  it("旧低迭代 PBKDF2 密码登录成功后自动升级为 pepper HMAC 格式", async () => {
+    const app = createAuthTestApp();
+    const userId = crypto.randomUUID();
+    const tenantId = crypto.randomUUID();
+    await db.insert(users).values({
+      id: userId,
+      username: "legacy-pbkdf2",
+      email: "legacy-pbkdf2@test.com",
+      emailVerified: 1,
+      passwordHash: await legacyPbkdf2("Password123", new Uint8Array(16).fill(7)),
+    });
+    await db.insert(tenants).values({ id: tenantId, name: "legacy-pbkdf2" });
+    await db.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
+
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.3" },
+      body: JSON.stringify({ username: "legacy-pbkdf2", password: "Password123" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const [upgraded] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    expect(upgraded?.passwordHash).toMatch(/^hmac_sha256_v1:[a-f0-9]{32}:[a-f0-9]{64}$/);
   });
 
   it("注册后自动创建租户和成员记录", async () => {
