@@ -357,3 +357,28 @@ export const activityEvents = sqliteTable("activity_events", {
   entryIdx: index("idx_activity_events_entry").on(t.tenantId, t.drawId, t.entryId, t.createdAt),
   refIdx: index("idx_activity_events_ref").on(t.tenantId, t.drawId, t.refCode, t.createdAt),
 }));
+
+// ── 外部转化回传（成交、核销、注册等外部系统事实） ──
+// 只有外部系统通过 API Key 回传后，平台才可把它展示为外部转化；UTM、点击和参与不能替代本表。
+export const externalConversions = sqliteTable("external_conversions", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  entryId: text("entry_id").notNull().default(""),
+  externalEventId: text("external_event_id").notNull(),
+  conversionType: text("conversion_type").notNull(),
+  source: text("source").notNull().default(""),
+  refCode: text("ref_code").notNull().default(""),
+  amountCents: integer("amount_cents"),
+  currency: text("currency").notNull().default(""),
+  identityType: text("identity_type").notNull().default(""),
+  identityValue: text("identity_value").notNull().default(""),
+  payloadJson: text("payload_json").notNull().default("{}"),
+  occurredAt: text("occurred_at").notNull(),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  conversionEventUnique: uniqueIndex("idx_external_conversions_event").on(t.tenantId, t.source, t.externalEventId),
+  conversionDrawIdx: index("idx_external_conversions_draw").on(t.tenantId, t.drawId, t.conversionType, t.createdAt),
+  conversionEntryIdx: index("idx_external_conversions_entry").on(t.tenantId, t.drawId, t.entryId, t.createdAt),
+  conversionRefIdx: index("idx_external_conversions_ref").on(t.tenantId, t.drawId, t.refCode, t.createdAt),
+}));

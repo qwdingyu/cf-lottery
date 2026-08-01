@@ -36,10 +36,12 @@ import {
   activityOutcomes,      // 接龙/预约等活动的统一结果
   tenants,               // SaaS 租户与套餐
   tenantMembers,         // 团队成员配额统计
+  apiKeys,               // 外部集成 API Key
   webhookConfigs,        // Webhook 配额统计
   webhookDeliveries,     // Webhook 投递生命周期
   activityEvents,        // 活动事件与导流漏斗
   shareRecords,          // 分享裂变归因
+  externalConversions,   // 外部成交/核销/注册回传事实
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
@@ -120,6 +122,31 @@ export type EnqueueWebhookEventInput = {
 
 export type WebhookFetch = (url: string, init: RequestInit) => Promise<Response>;
 
+export type ExternalConversionType =
+  | "registration"
+  | "purchase"
+  | "coupon_redeemed"
+  | "lead_qualified"
+  | "offline_redeemed"
+  | "custom";
+
+export type RecordExternalConversionInput = {
+  tenantId: string;
+  drawId?: string;
+  publicSlug?: string;
+  externalEventId: string;
+  conversionType: ExternalConversionType;
+  source?: string;
+  entryId?: string;
+  identityType?: string;
+  identityValue?: string;
+  refCode?: string;
+  amountCents?: number | null;
+  currency?: string;
+  payload?: Record<string, unknown>;
+  occurredAt?: string;
+};
+
 const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "page_view",
   "participation_started",
@@ -142,6 +169,15 @@ const WEBHOOK_EVENT_TYPES = new Set<WebhookEventType>([
   "share.created",
   "share.clicked",
   "activity.event.recorded",
+]);
+
+const EXTERNAL_CONVERSION_TYPES = new Set<ExternalConversionType>([
+  "registration",
+  "purchase",
+  "coupon_redeemed",
+  "lead_qualified",
+  "offline_redeemed",
+  "custom",
 ]);
 
 const DEFAULT_ACTIVITY_PARTICIPANT_CAP = 5000;
