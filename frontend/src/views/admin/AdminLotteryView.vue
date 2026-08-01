@@ -281,6 +281,19 @@
       </table>
     </div>
 
+    <AdminPagination
+      v-if="pagination.total.value > 0"
+      :page="pagination.page.value"
+      :total="pagination.total.value"
+      :total-pages="pagination.totalPages.value"
+      :limit="pagination.limit.value"
+      :disabled="loading"
+      @prev="pagination.prevPage(); loadData()"
+      @next="pagination.nextPage(); loadData()"
+      @jump="pagination.setPage($event); loadData()"
+      @update:limit="pagination.setLimit($event); loadData()"
+    />
+
     <!-- 创建/编辑活动 -->
     <AdminModal
       v-model="showCreateModal"
@@ -808,6 +821,8 @@ import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
 import { writeClipboardText } from '@/composables/useClipboard'
 import AdminModal from '@/components/AdminModal.vue'
+import AdminPagination from '@/components/AdminPagination.vue'
+import { useTablePagination } from '@/composables/useTablePagination'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 /** 管理端 API 请求封装 */
@@ -886,7 +901,12 @@ const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDial
 
 // ── 兼容旧 API 调用（适配到新后端） ──
 const requireToken = () => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } };
-const fetchLotteryDraws = async (_token: string) => adminRequest<{ draws: LotteryDraw[] }>('/api/admin/draws');
+const fetchLotteryDraws = async (_token: string, params: { limit: number; offset: number; status?: string; query?: string }) => {
+  const search = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) })
+  if (params.status) search.set('status', params.status)
+  if (params.query) search.set('query', params.query)
+  return adminRequest<{ draws: LotteryDraw[]; total: number }>(`/api/admin/draws?${search}`)
+}
 const createLotteryDraw = async (_token: string, body: any) => adminRequest<{ id: string; publicSlug: string }>('/api/admin/draws', { method: 'POST', body: JSON.stringify(body) });
 const updateLotteryDraw = async (_token: string, id: string, body: any) => adminRequest(`/api/admin/draws/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 const openLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/publish`, { method: 'POST' });
@@ -901,12 +921,6 @@ const retryAdminLotteryEmail = async (_token: string, id: string) => adminReques
 const recoverLotteryDraw = async (_token: string, id: string) => adminRequest<{ healed: 'drawn' | 'open' }>(`/api/admin/draws/${id}/recover`, { method: 'POST' });
 
 // ── 内联 lottery-ops 函数 ──
-const filterAndSortLotteryDraws = (draws: LotteryDraw[], opts: { status: string; query: string }) => {
-  let r = draws;
-  if (opts.status) r = r.filter(d => d.status === opts.status);
-  if (opts.query) { const q = opts.query.toLowerCase(); r = r.filter(d => d.title.toLowerCase().includes(q) || d.id.toLowerCase().includes(q)); }
-  return r.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-};
 const countLotteryEmailFailures = (winners: LotteryWinner[]) => winners.filter(w => w.notificationStatus === 'failed').length;
 const formatLotteryEntryProgress = (count?: number | null, max?: number | null) => max ? `${count ?? 0} / ${max}` : `${count ?? 0}`;
 const formatLotteryVisibilityLabel = (visible: number | undefined | null, labels: { public: string; hidden: string }) => visible ? labels.public : labels.hidden;
@@ -975,18 +989,14 @@ const creating = ref(false)
 const operatingId = ref('')
 // batchOperating 必须在 useTableSelection 之前声明，确保模板访问时已初始化
 const batchOperating = ref(false)
+const pagination = useTablePagination({ initialLimit: 50 })
 let loadSequence = 0
 let winnersStatusTimer: ReturnType<typeof setInterval> | null = null
 let winnersStatusRefreshes = 0
 let winnersStatusInFlight = false
 const MAX_WINNERS_STATUS_REFRESHES = 10
 
-const filteredDraws = computed(() =>
-  filterAndSortLotteryDraws(draws.value, {
-    status: statusFilter.value,
-    query: listQuery.value,
-  }),
-)
+const filteredDraws = computed(() => draws.value)
 
 const hasListFilter = computed(
   () => Boolean(String(statusFilter.value || '').trim() || String(listQuery.value || '').trim()),
@@ -1699,9 +1709,15 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await fetchLotteryDraws(requireToken())
+    const data = await fetchLotteryDraws(requireToken(), {
+      limit: pagination.limit.value,
+      offset: (pagination.page.value - 1) * pagination.limit.value,
+      status: statusFilter.value || undefined,
+      query: listQuery.value || undefined,
+    })
     if (sequence !== loadSequence) return
     draws.value = data.draws || []
+    pagination.setTotal(data.total || 0)
   } catch (e: any) {
     if (sequence !== loadSequence) return
     draws.value = []

@@ -114,7 +114,7 @@ import { useToast } from '@/composables/useToast'
 
 const route = useRoute()
 const router = useRouter()
-const { setToken } = useAdminAuth()
+const { setToken, setPlatformRole } = useAdminAuth()
 const { showToast } = useToast()
 
 const username = ref('')
@@ -132,6 +132,28 @@ const showRegister = ref(false)
 function redirectAfterLogin() {
   const redirect = (route.query.redirect as string) || '/admin'
   router.replace(redirect)
+}
+
+/**
+ * 登录/注册成功后，异步获取平台角色信息并缓存到 localStorage。
+ * 这个调用不阻塞页面跳转——如果失败（非平台成员），platformRole 被设为 null，
+ * 下次访问 /platform/* 路由时守卫会拦住。
+ */
+async function fetchPlatformRole(token: string) {
+  try {
+    const res = await fetch('/api/admin/me', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    const data = await res.json()
+    if (data.ok) {
+      setPlatformRole(data.platformRole ?? null, token)
+    } else {
+      setPlatformRole(null, token)
+    }
+  } catch {
+    // 网络异常时不写入 null，保留 undefined 状态让路由守卫放行
+    // （PlatformLayout 内部会展示错误提示）
+  }
 }
 
 async function handleLogin() {
@@ -154,6 +176,7 @@ async function handleLogin() {
     if (data.ok && data.token) {
       // cf-lottery 使用 JWT token 作为 admin_token
       setToken(data.token)
+      fetchPlatformRole(data.token)
       showToast('登录成功', 'success')
       redirectAfterLogin()
     } else {
@@ -220,6 +243,7 @@ async function handleVerifyEmail() {
     const data = await res.json()
     if (data.ok && data.token) {
       setToken(data.token)
+      fetchPlatformRole(data.token)
       showToast('注册成功', 'success')
       redirectAfterLogin()
     } else {

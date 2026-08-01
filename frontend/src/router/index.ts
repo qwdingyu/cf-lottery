@@ -10,6 +10,7 @@ import AdminLayout from '@/views/AdminLayout.vue'
 import PlatformLayout from '@/views/PlatformLayout.vue'
 import LandingView from '@/views/LandingView.vue'
 import { readAdminToken } from '@/composables/useAdminAuth'
+import { readPlatformRole } from '@/composables/useAdminAuth'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -123,9 +124,22 @@ router.beforeEach((to) => {
 
   const requiresAuth = to.meta.requiresAuth as boolean | undefined
   const requiresGuest = to.meta.requiresGuest as boolean | undefined
+  const isPlatformRoute = to.path.startsWith('/platform')
 
   if (requiresAuth && !adminToken) {
     return { name: 'AdminLogin', query: { redirect: to.fullPath }, replace: true }
+  }
+
+  // 平台路由额外要求平台成员身份。readPlatformRole() 返回 undefined 表示
+  // 尚未从 API 获取（登录流程中会异步填充），此时允许通过但不渲染内容，
+  // 由 PlatformLayout 自行处理 loading 状态。
+  if (isPlatformRoute && adminToken) {
+    const platRole = readPlatformRole()
+    if (platRole === null) {
+      // 已确认非平台成员，跳回租户后台首页
+      return { name: 'AdminDashboard', replace: true }
+    }
+    // platRole === undefined 或 platRole === string 都放行
   }
 
   if (requiresGuest && adminToken) {

@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
@@ -175,7 +175,7 @@ adminLotteryRoute.get("/dashboard", async (c) => {
 // 当前用户
 // ═════════════════════════════════════════════════════════
 
-/** 获取当前用户信息（含租户信息） */
+/** 获取当前用户信息（含租户信息和平台角色） */
 adminLotteryRoute.get("/me", async (c) => {
   const db = getDb(c);
   const userId = c.get("userId") as string;
@@ -195,10 +195,19 @@ adminLotteryRoute.get("/me", async (c) => {
     .where(eq(tenants.id, tenantId))
     .limit(1);
 
+  // 同时查询平台成员身份，前端根据 platformRole 决定是否展示平台后台入口。
+  // 查一次主键即可，不消耗显著的 rows read。
+  const [platformMember] = await db
+    .select({ role: platformMembers.role, status: platformMembers.status })
+    .from(platformMembers)
+    .where(eq(platformMembers.userId, userId))
+    .limit(1);
+
   return ok(c, {
     user,
     tenant: tenant || { id: tenantId, name: "", plan: "free" },
     quota: await getTenantUsage(db, tenantId),
+    platformRole: platformMember?.status === "active" ? platformMember.role : null,
   });
 });
 
@@ -274,17 +283,34 @@ adminLotteryRoute.post("/prizes/:id/codes/import", async (c) => {
 // 活动管理
 // ═════════════════════════════════════════════════════════
 
-/** 活动列表 */
+/** 活动列表（分页，支持状态筛选和搜索） */
 adminLotteryRoute.get("/draws", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
+  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
+  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const status = c.req.query("status") || "";
+  const query = c.req.query("query") || "";
+
+  const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
+  if (status) conditions.push(eq(lotteryDraws.status, status));
+  if (query) conditions.push(sql`${lotteryDraws.title} LIKE ${'%' + query + '%'}`);
+
   const rows = await db
     .select()
     .from(lotteryDraws)
-    .where(eq(lotteryDraws.tenantId, tenantId))
+    .where(and(...conditions))
     .orderBy(desc(lotteryDraws.createdAt))
-    .limit(50);
-  return ok(c, { draws: rows });
+    .limit(limit)
+    .offset(offset);
+
+  // 查询总数
+  const [totalRow] = await db
+    .select({ total: count() })
+    .from(lotteryDraws)
+    .where(and(...conditions));
+
+  return ok(c, { draws: rows, total: Number(totalRow?.total ?? 0) });
 });
 
 /** 活动详情 */
