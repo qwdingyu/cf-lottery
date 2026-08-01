@@ -81,6 +81,7 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   experienceType: text("experience_type").notNull().default("wheel"),
   drawTrigger: text("draw_trigger").notNull().default("manual"),
   resultMode: text("result_mode").notNull().default("manual"),
+  allocationPolicy: text("allocation_policy").notNull().default("capacity"),
   policyVersion: integer("policy_version").notNull().default(1),
   startAt: text("start_at").notNull(),
   endAt: text("end_at").notNull(),
@@ -186,6 +187,29 @@ export const auditLogs = sqliteTable("audit_logs", {
   metadataJson: text("metadata_json").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
+
+// ── 活动结果/顺序分配 ──
+// 抽奖继续使用 lottery_winners；接龙、预约、候补等活动使用统一 assignment 记录。
+export const activityAssignments = sqliteTable("activity_assignments", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  entryId: text("entry_id").notNull(),
+  assignmentType: text("assignment_type").notNull().default("slot"),
+  status: text("status").notNull().default("confirmed"),
+  position: integer("position").notNull(),
+  label: text("label").notNull().default(""),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  assignedAt: text("assigned_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  entryUnique: uniqueIndex("idx_activity_assignment_entry").on(
+    t.tenantId, t.drawId, t.entryId, t.assignmentType,
+  ),
+  positionUnique: uniqueIndex("idx_activity_assignment_position").on(
+    t.tenantId, t.drawId, t.assignmentType, t.position,
+  ),
+}));
 
 // ── 邮箱验证码 ──
 export const emailAccessCodes = sqliteTable("email_access_codes", {
