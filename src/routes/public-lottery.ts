@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes } from "../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig } from "../db/schema";
 import { eq, and, count, sql, asc } from "drizzle-orm";
 import { getActivityOutcome, joinDraw, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
 import { sendAccessCode } from "../services/email-service";
@@ -288,7 +288,10 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   // 生成验证码
   const code = generateCode();
   const codeHash = await hashCode(code);
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 分钟有效期
+  // 验证码有效期：优先从系统配置读取（平台运营者可调整），默认 10 分钟。
+  const [expireCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "access_code_expires_seconds")).limit(1);
+  const expiresSeconds = Math.min(Math.max(parseInt(expireCfg?.value || "", 10) || 600, 60), 3600);
+  const expiresAt = new Date(Date.now() + expiresSeconds * 1000).toISOString();
 
   // 存储验证码（标记旧码为已使用）
   await db.update(emailAccessCodes)
@@ -310,7 +313,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   return ok(c, {
     sent: sendResult.ok,
     message: sendResult.ok ? "验证码已发送" : "发送失败，请稍后重试",
-    expiresInSeconds: 600,
+    expiresInSeconds: expiresSeconds,
   });
 });
 

@@ -499,14 +499,22 @@ adminLotteryRoute.post("/draws", async (c) => {
     }
 
     const activityKind = coerceEnum(body.activityKind, ACTIVITY_KINDS, "lottery");
-    // 校验活动类型是否在平台启用列表中
-    const config = await readSystemConfigMap(db, ["enabled_activity_kinds"]);
+    // 校验活动类型是否在平台启用列表中，同时读取运营侧配置的默认参数
+    const config = await readSystemConfigMap(db, [
+      "enabled_activity_kinds",
+      "draw_default_winner_count",
+      "draw_max_participants",
+    ]);
     const enabledKinds = (config["enabled_activity_kinds"] || "lottery,signup_chain,claim,survey").split(",").map(s => s.trim());
     if (!enabledKinds.includes(activityKind)) {
       return fail(c, `活动类型 "${activityKind}" 当前未启用，请联系平台运营`, 400);
     }
     const participationMode = coerceEnum(body.participationMode, PARTICIPATION_MODES, "open");
     const drawTrigger = coerceEnum(body.drawTrigger, DRAW_TRIGGERS, "manual");
+
+    // 运营者可通过系统配置控制活动创建的默认参数（闭环：L3 配置 → L2 生效）
+    const defaultWinnerCount = parseInt(config["draw_default_winner_count"], 10) || 1;
+    const systemMaxParticipants = parseInt(config["draw_max_participants"], 10) || undefined;
 
     const { id, publicSlug } = await createDraw(db, tenantId, {
       title: String(body.title || ""),
@@ -528,8 +536,8 @@ adminLotteryRoute.post("/draws", async (c) => {
       endAt: String(body.endAt || ""),
       drawAt: body.drawAt || undefined,
       accessPassword: String(body.accessPassword || ""),
-      maxParticipants: body.maxParticipants ? Number(body.maxParticipants) : undefined,
-      winnerCount: body.winnerCount !== undefined ? Number(body.winnerCount) : undefined,
+      maxParticipants: body.maxParticipants !== undefined ? Number(body.maxParticipants) : systemMaxParticipants,
+      winnerCount: body.winnerCount !== undefined ? Number(body.winnerCount) : defaultWinnerCount,
       productLink: body.productLink ? JSON.stringify(body.productLink) : "{}",
       promotionConfig: body.promotionConfig && typeof body.promotionConfig === "object" ? JSON.stringify(body.promotionConfig) : "{}",
       activityConfig: body.activityConfig !== undefined

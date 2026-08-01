@@ -74,7 +74,7 @@ export interface SendEmailResult {
 /** 发送邮件（通过 Resend API） */
 export async function sendEmail(
   _db: any,
-  emailEnv: { resendApiKey?: string; emailFrom?: string },
+  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string },
   input: SendEmailInput,
 ): Promise<SendEmailResult> {
   const apiKey = emailEnv.resendApiKey;
@@ -85,6 +85,9 @@ export async function sendEmail(
 
   const subject = templateSubjects[input.template] || "通知";
   const html = interpolate(template, input.templateData);
+  // 发件人：优先使用系统配置的名称+邮箱，兜底用原始邮箱地址
+  const fromEmail = emailEnv.emailFrom || "noreply@resend.dev";
+  const from = emailEnv.emailFromName ? `${emailEnv.emailFromName} <${fromEmail}>` : fromEmail;
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -94,7 +97,7 @@ export async function sendEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: emailEnv.emailFrom || "noreply@resend.dev",
+        from,
         to: input.to,
         subject,
         html,
@@ -114,7 +117,7 @@ export async function sendEmail(
  * 通过 Resend 发送 6 位数字验证码到用户邮箱。
  */
 export async function sendAccessCode(
-  emailEnv: { resendApiKey: string; emailFrom: string },
+  emailEnv: { resendApiKey: string; emailFrom: string; emailFromName?: string },
   to: string,
   drawName: string,
   code: string,
@@ -134,7 +137,9 @@ export async function sendAccessCode(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: emailEnv.emailFrom || "noreply@resend.dev",
+        from: emailEnv.emailFromName
+          ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@resend.dev"}>`
+          : emailEnv.emailFrom || "noreply@resend.dev",
         to,
         subject: "您的抽奖验证码",
         html,
