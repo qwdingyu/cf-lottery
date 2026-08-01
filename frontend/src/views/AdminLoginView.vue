@@ -58,7 +58,7 @@
           <input
             v-model="regUsername"
             type="text"
-            placeholder="2-40 个字符"
+            placeholder="4-20 个字符，字母数字下划线"
             autocomplete="off"
             :disabled="loading"
           />
@@ -167,8 +167,12 @@ async function handleLogin() {
 }
 
 async function handleRegister() {
-  if (!regUsername.value || !regPassword.value) {
-    error.value = '请输入用户名和密码'
+  if (!regUsername.value || !regPassword.value || !regEmail.value) {
+    error.value = '请填写所有字段'
+    return
+  }
+  if (!regEmail.value.includes('@')) {
+    error.value = '请输入有效的邮箱地址'
     return
   }
 
@@ -179,14 +183,17 @@ async function handleRegister() {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: regUsername.value, password: regPassword.value }),
+      body: JSON.stringify({
+        username: regUsername.value,
+        password: regPassword.value,
+        email: regEmail.value.trim(),
+      }),
     })
     const data = await res.json()
 
-    if (data.ok && data.token) {
-      setToken(data.token)
-      showToast('注册成功', 'success')
-      redirectAfterLogin()
+    if (data.ok) {
+      showVerifyCode.value = true
+      showToast('验证码已发送到邮箱', 'success')
     } else {
       error.value = data.message || '注册失败'
     }
@@ -194,6 +201,34 @@ async function handleRegister() {
     error.value = '网络错误，请稍后重试'
   } finally {
     loading.value = false
+  }
+}
+
+async function handleVerifyEmail() {
+  if (!regCode.value || regCode.value.length !== 6) {
+    error.value = '请输入 6 位验证码'
+    return
+  }
+  verifying.value = true
+  error.value = ''
+  try {
+    const res = await fetch('/api/auth/verify-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: regEmail.value.trim(), code: regCode.value.trim() }),
+    })
+    const data = await res.json()
+    if (data.ok && data.token) {
+      setToken(data.token)
+      showToast('注册成功', 'success')
+      redirectAfterLogin()
+    } else {
+      error.value = data.message || '验证失败'
+    }
+  } catch {
+    error.value = '网络错误'
+  } finally {
+    verifying.value = false
   }
 }
 </script>

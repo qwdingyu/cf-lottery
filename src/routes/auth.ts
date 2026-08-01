@@ -77,7 +77,7 @@ authRoute.post("/register", async (c) => {
 
   // 校验
   if (!USERNAME_RE.test(username)) {
-    return c.json({ ok: false, message: "用户名需要 2-40 个字符，只允许字母、数字和下划线" }, 400);
+    return c.json({ ok: false, message: "用户名需要 4-20 个字符，只允许字母、数字和下划线" }, 400);
   }
   if (password.length < 8) {
     return c.json({ ok: false, message: "密码需要至少 8 个字符" }, 400);

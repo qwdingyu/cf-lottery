@@ -10,7 +10,7 @@
           <input
             v-model="username"
             type="text"
-            placeholder="2-40 个字符，字母数字下划线"
+            placeholder="4-20 个字符，字母数字下划线"
             autocomplete="username"
             autofocus
             :disabled="loading"
@@ -60,7 +60,7 @@ async function handleRegister() {
   const u = username.value.trim()
   const p = password.value
 
-  if (u.length < 2 || u.length > 40) { error.value = '用户名需要 2-40 个字符'; return }
+  if (u.length < 4 || u.length > 20) { error.value = '用户名需要 4-20 个字符'; return }
   if (!/^[a-zA-Z0-9_]+$/.test(u)) { error.value = '用户名只能包含字母、数字和下划线'; return }
   if (p.length < 8) { error.value = '密码至少需要 8 个字符'; return }
   if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) { error.value = '密码需要同时包含字母和数字'; return }
