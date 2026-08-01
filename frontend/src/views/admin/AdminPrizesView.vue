@@ -81,7 +81,7 @@
                       @change="uploadPrizeImage"
                     />
                   </label>
-                  <small class="field-hint">JPEG、PNG、WebP、AVIF，最大 5MiB</small>
+                  <small class="field-hint">JPEG、PNG、WebP、AVIF，最大 2MiB</small>
                 </div>
                 <input v-model="form.imageUrl" maxlength="500" placeholder="不上传则使用默认图" />
               </div>

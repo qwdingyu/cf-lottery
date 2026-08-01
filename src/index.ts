@@ -84,13 +84,13 @@ app.onError((err, c) => {
 
 // ── 请求体大小闸门 ──
 // Cloudflare Workers 免费层不适合让任意 API 接收大请求体。
-// 只有 /api/admin/media/images 允许 5MiB 图片上传，其余接口保持 100KB。
+// 只有 /api/admin/media/images 允许 2MiB 图片上传，其余接口保持 100KB。
 app.use("*", async (c, next) => {
   const length = Number(c.req.header("content-length") || "0");
   const limit = getApiBodyLimitBytes(c.req.path);
   if (Number.isFinite(length) && length > limit) {
     const isMediaUpload = c.req.path === "/api/admin/media/images";
-    return fail(c, isMediaUpload ? "图片上传请求过大（图片最大 5MiB）" : "请求体过大（最大 100KB）", 413);
+    return fail(c, isMediaUpload ? "图片上传请求过大（图片最大 2MiB）" : "请求体过大（最大 100KB）", 413);
   }
   await next();
 });
