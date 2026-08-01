@@ -21,6 +21,7 @@ import {
   getDrawWinners,
   getEntries,
   getDrawEntriesCount,
+  getActivityOutcomes,
   createPrize,
   importPrizeCodes,
 } from "../services/lottery-service";
