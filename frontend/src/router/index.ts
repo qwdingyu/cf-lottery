@@ -78,6 +78,11 @@ const router = createRouter({
           name: 'AdminQuotaRedeem',
           component: () => import('@/views/admin/AdminQuotaRedeemView.vue'),
         },
+        {
+          path: 'integrations',
+          name: 'AdminIntegrations',
+          component: () => import('@/views/admin/AdminIntegrationsView.vue'),
+        },
       ],
     },
     // 平台运营后台（L3），与租户后台（/admin）路由分离

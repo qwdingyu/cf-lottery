@@ -47,6 +47,7 @@ export default {
     menuPrizes: "Prizes",
     menuMembers: "Members",
     menuBlacklist: "Blacklist",
+    menuIntegrations: "Integrations",
     menuQuotaRedeem: "Redeem Quota",
     menuLogs: "Logs",
   },

@@ -79,7 +79,7 @@ async function main() {
   console.log("\n📋 测试 3: 验证 lottery_draws 列");
   const columns = [
     "activity_kind", "experience_type", "result_mode", "policy_version",
-    "promotion_config", "product_link", "draw_seed_hash", "draw_seed",
+    "promotion_config", "activity_config", "product_link", "draw_seed_hash", "draw_seed",
   ];
   for (const col of columns) {
     try {

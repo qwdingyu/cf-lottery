@@ -111,6 +111,7 @@ const menuItems = computed(() => [
   { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '&#x1F4DD;' },
   { name: 'AdminMembers', to: '/admin/members', label: t('adminLayout.menuMembers'), icon: '&#x1F465;' },
   { name: 'AdminBlacklist', to: '/admin/blacklist', label: t('adminLayout.menuBlacklist'), icon: '&#x1F6AB;' },
+  { name: 'AdminIntegrations', to: '/admin/integrations', label: t('adminLayout.menuIntegrations'), icon: '&#x1F517;' },
   { name: 'AdminQuotaRedeem', to: '/admin/quota-redeem', label: t('adminLayout.menuQuotaRedeem'), icon: '&#x1F39F;' },
 ])
 

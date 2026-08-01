@@ -49,6 +49,7 @@ export default {
     menuPrizes: "奖品管理",
     menuMembers: "团队成员",
     menuBlacklist: "黑名单",
+    menuIntegrations: "集成设置",
     menuQuotaRedeem: "兑换额度",
     menuLogs: "操作日志",
   },

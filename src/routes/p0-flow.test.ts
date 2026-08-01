@@ -12,7 +12,7 @@ import { createDb, type DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
-import { activityEvents, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
+import { activityEvents, activitySubmissions, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 let client: Client;
@@ -40,6 +40,9 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS lottery_entries (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, identity_type TEXT NOT NULL DEFAULT 'email', identity_value TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', invite_code_id TEXT DEFAULT '', ip_hash TEXT NOT NULL DEFAULT '', joined_at TEXT NOT NULL, UNIQUE(tenant_id, draw_id, identity_type, identity_value))`,
   `CREATE TABLE IF NOT EXISTS lottery_winners (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, tier_id TEXT NOT NULL, entry_id TEXT NOT NULL, identity_type TEXT NOT NULL, identity_value TEXT NOT NULL, prize_code_id TEXT DEFAULT '', drawn_at TEXT NOT NULL, notification_status TEXT NOT NULL DEFAULT 'pending', notification_error TEXT NOT NULL DEFAULT '', UNIQUE(tenant_id, draw_id, entry_id))`,
   `CREATE TABLE IF NOT EXISTS activity_outcomes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, entry_id TEXT NOT NULL, outcome_type TEXT NOT NULL DEFAULT 'assignment', status TEXT NOT NULL DEFAULT 'assigned', sequence_no INTEGER NOT NULL, assignment_no INTEGER, result_key TEXT NOT NULL DEFAULT '', result_label TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', decided_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE TABLE IF NOT EXISTS activity_submissions (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, entry_id TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}', idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_submissions_entry ON activity_submissions(tenant_id, draw_id, entry_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_activity_submissions_draw ON activity_submissions(tenant_id, draw_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS prizes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', image_url TEXT NOT NULL DEFAULT '', value_text TEXT NOT NULL DEFAULT '', prize_type TEXT NOT NULL DEFAULT 'code', fulfillment_note TEXT NOT NULL DEFAULT '', total_count INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS prize_codes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, prize_id TEXT NOT NULL, code TEXT NOT NULL, secret TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'available', winner_id TEXT DEFAULT '', issued_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS coupon_codes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT, code TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'available', recipient_email TEXT, redeemed_at TEXT, expires_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(tenant_id, code))`,
@@ -70,7 +73,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  for (const table of ["webhook_deliveries", "webhook_configs", "audit_logs", "external_conversions", "share_records", "activity_events", "email_access_codes", "lottery_blacklist", "lottery_invite_codes", "lottery_roster_members", "lottery_prize_tiers", "coupon_codes", "prize_codes", "prizes", "activity_outcomes", "lottery_winners", "lottery_entries", "lottery_draws", "system_config", "platform_members", "tenant_members", "users", "tenants"]) {
+  for (const table of ["webhook_deliveries", "webhook_configs", "audit_logs", "external_conversions", "share_records", "activity_events", "email_access_codes", "lottery_blacklist", "lottery_invite_codes", "lottery_roster_members", "lottery_prize_tiers", "coupon_codes", "prize_codes", "prizes", "activity_submissions", "activity_outcomes", "lottery_winners", "lottery_entries", "lottery_draws", "system_config", "platform_members", "tenant_members", "users", "tenants"]) {
     await client.execute(`DELETE FROM ${table}`);
   }
 });
@@ -234,7 +237,7 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     expect(entries.length).toBe(3);
   });
 
-  it("问卷活动：当前仅允许创建草稿，未完成字段配置闭环前禁止正式发布", async () => {
+  it("问卷活动：缺字段配置时禁止发布，有配置后可发布并保存提交", async () => {
     await seedOwner();
     const app = createTestApp();
 
@@ -254,6 +257,23 @@ describe("P0 核心流程：创建活动 → 发布", () => {
       headers: { ...(await authHeader()) },
     }, TEST_ENV);
     expect(publishRes.status).toBe(400);
+
+    const configured = await createAndPublish(app, "survey", {
+      activityConfig: {
+        version: 1,
+        kind: "survey",
+        fields: [{ id: "feedback", label: "反馈", type: "textarea", required: true, maxLength: 500, options: [] }],
+      },
+    });
+    const joinRes = await app.request(`/api/public/draws/${configured.publicSlug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.16" },
+      body: JSON.stringify({ email: "survey@test.com", submission: { fields: { feedback: "体验不错" } } }),
+    }, TEST_ENV);
+    expect(joinRes.status).toBe(200);
+    const submissions = await db.select().from(activitySubmissions).where(eq(activitySubmissions.drawId, configured.id));
+    expect(submissions.length).toBe(1);
+    expect(JSON.parse(submissions[0]!.payloadJson).fields.feedback).toBe("体验不错");
   });
 
   it("资料领取活动：创建→发布→领取", async () => {
@@ -428,7 +448,7 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     expect(check.errors.some((item: any) => item.code === "webhook.events.invalid")).toBe(true);
   });
 
-  it("发布前校验：投票选项闭环未完成前禁止正式发布", async () => {
+  it("投票活动：缺选项时禁止发布，有固定选项后按 submission 统计票数", async () => {
     await seedOwner();
     const app = createTestApp();
     const { id } = await createDraft(app, "vote");
@@ -440,6 +460,36 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     const check = await checkRes.json() as any;
     expect(check.canPublish).toBe(false);
     expect(check.errors.some((item: any) => item.code === "vote.options.missing")).toBe(true);
+
+    const configured = await createAndPublish(app, "vote", {
+      activityConfig: {
+        version: 1,
+        kind: "vote",
+        selection: "single",
+        options: [
+          { id: "option_a", label: "方案 A", description: "", imageUrl: "" },
+          { id: "option_b", label: "方案 B", description: "", imageUrl: "" },
+        ],
+      },
+    });
+    for (const [email, optionId] of [["vote1@test.com", "option_a"], ["vote2@test.com", "option_a"], ["vote3@test.com", "option_b"]] as const) {
+      const joinRes = await app.request(`/api/public/draws/${configured.publicSlug}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": `10.0.0.${email[4]}` },
+        body: JSON.stringify({ email, submission: { optionId } }),
+      }, TEST_ENV);
+      expect(joinRes.status).toBe(200);
+    }
+
+    const tallyRes = await app.request(`/api/admin/draws/${configured.id}/tally`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(tallyRes.status).toBe(200);
+    const tally = await tallyRes.json() as any;
+    expect(tally.total).toBe(3);
+    expect(tally.tally.find((row: any) => row.optionId === "option_a").count).toBe(2);
+    expect(tally.tally.find((row: any) => row.optionId === "option_b").count).toBe(1);
   });
 
   it("公开事件治理：非法事件类型和大 payload 被拒绝且不写库", async () => {
