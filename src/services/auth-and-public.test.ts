@@ -141,8 +141,100 @@ describe("用户注册数据完整性", () => {
     expect(res.status).toBe(200);
     const [user] = await db.select().from(users).where(eq(users.username, "routeuser")).limit(1);
     expect(user?.passwordHash).toMatch(/^hmac_sha256_v1:[a-f0-9]{32}:[a-f0-9]{64}$/);
+    // 验证码应写入 email_access_codes 表
     const [code] = await db.select().from(emailAccessCodes).where(eq(emailAccessCodes.email, "route@test.com")).limit(1);
     expect(code).toBeTruthy();
+    // 应自动创建租户和成员记录
+    const [member] = await db.select().from(tenantMembers).where(eq(tenantMembers.userId, user!.id)).limit(1);
+    expect(member?.role).toBe("owner");
+  });
+
+  it("注册时用户名已存在返回 409", async () => {
+    const app = createAuthTestApp();
+    // 先注册一个用户
+    await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.2" },
+      body: JSON.stringify({ username: "dupuser", password: "Password123", email: "dup1@test.com" }),
+    }, TEST_ENV);
+
+    // 用相同用户名再次注册（不同邮箱），应返回 409
+    const res = await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.3" },
+      body: JSON.stringify({ username: "dupuser", password: "Password456", email: "dup2@test.com" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.message).toContain("用户名已存在");
+  });
+
+  it("注册时邮箱已被验证返回 409", async () => {
+    const app = createAuthTestApp();
+    // 先注册一个用户
+    await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.4" },
+      body: JSON.stringify({ username: "emailuser1", password: "Password123", email: "same@test.com" }),
+    }, TEST_ENV);
+
+    // 手动标记邮箱已验证（模拟验证流程）
+    const [user] = await db.select().from(users).where(eq(users.username, "emailuser1")).limit(1);
+    if (user) {
+      await db.update(users).set({ emailVerified: 1 }).where(eq(users.id, user.id));
+    }
+
+    // 用不同用户名但相同已验证邮箱注册，应返回 409
+    const res = await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.5" },
+      body: JSON.stringify({ username: "emailuser2", password: "Password456", email: "same@test.com" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(409);
+    const body = await res.json() as any;
+    expect(body.message).toContain("邮箱已被注册");
+  });
+
+  it("注册时密码太短返回 400", async () => {
+    const app = createAuthTestApp();
+    const res = await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.6" },
+      body: JSON.stringify({ username: "shortpwuser", password: "Ab1", email: "short@test.com" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.message).toContain("密码需要至少 8 个字符");
+  });
+
+  it("注册时密码缺少字母或数字返回 400", async () => {
+    const app = createAuthTestApp();
+    const res = await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.7" },
+      body: JSON.stringify({ username: "pwuser1", password: "1234567890", email: "pw1@test.com" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.message).toContain("密码必须包含字母和数字");
+  });
+
+  it("注册时用户名格式错误返回 400", async () => {
+    const app = createAuthTestApp();
+    // 用户名太短（1个字符）
+    const res = await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.8" },
+      body: JSON.stringify({ username: "a", password: "Password123", email: "bad@test.com" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.message).toContain("用户名需要");
   });
 
   it("旧 SHA-256 密码登录成功后自动升级为 pepper HMAC 格式", async () => {

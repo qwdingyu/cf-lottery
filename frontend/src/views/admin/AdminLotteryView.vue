@@ -72,7 +72,7 @@
               />
             </th>
             <th>{{ $t('lottery.adminName') }}</th>
-            <th>{{ $t('lottery.product') }}</th>
+            <th>目标 / 类型</th>
             <th class="col-status">{{ $t('lottery.adminStatus') }}</th>
             <th class="col-num">{{ $t('lottery.adminEntryCount') }}</th>
             <th class="col-num">{{ $t('lottery.winnerCount') }}</th>
@@ -99,7 +99,7 @@
             </td>
             <td class="col-name">
               <div class="relation-cell">
-                <span class="draw-name">{{ draw.name }}</span>
+                <span class="draw-name">{{ draw.title }}</span>
                 <small v-if="draw.description" class="draw-desc">{{ draw.description }}</small>
                 <small
                   v-if="draw.failureReason"
@@ -112,7 +112,8 @@
             </td>
             <td>
               <div class="relation-cell">
-                <span>{{ draw.title }}</span>
+                <span>{{ activityKindLabel(draw.activityKind) }}</span>
+                <small class="muted-text">{{ experienceTypeLabel(draw.experienceType) }}</small>
               </div>
             </td>
             <td class="col-status">
@@ -198,7 +199,7 @@
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
-                  @click="handleOpen(draw.id)"
+                  @click="handleOpen(draw)"
                 >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminDrawOpen') }}</button>
                 <button
                   v-if="draw.status === 'open' && draw.activityKind === 'lottery'"
@@ -399,12 +400,18 @@
                 <select v-model="form.activityKind" @change="handleActivityKindChange">
                   <option value="lottery">抽奖</option>
                   <option value="signup_chain">接龙 / 报名</option>
+                  <option value="claim">资料领取 / 领券</option>
+                  <option value="survey">问卷调研</option>
+                  <option value="vote">投票评选</option>
+                  <option value="checkin">签到 / 打卡</option>
+                  <option value="reservation">预约确认</option>
+                  <option value="approval">审核申请</option>
                 </select>
-                <small class="field-hint">活动类型决定结果语义；抽奖随机产生结果，接龙按顺序占位</small>
+                <small class="field-hint">活动类型决定结果语义；互动体验只决定前台展示</small>
               </label>
               <label class="field-span-2">
                 <span>参与模式</span>
-                <select v-model="form.participationMode">
+                <select v-model="form.participationMode" @change="handleParticipationModeChange">
                   <option value="open">公开参与（任何人都可参与）</option>
                   <option value="roster">限定名单（仅导入的邮箱可参与）</option>
                   <option value="password">访问密码（输入密码后可参与）</option>
@@ -421,6 +428,11 @@
                   <option value="list">接龙列表</option>
                   <option value="queue">排队队列</option>
                   <option value="form">表单提交</option>
+                  <option value="ballot">投票选项</option>
+                  <option value="calendar">预约日历</option>
+                  <option value="checkin">签到按钮</option>
+                  <option value="reveal">领取揭晓</option>
+                  <option value="grid">九宫格</option>
                   <option value="submit">普通提交</option>
                 </select>
                 <small class="field-hint">互动体验只影响活动页展示，不决定参与资格或开奖结果</small>
@@ -489,10 +501,15 @@
               <p class="form-section-desc">{{ $t('lottery.adminSectionPrizesDesc') }}</p>
             </header>
             <div class="form-grid two-cols">
-              <label>
+              <label v-if="form.activityKind === 'lottery'">
                 <span>{{ $t('lottery.winnerCount') }}</span>
                 <input v-model.number="form.winnerCount" type="number" min="1" max="9999" step="1" required />
                 <small class="field-hint">{{ $t('lottery.winnerCountHint') }}</small>
+              </label>
+              <label v-else>
+                <span>结果规则</span>
+                <input :value="resultModeLabel(form.resultMode)" disabled />
+                <small class="field-hint">非抽奖活动不配置中奖人数，按活动类型自动分配或记录结果</small>
               </label>
               <label>
                 <span>{{ $t('lottery.maxParticipants') }}</span>
