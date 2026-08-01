@@ -39,6 +39,7 @@ import {
 } from "../services/lottery-service";
 import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
 import { readSystemConfigMap } from "../lib/system-config-registry";
+import { buildPublishCheck } from "../services/publish-check-service";
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 
@@ -272,7 +273,7 @@ adminLotteryRoute.patch("/prizes/:id", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const prizeId = c.req.param("id");
-  const body = await c.req.json<{ name?: string; description?: string; prizeType?: string; imageUrl?: string; valueText?: string }>();
+  const body = await c.req.json<{ name?: string; description?: string; prizeType?: string; imageUrl?: string; valueText?: string; active?: number }>();
 
   const [existing] = await db
     .select()
@@ -291,6 +292,7 @@ adminLotteryRoute.patch("/prizes/:id", async (c) => {
       ...(body.prizeType !== undefined ? { prizeType: body.prizeType } : {}),
       ...(body.imageUrl !== undefined ? { imageUrl: String(body.imageUrl).trim() } : {}),
       ...(body.valueText !== undefined ? { valueText: String(body.valueText).trim() } : {}),
+      ...(body.active !== undefined ? { active: body.active ? 1 : 0 } : {}),
       updatedAt: new Date().toISOString(),
     })
     .where(and(eq(prizes.id, prizeId), eq(prizes.tenantId, tenantId)));
@@ -311,6 +313,47 @@ adminLotteryRoute.post("/prizes/:id/codes/import", async (c) => {
 
   await importPrizeCodes(db, tenantId, prizeId, body.codes);
   return ok(c, { imported: body.codes.length });
+});
+
+/**
+ * 自动生成奖品卡密。
+ *
+ * 使用 crypto.getRandomValues() 生成抗猜测的唯一码。
+ * 字符集排除易混淆字符（0/O/1/I/l），降低运营者人工核对成本。
+ */
+adminLotteryRoute.post("/prizes/:id/codes/generate", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const prizeId = c.req.param("id");
+  const body = await c.req.json<{ count?: number; prefix?: string; codeLength?: number; secretLength?: number }>();
+
+  const count = Math.min(Math.max(Number(body.count) || 10, 1), 1000);
+  const prefix = String(body.prefix || "").slice(0, 20);
+  const codeLen = Math.min(Math.max(Number(body.codeLength) || 8, 4), 32);
+  const secretLen = Math.min(Math.max(Number(body.secretLength) || 0, 0), 32);
+
+  // 排除易混淆字符：0/O、1/I/l
+  const CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const randomBytes = new Uint8Array(Math.max(codeLen, secretLen) * count);
+  crypto.getRandomValues(randomBytes);
+
+  const codes: Array<{ code: string; secret: string }> = [];
+  let byteIdx = 0;
+  for (let i = 0; i < count; i++) {
+    let code = "";
+    for (let j = 0; j < codeLen; j++) {
+      code += CHARS[randomBytes[byteIdx++]! % CHARS.length]!;
+    }
+    const fullCode = prefix ? `${prefix}${code}` : code;
+    let secret = "";
+    for (let j = 0; j < secretLen; j++) {
+      secret += CHARS[randomBytes[byteIdx++]! % CHARS.length]!;
+    }
+    codes.push({ code: fullCode, secret });
+  }
+
+  await importPrizeCodes(db, tenantId, prizeId, codes);
+  return ok(c, { generated: count });
 });
 
 // ═════════════════════════════════════════════════════════
@@ -1001,65 +1044,9 @@ adminLotteryRoute.get("/draws/:id/publish-check", async (c) => {
   const tenantId = c.get("tenantId") as string;
   const drawId = c.req.param("id");
 
-  const draw = await getDraw(db, drawId, tenantId);
-  if (!draw) return fail(c, "活动不存在", 404);
-
-  const warnings: string[] = [];
-  const errors: string[] = [];
-
-  // 基础校验
-  if (!draw.title) errors.push("活动标题不能为空");
-  if (!draw.startAt || !draw.endAt) errors.push("请设置活动时间");
-  if (draw.drawTrigger === "scheduled" && !draw.drawAt) errors.push("定时开奖必须设置开奖时间");
-
-  // 参与模式校验
-  if (draw.participationMode === "roster") {
-    const [rosterRow] = await db
-      .select({ count: sql<number>`COUNT(*)` })
-      .from(lotteryRosterMembers)
-      .where(eq(lotteryRosterMembers.drawId, drawId));
-    if (Number(rosterRow?.count || 0) === 0) errors.push("名单模式需要导入参与者名单");
-  }
-
-  if (draw.participationMode === "invite_code") {
-    const [inviteRow] = await db
-      .select({ count: sql<number>`COUNT(*)` })
-      .from(lotteryInviteCodes)
-      .where(eq(lotteryInviteCodes.drawId, drawId));
-    if (Number(inviteRow?.count || 0) === 0) errors.push("邀请码模式需要生成邀请码");
-  }
-
-  if (draw.activityKind === "signup_chain") {
-    if (!draw.maxParticipants) {
-      warnings.push("接龙活动未设置名额上限，将按默认上限控制参与量");
-    }
-  } else {
-    // 奖项校验只适用于抽奖活动
-    const tiers = await db
-      .select()
-      .from(lotteryPrizeTiers)
-      .where(eq(lotteryPrizeTiers.drawId, drawId));
-
-    if (tiers.length > 0) {
-      for (const tier of tiers) {
-        if (tier.prizeId) {
-          const [codeRow] = await db
-            .select({ count: sql<number>`COUNT(*)` })
-            .from(prizeCodes)
-            .where(and(eq(prizeCodes.tenantId, tenantId), eq(prizeCodes.prizeId, tier.prizeId), eq(prizeCodes.status, "available")));
-          if (Number(codeRow?.count || 0) < tier.winnerCount) {
-            warnings.push(`奖项"${tier.tierName}"可用码 ${codeRow?.count || 0} 个，中奖名额 ${tier.winnerCount} 个，码可能不足`);
-          }
-        }
-      }
-    }
-  }
-
-  return ok(c, {
-    canPublish: errors.length === 0,
-    errors,
-    warnings,
-  });
+  const check = await buildPublishCheck(db, tenantId, drawId);
+  if (!check) return fail(c, "活动不存在", 404);
+  return ok(c, check);
 });
 
 /** 导入名单成员（roster 模式） */

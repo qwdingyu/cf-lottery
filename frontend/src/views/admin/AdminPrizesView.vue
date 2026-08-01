@@ -42,7 +42,10 @@
             <td>
               <img :src="prizeImageUrl(prize.imageUrl)" :alt="prize.name || '奖品'" class="prize-thumb" />
             </td>
-            <td>{{ prize.name }}</td>
+            <td>
+              {{ prize.name }}
+              <small v-if="prize.fulfillmentNote" class="field-hint" style="display:block;max-width:200px">📋 {{ prize.fulfillmentNote }}</small>
+            </td>
             <td>{{ prize.prizeType === 'code' ? '卡密' : '手动发放' }}</td>
             <td>{{ prize.valueText || '-' }}</td>
             <td>{{ prize.description || '-' }}</td>
@@ -57,7 +60,10 @@
             </td>
             <td>{{ prize.createdAt }}</td>
             <td class="col-actions">
-              <button class="btn btn-ghost btn-xs" @click="showImport(prize)">导入码</button>
+              <button v-if="prize.prizeType === 'code'" class="btn btn-ghost btn-xs" @click="showImport(prize)">导入码</button>
+              <button class="btn btn-ghost btn-xs" :title="prize.active ? '停用后活动不可选用此奖品' : '启用后活动可选用此奖品'" @click="toggleActive(prize)">
+                {{ prize.active !== 0 ? '停用' : '启用' }}
+              </button>
             </td>
           </tr>
           <tr v-if="prizes.length === 0">
@@ -124,17 +130,43 @@
 
     <!-- 导入码弹窗 -->
     <AdminModal v-model="showImportModal" :title="'导入码 - ' + (importPrize?.name || '')" max-width="600px">
-      <div class="modal-form">
+      <div class="tabs" style="margin-bottom:12px">
+        <button type="button" class="tab" :class="{ active: importTab === 'paste' }" @click="importTab = 'paste'">粘贴导入</button>
+        <button type="button" class="tab" :class="{ active: importTab === 'generate' }" @click="importTab = 'generate'">自动生成</button>
+      </div>
+
+      <div v-if="importTab === 'paste'" class="modal-form">
         <label>
           <span>卡密列表（每行一个）</span>
           <textarea v-model="codesText" rows="8" placeholder="code1&#10;code2&#10;code3" />
         </label>
         <p class="field-hint">每行一个码，支持格式：code 或 code:secret</p>
       </div>
+
+      <div v-if="importTab === 'generate'" class="modal-form">
+        <label>
+          <span>生成数量</span>
+          <input v-model.number="genCount" type="number" min="1" max="1000" placeholder="100" />
+        </label>
+        <label>
+          <span>码前缀（可选）</span>
+          <input v-model="genPrefix" maxlength="20" placeholder="如 LUCKY-" />
+          <small class="field-hint">便于区分不同活动和奖品</small>
+        </label>
+        <label>
+          <span>码长度</span>
+          <input v-model.number="genCodeLen" type="number" min="4" max="32" placeholder="8" />
+          <small class="field-hint">默认 8 位，自动排除易混淆字符（0/O/1/I/l）</small>
+        </label>
+      </div>
+
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost btn-sm" @click="showImportModal = false">取消</button>
-        <button type="button" class="btn btn-primary btn-sm" :disabled="importing" @click="handleImport">
+        <button v-if="importTab === 'paste'" type="button" class="btn btn-primary btn-sm" :disabled="importing" @click="handleImport">
           {{ importing ? '导入中…' : '导入' }}
+        </button>
+        <button v-if="importTab === 'generate'" type="button" class="btn btn-primary btn-sm" :disabled="importing" @click="handleGenerate">
+          {{ importing ? '生成中…' : '生成' }}
         </button>
       </div>
     </AdminModal>
@@ -158,6 +190,10 @@ const showCreate = ref(false)
 const showImportModal = ref(false)
 const importPrize = ref<any>(null)
 const codesText = ref('')
+const importTab = ref<'paste' | 'generate'>('paste')
+const genCount = ref(100)
+const genPrefix = ref('')
+const genCodeLen = ref(8)
 const prizes = ref<any[]>([])
 
 const form = ref({
@@ -276,6 +312,42 @@ async function handleImport() {
     showImportModal.value = false
   } catch (err: any) {
     showToast(err?.message || '导入失败', 'error')
+  } finally {
+    importing.value = false
+  }
+}
+
+async function toggleActive(prize: any) {
+  try {
+    const newActive = prize.active !== 0 ? 0 : 1;
+    await adminRequest(`/api/admin/prizes/${prize.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ active: newActive }),
+    });
+    prize.active = newActive;
+    showToast(newActive ? '奖品已启用' : '奖品已停用', 'success');
+  } catch (err: any) {
+    showToast(err?.message || '操作失败', 'error');
+  }
+}
+
+async function handleGenerate() {
+  if (!importPrize.value) return
+  importing.value = true
+  try {
+    const data = await adminRequest<{ generated: number }>(`/api/admin/prizes/${importPrize.value.id}/codes/generate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        count: genCount.value || 100,
+        prefix: genPrefix.value.trim(),
+        codeLength: genCodeLen.value || 8,
+      }),
+    })
+    showToast(`成功生成 ${data.generated} 个码`, 'success')
+    showImportModal.value = false
+    loadData()
+  } catch (err: any) {
+    showToast(err?.message || '生成失败', 'error')
   } finally {
     importing.value = false
   }
