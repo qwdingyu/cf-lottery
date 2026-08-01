@@ -12,7 +12,7 @@ import { createDb, type DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
-import { activityEvents, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig } from "../db/schema";
+import { activityEvents, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 let client: Client;
@@ -396,6 +396,36 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     expect(check.warnings.some((item: any) => item.code === "promotion.empty")).toBe(true);
     expect(check.infos.some((item: any) => item.code === "webhook.empty")).toBe(true);
     expect(check.infos.some((item: any) => item.code === "prizes.image.default")).toBe(true);
+  });
+
+  it("发布前校验：危险导流链接和异常 Webhook 配置会阻断发布", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const { id } = await createDraft(app, "lottery", {
+      promotionConfig: {
+        enabled: true,
+        destination: { url: "javascript:alert(1)", title: "危险链接" },
+      },
+    });
+    await configureManualPrizeTier(app, id);
+    await db.insert(webhookConfigs).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_ID,
+      url: "ftp://example.com/hook",
+      events: "[]",
+      signingSecret: "",
+      active: 1,
+    });
+
+    const checkRes = await app.request(`/api/admin/draws/${id}/publish-check`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    const check = await checkRes.json() as any;
+    expect(check.canPublish).toBe(false);
+    expect(check.errors.some((item: any) => item.code === "promotion.url.invalid")).toBe(true);
+    expect(check.errors.some((item: any) => item.code === "webhook.url.invalid")).toBe(true);
+    expect(check.errors.some((item: any) => item.code === "webhook.events.invalid")).toBe(true);
   });
 
   it("发布前校验：投票选项闭环未完成前禁止正式发布", async () => {

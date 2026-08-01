@@ -110,6 +110,11 @@ const router = createRouter({
           name: 'PlatformAuditLogs',
           component: () => import('@/views/platform/PlatformAuditLogsView.vue'),
         },
+        {
+          path: 'webhook-deliveries',
+          name: 'PlatformWebhookDeliveries',
+          component: () => import('@/views/platform/PlatformWebhookDeliveriesView.vue'),
+        },
       ],
     },
     {

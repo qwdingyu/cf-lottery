@@ -60,6 +60,7 @@ export default {
     menuConfig: "系统配置",
     menuRedemptionCodes: "兑换码",
     menuAuditLogs: "审计日志",
+    menuWebhookDeliveries: "投递任务",
   },
 
   // ── 运营台（AdminDashboardView） ──────────────

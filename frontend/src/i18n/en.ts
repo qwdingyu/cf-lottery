@@ -58,6 +58,7 @@ export default {
     menuConfig: "Config",
     menuRedemptionCodes: "Redemption Codes",
     menuAuditLogs: "Audit Logs",
+    menuWebhookDeliveries: "Deliveries",
   },
 
   // ── Dashboard ──────────────────────────────

@@ -55,6 +55,7 @@ const menuItems = computed(() => [
   { name: 'PlatformConfig', to: '/platform/config', label: t('platformLayout.menuConfig'), icon: '&#x2699;&#xFE0F;' },
   { name: 'PlatformRedemptionCodes', to: '/platform/redemption-codes', label: t('platformLayout.menuRedemptionCodes'), icon: '&#x1F3B5;' },
   { name: 'PlatformAuditLogs', to: '/platform/audit-logs', label: t('platformLayout.menuAuditLogs'), icon: '&#x1F4DD;' },
+  { name: 'PlatformWebhookDeliveries', to: '/platform/webhook-deliveries', label: t('platformLayout.menuWebhookDeliveries'), icon: '&#x1F4E8;' },
 ])
 
 const currentName = computed(() => route.name as string | undefined)

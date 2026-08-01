@@ -11,6 +11,7 @@ import { requireAuth, requirePlatformMember } from "../middleware/auth";
 import { tenants, platformMembers, users, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
+import { dispatchWebhookDelivery } from "../services/lottery-service";
 
 export const platformRoute = new Hono<AppEnv>();
 
@@ -299,4 +300,42 @@ platformRoute.get("/webhook-deliveries", async (c) => {
     .limit(limit).offset(offset);
 
   return ok(c, { deliveries: rows });
+});
+
+/** 平台手动重试 Webhook 投递。
+ *
+ * 这是平台运营排障能力，不属于租户后台：
+ * - platform_support 只能看，不能触发外部请求。
+ * - 重试会真实访问租户配置的 Webhook URL，因此必须写平台审计。
+ */
+platformRoute.post("/webhook-deliveries/:id/retry", requirePlatformMember(["platform_owner", "platform_operator"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
+  const deliveryId = c.req.param("id");
+
+  const [delivery] = await db
+    .select({
+      id: webhookDeliveries.id,
+      tenantId: webhookDeliveries.tenantId,
+      status: webhookDeliveries.status,
+      eventType: webhookDeliveries.eventType,
+    })
+    .from(webhookDeliveries)
+    .where(eq(webhookDeliveries.id, deliveryId))
+    .limit(1);
+  if (!delivery) return fail(c, "Webhook 投递记录不存在", 404);
+
+  const result = await dispatchWebhookDelivery(db, delivery.tenantId, delivery.id);
+  await writePlatformAudit(db, {
+    actorUserId,
+    actorRole,
+    action: "platform.webhook_delivery.retry",
+    targetType: "webhook_delivery",
+    targetId: delivery.id,
+    tenantId: delivery.tenantId,
+    metadata: { previousStatus: delivery.status, eventType: delivery.eventType, result },
+  });
+
+  return ok(c, result);
 });
