@@ -131,7 +131,7 @@ authRoute.post("/register", async (c) => {
 
     return c.json({ ok: true, message: "验证码已发送到邮箱", expiresInSeconds: 600 });
   } catch (err) {
-    console.error("[auth] register failed:", err);
+    console.error("[auth] register failed:", err, err instanceof Error ? err.message : String(err));
     return c.json({ ok: false, message: "注册失败，请稍后再试" }, 500);
   }
 });
