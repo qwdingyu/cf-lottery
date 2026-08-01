@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryBlacklist, auditLogs, users, tenants } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryBlacklist, auditLogs, tenantMembers, users, tenants } from "../db/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import {
   createDraw,
@@ -790,6 +790,71 @@ adminLotteryRoute.delete("/blacklist/:id", async (c) => {
   await db
     .delete(lotteryBlacklist)
     .where(and(eq(lotteryBlacklist.id, id), eq(lotteryBlacklist.tenantId, tenantId)));
+
+  return ok(c, { deleted: true });
+});
+
+// ═════════════════════════════════════════════════════════
+// 租户成员管理
+// ═════════════════════════════════════════════════════════
+
+/** 成员列表 */
+adminLotteryRoute.get("/members", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+
+  const rows = await db
+    .select({
+      userId: tenantMembers.userId,
+      role: tenantMembers.role,
+      username: users.username,
+      createdAt: tenantMembers.createdAt,
+    })
+    .from(tenantMembers)
+    .innerJoin(users, eq(tenantMembers.userId, users.id))
+    .where(eq(tenantMembers.tenantId, tenantId))
+    .orderBy(desc(tenantMembers.createdAt));
+
+  return ok(c, { members: rows });
+});
+
+/** 添加成员 */
+adminLotteryRoute.post("/members", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ username: string; role?: string }>();
+  const username = String(body.username || "").trim();
+
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
+  if (!user) return fail(c, "用户不存在", 404);
+
+  const [existing] = await db
+    .select({ userId: tenantMembers.userId })
+    .from(tenantMembers)
+    .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, user.id)))
+    .limit(1);
+  if (existing) return fail(c, "该用户已是团队成员", 409);
+
+  await db.insert(tenantMembers).values({
+    tenantId,
+    userId: user.id,
+    role: body.role || "admin",
+  });
+
+  return ok(c, { added: true });
+});
+
+/** 删除成员 */
+adminLotteryRoute.delete("/members/:userId", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const userId = c.req.param("userId");
+
+  if (userId === c.get("userId")) return fail(c, "不能删除自己", 400);
+
+  await db
+    .delete(tenantMembers)
+    .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, userId)));
 
   return ok(c, { deleted: true });
 });

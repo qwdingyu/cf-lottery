@@ -11,8 +11,8 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb } from "../lib/http";
-import { users, tenantMembers, tenants } from "../db/schema";
-import { eq, and } from "drizzle-orm";
+import { users, tenantMembers, tenants, emailAccessCodes } from "../db/schema";
+import { eq, and, sql } from "drizzle-orm";
 import { signJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 
@@ -55,8 +55,7 @@ async function hashCode(code: string): Promise<string> {
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-// 内存存储注册验证码：email -> { codeHash, expiresAt }
-const regCodeStore = new Map<string, { codeHash: string; expiresAt: number }>();
+// 数据库存储验证码（替代内存 Map，确保跨 Worker 实例可用）
 
 // ══════════════════════════════════════════════════════════
 // 注册流程：提交信息 → 发送验证码 → 验证邮箱 → 完成注册
@@ -110,10 +109,18 @@ authRoute.post("/register", async (c) => {
   await db.insert(tenants).values({ id: tenantId, name: username });
   await db.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
 
-  // 生成并发送验证码
+  // 生成并存入数据库
   const code = generateCode();
   const codeHash = await hashCode(code);
-  regCodeStore.set(email, { codeHash, expiresAt: Date.now() + 10 * 60 * 1000 });
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await db.insert(emailAccessCodes).values({
+    id: crypto.randomUUID(),
+    email,
+    drawId: "",
+    codeHash,
+    used: 0,
+    expiresAt,
+  });
 
   const emailEnv = { resendApiKey: c.env.RESEND_API_KEY || "", emailFrom: c.env.EMAIL_FROM || "" };
   try {
@@ -128,26 +135,32 @@ authRoute.post("/register", async (c) => {
 
 /** 第二步：验证邮箱码 */
 authRoute.post("/verify-email", async (c) => {
+  const db = getDb(c);
   const body = await c.req.json<{ email: string; code: string }>();
   const email = String(body.email || "").trim().toLowerCase();
   const code = String(body.code || "").trim();
 
-  const stored = regCodeStore.get(email);
-  if (!stored) return c.json({ ok: false, message: "请先提交注册信息" }, 400);
-  if (Date.now() > stored.expiresAt) {
-    regCodeStore.delete(email);
+  const stored = await db
+    .select()
+    .from(emailAccessCodes)
+    .where(and(eq(emailAccessCodes.email, email), eq(emailAccessCodes.used, 0)))
+    .orderBy(sql`${emailAccessCodes.createdAt} DESC`)
+    .limit(1);
+  if (stored.length === 0) return c.json({ ok: false, message: "请先提交注册信息" }, 400);
+  const codeRecord = stored[0]!;
+  if (new Date() > new Date(codeRecord.expiresAt)) {
+    await db.delete(emailAccessCodes).where(eq(emailAccessCodes.id, codeRecord.id));
     return c.json({ ok: false, message: "验证码已过期" }, 400);
   }
 
   const inputHash = await hashCode(code);
-  if (inputHash !== stored.codeHash) {
+  if (inputHash !== codeRecord.codeHash) {
     return c.json({ ok: false, message: "验证码错误" }, 400);
   }
 
-  regCodeStore.delete(email);
+  await db.update(emailAccessCodes).set({ used: 1 }).where(eq(emailAccessCodes.id, codeRecord.id));
 
   // 标记邮箱已验证
-  const db = getDb(c);
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (!user) return c.json({ ok: false, message: "用户不存在" }, 404);
 
@@ -197,7 +210,15 @@ authRoute.post("/login", async (c) => {
     // 重新发送验证码
     const code = generateCode();
     const codeHash = await hashCode(code);
-    regCodeStore.set(user.email, { codeHash, expiresAt: Date.now() + 10 * 60 * 1000 });
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email: user.email,
+      drawId: "",
+      codeHash,
+      used: 0,
+      expiresAt,
+    });
     const emailEnv = { resendApiKey: c.env.RESEND_API_KEY || "", emailFrom: c.env.EMAIL_FROM || "" };
     try {
       await sendAccessCode(emailEnv, user.email, "注册验证", code);
