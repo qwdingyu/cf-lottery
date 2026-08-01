@@ -3,31 +3,31 @@
     <div class="stats-row">
       <div class="stat-card">
         <span class="stat-value">{{ stats.open }}</span>
-        <span class="stat-label">进行中</span>
+        <span class="stat-label">{{ $t('adminDashboard.active') }}</span>
       </div>
       <div class="stat-card">
         <span class="stat-value">{{ stats.draft }}</span>
-        <span class="stat-label">草稿</span>
+        <span class="stat-label">{{ $t('adminDashboard.draft') }}</span>
       </div>
       <div class="stat-card">
         <span class="stat-value">{{ stats.drawn }}</span>
-        <span class="stat-label">已开奖</span>
+        <span class="stat-label">{{ $t('adminDashboard.drawn') }}</span>
       </div>
       <div class="stat-card">
         <span class="stat-value">{{ stats.recentParticipants }}</span>
-        <span class="stat-label">近 7 天参与</span>
+        <span class="stat-label">{{ $t('adminDashboard.recentParticipants') }}</span>
       </div>
       <div class="stat-card">
         <span class="stat-value">{{ stats.totalWinners }}</span>
-        <span class="stat-label">累计中奖</span>
+        <span class="stat-label">{{ $t('adminDashboard.totalWinners') }}</span>
       </div>
       <div class="stat-card">
         <span class="stat-value">{{ planLabel }}</span>
-        <span class="stat-label">当前套餐</span>
+        <span class="stat-label">{{ $t('adminDashboard.currentPlan') }}</span>
       </div>
       <div class="stat-card">
         <span class="stat-value">{{ quotaText }}</span>
-        <span class="stat-label">活动用量</span>
+        <span class="stat-label">{{ $t('adminDashboard.activityQuota') }}</span>
       </div>
       <!-- 参与人数用量：后台低频概览允许展示租户级累计 COUNT。
            因 Turso rows read 和请求延迟约束，公开热路径不做租户级实时 COUNT。
@@ -35,31 +35,31 @@
            详见 docs/023_Cloudflare免费版与Turso约束下认证和运行安全方案_2026-08-01.md -->
       <div class="stat-card">
         <span class="stat-value">{{ participantQuotaText }}</span>
-        <span class="stat-label">参与人数用量</span>
+        <span class="stat-label">{{ $t('adminDashboard.participantQuota') }}</span>
       </div>
     </div>
 
     <div class="toolbar">
       <div class="filters">
         <button class="btn btn-primary btn-sm" type="button" @click="router.push('/admin/draws')">
-          管理活动
+          {{ $t('adminDashboard.manageActivities') }}
         </button>
         <button class="btn btn-ghost btn-sm" type="button" @click="loadData">
-          刷新
+          {{ $t('adminDashboard.refresh') }}
         </button>
       </div>
     </div>
 
     <div v-if="recentDraws.length > 0" class="section">
-      <h3 class="section-title">最近活动</h3>
+      <h3 class="section-title">{{ $t('adminDashboard.recentActivities') }}</h3>
       <div class="table-wrap">
         <table class="admin-table">
           <thead>
             <tr>
-              <th>名称</th>
-              <th>状态</th>
-              <th>参与人数</th>
-              <th>创建时间</th>
+              <th>{{ $t('adminDashboard.colName') }}</th>
+              <th>{{ $t('adminDashboard.colStatus') }}</th>
+              <th>{{ $t('adminDashboard.colParticipants') }}</th>
+              <th>{{ $t('adminDashboard.colCreatedAt') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -79,11 +79,13 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/composables/useFormat'
 import { adminRequest } from '@/composables/useAdminRequest'
 
 const router = useRouter()
+const { t } = useI18n()
 const { showToast } = useToast()
 
 const stats = ref({
@@ -119,7 +121,14 @@ const participantQuotaText = computed(() =>
 )
 
 function statusLabel(status: string): string {
-  const map: Record<string,string> = { draft:'草稿', open:'进行中', paused:'已暂停', drawing:'开奖中', drawn:'已开奖', cancelled:'已取消' };
+  const map: Record<string,string> = {
+    draft: t('adminDashboard.draft'),
+    open: t('adminDashboard.active'),
+    paused: t('lottery.statusPaused'),
+    drawing: t('lottery.statusDrawing'),
+    drawn: t('adminDashboard.drawn'),
+    cancelled: t('lottery.adminDrawCancelled'),
+  };
   return map[status] || status;
 }
 function statusClass(status: string): string {

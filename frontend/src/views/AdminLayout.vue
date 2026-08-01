@@ -107,11 +107,11 @@ function toggleSidebar() {
 const menuItems = computed(() => [
   { name: 'AdminDashboard', to: '/admin', label: t('adminLayout.menuDashboard'), icon: '&#x1F4CA;' },
   { name: 'AdminLottery', to: '/admin/draws', label: t('adminLayout.menuLottery'), icon: '&#x1F3B0;' },
-  { name: 'AdminPrizes', to: '/admin/prizes', label: '奖品管理', icon: '&#x1F381;' },
+  { name: 'AdminPrizes', to: '/admin/prizes', label: t('adminLayout.menuPrizes'), icon: '&#x1F381;' },
   { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '&#x1F4DD;' },
-  { name: 'AdminMembers', to: '/admin/members', label: '团队成员', icon: '&#x1F465;' },
-  { name: 'AdminBlacklist', to: '/admin/blacklist', label: '黑名单', icon: '&#x1F6AB;' },
-  { name: 'AdminQuotaRedeem', to: '/admin/quota-redeem', label: '兑换额度', icon: '&#x1F39F;' },
+  { name: 'AdminMembers', to: '/admin/members', label: t('adminLayout.menuMembers'), icon: '&#x1F465;' },
+  { name: 'AdminBlacklist', to: '/admin/blacklist', label: t('adminLayout.menuBlacklist'), icon: '&#x1F6AB;' },
+  { name: 'AdminQuotaRedeem', to: '/admin/quota-redeem', label: t('adminLayout.menuQuotaRedeem'), icon: '&#x1F39F;' },
 ])
 
 const currentName = computed(() => {

@@ -1,16 +1,16 @@
 <template>
   <div class="admin-login">
     <div class="login-card">
-      <h1 class="login-title">{{ $t('app.title') }} 管理后台</h1>
-      <p class="login-subtitle">请登录以管理抽奖活动</p>
+      <h1 class="login-title">{{ $t('app.title') }} {{ $t('adminLogin.title') }}</h1>
+      <p class="login-subtitle">{{ $t('adminLogin.subtitle') }}</p>
 
       <form class="login-form" @submit.prevent="handleLogin">
         <label class="field-label">
-          <span>用户名</span>
+          <span>{{ $t('adminLogin.username') }}</span>
           <input
             v-model="username"
             type="text"
-            placeholder="请输入用户名"
+            :placeholder="$t('adminLogin.usernamePlaceholder')"
             autocomplete="username"
             autofocus
             :disabled="loading"
@@ -18,87 +18,87 @@
         </label>
 
         <label class="field-label">
-          <span>密码</span>
+          <span>{{ $t('adminLogin.password') }}</span>
           <input
             v-model="password"
             type="password"
-            placeholder="请输入密码"
+            :placeholder="$t('adminLogin.passwordPlaceholder')"
             autocomplete="current-password"
             :disabled="loading"
           />
         </label>
 
         <button class="btn btn-primary login-btn" type="submit" :disabled="loading">
-          {{ loading ? '登录中…' : '登录' }}
+          {{ loading ? $t('adminLogin.loggingIn') : $t('adminLogin.loginBtn') }}
         </button>
 
         <p v-if="error" class="login-error">{{ error }}</p>
       </form>
 
       <div class="login-footer">
-        <span>还没有账号？</span>
+        <span>{{ $t('adminLogin.noAccount') }}</span>
         <button class="btn btn-ghost btn-sm" type="button" @click="showRegister = !showRegister">
-          {{ showRegister ? '返回登录' : '注册' }}
+          {{ showRegister ? $t('adminLogin.switchToLogin') : $t('adminLogin.switchToRegister') }}
         </button>
       </div>
 
       <form v-if="showRegister && !showVerifyCode" class="register-form" @submit.prevent="handleRegister">
         <label class="field-label">
-          <span>邮箱</span>
+          <span>{{ $t('adminLogin.email') }}</span>
           <input
             v-model="regEmail"
             type="email"
-            placeholder="your@email.com"
+            :placeholder="$t('adminLogin.emailPlaceholder')"
             autocomplete="email"
             :disabled="loading"
           />
         </label>
         <label class="field-label">
-          <span>用户名</span>
+          <span>{{ $t('adminLogin.username') }}</span>
           <input
             v-model="regUsername"
             type="text"
-            placeholder="4-20 个字符，字母数字下划线"
+            :placeholder="$t('adminLogin.regUsernamePlaceholder')"
             autocomplete="off"
             :disabled="loading"
           />
         </label>
         <label class="field-label">
-          <span>密码</span>
+          <span>{{ $t('adminLogin.password') }}</span>
           <input
             v-model="regPassword"
             type="password"
-            placeholder="至少 8 位，包含字母和数字"
+            :placeholder="$t('adminLogin.regPasswordPlaceholder')"
             autocomplete="new-password"
             :disabled="loading"
           />
         </label>
 
         <button class="btn btn-primary login-btn" type="submit" :disabled="loading">
-          {{ loading ? '发送验证码…' : '注册' }}
+          {{ loading ? $t('adminLogin.sendCode') : $t('adminLogin.registerBtn') }}
         </button>
       </form>
 
       <!-- 验证码输入 -->
       <form v-if="showRegister && showVerifyCode" class="register-form" @submit.prevent="handleVerifyEmail">
-        <p class="field-hint">验证码已发送到 <strong>{{ regEmail }}</strong></p>
+        <p class="field-hint">{{ $t('adminLogin.codeSent') }} <strong>{{ regEmail }}</strong></p>
         <label class="field-label">
-          <span>验证码</span>
+          <span>{{ $t('adminLogin.verifyCode') }}</span>
           <input
             v-model="regCode"
             type="text"
             maxlength="6"
-            placeholder="请输入 6 位验证码"
+            :placeholder="$t('adminLogin.verifyCodePlaceholder')"
             autocomplete="off"
             :disabled="verifying"
           />
         </label>
         <button class="btn btn-primary login-btn" type="submit" :disabled="verifying || !regCode">
-          {{ verifying ? '验证中…' : '验证并完成注册' }}
+          {{ verifying ? $t('adminLogin.verifying') : $t('adminLogin.verifyComplete') }}
         </button>
         <p class="field-hint" style="text-align:center;margin-top:8px;">
           <button type="button" class="btn btn-ghost btn-xs" :disabled="loading" @click="handleRegister">
-            重新发送验证码
+            {{ $t('adminLogin.resendCode') }}
           </button>
         </p>
       </form>
