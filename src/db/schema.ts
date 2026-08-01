@@ -206,3 +206,14 @@ export const systemConfig = sqliteTable("system_config", {
   value: text("value").notNull().default(""),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
+
+// ── 参与者黑名单（按租户级别，防止同一人用多个邮箱参与） ──
+export const lotteryBlacklist = sqliteTable("lottery_blacklist", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  identityValue: text("identity_value").notNull(),
+  note: text("note").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  blacklistTenantIdx: uniqueIndex("idx_blacklist_value").on(t.tenantId, t.identityValue),
+}));

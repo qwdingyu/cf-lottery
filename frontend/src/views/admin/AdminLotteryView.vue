@@ -634,22 +634,22 @@ type LotteryWinner = {
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
-const { token } = useAdminAuth()
+useAdminAuth()
 const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 
 // ── 兼容旧 API 调用（适配到新后端） ──
 const requireToken = () => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } };
-const fetchLotteryDraws = async (t: string) => adminRequest<{ draws: LotteryDraw[] }>('/api/admin/draws');
-const createLotteryDraw = async (t: string, body: any) => adminRequest('/api/admin/draws', { method: 'POST', body: JSON.stringify(body) });
-const updateLotteryDraw = async (t: string, id: string, body: any) => adminRequest(`/api/admin/draws/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
-const openLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/publish`, { method: 'POST' });
-const performLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/draw`, { method: 'POST' });
-const cancelLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/cancel`, { method: 'POST' });
-const deleteLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}`, { method: 'DELETE' });
-const fetchLotteryWinners = async (t: string, id: string) => adminRequest<{ winners: LotteryWinner[] }>(`/api/admin/draws/${id}/winners`);
-const fetchAdminLottery = async (t: string, path: string, method: string) => adminRequest(path, { method });
-const retryAdminLotteryEmail = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/retry-email`, { method: 'POST' });
-const recoverLotteryDraw = async (t: string, id: string) => adminRequest(`/api/admin/draws/${id}/recover`, { method: 'POST' });
+const fetchLotteryDraws = async (_token: string) => adminRequest<{ draws: LotteryDraw[] }>('/api/admin/draws');
+const createLotteryDraw = async (_token: string, body: any) => adminRequest<{ id: string; publicSlug: string }>('/api/admin/draws', { method: 'POST', body: JSON.stringify(body) });
+const updateLotteryDraw = async (_token: string, id: string, body: any) => adminRequest(`/api/admin/draws/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+const openLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/publish`, { method: 'POST' });
+const performLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/draw`, { method: 'POST' });
+const cancelLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/cancel`, { method: 'POST' });
+const deleteLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}`, { method: 'DELETE' });
+const fetchLotteryWinners = async (_token: string, id: string) => adminRequest<{ winners: LotteryWinner[] }>(`/api/admin/draws/${id}/winners`);
+const fetchAdminLottery = async (_token: string, path: string, method: string) => adminRequest(path, { method });
+const retryAdminLotteryEmail = async (_token: string, id: string) => adminRequest<{ sent: number; failed: number }>(`/api/admin/draws/${id}/retry-email`, { method: 'POST' });
+const recoverLotteryDraw = async (_token: string, id: string) => adminRequest<{ healed: 'drawn' | 'open' }>(`/api/admin/draws/${id}/recover`, { method: 'POST' });
 
 // ── 内联 lottery-ops 函数 ──
 const filterAndSortLotteryDraws = (draws: LotteryDraw[], opts: { status: string; query: string }) => {
@@ -661,8 +661,6 @@ const filterAndSortLotteryDraws = (draws: LotteryDraw[], opts: { status: string;
 const countLotteryEmailFailures = (winners: LotteryWinner[]) => winners.filter(w => w.notificationStatus === 'failed').length;
 const formatLotteryEntryProgress = (count?: number | null, max?: number | null) => max ? `${count ?? 0} / ${max}` : `${count ?? 0}`;
 const formatLotteryVisibilityLabel = (visible: number | undefined | null, labels: { public: string; hidden: string }) => visible ? labels.public : labels.hidden;
-const buildLotteryPublicPath = (id: string) => `/lottery/${id}`;
-const buildLotteryPublicShareUrl = (origin: string | null | undefined, id: string) => `${(origin || '').replace(/\/+$/, '')}${buildLotteryPublicPath(id)}`;
 const buildLotteryWinnersCsvRows = (winners: LotteryWinner[], labels: any) => {
   const header = [labels.email, labels.emailStatus];
   const rows = winners.map((w: any) => [w.identityValue, w.notificationStatus === 'sent' ? labels.sent : w.notificationStatus === 'failed' ? labels.failed : labels.pending]);
@@ -672,9 +670,9 @@ const buildLotteryDuplicateDraft = (draw: any, opts: { nameSuffix: string; defau
   name: draw.title ? `${draw.title}${opts.nameSuffix}` : opts.defaultName,
   description: draw.description || '',
   prizeName: '',
-  startTime: draw.startAt ? toDateTimeLocalValue(new Date(draw.startAt)) : '',
-  endTime: draw.endAt ? toDateTimeLocalValue(new Date(draw.endAt)) : '',
-  drawTime: draw.drawAt ? toDateTimeLocalValue(new Date(draw.drawAt)) : '',
+  startTime: draw.startAt ? toDateTimeLocalValue(draw.startAt) : '',
+  endTime: draw.endAt ? toDateTimeLocalValue(draw.endAt) : '',
+  drawTime: draw.drawAt ? toDateTimeLocalValue(draw.drawAt) : '',
   winnerCount: draw.winnerCount || 1,
   maxParticipants: draw.maxParticipants || null,
   participationMode: draw.participationMode || 'open',
@@ -937,6 +935,7 @@ function handleExportWinners() {
 function handleDuplicate(draw: LotteryDraw) {
   const draft = buildLotteryDuplicateDraft(draw, { nameSuffix: '(副本)', defaultName: '新活动' })
   form.value = {
+    ...emptyForm(),
     id: '',
     name: draft.name,
     description: draft.description,
@@ -1023,7 +1022,6 @@ function openCreate() {
     id: '',
     name: '',
     description: '',
-    productId: '',
     maxWinners: 1,
     maxParticipants: null,
     expectedParticipants: 0,

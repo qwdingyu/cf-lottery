@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, auditLogs, users, tenants } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryBlacklist, auditLogs, users, tenants } from "../db/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import {
   createDraw,
@@ -737,3 +737,59 @@ function defaultExperienceForParticipation(participationMode: string): string {
   if (participationMode === "roster") return "card";
   return "wheel";
 }
+
+// ═════════════════════════════════════════════════════════
+// 参与者黑名单
+// ═════════════════════════════════════════════════════════
+
+/** 黑名单列表 */
+adminLotteryRoute.get("/blacklist", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
+  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+
+  const rows = await db
+    .select()
+    .from(lotteryBlacklist)
+    .where(eq(lotteryBlacklist.tenantId, tenantId))
+    .orderBy(desc(lotteryBlacklist.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  return ok(c, { items: rows });
+});
+
+/** 添加黑名单 */
+adminLotteryRoute.post("/blacklist", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ identityValue: string; note?: string }>();
+  const email = String(body.identityValue || "").trim().toLowerCase();
+
+  if (!email || !email.includes("@")) {
+    return fail(c, "请输入有效的邮箱地址", 400);
+  }
+
+  await db.insert(lotteryBlacklist).values({
+    id: crypto.randomUUID(),
+    tenantId,
+    identityValue: email,
+    note: String(body.note || "").trim(),
+  });
+
+  return ok(c, { added: true });
+});
+
+/** 删除黑名单 */
+adminLotteryRoute.delete("/blacklist/:id", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const id = c.req.param("id");
+
+  await db
+    .delete(lotteryBlacklist)
+    .where(and(eq(lotteryBlacklist.id, id), eq(lotteryBlacklist.tenantId, tenantId)));
+
+  return ok(c, { deleted: true });
+});

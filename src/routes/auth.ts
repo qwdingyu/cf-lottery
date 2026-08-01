@@ -116,7 +116,12 @@ authRoute.post("/register", async (c) => {
   regCodeStore.set(email, { codeHash, expiresAt: Date.now() + 10 * 60 * 1000 });
 
   const emailEnv = { resendApiKey: c.env.RESEND_API_KEY || "", emailFrom: c.env.EMAIL_FROM || "" };
-  await sendAccessCode(emailEnv, email, "注册验证", code);
+  try {
+    await sendAccessCode(emailEnv, email, "注册验证", code);
+  } catch (err) {
+    console.warn("[auth] sendAccessCode failed:", (err as Error).message);
+    // 邮件发送失败不阻止注册，验证码已存入内存
+  }
 
   return c.json({ ok: true, message: "验证码已发送到邮箱", expiresInSeconds: 600 });
 });
@@ -194,7 +199,11 @@ authRoute.post("/login", async (c) => {
     const codeHash = await hashCode(code);
     regCodeStore.set(user.email, { codeHash, expiresAt: Date.now() + 10 * 60 * 1000 });
     const emailEnv = { resendApiKey: c.env.RESEND_API_KEY || "", emailFrom: c.env.EMAIL_FROM || "" };
-    await sendAccessCode(emailEnv, user.email, "注册验证", code);
+    try {
+      await sendAccessCode(emailEnv, user.email, "注册验证", code);
+    } catch (err) {
+      console.warn("[auth] login sendAccessCode failed:", (err as Error).message);
+    }
     return c.json({ ok: false, message: "邮箱未验证，验证码已重新发送", email: user.email, needVerify: true });
   }
 

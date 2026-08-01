@@ -90,6 +90,10 @@ beforeAll(async () => {
     target_type TEXT NOT NULL, target_id TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS lottery_blacklist (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, identity_value TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
   await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)", args: [USER, "test", "hash"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO tenant_members (tenant_id, user_id) VALUES (?, ?)", args: [TENANT, USER] });

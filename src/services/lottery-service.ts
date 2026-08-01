@@ -32,6 +32,7 @@ import {
   lotteryRosterMembers,  // 限定名单表
   lotteryInviteCodes,    // 邀请码表
   auditLogs,             // 审计日志表
+  lotteryBlacklist,      // 参与者黑名单
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
@@ -350,7 +351,16 @@ export async function joinDraw(
   // 只有 open 状态的活动可以参与
   if (draw.status !== "open") throw new Error("活动未开启");
 
+  // 检查是否在黑名单中
   const normalizedValue = identityValue.trim().toLowerCase();
+  const [banned] = await db
+    .select({ id: lotteryBlacklist.id })
+    .from(lotteryBlacklist)
+    .where(and(eq(lotteryBlacklist.tenantId, draw.tenantId), eq(lotteryBlacklist.identityValue, normalizedValue)))
+    .limit(1);
+  if (banned) {
+    return { joined: false, message: "您已被限制参与此活动" };
+  }
 
   // ── 参与模式校验 ──
 
