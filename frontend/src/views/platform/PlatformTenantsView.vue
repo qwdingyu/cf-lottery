@@ -2,32 +2,34 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
-        <select v-model="filter.status">
+        <select v-model="filter.status" @change="searchData">
           <option value="">全部状态</option>
           <option value="active">正常</option>
           <option value="suspended">已暂停</option>
           <option value="disabled">已禁用</option>
         </select>
-        <select v-model="filter.plan">
+        <select v-model="filter.plan" @change="searchData">
           <option value="">全部套餐</option>
           <option value="free">Free</option>
           <option value="pro">Pro</option>
           <option value="team">Team</option>
           <option value="enterprise">Enterprise</option>
         </select>
-        <button class="btn btn-primary btn-sm" @click="loadData">查询</button>
+        <button class="btn btn-primary btn-sm" :disabled="loading" @click="searchData">
+          {{ loading ? '查询中…' : '查询' }}
+        </button>
       </div>
       <div class="toolbar-actions">
         <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">刷新</button>
       </div>
     </div>
 
-    <div v-if="error" class="table-error" role="alert">
-      <span>{{ error }}</span>
+    <div v-if="loadError" class="table-error" role="alert">
+      <span>{{ loadError }}</span>
       <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">重试</button>
     </div>
 
-    <div class="table-wrap">
+    <div class="table-wrap" role="region" aria-label="租户列表" :aria-busy="loading">
       <table class="admin-table">
         <thead>
           <tr>
@@ -40,7 +42,12 @@
             <th class="col-actions">操作</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody v-if="loading">
+          <tr v-for="i in 5" :key="'sk' + i" class="skeleton-row">
+            <td :colspan="7"><div class="skeleton-cell" /></td>
+          </tr>
+        </tbody>
+        <tbody v-else>
           <tr v-for="t in tenants" :key="t.id">
             <td>{{ t.name }}</td>
             <td><span class="tag tag-info">{{ t.plan }}</span></td>
@@ -51,31 +58,38 @@
             </td>
             <td>{{ usageMap[t.id]?.activities ?? '-' }}</td>
             <td>{{ usageMap[t.id]?.participants ?? '-' }}</td>
-            <td>{{ formatTime(t.createdAt) }}</td>
+            <td class="time-cell">{{ formatTime(t.createdAt) }}</td>
             <td class="col-actions">
               <button class="btn btn-ghost btn-xs" @click="showDetail(t)">详情</button>
+              <button class="btn btn-ghost btn-xs" :title="'复制租户 ID'" @click="copyId(t.id)">复制 ID</button>
             </td>
           </tr>
           <tr v-if="tenants.length === 0">
-            <td colspan="7" class="empty-text">暂无租户</td>
+            <td colspan="8" class="empty-text">暂无租户</td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <div class="pagination">
-      <button class="btn btn-ghost btn-sm" :disabled="offset <= 0" @click="prevPage">上一页</button>
-      <span class="pagination-info">第 {{ page }} 页</span>
-      <button class="btn btn-ghost btn-sm" :disabled="tenants.length < limit" @click="nextPage">下一页</button>
-    </div>
+    <AdminPagination
+      v-if="pagination.total.value > 0"
+      :page="pagination.page.value"
+      :total="pagination.total.value"
+      :total-pages="pagination.totalPages.value"
+      :limit="pagination.limit.value"
+      :disabled="loading"
+      @prev="pagination.prevPage(); loadData()"
+      @next="pagination.nextPage(); loadData()"
+      @jump="pagination.setPage($event); loadData()"
+      @update:limit="pagination.setLimit($event); loadData()"
+    />
 
-    <!-- 租户详情弹窗 -->
     <AdminModal v-model="showDetailModal" :title="'租户详情 - ' + (detailTenant?.name || '')" max-width="640px">
       <div v-if="detailLoading" class="empty-text">加载中…</div>
       <div v-else-if="detailTenant" class="detail-grid">
         <div class="detail-row">
           <span class="detail-label">租户 ID</span>
-          <span class="detail-value">{{ detailTenant.id }}</span>
+          <span class="detail-value"><code>{{ detailTenant.id }}</code></span>
         </div>
         <div class="detail-row">
           <span class="detail-label">套餐</span>
@@ -111,25 +125,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import AdminModal from '@/components/AdminModal.vue'
+import AdminPagination from '@/components/AdminPagination.vue'
+import { useTablePagination } from '@/composables/useTablePagination'
 
 const loading = ref(false)
-const error = ref('')
+const loadError = ref('')
 const tenants = ref<any[]>([])
-const limit = 50
-const offset = ref(0)
 const usageMap = ref<Record<string, any>>({})
 
 const filter = ref({ status: '', plan: '' })
+const pagination = useTablePagination({ initialLimit: 50 })
 
-const page = computed(() => Math.floor(offset.value / limit) + 1)
 
-/** 格式化时间 */
 function formatTime(iso: string): string {
   if (!iso) return '-'
   try { return new Date(iso).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
   catch { return iso }
+}
+
+function copyId(id: string) {
+  navigator.clipboard.writeText(id).catch(() => {})
 }
 
 async function adminFetch<T>(path: string): Promise<T> {
@@ -142,29 +159,29 @@ async function adminFetch<T>(path: string): Promise<T> {
 
 async function loadData() {
   loading.value = true
-  error.value = ''
+  loadError.value = ''
   try {
-    const params = new URLSearchParams({ limit: String(limit), offset: String(offset.value) })
+    const params = new URLSearchParams({ limit: String(pagination.limit.value), offset: String((pagination.page.value - 1) * pagination.limit.value) })
     if (filter.value.status) params.set('status', filter.value.status)
     if (filter.value.plan) params.set('plan', filter.value.plan)
     const data = await adminFetch<{ tenants: any[] }>(`/api/platform/tenants?${params}`)
     tenants.value = data.tenants || []
-    // 加载租户用量摘要
-    for (const t of tenants.value) {
+    pagination.setTotal(data.tenants?.length === pagination.limit.value ? pagination.page.value * pagination.limit.value + 1 : (pagination.page.value - 1) * pagination.limit.value + (data.tenants?.length || 0))
+    // 并行加载用量摘要
+    await Promise.all(tenants.value.map(async (t) => {
       try {
         const summary = await adminFetch<{ usage: any }>(`/api/platform/tenants/${t.id}/summary`)
         usageMap.value[t.id] = summary.usage || {}
-      } catch { /* 单个租户加载失败不影响列表 */ }
-    }
+      } catch { /* 忽略 */ }
+    }))
   } catch (err: any) {
-    error.value = err.message || '加载失败'
+    loadError.value = err.message || '加载失败'
   } finally {
     loading.value = false
   }
 }
 
-function prevPage() { offset.value = Math.max(0, offset.value - limit); loadData() }
-function nextPage() { offset.value += limit; loadData() }
+function searchData() { pagination.setPage(1); loadData() }
 
 // ── 详情弹窗 ──
 const showDetailModal = ref(false)
@@ -190,6 +207,5 @@ async function showDetail(t: any) {
 .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border, rgba(255,255,255,0.1)); }
 .detail-label { font-size: 13px; color: var(--tg-hint, #9aa4b2); }
 .detail-value { font-size: 13px; font-weight: 500; }
-.pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 16px 0; }
-.pagination-info { font-size: 13px; color: var(--tg-hint, #9aa4b2); }
+.time-cell { white-space: nowrap; font-size: 12px; }
 </style>
