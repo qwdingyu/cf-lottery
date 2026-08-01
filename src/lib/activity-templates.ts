@@ -26,7 +26,10 @@ export interface ActivityTemplate {
 }
 
 export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
-  {
+  // 大转盘抽奖模板
+// 注意：resultMode 使用 "manual"（手动开奖），因为 joinDraw 对 lottery 不产生即时结果。
+// 如果设置为 "instant"，运营者会在后台看到 resultMode="instant" 但参与后无即时开奖，产生困惑。
+{
     id: "lottery-wheel",
     name: "大转盘抽奖",
     description: "经典转盘抽奖，用户转动转盘随机获得奖品。适合福利放送、粉丝互动、节日活动。",
@@ -35,7 +38,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     defaults: {
       activityKind: "lottery",
       experienceType: "wheel",
-      resultMode: "instant",
+      resultMode: "manual",   // lottery 不支持 instant，joinDraw 不产生即时结果
       participationMode: "open",
       allocationPolicy: "capacity",
       winnerCount: 1,
@@ -53,7 +56,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     defaults: {
       activityKind: "lottery",
       experienceType: "scratch",
-      resultMode: "instant",
+      resultMode: "manual",   // lottery 不支持 instant
       participationMode: "open",
       allocationPolicy: "capacity",
       winnerCount: 1,
