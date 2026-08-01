@@ -516,6 +516,16 @@ adminLotteryRoute.post("/draws", async (c) => {
     // 运营者可通过系统配置控制活动创建的默认参数（闭环：L3 配置 → L2 生效）
     const defaultWinnerCount = parseInt(config["draw_default_winner_count"], 10) || 1;
     const systemMaxParticipants = parseInt(config["draw_max_participants"], 10) || undefined;
+    // 活动最长持续时间校验：防止运营者设置超长活动占用资源
+    const maxDurationDays = parseInt(config["draw_max_duration_days"], 10) || 90;
+    const startAt = String(body.startAt || "");
+    const endAt = String(body.endAt || "");
+    if (startAt && endAt) {
+      const durationMs = new Date(endAt).getTime() - new Date(startAt).getTime();
+      if (durationMs > maxDurationDays * 86400000) {
+        return fail(c, `活动持续时间不能超过 ${maxDurationDays} 天`, 400);
+      }
+    }
 
     const { id, publicSlug } = await createDraw(db, tenantId, {
       title: String(body.title || ""),
