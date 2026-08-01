@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { getDb, ok, fail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords } from "../db/schema";
 import { eq, and, count, sql } from "drizzle-orm";
-import { getActivityOutcome, joinDraw } from "../services/lottery-service";
+import { getActivityOutcome, joinDraw, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
 import { sendAccessCode } from "../services/email-service";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
@@ -28,6 +28,16 @@ function checkRateLimit(ip: string, limit = 10, windowMs = 60000): boolean {
   entry.count++;
   return true;
 }
+
+const PUBLIC_EVENT_TYPES = new Set<ActivityEventType>([
+  "page_view",
+  "participation_started",
+  "participation_completed",
+  "cta_impression",
+  "cta_click",
+  "share_click",
+  "external_conversion_reported",
+]);
 
 /** 生成 6 位数字验证码 */
 function generateCode(): string {
@@ -108,6 +118,49 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
   }
 
   return ok(c, result);
+});
+
+/** 活动事件上报：只记录平台内事实，不把点击命名为成交 */
+publicLotteryRoute.post("/draws/:slug/events", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+  const body = await c.req.json<{
+    eventType: ActivityEventType;
+    entryId?: string;
+    source?: string;
+    medium?: string;
+    campaign?: string;
+    refCode?: string;
+    metadata?: Record<string, unknown>;
+  }>();
+
+  if (!PUBLIC_EVENT_TYPES.has(body.eventType)) {
+    return fail(c, "活动事件类型无效", 400);
+  }
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  const ipHash = await hashEventValue(c.req.header("CF-Connecting-IP") || "");
+  await recordActivityEvent(db, {
+    tenantId: draw.tenantId,
+    drawId: draw.id,
+    eventType: body.eventType,
+    entryId: body.entryId,
+    source: body.source,
+    medium: body.medium,
+    campaign: body.campaign,
+    refCode: body.refCode,
+    metadata: body.metadata,
+    ipHash,
+    userAgent: c.req.header("User-Agent") || "",
+  });
+
+  return ok(c, { recorded: true });
 });
 
 // ═════════════════════════════════════════════════════════
@@ -433,7 +486,22 @@ publicLotteryRoute.get("/draws/:slug/ref/:shareCode", async (c) => {
   const [share] = await db.select().from(shareRecords).where(eq(shareRecords.shareCode, shareCode)).limit(1);
   if (share) {
     await db.update(shareRecords).set({ clickedCount: share.clickedCount + 1 }).where(eq(shareRecords.id, share.id));
+    await recordActivityEvent(db, {
+      tenantId: share.tenantId,
+      drawId: share.drawId,
+      eventType: "share_click",
+      refCode: shareCode,
+      ipHash: await hashEventValue(c.req.header("CF-Connecting-IP") || ""),
+      userAgent: c.req.header("User-Agent") || "",
+    });
   }
 
   return c.redirect(`/${slug}`);
 });
+
+async function hashEventValue(value: string): Promise<string> {
+  if (!value) return "";
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}

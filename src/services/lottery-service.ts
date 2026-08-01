@@ -37,6 +37,7 @@ import {
   tenants,               // SaaS 租户与套餐
   tenantMembers,         // 团队成员配额统计
   webhookConfigs,        // Webhook 配额统计
+  activityEvents,        // 活动事件与导流漏斗
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
@@ -71,6 +72,45 @@ export type TenantPlanLimits = {
   maxMembers: number | null;
   maxWebhooks: number | null;
 };
+
+export type ActivityEventType =
+  | "page_view"
+  | "participation_started"
+  | "participation_completed"
+  | "outcome_assigned"
+  | "cta_impression"
+  | "cta_click"
+  | "share_created"
+  | "share_click"
+  | "attributed_join"
+  | "external_conversion_reported";
+
+export type RecordActivityEventInput = {
+  tenantId: string;
+  drawId: string;
+  entryId?: string;
+  eventType: ActivityEventType;
+  source?: string;
+  medium?: string;
+  campaign?: string;
+  refCode?: string;
+  metadata?: Record<string, unknown>;
+  ipHash?: string;
+  userAgent?: string;
+};
+
+const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
+  "page_view",
+  "participation_started",
+  "participation_completed",
+  "outcome_assigned",
+  "cta_impression",
+  "cta_click",
+  "share_created",
+  "share_click",
+  "attributed_join",
+  "external_conversion_reported",
+]);
 
 const DEFAULT_ACTIVITY_PARTICIPANT_CAP = 5000;
 
@@ -160,6 +200,56 @@ async function enforceTenantActivityQuota(
   }
 
   return usage.limits;
+}
+
+export async function recordActivityEvent(db: DbType, input: RecordActivityEventInput) {
+  if (!ACTIVITY_EVENT_TYPES.has(input.eventType)) {
+    throw new Error("活动事件类型无效");
+  }
+
+  const id = crypto.randomUUID();
+  await db.insert(activityEvents).values({
+    id,
+    tenantId: input.tenantId,
+    drawId: input.drawId,
+    entryId: truncateForEvent(input.entryId || "", 80),
+    eventType: input.eventType,
+    source: truncateForEvent(input.source || "", 100),
+    medium: truncateForEvent(input.medium || "", 100),
+    campaign: truncateForEvent(input.campaign || "", 160),
+    refCode: truncateForEvent(input.refCode || "", 80),
+    metadataJson: JSON.stringify(input.metadata || {}),
+    ipHash: truncateForEvent(input.ipHash || "", 128),
+    userAgent: truncateForEvent(input.userAgent || "", 300),
+    createdAt: new Date().toISOString(),
+  });
+  return { id };
+}
+
+export async function getActivityEventSummary(db: DbType, tenantId: string, drawId: string) {
+  const rows = await db
+    .select({ eventType: activityEvents.eventType, total: count() })
+    .from(activityEvents)
+    .where(and(eq(activityEvents.tenantId, tenantId), eq(activityEvents.drawId, drawId)))
+    .groupBy(activityEvents.eventType);
+
+  const totals: Record<string, number> = {};
+  for (const row of rows) {
+    totals[row.eventType] = Number(row.total || 0);
+  }
+
+  return {
+    totals,
+    pageViews: totals.page_view || 0,
+    participationCompleted: totals.participation_completed || 0,
+    ctaClicks: totals.cta_click || 0,
+    shareClicks: totals.share_click || 0,
+    externalConversionsReported: totals.external_conversion_reported || 0,
+  };
+}
+
+function truncateForEvent(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value;
 }
 
 /* ── 内部工具 ─────────────────────────────────────────────── */

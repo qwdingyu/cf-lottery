@@ -22,6 +22,7 @@ import {
   getEntries,
   getDrawEntriesCount,
   getActivityOutcomes,
+  getActivityEventSummary,
   getTenantUsage,
   hashAccessPassword,
   createPrize,
@@ -476,7 +477,20 @@ adminLotteryRoute.get("/draws/:id/stats", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
 
   const entryCount = await getDrawEntriesCount(db, drawId, tenantId);
-  return ok(c, { entryCount });
+  const events = await getActivityEventSummary(db, tenantId, drawId);
+  return ok(c, { entryCount, events });
+});
+
+/** 活动事件汇总：导流漏斗基础事实，不代表外部成交 */
+adminLotteryRoute.get("/draws/:id/events/summary", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const draw = await getDraw(db, drawId, tenantId);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  return ok(c, await getActivityEventSummary(db, tenantId, drawId));
 });
 
 /** 导出 CSV */

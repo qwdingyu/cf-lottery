@@ -311,3 +311,24 @@ export const shareRecords = sqliteTable("share_records", {
   shareDrawIdx: index("idx_share_draw").on(t.tenantId, t.drawId, t.createdAt),
   shareCodeUnique: uniqueIndex("idx_share_code").on(t.shareCode),
 }));
+
+// ── 活动事件（导流、归因、漏斗统计的统一事实表） ──
+export const activityEvents = sqliteTable("activity_events", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  entryId: text("entry_id").notNull().default(""),
+  eventType: text("event_type").notNull(),
+  source: text("source").notNull().default(""),
+  medium: text("medium").notNull().default(""),
+  campaign: text("campaign").notNull().default(""),
+  refCode: text("ref_code").notNull().default(""),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  ipHash: text("ip_hash").notNull().default(""),
+  userAgent: text("user_agent").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  drawEventIdx: index("idx_activity_events_draw_event").on(t.tenantId, t.drawId, t.eventType, t.createdAt),
+  entryIdx: index("idx_activity_events_entry").on(t.tenantId, t.drawId, t.entryId, t.createdAt),
+  refIdx: index("idx_activity_events_ref").on(t.tenantId, t.drawId, t.refCode, t.createdAt),
+}));
