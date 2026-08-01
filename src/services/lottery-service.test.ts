@@ -59,10 +59,12 @@ beforeAll(async () => {
   )`);
   await client.execute(`CREATE TABLE IF NOT EXISTS prizes (
     id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-    image_url TEXT NOT NULL DEFAULT '', prize_type TEXT NOT NULL DEFAULT 'code', fulfillment_note TEXT NOT NULL DEFAULT '',
+    image_url TEXT NOT NULL DEFAULT '', value_text TEXT NOT NULL DEFAULT '', prize_type TEXT NOT NULL DEFAULT 'code', fulfillment_note TEXT NOT NULL DEFAULT '',
     total_count INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  await client.execute("ALTER TABLE prizes ADD COLUMN image_url TEXT NOT NULL DEFAULT ''").catch(() => undefined);
+  await client.execute("ALTER TABLE prizes ADD COLUMN value_text TEXT NOT NULL DEFAULT ''").catch(() => undefined);
   await client.execute(`CREATE TABLE IF NOT EXISTS prize_codes (
     id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, prize_id TEXT NOT NULL, code TEXT NOT NULL,
     secret TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'available',

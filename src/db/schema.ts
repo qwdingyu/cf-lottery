@@ -107,6 +107,7 @@ export const prizes = sqliteTable("prizes", {
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   imageUrl: text("image_url").notNull().default(""),
+  valueText: text("value_text").notNull().default(""),
   prizeType: text("prize_type").notNull().default("code"),
   fulfillmentNote: text("fulfillment_note").notNull().default(""),
   totalCount: integer("total_count").notNull().default(0),

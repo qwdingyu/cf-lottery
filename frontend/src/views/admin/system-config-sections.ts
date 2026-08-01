@@ -21,7 +21,7 @@ export const SYSTEM_CONFIG_SECTIONS: readonly SystemConfigSectionDef[] = [
     id: 'general',
     label: '通用',
     description: '平台品牌信息与基本设置。',
-    groups: ['基础信息'],
+    groups: ['基础信息', '平台运营'],
   },
   {
     id: 'security',

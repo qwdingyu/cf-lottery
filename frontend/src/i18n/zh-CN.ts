@@ -2239,6 +2239,7 @@ export default {
       data_retention: "数据保留与清理",
       other: "其他",
       plan_limits: "套餐额度",
+      platform_ops: "平台运营",
     },
     paymentCrosslink: "余额/充值开关与「支付」页同步，改任一处即可。",
     paymentPageLink: "打开支付页",

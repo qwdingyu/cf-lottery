@@ -2215,6 +2215,7 @@ export default {
       data_retention: "Data Retention & Cleanup",
       other: "Other",
       plan_limits: "Plan Limits",
+      platform_ops: "Platform Operations",
     },
     paymentCrosslink: "Balance/top-up toggle syncs with the Payment page; changing either works.",
     paymentPageLink: "Open Payment Page",

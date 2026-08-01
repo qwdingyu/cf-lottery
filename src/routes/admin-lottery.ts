@@ -37,6 +37,7 @@ import {
   importPrizeCodes,
 } from "../services/lottery-service";
 import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
+import { readSystemConfigMap } from "../lib/system-config-registry";
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 
@@ -296,16 +297,16 @@ adminLotteryRoute.get("/draws/:id", async (c) => {
 
 /** 获取活动模板列表
  *
- * 返回预置活动模板列表，每个模板包含：
- * - 名称、描述、图标、分类（营销获客/互动传播/转化留资/调研分析）
- * - 默认配置：activityKind、experienceType、participationMode、resultMode 等
- * - 创建提示文案
- *
- * 前端根据此列表渲染模板选择弹窗，用户选择后自动填充创建表单。
+ * 返回预置活动模板列表，仅包含平台启用的活动类型对应的模板。
+ * 每个模板包含：名称、描述、图标、分类、默认配置、创建提示。
  * 模板定义在 src/lib/activity-templates.ts 中维护。
  */
 adminLotteryRoute.get("/templates", async (c) => {
-  return ok(c, { templates: ACTIVITY_TEMPLATES });
+  const db = getDb(c);
+  const config = await readSystemConfigMap(db, ["enabled_activity_kinds"]);
+  const enabledKinds = (config["enabled_activity_kinds"] || "lottery,signup_chain,claim,survey").split(",").map(s => s.trim());
+  const filtered = ACTIVITY_TEMPLATES.filter(t => enabledKinds.includes(t.defaults.activityKind));
+  return ok(c, { templates: filtered });
 });
 
 /** 复制活动（复制配置，不包括参与数据）
@@ -374,6 +375,12 @@ adminLotteryRoute.post("/draws", async (c) => {
     }
 
     const activityKind = coerceEnum(body.activityKind, ACTIVITY_KINDS, "lottery");
+    // 校验活动类型是否在平台启用列表中
+    const config = await readSystemConfigMap(db, ["enabled_activity_kinds"]);
+    const enabledKinds = (config["enabled_activity_kinds"] || "lottery,signup_chain,claim,survey").split(",").map(s => s.trim());
+    if (!enabledKinds.includes(activityKind)) {
+      return fail(c, `活动类型 "${activityKind}" 当前未启用，请联系平台运营`, 400);
+    }
     const participationMode = coerceEnum(body.participationMode, PARTICIPATION_MODES, "open");
     const drawTrigger = coerceEnum(body.drawTrigger, DRAW_TRIGGERS, "manual");
 

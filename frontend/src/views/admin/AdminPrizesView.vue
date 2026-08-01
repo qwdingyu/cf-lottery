@@ -20,6 +20,7 @@
             <th>图片</th>
             <th>名称</th>
             <th>类型</th>
+            <th>价值</th>
             <th>描述</th>
             <th>创建时间</th>
             <th class="col-actions">操作</th>
@@ -33,6 +34,7 @@
             </td>
             <td>{{ prize.name }}</td>
             <td>{{ prize.prizeType === 'code' ? '卡密' : '手动发放' }}</td>
+            <td>{{ prize.valueText || '-' }}</td>
             <td>{{ prize.description || '-' }}</td>
             <td>{{ prize.createdAt }}</td>
             <td class="col-actions">
@@ -40,7 +42,7 @@
             </td>
           </tr>
           <tr v-if="prizes.length === 0">
-            <td colspan="5" class="empty-text">暂无奖品</td>
+            <td colspan="7" class="empty-text">暂无奖品</td>
           </tr>
         </tbody>
       </table>
@@ -72,7 +74,8 @@
           </label>
           <label>
             <span>价值</span>
-            <input v-model="form.value" maxlength="50" placeholder="奖品价值，如 50 USDT（可选）" />
+            <input v-model="form.valueText" maxlength="50" placeholder="展示文案，如 50 USDT（可选）" />
+            <small class="field-hint">只作为奖品吸引力展示，不参与金额计算</small>
           </label>
         </div>
         <div class="modal-actions">
@@ -124,7 +127,7 @@ const form = ref({
   description: '',
   prizeType: 'code',
   imageUrl: '',
-  value: '',
+  valueText: '',
 })
 
 async function loadData() {
@@ -159,7 +162,7 @@ async function handleCreate() {
     if (data.ok) {
       showToast('创建成功', 'success')
       showCreate.value = false
-      form.value = { name: '', description: '', prizeType: 'code' }
+      form.value = { name: '', description: '', prizeType: 'code', imageUrl: '', valueText: '' }
       await loadData()
     } else {
       showToast(data.message || '创建失败', 'error')

@@ -243,5 +243,16 @@
     "max": 9999999,
     "group": "套餐额度",
     "order": 19
+  },
+  {
+    "key": "enabled_activity_kinds",
+    "label": "启用的活动类型",
+    "description": "可创建的活动类型列表，逗号分隔。不在列表中的类型不会出现在创建界面。",
+    "effect": "创建活动时校验，不在列表中的类型拒绝创建。已有活动不受影响。",
+    "scope": "admin",
+    "type": "string",
+    "defaultValue": "lottery,signup_chain,claim,survey,vote,checkin,approval,reservation",
+    "group": "平台运营",
+    "order": 20
   }
 ]
