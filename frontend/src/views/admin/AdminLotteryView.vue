@@ -194,7 +194,7 @@
                   @click="handleOpen(draw.id)"
                 >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminDrawOpen') }}</button>
                 <button
-                  v-if="draw.status === 'open'"
+                  v-if="draw.status === 'open' && draw.activityKind === 'lottery'"
                   type="button"
                   class="btn btn-primary btn-xs"
                   :disabled="operatingId === draw.id"
@@ -222,7 +222,7 @@
                   @click="handleToggleVisibility(draw.id, draw.visible)"
                 >{{ draw.visible ? $t('lottery.adminHide') : $t('lottery.adminShow') }}</button>
                 <button
-                  v-if="draw.status === 'drawn' || draw.status === 'drawing'"
+                  v-if="draw.activityKind === 'lottery' && (draw.status === 'drawn' || draw.status === 'drawing')"
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id || winnersLoading"
@@ -388,6 +388,14 @@
             </header>
             <div class="form-grid two-cols">
               <label class="field-span-2">
+                <span>活动类型</span>
+                <select v-model="form.activityKind" @change="handleActivityKindChange">
+                  <option value="lottery">抽奖</option>
+                  <option value="signup_chain">接龙 / 报名</option>
+                </select>
+                <small class="field-hint">活动类型决定结果语义；抽奖随机产生结果，接龙按顺序占位</small>
+              </label>
+              <label class="field-span-2">
                 <span>参与模式</span>
                 <select v-model="form.participationMode">
                   <option value="open">公开参与（任何人都可参与）</option>
@@ -403,9 +411,20 @@
                   <option value="slot">老虎机</option>
                   <option value="scratch">刮刮卡</option>
                   <option value="card">卡片翻转</option>
+                  <option value="list">接龙列表</option>
+                  <option value="queue">排队队列</option>
+                  <option value="form">表单提交</option>
                   <option value="submit">普通提交</option>
                 </select>
                 <small class="field-hint">互动体验只影响活动页展示，不决定参与资格或开奖结果</small>
+              </label>
+              <label v-if="form.activityKind === 'signup_chain'" class="field-span-2">
+                <span>名额策略</span>
+                <select v-model="form.allocationPolicy">
+                  <option value="capacity">满额后拒绝</option>
+                  <option value="waitlist">满额后进入候补</option>
+                </select>
+                <small class="field-hint">接龙结果由后端按参与顺序分配，候补不会占用正式名额</small>
               </label>
               <label v-if="form.participationMode === 'password'" class="field-span-2">
                 <span>访问密码</span>
@@ -633,7 +652,7 @@ async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> 
 
 type LotteryDraw = {
   id: string; tenantId: string; publicSlug: string; title: string; name?: string; description: string;
-  status: string; activityKind: string; participationMode: string; experienceType: string; drawTrigger: string; resultMode: string; policyVersion: number;
+  status: string; activityKind: string; participationMode: string; experienceType: string; drawTrigger: string; resultMode: string; allocationPolicy?: string; policyVersion: number;
   startAt: string; startTime?: string; endAt: string; endTime?: string; drawAt: string | null; drawTime?: string | null;
   winnerCount: number; maxParticipants: number | null;
   maxWinners?: number; expectedParticipants?: number; entryCount?: number; visible?: number;
@@ -694,6 +713,8 @@ const buildLotteryDuplicateDraft = (draw: any, opts: { nameSuffix: string; defau
   winnerCount: draw.winnerCount || 1,
   maxParticipants: draw.maxParticipants || null,
   participationMode: draw.participationMode || 'open',
+  activityKind: draw.activityKind || 'lottery',
+  allocationPolicy: draw.allocationPolicy || 'capacity',
   experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'),
   accessPassword: '',
 });
@@ -774,8 +795,10 @@ const emptyForm = () => ({
   maxWinners: 1,
   maxParticipants: null as number | null,
   expectedParticipants: 0,
+  activityKind: 'lottery',
   participationMode: 'open',
   experienceType: 'wheel',
+  allocationPolicy: 'capacity',
   accessPassword: '',
   showWinners: false,
   // 导流配置
@@ -833,6 +856,21 @@ function defaultExperienceForParticipation(participationMode: string): string {
   if (participationMode === 'password') return 'scratch'
   if (participationMode === 'roster') return 'card'
   return 'wheel'
+}
+
+function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
+  if (activityKind === 'signup_chain') return 'list'
+  return defaultExperienceForParticipation(participationMode)
+}
+
+function handleActivityKindChange() {
+  if (form.value.activityKind === 'signup_chain') {
+    form.value.experienceType = 'list'
+    form.value.allocationPolicy = form.value.allocationPolicy || 'capacity'
+  } else {
+    form.value.experienceType = defaultExperienceForParticipation(form.value.participationMode || 'open')
+    form.value.allocationPolicy = 'capacity'
+  }
 }
 
 function canDeleteDraw(draw: LotteryDraw): boolean {
@@ -987,6 +1025,8 @@ function handleDuplicate(draw: LotteryDraw) {
     winnerCount: draft.winnerCount,
     maxParticipants: draft.maxParticipants,
     participationMode: draft.participationMode,
+    activityKind: draft.activityKind || 'lottery',
+    allocationPolicy: draft.allocationPolicy || 'capacity',
     experienceType: draft.experienceType,
     accessPassword: draft.accessPassword,
     enableProductLink: false,
@@ -1277,7 +1317,9 @@ async function handleEdit(draw: LotteryDraw) {
     winnerCount: draw.winnerCount,
     maxParticipants: draw.maxParticipants ?? null,
     participationMode: draw.participationMode || 'open',
-    experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'),
+    activityKind: draw.activityKind || 'lottery',
+    allocationPolicy: draw.allocationPolicy || 'capacity',
+    experienceType: draw.experienceType || defaultExperienceForActivity(draw.activityKind || 'lottery', draw.participationMode || 'open'),
   }
   isEditing.value = true
   showCreateModal.value = true
@@ -1367,9 +1409,10 @@ async function handleCreate() {
       winnerCount: Number(form.value.winnerCount) || 1,
       maxParticipants: form.value.maxParticipants ? Number(form.value.maxParticipants) : undefined,
       participationMode: form.value.participationMode || 'open',
-      experienceType: form.value.experienceType || defaultExperienceForParticipation(form.value.participationMode || 'open'),
-      activityKind: 'lottery',
-      resultMode: 'manual',
+      experienceType: form.value.experienceType || defaultExperienceForActivity(form.value.activityKind || 'lottery', form.value.participationMode || 'open'),
+      activityKind: form.value.activityKind || 'lottery',
+      resultMode: form.value.activityKind === 'signup_chain' ? 'ordered_assignment' : 'manual',
+      allocationPolicy: form.value.allocationPolicy || 'capacity',
       accessPassword: form.value.accessPassword || '',
       // 导流：商品链接（启用时发送，关闭时发送 undefined）
       productLink: form.value.enableProductLink && form.value.productLink.url

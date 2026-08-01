@@ -278,3 +278,20 @@ export const webhookConfigs = sqliteTable("webhook_configs", {
 }, (t) => ({
   webhookTenantIdx: index("idx_webhook_tenant").on(t.tenantId, t.active, t.createdAt),
 }));
+
+// ── 优惠券码池（唯一码，支持核销） ──
+export const couponCodes = sqliteTable("coupon_codes", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id"),
+  code: text("code").notNull(),
+  label: text("label").notNull().default(""),
+  status: text("status").notNull().default("available"), // available/reserved/issued/redeemed/expired
+  recipientEmail: text("recipient_email"),
+  redeemedAt: text("redeemed_at"),
+  expiresAt: text("expires_at"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  couponTenantIdx: index("idx_coupon_tenant").on(t.tenantId, t.status, t.createdAt),
+  couponCodeUnique: uniqueIndex("idx_coupon_code").on(t.tenantId, t.code),
+}));

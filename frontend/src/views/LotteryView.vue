@@ -172,7 +172,7 @@
             <span class="drawing-state">{{ $t('lottery.statusDrawing') }}</span>
           </template>
           <template v-else-if="draw.status === 'open'">
-            <span v-if="myJoinedById[draw.id]" class="joined-badge">{{ $t('lottery.joined') }} · {{ $t('lottery.waitDraw') }}</span>
+            <span v-if="myJoinedById[draw.id]" class="joined-badge">{{ joinedStatusText(draw) }}</span>
             <button
               v-else-if="!sessionEmail"
               type="button"
@@ -277,7 +277,7 @@
 
             <div v-else-if="draw.status === 'open'" class="join-section">
               <div v-if="myJoinedById[draw.id]" class="joined-badge">
-                {{ $t('lottery.joined') }} · {{ $t('lottery.waitDraw') }}
+                {{ joinedStatusText(draw) }}
               </div>
               <!-- 导流：参与成功后展示商品卡片 -->
               <div v-if="myJoinedById[draw.id] && draw.productLink" class="product-card">
@@ -434,7 +434,7 @@ const API_BASE = '/api'
 
 type LotteryDraw = {
   id: string; publicSlug?: string; title: string; name?: string; description?: string; status: string;
-  activityKind?: string; participationMode: string; experienceType?: string; resultMode?: string;
+  activityKind?: string; participationMode: string; experienceType?: string; resultMode?: string; allocationPolicy?: string;
   startAt: string; startTime?: string; endAt: string; endTime?: string; drawAt: string | null; drawTime?: string | null;
   winnerCount: number; maxParticipants?: number | null;
   showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
@@ -443,6 +443,16 @@ type LotteryDraw = {
   prizes?: Array<{ name?: string; tierName?: string }>;
   productId?: string; productTitle?: string;
   productLink?: { url: string; title: string; imageUrl?: string; price?: string };
+};
+
+type ActivityOutcome = {
+  id?: string;
+  outcomeType?: string;
+  status: string;
+  sequenceNo?: number;
+  assignmentNo?: number | null;
+  resultLabel?: string;
+  decidedAt?: string | null;
 };
 
 type MyEntry = {
@@ -456,6 +466,7 @@ const expandedId = ref<string | null>(null)
 const sessionEmail = ref('')
 const myJoinedById = ref<Record<string, true>>({})
 const myWonById = ref<Record<string, any>>({})
+const myOutcomeById = ref<Record<string, ActivityOutcome>>({})
 const myEntryList = ref<MyEntry[]>([])
 
 /** 中奖优先，再按参与时间新→旧 */
@@ -550,7 +561,18 @@ function clearSession() {
   sessionEmail.value = ''
   myJoinedById.value = {}
   myWonById.value = {}
+  myOutcomeById.value = {}
   myEntryList.value = []
+}
+
+function joinedStatusText(draw: LotteryDraw): string {
+  const outcome = myOutcomeById.value[draw.id]
+  if (draw.activityKind === 'signup_chain') {
+    if (outcome?.status === 'waitlisted') return `已接龙 · ${outcome.resultLabel || '候补中'}`
+    if (outcome?.status === 'assigned') return `已接龙 · ${outcome.resultLabel || '已占位'}`
+    return '已接龙'
+  }
+  return `${t('lottery.joined')} · ${t('lottery.waitDraw')}`
 }
 
 /** 生成带 UTM 追踪参数的商品链接（使用公开 slug，不暴露内部 ID） */
@@ -728,14 +750,18 @@ async function handleVerifyCode() {
     })
     const data = await res.json() as any
     if (data.ok && data.joined) {
+      const joinedDrawId = pendingJoinDrawId.value
       sessionEmail.value = loginEmail.value
-      myJoinedById.value = { ...myJoinedById.value, [pendingJoinDrawId.value]: true }
+      myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
+      if (data.outcome) {
+        myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
+      }
       showLoginModal.value = false
       pendingJoinDrawId.value = null
       loginEmail.value = ''
       loginCode.value = ''
       codeSent.value = false
-      showToast('参与成功')
+      showToast(data.outcome?.resultLabel ? `参与成功：${data.outcome.resultLabel}` : '参与成功')
       showResult.value = true
     } else {
       loginError.value = data.message || '验证失败'

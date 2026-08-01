@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, auditLogs, tenantMembers, users, tenants } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, auditLogs, tenantMembers, users, tenants } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
@@ -1042,4 +1042,63 @@ adminLotteryRoute.delete("/webhooks/:id", async (c) => {
   const tenantId = c.get("tenantId") as string;
   await db.delete(webhookConfigs).where(and(eq(webhookConfigs.id, c.req.param("id")), eq(webhookConfigs.tenantId, tenantId)));
   return ok(c, { deleted: true });
+});
+
+// ═════════════════════════════════════════════════════════
+// 优惠券码池管理
+// ═════════════════════════════════════════════════════════
+
+/** 优惠券列表 */
+adminLotteryRoute.get("/coupons", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
+  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const rows = await db
+    .select()
+    .from(couponCodes)
+    .where(eq(couponCodes.tenantId, tenantId))
+    .orderBy(desc(couponCodes.createdAt))
+    .limit(limit).offset(offset);
+  return ok(c, { coupons: rows });
+});
+
+/** 批量导入优惠券 */
+adminLotteryRoute.post("/coupons/import", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ codes: string[]; label?: string; expiresAt?: string }>();
+  if (!body.codes || body.codes.length === 0) return fail(c, "请提供至少一个码", 400);
+  let count = 0;
+  for (const code of body.codes) {
+    try {
+      await db.insert(couponCodes).values({
+        id: crypto.randomUUID(), tenantId, code: code.trim(),
+        label: body.label || "", expiresAt: body.expiresAt || null,
+      });
+      count++;
+    } catch { /* 跳过重复码 */ }
+  }
+  return ok(c, { imported: count });
+});
+
+/** 核销优惠券 */
+adminLotteryRoute.post("/coupons/redeem", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ code: string }>();
+  const code = String(body.code || "").trim();
+  if (!code) return fail(c, "请输入优惠券码", 400);
+
+  const [coupon] = await db
+    .select()
+    .from(couponCodes)
+    .where(and(eq(couponCodes.tenantId, tenantId), eq(couponCodes.code, code)))
+    .limit(1);
+  if (!coupon) return fail(c, "优惠券不存在", 404);
+  if (coupon.status !== "available") return fail(c, "优惠券已使用或已过期", 400);
+
+  await db.update(couponCodes).set({ status: "redeemed", redeemedAt: new Date().toISOString() })
+    .where(eq(couponCodes.id, coupon.id));
+  return ok(c, { redeemed: true, label: coupon.label });
 });
