@@ -1416,6 +1416,7 @@ export async function joinDraw(
         entryId,
         activityKind: draw.activityKind,
         attribution,
+        submissionId,
         outcome: {
           id: outcomeId,
           drawId: draw.id,

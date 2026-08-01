@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
@@ -768,6 +768,35 @@ adminLotteryRoute.get("/draws/:id/events/summary", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
 
   return ok(c, await getActivityEventSummary(db, tenantId, drawId));
+});
+
+/**
+ * 活动提交记录（问卷答案/投票选项/资料领取 payload）。
+ * 033 基线：所有玩法的动态表单数据统一走 activity_submissions 表。
+ */
+adminLotteryRoute.get("/draws/:id/submissions", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+  const { limit, offset } = parseAdminPagination(c, 50, 200);
+
+  const draw = await getDraw(db, drawId, tenantId);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  const [{ total: totalCount }] = await db
+    .select({ total: count() })
+    .from(activitySubmissions)
+    .where(and(eq(activitySubmissions.tenantId, tenantId), eq(activitySubmissions.drawId, drawId)));
+
+  const rows = await db
+    .select()
+    .from(activitySubmissions)
+    .where(and(eq(activitySubmissions.tenantId, tenantId), eq(activitySubmissions.drawId, drawId)))
+    .orderBy(desc(activitySubmissions.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  return ok(c, { submissions: rows, total: Number(totalCount) });
 });
 
 /** 投票统计：按选项统计票数（仅 vote 活动可用）
