@@ -1734,6 +1734,23 @@ adminLotteryRoute.get("/draws/:id/shares", async (c) => {
 // 兑换码平台管理入口已迁移到 /api/platform/redemption-codes。
 // 租户侧只保留兑换接口：/api/admin/redemption-codes/redeem
 
+/** 兑换历史记录（租户侧：查看本租户的兑换记录） */
+adminLotteryRoute.get("/redemption-records", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
+  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+
+  const rows = await db
+    .select()
+    .from(redemptionRecords)
+    .where(eq(redemptionRecords.tenantId, tenantId))
+    .orderBy(desc(redemptionRecords.redeemedAt))
+    .limit(limit).offset(offset);
+
+  return ok(c, { records: rows });
+});
+
 /** 兑换码兑换（租户侧：输入兑换码，获得额度）
  *
  * 使用 CAS（条件更新）防止并发超发：

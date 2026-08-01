@@ -46,11 +46,45 @@
         </div>
       </div>
     </section>
+
+    <section class="section">
+      <h3 class="section-title">兑换历史</h3>
+      <div class="table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>兑换码</th>
+              <th>活动次数</th>
+              <th>参与人数</th>
+              <th>有效期</th>
+              <th>兑换时间</th>
+            </tr>
+          </thead>
+          <tbody v-if="recordsLoading">
+            <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row">
+              <td :colspan="5"><div class="skeleton-cell" /></td>
+            </tr>
+          </tbody>
+          <tbody v-else>
+            <tr v-for="r in records" :key="r.id">
+              <td><code class="code-text">{{ r.code }}</code></td>
+              <td>{{ r.activityQuotaGranted }}</td>
+              <td>{{ r.participantQuotaGranted }}</td>
+              <td>{{ formatDate(r.expiresAt) }}</td>
+              <td>{{ formatDate(r.redeemedAt) }}</td>
+            </tr>
+            <tr v-if="records.length === 0">
+              <td colspan="5" class="empty-text">暂无兑换记录</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/composables/useFormat'
@@ -70,6 +104,21 @@ const { showToast } = useToast()
 const code = ref('')
 const submitting = ref(false)
 const result = ref<RedeemResult | null>(null)
+// 兑换历史
+const records = ref<any[]>([])
+const recordsLoading = ref(false)
+
+/** 加载兑换历史 */
+async function loadRecords() {
+  recordsLoading.value = true
+  try {
+    const data = await adminRequest<{ records: any[] }>('/api/admin/redemption-records')
+    records.value = data.records || []
+  } catch { records.value = [] }
+  recordsLoading.value = false
+}
+
+onMounted(loadRecords)
 
 async function handleRedeem() {
   const normalizedCode = code.value.trim().toUpperCase()
@@ -87,6 +136,8 @@ async function handleRedeem() {
     })
     code.value = ''
     showToast('额度已兑换', 'success')
+    // 兑换成功后刷新历史记录
+    await loadRecords()
   } catch (err: any) {
     showToast(err?.message || '兑换失败', 'error')
   } finally {
