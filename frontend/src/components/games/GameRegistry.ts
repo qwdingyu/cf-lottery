@@ -1,8 +1,23 @@
 /**
  * 游戏注册表 — 可插拔游戏引擎核心。
  *
- * 每种参与模式映射到一个游戏组件，新增游戏只需在此注册。
- * 游戏组件实现统一接口：接收 prizes/disabled/mode/draw props，emit play 事件。
+ * ## 设计原则
+ * 1. 每种参与模式映射到一个游戏组件
+ * 2. 所有游戏组件实现统一接口：
+ *    - Props: { prizes: PrizeItem[], disabled?: boolean }
+ *    - Emits: { play: [] }
+ * 3. 新增游戏只需在此注册一行映射，无需修改 LotteryView
+ *
+ * ## 新增游戏步骤
+ * 1. 创建 src/components/games/NewGame.vue
+ * 2. 在 GAME_MAP 中添加一行：'new_mode': () => import('./NewGame.vue')
+ * 3. 前端自动使用新游戏，无需其他修改
+ *
+ * ## 游戏组件规范
+ * - 接收 prizes 数组，渲染奖品视觉元素
+ * - disabled 为 true 时禁止交互
+ * - 用户操作后 emit('play')，由父组件调用后端 API
+ * - 游戏动画是纯视觉，不决定中奖结果（结果由后端决定）
  */
 import { defineAsyncComponent, type Component } from 'vue'
 

@@ -30,9 +30,7 @@ const props = defineProps<{
   disabled?: boolean
 }>()
 
-const emit = defineEmits<{
-  spin: []
-}>()
+const emit = defineEmits<{ play: [] }>()
 
 const wheelCanvasRef = ref<HTMLCanvasElement>()
 const spinning = ref(false)
@@ -131,7 +129,7 @@ async function spinAnimation(targetIndex: number) {
 async function handleSpin() {
   if (spinning.value || props.disabled) return
   spinning.value = true
-  emit('spin')
+  emit('play')
   // 随机选择一个目标
   const targetIndex = Math.floor(Math.random() * props.prizes.length)
   await spinAnimation(targetIndex)
