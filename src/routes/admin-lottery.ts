@@ -221,7 +221,7 @@ adminLotteryRoute.get("/prizes", async (c) => {
 adminLotteryRoute.post("/prizes", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  const body = await c.req.json<{ name: string; description?: string; prizeType?: string }>();
+  const body = await c.req.json<{ name: string; description?: string; prizeType?: string; imageUrl?: string; valueText?: string }>();
   const { id } = await createPrize(db, tenantId, body);
   return ok(c, { id });
 });

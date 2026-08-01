@@ -8,8 +8,8 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords } from "../db/schema";
-import { eq, and, count, sql } from "drizzle-orm";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes } from "../db/schema";
+import { eq, and, count, sql, asc } from "drizzle-orm";
 import { getActivityOutcome, joinDraw, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
 import { sendAccessCode } from "../services/email-service";
 
@@ -107,6 +107,37 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     productLink: draw.productLink && draw.productLink !== "{}" ? tryParseJson(draw.productLink) : undefined,
     promotionConfig: draw.promotionConfig && draw.promotionConfig !== "{}" ? tryParseJson(draw.promotionConfig) : undefined,
   };
+
+  if (draw.activityKind === "lottery") {
+    const prizeRows = await db
+      .select({
+        tierName: lotteryPrizeTiers.tierName,
+        winnerCount: lotteryPrizeTiers.winnerCount,
+        name: prizes.name,
+        description: prizes.description,
+        imageUrl: prizes.imageUrl,
+        valueText: prizes.valueText,
+      })
+      .from(lotteryPrizeTiers)
+      .leftJoin(prizes, and(
+        eq(prizes.id, lotteryPrizeTiers.prizeId),
+        eq(prizes.tenantId, draw.tenantId),
+      ))
+      .where(and(
+        eq(lotteryPrizeTiers.drawId, draw.id),
+        eq(lotteryPrizeTiers.tenantId, draw.tenantId),
+      ))
+      .orderBy(asc(lotteryPrizeTiers.sortOrder));
+
+    result.prizes = prizeRows.map((row) => ({
+      tierName: row.tierName,
+      winnerCount: row.winnerCount,
+      name: row.name || row.tierName,
+      description: row.description || "",
+      imageUrl: row.imageUrl || "",
+      valueText: row.valueText || "",
+    }));
+  }
 
   // 开奖后展示中奖名单
   if (draw.status === "drawn" && draw.showWinnerList) {

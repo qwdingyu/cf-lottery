@@ -26,6 +26,10 @@ export interface PrizeItem {
   name: string
   /** 奖品颜色（可选，用于组件配色） */
   color?: string
+  /** 奖品图片 URL（可选，未提供时展示层使用默认图） */
+  imageUrl?: string
+  /** 奖品展示价值文案（可选，不参与金额计算） */
+  valueText?: string
 }
 
 /** 游戏组件 Props 接口 */

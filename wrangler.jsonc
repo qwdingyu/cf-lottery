@@ -35,6 +35,15 @@
     "crons": ["*/5 * * * *"]
   },
 
+  // R2 图片存储：奖品图、活动图等公开媒体。
+  // 免费层目标是少量运营图片；不要在当前阶段引入媒体库、裁剪、批量上传或用户侧上传。
+  "r2_buckets": [
+    {
+      "binding": "LOTTERY_MEDIA",
+      "bucket_name": "cf-lottery-media"
+    }
+  ],
+
   // 非敏感环境变量
   "vars": {
     "APP_ORIGIN": "https://lucky.eforge.xyz"

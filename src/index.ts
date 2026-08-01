@@ -8,6 +8,7 @@ import { cors } from "hono/cors";
 import type { AppEnv, Bindings } from "./bindings";
 import { createClient } from "@libsql/client";
 import { createDb } from "./db/client";
+import { fail } from "./lib/http";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
@@ -16,6 +17,8 @@ import { systemConfigRoute } from "./routes/system-config";
 import { platformSystemConfigRoute } from "./routes/platform-system-config";
 import { platformRedemptionCodesRoute } from "./routes/platform-redemption-codes";
 import { platformRoute } from "./routes/platform";
+import { adminMediaRoute, mediaRoute } from "./routes/media";
+import { getApiBodyLimitBytes } from "./lib/api-body-limit";
 import { cleanExpiredRateLimits } from "./lib/rate-limit";
 import { refreshAllTenantSnapshots } from "./services/admin/usage-snapshots";
 import {
@@ -79,6 +82,19 @@ app.onError((err, c) => {
   return c.json({ ok: false, message: "服务器内部错误" }, 500);
 });
 
+// ── 请求体大小闸门 ──
+// Cloudflare Workers 免费层不适合让任意 API 接收大请求体。
+// 只有 /api/admin/media/images 允许 5MiB 图片上传，其余接口保持 100KB。
+app.use("*", async (c, next) => {
+  const length = Number(c.req.header("content-length") || "0");
+  const limit = getApiBodyLimitBytes(c.req.path);
+  if (Number.isFinite(length) && length > limit) {
+    const isMediaUpload = c.req.path === "/api/admin/media/images";
+    return fail(c, isMediaUpload ? "图片上传请求过大（图片最大 5MiB）" : "请求体过大（最大 100KB）", 413);
+  }
+  await next();
+});
+
 // ── 请求耗时观测（用于识别慢查询和异常路由） ──
 app.use("*", async (c, next) => {
   const start = Date.now();
@@ -104,6 +120,8 @@ app.use("*", async (c, next) => {
 
 // 路由挂载
 app.route("/api/auth", authRoute);
+app.route("/api", mediaRoute);
+app.route("/api/admin/media", adminMediaRoute);
 app.route("/api/admin", adminLotteryRoute);
 app.route("/api/public", publicLotteryRoute);
 app.route("/api/integration", integrationRoute);

@@ -11,6 +11,8 @@ export type Bindings = {
   TURSO_TOKEN?: string;
   // 静态资源绑定（前端构建产物）
   ASSETS: Fetcher;
+  // 奖品图、活动图等公开媒体对象。未绑定时上传/读取接口返回明确 503。
+  LOTTERY_MEDIA?: R2Bucket;
   // JWT 签名密钥（必填，生产环境通过 wrangler secret put 设置）
   JWT_SECRET?: string;
   // 密码 pepper（推荐独立于 JWT_SECRET 配置），用于降低数据库单独泄漏后的离线撞库风险。

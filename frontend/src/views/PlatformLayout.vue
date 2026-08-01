@@ -51,8 +51,10 @@ const { showToast } = useToast()
 
 /** 平台运营后台菜单（仅 L3 功能） */
 const menuItems = computed(() => [
+  { name: 'PlatformTenants', to: '/platform/tenants', label: '租户管理', icon: '&#x1F3E2;' },
   { name: 'PlatformConfig', to: '/platform/config', label: '系统配置', icon: '&#x2699;&#xFE0F;' },
   { name: 'PlatformRedemptionCodes', to: '/platform/redemption-codes', label: '兑换码', icon: '&#x1F3B5;' },
+  { name: 'PlatformAuditLogs', to: '/platform/audit-logs', label: '审计日志', icon: '&#x1F4DD;' },
 ])
 
 const currentName = computed(() => route.name as string | undefined)

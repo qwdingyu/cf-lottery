@@ -194,7 +194,7 @@
           <component
             :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
             v-if="expandedId === draw.id && draw.status === 'open'"
-            :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || '奖品', color: '' }))"
+            :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || '奖品', color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
             :disabled="joiningId === draw.id"
             @play="handleJoin(draw.id)"
           />
@@ -218,6 +218,17 @@
         <!-- 展开详情 -->
         <div v-if="expandedId === draw.id" class="draw-card-body">
           <p v-if="draw.description" class="draw-desc">{{ draw.description }}</p>
+          <div v-if="draw.prizes && draw.prizes.length > 0" class="prize-showcase">
+            <div v-for="prize in draw.prizes" :key="`${prize.tierName || ''}-${prize.name || ''}`" class="prize-card">
+              <img :src="prizeImageUrl(prize.imageUrl)" :alt="prize.name || prize.tierName || '奖品'" class="prize-card-img" loading="lazy" />
+              <div class="prize-card-body">
+                <strong>{{ prize.name || prize.tierName || '奖品' }}</strong>
+                <span v-if="prize.valueText" class="prize-value">{{ prize.valueText }}</span>
+                <small v-if="prize.description">{{ prize.description }}</small>
+                <small v-if="prize.winnerCount">名额 {{ prize.winnerCount }}</small>
+              </div>
+            </div>
+          </div>
           <div class="draw-detail-grid">
             <div v-if="draw.productTitle || draw.productId" class="detail-item">
               <span class="detail-label">{{ $t('lottery.product') }}</span>
@@ -442,10 +453,25 @@ type LotteryDraw = {
   showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
   showWinners?: boolean; maxWinners?: number;
   participantCount?: number; entryCount?: number; winners?: Array<{ identity: string }>;
-  prizes?: Array<{ name?: string; tierName?: string }>;
+  prizes?: Array<{ name?: string; tierName?: string; description?: string; imageUrl?: string; valueText?: string; winnerCount?: number }>;
   productId?: string; productTitle?: string;
   productLink?: { url: string; title: string; imageUrl?: string; price?: string };
 };
+
+const DEFAULT_PRIZE_IMAGE = `data:image/svg+xml,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+  <rect width="160" height="160" rx="18" fill="#1f2937"/>
+  <rect x="43" y="66" width="74" height="54" rx="8" fill="#f59e0b"/>
+  <rect x="38" y="52" width="84" height="20" rx="7" fill="#fbbf24"/>
+  <path d="M80 52c-18-18-38-8-24 12h24V52Zm0 0c18-18 38-8 24 12H80V52Z" fill="#fde68a"/>
+  <path d="M77 52h6v68h-6z" fill="#92400e" opacity=".45"/>
+</svg>
+`)}`
+
+function prizeImageUrl(url?: string) {
+  const trimmed = String(url || '').trim()
+  return trimmed || DEFAULT_PRIZE_IMAGE
+}
 
 type ActivityOutcome = {
   id?: string;
@@ -1162,6 +1188,44 @@ onUnmounted(() => {
 .draw-desc {
   color: var(--tg-hint);
   margin: 12px 0;
+}
+
+.prize-showcase {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.prize-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.prize-card-img {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--tg-secondary-bg, #151b28);
+  flex: 0 0 auto;
+}
+
+.prize-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prize-value {
+  color: var(--admin-warning);
+  font-weight: 600;
 }
 
 .draw-detail-grid {

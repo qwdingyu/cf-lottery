@@ -87,7 +87,12 @@ const router = createRouter({
       children: [
         {
           path: '',
-          redirect: '/platform/config',
+          redirect: '/platform/tenants',
+        },
+        {
+          path: 'tenants',
+          name: 'PlatformTenants',
+          component: () => import('@/views/platform/PlatformTenantsView.vue'),
         },
         {
           path: 'config',
@@ -98,6 +103,11 @@ const router = createRouter({
           path: 'redemption-codes',
           name: 'PlatformRedemptionCodes',
           component: () => import('@/views/admin/AdminRedemptionCodesView.vue'),
+        },
+        {
+          path: 'audit-logs',
+          name: 'PlatformAuditLogs',
+          component: () => import('@/views/platform/PlatformAuditLogsView.vue'),
         },
       ],
     },

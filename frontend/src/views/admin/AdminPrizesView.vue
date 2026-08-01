@@ -29,8 +29,7 @@
         <tbody>
           <tr v-for="prize in prizes" :key="prize.id">
             <td>
-              <img v-if="prize.imageUrl" :src="prize.imageUrl" :alt="prize.name" class="prize-thumb" />
-              <span v-else class="prize-thumb-placeholder">🎁</span>
+              <img :src="prizeImageUrl(prize.imageUrl)" :alt="prize.name || '奖品'" class="prize-thumb" />
             </td>
             <td>{{ prize.name }}</td>
             <td>{{ prize.prizeType === 'code' ? '卡密' : '手动发放' }}</td>
@@ -69,8 +68,24 @@
           </label>
           <label>
             <span>图片 URL</span>
-            <input v-model="form.imageUrl" maxlength="500" placeholder="奖品图片链接（可选）" />
-            <small class="field-hint">建议使用正方形图片，将在活动页面展示</small>
+            <div class="prize-image-editor">
+              <img :src="prizeImageUrl(form.imageUrl)" alt="奖品图片预览" class="prize-preview" />
+              <div class="prize-image-fields">
+                <div class="image-upload-row">
+                  <label class="btn btn-ghost btn-sm image-upload-button" :class="{ 'is-disabled': uploadingImage }">
+                    {{ uploadingImage ? '上传中...' : '上传图片' }}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/avif"
+                      :disabled="uploadingImage"
+                      @change="uploadPrizeImage"
+                    />
+                  </label>
+                  <small class="field-hint">JPEG、PNG、WebP、AVIF，最大 5MiB</small>
+                </div>
+                <input v-model="form.imageUrl" maxlength="500" placeholder="不上传则使用默认图" />
+              </div>
+            </div>
           </label>
           <label>
             <span>价值</span>
@@ -116,6 +131,7 @@ const { showToast } = useToast()
 const loading = ref(false)
 const submitting = ref(false)
 const importing = ref(false)
+const uploadingImage = ref(false)
 const showCreate = ref(false)
 const showImportModal = ref(false)
 const importPrize = ref<any>(null)
@@ -129,6 +145,55 @@ const form = ref({
   imageUrl: '',
   valueText: '',
 })
+
+const DEFAULT_PRIZE_IMAGE = `data:image/svg+xml,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+  <rect width="160" height="160" rx="18" fill="#1f2937"/>
+  <rect x="43" y="66" width="74" height="54" rx="8" fill="#f59e0b"/>
+  <rect x="38" y="52" width="84" height="20" rx="7" fill="#fbbf24"/>
+  <path d="M80 52c-18-18-38-8-24 12h24V52Zm0 0c18-18 38-8 24 12H80V52Z" fill="#fde68a"/>
+  <path d="M77 52h6v68h-6z" fill="#92400e" opacity=".45"/>
+</svg>
+`)}`
+
+function prizeImageUrl(url?: string) {
+  const trimmed = String(url || '').trim()
+  return trimmed || DEFAULT_PRIZE_IMAGE
+}
+
+async function uploadPrizeImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || uploadingImage.value) return
+  if (file.size <= 0) {
+    showToast('请选择非空图片文件', 'error')
+    return
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    showToast('图片不能超过 2MiB', 'error')
+    return
+  }
+
+  uploadingImage.value = true
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    const res = await fetch('/api/admin/media/images', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${localStorage.getItem('admin_token') || ''}` },
+      body,
+    })
+    const data = await res.json()
+    if (!data.ok) throw new Error(data.message || `图片上传失败：${res.status}`)
+    form.value.imageUrl = data.url || ''
+    showToast('奖品图片已上传', 'success')
+  } catch (err: any) {
+    showToast(err?.message || '图片上传失败', 'error')
+  } finally {
+    uploadingImage.value = false
+  }
+}
 
 async function loadData() {
   loading.value = true
@@ -221,3 +286,61 @@ async function handleImport() {
 
 onMounted(loadData)
 </script>
+
+<style scoped>
+.prize-thumb,
+.prize-preview {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--tg-secondary-bg, #151b28);
+}
+
+.prize-preview {
+  width: 72px;
+  height: 72px;
+  flex: 0 0 auto;
+}
+
+.prize-image-editor {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.prize-image-fields {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.image-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.image-upload-button {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.image-upload-button.is-disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.image-upload-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+</style>
