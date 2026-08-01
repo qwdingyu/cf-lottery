@@ -28,7 +28,7 @@ import {
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 
-const ACTIVITY_KINDS = new Set(["lottery", "signup_chain", "reservation", "vote", "survey", "checkin"]);
+const ACTIVITY_KINDS = new Set(["lottery", "signup_chain", "reservation", "vote", "survey", "checkin", "waitlist", "approval", "claim"]);
 const PARTICIPATION_MODES = new Set(["open", "roster", "password", "invite_code"]);
 const EXPERIENCE_TYPES = new Set(["submit", "wheel", "slot", "scratch", "card"]);
 const DRAW_TRIGGERS = new Set(["manual", "scheduled"]);

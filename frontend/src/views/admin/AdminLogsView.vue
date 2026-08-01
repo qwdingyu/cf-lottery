@@ -154,7 +154,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
+import i18n from '@/i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 import { useTableSelection } from '@/composables/useTableSelection'
@@ -164,6 +165,7 @@ import { formatDate } from '@/composables/useFormat'
 import AdminPagination from '@/components/AdminPagination.vue'
 import AdminModal from '@/components/AdminModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import type { AdminAuditLog, AdminAuditLogFilter, AdminAuditLogListResult } from '@/types/admin'
 
 /** 管理端 API 请求封装 */
 async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
@@ -187,8 +189,9 @@ function downloadCsv(filename: string, rows: string[][]) {
 
 const { token } = useAdminAuth()
 const { showToast } = useToast()
-const items = ref<any[]>([])
+const items = ref<AdminAuditLog[]>([])
 const loading = ref(false)
+const batchDeleting = ref(false)
 const clearingAll = ref(false)
 const logsMutating = computed(() => batchDeleting.value || clearingAll.value)
 const snapshotAt = ref('')
@@ -232,6 +235,37 @@ const currentLog = ref<AdminAuditLog | null>(null)
 const error = ref('')
 const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 let loadSequence = 0
+
+async function fetchAdminLogs(_token: string, filter: AdminAuditLogFilter): Promise<AdminAuditLogListResult> {
+  const params = new URLSearchParams()
+  if (filter.action) params.set('action', filter.action)
+  if (filter.targetType) params.set('targetType', filter.targetType)
+  if (filter.targetId) params.set('targetId', filter.targetId)
+  params.set('limit', String(filter.limit ?? 20))
+  const data = await adminRequest<{ logs: AdminAuditLog[] }>(`/api/admin/logs?${params.toString()}`)
+  return {
+    logs: data.logs || [],
+    total: data.logs?.length || 0,
+    snapshotAt: new Date().toISOString(),
+    nextCursor: '',
+    hasMore: false,
+  }
+}
+
+async function batchDeleteAdminLogs(_token: string, _logs: Array<{ type: 'request' | 'admin'; id: string }>): Promise<{ deleted: number }> {
+  throw new Error('当前后端暂未开放批量删除日志接口')
+}
+
+async function clearAllAdminLogs(_token: string): Promise<{ deleted: number }> {
+  throw new Error('当前后端暂未开放清空日志接口')
+}
+
+function formatIpFingerprint(value?: string): string {
+  const text = String(value || '')
+  if (!text) return '-'
+  if (text.length <= 12) return text
+  return `${text.slice(0, 6)}…${text.slice(-4)}`
+}
 
 function logKey(item: AdminAuditLog) {
   return item.id ? `${item.type || 'log'}:${item.id}` : `${item.createdAt || ''}:${item.action || ''}:${item.targetType || ''}:${item.targetId || ''}`

@@ -154,9 +154,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import i18n from '@/i18n'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -168,6 +169,9 @@ import {
   resolveSystemConfigSectionId,
   type SystemConfigSectionId,
 } from './system-config-sections'
+import type { AdminSystemConfigDefinition } from '@/types/admin'
+
+type AdminClearBusinessDataProfile = 'runtime' | 'keep_trade' | 'keep_catalog' | 'full'
 
 /** 管理端 API 请求封装 */
 async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
@@ -200,7 +204,7 @@ function groupNameKey(name: string): string {
 
 const { showToast } = useToast()
 const { t } = useI18n()
-const { token } = useAdminAuth()
+useAdminAuth()
 const route = useRoute()
 const router = useRouter()
 
@@ -208,7 +212,7 @@ const loading = ref(false)
 const loadError = ref('')
 const config = reactive<Record<string, string>>({})
 const fieldStatus = reactive<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
-const definitions = ref<any[]>([])
+const definitions = ref<AdminSystemConfigDefinition[]>([])
 const testEmailTo = ref('')
 const sendingTestEmail = ref(false)
 const testEmailStatus = ref('')
@@ -320,7 +324,7 @@ function selectSection(id: SystemConfigSectionId) {
 async function refreshPublicConfig(scope?: string): Promise<boolean> {
   if (scope !== 'public') return true
   try {
-    const res = await adminRequest<any>('/api/system-config')
+    await adminRequest<any>('/api/system-config')
     return true
   } catch {
     return false
@@ -383,9 +387,6 @@ async function clearBusinessData() {
   showToast('数据清理功能暂不可用', 'info')
 }
 
-const turnstileBannerClass = 'status-banner-info'
-const turnstileBannerText = ''
-
 async function reset(key: string) {
   const def = definitions.value.find((d) => d.key === key)
   if (!def) return
@@ -394,8 +395,8 @@ async function reset(key: string) {
   fieldStatus[key] = 'saving'
   try {
     const res = await adminRequest<any>('/api/admin/system-config', {
-      key: resetKey,
-      value: def.defaultValue || '',
+      method: 'PUT',
+      body: JSON.stringify({ key: resetKey, value: def.defaultValue || '' }),
     })
     config[resetKey] = res.value
     const publicConfigSynced = await refreshPublicConfig(def.scope)
@@ -411,12 +412,6 @@ async function reset(key: string) {
   } finally {
     resetKey = null
   }
-}
-
-function markEmailTestStale(key: string) {
-  if (!emailConfigKeys.includes(key)) return
-  testEmailOk.value = false
-  testEmailStatus.value = t('adminConfig.emailTest.configUpdated')
 }
 
 onMounted(loadData)
