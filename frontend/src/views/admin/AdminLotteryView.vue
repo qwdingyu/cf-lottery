@@ -169,6 +169,12 @@
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs"
+                  :title="'生成二维码'"
+                  @click="handleShowQrCode(draw)"
+                >二维码</button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   :title="$t('lottery.adminDuplicateHint')"
                   @click="handleDuplicate(draw)"
@@ -583,6 +589,18 @@
     </AdminModal>
 
     <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" @confirm="onConfirm" />
+
+    <!-- 二维码弹窗 -->
+    <AdminModal v-model="showQrModal" title="活动二维码" max-width="400px">
+      <div class="qr-modal-body">
+        <img :src="qrImageUrl" alt="活动二维码" class="qr-image" />
+        <p class="qr-hint">扫描二维码参与活动</p>
+        <div class="qr-actions">
+          <button class="btn btn-primary btn-sm" @click="handleDownloadQr">下载二维码</button>
+          <button class="btn btn-ghost btn-sm" @click="handleCopyQrLink">复制链接</button>
+        </div>
+      </div>
+    </AdminModal>
   </div>
 </template>
 
@@ -698,6 +716,9 @@ const loading = ref(false)
 const loadError = ref('')
 const showCreateModal = ref(false)
 const showWinnersModal = ref(false)
+const showQrModal = ref(false)
+const qrImageUrl = ref('')
+const qrDrawUrl = ref('')
 const winners = ref<LotteryWinner[]>([])
 const winnersLoading = ref(false)
 /** 中奖弹窗对应的活动 id，便于弹窗内一键重发失败邮件 */
@@ -911,6 +932,26 @@ function handleOpenPublic(draw: LotteryDraw) {
   if (typeof window !== 'undefined') {
     window.open(path, '_blank', 'noopener,noreferrer')
   }
+}
+
+/** 生成二维码 */
+function handleShowQrCode(draw: LotteryDraw) {
+  const url = `${window.location.origin}/lottery/${draw.publicSlug}`
+  qrDrawUrl.value = url
+  qrImageUrl.value = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`
+  showQrModal.value = true
+}
+
+function handleDownloadQr() {
+  const a = document.createElement('a')
+  a.href = qrImageUrl.value
+  a.download = 'qrcode.png'
+  a.click()
+}
+
+function handleCopyQrLink() {
+  writeClipboardText(qrDrawUrl.value)
+  showToast('链接已复制', 'success')
 }
 
 function handleExportWinners() {
@@ -1457,4 +1498,10 @@ onMounted(loadData)
   min-width: 88px;
   max-width: 100%;
 }
+
+/* 二维码弹窗 */
+.qr-modal-body { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; }
+.qr-image { width: 240px; height: 240px; border-radius: 8px; background: #fff; padding: 8px; }
+.qr-hint { font-size: 13px; color: var(--tg-hint, #9aa4b2); }
+.qr-actions { display: flex; gap: 8px; }
 </style>
