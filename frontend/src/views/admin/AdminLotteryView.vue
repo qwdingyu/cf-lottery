@@ -186,28 +186,28 @@
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleOpen(draw.id)"
-                >{{ operatingId === draw.id ? $t('shop.loading') : $t('lottery.adminDrawOpen') }}</button>
+                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminDrawOpen') }}</button>
                 <button
                   v-if="draw.status === 'open'"
                   type="button"
                   class="btn btn-primary btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleDraw(draw)"
-                >{{ operatingId === draw.id ? $t('shop.loading') : $t('lottery.adminDrawNow') }}</button>
+                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminDrawNow') }}</button>
                 <button
                   v-if="draw.status === 'open'"
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handlePause(draw.id)"
-                >{{ operatingId === draw.id ? $t('shop.loading') : $t('lottery.adminPause') }}</button>
+                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminPause') }}</button>
                 <button
                   v-if="draw.status === 'paused'"
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleResume(draw.id)"
-                >{{ operatingId === draw.id ? $t('shop.loading') : $t('lottery.adminResume') }}</button>
+                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminResume') }}</button>
                 <button
                   v-if="draw.status === 'drawn'"
                   type="button"
@@ -228,14 +228,14 @@
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleRecover(draw.id)"
-                >{{ operatingId === draw.id ? $t('shop.loading') : $t('lottery.adminRecoverDrawing') }}</button>
+                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminRecoverDrawing') }}</button>
                 <button
                   v-if="draw.status === 'drawn'"
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleRetryEmail(draw.id)"
-                >{{ operatingId === draw.id ? $t('shop.loading') : $t('lottery.adminRetryEmail') }}</button>
+                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminRetryEmail') }}</button>
                 <button
                   v-if="draw.status === 'draft' || draw.status === 'open' || draw.status === 'paused'"
                   type="button"
