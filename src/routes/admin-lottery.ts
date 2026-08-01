@@ -504,6 +504,7 @@ adminLotteryRoute.post("/draws", async (c) => {
       "enabled_activity_kinds",
       "draw_default_winner_count",
       "draw_max_participants",
+      "draw_max_duration_days",
     ]);
     const enabledKinds = (config["enabled_activity_kinds"] || "lottery,signup_chain,claim,survey").split(",").map(s => s.trim());
     if (!enabledKinds.includes(activityKind)) {
