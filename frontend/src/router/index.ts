@@ -76,6 +76,11 @@ const router = createRouter({
           name: 'AdminBlacklist',
           component: () => import('@/views/admin/AdminBlacklistView.vue'),
         },
+        {
+          path: 'redemption-codes',
+          name: 'AdminRedemptionCodes',
+          component: () => import('@/views/admin/AdminRedemptionCodesView.vue'),
+        },
       ],
     },
     {

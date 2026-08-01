@@ -40,8 +40,16 @@ beforeAll(async () => {
   db = createDb(client);
   await client.execute(`CREATE TABLE IF NOT EXISTS tenants (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'free',
-    status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    status TEXT NOT NULL DEFAULT 'active', brand_config TEXT NOT NULL DEFAULT '{}',
+    extra_activity_quota INTEGER NOT NULL DEFAULT 0,
+    extra_participant_quota INTEGER NOT NULL DEFAULT 0,
+    extra_quota_expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  await client.execute("ALTER TABLE tenants ADD COLUMN brand_config TEXT NOT NULL DEFAULT '{}'").catch(() => undefined);
+  await client.execute("ALTER TABLE tenants ADD COLUMN extra_activity_quota INTEGER NOT NULL DEFAULT 0").catch(() => undefined);
+  await client.execute("ALTER TABLE tenants ADD COLUMN extra_participant_quota INTEGER NOT NULL DEFAULT 0").catch(() => undefined);
+  await client.execute("ALTER TABLE tenants ADD COLUMN extra_quota_expires_at TEXT").catch(() => undefined);
   await client.execute(`CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, email TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))

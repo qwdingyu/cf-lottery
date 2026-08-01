@@ -14,6 +14,9 @@ export const tenants = sqliteTable("tenants", {
   plan: text("plan").notNull().default("free"),
   status: text("status").notNull().default("active"),
   brandConfig: text("brand_config").notNull().default("{}"),
+  extraActivityQuota: integer("extra_activity_quota").notNull().default(0),
+  extraParticipantQuota: integer("extra_participant_quota").notNull().default(0),
+  extraQuotaExpiresAt: text("extra_quota_expires_at"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });

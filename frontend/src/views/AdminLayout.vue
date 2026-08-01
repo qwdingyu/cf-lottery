@@ -112,6 +112,7 @@ const menuItems = computed(() => [
   { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '&#x1F4DD;' },
   { name: 'AdminMembers', to: '/admin/members', label: '团队成员', icon: '&#x1F465;' },
   { name: 'AdminBlacklist', to: '/admin/blacklist', label: '黑名单', icon: '&#x1F6AB;' },
+  { name: 'AdminRedemptionCodes', to: '/admin/redemption-codes', label: '兑换码', icon: '&#x1F3B5;' },
 ])
 
 const currentName = computed(() => {
