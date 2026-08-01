@@ -17,6 +17,7 @@
       <table class="admin-table">
         <thead>
           <tr>
+            <th>图片</th>
             <th>名称</th>
             <th>类型</th>
             <th>描述</th>
@@ -26,6 +27,10 @@
         </thead>
         <tbody>
           <tr v-for="prize in prizes" :key="prize.id">
+            <td>
+              <img v-if="prize.imageUrl" :src="prize.imageUrl" :alt="prize.name" class="prize-thumb" />
+              <span v-else class="prize-thumb-placeholder">🎁</span>
+            </td>
             <td>{{ prize.name }}</td>
             <td>{{ prize.prizeType === 'code' ? '卡密' : '手动发放' }}</td>
             <td>{{ prize.description || '-' }}</td>
@@ -58,7 +63,16 @@
           </label>
           <label>
             <span>描述</span>
-            <textarea v-model="form.description" maxlength="500" rows="2" placeholder="可选" />
+            <textarea v-model="form.description" maxlength="500" rows="2" placeholder="奖品说明（可选）" />
+          </label>
+          <label>
+            <span>图片 URL</span>
+            <input v-model="form.imageUrl" maxlength="500" placeholder="奖品图片链接（可选）" />
+            <small class="field-hint">建议使用正方形图片，将在活动页面展示</small>
+          </label>
+          <label>
+            <span>价值</span>
+            <input v-model="form.value" maxlength="50" placeholder="奖品价值，如 50 USDT（可选）" />
           </label>
         </div>
         <div class="modal-actions">
@@ -109,6 +123,8 @@ const form = ref({
   name: '',
   description: '',
   prizeType: 'code',
+  imageUrl: '',
+  value: '',
 })
 
 async function loadData() {

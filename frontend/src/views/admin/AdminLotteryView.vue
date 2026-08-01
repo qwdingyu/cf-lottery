@@ -1384,82 +1384,6 @@ function handleShowQrCode(draw: LotteryDraw) {
   showQrModal.value = true
 }
 
-async function handleShowPoster(draw: LotteryDraw) {
-  posterDrawData.value = draw
-  showPosterModal.value = true
-  posterGenerating.value = true
-  await nextTick()
-  drawPoster(draw)
-  posterGenerating.value = false
-}
-
-function drawPoster(draw: LotteryDraw) {
-  const canvas = posterCanvasRef.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-
-  const url = publicShareUrl(draw.publicSlug)
-  ctx.clearRect(0, 0, posterWidth, posterHeight)
-
-  const gradient = ctx.createLinearGradient(0, 0, posterWidth, posterHeight)
-  gradient.addColorStop(0, '#0f172a')
-  gradient.addColorStop(1, '#1f2937')
-  ctx.fillStyle = gradient
-  ctx.fillRect(0, 0, posterWidth, posterHeight)
-
-  ctx.fillStyle = '#f59e0b'
-  ctx.fillRect(28, 28, 54, 4)
-
-  ctx.fillStyle = '#f8fafc'
-  ctx.font = '700 30px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
-  wrapCanvasText(ctx, draw.title || '活动邀请', 28, 88, posterWidth - 56, 40, 3)
-
-  ctx.fillStyle = '#cbd5e1'
-  ctx.font = '16px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
-  wrapCanvasText(ctx, draw.description || activityKindLabel(draw.activityKind), 28, 230, posterWidth - 56, 24, 4)
-
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'
-  ctx.fillRect(28, 384, posterWidth - 56, 104)
-  ctx.fillStyle = '#f8fafc'
-  ctx.font = '600 16px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText('参与链接', 48, 420)
-  ctx.fillStyle = '#cbd5e1'
-  ctx.font = '14px ui-monospace, SFMono-Regular, Menlo, monospace'
-  wrapCanvasText(ctx, url, 48, 450, posterWidth - 96, 20, 2)
-
-  ctx.fillStyle = '#94a3b8'
-  ctx.font = '13px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText('复制链接或使用二维码投放活动', 28, 530)
-}
-
-function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number, maxLines: number) {
-  const chars = Array.from(text)
-  let line = ''
-  let lines = 0
-  for (const char of chars) {
-    const nextLine = line + char
-    if (ctx.measureText(nextLine).width > maxWidth && line) {
-      ctx.fillText(line, x, y + lines * lineHeight)
-      line = char
-      lines += 1
-      if (lines >= maxLines) return
-    } else {
-      line = nextLine
-    }
-  }
-  if (line && lines < maxLines) ctx.fillText(line, x, y + lines * lineHeight)
-}
-
-function handleDownloadPoster() {
-  const canvas = posterCanvasRef.value
-  if (!canvas) return
-  const a = document.createElement('a')
-  a.href = canvas.toDataURL('image/png')
-  a.download = `activity-poster-${posterDrawData.value?.publicSlug || 'draft'}.png`
-  a.click()
-}
-
 function handleDownloadQr() {
   const a = document.createElement('a')
   a.href = qrImageUrl.value
@@ -1567,13 +1491,20 @@ async function generatePoster(draw: LotteryDraw) {
     ctx.fillText(`${startTime} ~ ${endTime}`, W / 2, 150)
   }
 
-  // 二维码区域
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrDrawUrl.value || '')}`
-  const qrImg = await loadImage(qrUrl)
+  // 投放信息区域：不把远程二维码图片绘制进 canvas，避免跨域污染导致海报无法下载。
   const qrSize = 160
   const qrX = (W - qrSize) / 2
   const qrY = 180
-  ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize)
+  ctx.fillStyle = 'rgba(255,255,255,0.08)'
+  ctx.fillRect(qrX, qrY, qrSize, qrSize)
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 16px sans-serif'
+  ctx.fillText('参与链接', W / 2, qrY + 46)
+  ctx.fillStyle = '#cbd5e1'
+  ctx.font = '12px monospace'
+  const linkText = qrDrawUrl.value || publicShareUrl(draw.publicSlug)
+  ctx.fillText(linkText.length > 34 ? `${linkText.slice(0, 34)}...` : linkText, W / 2, qrY + 84)
+  ctx.fillText('二维码请在活动列表单独下载', W / 2, qrY + 118)
 
   // 二维码提示
   ctx.fillStyle = '#9aa4b2'
@@ -1584,17 +1515,6 @@ async function generatePoster(draw: LotteryDraw) {
   ctx.fillStyle = 'rgba(255,255,255,0.4)'
   ctx.font = '10px sans-serif'
   ctx.fillText('由抽奖平台提供技术支持', W / 2, H - 20)
-}
-
-/** 加载图片 */
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => resolve(img)
-    img.onerror = reject
-    img.src = src
-  })
 }
 
 /** 下载海报 */

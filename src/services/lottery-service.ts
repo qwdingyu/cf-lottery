@@ -1894,7 +1894,7 @@ export async function healDrawingState(
 export async function createPrize(
   db: DbType,
   tenantId: string,
-  data: { name: string; description?: string; prizeType?: string },
+  data: { name: string; description?: string; prizeType?: string; imageUrl?: string; value?: string },
 ) {
   const id = crypto.randomUUID();
   await db.insert(prizes).values({
@@ -1902,6 +1902,7 @@ export async function createPrize(
     tenantId,
     name: data.name,
     description: data.description || "",
+    imageUrl: data.imageUrl || "",   // 奖品图片 URL（可选）
     prizeType: data.prizeType || "code",  // 默认卡密类型
   });
   return { id };
