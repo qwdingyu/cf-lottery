@@ -628,6 +628,29 @@
             </div>
           </section>
 
+          <!-- 活动后承接：未中奖自动发券（仅抽奖活动，需显式启用） -->
+          <section v-if="form.activityKind === 'lottery'" class="form-section" aria-labelledby="lottery-loserreward">
+            <header class="form-section-head">
+              <h4 id="lottery-loserreward" class="form-section-title">活动后承接</h4>
+              <p class="form-section-desc">未中奖用户自动发放优惠券，把流失用户转化为可再营销的潜在客户</p>
+            </header>
+            <div class="form-grid two-cols">
+              <label class="field-span-2">
+                <span>未中奖自动发券</span>
+                <select v-model="loserRewardEnabled" @change="syncLoserReward">
+                  <option :value="false">关闭</option>
+                  <option :value="true">启用</option>
+                </select>
+                <small class="field-hint">启用后，开奖时自动给未中奖用户发放优惠券码</small>
+              </label>
+              <label v-if="loserRewardEnabled" class="field-span-2">
+                <span>优惠券标签（可选）</span>
+                <input v-model="loserRewardCouponLabel" maxlength="50" placeholder="指定发放某个 label 的券池，留空发任意可用券" @change="syncLoserReward" />
+                <small class="field-hint">先在「奖品管理 → 优惠券」导入优惠券，可设置标签区分券池</small>
+              </label>
+            </div>
+          </section>
+
           <section class="form-section" aria-labelledby="lottery-prizes">
             <header class="form-section-head">
               <h4 id="lottery-prizes" class="form-section-title">{{ $t('lottery.adminSectionPrizes') }}</h4>
@@ -967,7 +990,14 @@ type SurveyFieldForm = {
 type ActivityConfigForm =
   | { version: 1; kind: 'survey'; fields: SurveyFieldForm[] }
   | { version: 1; kind: 'vote'; selection: 'single'; options: Array<{ id: string; label: string; description: string; imageUrl: string }> }
-  | { version?: 1; kind?: string; fields?: SurveyFieldForm[]; options?: Array<{ id: string; label: string; description?: string; imageUrl?: string }> };
+  | {
+      version?: 1;
+      kind?: string;
+      fields?: SurveyFieldForm[];
+      options?: Array<{ id: string; label: string; description?: string; imageUrl?: string }>;
+      /** 未中奖自动发券（安慰奖）：仅 lottery 活动生效，enabled 默认 false */
+      loserReward?: { enabled: boolean; couponLabel: string };
+    };
 
 type LotteryWinner = {
   id: string; drawId: string; tierId: string; entryId: string;
@@ -1215,7 +1245,8 @@ function defaultActivityConfigForKind(kind: string): ActivityConfigForm {
       ],
     }
   }
-  return { version: 1, kind }
+  // lottery 默认配置：未中奖自动发券默认关闭，需运营者显式启用
+  return { version: 1, kind, loserReward: { enabled: false, couponLabel: '' } }
 }
 
 function normalizeActivityConfig(kind: string, config: any): ActivityConfigForm {
@@ -1286,6 +1317,24 @@ const rosterInput = ref('')
 const inviteCodeCount = ref(10)
 /** 奖品库（用于奖项配置下拉选择） */
 const prizeOptions = ref<any[]>([])
+
+// ── 活动后承接：未中奖自动发券开关（表单编辑用，保存时同步进 activityConfig.loserReward） ──
+const loserRewardEnabled = ref(false)
+const loserRewardCouponLabel = ref('')
+
+/** 把开关状态同步进 form.activityConfig.loserReward */
+function syncLoserReward() {
+  const config = form.value.activityConfig as any
+  config.loserReward = { enabled: loserRewardEnabled.value, couponLabel: loserRewardCouponLabel.value }
+}
+
+/** 从 form.activityConfig.loserReward 回填开关状态（编辑活动时调用） */
+function initLoserRewardFromConfig() {
+  const config = form.value.activityConfig as any
+  const lr = config?.loserReward
+  loserRewardEnabled.value = Boolean(lr?.enabled)
+  loserRewardCouponLabel.value = lr?.couponLabel || ''
+}
 
 /** 加载奖品库 */
 async function loadPrizeOptions() {
@@ -2214,6 +2263,8 @@ async function handleEdit(draw: LotteryDraw) {
     activityConfig: normalizeActivityConfig(draw.activityKind || 'lottery', draw.activityConfig) as any,
   }
   isEditing.value = true
+  // 回填未中奖自动发券开关状态
+  initLoserRewardFromConfig()
   showCreateModal.value = true
 }
 
@@ -2307,9 +2358,18 @@ async function handleCreate() {
       // 模板和活动类型默认值必须原样传给后端，否则问卷/签到/资料领取会被误建成 manual 抽奖语义。
       resultMode: form.value.resultMode || defaultResultModeForActivity(form.value.activityKind || 'lottery'),
       allocationPolicy: form.value.allocationPolicy || 'capacity',
-      activityConfig: ['survey', 'vote'].includes(form.value.activityKind || '')
-        ? normalizeActivityConfig(form.value.activityKind || 'lottery', form.value.activityConfig)
-        : undefined,
+      activityConfig: (() => {
+        // survey/vote 发送完整内容配置；lottery 发送活动后承接（未中奖自动发券）配置
+        if (['survey', 'vote'].includes(form.value.activityKind || '')) {
+          return normalizeActivityConfig(form.value.activityKind || 'lottery', form.value.activityConfig)
+        }
+        if (form.value.activityKind === 'lottery') {
+          syncLoserReward()
+          const config = form.value.activityConfig as any
+          return { version: 1, kind: 'lottery', loserReward: config?.loserReward || { enabled: false, couponLabel: '' } }
+        }
+        return undefined
+      })(),
       accessPassword: form.value.accessPassword || '',
       // 导流：商品链接（启用时发送，关闭时发送 undefined）
       productLink: form.value.enableProductLink && form.value.productLink.url

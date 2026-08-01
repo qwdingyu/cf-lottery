@@ -96,7 +96,7 @@ export default {
     switchToRegister: "Register",
     switchToLogin: "Back to login",
     email: "Email",
-    emailPlaceholder: "your@email.com",
+    emailPlaceholder: "Enter your email address",
     regUsernamePlaceholder: "4-20 chars, letters, digits and underscores",
     regPasswordPlaceholder: "At least 8 chars, with letters and digits",
     sendCode: "Sending code…",
@@ -384,7 +384,7 @@ export default {
       },
       email_alias_block_enabled: {
         label: "Block Email + Aliases",
-        description: "Reject addresses whose local-part contains +, such as user+tag@domain.com. Disabled by default. Purchase limits and OTP still canonicalize aliases even when this is off.",
+        description: "Reject addresses whose local-part contains +, such as user plus tag at domain dot com. Disabled by default. Purchase limits and OTP still canonicalize aliases even when this is off.",
         effect: "Shares the domain-policy entry points: code sending, new order/recharge writes, and balance lookup. Successful idempotent replay and existing orders are unaffected.",
       },
       email_domain_whitelist: {
@@ -419,7 +419,7 @@ export default {
       },
       email_from: {
         label: "Resend Sender",
-        description: "Verified Resend sender, for example \"eshop <noreply@eforge.xyz>\".",
+        description: "Verified Resend sender, for example \"eshop <noreply at eforge.xyz>\".",
         effect: "sendEmail uses this as the sender; when missing, the code fallback is used.",
       },
       turnstile_secret_key: {

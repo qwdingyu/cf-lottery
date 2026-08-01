@@ -98,7 +98,7 @@ export default {
     switchToRegister: "注册",
     switchToLogin: "返回登录",
     email: "邮箱",
-    emailPlaceholder: "your@email.com",
+    emailPlaceholder: "请输入邮箱地址",
     regUsernamePlaceholder: "4-20 个字符，字母数字下划线",
     regPasswordPlaceholder: "至少 8 位，包含字母和数字",
     sendCode: "发送验证码…",

@@ -243,12 +243,14 @@ publicLotteryRoute.post("/draws/:slug/events", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
-  // 限流：同一 IP 每分钟最多 3 次请求验证码（比参与限流更严格，防恶意刷邮件）
   const ip = c.req.header("CF-Connecting-IP") || "unknown";
-  if (!checkRateLimit(`access-code:${ip}`, 3, 60000)) {
+  const db = getDb(c);
+  // 读取系统配置的验证码限流值（闭环：L3 配置 → 公开参与限流生效）
+  const [rlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_access_code")).limit(1);
+  const accessCodeLimit = Math.min(Math.max(parseInt(rlCfg?.value || "", 10) || 3, 1), 100);
+  if (!checkRateLimit(`access-code:${ip}`, accessCodeLimit, 60000)) {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
-  const db = getDb(c);
   const slug = c.req.param("slug");
   const body = await c.req.json<{ email: string }>();
   const email = String(body.email || "").trim().toLowerCase();

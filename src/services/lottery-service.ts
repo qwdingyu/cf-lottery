@@ -45,6 +45,7 @@ import {
   shareRecords,          // 分享裂变归因
   externalConversions,   // 外部成交/核销/注册回传事实
   activitySubmissions,   // 动态表单提交 payload
+  couponCodes,           // 优惠券码池（用于未中奖自动发券）
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
@@ -1902,6 +1903,93 @@ export async function sendWinnerNotifications(
         .where(eq(lotteryWinners.id, winner.winnerId));
     }
   }
+}
+
+/**
+ * 活动后承接：未中奖自动发券（安慰奖）。
+ *
+ * 由 performDraw 开奖完成后调用，对参与但未中奖的用户从优惠券码池发放优惠券，
+ * 把"没中奖的流失用户"转化为"可再营销的潜在客户"。
+ *
+ * 开关控制：活动配置 activityConfig.loserReward.enabled 必须为 true 才启用。
+ * 发券池：活动配置 activityConfig.loserReward.couponLabel 指定从哪个 label 的
+ *         coupon_codes 池中取码；未指定时用任意 available 码。
+ *
+ * 安全与一致性：
+ * - 不阻塞开奖主流程（由调用方 try/catch 包裹）
+ * - 单码原子发放（CAS：WHERE status='available'），并发安全
+ * - 优惠券不足时发放部分，不失败回滚
+ */
+export async function grantLoserRewards(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+): Promise<{ granted: number; totalLosers: number }> {
+  // 读取活动配置，确认是否启用未中奖发券
+  const [draw] = await db
+    .select({ activityConfig: lotteryDraws.activityConfig, title: lotteryDraws.title })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+  if (!draw) return { granted: 0, totalLosers: 0 };
+
+  let config: { loserReward?: { enabled?: boolean; couponLabel?: string } } = {};
+  try { config = JSON.parse(draw.activityConfig || "{}"); } catch { config = {}; }
+  const loserReward = config.loserReward;
+  // 默认关闭：未显式启用时不做任何发券，避免误发
+  if (!loserReward?.enabled) return { granted: 0, totalLosers: 0 };
+
+  // 查询全部参与记录
+  const entries = await db
+    .select({ id: lotteryEntries.id, identityValue: lotteryEntries.identityValue })
+    .from(lotteryEntries)
+    .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId)));
+
+  // 查询已中奖者（排除中奖者，只给未中奖的发放）
+  const winners = await db
+    .select({ entryId: lotteryWinners.entryId })
+    .from(lotteryWinners)
+    .where(and(eq(lotteryWinners.tenantId, tenantId), eq(lotteryWinners.drawId, drawId)));
+  const winnerEntryIds = new Set(winners.map((w) => w.entryId));
+
+  const losers = entries.filter((e) => !winnerEntryIds.has(e.id));
+  if (losers.length === 0) return { granted: 0, totalLosers: 0 };
+
+  // 从优惠券码池取 available 码（按 label 过滤，未指定时取任意）
+  const couponConditions = [
+    eq(couponCodes.tenantId, tenantId),
+    eq(couponCodes.status, "available"),
+  ];
+  if (loserReward.couponLabel) {
+    couponConditions.push(eq(couponCodes.label, loserReward.couponLabel));
+  }
+  const availableCoupons = await db
+    .select({ id: couponCodes.id, code: couponCodes.code })
+    .from(couponCodes)
+    .where(and(...couponConditions))
+    .orderBy(couponCodes.createdAt)
+    .limit(losers.length);
+
+  let granted = 0;
+  for (let i = 0; i < losers.length && i < availableCoupons.length; i++) {
+    const loser = losers[i]!;
+    const coupon = availableCoupons[i]!;
+    // CAS 原子发放：仅当仍为 available 时更新为 issued，并记录领取人
+    const result = await db.update(couponCodes)
+      .set({
+        status: "issued",
+        recipientEmail: loser.identityValue,
+        drawId,
+        redeemedAt: new Date().toISOString(),
+      })
+      .where(and(
+        eq(couponCodes.id, coupon.id),
+        eq(couponCodes.status, "available"),
+      ));
+    if ((result.rowsAffected ?? 0) > 0) granted++;
+  }
+
+  return { granted, totalLosers: losers.length };
 }
 
 /**

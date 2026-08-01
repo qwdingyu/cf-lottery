@@ -12,7 +12,7 @@ import { createDb, type DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
-import { activityEvents, activitySubmissions, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
+import { activityEvents, activitySubmissions, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 let client: Client;
@@ -547,4 +547,70 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.eventType).toBe("cta_click");
   });
+
+  it("活动后承接：未启用时开奖不发券，启用后未中奖用户自动获券", async () => {
+    await seedOwner();
+    const app = createTestApp();
+
+    // 准备优惠券码池（label = '安慰奖'）
+    await db.insert(couponCodes).values({ id: "c1", tenantId: TENANT_ID, code: "COUPON-1", label: "安慰奖", status: "available" });
+    await db.insert(couponCodes).values({ id: "c2", tenantId: TENANT_ID, code: "COUPON-2", label: "安慰奖", status: "available" });
+
+    // 场景 1：未启用 loserReward（默认），开奖后不发券
+    const { id: drawId1, publicSlug: slug1 } = await createAndPublish(app, "lottery");
+    // 2 人参与
+    await joinByEmail(app, slug1, "loser1@test.com");
+    await joinByEmail(app, slug1, "loser2@test.com");
+    // 开奖（1 个中奖者）
+    await app.request(`/api/admin/draws/${drawId1}/draw`, { method: "POST", headers: { ...(await authHeader()) } }, TEST_ENV);
+    // 未启用：优惠券不应被发放（仍 available）
+    const [c1] = await db.select().from(couponCodes).where(eq(couponCodes.id, "c1"));
+    expect(c1?.status).toBe("available");
+
+    // 场景 2：启用 loserReward，开奖后未中奖用户获券
+    const { id: drawId2, publicSlug: slug2 } = await createAndPublish(app, "lottery");
+    // 配置活动后承接（未中奖自动发券）
+    await db.update(lotteryDraws).set({ activityConfig: JSON.stringify({ version: 1, kind: "lottery", loserReward: { enabled: true, couponLabel: "安慰奖" } }) }).where(eq(lotteryDraws.id, drawId2));
+    // 3 人参与，1 人中奖 → 2 人未中奖获券
+    await joinByEmail(app, slug2, "winner@test.com");
+    await joinByEmail(app, slug2, "lose1@test.com");
+    await joinByEmail(app, slug2, "lose2@test.com");
+    await app.request(`/api/admin/draws/${drawId2}/draw`, { method: "POST", headers: { ...(await authHeader()) } }, TEST_ENV);
+
+    // 2 张券应被发放（状态 issued + recipientEmail 非空）
+    const issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued.length).toBe(2);
+    // 发放对象是未中奖用户
+    expect(issued.map(c => c.recipientEmail).sort()).toEqual(["lose1@test.com", "lose2@test.com"]);
+  });
+
+  it("活动后承接：优惠券不足时只发放可用数量，中奖者不发券", async () => {
+    await seedOwner();
+    const app = createTestApp();
+
+    // 只准备 1 张券，但 3 人参与（1 中奖 + 2 未中奖）→ 只发 1 张
+    await db.insert(couponCodes).values({ id: "c3", tenantId: TENANT_ID, code: "COUPON-3", label: "安慰奖", status: "available" });
+
+    const { id, publicSlug } = await createAndPublish(app, "lottery");
+    await db.update(lotteryDraws).set({ activityConfig: JSON.stringify({ version: 1, kind: "lottery", loserReward: { enabled: true, couponLabel: "安慰奖" } }) }).where(eq(lotteryDraws.id, id));
+
+    await joinByEmail(app, publicSlug, "winner@test.com");
+    await joinByEmail(app, publicSlug, "lose1@test.com");
+    await joinByEmail(app, publicSlug, "lose2@test.com");
+    await app.request(`/api/admin/draws/${id}/draw`, { method: "POST", headers: { ...(await authHeader()) } }, TEST_ENV);
+
+    // 只有 1 张券被发放
+    const issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued.length).toBe(1);
+  });
 });
+
+/** 通过公开端参与（open 模式直接参与，无需验证码） */
+async function joinByEmail(app: Hono, slug: string, email: string) {
+  const res = await app.request(`/api/public/draws/${slug}/join`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.9.1" },
+    body: JSON.stringify({ email }),
+  }, TEST_ENV);
+  expect(res.status).toBe(200);
+}

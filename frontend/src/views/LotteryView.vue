@@ -639,7 +639,8 @@ const trackedPageViews = new Set<string>()
 function ensureSubmissionDraft(draw: LotteryDraw) {
   if (!requiresActivitySubmission(draw) || submissionDrafts.value[draw.id]) return
   const fields: Record<string, any> = {}
-  if (draw.activityConfig?.kind === 'survey') {
+  // 防御：activityConfig.fields 可能未配置（如投票活动没有字段），遍历前兜底为空数组
+  if (draw.activityConfig?.kind === 'survey' && Array.isArray(draw.activityConfig.fields)) {
     for (const field of draw.activityConfig.fields) {
       fields[field.id] = field.type === 'checkbox' ? [] : ''
     }
@@ -670,7 +671,9 @@ function validateSubmissionDraft(draw: LotteryDraw): string {
     return draft.optionId ? '' : '请选择一个投票选项'
   }
   if (draw.activityConfig?.kind === 'survey') {
-    for (const field of draw.activityConfig.fields) {
+    // 防御：fields 未配置时跳过校验
+    const fields = Array.isArray(draw.activityConfig.fields) ? draw.activityConfig.fields : []
+    for (const field of fields) {
       const value = draft.fields[field.id]
       const empty = value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
       if (field.required && empty) return `请填写：${field.label}`

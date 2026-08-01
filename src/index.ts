@@ -8,7 +8,9 @@ import { cors } from "hono/cors";
 import type { AppEnv, Bindings } from "./bindings";
 import { createClient } from "@libsql/client";
 import { createDb } from "./db/client";
+import { and, sql } from "drizzle-orm";
 import { fail } from "./lib/http";
+import { systemConfig, auditLogs, lotteryDraws } from "./db/schema";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
@@ -62,8 +64,45 @@ export async function runScheduledMaintenance(
   const cleanedRateLimitLogs = await cleanExpiredRateLimits(db);
   // 平台运营后台依赖快照展示租户用量；放进统一维护任务，保证 scheduled 和手动入口行为一致。
   const usageSnapshots = await refreshAllTenantSnapshots(db);
+  // 数据保留清理：根据系统配置定期删除过期数据（兜底：未配置 = 不清理）
+  const cleanedRetention = await runRetentionCleanup(db);
 
-  return { draws, webhooks, cleanedRateLimitLogs, usageSnapshots: usageSnapshots.processed };
+  return { draws, webhooks, cleanedRateLimitLogs, usageSnapshots: usageSnapshots.processed, cleanedRetention };
+}
+
+/**
+ * 数据保留清理：读取系统配置的 data_retention_days 和 audit_log_retention_days，
+ * 清理过期的草稿/已取消活动以及审计日志。
+ * 仅在 cron/maintenance 定时任务中触发，不在热路径执行。
+ */
+async function runRetentionCleanup(db: ReturnType<typeof createDb>) {
+  const rows = await db.select({ key: systemConfig.key, value: systemConfig.value })
+    .from(systemConfig)
+    .where(sql`${systemConfig.key} IN ('data_retention_days', 'audit_log_retention_days')`);
+  const cfg: Record<string, number> = {};
+  for (const row of rows) cfg[row.key] = parseInt(row.value, 10) || 0;
+
+  const dataDays = cfg["data_retention_days"] || 0;
+  const auditDays = cfg["audit_log_retention_days"] || 0;
+  let deletedData = 0;
+  let deletedAudit = 0;
+
+  if (dataDays > 0) {
+    const cutoff = new Date(Date.now() - dataDays * 86400000).toISOString();
+    const result = await db.delete(lotteryDraws).where(and(
+      sql`${lotteryDraws.status} IN ('draft', 'cancelled')`,
+      sql`${lotteryDraws.updatedAt} < ${cutoff}`,
+    ));
+    deletedData = result.rowsAffected ?? 0;
+  }
+
+  if (auditDays > 0) {
+    const cutoff = new Date(Date.now() - auditDays * 86400000).toISOString();
+    const result = await db.delete(auditLogs).where(sql`${auditLogs.createdAt} < ${cutoff}`);
+    deletedAudit = result.rowsAffected ?? 0;
+  }
+
+  return { deletedDataRows: deletedData, deletedAuditRows: deletedAudit };
 }
 
 // ── CORS（允许前端跨域请求） ──

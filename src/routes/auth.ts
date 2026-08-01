@@ -215,13 +215,16 @@ authRoute.post("/verify-email", async (c) => {
 /** 登录（仅已验证邮箱的用户可登录） */
 authRoute.post("/login", async (c) => {
   const ip = c.req.header("CF-Connecting-IP") || "unknown";
-  if (!checkRateLimit(`login:${ip}`, 5, 60000)) {
+  const db = getDb(c);
+  // 读取系统配置的登录限流值（闭环：L3 配置 → 登录限流生效）
+  const [rlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_login")).limit(1);
+  const loginLimit = Math.min(Math.max(parseInt(rlCfg?.value || "", 10) || 5, 1), 100);
+  if (!checkRateLimit(`login:${ip}`, loginLimit, 60000)) {
     return c.json({ ok: false, message: "登录过于频繁，请稍后再试" }, 429);
   }
 
-  const db = getDb(c);
   // 数据库级限流：多实例下全局一致
-  if (!(await checkDbRateLimit(db, `login:${ip}`, 5, 60000))) {
+  if (!(await checkDbRateLimit(db, `login:${ip}`, loginLimit, 60000))) {
     return c.json({ ok: false, message: "登录过于频繁，请稍后再试" }, 429);
   }
 
