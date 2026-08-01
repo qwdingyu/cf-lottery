@@ -176,6 +176,12 @@
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs"
+                  :title="'生成海报'"
+                  @click="handleShowPoster(draw)"
+                >海报</button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   :title="'查看活动漏斗和外部回传'"
                   @click="handleViewAnalytics(draw)"
@@ -769,6 +775,21 @@
         </div>
       </div>
     </AdminModal>
+
+    <!-- 海报弹窗 -->
+    <AdminModal v-model="showPosterModal" title="活动海报" max-width="500px">
+      <div class="poster-modal-body">
+        <div class="poster-canvas-wrap">
+          <canvas ref="posterCanvasRef" class="poster-canvas" :width="posterWidth" :height="posterHeight" />
+        </div>
+        <div class="poster-actions">
+          <button class="btn btn-primary btn-sm" :disabled="posterGenerating" @click="handleDownloadPoster">
+            {{ posterGenerating ? '生成中…' : '下载海报' }}
+          </button>
+          <button class="btn btn-ghost btn-sm" @click="showPosterModal = false">关闭</button>
+        </div>
+      </div>
+    </AdminModal>
   </div>
 </template>
 
@@ -776,7 +797,7 @@
 /**
  * 抽奖管理页 — cf-lottery 适配版。
  */
-import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -906,6 +927,7 @@ const buildLotteryDuplicateDraft = (draw: any, opts: { nameSuffix: string; defau
   activityKind: draw.activityKind || 'lottery',
   allocationPolicy: draw.allocationPolicy || 'capacity',
   experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'),
+  resultMode: draw.resultMode || defaultResultModeForActivity(draw.activityKind || 'lottery'),
   accessPassword: '',
 });
 const buildLotteryDrawConfirmMessage = (draw: any, labels: any) => `${labels.title}\n${labels.name}${draw.title}\n${labels.pool}${draw.entryCount || 0}\n${labels.willDraw}${Math.min(Number(draw.entryCount)||0, draw.winnerCount)}`;
@@ -932,6 +954,12 @@ const showWinnersModal = ref(false)
 const showAnalyticsModal = ref(false)
 const showQrModal = ref(false)
 const qrImageUrl = ref('')
+const showPosterModal = ref(false)
+const posterGenerating = ref(false)
+const posterCanvasRef = ref<HTMLCanvasElement | null>(null)
+const posterWidth = 400
+const posterHeight = 560
+const posterDrawData = ref<any>(null)
 const qrDrawUrl = ref('')
 const winners = ref<LotteryWinner[]>([])
 const winnersLoading = ref(false)
@@ -1027,6 +1055,7 @@ const emptyForm = () => ({
   activityKind: 'lottery',
   participationMode: 'open',
   experienceType: 'wheel',
+  resultMode: 'manual',
   allocationPolicy: 'capacity',
   accessPassword: '',
   showWinners: false,
@@ -1089,17 +1118,86 @@ function defaultExperienceForParticipation(participationMode: string): string {
 
 function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
   if (activityKind === 'signup_chain') return 'list'
+  if (activityKind === 'reservation') return 'calendar'
+  if (activityKind === 'vote') return 'ballot'
+  if (activityKind === 'survey') return 'form'
+  if (activityKind === 'checkin') return 'checkin'
+  if (activityKind === 'waitlist') return 'queue'
+  if (activityKind === 'approval') return 'form'
+  if (activityKind === 'claim') return 'reveal'
   return defaultExperienceForParticipation(participationMode)
 }
 
+function defaultResultModeForActivity(activityKind: string): string {
+  if (activityKind === 'signup_chain') return 'ordered_assignment'
+  if (activityKind === 'reservation') return 'capacity_assignment'
+  if (activityKind === 'vote') return 'vote_tally'
+  if (activityKind === 'survey') return 'no_result'
+  if (activityKind === 'checkin') return 'no_result'
+  if (activityKind === 'waitlist') return 'ordered_assignment'
+  if (activityKind === 'approval') return 'review_decision'
+  if (activityKind === 'claim') return 'instant'
+  return 'manual'
+}
+
 function handleActivityKindChange() {
-  if (form.value.activityKind === 'signup_chain') {
-    form.value.experienceType = 'list'
-    form.value.allocationPolicy = form.value.allocationPolicy || 'capacity'
-  } else {
-    form.value.experienceType = defaultExperienceForParticipation(form.value.participationMode || 'open')
-    form.value.allocationPolicy = 'capacity'
+  const kind = form.value.activityKind || 'lottery'
+  form.value.experienceType = defaultExperienceForActivity(kind, form.value.participationMode || 'open')
+  form.value.resultMode = defaultResultModeForActivity(kind)
+  form.value.allocationPolicy = kind === 'signup_chain' ? 'waitlist' : kind === 'approval' ? 'approval' : 'capacity'
+  form.value.winnerCount = kind === 'lottery' ? Math.max(1, Number(form.value.winnerCount) || 1) : 0
+}
+
+function handleParticipationModeChange() {
+  form.value.experienceType = defaultExperienceForActivity(form.value.activityKind || 'lottery', form.value.participationMode || 'open')
+}
+
+function activityKindLabel(kind: string): string {
+  const map: Record<string, string> = {
+    lottery: '抽奖',
+    signup_chain: '接龙 / 报名',
+    claim: '资料领取 / 领券',
+    survey: '问卷调研',
+    vote: '投票评选',
+    checkin: '签到 / 打卡',
+    reservation: '预约确认',
+    approval: '审核申请',
+    waitlist: '候补名单',
   }
+  return map[kind] || kind || '-'
+}
+
+function experienceTypeLabel(type: string): string {
+  const map: Record<string, string> = {
+    submit: '普通提交',
+    wheel: '大转盘',
+    slot: '老虎机',
+    scratch: '刮刮卡',
+    card: '卡片翻转',
+    list: '接龙列表',
+    calendar: '预约日历',
+    form: '表单提交',
+    ballot: '投票选项',
+    checkin: '签到按钮',
+    queue: '排队队列',
+    reveal: '领取揭晓',
+    grid: '九宫格',
+  }
+  return map[type] || type || '-'
+}
+
+function resultModeLabel(mode: string): string {
+  const map: Record<string, string> = {
+    manual: '手动开奖',
+    scheduled: '定时开奖',
+    instant: '即时结果',
+    ordered_assignment: '按顺序分配',
+    capacity_assignment: '按容量确认',
+    vote_tally: '投票统计',
+    review_decision: '人工审核',
+    no_result: '只记录提交',
+  }
+  return map[mode] || mode || '-'
 }
 
 function canDeleteDraw(draw: LotteryDraw): boolean {
@@ -1286,6 +1384,82 @@ function handleShowQrCode(draw: LotteryDraw) {
   showQrModal.value = true
 }
 
+async function handleShowPoster(draw: LotteryDraw) {
+  posterDrawData.value = draw
+  showPosterModal.value = true
+  posterGenerating.value = true
+  await nextTick()
+  drawPoster(draw)
+  posterGenerating.value = false
+}
+
+function drawPoster(draw: LotteryDraw) {
+  const canvas = posterCanvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const url = publicShareUrl(draw.publicSlug)
+  ctx.clearRect(0, 0, posterWidth, posterHeight)
+
+  const gradient = ctx.createLinearGradient(0, 0, posterWidth, posterHeight)
+  gradient.addColorStop(0, '#0f172a')
+  gradient.addColorStop(1, '#1f2937')
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, posterWidth, posterHeight)
+
+  ctx.fillStyle = '#f59e0b'
+  ctx.fillRect(28, 28, 54, 4)
+
+  ctx.fillStyle = '#f8fafc'
+  ctx.font = '700 30px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+  wrapCanvasText(ctx, draw.title || '活动邀请', 28, 88, posterWidth - 56, 40, 3)
+
+  ctx.fillStyle = '#cbd5e1'
+  ctx.font = '16px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+  wrapCanvasText(ctx, draw.description || activityKindLabel(draw.activityKind), 28, 230, posterWidth - 56, 24, 4)
+
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'
+  ctx.fillRect(28, 384, posterWidth - 56, 104)
+  ctx.fillStyle = '#f8fafc'
+  ctx.font = '600 16px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText('参与链接', 48, 420)
+  ctx.fillStyle = '#cbd5e1'
+  ctx.font = '14px ui-monospace, SFMono-Regular, Menlo, monospace'
+  wrapCanvasText(ctx, url, 48, 450, posterWidth - 96, 20, 2)
+
+  ctx.fillStyle = '#94a3b8'
+  ctx.font = '13px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText('复制链接或使用二维码投放活动', 28, 530)
+}
+
+function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number, maxLines: number) {
+  const chars = Array.from(text)
+  let line = ''
+  let lines = 0
+  for (const char of chars) {
+    const nextLine = line + char
+    if (ctx.measureText(nextLine).width > maxWidth && line) {
+      ctx.fillText(line, x, y + lines * lineHeight)
+      line = char
+      lines += 1
+      if (lines >= maxLines) return
+    } else {
+      line = nextLine
+    }
+  }
+  if (line && lines < maxLines) ctx.fillText(line, x, y + lines * lineHeight)
+}
+
+function handleDownloadPoster() {
+  const canvas = posterCanvasRef.value
+  if (!canvas) return
+  const a = document.createElement('a')
+  a.href = canvas.toDataURL('image/png')
+  a.download = `activity-poster-${posterDrawData.value?.publicSlug || 'draft'}.png`
+  a.click()
+}
+
 function handleDownloadQr() {
   const a = document.createElement('a')
   a.href = qrImageUrl.value
@@ -1296,6 +1470,142 @@ function handleDownloadQr() {
 function handleCopyQrLink() {
   writeClipboardText(qrDrawUrl.value)
   showToast('链接已复制', 'success')
+}
+
+/* ── 海报生成 ──────────────────────────────────────────── */
+
+/** 生成活动海报 */
+async function handleShowPoster(draw: LotteryDraw) {
+  posterDrawData.value = draw
+  // 设置二维码链接
+  const origin = window.location.origin
+  const url = `${origin}/lottery/${draw.publicSlug}`
+  qrDrawUrl.value = url
+  showPosterModal.value = true
+  posterGenerating.value = true
+  // 等待 DOM 渲染后生成海报
+  await nextTick()
+  await generatePoster(draw)
+  posterGenerating.value = false
+}
+
+/** 用 Canvas 绘制海报 */
+async function generatePoster(draw: LotteryDraw) {
+  const canvas = posterCanvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const W = posterWidth
+  const H = posterHeight
+  const platformName = '抽奖平台'
+
+  // 清空画布
+  ctx.clearRect(0, 0, W, H)
+
+  // 背景渐变
+  const gradient = ctx.createLinearGradient(0, 0, 0, H)
+  gradient.addColorStop(0, '#1a1a2e')
+  gradient.addColorStop(0.5, '#16213e')
+  gradient.addColorStop(1, '#0f3460')
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, W, H)
+
+  // 装饰线条
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)'
+  ctx.lineWidth = 1
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath()
+    ctx.moveTo(0, i * 120 + 30)
+    ctx.lineTo(W, i * 120 + 30)
+    ctx.stroke()
+  }
+
+  // 顶部品牌标识
+  ctx.fillStyle = '#f59e0b'
+  ctx.font = 'bold 18px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText(platformName, W / 2, 40)
+
+  // 分隔线
+  ctx.strokeStyle = '#f59e0b'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(W / 2 - 40, 52)
+  ctx.lineTo(W / 2 + 40, 52)
+  ctx.stroke()
+
+  // 活动标题
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 22px sans-serif'
+  ctx.textAlign = 'center'
+  const title = draw.title || '活动'
+  const maxTitleWidth = W - 60
+  let displayTitle = title
+  if (ctx.measureText(title).width > maxTitleWidth) {
+    displayTitle = title.slice(0, 12) + '…'
+  }
+  ctx.fillText(displayTitle, W / 2, 95)
+
+  // 活动类型标签
+  const kindMap: Record<string, string> = {
+    lottery: '抽奖', signup_chain: '报名接龙', claim: '资料领取',
+    survey: '问卷调研', vote: '投票评选', checkin: '每日签到',
+    approval: '审核申请', reservation: '限量预约',
+  }
+  const kindLabel = kindMap[draw.activityKind || 'lottery'] || '活动'
+  ctx.fillStyle = '#f59e0b'
+  ctx.font = '13px sans-serif'
+  ctx.fillText(kindLabel, W / 2, 120)
+
+  // 活动时间
+  ctx.fillStyle = '#9aa4b2'
+  ctx.font = '12px sans-serif'
+  const startTime = draw.startTime ? formatDate(draw.startTime) : ''
+  const endTime = draw.endTime ? formatDate(draw.endTime) : ''
+  if (startTime && endTime) {
+    ctx.fillText(`${startTime} ~ ${endTime}`, W / 2, 150)
+  }
+
+  // 二维码区域
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrDrawUrl.value || '')}`
+  const qrImg = await loadImage(qrUrl)
+  const qrSize = 160
+  const qrX = (W - qrSize) / 2
+  const qrY = 180
+  ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize)
+
+  // 二维码提示
+  ctx.fillStyle = '#9aa4b2'
+  ctx.font = '12px sans-serif'
+  ctx.fillText('扫码参与活动', W / 2, qrY + qrSize + 25)
+
+  // 底部信息
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'
+  ctx.font = '10px sans-serif'
+  ctx.fillText('由抽奖平台提供技术支持', W / 2, H - 20)
+}
+
+/** 加载图片 */
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = src
+  })
+}
+
+/** 下载海报 */
+async function handleDownloadPoster() {
+  const canvas = posterCanvasRef.value
+  if (!canvas) return
+  const a = document.createElement('a')
+  a.href = canvas.toDataURL('image/png')
+  a.download = 'poster.png'
+  a.click()
+  showToast('海报已下载', 'success')
 }
 
 function handleExportWinners() {
@@ -1334,6 +1644,7 @@ function handleDuplicate(draw: LotteryDraw) {
     activityKind: draft.activityKind || 'lottery',
     allocationPolicy: draft.allocationPolicy || 'capacity',
     experienceType: draft.experienceType,
+    resultMode: draft.resultMode,
     accessPassword: draft.accessPassword,
     enableProductLink: false,
     productLink: { url: '', title: '', imageUrl: '', price: '' },
@@ -1432,6 +1743,7 @@ function applyTemplate(tpl: any) {
     description: '',
     activityKind: tpl.defaults.activityKind,
     experienceType: tpl.defaults.experienceType,
+    resultMode: tpl.defaults.resultMode || defaultResultModeForActivity(tpl.defaults.activityKind),
     participationMode: tpl.defaults.participationMode,
     allocationPolicy: tpl.defaults.allocationPolicy,
     winnerCount: tpl.defaults.winnerCount,
@@ -1479,13 +1791,13 @@ async function loadData() {
   }
 }
 
-async function handleOpen(id: string) {
-  operatingId.value = id
+async function handleOpen(draw: LotteryDraw) {
+  operatingId.value = draw.id
   try {
-    await openLotteryDraw(requireToken(), id)
-    // 开启后立刻把投放链接放进剪贴板，少一步手动复制
+    await openLotteryDraw(requireToken(), draw.id)
+    // 发布后复制公开 slug 链接，避免把内部活动 id 发给参与者导致公开页 404。
     try {
-      await writeClipboardText(publicShareUrl(id))
+      await writeClipboardText(publicShareUrl(draw.publicSlug))
       showToast(t('lottery.adminOpenedWithLink'), 'success')
     } catch {
       showToast(t('lottery.adminDrawOpened'), 'success')
@@ -1626,7 +1938,7 @@ async function handlePause(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmPause')))) return
   operatingId.value = id
   try {
-    await fetchAdminLottery(requireToken(), `lottery/draws/${id}/pause`, 'POST')
+    await fetchAdminLottery(requireToken(), `/api/admin/draws/${id}/pause`, 'POST')
     showToast(t('lottery.adminPaused'), 'success')
     await loadData()
   } catch (e: any) {
@@ -1640,7 +1952,7 @@ async function handlePause(id: string) {
 async function handleResume(id: string) {
   operatingId.value = id
   try {
-    await fetchAdminLottery(requireToken(), `lottery/draws/${id}/resume`, 'POST')
+    await fetchAdminLottery(requireToken(), `/api/admin/draws/${id}/resume`, 'POST')
     showToast(t('lottery.adminResumed'), 'success')
     await loadData()
   } catch (e: any) {
@@ -1671,6 +1983,7 @@ async function handleEdit(draw: LotteryDraw) {
     activityKind: draw.activityKind || 'lottery',
     allocationPolicy: draw.allocationPolicy || 'capacity',
     experienceType: draw.experienceType || defaultExperienceForActivity(draw.activityKind || 'lottery', draw.participationMode || 'open'),
+    resultMode: draw.resultMode || defaultResultModeForActivity(draw.activityKind || 'lottery'),
   }
   isEditing.value = true
   showCreateModal.value = true
@@ -1757,12 +2070,14 @@ async function handleCreate() {
       startAt: dateTimeLocalToIso(form.value.startTime),
       endAt: dateTimeLocalToIso(form.value.endTime),
       drawAt: form.value.drawTime ? dateTimeLocalToIso(form.value.drawTime) : undefined,
-      winnerCount: Number(form.value.winnerCount) || 1,
+      winnerCount: form.value.activityKind === 'lottery' ? Number(form.value.winnerCount) || 1 : 0,
       maxParticipants: form.value.maxParticipants ? Number(form.value.maxParticipants) : undefined,
       participationMode: form.value.participationMode || 'open',
       experienceType: form.value.experienceType || defaultExperienceForActivity(form.value.activityKind || 'lottery', form.value.participationMode || 'open'),
       activityKind: form.value.activityKind || 'lottery',
-      resultMode: form.value.activityKind === 'signup_chain' ? 'ordered_assignment' : 'manual',
+      // resultMode 是“结果什么时候/如何产生”的业务语义，不能由抽奖旧逻辑统一覆盖。
+      // 模板和活动类型默认值必须原样传给后端，否则问卷/签到/资料领取会被误建成 manual 抽奖语义。
+      resultMode: form.value.resultMode || defaultResultModeForActivity(form.value.activityKind || 'lottery'),
       allocationPolicy: form.value.allocationPolicy || 'capacity',
       accessPassword: form.value.accessPassword || '',
       // 导流：商品链接（启用时发送，关闭时发送 undefined）
@@ -1898,6 +2213,12 @@ onMounted(loadData)
 .qr-image { width: 240px; height: 240px; border-radius: 8px; background: #fff; padding: 8px; }
 .qr-hint { font-size: 13px; color: var(--tg-hint, #9aa4b2); }
 .qr-actions { display: flex; gap: 8px; }
+
+/* 海报弹窗 */
+.poster-modal-body { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.poster-canvas-wrap { border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+.poster-canvas { display: block; width: 100%; height: auto; }
+.poster-actions { display: flex; gap: 8px; }
 
 .analytics-modal-body {
   display: flex;

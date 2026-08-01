@@ -1,0 +1,125 @@
+<template>
+  <div class="admin-page">
+    <section class="section">
+      <h3 class="section-title">兑换额度</h3>
+      <p class="muted-text">输入平台发放的额度码，为当前租户增加活动次数或参与人数额度。</p>
+
+      <form class="redeem-form" @submit.prevent="handleRedeem">
+        <label>
+          <span>额度码</span>
+          <input
+            v-model="code"
+            type="text"
+            autocomplete="off"
+            maxlength="64"
+            placeholder="LUCKY-XXXX-XXXX-XXXX"
+            required
+          />
+          <small class="field-hint">兑换码只会作用于当前登录租户，不会展示平台码池。</small>
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
+          {{ submitting ? '兑换中...' : '兑换' }}
+        </button>
+      </form>
+    </section>
+
+    <section v-if="result" class="section">
+      <h3 class="section-title">兑换结果</h3>
+      <div class="stats-row">
+        <div class="stat-card">
+          <span class="stat-value">{{ result.activityQuota }}</span>
+          <span class="stat-label">新增活动次数</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value">{{ result.participantQuota }}</span>
+          <span class="stat-label">新增参与人数</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value quota-expiry">{{ formatDate(result.expiresAt) }}</span>
+          <span class="stat-label">额度有效期</span>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="filters">
+          <button class="btn btn-ghost btn-sm" type="button" @click="router.push('/admin')">查看运营台</button>
+          <button class="btn btn-primary btn-sm" type="button" @click="router.push('/admin/draws')">创建活动</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { useToast } from '@/composables/useToast'
+import { formatDate } from '@/composables/useFormat'
+
+type RedeemResult = {
+  redeemed: boolean
+  activityQuota: number
+  participantQuota: number
+  expiresAt: string
+}
+
+const ADMIN_REDEMPTION_REDEEM_API = '/api/admin/redemption-codes/redeem'
+
+const router = useRouter()
+const { showToast } = useToast()
+const code = ref('')
+const submitting = ref(false)
+const result = ref<RedeemResult | null>(null)
+
+async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = (() => { try { return localStorage.getItem('admin_token') || '' } catch { return '' } })()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(path, { ...options, headers })
+  const data = await res.json()
+  if (!data.ok) throw new Error(data.message || `请求失败: ${res.status}`)
+  return data as T
+}
+
+async function handleRedeem() {
+  const normalizedCode = code.value.trim().toUpperCase()
+  if (!normalizedCode) {
+    showToast('请输入额度码', 'error')
+    return
+  }
+
+  submitting.value = true
+  try {
+    // 租户只能兑换额度；平台发码、查码池、统计都在 /api/platform/redemption-codes。
+    result.value = await adminRequest<RedeemResult>(ADMIN_REDEMPTION_REDEEM_API, {
+      method: 'POST',
+      body: JSON.stringify({ code: normalizedCode }),
+    })
+    code.value = ''
+    showToast('额度已兑换', 'success')
+  } catch (err: any) {
+    showToast(err?.message || '兑换失败', 'error')
+  } finally {
+    submitting.value = false
+  }
+}
+</script>
+
+<style scoped>
+.redeem-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 420px) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.quota-expiry {
+  font-size: 15px;
+}
+
+@media (max-width: 720px) {
+  .redeem-form {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

@@ -72,6 +72,11 @@ const router = createRouter({
           name: 'AdminBlacklist',
           component: () => import('@/views/admin/AdminBlacklistView.vue'),
         },
+        {
+          path: 'quota-redeem',
+          name: 'AdminQuotaRedeem',
+          component: () => import('@/views/admin/AdminQuotaRedeemView.vue'),
+        },
       ],
     },
     // 平台运营后台（L3），与租户后台（/admin）路由分离
