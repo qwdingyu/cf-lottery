@@ -18,7 +18,17 @@
           </div>
         </div>
       </div>
-      <div class="slot-lever" @click="handlePull" :class="{ pulling: spinning }">
+      <div
+        class="slot-lever"
+        role="button"
+        :tabindex="disabled ? -1 : 0"
+        :aria-label="spinning ? '抽奖中' : '拉动拉杆'"
+        :aria-disabled="disabled || spinning"
+        @click="handlePull"
+        @keydown.enter="handlePull"
+        @keydown.space.prevent="handlePull"
+        :class="{ pulling: spinning }"
+      >
         <span class="lever-text">{{ spinning ? '...' : '拉杆' }}</span>
       </div>
     </div>

@@ -12,16 +12,21 @@
         class="scratch-canvas"
         :width="300"
         :height="200"
+        role="img"
+        :aria-label="scratched ? '已刮开' : '刮开涂层参与抽奖'"
+        :tabindex="disabled ? -1 : 0"
         @mousedown="startScratch"
         @mousemove="scratch"
-        @mouseup="stopScratch"
-        @mouseleave="stopScratch"
-        @touchstart.prevent="startScratchTouch"
-        @touchmove.prevent="scratchTouch"
-        @touchend="stopScratch"
+        @mouseup="endScratch"
+        @mouseleave="endScratch"
+        @touchstart.prevent="startTouchScratch"
+        @touchmove.prevent="touchScratch"
+        @touchend="endScratch"
+        @keydown.enter="quickScratch"
+        @keydown.space.prevent="quickScratch"
       />
     </div>
-    <p v-if="!scratched" class="scratch-hint">用手指刮开涂层查看奖品</p>
+    <p v-if="!scratched" class="scratch-hint">刮开涂层参与抽奖</p>
     <button
       v-if="scratched"
       type="button"
@@ -100,10 +105,37 @@ function getTouchPos(e: TouchEvent) {
 
 function startScratch(e: MouseEvent) { isDrawing.value = true; scratchAt(e.offsetX, e.offsetY) }
 function scratch(e: MouseEvent) { if (isDrawing.value) scratchAt(e.offsetX, e.offsetY) }
-function stopScratch() { isDrawing.value = false }
-function startScratchTouch(e: TouchEvent) { isDrawing.value = true; scratchAt(getTouchPos(e).x, getTouchPos(e).y) }
-function scratchTouch(e: TouchEvent) {
+function endScratch() { isDrawing.value = false; checkScratched() }
+function startTouchScratch(e: TouchEvent) { isDrawing.value = true; scratchAt(getTouchPos(e).x, getTouchPos(e).y) }
+function touchScratch(e: TouchEvent) {
   if (isDrawing.value) { const p = getTouchPos(e); scratchAt(p.x, p.y) }
+}
+function quickScratch() {
+  if (scratched.value || isDrawing.value) return
+  // 键盘/无障碍快捷刮开
+  const canvas = canvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.clearRect(0, 0, 300, 200)
+  scratched.value = true
+  emit('play')
+}
+function checkScratched() {
+  if (scratched.value) return
+  const canvas = canvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const imageData = ctx.getImageData(0, 0, 300, 200)
+  let transparent = 0
+  for (let i = 3; i < imageData.data.length; i += 4) {
+    if (imageData.data[i]! < 128) transparent++
+  }
+  if (transparent / (300 * 200) > 0.5) {
+    scratched.value = true
+    emit('play')
+  }
 }
 
 onMounted(initCanvas)

@@ -9,7 +9,16 @@
         :height="canvasSize"
       />
       <!-- 指针 -->
-      <div class="wheel-pointer" @click="handleSpin">
+      <div
+        class="wheel-pointer"
+        role="button"
+        :tabindex="disabled ? -1 : 0"
+        :aria-label="spinning ? '抽奖中' : '点击开始抽奖'"
+        :aria-disabled="disabled || spinning"
+        @click="handleSpin"
+        @keydown.enter="handleSpin"
+        @keydown.space.prevent="handleSpin"
+      >
         <span class="pointer-text">{{ spinning ? '...' : '抽奖' }}</span>
       </div>
     </div>
