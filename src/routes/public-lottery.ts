@@ -314,7 +314,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
   }
   const db = getDb(c);
   const slug = c.req.param("slug");
-  const body = await c.req.json<{ email: string; code: string; accessPassword?: string; inviteCode?: string; refCode?: string }>();
+  const body = await c.req.json<{ email: string; code: string; accessPassword?: string; inviteCode?: string; refCode?: string; submission?: Record<string, unknown> }>();
   const email = String(body.email || "").trim().toLowerCase();
   const code = String(body.code || "").trim();
 
@@ -354,7 +354,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     return fail(c, "验证码无效或已过期", 400);
   }
 
-  // 标记验证码为已使用
+  // 标记验证码为已使用（先占位，参与失败时恢复）
   await db.update(emailAccessCodes)
     .set({ used: 1 })
     .where(eq(emailAccessCodes.id, validCode.id));
@@ -366,16 +366,23 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       ipHash: ip,
       refCode: body.refCode,
       userAgent: c.req.header("User-Agent") || "",
+      // 传递动态表单提交 payload（问卷/投票/资料领取等）
+      submissionPayload: body.submission,
     });
     if (!result.joined) {
+      // 参与失败（容量满/名单不匹配/邀请码无效等）：恢复验证码，允许用户修改条件后重试
+      await db.update(emailAccessCodes).set({ used: 0 }).where(eq(emailAccessCodes.id, validCode.id));
       return fail(c, result.message || "参与失败", 400);
     }
     return ok(c, {
       joined: true,
       activityKind: draw.activityKind || "lottery",
       outcome: "outcome" in result ? result.outcome : undefined,
+      submissionId: "submissionId" in result ? result.submissionId : undefined,
     });
   } catch (err: any) {
+    // 异常（UNIQUE 约束冲突等）：恢复验证码，允许用户重试
+    await db.update(emailAccessCodes).set({ used: 0 }).where(eq(emailAccessCodes.id, validCode.id));
     if (err.message?.includes("UNIQUE constraint")) {
       return fail(c, "您已参与此活动", 409);
     }
@@ -394,7 +401,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
   const db = getDb(c);
-  const body = await c.req.json<{ email: string; refCode?: string }>();
+  const body = await c.req.json<{ email: string; refCode?: string; submission?: Record<string, unknown> }>();
   const email = String(body.email || "").trim().toLowerCase();
 
   if (!email || !email.includes("@")) {
@@ -406,6 +413,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
       ipHash: ip,
       refCode: body.refCode,
       userAgent: c.req.header("User-Agent") || "",
+      submissionPayload: body.submission,
     });
     if (!result.joined) {
       return fail(c, result.message || "参与失败", 400);
@@ -414,6 +422,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
       joined: true,
       activityKind: "activityKind" in result ? result.activityKind : undefined,
       outcome: "outcome" in result ? result.outcome : undefined,
+      submissionId: "submissionId" in result ? result.submissionId : undefined,
     });
   } catch (err) {
     if (err instanceof Error && err.message.includes("UNIQUE constraint")) {
