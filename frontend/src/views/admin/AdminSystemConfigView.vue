@@ -32,14 +32,6 @@
     </div>
 
     <div class="config-scroll">
-      <div
-        v-if="!loading && !loadError && activeSection === 'security'"
-        class="status-banner"
-        :class="turnstileBannerClass"
-      >
-        {{ turnstileBannerText }}
-      </div>
-
       <div v-if="loading" class="skeleton-list">
         <div v-for="i in 6" :key="i" class="skeleton-line w-80" />
       </div>
@@ -53,17 +45,6 @@
             </div>
             <span class="config-count">{{ $t('adminConfig.itemCount', { count: activeSectionItemCount }) }}</span>
           </div>
-
-          <p v-if="activeSection === 'payment'" class="config-crosslink">
-            {{ $t('adminConfig.paymentCrosslink') }}
-            <RouterLink class="config-crosslink-a" to="/admin/payment">{{ $t('adminConfig.paymentPageLink') }}</RouterLink>
-            {{ $t('adminConfig.paymentPageNote') }}
-          </p>
-          <p v-if="activeSection === 'referral'" class="config-crosslink">
-            {{ $t('adminConfig.referralCrosslink1') }}
-            <RouterLink class="config-crosslink-a" to="/admin/referral-codes">{{ $t('adminConfig.referralLink') }}</RouterLink>
-            {{ $t('adminConfig.referralCrosslink2') }}
-          </p>
 
           <div v-if="activeGroupedDefinitions.length === 0" class="empty-text config-empty">
             {{ $t('adminConfig.noData') }}
