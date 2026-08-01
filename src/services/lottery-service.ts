@@ -34,6 +34,9 @@ import {
   auditLogs,             // 审计日志表
   lotteryBlacklist,      // 参与者黑名单
   activityOutcomes,      // 接龙/预约等活动的统一结果
+  tenants,               // SaaS 租户与套餐
+  tenantMembers,         // 团队成员配额统计
+  webhookConfigs,        // Webhook 配额统计
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
@@ -60,6 +63,104 @@ export type ActivityOutcome = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type TenantPlanLimits = {
+  plan: string;
+  maxActivities: number | null;
+  maxParticipantsPerActivity: number;
+  maxMembers: number | null;
+  maxWebhooks: number | null;
+};
+
+const DEFAULT_ACTIVITY_PARTICIPANT_CAP = 5000;
+
+const PLAN_LIMITS: Record<string, Omit<TenantPlanLimits, "plan">> = {
+  free: {
+    maxActivities: 10,
+    maxParticipantsPerActivity: 200,
+    maxMembers: 2,
+    maxWebhooks: 0,
+  },
+  pro: {
+    maxActivities: 200,
+    maxParticipantsPerActivity: 5000,
+    maxMembers: 10,
+    maxWebhooks: 3,
+  },
+  team: {
+    maxActivities: 1000,
+    maxParticipantsPerActivity: 20000,
+    maxMembers: 50,
+    maxWebhooks: 10,
+  },
+  enterprise: {
+    maxActivities: null,
+    maxParticipantsPerActivity: 100000,
+    maxMembers: null,
+    maxWebhooks: null,
+  },
+};
+
+export function getTenantPlanLimits(plan?: string | null): TenantPlanLimits {
+  const normalized = String(plan || "free").trim().toLowerCase();
+  const limits = PLAN_LIMITS[normalized] || PLAN_LIMITS.free!;
+  return { plan: PLAN_LIMITS[normalized] ? normalized : "free", ...limits };
+}
+
+export async function getTenantUsage(db: DbType, tenantId: string) {
+  const [tenant] = await db
+    .select({ plan: tenants.plan })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .limit(1);
+  const plan = tenant?.plan || "free";
+  const limits = getTenantPlanLimits(plan);
+
+  const [{ total: activityCount }] = await db
+    .select({ total: count() })
+    .from(lotteryDraws)
+    .where(and(
+      eq(lotteryDraws.tenantId, tenantId),
+      sql`${lotteryDraws.status} <> 'cancelled'`,
+    ));
+
+  const [{ total: memberCount }] = await db
+    .select({ total: count() })
+    .from(tenantMembers)
+    .where(eq(tenantMembers.tenantId, tenantId));
+
+  const [{ total: webhookCount }] = await db
+    .select({ total: count() })
+    .from(webhookConfigs)
+    .where(and(eq(webhookConfigs.tenantId, tenantId), eq(webhookConfigs.active, 1)));
+
+  return {
+    plan: limits.plan,
+    limits,
+    usage: {
+      activities: Number(activityCount || 0),
+      members: Number(memberCount || 0),
+      webhooks: Number(webhookCount || 0),
+    },
+  };
+}
+
+async function enforceTenantActivityQuota(
+  db: DbType,
+  tenantId: string,
+  requestedMaxParticipants?: number,
+) {
+  const usage = await getTenantUsage(db, tenantId);
+  if (usage.limits.maxActivities !== null && usage.usage.activities >= usage.limits.maxActivities) {
+    throw new Error(`当前套餐最多可保留 ${usage.limits.maxActivities} 个活动，请升级套餐或删除草稿活动`);
+  }
+
+  if (requestedMaxParticipants !== undefined && requestedMaxParticipants > usage.limits.maxParticipantsPerActivity) {
+    throw new Error(`当前套餐单活动最多允许 ${usage.limits.maxParticipantsPerActivity} 人参与，请降低名额或升级套餐`);
+  }
+
+  return usage.limits;
+}
 
 /* ── 内部工具 ─────────────────────────────────────────────── */
 
@@ -184,13 +285,19 @@ export async function createDraw(
     promotionConfig?: string;      // 活动引擎导流配置，JSON 字符串
   },
 ) {
+  const requestedMaxParticipants = data.maxParticipants ? Number(data.maxParticipants) : undefined;
+  const planLimits = await enforceTenantActivityQuota(db, tenantId, requestedMaxParticipants);
+  const activityKind = data.activityKind || "lottery";
+  const drawTrigger = data.drawTrigger || "manual";
+  const winnerCount = normalizeWinnerCount(activityKind, data.winnerCount);
+
   // 校验参与时间合法性
   const start = new Date(data.startAt);
   const end = new Date(data.endAt);
   if (start >= end) throw new Error("参与开始时间必须早于结束时间");
 
   // 定时开奖必须设置开奖时间
-  if (data.drawTrigger === "scheduled" && !data.drawAt) {
+  if (drawTrigger === "scheduled" && !data.drawAt) {
     throw new Error("定时开奖必须设置开奖时间");
   }
 
@@ -200,8 +307,8 @@ export async function createDraw(
     if (end >= draw) throw new Error("开奖时间必须在参与结束后");
   }
 
-  // 中奖名额至少为 1
-  if (!data.winnerCount || data.winnerCount < 1) {
+  // 只有抽奖类活动要求中奖名额；接龙、问卷、预约等不应被 winner 语义绑住。
+  if (requiresWinnerCount(activityKind) && winnerCount < 1) {
     throw new Error("中奖名额至少为 1");
   }
 
@@ -209,9 +316,8 @@ export async function createDraw(
   // 取 UUID 前 8 位作为公开链接 slug，不可枚举
   const publicSlug = crypto.randomUUID().slice(0, 8);
   const now = new Date().toISOString();
-  const activityKind = data.activityKind || "lottery";
   const experienceType = data.experienceType || defaultExperienceForActivity(activityKind, data.participationMode || "open");
-  const resultMode = data.resultMode || data.drawTrigger || (activityKind === "signup_chain" ? "ordered_assignment" : "manual");
+  const resultMode = data.resultMode || defaultResultModeForActivity(activityKind, drawTrigger);
 
   await db.insert(lotteryDraws).values({
     id,
@@ -222,7 +328,7 @@ export async function createDraw(
     activityKind,
     participationMode: data.participationMode || "open",
     experienceType,
-    drawTrigger: data.drawTrigger || "manual",
+    drawTrigger,
     resultMode,
     allocationPolicy: data.allocationPolicy || (activityKind === "signup_chain" ? "capacity" : "capacity"),
     policyVersion: data.policyVersion || 1,
@@ -230,8 +336,8 @@ export async function createDraw(
     endAt: data.endAt,
     drawAt: data.drawAt || null,
     accessPassword: data.accessPassword ? await hashAccessPassword(data.accessPassword) : "",
-    maxParticipants: data.maxParticipants || 5000, // 默认上限 5000，防止候选池过大导致 Worker OOM
-    winnerCount: data.winnerCount || 1,
+    maxParticipants: requestedMaxParticipants || Math.min(DEFAULT_ACTIVITY_PARTICIPANT_CAP, planLimits.maxParticipantsPerActivity),
+    winnerCount,
     showParticipantCount: data.showParticipantCount ?? 1,
     showWinnerCount: data.showWinnerCount ?? 1,
     showWinnerList: data.showWinnerList ?? 0,
@@ -254,7 +360,36 @@ function defaultExperienceForParticipation(participationMode: string): string {
 
 function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
   if (activityKind === "signup_chain") return "list";
+  if (activityKind === "reservation") return "calendar";
+  if (activityKind === "vote") return "ballot";
+  if (activityKind === "survey") return "form";
+  if (activityKind === "checkin") return "checkin";
+  if (activityKind === "waitlist") return "queue";
+  if (activityKind === "approval") return "form";
+  if (activityKind === "claim") return "reveal";
   return defaultExperienceForParticipation(participationMode);
+}
+
+function defaultResultModeForActivity(activityKind: string, drawTrigger: string): string {
+  if (activityKind === "signup_chain") return "ordered_assignment";
+  if (activityKind === "reservation") return "capacity_assignment";
+  if (activityKind === "vote") return "vote_tally";
+  if (activityKind === "survey") return "no_result";
+  if (activityKind === "checkin") return "no_result";
+  if (activityKind === "waitlist") return "ordered_assignment";
+  if (activityKind === "approval") return "review_decision";
+  if (activityKind === "claim") return "instant";
+  if (activityKind === "assignment") return "ordered_assignment";
+  return drawTrigger === "scheduled" ? "scheduled" : "manual";
+}
+
+function requiresWinnerCount(activityKind: string): boolean {
+  return activityKind === "lottery";
+}
+
+function normalizeWinnerCount(activityKind: string, winnerCount?: number): number {
+  if (!requiresWinnerCount(activityKind)) return winnerCount ?? 0;
+  return winnerCount ?? 1;
 }
 
 /**

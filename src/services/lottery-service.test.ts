@@ -14,6 +14,7 @@ import {
   getDraw,
   getDrawWinners,
   getActivityOutcomes,
+  getTenantUsage,
   createPrize,
   importPrizeCodes,
   randomSelect,
@@ -106,6 +107,12 @@ beforeAll(async () => {
     UNIQUE(tenant_id, draw_id, outcome_type, sequence_no),
     UNIQUE(tenant_id, draw_id, outcome_type, assignment_no)
   )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS webhook_configs (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, url TEXT NOT NULL,
+    events TEXT NOT NULL DEFAULT '["draw.completed","prize.issued"]',
+    active INTEGER NOT NULL DEFAULT 1, last_sent_at TEXT, last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
   await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)", args: [USER, "test", "hash"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO tenant_members (tenant_id, user_id) VALUES (?, ?)", args: [TENANT, USER] });
@@ -122,6 +129,8 @@ afterEach(async () => {
   await client.execute("DELETE FROM prize_codes");
   await client.execute("DELETE FROM prizes");
   await client.execute("DELETE FROM audit_logs");
+  await client.execute("DELETE FROM webhook_configs");
+  await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["free", TENANT] });
 });
 
 /* ── 辅助函数 ── */
@@ -347,6 +356,131 @@ describe("租户隔离", () => {
   it("租户 A 看不到租户 B 的活动", async () => {
     const { id } = await setupDraw("open");
     expect(await getDraw(db, id, "other-tenant")).toBeNull();
+  });
+});
+
+describe("SaaS 套餐配额", () => {
+  it("free：单活动参与上限不能超过套餐限制", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    await expect(createDraw(db, TENANT, {
+      title: "超额活动",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      maxParticipants: 201,
+      winnerCount: 1,
+    })).rejects.toThrow("单活动最多允许 200 人");
+  });
+
+  it("free：默认参与上限按套餐收敛", async () => {
+    const { id } = await createDraw(db, TENANT, {
+      title: "默认名额",
+      startAt: new Date().toISOString(),
+      endAt: new Date(Date.now() + 3600000).toISOString(),
+      winnerCount: 1,
+    });
+    const draw = await getDraw(db, id, TENANT);
+    expect(draw?.maxParticipants).toBe(200);
+  });
+
+  it("free：最多保留 10 个非取消活动", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    for (let i = 0; i < 10; i++) {
+      await createDraw(db, TENANT, {
+        title: `活动 ${i}`,
+        startAt: now.toISOString(),
+        endAt: future.toISOString(),
+        winnerCount: 1,
+      });
+    }
+
+    await expect(createDraw(db, TENANT, {
+      title: "第 11 个活动",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      winnerCount: 1,
+    })).rejects.toThrow("最多可保留 10 个活动");
+
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.usage.activities).toBe(10);
+    expect(usage.usage.members).toBe(1);
+    expect(usage.usage.webhooks).toBe(0);
+    expect(usage.limits.maxActivities).toBe(10);
+  });
+
+  it("pro：允许更高的单活动参与上限", async () => {
+    await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["pro", TENANT] });
+    const { id } = await createDraw(db, TENANT, {
+      title: "专业版活动",
+      startAt: new Date().toISOString(),
+      endAt: new Date(Date.now() + 3600000).toISOString(),
+      maxParticipants: 1000,
+      winnerCount: 1,
+    });
+    const draw = await getDraw(db, id, TENANT);
+    expect(draw?.maxParticipants).toBe(1000);
+  });
+});
+
+describe("活动引擎默认规则", () => {
+  it("signup_chain：不传 winnerCount/resultMode/experienceType 也按接龙语义创建", async () => {
+    const { id } = await createDraw(db, TENANT, {
+      title: "默认接龙",
+      startAt: new Date().toISOString(),
+      endAt: new Date(Date.now() + 3600000).toISOString(),
+      activityKind: "signup_chain",
+      participationMode: "open",
+      allocationPolicy: "waitlist",
+      maxParticipants: 10,
+    });
+
+    const draw = await getDraw(db, id, TENANT);
+    expect(draw?.activityKind).toBe("signup_chain");
+    expect(draw?.experienceType).toBe("list");
+    expect(draw?.resultMode).toBe("ordered_assignment");
+    expect(draw?.allocationPolicy).toBe("waitlist");
+    expect(draw?.winnerCount).toBe(0);
+  });
+
+  it("survey：不需要中奖名额，默认是表单和无结果模式", async () => {
+    const { id } = await createDraw(db, TENANT, {
+      title: "问卷活动",
+      startAt: new Date().toISOString(),
+      endAt: new Date(Date.now() + 3600000).toISOString(),
+      activityKind: "survey",
+      participationMode: "open",
+    });
+
+    const draw = await getDraw(db, id, TENANT);
+    expect(draw?.experienceType).toBe("form");
+    expect(draw?.resultMode).toBe("no_result");
+    expect(draw?.winnerCount).toBe(0);
+  });
+
+  it("lottery：显式传 0 个中奖名额会被拒绝", async () => {
+    await expect(createDraw(db, TENANT, {
+      title: "无中奖名额抽奖",
+      startAt: new Date().toISOString(),
+      endAt: new Date(Date.now() + 3600000).toISOString(),
+      activityKind: "lottery",
+      winnerCount: 0,
+    })).rejects.toThrow("中奖名额至少为 1");
+  });
+
+  it("lottery：定时开奖默认使用 scheduled 结果模式", async () => {
+    const endAt = new Date(Date.now() + 3600000);
+    const { id } = await createDraw(db, TENANT, {
+      title: "定时抽奖",
+      startAt: new Date().toISOString(),
+      endAt: endAt.toISOString(),
+      drawAt: new Date(endAt.getTime() + 3600000).toISOString(),
+      drawTrigger: "scheduled",
+    });
+
+    const draw = await getDraw(db, id, TENANT);
+    expect(draw?.resultMode).toBe("scheduled");
+    expect(draw?.winnerCount).toBe(1);
   });
 });
 

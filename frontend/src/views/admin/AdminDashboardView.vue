@@ -21,6 +21,14 @@
         <span class="stat-value">{{ stats.totalWinners }}</span>
         <span class="stat-label">累计中奖</span>
       </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ planLabel }}</span>
+        <span class="stat-label">当前套餐</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ quotaText }}</span>
+        <span class="stat-label">活动用量</span>
+      </div>
     </div>
 
     <div class="toolbar">
@@ -61,7 +69,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/composables/useFormat'
@@ -69,8 +77,30 @@ import { formatDate } from '@/composables/useFormat'
 const router = useRouter()
 const { showToast } = useToast()
 
-const stats = ref({ open: 0, draft: 0, drawn: 0, recentParticipants: 0, totalWinners: 0 })
+const stats = ref({
+  open: 0,
+  draft: 0,
+  drawn: 0,
+  recentParticipants: 0,
+  totalWinners: 0,
+  plan: 'free',
+  activityUsage: 0,
+  activityLimit: 10 as number | null,
+})
 const recentDraws = ref<any[]>([])
+
+const planLabelMap: Record<string, string> = {
+  free: 'Free',
+  pro: 'Pro',
+  team: 'Team',
+  enterprise: 'Enterprise',
+}
+const planLabel = computed(() => planLabelMap[stats.value.plan] || stats.value.plan)
+const quotaText = computed(() =>
+  stats.value.activityLimit === null
+    ? `${stats.value.activityUsage} / ∞`
+    : `${stats.value.activityUsage} / ${stats.value.activityLimit}`,
+)
 
 function statusLabel(status: string): string {
   const map: Record<string,string> = { draft:'草稿', open:'进行中', paused:'已暂停', drawing:'开奖中', drawn:'已开奖', cancelled:'已取消' };
@@ -106,6 +136,9 @@ async function loadData() {
       drawn: statsData.drawnDraws ?? 0,
       recentParticipants: statsData.recentParticipants ?? 0,
       totalWinners: statsData.totalWinners ?? 0,
+      plan: statsData.plan || 'free',
+      activityUsage: statsData.usage?.activities ?? statsData.totalDraws ?? 0,
+      activityLimit: statsData.limits?.maxActivities ?? null,
     }
   } catch (err: any) {
     showToast(err.message || '加载失败', 'error')

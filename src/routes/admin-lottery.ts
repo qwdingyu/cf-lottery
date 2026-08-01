@@ -22,6 +22,8 @@ import {
   getEntries,
   getDrawEntriesCount,
   getActivityOutcomes,
+  getTenantUsage,
+  hashAccessPassword,
   createPrize,
   importPrizeCodes,
 } from "../services/lottery-service";
@@ -30,9 +32,34 @@ export const adminLotteryRoute = new Hono<AppEnv>();
 
 const ACTIVITY_KINDS = new Set(["lottery", "signup_chain", "reservation", "vote", "survey", "checkin", "waitlist", "approval", "claim"]);
 const PARTICIPATION_MODES = new Set(["open", "roster", "password", "invite_code"]);
-const EXPERIENCE_TYPES = new Set(["submit", "wheel", "slot", "scratch", "card"]);
+const EXPERIENCE_TYPES = new Set([
+  "submit",
+  "wheel",
+  "slot",
+  "scratch",
+  "card",
+  "list",
+  "calendar",
+  "form",
+  "ballot",
+  "quiz",
+  "checkin",
+  "queue",
+  "reveal",
+  "grid",
+]);
 const DRAW_TRIGGERS = new Set(["manual", "scheduled"]);
-const RESULT_MODES = new Set(["manual", "scheduled", "instant", "ordered_assignment"]);
+const RESULT_MODES = new Set([
+  "manual",
+  "scheduled",
+  "instant",
+  "ordered_assignment",
+  "capacity_assignment",
+  "vote_tally",
+  "review_decision",
+  "no_result",
+]);
+const ALLOCATION_POLICIES = new Set(["capacity", "waitlist", "fifo", "priority", "random", "weighted_random", "approval"]);
 
 // 所有管理端路由需要登录
 adminLotteryRoute.use("*", requireAuth);
@@ -46,6 +73,7 @@ adminLotteryRoute.get("/dashboard", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const now = new Date().toISOString();
+  const tenantUsage = await getTenantUsage(db, tenantId);
 
   // 活动状态统计
   const [openRow] = await db
@@ -87,6 +115,9 @@ adminLotteryRoute.get("/dashboard", async (c) => {
     drawnCount: Number(drawnRow?.count || 0),
     dueCount: Number(dueRow?.count || 0),
     failedNotifyCount: Number(failedNotifyRow?.count || 0),
+    plan: tenantUsage.plan,
+    limits: tenantUsage.limits,
+    usage: tenantUsage.usage,
   });
 });
 
@@ -117,6 +148,7 @@ adminLotteryRoute.get("/me", async (c) => {
   return ok(c, {
     user,
     tenant: tenant || { id: tenantId, name: "", plan: "free" },
+    quota: await getTenantUsage(db, tenantId),
   });
 });
 
@@ -227,21 +259,32 @@ adminLotteryRoute.post("/draws", async (c) => {
       if (err) return fail(c, err, 400);
     }
 
+    const activityKind = coerceEnum(body.activityKind, ACTIVITY_KINDS, "lottery");
+    const participationMode = coerceEnum(body.participationMode, PARTICIPATION_MODES, "open");
+    const drawTrigger = coerceEnum(body.drawTrigger, DRAW_TRIGGERS, "manual");
+
     const { id, publicSlug } = await createDraw(db, tenantId, {
       title: String(body.title || ""),
       description: String(body.description || ""),
-      activityKind: coerceEnum(body.activityKind, ACTIVITY_KINDS, "lottery"),
-      participationMode: coerceEnum(body.participationMode, PARTICIPATION_MODES, "open"),
-      experienceType: coerceEnum(body.experienceType, EXPERIENCE_TYPES, defaultExperienceForParticipation(String(body.participationMode || "open"))),
-      drawTrigger: coerceEnum(body.drawTrigger, DRAW_TRIGGERS, "manual"),
-      resultMode: coerceEnum(body.resultMode || body.drawTrigger, RESULT_MODES, "manual"),
+      activityKind,
+      participationMode,
+      experienceType: body.experienceType !== undefined
+        ? coerceEnum(body.experienceType, EXPERIENCE_TYPES, defaultExperienceForActivity(activityKind, participationMode))
+        : undefined,
+      drawTrigger,
+      resultMode: body.resultMode !== undefined
+        ? coerceEnum(body.resultMode, RESULT_MODES, defaultResultModeForActivity(activityKind, drawTrigger))
+        : undefined,
+      allocationPolicy: body.allocationPolicy !== undefined
+        ? coerceEnum(body.allocationPolicy, ALLOCATION_POLICIES, "capacity")
+        : undefined,
       policyVersion: 1,
       startAt: String(body.startAt || ""),
       endAt: String(body.endAt || ""),
       drawAt: body.drawAt || undefined,
       accessPassword: String(body.accessPassword || ""),
       maxParticipants: body.maxParticipants ? Number(body.maxParticipants) : undefined,
-      winnerCount: body.winnerCount ? Number(body.winnerCount) : 1,
+      winnerCount: body.winnerCount !== undefined ? Number(body.winnerCount) : undefined,
       productLink: body.productLink ? JSON.stringify(body.productLink) : "{}",
       promotionConfig: body.promotionConfig && typeof body.promotionConfig === "object" ? JSON.stringify(body.promotionConfig) : "{}",
     });
@@ -284,6 +327,14 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     if (err) return fail(c, err, 400);
   }
 
+  if (body.maxParticipants !== undefined && body.maxParticipants !== null) {
+    const maxParticipants = Number(body.maxParticipants);
+    const quota = await getTenantUsage(db, tenantId);
+    if (maxParticipants > quota.limits.maxParticipantsPerActivity) {
+      return fail(c, `当前套餐单活动最多允许 ${quota.limits.maxParticipantsPerActivity} 人参与，请降低名额或升级套餐`, 403);
+    }
+  }
+
   await db
     .update(lotteryDraws)
     .set({
@@ -291,19 +342,21 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       ...(body.description !== undefined ? { description: body.description } : {}),
       ...(body.activityKind !== undefined ? { activityKind: coerceEnum(body.activityKind, ACTIVITY_KINDS, "lottery") } : {}),
       ...(body.participationMode !== undefined ? { participationMode: coerceEnum(body.participationMode, PARTICIPATION_MODES, draw.participationMode) } : {}),
-      ...(body.experienceType !== undefined ? { experienceType: coerceEnum(body.experienceType, EXPERIENCE_TYPES, draw.experienceType || defaultExperienceForParticipation(draw.participationMode)) } : {}),
+      ...(body.experienceType !== undefined ? { experienceType: coerceEnum(body.experienceType, EXPERIENCE_TYPES, draw.experienceType || defaultExperienceForActivity(draw.activityKind || "lottery", draw.participationMode)) } : {}),
       ...(body.drawTrigger !== undefined ? { drawTrigger: coerceEnum(body.drawTrigger, DRAW_TRIGGERS, draw.drawTrigger) } : {}),
       ...(body.resultMode !== undefined ? { resultMode: coerceEnum(body.resultMode, RESULT_MODES, draw.resultMode || draw.drawTrigger) } : {}),
+      ...(body.allocationPolicy !== undefined ? { allocationPolicy: coerceEnum(body.allocationPolicy, ALLOCATION_POLICIES, draw.allocationPolicy || "capacity") } : {}),
       ...(body.startAt !== undefined ? { startAt: body.startAt } : {}),
       ...(body.endAt !== undefined ? { endAt: body.endAt } : {}),
       ...(body.drawAt !== undefined ? { drawAt: body.drawAt } : {}),
       ...(body.winnerCount !== undefined ? { winnerCount: Number(body.winnerCount) } : {}),
       ...(body.maxParticipants !== undefined ? { maxParticipants: body.maxParticipants ? Number(body.maxParticipants) : null } : {}),
-      ...(body.accessPassword !== undefined ? { accessPassword: body.accessPassword } : {}),
+      ...(body.accessPassword !== undefined ? { accessPassword: body.accessPassword ? await hashAccessPassword(String(body.accessPassword)) : "" } : {}),
       ...(body.showParticipantCount !== undefined ? { showParticipantCount: body.showParticipantCount ? 1 : 0 } : {}),
       ...(body.showWinnerCount !== undefined ? { showWinnerCount: body.showWinnerCount ? 1 : 0 } : {}),
       ...(body.showWinnerList !== undefined ? { showWinnerList: body.showWinnerList ? 1 : 0 } : {}),
       ...(body.productLink !== undefined ? { productLink: typeof body.productLink === "string" ? body.productLink : JSON.stringify(body.productLink) } : {}),
+      ...(body.promotionConfig !== undefined ? { promotionConfig: typeof body.promotionConfig === "string" ? body.promotionConfig : JSON.stringify(body.promotionConfig) } : {}),
       updatedAt: new Date().toISOString(),
     })
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
@@ -769,6 +822,31 @@ function defaultExperienceForParticipation(participationMode: string): string {
   return "wheel";
 }
 
+function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
+  if (activityKind === "signup_chain") return "list";
+  if (activityKind === "reservation") return "calendar";
+  if (activityKind === "vote") return "ballot";
+  if (activityKind === "survey") return "form";
+  if (activityKind === "checkin") return "checkin";
+  if (activityKind === "waitlist") return "queue";
+  if (activityKind === "approval") return "form";
+  if (activityKind === "claim") return "reveal";
+  return defaultExperienceForParticipation(participationMode);
+}
+
+function defaultResultModeForActivity(activityKind: string, drawTrigger: string): string {
+  if (activityKind === "signup_chain") return "ordered_assignment";
+  if (activityKind === "reservation") return "capacity_assignment";
+  if (activityKind === "vote") return "vote_tally";
+  if (activityKind === "survey") return "no_result";
+  if (activityKind === "checkin") return "no_result";
+  if (activityKind === "waitlist") return "ordered_assignment";
+  if (activityKind === "approval") return "review_decision";
+  if (activityKind === "claim") return "instant";
+  if (activityKind === "assignment") return "ordered_assignment";
+  return drawTrigger === "scheduled" ? "scheduled" : "manual";
+}
+
 /** 安全解析 JSON 字符串 */
 function tryParseJson(s: string): any {
   try { return JSON.parse(s); } catch { return undefined; }
@@ -871,6 +949,17 @@ adminLotteryRoute.post("/members", async (c) => {
     .limit(1);
   if (existing) return fail(c, "该用户已是团队成员", 409);
 
+  const quota = await getTenantUsage(db, tenantId);
+  if (quota.limits.maxMembers !== null) {
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(tenantMembers)
+      .where(eq(tenantMembers.tenantId, tenantId));
+    if (Number(total || 0) >= quota.limits.maxMembers) {
+      return fail(c, `当前套餐最多允许 ${quota.limits.maxMembers} 名团队成员`, 403);
+    }
+  }
+
   await db.insert(tenantMembers).values({
     tenantId,
     userId: user.id,
@@ -903,6 +992,7 @@ adminLotteryRoute.delete("/members/:userId", async (c) => {
 adminLotteryRoute.get("/stats", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
+  const tenantUsage = await getTenantUsage(db, tenantId);
 
   const [drawCount] = await db
     .select({ total: count() })
@@ -936,6 +1026,9 @@ adminLotteryRoute.get("/stats", async (c) => {
     drawnDraws: Number(drawnCount?.total ?? 0),
     recentParticipants: Number(recentEntries?.total ?? 0),
     totalWinners: Number(winnerCount?.total ?? 0),
+    plan: tenantUsage.plan,
+    limits: tenantUsage.limits,
+    usage: tenantUsage.usage,
   });
 });
 
@@ -964,7 +1057,7 @@ adminLotteryRoute.get("/draws/:id/signup-list", async (c) => {
       joinedAt: lotteryEntries.joinedAt,
     })
     .from(lotteryEntries)
-    .where(eq(lotteryEntries.drawId, drawId))
+    .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId)))
     .orderBy(lotteryEntries.joinedAt);
 
   return ok(c, { entries, total: entries.length });
@@ -1031,6 +1124,17 @@ adminLotteryRoute.post("/webhooks", async (c) => {
   const url = String(body.url || "").trim();
   if (!url) return fail(c, "请输入 Webhook URL", 400);
   try { new URL(url); if (url.startsWith("http")) {} else throw 1; } catch { return fail(c, "URL 格式无效", 400); }
+
+  const quota = await getTenantUsage(db, tenantId);
+  if (quota.limits.maxWebhooks !== null) {
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(webhookConfigs)
+      .where(and(eq(webhookConfigs.tenantId, tenantId), eq(webhookConfigs.active, 1)));
+    if (Number(total || 0) >= quota.limits.maxWebhooks) {
+      return fail(c, `当前套餐最多允许 ${quota.limits.maxWebhooks} 个 Webhook`, 403);
+    }
+  }
 
   await db.insert(webhookConfigs).values({
     id: crypto.randomUUID(),

@@ -6,7 +6,12 @@
         :key="i"
         class="card-item"
         :class="{ flipped: card.flipped }"
+        role="button"
+        :tabindex="disabled ? -1 : 0"
+        :aria-label="card.flipped ? '已翻开' : `翻牌 ${i + 1}`"
         @click="flipCard(i)"
+        @keydown.enter="flipCard(i)"
+        @keydown.space.prevent="flipCard(i)"
       >
         <div class="card-inner">
           <div class="card-front">
