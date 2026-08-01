@@ -32,10 +32,6 @@ export type Bindings = {
   RATE_LIMIT_SALT?: string;
   // Cron 调用的认证密钥，防止未授权触发定时开奖
   CRON_SECRET?: string;
-  // 平台首个 owner 初始化邮箱（部署时一次性配置，配合 BOOTSTRAP_SECRET 使用）
-  PLATFORM_BOOTSTRAP_EMAIL?: string;
-  // 平台 bootstrap 认证密钥（防止未授权创建平台 owner）
-  BOOTSTRAP_SECRET?: string;
   // 敏感配置加密密钥（64 位 hex 字符串），用于加密存储敏感配置项
   CREDENTIALS_ENCRYPTION_KEY?: string;
 };
