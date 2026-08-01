@@ -40,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 
 interface PrizeItem { name: string; color?: string }
 
@@ -50,9 +50,6 @@ const emit = defineEmits<{ play: [] }>()
 const canvasRef = ref<HTMLCanvasElement>()
 const scratched = ref(false)
 const isDrawing = ref(false)
-
-/** 展示参与状态（不展示随机奖品，避免误导用户以为已中奖） */
-const prizeName = ref('')
 
 function initCanvas() {
   const canvas = canvasRef.value
@@ -82,22 +79,6 @@ function scratchAt(x: number, y: number) {
   checkScratched()
 }
 
-function checkScratched() {
-  const canvas = canvasRef.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-  let transparent = 0
-  for (let i = 3; i < imageData.data.length; i += 4) {
-    if (imageData.data[i] === 0) transparent++
-  }
-  if (transparent / (imageData.data.length / 4) > 0.4) {
-    scratched.value = true
-  }
-}
-
-function getPos(e: MouseEvent) { return { x: e.offsetX, y: e.offsetY } }
 function getTouchPos(e: TouchEvent) {
   const rect = canvasRef.value!.getBoundingClientRect()
   return { x: e.touches[0]!.clientX - rect.left, y: e.touches[0]!.clientY - rect.top }

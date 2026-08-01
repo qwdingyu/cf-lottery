@@ -24,7 +24,6 @@
  * 4. 在 GAME_MAP 中添加一行：'new_experience': () => import('./NewGame.vue')
  */
 import { defineAsyncComponent, type Component } from 'vue'
-import type { GameProps } from './types'
 
 export type { GameProps } from './types'
 

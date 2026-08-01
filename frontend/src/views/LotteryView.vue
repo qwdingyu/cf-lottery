@@ -134,7 +134,7 @@
               class="draw-prize"
             >{{ $t('lottery.product') }}: {{ draw.productTitle || draw.productId }}</span>
             <span v-if="draw.showWinners" class="draw-count">{{ $t('lottery.drawCount', { count: draw.entryCount ?? 0 }) }}</span>
-            <span class="draw-time">{{ $t('lottery.drawTime') }}: {{ formatTime(draw.drawTime) }}</span>
+            <span class="draw-time">{{ $t('lottery.drawTime') }}: {{ formatTime(draw.drawTime || draw.drawAt || '') }}</span>
             <span
               v-if="countdownText(draw)"
               class="draw-countdown"
@@ -225,11 +225,11 @@
             </div>
             <div class="detail-item">
               <span class="detail-label">{{ $t('lottery.joinTime') }}</span>
-              <span class="detail-value">{{ formatTime(draw.startTime) }} ~ {{ formatTime(draw.endTime) }}</span>
+              <span class="detail-value">{{ formatTime(draw.startTime || draw.startAt || '') }} ~ {{ formatTime(draw.endTime || draw.endAt || '') }}</span>
             </div>
             <div class="detail-item">
               <span class="detail-label">{{ $t('lottery.drawTime') }}</span>
-              <span class="detail-value">{{ formatTime(draw.drawTime) }}</span>
+              <span class="detail-value">{{ formatTime(draw.drawTime || draw.drawAt || '') }}</span>
             </div>
             <div v-if="draw.showWinners" class="detail-item">
               <span class="detail-label">{{ $t('lottery.winnerCount') }}</span>
@@ -433,24 +433,21 @@ const isDeepLinked = computed(() => Boolean(props.id && String(props.id).trim())
 const API_BASE = '/api'
 
 type LotteryDraw = {
-  id: string; title: string; description?: string; status: string;
+  id: string; publicSlug?: string; title: string; name?: string; description?: string; status: string;
   activityKind?: string; participationMode: string; experienceType?: string; resultMode?: string;
-  startAt: string; endAt: string; drawAt: string | null;
+  startAt: string; startTime?: string; endAt: string; endTime?: string; drawAt: string | null; drawTime?: string | null;
   winnerCount: number; maxParticipants?: number | null;
   showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
-  participantCount?: number; winners?: Array<{ identity: string }>;
+  showWinners?: boolean; maxWinners?: number;
+  participantCount?: number; entryCount?: number; winners?: Array<{ identity: string }>;
+  prizes?: Array<{ name?: string; tierName?: string }>;
+  productId?: string; productTitle?: string;
+  productLink?: { url: string; title: string; imageUrl?: string; price?: string };
 };
 
 type MyEntry = {
   drawId: string; joinedAt?: string; drawName?: string; drawStatus?: string; drawTime?: string;
 };
-
-type MyWinner = {
-  drawId: string
-  orderToken?: string
-  productId?: string
-  drawnAt?: string
-}
 
 const loading = ref(true)
 const recordsLoading = ref(false)
@@ -549,12 +546,6 @@ function hasEnded(draw: LotteryDraw): boolean {
   return false
 }
 
-// 从 ok() 展开响应中剥掉协议字段，剩余即业务 payload
-function payloadOf(data: Record<string, unknown>) {
-  const { ok: _ok, error: _error, details: _details, ...rest } = data
-  return rest
-}
-
 function clearSession() {
   sessionEmail.value = ''
   myJoinedById.value = {}
@@ -586,11 +577,6 @@ function closeLogin() {
   showLoginModal.value = false
   pendingJoinDrawId.value = null
   loginError.value = ''
-}
-
-function clearVerifiedEmail() {
-  loginCode.value = ''
-  codeSent.value = false
 }
 
 function handleLogout() {
@@ -669,10 +655,6 @@ async function fetchDraws() {
   } finally {
     loading.value = false
   }
-}
-
-async function fetchMyRecords() {
-  // MVP 不需要登录态，直接通过邮箱查询结果
 }
 
 async function handleJoin(drawId: string) {

@@ -614,10 +614,11 @@ async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> 
 }
 
 type LotteryDraw = {
-  id: string; tenantId: string; publicSlug: string; title: string; description: string;
+  id: string; tenantId: string; publicSlug: string; title: string; name?: string; description: string;
   status: string; activityKind: string; participationMode: string; experienceType: string; drawTrigger: string; resultMode: string; policyVersion: number;
-  startAt: string; endAt: string; drawAt: string | null;
+  startAt: string; startTime?: string; endAt: string; endTime?: string; drawAt: string | null; drawTime?: string | null;
   winnerCount: number; maxParticipants: number | null;
+  maxWinners?: number; expectedParticipants?: number; entryCount?: number; visible?: number;
   showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
   drawnAt: string | null; failureReason: string;
   createdAt: string; updatedAt: string;
@@ -627,6 +628,8 @@ type LotteryWinner = {
   id: string; drawId: string; tierId: string; entryId: string;
   identityType: string; identityValue: string; prizeCodeId: string;
   drawnAt: string; notificationStatus: string; notificationError: string;
+  email?: string; orderNo?: string; cardAccountLabel?: string; cardDeliverySecret?: string;
+  emailSent?: number; emailError?: string;
 };
 
 const { t, locale } = useI18n()
@@ -744,14 +747,18 @@ const emptyForm = () => ({
   name: '',
   description: '',
   prizeName: '',
+  productName: '',
   startTime: '',
   endTime: '',
   drawTime: '',
   winnerCount: 1,
+  maxWinners: 1,
   maxParticipants: null as number | null,
+  expectedParticipants: 0,
   participationMode: 'open',
   experienceType: 'wheel',
   accessPassword: '',
+  showWinners: false,
   // 导流配置
   enableProductLink: false,
   productLink: { url: '', title: '', imageUrl: '', price: '' },
