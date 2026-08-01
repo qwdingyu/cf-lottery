@@ -75,10 +75,16 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     .where(eq(lotteryEntries.drawId, draw.id));
 
   const result: any = {
+    id: draw.publicSlug, // 公开页面使用 publicSlug 作为标识，不暴露内部 ID
+    publicSlug: draw.publicSlug,
     title: draw.title,
     description: draw.description,
     status: draw.status,
+    activityKind: draw.activityKind || "lottery",
     participationMode: draw.participationMode,
+    experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode),
+    resultMode: draw.resultMode || draw.drawTrigger,
+    policyVersion: draw.policyVersion || 1,
     startAt: draw.startAt,
     endAt: draw.endAt,
     drawAt: draw.drawAt,
@@ -88,6 +94,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     winnerCount: draw.showWinnerCount ? draw.winnerCount : undefined,
     // 导流：关联商品链接（仅在活动中开放时返回）
     productLink: draw.productLink && draw.productLink !== "{}" ? tryParseJson(draw.productLink) : undefined,
+    promotionConfig: draw.promotionConfig && draw.promotionConfig !== "{}" ? tryParseJson(draw.promotionConfig) : undefined,
   };
 
   // 开奖后展示中奖名单
@@ -360,4 +367,11 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
 /** 安全解析 JSON 字符串 */
 function tryParseJson(s: string): any {
   try { return JSON.parse(s); } catch { return undefined; }
+}
+
+function defaultExperienceForParticipation(participationMode: string): string {
+  if (participationMode === "invite_code") return "slot";
+  if (participationMode === "password") return "scratch";
+  if (participationMode === "roster") return "card";
+  return "wheel";
 }

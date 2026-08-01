@@ -390,6 +390,17 @@
                   <option value="invite_code">邀请码（输入邀请码后可参与）</option>
                 </select>
               </label>
+              <label class="field-span-2">
+                <span>互动体验</span>
+                <select v-model="form.experienceType">
+                  <option value="wheel">大转盘</option>
+                  <option value="slot">老虎机</option>
+                  <option value="scratch">刮刮卡</option>
+                  <option value="card">卡片翻转</option>
+                  <option value="submit">普通提交</option>
+                </select>
+                <small class="field-hint">互动体验只影响活动页展示，不决定参与资格或开奖结果</small>
+              </label>
               <label v-if="form.participationMode === 'password'" class="field-span-2">
                 <span>访问密码</span>
                 <input v-model="form.accessPassword" type="text" maxlength="20" placeholder="设置活动访问密码" />
@@ -604,7 +615,7 @@ async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> 
 
 type LotteryDraw = {
   id: string; tenantId: string; publicSlug: string; title: string; description: string;
-  status: string; participationMode: string; drawTrigger: string;
+  status: string; activityKind: string; participationMode: string; experienceType: string; drawTrigger: string; resultMode: string; policyVersion: number;
   startAt: string; endAt: string; drawAt: string | null;
   winnerCount: number; maxParticipants: number | null;
   showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
@@ -664,6 +675,7 @@ const buildLotteryDuplicateDraft = (draw: any, opts: { nameSuffix: string; defau
   winnerCount: draw.winnerCount || 1,
   maxParticipants: draw.maxParticipants || null,
   participationMode: draw.participationMode || 'open',
+  experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'),
   accessPassword: '',
 });
 const buildLotteryDrawConfirmMessage = (draw: any, labels: any) => `${labels.title}\n${labels.name}${draw.title}\n${labels.pool}${draw.entryCount || 0}\n${labels.willDraw}${Math.min(Number(draw.entryCount)||0, draw.winnerCount)}`;
@@ -738,6 +750,7 @@ const emptyForm = () => ({
   winnerCount: 1,
   maxParticipants: null as number | null,
   participationMode: 'open',
+  experienceType: 'wheel',
   accessPassword: '',
   // 导流配置
   enableProductLink: false,
@@ -787,6 +800,13 @@ function statusClass(status: string): string {
   if (status === 'drawn') return 'tag-info'
   if (status === 'cancelled') return 'tag-danger'
   return 'tag-muted'
+}
+
+function defaultExperienceForParticipation(participationMode: string): string {
+  if (participationMode === 'invite_code') return 'slot'
+  if (participationMode === 'password') return 'scratch'
+  if (participationMode === 'roster') return 'card'
+  return 'wheel'
 }
 
 function canDeleteDraw(draw: LotteryDraw): boolean {
@@ -920,7 +940,10 @@ function handleDuplicate(draw: LotteryDraw) {
     winnerCount: draft.winnerCount,
     maxParticipants: draft.maxParticipants,
     participationMode: draft.participationMode,
+    experienceType: draft.experienceType,
     accessPassword: draft.accessPassword,
+    enableProductLink: false,
+    productLink: { url: '', title: '', imageUrl: '', price: '' },
   }
   isEditing.value = false
   showCreateModal.value = true
@@ -1198,17 +1221,17 @@ async function handleEdit(draw: LotteryDraw) {
     return
   }
   form.value = {
+    ...emptyForm(),
     id: draw.id,
-    name: draw.name,
+    name: draw.title,
     description: draw.description || '',
-    productId: draw.productId,
-    startTime: toDateTimeLocalValue(draw.startTime),
-    endTime: toDateTimeLocalValue(draw.endTime),
-    drawTime: toDateTimeLocalValue(draw.drawTime),
-    maxWinners: draw.maxWinners,
+    startTime: toDateTimeLocalValue(draw.startAt),
+    endTime: toDateTimeLocalValue(draw.endAt),
+    drawTime: toDateTimeLocalValue(draw.drawAt || ''),
+    winnerCount: draw.winnerCount,
     maxParticipants: draw.maxParticipants ?? null,
-    expectedParticipants: draw.expectedParticipants ?? 0,
-    showWinners: draw.showWinners ? true : false,
+    participationMode: draw.participationMode || 'open',
+    experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'),
   }
   isEditing.value = true
   showCreateModal.value = true
@@ -1298,6 +1321,9 @@ async function handleCreate() {
       winnerCount: Number(form.value.winnerCount) || 1,
       maxParticipants: form.value.maxParticipants ? Number(form.value.maxParticipants) : undefined,
       participationMode: form.value.participationMode || 'open',
+      experienceType: form.value.experienceType || defaultExperienceForParticipation(form.value.participationMode || 'open'),
+      activityKind: 'lottery',
+      resultMode: 'manual',
       accessPassword: form.value.accessPassword || '',
       // 导流：商品链接（启用时发送，关闭时发送 null 以清空）
       productLink: form.value.enableProductLink && form.value.productLink.url

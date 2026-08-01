@@ -241,6 +241,8 @@ adminLotteryRoute.post("/draws", async (c) => {
       accessPassword: String(body.accessPassword || ""),
       maxParticipants: body.maxParticipants ? Number(body.maxParticipants) : undefined,
       winnerCount: body.winnerCount ? Number(body.winnerCount) : 1,
+      productLink: body.productLink ? JSON.stringify(body.productLink) : "{}",
+      promotionConfig: body.promotionConfig && typeof body.promotionConfig === "object" ? JSON.stringify(body.promotionConfig) : "{}",
     });
     return ok(c, { id, publicSlug });
   } catch (err) {

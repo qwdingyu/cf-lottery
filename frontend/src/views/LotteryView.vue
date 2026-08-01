@@ -192,7 +192,7 @@
             </button>
           </template>
           <component
-            :is="getGameComponent(draw.participationMode || 'open')"
+            :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
             v-if="expandedId === draw.id && draw.status === 'open'"
             :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || '奖品', color: '' }))"
             :disabled="joiningId === draw.id"
@@ -289,7 +289,7 @@
                     <h4 class="product-card-title">{{ draw.productLink.title }}</h4>
                     <p v-if="draw.productLink.price" class="product-card-price">{{ draw.productLink.price }}</p>
                     <a
-                      :href="productUtmUrl(draw.productLink.url, draw.id)"
+                      :href="productUtmUrl(draw.productLink.url, draw.id, draw.publicSlug)"
                       target="_blank"
                       rel="noopener noreferrer"
                       class="btn btn-primary btn-sm"
@@ -434,7 +434,8 @@ const API_BASE = '/api'
 
 type LotteryDraw = {
   id: string; title: string; description?: string; status: string;
-  participationMode: string; startAt: string; endAt: string; drawAt: string | null;
+  activityKind?: string; participationMode: string; experienceType?: string; resultMode?: string;
+  startAt: string; endAt: string; drawAt: string | null;
   winnerCount: number; maxParticipants?: number | null;
   showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
   participantCount?: number; winners?: Array<{ identity: string }>;
@@ -497,6 +498,13 @@ function statusLabel(status: string): string {
   return t('lottery.' + (map[status] || 'statusOpen'))
 }
 
+function defaultExperienceForParticipation(participationMode: string): string {
+  if (participationMode === 'invite_code') return 'slot'
+  if (participationMode === 'password') return 'scratch'
+  if (participationMode === 'roster') return 'card'
+  return 'wheel'
+}
+
 function formatTime(iso: string): string {
   if (!iso) return ''
   const d = new Date(iso)
@@ -554,13 +562,14 @@ function clearSession() {
   myEntryList.value = []
 }
 
-/** 生成带 UTM 追踪参数的商品链接 */
-function productUtmUrl(url: string, drawId: string): string {
+/** 生成带 UTM 追踪参数的商品链接（使用公开 slug，不暴露内部 ID） */
+function productUtmUrl(url: string, drawId: string, publicSlug?: string): string {
   try {
     const u = new URL(url)
     u.searchParams.set('utm_source', 'lottery')
     u.searchParams.set('utm_medium', 'draw')
-    u.searchParams.set('utm_campaign', drawId)
+    // 使用公开 slug 作为 campaign 标识，不暴露内部 ID
+    u.searchParams.set('utm_campaign', publicSlug || drawId)
     return u.toString()
   } catch {
     return url
