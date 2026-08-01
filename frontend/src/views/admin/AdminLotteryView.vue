@@ -16,6 +16,7 @@
           type="search"
           :placeholder="$t('lottery.adminSearchPlaceholder')"
           :aria-label="$t('lottery.adminSearchAria')"
+          @keyup.enter="loadData"
         />
         <button class="btn btn-ghost btn-sm" type="button" :disabled="loading" @click="loadData">
           {{ $t('lottery.adminReload') }}
@@ -2061,17 +2062,23 @@ async function handleCreate() {
         }
         try {
           await writeClipboardText(publicShareUrl(created.publicSlug || created.id))
-          showToast('活动已创建，链接已复制', 'success')
-        } catch {
-          showToast('活动已创建', 'success')
+        } catch { /* 剪贴板写入失败不阻断 */ }
+        showToast('活动已创建，链接已复制', 'success')
+        closeEditor()
+        form.value = emptyForm()
+        await loadData()
+        // 创建成功后自动打开编辑模式，让用户立即配置奖品和发布
+        if (created.id) {
+          const newDraw = draws.value.find((d: any) => d.id === created.id)
+          if (newDraw) handleEdit(newDraw)
         }
       } else {
         showToast('活动已创建', 'success')
+        closeEditor()
+        form.value = emptyForm()
+        await loadData()
       }
     }
-    closeEditor()
-    form.value = emptyForm()
-    await loadData()
   } catch (e: any) {
     showToast(e?.message || '创建失败', 'error')
   } finally {

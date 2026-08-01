@@ -63,7 +63,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="draw in recentDraws" :key="draw.id">
+            <tr v-for="draw in recentDraws" :key="draw.id" class="clickable-row" @click="router.push('/admin/draws')">
               <td>{{ draw.title }}</td>
               <td><span class="tag" :class="statusClass(draw.status)">{{ statusLabel(draw.status) }}</span></td>
               <td>{{ draw.entryCount || 0 }}</td>
