@@ -613,6 +613,21 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
   return ok(c, { updated: true });
 });
 
+// ═════════════════════════════════════════════════════════
+// 活动生命周期（状态机）
+//
+// 活动状态流转：
+//   draft ──→ open ──→ drawing ──→ drawn
+//               │                      ↑
+//               ├──→ paused → open ────┘（恢复后可继续参与或开奖）
+//               └──→ cancelled（终结态，不可恢复）
+//
+// 关键约束：
+// - 只有 open 状态的活动可以参与（joinDraw 校验）
+// - 只有 open 状态的活动可以开奖（performDraw CAS 原子锁）
+// - paused 恢复后仍然是 open（参与者不受影响）
+// ═════════════════════════════════════════════════════════
+
 /** 发布活动（draft → open） */
 adminLotteryRoute.post("/draws/:id/publish", async (c) => {
   const db = getDb(c);

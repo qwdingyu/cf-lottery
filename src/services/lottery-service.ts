@@ -1097,10 +1097,22 @@ export function defaultResultModeForActivity(activityKind: string, drawTrigger: 
   return drawTrigger === "scheduled" ? "scheduled" : "manual";
 }
 
+/**
+ * 判断活动类型是否要求中奖名额。
+ *
+ * 只有抽奖（lottery）需要中奖名额；接龙、问卷、签到等活动的"结果"不是抽奖，
+ * 不应被 winner 语义绑住（否则问卷活动会强制要求填中奖人数，造成困惑）。
+ */
 function requiresWinnerCount(activityKind: string): boolean {
   return activityKind === "lottery";
 }
 
+/**
+ * 归一化中奖名额。
+ *
+ * - 抽奖活动：未传时默认 1，保证开奖有明确名额
+ * - 非抽奖活动：未传时返回 0（不参与中奖语义）
+ */
 function normalizeWinnerCount(activityKind: string, winnerCount?: number): number {
   if (!requiresWinnerCount(activityKind)) return winnerCount ?? 0;
   return winnerCount ?? 1;
@@ -1113,6 +1125,7 @@ function normalizeWinnerCount(activityKind: string, winnerCount?: number): numbe
  * - 标题不能为空
  * - 活动时间必须设置
  * - 定时开奖必须设置开奖时间
+ * - 抽奖活动必须至少配置一个奖项（buildPublishCheckForDraw 统一门禁）
  *
  * 使用 CAS 更新（WHERE status = 'draft'），防止并发发布。
  */
