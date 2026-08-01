@@ -110,6 +110,8 @@ const menuItems = computed(() => [
   { name: 'AdminPrizes', to: '/admin/prizes', label: '奖品管理', icon: '&#x1F381;' },
   { name: 'AdminConfig', to: '/admin/config', label: t('adminLayout.menuConfig'), icon: '&#x2699;&#xFE0F;' },
   { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '&#x1F4DD;' },
+  { name: 'AdminMembers', to: '/admin/members', label: '团队成员', icon: '&#x1F465;' },
+  { name: 'AdminBlacklist', to: '/admin/blacklist', label: '黑名单', icon: '&#x1F6AB;' },
 ])
 
 const currentName = computed(() => {

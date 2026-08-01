@@ -66,6 +66,16 @@ const router = createRouter({
           name: 'AdminLogs',
           component: () => import('@/views/admin/AdminLogsView.vue'),
         },
+        {
+          path: 'members',
+          name: 'AdminMembers',
+          component: () => import('@/views/admin/AdminMembersView.vue'),
+        },
+        {
+          path: 'blacklist',
+          name: 'AdminBlacklist',
+          component: () => import('@/views/admin/AdminBlacklistView.vue'),
+        },
       ],
     },
     {
