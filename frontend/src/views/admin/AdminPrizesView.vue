@@ -27,13 +27,14 @@
             <th>类型</th>
             <th>价值</th>
             <th>描述</th>
+            <th>码池余量</th>
             <th>创建时间</th>
             <th class="col-actions">操作</th>
           </tr>
         </thead>
         <tbody v-if="loading">
           <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row">
-            <td :colspan="7"><div class="skeleton-cell" /></td>
+            <td :colspan="8"><div class="skeleton-cell" /></td>
           </tr>
         </tbody>
         <tbody v-else>
@@ -45,13 +46,22 @@
             <td>{{ prize.prizeType === 'code' ? '卡密' : '手动发放' }}</td>
             <td>{{ prize.valueText || '-' }}</td>
             <td>{{ prize.description || '-' }}</td>
+            <td>
+              <template v-if="prize.prizeType === 'code'">
+                <span :class="{ 'tag-danger': (prize.totalCount - prize.usedCount) <= 0, 'tag-success': (prize.totalCount - prize.usedCount) > 0 }">
+                  {{ prize.usedCount || 0 }}/{{ prize.totalCount || 0 }}
+                </span>
+                <small class="field-hint" style="display:block">剩余 {{ Math.max(0, (prize.totalCount || 0) - (prize.usedCount || 0)) }}</small>
+              </template>
+              <template v-else>—</template>
+            </td>
             <td>{{ prize.createdAt }}</td>
             <td class="col-actions">
               <button class="btn btn-ghost btn-xs" @click="showImport(prize)">导入码</button>
             </td>
           </tr>
           <tr v-if="prizes.length === 0">
-            <td colspan="7" class="empty-text">暂无奖品</td>
+            <td colspan="8" class="empty-text">暂无奖品</td>
           </tr>
         </tbody>
       </table>

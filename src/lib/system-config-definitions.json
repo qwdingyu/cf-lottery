@@ -254,5 +254,40 @@
     "defaultValue": "lottery,signup_chain,claim,survey,vote,checkin,approval,reservation",
     "group": "平台运营",
     "order": 20
+  },
+  {
+    "key": "enable_registration",
+    "label": "开放注册",
+    "description": "是否允许新用户自助注册。关闭后仅平台运营者可通过后台创建租户。",
+    "effect": "注册接口校验，关闭时新用户无法注册。已有用户不受影响。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "true",
+    "group": "平台运营",
+    "order": 21
+  },
+  {
+    "key": "free_plan_max_webhooks",
+    "label": "Free 套餐 Webhook 数量",
+    "description": "Free 套餐的租户最多可配置的 Webhook 数量。MVP 推广期建议设为 1，给用户试用体验。",
+    "effect": "创建 Webhook 时校验，超过此限制则拒绝。",
+    "scope": "admin",
+    "type": "integer",
+    "defaultValue": "1",
+    "min": 0,
+    "max": 100,
+    "group": "套餐额度",
+    "order": 22
+  },
+  {
+    "key": "enable_pricing_page",
+    "label": "显示套餐页",
+    "description": "是否在前端展示套餐定价页。MVP 推广期建议关闭，避免用户因价格劝退。",
+    "effect": "前端根据此配置决定是否展示定价入口。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "false",
+    "group": "平台运营",
+    "order": 23
   }
 ]

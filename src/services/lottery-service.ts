@@ -1697,6 +1697,11 @@ export async function performDraw(
                 ))
                 .limit(1);
               prizeCodeId = lockedCode?.id || "";
+
+              // 发放成功后更新奖品已用数（used_count），保证运营者可看到码池消耗
+              await tx.update(prizes)
+                .set({ usedCount: sql`used_count + 1`, updatedAt: now })
+                .where(eq(prizes.id, tier.prizeId));
             }
             // 码不足时跳过（prizeCodeId 保持空字符串），中奖者仍记录但无码
             }
@@ -1962,6 +1967,11 @@ export async function importPrizeCodes(
       status: "available",  // 初始状态：可用
     });
   }
+
+  // 导入成功后更新奖品总数（total_count），保证运营者可看到码池余量
+  await db.update(prizes)
+    .set({ totalCount: sql`total_count + ${codes.length}`, updatedAt: new Date().toISOString() })
+    .where(eq(prizes.id, prizeId));
 }
 
 /* ── 定时开奖兜底 ─────────────────────────────────────────── */

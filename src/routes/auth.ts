@@ -11,7 +11,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb } from "../lib/http";
-import { users, tenantMembers, tenants, emailAccessCodes } from "../db/schema";
+import { users, tenantMembers, tenants, emailAccessCodes, systemConfig } from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { signJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
