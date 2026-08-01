@@ -214,6 +214,12 @@ adminLotteryRoute.post("/draws", async (c) => {
   const body = await c.req.json();
 
   try {
+    // 创建活动时校验 productLink
+    if (body.productLink) {
+      const err = validateProductLink(body.productLink);
+      if (err) return fail(c, err, 400);
+    }
+
     const { id, publicSlug } = await createDraw(db, tenantId, {
       title: String(body.title || ""),
       description: String(body.description || ""),
@@ -257,6 +263,12 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
   }
   if (drawAt && new Date(endAt) >= new Date(drawAt)) {
     return fail(c, "开奖时间必须在参与结束后", 400);
+  }
+
+  // 编辑时校验 productLink
+  if (body.productLink !== undefined) {
+    const err = validateProductLink(body.productLink);
+    if (err) return fail(c, err, 400);
   }
 
   await db
@@ -673,3 +685,28 @@ adminLotteryRoute.get("/logs", async (c) => {
 
   return ok(c, { logs: rows });
 });
+
+/**
+ * 校验商品链接配置（服务端校验，防止危险协议和超长字段）
+ * 返回 null 表示通过，返回字符串表示错误消息
+ */
+function validateProductLink(link: any): string | null {
+  if (!link || typeof link !== "object") return "商品链接配置无效";
+  if (typeof link.url !== "string" || !link.url.trim()) return "商品链接不能为空";
+  try {
+    const url = new URL(link.url);
+    if (!["https:", "http:"].includes(url.protocol)) {
+      return "商品链接仅支持 http 和 https 协议";
+    }
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return "商品链接不能指向本地地址";
+    }
+    if (url.href.length > 2000) return "商品链接过长";
+  } catch {
+    return "商品链接格式无效";
+  }
+  if (typeof link.title === "string" && link.title.length > 200) return "商品名称过长";
+  if (typeof link.imageUrl === "string" && link.imageUrl.length > 2000) return "图片链接过长";
+  if (typeof link.price === "string" && link.price.length > 50) return "展示价格过长";
+  return null;
+}

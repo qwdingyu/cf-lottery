@@ -1,15 +1,19 @@
 <template>
   <div class="landing-page">
+    <!-- 顶部导航 -->
+    <nav class="landing-nav">
+      <span class="nav-brand">🎯 Lucky Draw</span>
+      <RouterLink to="/admin/login" class="nav-link">登录</RouterLink>
+    </nav>
+
     <!-- Hero -->
     <header class="landing-hero">
-      <div class="hero-badge">🎯 轻量抽奖 SaaS</div>
       <h1 class="hero-title">3 分钟创建抽奖活动<br>自动发奖，公平开奖</h1>
       <p class="hero-subtitle">社群运营、门店促销、企业年会 — 四种游戏模式，提升参与感</p>
       <div class="hero-actions">
         <RouterLink to="/admin/register" class="btn btn-primary btn-lg">免费注册，开始使用</RouterLink>
-        <RouterLink to="/admin/login" class="btn btn-ghost btn-lg">已有账号？登录</RouterLink>
+        <p class="hero-note">无需信用卡，免费套餐支持 3 个活动</p>
       </div>
-      <p class="hero-note">无需信用卡，免费套餐支持 3 个活动</p>
     </header>
 
     <!-- 四步流程 -->
@@ -169,6 +173,10 @@ import { RouterLink } from 'vue-router'
 
 <style scoped>
 .landing-page { max-width: 960px; margin: 0 auto; padding: 0 20px; }
+.landing-nav { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; }
+.nav-brand { font-size: 18px; font-weight: 700; }
+.nav-link { font-size: 14px; color: var(--tg-hint); text-decoration: none; }
+.nav-link:hover { color: var(--tg-text); }
 .landing-hero { text-align: center; padding: 80px 0 60px; }
 .hero-badge { display: inline-block; background: rgba(245,158,11,.15); color: #f59e0b; padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 20px; }
 .hero-title { font-size: 40px; font-weight: 800; line-height: 1.3; margin-bottom: 16px; }
