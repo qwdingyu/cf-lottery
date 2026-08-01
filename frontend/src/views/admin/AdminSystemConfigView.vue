@@ -313,7 +313,10 @@ const canClearBusinessData = computed(() =>
 
 const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 let resetKey: string | null = null
+// 平台管理入口：只给 L3 平台 owner 读取完整定义、写入配置、删除非内置项。
 const PLATFORM_SYSTEM_CONFIG_API = '/api/platform/system-config'
+// 公开读取入口：无鉴权，只返回白名单配置。保存 public 配置后用它验证前台可见配置是否已同步。
+const PUBLIC_SYSTEM_CONFIG_API = '/api/system-config/system-config'
 
 function selectSection(id: SystemConfigSectionId) {
   if (activeSection.value === id && route.query.tab === id) return
@@ -325,7 +328,7 @@ function selectSection(id: SystemConfigSectionId) {
 async function refreshPublicConfig(scope?: string): Promise<boolean> {
   if (scope !== 'public') return true
   try {
-    await adminRequest<any>('/api/system-config/system-config')
+    await adminRequest<any>(PUBLIC_SYSTEM_CONFIG_API)
     return true
   } catch {
     return false

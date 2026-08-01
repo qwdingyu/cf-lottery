@@ -9,12 +9,16 @@ import type { AppEnv } from "../bindings";
 import { fail, getDb, ok } from "../lib/http";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
 import { tenants, auditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws } from "../db/schema";
-import { eq, and, desc, count, sql } from "drizzle-orm";
+import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 
 export const platformRoute = new Hono<AppEnv>();
 
 // 所有平台路由需要登录 + 平台成员权限
 platformRoute.use("*", requireAuth, requirePlatformMember(["platform_owner", "platform_operator", "platform_support"]));
+
+function combinedWhere(conditions: SQL[]): SQL | undefined {
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
 
 // ═════════════════════════════════════════════════════════
 // 租户管理
@@ -28,14 +32,14 @@ platformRoute.get("/tenants", async (c) => {
   const status = c.req.query("status") || "";
   const plan = c.req.query("plan") || "";
 
-  const conditions: any[] = [];
+  const conditions: SQL[] = [];
   if (status) conditions.push(eq(tenants.status, status));
   if (plan) conditions.push(eq(tenants.plan, plan));
 
   const rows = await db
     .select()
     .from(tenants)
-    .where(and(...conditions))
+    .where(combinedWhere(conditions))
     .orderBy(desc(tenants.createdAt))
     .limit(limit).offset(offset);
 
@@ -98,14 +102,14 @@ platformRoute.get("/audit-logs", async (c) => {
   const tenantId = c.req.query("tenantId") || "";
   const action = c.req.query("action") || "";
 
-  const conditions: any[] = [];
+  const conditions: SQL[] = [];
   if (tenantId) conditions.push(eq(auditLogs.tenantId, tenantId));
   if (action) conditions.push(eq(auditLogs.action, action));
 
   const rows = await db
     .select()
     .from(auditLogs)
-    .where(and(...conditions))
+    .where(combinedWhere(conditions))
     .orderBy(desc(auditLogs.createdAt))
     .limit(limit).offset(offset);
 
@@ -123,13 +127,13 @@ platformRoute.get("/usage-snapshots", async (c) => {
   const limit = Math.min(Number(c.req.query("limit") || "31"), 365);
   const offset = Math.max(0, Number(c.req.query("offset") || "0"));
 
-  const conditions: any[] = [];
+  const conditions: SQL[] = [];
   if (tenantId) conditions.push(eq(tenantUsageSnapshots.tenantId, tenantId));
 
   const rows = await db
     .select()
     .from(tenantUsageSnapshots)
-    .where(and(...conditions))
+    .where(combinedWhere(conditions))
     .orderBy(desc(tenantUsageSnapshots.snapshotDate))
     .limit(limit).offset(offset);
 
@@ -148,14 +152,14 @@ platformRoute.get("/webhook-deliveries", async (c) => {
   const tenantId = c.req.query("tenantId") || "";
   const status = c.req.query("status") || "";
 
-  const conditions: any[] = [];
+  const conditions: SQL[] = [];
   if (tenantId) conditions.push(eq(webhookDeliveries.tenantId, tenantId));
   if (status) conditions.push(eq(webhookDeliveries.status, status));
 
   const rows = await db
     .select()
     .from(webhookDeliveries)
-    .where(and(...conditions))
+    .where(combinedWhere(conditions))
     .orderBy(desc(webhookDeliveries.createdAt))
     .limit(limit).offset(offset);
 

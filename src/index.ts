@@ -57,8 +57,10 @@ export async function runScheduledMaintenance(
   });
   // 限流日志只服务短窗口判断，定时清理避免 Turso 免费层 rows/storage 被长期无价值日志拖垮。
   const cleanedRateLimitLogs = await cleanExpiredRateLimits(db);
+  // 平台运营后台依赖快照展示租户用量；放进统一维护任务，保证 scheduled 和手动入口行为一致。
+  const usageSnapshots = await refreshAllTenantSnapshots(db);
 
-  return { draws, webhooks, cleanedRateLimitLogs };
+  return { draws, webhooks, cleanedRateLimitLogs, usageSnapshots: usageSnapshots.processed };
 }
 
 // ── CORS（允许前端跨域请求） ──
@@ -166,12 +168,6 @@ app.post("/api/cron/maintenance", async (c) => {
 
   try {
     const result = await runScheduledMaintenance(c.env);
-    // 同时刷新租户用量快照
-    const db = createDbFromEnv(c.env);
-    if (db) {
-      const snapshots = await refreshAllTenantSnapshots(db);
-      return c.json({ ok: true, ...result, snapshots: snapshots.processed });
-    }
     return c.json({ ok: true, ...result });
   } catch (err) {
     console.error("[cron] maintenance failed:", err);

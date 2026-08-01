@@ -1353,7 +1353,7 @@ adminLotteryRoute.post("/coupons/import", async (c) => {
   return ok(c, { imported: count });
 });
 
-/** 核销优惠券 */
+/** 核销优惠券（CAS 条件更新防止并发重复核销） */
 adminLotteryRoute.post("/coupons/redeem", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
@@ -1361,17 +1361,22 @@ adminLotteryRoute.post("/coupons/redeem", async (c) => {
   const code = String(body.code || "").trim();
   if (!code) return fail(c, "请输入优惠券码", 400);
 
+  // CAS 条件更新：仅当 status = 'available' 时更新为 redeemed
+  const result = await db.update(couponCodes)
+    .set({ status: "redeemed", redeemedAt: new Date().toISOString() })
+    .where(and(eq(couponCodes.tenantId, tenantId), eq(couponCodes.code, code), eq(couponCodes.status, "available")));
+
+  if ((result.rowsAffected ?? 0) === 0) {
+    return fail(c, "优惠券不存在或已使用", 404);
+  }
+
   const [coupon] = await db
-    .select()
+    .select({ label: couponCodes.label })
     .from(couponCodes)
     .where(and(eq(couponCodes.tenantId, tenantId), eq(couponCodes.code, code)))
     .limit(1);
-  if (!coupon) return fail(c, "优惠券不存在", 404);
-  if (coupon.status !== "available") return fail(c, "优惠券已使用或已过期", 400);
 
-  await db.update(couponCodes).set({ status: "redeemed", redeemedAt: new Date().toISOString() })
-    .where(eq(couponCodes.id, coupon.id));
-  return ok(c, { redeemed: true, label: coupon.label });
+  return ok(c, { redeemed: true, label: coupon?.label || "" });
 });
 
 // ═════════════════════════════════════════════════════════

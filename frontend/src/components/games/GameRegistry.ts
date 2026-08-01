@@ -37,10 +37,14 @@ export type { GameProps, PrizeItem, GameEmits } from './types'
 
 /** 体验类型 → 游戏组件的映射 */
 const GAME_MAP: Record<string, () => Promise<Component>> = {
-  'wheel':   () => import('./WheelGame.vue'),      // 大转盘
-  'slot':    () => import('./SlotGame.vue'),       // 老虎机
-  'scratch': () => import('./ScratchGame.vue'),    // 刮刮卡
-  'card':    () => import('./CardGame.vue'),       // 卡片翻转
+  'wheel':   () => import('./WheelGame.vue'),      // 大转盘（抽奖）
+  'slot':    () => import('./SlotGame.vue'),       // 老虎机（抽奖）
+  'scratch': () => import('./ScratchGame.vue'),    // 刮刮卡（抽奖/即时开奖）
+  'card':    () => import('./CardGame.vue'),       // 卡片翻转（抽奖/翻牌）
+  'grid':    () => import('./GridGame.vue'),       // 九宫格（抽奖/盲盒）
+  'submit':  () => import('./SubmitGame.vue'),     // 通用提交按钮（抽奖/接龙）
+  'reveal':  () => import('./RevealGame.vue'),     // 领取/揭晓（资料领取/盲盒）
+  'form':    () => import('./FormGame.vue'),       // 表单提交（问卷/调研/审核申请）
 }
 
 /**
