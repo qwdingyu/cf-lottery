@@ -250,3 +250,31 @@ export const lotteryBlacklist = sqliteTable("lottery_blacklist", {
 }, (t) => ({
   blacklistTenantIdx: uniqueIndex("idx_blacklist_value").on(t.tenantId, t.identityValue),
 }));
+
+// ── API 密钥（用于外部系统集成） ──
+export const apiKeys = sqliteTable("api_keys", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  name: text("name").notNull(),
+  key: text("key").notNull().unique(),
+  active: integer("active").notNull().default(1),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  apiKeyTenantIdx: index("idx_api_key_tenant").on(t.tenantId, t.active, t.createdAt),
+}));
+
+// ── Webhook 配置（外部系统事件通知） ──
+export const webhookConfigs = sqliteTable("webhook_configs", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  url: text("url").notNull(),
+  events: text("events").notNull().default("[\"draw.completed\",\"prize.issued\"]"),
+  active: integer("active").notNull().default(1),
+  lastSentAt: text("last_sent_at"),
+  lastError: text("last_error"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  webhookTenantIdx: index("idx_webhook_tenant").on(t.tenantId, t.active, t.createdAt),
+}));
