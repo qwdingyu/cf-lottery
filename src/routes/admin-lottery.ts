@@ -1259,3 +1259,59 @@ adminLotteryRoute.get("/draws/:id/shares", async (c) => {
   const totalJoins = rows.reduce((s, r) => s + r.joinedCount, 0);
   return ok(c, { shares: rows, totalClicks, totalJoins, sharerCount: rows.length });
 });
+
+// ═════════════════════════════════════════════════════════
+// 租户成员管理
+// ═════════════════════════════════════════════════════════
+
+/** 成员列表 */
+adminLotteryRoute.get("/members", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const rows = await db
+    .select({ userId: tenantMembers.userId, role: tenantMembers.role, username: users.username, email: users.email, createdAt: tenantMembers.createdAt })
+    .from(tenantMembers)
+    .innerJoin(users, eq(tenantMembers.userId, users.id))
+    .where(eq(tenantMembers.tenantId, tenantId))
+    .orderBy(tenantMembers.createdAt);
+  return ok(c, { members: rows });
+});
+
+/** 邀请成员 */
+adminLotteryRoute.post("/members", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ username: string; role?: string }>();
+  const username = String(body.username || "").trim();
+  if (!username) return fail(c, "请输入用户名", 400);
+
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
+  if (!user) return fail(c, "用户不存在", 404);
+
+  const [existing] = await db.select({ userId: tenantMembers.userId }).from(tenantMembers).where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, user.id))).limit(1);
+  if (existing) return fail(c, "该用户已是成员", 409);
+
+  await db.insert(tenantMembers).values({ tenantId, userId: user.id, role: body.role || "operator" });
+  return ok(c, { invited: true });
+});
+
+/** 修改成员角色 */
+adminLotteryRoute.patch("/members/:userId", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ role: string }>();
+  if (!body.role) return fail(c, "请指定角色", 400);
+
+  const result = await db.update(tenantMembers).set({ role: body.role }).where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, c.req.param("userId"))));
+  if ((result.rowsAffected ?? 0) === 0) return fail(c, "成员不存在", 404);
+  return ok(c, { updated: true });
+});
+
+/** 移除成员 */
+adminLotteryRoute.delete("/members/:userId", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const result = await db.delete(tenantMembers).where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, c.req.param("userId"))));
+  if ((result.rowsAffected ?? 0) === 0) return fail(c, "成员不存在", 404);
+  return ok(c, { removed: true });
+});
