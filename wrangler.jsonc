@@ -1,14 +1,19 @@
 {
-  // 项目名称 — 部署后自动生成 <name>.workers.dev 域名
+  // 项目名称
   "name": "cf-lottery",
 
   // Worker 入口文件
   "main": "src/index.ts",
 
-  // 兼容性日期 — 锁定 Workers 运行时 API 版本
+  // 兼容性日期
   "compatibility_date": "2026-05-24",
 
-  // 静态资源配置（Cloudflare Assets）
+  // 自定义域名路由
+  "routes": [
+    { "pattern": "lucky.eforge.xyz", "custom_domain": true }
+  ],
+
+  // 静态资源配置
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -17,12 +22,12 @@
     "run_worker_first": true
   },
 
-  // 可观测性（日志 + 指标）
+  // 可观测性
   "observability": {
     "enabled": true
   },
 
-  // 抽奖到期兜底开奖：每 5 分钟执行一次，每次最多处理 20 个活动
+  // Cron 定时开奖
   "triggers": {
     "crons": ["*/5 * * * *"]
   },
@@ -33,16 +38,6 @@
   },
 
   // ═══════════════════════════════════════════════════════════════
-  // 必需 secrets（由 wrangler secret put 设置）：
-  //
-  //   TURSO_URL                      — 数据库连接 URL
-  //   TURSO_TOKEN                    — 数据库认证 Token
-  //   JWT_SECRET                     — JWT 签名密钥
-  //   RESEND_API_KEY                 — 邮件发送 API Key
-  //   EMAIL_FROM                     — 发件邮箱地址
-  //   CRON_SECRET                    — Cron 定时开奖认证密钥
-  //   CREDENTIALS_ENCRYPTION_KEY     — 敏感配置加密密钥（64 位 hex）
-  //
-  // 本地开发时写入 .dev.vars 文件（已加入 .gitignore）
+  // 必需 secrets（由 wrangler secret put 设置）
   // ═══════════════════════════════════════════════════════════════
 }
