@@ -21,6 +21,7 @@ export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   username: text("username").notNull().unique(),
   email: text("email").notNull().default(""),
+  emailVerified: integer("email_verified").notNull().default(0),
   passwordHash: text("password_hash").notNull(),
   status: text("status").notNull().default("active"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),

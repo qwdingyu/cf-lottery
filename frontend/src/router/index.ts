@@ -5,6 +5,7 @@
  */
 import { createRouter, createWebHistory } from 'vue-router'
 import AdminLoginView from '@/views/AdminLoginView.vue'
+import AdminRegisterView from '@/views/AdminRegisterView.vue'
 import AdminLayout from '@/views/AdminLayout.vue'
 import LandingView from '@/views/LandingView.vue'
 import { readAdminToken } from '@/composables/useAdminAuth'
@@ -27,6 +28,12 @@ const router = createRouter({
       path: '/admin/login',
       name: 'AdminLogin',
       component: AdminLoginView,
+      meta: { requiresGuest: true },
+    },
+    {
+      path: '/admin/register',
+      name: 'AdminRegister',
+      component: AdminRegisterView,
       meta: { requiresGuest: true },
     },
     {

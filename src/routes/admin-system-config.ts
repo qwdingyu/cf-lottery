@@ -13,12 +13,8 @@ import {
   isSensitiveSystemConfigKey,
   isSupportedSystemConfigKey,
   normalizeSystemConfigValue,
-  buildSystemConfigMap,
-  SYSTEM_CONFIG_KEYS,
 } from "../lib/system-config-registry";
 import { getSystemConfig, upsertSystemConfig, deleteSystemConfig } from "../services/admin/system-config";
-import { eq, inArray } from "drizzle-orm";
-import { systemConfig } from "../db/schema";
 
 export const adminSystemConfigRoute = new Hono<AppEnv>();
 
