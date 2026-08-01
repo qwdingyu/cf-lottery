@@ -155,21 +155,7 @@ export function adminSystemConfigDefinitions(): SystemConfigDefinition[] {
   return [...SYSTEM_CONFIG_DEFINITIONS];
 }
 
-export type TurnstileConfigCompleteness = {
-  enabled: boolean;
-  siteKeyConfigured: boolean;
-  secretKeyConfigured: boolean;
-  complete: boolean;
-};
+;
 
-export function evaluateTurnstileConfigCompleteness(config: Record<string, string>): TurnstileConfigCompleteness {
-  const enabled = config.turnstile_enabled === "true";
-  const siteKeyConfigured = Boolean(config.turnstile_site_key?.trim());
-  const secretKeyConfigured = Boolean(config.turnstile_secret_key?.trim());
-  return {
-    enabled,
-    siteKeyConfigured,
-    secretKeyConfigured,
-    complete: !enabled || (siteKeyConfigured && secretKeyConfigured),
-  };
+;
 }

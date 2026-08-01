@@ -623,12 +623,6 @@ export interface AdminSystemConfigDefinition {
 export interface AdminSystemConfigResult {
   config: Record<string, string>
   definitions: AdminSystemConfigDefinition[]
-  turnstileStatus?: {
-    enabled: boolean
-    siteKeyConfigured: boolean
-    secretKeyConfigured: boolean
-    complete: boolean
-  }
 }
 
 export interface AdminUpdateSystemConfigBody {
