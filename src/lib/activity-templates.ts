@@ -117,7 +117,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       showParticipantCount: 0,
       showWinnerCount: 0,
     },
-    hints: ["在活动描述中写明问卷内容", "可在导流配置中添加完成后的引导链接", "建议关闭参与人数显示"],
+    hints: ["选择模板后在活动内容配置中调整问卷字段", "可在导流配置中添加完成后的引导链接", "建议关闭参与人数显示"],
   },
   {
     id: "vote-pick",
@@ -135,7 +135,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       showParticipantCount: 1,
       showWinnerCount: 1,
     },
-    hints: ["在活动描述中写明投票选项", "投票结束后可在管理后台查看票数统计", "每人限投一次"],
+    hints: ["选择模板后在活动内容配置中调整投票选项", "投票结束后可在管理后台查看票数统计", "每人限投一次"],
   },
   {
     id: "checkin-daily",
