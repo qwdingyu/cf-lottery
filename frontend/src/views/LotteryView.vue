@@ -398,8 +398,6 @@
 
   <GameResultModal
     :show="showResult"
-    :winner="joinResult?.joined === true"
-    :prize-name="joinResult?.prizeName"
     @close="showResult = false"
   />
 </template>
@@ -475,7 +473,6 @@ const sortedMyEntries = computed(() => {
 
 const joiningId = ref('')
 const showResult = ref(false)
-const joinResult = ref<{ joined?: boolean; prizeName?: string } | null>(null)
 const pendingJoinDrawId = ref<string | null>(null)
 const nowMs = ref(Date.now())
 
@@ -746,8 +743,6 @@ async function handleVerifyCode() {
       loginCode.value = ''
       codeSent.value = false
       showToast('参与成功')
-      // 显示游戏结果弹窗
-      joinResult.value = { joined: true, prizeName: data.prizeName || '奖品' }
       showResult.value = true
     } else {
       loginError.value = data.message || '验证失败'
