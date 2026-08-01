@@ -38,7 +38,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
 /**
  * JWT 签名和验证（使用 Web Crypto API，Cloudflare Workers 原生支持）
  */
-async function verifyJwt(token: string, secret: string): Promise<Record<string, any> | null> {
+export async function verifyJwt(token: string, secret: string): Promise<Record<string, any> | null> {
   try {
     const [headerB64, payloadB64, signatureB64] = token.split(".");
     if (!headerB64 || !payloadB64 || !signatureB64) return null;
