@@ -403,6 +403,14 @@
       </div>
     </div>
   </div>
+
+    <GameResultModal
+      :show="showResult"
+      :winner="joinResult?.joined === true"
+      :prize-name="joinResult?.prizeName"
+      @close="showResult = false"
+    />
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -422,6 +430,7 @@ import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { getGameComponent } from '@/components/games/GameRegistry'
+import GameResultModal from '@/components/games/GameResultModal.vue'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
@@ -474,6 +483,8 @@ const sortedMyEntries = computed(() => {
 });
 
 const joiningId = ref('')
+const showResult = ref(false)
+const joinResult = ref<{ joined?: boolean; prizeName?: string } | null>(null)
 const pendingJoinDrawId = ref<string | null>(null)
 const nowMs = ref(Date.now())
 

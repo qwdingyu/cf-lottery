@@ -408,7 +408,7 @@
             </div>
           </section>
 
-          <!-- 导流配置：关联商品推广（借力 cf-shop 模式，参照 AdminProductsView 弹窗设计） -->
+          <!-- 导流配置：关联商品推广 -->
           <section class="form-section" aria-labelledby="lottery-traffic">
             <header class="form-section-head">
               <h4 id="lottery-traffic" class="form-section-title">导流配置</h4>
