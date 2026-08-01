@@ -27,7 +27,7 @@ import {
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 
-const ACTIVITY_KINDS = new Set(["lottery", "signup_chain", "reservation"]);
+const ACTIVITY_KINDS = new Set(["lottery", "signup_chain", "reservation", "vote", "survey", "checkin"]);
 const PARTICIPATION_MODES = new Set(["open", "roster", "password", "invite_code"]);
 const EXPERIENCE_TYPES = new Set(["submit", "wheel", "slot", "scratch", "card"]);
 const DRAW_TRIGGERS = new Set(["manual", "scheduled"]);
@@ -370,6 +370,11 @@ adminLotteryRoute.post("/draws/:id/draw", async (c) => {
   const drawId = c.req.param("id");
 
   try {
+    const draw = await getDraw(db, drawId, tenantId);
+    if (!draw) return fail(c, "活动不存在", 404);
+    if (draw.activityKind !== "lottery") {
+      return fail(c, "该活动类型不需要开奖", 400);
+    }
     const result = await performDraw(db, tenantId, drawId, userId, {
       resendApiKey: c.env.RESEND_API_KEY || "",
       emailFrom: c.env.EMAIL_FROM || "",
@@ -396,6 +401,17 @@ adminLotteryRoute.get("/draws/:id/entries", async (c) => {
   return ok(c, { entries: rows });
 });
 
+/** 通用活动结果（接龙/预约/候补等非抽奖活动） */
+adminLotteryRoute.get("/draws/:id/outcomes", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+  const draw = await getDraw(db, drawId, tenantId);
+  if (!draw) return fail(c, "活动不存在", 404);
+  const rows = await getActivityOutcomes(db, tenantId, drawId);
+  return ok(c, { outcomes: rows });
+});
+
 /** 候选池统计 */
 adminLotteryRoute.get("/draws/:id/stats", async (c) => {
   const db = getDb(c);
@@ -405,7 +421,7 @@ adminLotteryRoute.get("/draws/:id/stats", async (c) => {
   const draw = await getDraw(db, drawId, tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  const entryCount = await getDrawEntriesCount(db, drawId);
+  const entryCount = await getDrawEntriesCount(db, drawId, tenantId);
   return ok(c, { entryCount });
 });
 
@@ -420,18 +436,26 @@ adminLotteryRoute.get("/draws/:id/export", async (c) => {
 
   const winners = await getDrawWinners(db, drawId, tenantId);
   const entries = await getEntries(db, tenantId, drawId, 10000);
+  const outcomes = draw.activityKind === "lottery" ? [] : await getActivityOutcomes(db, tenantId, drawId, 10000);
 
   // 构建 CSV 内容
   const lines: string[] = [
     "活动名称,状态,参与人数,中奖人数",
-    `${draw.title},${draw.status},${entries.length},${winners.length}`,
+    `${draw.title},${draw.status},${entries.length},${draw.activityKind === "lottery" ? winners.length : outcomes.length}`,
     "",
     "参与者邮箱,参与时间",
     ...entries.map((e) => `${e.identityValue},${e.joinedAt}`),
-    "",
-    "中奖者邮箱,中奖时间",
-    ...winners.map((w) => `${w.identityValue},${w.drawnAt}`),
   ];
+
+  if (draw.activityKind === "lottery") {
+    lines.push("", "中奖者邮箱,中奖时间", ...winners.map((w) => `${w.identityValue},${w.drawnAt}`));
+  } else {
+    lines.push(
+      "",
+      "参与记录ID,状态,参与顺序,名额序号,结果说明,确认时间",
+      ...outcomes.map((o) => `${o.entryId},${o.status},${o.sequenceNo},${o.assignmentNo ?? ""},${o.resultLabel},${o.decidedAt || ""}`),
+    );
+  }
 
   return c.text(lines.join("\n"), 200, {
     "Content-Type": "text/csv; charset=utf-8",
@@ -576,21 +600,27 @@ adminLotteryRoute.get("/draws/:id/publish-check", async (c) => {
     if (Number(inviteRow?.count || 0) === 0) errors.push("邀请码模式需要生成邀请码");
   }
 
-  // 奖项校验
-  const tiers = await db
-    .select()
-    .from(lotteryPrizeTiers)
-    .where(eq(lotteryPrizeTiers.drawId, drawId));
+  if (draw.activityKind === "signup_chain") {
+    if (!draw.maxParticipants) {
+      warnings.push("接龙活动未设置名额上限，将按默认上限控制参与量");
+    }
+  } else {
+    // 奖项校验只适用于抽奖活动
+    const tiers = await db
+      .select()
+      .from(lotteryPrizeTiers)
+      .where(eq(lotteryPrizeTiers.drawId, drawId));
 
-  if (tiers.length > 0) {
-    for (const tier of tiers) {
-      if (tier.prizeId) {
-        const [codeRow] = await db
-          .select({ count: sql<number>`COUNT(*)` })
-          .from(prizeCodes)
-          .where(and(eq(prizeCodes.prizeId, tier.prizeId), eq(prizeCodes.status, "available")));
-        if (Number(codeRow?.count || 0) < tier.winnerCount) {
-          warnings.push(`奖项"${tier.tierName}"可用码 ${codeRow?.count || 0} 个，中奖名额 ${tier.winnerCount} 个，码可能不足`);
+    if (tiers.length > 0) {
+      for (const tier of tiers) {
+        if (tier.prizeId) {
+          const [codeRow] = await db
+            .select({ count: sql<number>`COUNT(*)` })
+            .from(prizeCodes)
+            .where(and(eq(prizeCodes.tenantId, tenantId), eq(prizeCodes.prizeId, tier.prizeId), eq(prizeCodes.status, "available")));
+          if (Number(codeRow?.count || 0) < tier.winnerCount) {
+            warnings.push(`奖项"${tier.tierName}"可用码 ${codeRow?.count || 0} 个，中奖名额 ${tier.winnerCount} 个，码可能不足`);
+          }
         }
       }
     }
