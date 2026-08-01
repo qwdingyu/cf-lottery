@@ -124,6 +124,25 @@ async function createDraft(app: Hono<AppEnv>, kind: string, extra: Record<string
   return { id: created.id, publicSlug: created.publicSlug };
 }
 
+/** 配置一个手动发放奖项；抽奖正式发布必须先具备奖品和奖项，不能靠默认空配置上线。 */
+async function configureManualPrizeTier(app: Hono<AppEnv>, drawId: string, prizeName = "测试奖品") {
+  const prizeRes = await app.request("/api/admin/prizes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ name: prizeName, prizeType: "manual_fulfillment" }),
+  }, TEST_ENV);
+  expect(prizeRes.status).toBe(200);
+  const prizeData = await prizeRes.json() as { ok: boolean; id: string };
+
+  const tierRes = await app.request(`/api/admin/draws/${drawId}/tiers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ tiers: [{ prizeId: prizeData.id, tierName: "一等奖", winnerCount: 1 }] }),
+  }, TEST_ENV);
+  expect(tierRes.status).toBe(200);
+  return prizeData.id;
+}
+
 /** 发布草稿活动，并确认状态进入 open */
 async function publishDraft(app: Hono<AppEnv>, id: string) {
   // 发布
@@ -141,6 +160,9 @@ async function publishDraft(app: Hono<AppEnv>, id: string) {
 /** 创建活动 → 发布 → 返回 public_slug */
 async function createAndPublish(app: Hono<AppEnv>, kind: string, extra: Record<string, unknown> = {}) {
   const created = await createDraft(app, kind, extra);
+  if (kind === "lottery") {
+    await configureManualPrizeTier(app, created.id);
+  }
   await publishDraft(app, created.id);
   return created;
 }
@@ -152,21 +174,7 @@ describe("P0 核心流程：创建活动 → 发布", () => {
 
     const { id, publicSlug } = await createDraft(app, "lottery");
 
-    // 配置奖品和奖项：运营正确顺序是“草稿配置完成 → 发布 → 用户参与 → 开奖”。
-    const prizeRes = await app.request("/api/admin/prizes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(await authHeader()) },
-      body: JSON.stringify({ name: "测试奖品", prizeType: "manual_fulfillment" }),
-    }, TEST_ENV);
-    expect(prizeRes.status).toBe(200);
-    const prizeData = await prizeRes.json() as { ok: boolean; id: string };
-
-    const tierRes = await app.request(`/api/admin/draws/${id}/tiers`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(await authHeader()) },
-      body: JSON.stringify({ tiers: [{ prizeId: prizeData.id, tierName: "一等奖", winnerCount: 1 }] }),
-    }, TEST_ENV);
-    expect(tierRes.status).toBe(200);
+    await configureManualPrizeTier(app, id);
 
     await publishDraft(app, id);
 
@@ -226,21 +234,26 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     expect(entries.length).toBe(3);
   });
 
-  it("问卷活动：创建→发布→提交→无结果模式", async () => {
+  it("问卷活动：当前仅允许创建草稿，未完成字段配置闭环前禁止正式发布", async () => {
     await seedOwner();
     const app = createTestApp();
 
-    const { publicSlug } = await createAndPublish(app, "survey");
+    const { id } = await createDraft(app, "survey");
 
-    const joinRes = await app.request(`/api/public/draws/${publicSlug}/join`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.5" },
-      body: JSON.stringify({ email: "survey@test.com" }),
+    const checkRes = await app.request(`/api/admin/draws/${id}/publish-check`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
     }, TEST_ENV);
-    expect(joinRes.status).toBe(200);
-    const data = await joinRes.json() as any;
-    // 问卷无结果，不产生 outcome
-    expect(data.outcome).toBeUndefined();
+    expect(checkRes.status).toBe(200);
+    const check = await checkRes.json() as any;
+    expect(check.canPublish).toBe(false);
+    expect(check.errors.some((item: any) => item.code === "survey.config.missing")).toBe(true);
+
+    const publishRes = await app.request(`/api/admin/draws/${id}/publish`, {
+      method: "POST",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(publishRes.status).toBe(400);
   });
 
   it("资料领取活动：创建→发布→领取", async () => {
@@ -295,6 +308,108 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     }, TEST_ENV);
     // 空标题应被拒绝
     expect([400, 500]).toContain(createRes.status);
+  });
+
+  it("发布前校验：抽奖没有奖项时禁止发布，避免上线空奖池活动", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const { id } = await createDraft(app, "lottery");
+
+    const checkRes = await app.request(`/api/admin/draws/${id}/publish-check`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(checkRes.status).toBe(200);
+    const check = await checkRes.json() as any;
+    expect(check.canPublish).toBe(false);
+    expect(check.errors.some((item: any) => item.code === "prizes.tiers.required")).toBe(true);
+
+    const publishRes = await app.request(`/api/admin/draws/${id}/publish`, {
+      method: "POST",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(publishRes.status).toBe(400);
+  });
+
+  it("发布前校验：卡密奖品码池不足时禁止发布", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const { id } = await createDraft(app, "lottery");
+
+    const prizeRes = await app.request("/api/admin/prizes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ name: "卡密奖品", prizeType: "code" }),
+    }, TEST_ENV);
+    expect(prizeRes.status).toBe(200);
+    const prizeData = await prizeRes.json() as { ok: boolean; id: string };
+
+    const tierRes = await app.request(`/api/admin/draws/${id}/tiers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ tiers: [{ prizeId: prizeData.id, tierName: "卡密奖", winnerCount: 2 }] }),
+    }, TEST_ENV);
+    expect(tierRes.status).toBe(200);
+
+    const checkRes = await app.request(`/api/admin/draws/${id}/publish-check`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    const check = await checkRes.json() as any;
+    expect(check.canPublish).toBe(false);
+    expect(check.errors.some((item: any) => item.code === "prizes.codes.insufficient")).toBe(true);
+  });
+
+  it("发布前校验：名单和邀请码模式必须先具备可用资格数据", async () => {
+    await seedOwner();
+    const app = createTestApp();
+
+    const roster = await createDraft(app, "signup_chain", { participationMode: "roster" });
+    const rosterCheckRes = await app.request(`/api/admin/draws/${roster.id}/publish-check`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    const rosterCheck = await rosterCheckRes.json() as any;
+    expect(rosterCheck.errors.some((item: any) => item.code === "participation.roster.empty")).toBe(true);
+
+    const invite = await createDraft(app, "signup_chain", { participationMode: "invite_code" });
+    const inviteCheckRes = await app.request(`/api/admin/draws/${invite.id}/publish-check`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    const inviteCheck = await inviteCheckRes.json() as any;
+    expect(inviteCheck.errors.some((item: any) => item.code === "participation.invite_code.empty")).toBe(true);
+  });
+
+  it("发布前校验：有效抽奖返回 CTA/Webhook/奖品信息提示但不阻断", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const { id } = await createDraft(app, "lottery");
+    await configureManualPrizeTier(app, id);
+
+    const checkRes = await app.request(`/api/admin/draws/${id}/publish-check`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    const check = await checkRes.json() as any;
+    expect(check.canPublish).toBe(true);
+    expect(check.warnings.some((item: any) => item.code === "promotion.empty")).toBe(true);
+    expect(check.infos.some((item: any) => item.code === "webhook.empty")).toBe(true);
+    expect(check.infos.some((item: any) => item.code === "prizes.image.default")).toBe(true);
+  });
+
+  it("发布前校验：投票选项闭环未完成前禁止正式发布", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const { id } = await createDraft(app, "vote");
+
+    const checkRes = await app.request(`/api/admin/draws/${id}/publish-check`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    const check = await checkRes.json() as any;
+    expect(check.canPublish).toBe(false);
+    expect(check.errors.some((item: any) => item.code === "vote.options.missing")).toBe(true);
   });
 
   it("公开事件治理：非法事件类型和大 payload 被拒绝且不写库", async () => {

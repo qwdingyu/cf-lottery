@@ -29,6 +29,7 @@ import {
   importPrizeCodes,
   randomSelect,
 } from "../services/lottery-service";
+import { lotteryPrizeTiers } from "../db/schema";
 
 let client: Client;
 let db: ReturnType<typeof createDb>;
@@ -228,6 +229,19 @@ afterEach(async () => {
 });
 
 /* ── 辅助函数 ── */
+async function configureManualTier(drawId: string, winnerCount = 1) {
+  const { id: prizeId } = await createPrize(db, TENANT, { name: "测试奖品", prizeType: "manual_fulfillment" });
+  await db.insert(lotteryPrizeTiers).values({
+    id: crypto.randomUUID(),
+    tenantId: TENANT,
+    drawId,
+    prizeId,
+    tierName: "一等奖",
+    winnerCount,
+    sortOrder: 100,
+  });
+}
+
 async function setupDraw(mode = "open", opts?: { maxParticipants?: number; winnerCount?: number }) {
   const now = new Date();
   const future = new Date(now.getTime() + 3600000);
@@ -236,9 +250,25 @@ async function setupDraw(mode = "open", opts?: { maxParticipants?: number; winne
     startAt: now.toISOString(),
     endAt: future.toISOString(),
     participationMode: mode,
+    accessPassword: mode === "password" ? "pwd" : undefined,
     winnerCount: opts?.winnerCount ?? 1,
     maxParticipants: opts?.maxParticipants,
   });
+  // 发布前校验要求抽奖活动至少配置一个奖项。
+  // 测试辅助函数总是创建独立的手动发放奖品，避免误复用其他用例的卡密奖品导致码池预检互相污染。
+  await configureManualTier(id, opts?.winnerCount ?? 1);
+  if (mode === "roster") {
+    await client.execute({
+      sql: "INSERT INTO lottery_roster_members (id, tenant_id, draw_id, identity_value) VALUES (?,?,?,?)",
+      args: [crypto.randomUUID(), TENANT, id, "user@test.com"],
+    });
+  }
+  if (mode === "invite_code") {
+    await client.execute({
+      sql: "INSERT INTO lottery_invite_codes (id, tenant_id, draw_id, code, max_uses) VALUES (?,?,?,?,?)",
+      args: [crypto.randomUUID(), TENANT, id, "PUBLISH-INVITE", 1],
+    });
+  }
   await publishDraw(db, TENANT, id);
   return { id, publicSlug };
 }
@@ -358,11 +388,7 @@ describe("四种参与模式", () => {
   });
 
   it("roster：名单内可参与", async () => {
-    const { id, publicSlug } = await setupDraw("roster");
-    await client.execute({
-      sql: "INSERT INTO lottery_roster_members (id, tenant_id, draw_id, identity_value) VALUES (?,?,?,?)",
-      args: [crypto.randomUUID(), TENANT, id, "user@test.com"],
-    });
+    const { publicSlug } = await setupDraw("roster");
     expect((await joinDraw(db, publicSlug, "user@test.com")).joined).toBe(true);
   });
 
@@ -989,6 +1015,7 @@ describe("最大参与人数和参与时间", () => {
     const { id, publicSlug } = await createDraw(db, TENANT, {
       title: "未来活动", startAt: future.toISOString(), endAt: later.toISOString(), winnerCount: 1,
     });
+    await configureManualTier(id, 1);
     await publishDraw(db, TENANT, id);
     expect((await joinDraw(db, publicSlug, "u@t.com")).joined).toBe(false);
   });

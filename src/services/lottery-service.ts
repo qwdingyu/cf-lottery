@@ -22,6 +22,7 @@
 import { withDbTransaction, type DbType, type DbWriteScope } from "../db/client";
 import { and, eq, count, inArray, sql } from "drizzle-orm";
 import { buildLotteryWinnerTemplateData, sendEmail } from "./email-service";
+import { buildPublishCheckForDraw } from "./publish-check-service";
 import {
   lotteryDraws,          // 抽奖活动表
   lotteryEntries,        // 候选池表
@@ -1123,10 +1124,12 @@ export async function publishDraw(db: DbType, tenantId: string, drawId: string):
   // 只有草稿状态可以发布
   if (draw.status !== "draft") throw new Error("只有草稿状态的活动才能发布");
 
-  // 发布前二次校验（创建时已校验，但发布前再次确认）
-  if (!draw.title) throw new Error("活动标题不能为空");
-  if (!draw.startAt || !draw.endAt) throw new Error("请设置活动时间");
-  if (draw.drawTrigger === "scheduled" && !draw.drawAt) throw new Error("定时开奖必须设置开奖时间");
+  // 发布前二次校验集中交给 publish-check-service：
+  // 真实发布路径必须和后台“发布前预检”使用同一套规则，否则前端清单和服务端行为会漂移。
+  const publishCheck = await buildPublishCheckForDraw(db, tenantId, draw);
+  if (!publishCheck.canPublish) {
+    throw new Error(publishCheck.errors[0]?.message || "活动未通过发布前校验");
+  }
 
   // CAS 更新：条件为 status = 'draft'，防止并发发布
   const result = await db

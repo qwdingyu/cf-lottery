@@ -8,7 +8,7 @@ import { cors } from "hono/cors";
 import type { AppEnv, Bindings } from "./bindings";
 import { createClient } from "@libsql/client";
 import { createDb } from "./db/client";
-import { fail } from "./lib/http";
+import { fail, getDb } from "./lib/http";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
@@ -21,6 +21,9 @@ import { adminMediaRoute, mediaRoute } from "./routes/media";
 import { getApiBodyLimitBytes } from "./lib/api-body-limit";
 import { cleanExpiredRateLimits } from "./lib/rate-limit";
 import { refreshAllTenantSnapshots } from "./services/admin/usage-snapshots";
+import { writePlatformAudit } from "./services/admin/platform-audit";
+import { users, platformMembers } from "./db/schema";
+import { eq } from "drizzle-orm";
 import {
   processDueDraws,
   processPendingWebhookDeliveriesForAllTenants,
@@ -139,6 +142,42 @@ app.get("/api/health", (c) => c.json({
   db: !!c.get("db"),
   dbError: c.get("dbInitError") || null,
 }));
+
+// 平台首个 owner 初始化（仅部署时一次性调用）
+// 通过 PLATFORM_BOOTSTRAP_EMAIL 环境变量指定首个平台运营者邮箱。
+// 安全：必须同时提供 BOOTSTRAP_SECRET，防止未授权创建平台 owner。
+app.post("/api/platform/bootstrap", async (c) => {
+  const db = getDb(c);
+  const email = c.env.PLATFORM_BOOTSTRAP_EMAIL || "";
+  const secret = c.env.BOOTSTRAP_SECRET || "";
+  const authHeader = c.req.header("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+  // 校验 bootstrap 密钥
+  if (!secret || token !== secret) return c.json({ ok: false, message: "未授权" }, 403);
+  if (!email) return c.json({ ok: false, message: "未配置 PLATFORM_BOOTSTRAP_EMAIL" }, 400);
+
+  // 查找用户
+  const [user] = await db.select().from(users).where(eq(users.email, email.trim().toLowerCase())).limit(1);
+  if (!user) return c.json({ ok: false, message: "用户不存在，请先注册" }, 404);
+
+  // 检查是否已是平台成员
+  const [existing] = await db.select().from(platformMembers).where(eq(platformMembers.userId, user.id)).limit(1);
+  if (existing) return c.json({ ok: false, message: "该用户已是平台成员" }, 409);
+
+  // 创建为平台 owner
+  await db.insert(platformMembers).values({ userId: user.id, role: "platform_owner", status: "active" });
+  await writePlatformAudit(db, {
+    actorUserId: user.id,
+    actorRole: "platform_owner",
+    action: "platform.bootstrap",
+    targetType: "platform_member",
+    targetId: user.id,
+    metadata: { email: user.email },
+  });
+
+  return c.json({ ok: true, message: "平台 owner 初始化成功" });
+});
 
 // Cron 手动入口：处理到期活动。线上自动任务使用 Worker scheduled() handler。
 // 安全：需要通过 CRON_SECRET 认证，防止未授权触发

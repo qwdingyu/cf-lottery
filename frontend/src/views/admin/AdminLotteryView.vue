@@ -885,6 +885,19 @@ type DrawAnalyticsStats = {
   externalConversions: ExternalConversionSummary;
 };
 
+type PublishCheckItem = {
+  code: string;
+  message: string;
+  section: string;
+};
+
+type PublishCheckResult = {
+  canPublish: boolean;
+  errors: PublishCheckItem[];
+  warnings: PublishCheckItem[];
+  infos: PublishCheckItem[];
+};
+
 type ExternalConversion = {
   id: string;
   drawId: string;
@@ -919,6 +932,7 @@ const fetchLotteryDraws = async (_token: string, params: { limit: number; offset
 }
 const createLotteryDraw = async (_token: string, body: any) => adminRequest<{ id: string; publicSlug: string }>('/api/admin/draws', { method: 'POST', body: JSON.stringify(body) });
 const updateLotteryDraw = async (_token: string, id: string, body: any) => adminRequest(`/api/admin/draws/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+const fetchPublishCheck = async (_token: string, id: string) => adminRequest<PublishCheckResult>(`/api/admin/draws/${id}/publish-check`);
 const openLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/publish`, { method: 'POST' });
 const performLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/draw`, { method: 'POST' });
 const cancelLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/cancel`, { method: 'POST' });
@@ -1292,6 +1306,12 @@ function conversionAmount(item: ExternalConversion): string {
   if (item.amountCents === null || item.amountCents === undefined) return '-'
   const currency = item.currency ? `${item.currency} ` : ''
   return `${currency}${item.amountCents} 分`
+}
+
+function formatPublishCheckItems(items: PublishCheckItem[], prefix: string): string {
+  const topItems = items.slice(0, 3).map((item) => item.message).join('\n')
+  const rest = items.length > 3 ? `\n还有 ${items.length - 3} 项，请查看发布前预检` : ''
+  return `${prefix}\n${topItems}${rest}`
 }
 
 async function handleViewAnalytics(draw: LotteryDraw) {
@@ -1752,6 +1772,16 @@ async function loadData() {
 async function handleOpen(draw: LotteryDraw) {
   operatingId.value = draw.id
   try {
+    // 发布前先展示同一套服务端门禁结果：运营者需要知道缺奖项、码池、CTA、Webhook 等具体阻断点。
+    const check = await fetchPublishCheck(requireToken(), draw.id)
+    if (!check.canPublish) {
+      showToast(formatPublishCheckItems(check.errors, '发布前需要先处理：'), 'error')
+      return
+    }
+    if (check.warnings.length > 0) {
+      const confirmed = await askConfirm(formatPublishCheckItems(check.warnings, '发布前仍有风险：') + '\n仍然发布吗？')
+      if (!confirmed) return
+    }
     await openLotteryDraw(requireToken(), draw.id)
     // 发布后复制公开 slug 链接，避免把内部活动 id 发给参与者导致公开页 404。
     try {
