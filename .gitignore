@@ -12,3 +12,4 @@ public/
 *.lognode_modules/
 coverage/
 .env
+*.tsbuildinfo
