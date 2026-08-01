@@ -13,6 +13,7 @@ import {
   joinDraw,
   getDraw,
   getDrawWinners,
+  getActivityOutcomes,
   createPrize,
   importPrizeCodes,
   randomSelect,
@@ -134,6 +135,25 @@ async function setupDraw(mode = "open", opts?: { maxParticipants?: number; winne
     participationMode: mode,
     winnerCount: opts?.winnerCount ?? 1,
     maxParticipants: opts?.maxParticipants,
+  });
+  await publishDraw(db, TENANT, id);
+  return { id, publicSlug };
+}
+
+async function setupSignupChain(opts?: { maxParticipants?: number; allocationPolicy?: string }) {
+  const now = new Date();
+  const future = new Date(now.getTime() + 3600000);
+  const { id, publicSlug } = await createDraw(db, TENANT, {
+    title: "接龙活动",
+    startAt: now.toISOString(),
+    endAt: future.toISOString(),
+    activityKind: "signup_chain",
+    participationMode: "open",
+    experienceType: "list",
+    resultMode: "ordered_assignment",
+    allocationPolicy: opts?.allocationPolicy,
+    maxParticipants: opts?.maxParticipants,
+    winnerCount: 1,
   });
   await publishDraw(db, TENANT, id);
   return { id, publicSlug };
