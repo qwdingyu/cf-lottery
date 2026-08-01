@@ -45,7 +45,6 @@ const DDL = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_email_code_active ON email_access_codes(email, draw_id) WHERE used = 0`,
   `CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, actor_user_id TEXT NOT NULL, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS system_config (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS rate_limit_log (id TEXT PRIMARY KEY, key TEXT NOT NULL, action TEXT NOT NULL, created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS activity_outcomes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, entry_id TEXT NOT NULL, outcome_type TEXT NOT NULL DEFAULT 'assignment', status TEXT NOT NULL DEFAULT 'assigned', sequence_no INTEGER NOT NULL, assignment_no INTEGER, result_key TEXT NOT NULL DEFAULT '', result_label TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', decided_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 ];
 
@@ -63,7 +62,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-    const tables = ["audit_logs","lottery_winners","lottery_entries","lottery_draws","prize_codes","prizes","tenant_members","users","tenants","email_access_codes","system_config","activity_outcomes","rate_limit_log"];
+  const tables = ["audit_logs","lottery_winners","lottery_entries","lottery_draws","prize_codes","prizes","tenant_members","users","tenants","email_access_codes","system_config","activity_outcomes","rate_limit_log"];
   for (const t of tables) await client.execute(`DELETE FROM ${t}`);
 });
 

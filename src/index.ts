@@ -15,7 +15,9 @@ import { integrationRoute } from "./routes/integration";
 import { systemConfigRoute } from "./routes/system-config";
 import { platformSystemConfigRoute } from "./routes/platform-system-config";
 import { platformRedemptionCodesRoute } from "./routes/platform-redemption-codes";
+import { platformRoute } from "./routes/platform";
 import { cleanExpiredRateLimits } from "./lib/rate-limit";
+import { refreshAllTenantSnapshots } from "./services/admin/usage-snapshots";
 import {
   processDueDraws,
   processPendingWebhookDeliveriesForAllTenants,
@@ -107,6 +109,7 @@ app.route("/api/system-config", systemConfigRoute);
 // 平台运营后台路由（L3）
 app.route("/api/platform/system-config", platformSystemConfigRoute);
 app.route("/api/platform/redemption-codes", platformRedemptionCodesRoute);
+app.route("/api/platform", platformRoute);
 
 // 健康检查
 app.get("/api/health", (c) => c.json({ ok: true, db: !!c.get("db") }));
@@ -163,6 +166,12 @@ app.post("/api/cron/maintenance", async (c) => {
 
   try {
     const result = await runScheduledMaintenance(c.env);
+    // 同时刷新租户用量快照
+    const db = createDbFromEnv(c.env);
+    if (db) {
+      const snapshots = await refreshAllTenantSnapshots(db);
+      return c.json({ ok: true, ...result, snapshots: snapshots.processed });
+    }
     return c.json({ ok: true, ...result });
   } catch (err) {
     console.error("[cron] maintenance failed:", err);

@@ -26,6 +26,7 @@ const TENANT_ID = "tenant-rbac";
 const OWNER_ID = "user-owner";
 const VIEWER_ID = "user-viewer";
 const PLATFORM_ID = "user-platform-owner";
+const INVITEE_ID = "user-invitee";
 
 const TEST_ENV = {
   TURSO_URL: "",
@@ -84,6 +85,7 @@ async function seedUsers() {
     { id: OWNER_ID, username: "owner", email: "owner@test.com", emailVerified: 1, passwordHash: "hash" },
     { id: VIEWER_ID, username: "viewer", email: "viewer@test.com", emailVerified: 1, passwordHash: "hash" },
     { id: PLATFORM_ID, username: "platform", email: "platform@test.com", emailVerified: 1, passwordHash: "hash" },
+    { id: INVITEE_ID, username: "invitee", email: "invitee@test.com", emailVerified: 1, passwordHash: "hash" },
   ]);
   await db.insert(tenantMembers).values([
     { tenantId: TENANT_ID, userId: OWNER_ID, role: "owner" },
@@ -153,6 +155,26 @@ describe("RBAC-lite 路由分层", () => {
       body: JSON.stringify({ title: "viewer 不应创建活动" }),
     }, TEST_ENV);
     expect(writeRes.status).toBe(403);
+  });
+
+  it("租户 owner 仍可通过 /api/admin/members 添加已有用户为团队成员", async () => {
+    await seedUsers();
+    await db.update(tenants).set({ plan: "pro" }).where(eq(tenants.id, TENANT_ID));
+    const app = createTestApp();
+
+    const addRes = await app.request("/api/admin/members", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader(OWNER_ID)) },
+      body: JSON.stringify({ username: "invitee", role: "admin" }),
+    }, TEST_ENV);
+    expect(addRes.status).toBe(200);
+
+    const listRes = await app.request("/api/admin/members", {
+      headers: await authHeader(OWNER_ID),
+    }, TEST_ENV);
+    expect(listRes.status).toBe(200);
+    const payload = await listRes.json() as { members: Array<{ userId: string; role: string }> };
+    expect(payload.members.some((member) => member.userId === INVITEE_ID && member.role === "admin")).toBe(true);
   });
 
   it("租户成员角色只能使用基线角色，不能写入 operator/member 等历史同义词", async () => {

@@ -80,6 +80,26 @@ export const rateLimitLog = sqliteTable("rate_limit_log", {
   keyActionIdx: index("idx_rate_limit_key_action").on(t.key, t.action, t.createdAt),
 }));
 
+/**
+ * 租户用量快照表
+ *
+ * 替代实时 COUNT，用于平台运营后台展示租户用量。
+ * 由 Cron 定时任务刷新，避免在管理后台做全表扫描 COUNT。
+ * 按租户+日期维度存储，支持按日/月/年聚合。
+ */
+export const tenantUsageSnapshots = sqliteTable("tenant_usage_snapshots", {
+  tenantId: text("tenant_id").notNull(),
+  snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD
+  activityCount: integer("activity_count").notNull().default(0),
+  participantCount: integer("participant_count").notNull().default(0),
+  eventCount: integer("event_count").notNull().default(0),
+  winnerCount: integer("winner_count").notNull().default(0),
+  webhookCount: integer("webhook_count").notNull().default(0),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  pk: uniqueIndex("pk_tenant_usage_snapshots").on(t.tenantId, t.snapshotDate),
+}));
+
 // ── 奖品与码池 ──
 export const prizes = sqliteTable("prizes", {
   id: text("id").primaryKey(),

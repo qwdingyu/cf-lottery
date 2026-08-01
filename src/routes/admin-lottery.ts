@@ -571,7 +571,7 @@ adminLotteryRoute.get("/draws/:id/export", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
 
   // 先检查总参与人数，超出限制时提示
-  const entryCount = await getDrawEntriesCount(db, tenantId, drawId);
+  const entryCount = await getDrawEntriesCount(db, drawId, tenantId);
   if (entryCount > MAX_EXPORT_ROWS) {
     return fail(c, `参与人数超出单次导出上限（${MAX_EXPORT_ROWS}），请分批导出或联系平台运营`, 400);
   }
