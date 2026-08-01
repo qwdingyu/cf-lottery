@@ -1325,9 +1325,25 @@ async function handleCreate() {
       activityKind: 'lottery',
       resultMode: 'manual',
       accessPassword: form.value.accessPassword || '',
-      // 导流：商品链接（启用时发送，关闭时发送 null 以清空）
+      // 导流：商品链接（启用时发送，关闭时发送 undefined）
       productLink: form.value.enableProductLink && form.value.productLink.url
         ? form.value.productLink
+        : undefined,
+      // 导流：版本化配置（PromotionConfigV1）
+      promotionConfig: form.value.enableProductLink && form.value.productLink.url
+        ? {
+            version: 1,
+            enabled: true,
+            kind: 'destination',
+            placement: 'after_join',
+            destination: {
+              url: form.value.productLink.url,
+              title: form.value.productLink.title,
+              imageUrl: form.value.productLink.imageUrl || '',
+              priceText: form.value.productLink.price || '',
+            },
+            tracking: { enabled: true },
+          }
         : undefined,
     }
     if (isEditing.value && form.value.id) {
