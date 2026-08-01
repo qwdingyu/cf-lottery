@@ -413,7 +413,7 @@
  * - 订单链接使用 history 模式 /order?token=（禁止 hash 路由伪链接）
  * - 个人状态用普通对象（非 Map.set 原地修改）保证 Vue 响应式
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -484,6 +484,28 @@ const joiningId = ref('')
 const showResult = ref(false)
 const pendingJoinDrawId = ref<string | null>(null)
 const nowMs = ref(Date.now())
+
+// Telegram Mini App BackButton 适配
+const tg = typeof window !== 'undefined' ? (window as any).Telegram?.WebApp : undefined
+function handleTelegramBackButton() {
+  if (showResult.value) { showResult.value = false; return }
+  if (isDeepLinked.value) { void router.push('/lottery'); return }
+  if (expandedId.value) { expandedId.value = null }
+}
+if (tg?.BackButton) {
+  tg.BackButton.onClick(handleTelegramBackButton)
+  watch([isDeepLinked, expandedId, showResult], () => {
+    if (isDeepLinked.value || expandedId.value || showResult.value) {
+      tg.BackButton.show()
+    } else {
+      tg.BackButton.hide()
+    }
+  }, { immediate: true })
+  onUnmounted(() => {
+    tg.BackButton.offClick?.(handleTelegramBackButton)
+    tg.BackButton.hide?.()
+  })
+}
 
 const showLoginModal = ref(false)
 const loginEmail = ref('')
