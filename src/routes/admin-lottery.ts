@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
@@ -502,6 +502,47 @@ adminLotteryRoute.get("/draws/:id/entries", async (c) => {
   return ok(c, { entries: rows });
 });
 
+/** 审核申请：批准或拒绝（仅 approval 活动可用） */
+adminLotteryRoute.post("/draws/:id/review", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+  const body = await c.req.json<{ entryId: string; decision: "approved" | "rejected"; reason?: string }>();
+  if (!body.entryId || !body.decision) return fail(c, "请指定参与记录和审批结果", 400);
+
+  const draw = await getDraw(db, drawId, tenantId);
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.activityKind !== "approval") return fail(c, "仅审核活动支持审批操作", 400);
+
+  // 检查 entry 是否存在
+  const [entry] = await db
+    .select({ id: lotteryEntries.id })
+    .from(lotteryEntries)
+    .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.id, body.entryId)))
+    .limit(1);
+  if (!entry) return fail(c, "参与记录不存在", 404);
+
+  const now = new Date().toISOString();
+  // 写入审批结果到 activity_outcomes
+  await db.insert(activityOutcomes).values({
+    id: crypto.randomUUID(),
+    tenantId,
+    drawId,
+    entryId: body.entryId,
+    outcomeType: "review",
+    status: body.decision,
+    sequenceNo: 0,
+    resultKey: body.decision,
+    resultLabel: body.decision === "approved" ? "已通过" : "已拒绝",
+    metadataJson: JSON.stringify({ reason: body.reason || "" }),
+    decidedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return ok(c, { reviewed: true, decision: body.decision });
+});
+
 /** 通用活动结果（接龙/预约/候补等非抽奖活动） */
 adminLotteryRoute.get("/draws/:id/outcomes", async (c) => {
   const db = getDb(c);
@@ -538,6 +579,30 @@ adminLotteryRoute.get("/draws/:id/events/summary", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
 
   return ok(c, await getActivityEventSummary(db, tenantId, drawId));
+});
+
+/** 投票统计：按选项统计票数（仅 vote 活动可用） */
+adminLotteryRoute.get("/draws/:id/tally", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const draw = await getDraw(db, drawId, tenantId);
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.activityKind !== "vote") return fail(c, "仅投票活动支持票数统计", 400);
+
+  // 按参与者身份标识分组统计票数
+  const rows = await db
+    .select({
+      option: lotteryEntries.identityValue,
+      count: count(),
+    })
+    .from(lotteryEntries)
+    .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId)))
+    .groupBy(lotteryEntries.identityValue)
+    .orderBy(desc(count()));
+
+  return ok(c, { tally: rows, total: rows.reduce((s, r) => s + Number(r.count), 0) });
 });
 
 /** 外部转化回传列表：只展示外部系统显式回传的事实 */

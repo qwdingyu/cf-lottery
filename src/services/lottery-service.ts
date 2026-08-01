@@ -1167,6 +1167,7 @@ export async function cancelDraw(db: DbType, tenantId: string, drawId: string): 
  * - 参与时间必须在活动时间窗口内
  * - 不超过最大参与人数上限
  * - 同一身份不可重复参与（UNIQUE 约束）
+ * - 签到活动例外：同一身份每天可签到一次（identity_value 附加日期后缀）
  */
 export async function joinDraw(
   db: DbType,
@@ -1193,7 +1194,12 @@ export async function joinDraw(
   if (draw.status !== "open") throw new Error("活动未开启");
 
   // 检查是否在黑名单中
-  const normalizedValue = identityValue.trim().toLowerCase();
+  let normalizedValue = identityValue.trim().toLowerCase();
+  // 签到活动：identity_value 附加日期后缀，允许同一人每天签到一次
+  if (draw.activityKind === "checkin") {
+    const today = new Date().toISOString().slice(0, 10);
+    normalizedValue = `${normalizedValue}:${today}`;
+  }
   const [banned] = await db
     .select({ id: lotteryBlacklist.id })
     .from(lotteryBlacklist)
