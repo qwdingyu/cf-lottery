@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, auditLogs, tenantMembers, users, tenants } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, auditLogs, tenantMembers, users, tenants } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
@@ -963,4 +963,83 @@ adminLotteryRoute.get("/draws/:id/signup-list", async (c) => {
     .orderBy(lotteryEntries.joinedAt);
 
   return ok(c, { entries, total: entries.length });
+});
+
+// ═════════════════════════════════════════════════════════
+// API 密钥管理
+// ═════════════════════════════════════════════════════════
+
+/** API 密钥列表 */
+adminLotteryRoute.get("/api-keys", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const rows = await db
+    .select({ id: apiKeys.id, name: apiKeys.name, key: apiKeys.key, active: apiKeys.active, createdAt: apiKeys.createdAt })
+    .from(apiKeys)
+    .where(eq(apiKeys.tenantId, tenantId))
+    .orderBy(desc(apiKeys.createdAt));
+  return ok(c, { keys: rows });
+});
+
+/** 创建 API 密钥 */
+adminLotteryRoute.post("/api-keys", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ name: string }>();
+  const name = String(body.name || "").trim();
+  if (!name) return fail(c, "请输入密钥名称", 400);
+
+  const key = "cl_" + crypto.randomUUID().replace(/-/g, "").slice(0, 32);
+  await db.insert(apiKeys).values({ id: crypto.randomUUID(), tenantId, name, key });
+  return ok(c, { key });
+});
+
+/** 删除 API 密钥 */
+adminLotteryRoute.delete("/api-keys/:id", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  await db.delete(apiKeys).where(and(eq(apiKeys.id, c.req.param("id")), eq(apiKeys.tenantId, tenantId)));
+  return ok(c, { deleted: true });
+});
+
+// ═════════════════════════════════════════════════════════
+// Webhook 配置管理
+// ═════════════════════════════════════════════════════════
+
+/** Webhook 列表 */
+adminLotteryRoute.get("/webhooks", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const rows = await db
+    .select()
+    .from(webhookConfigs)
+    .where(eq(webhookConfigs.tenantId, tenantId))
+    .orderBy(desc(webhookConfigs.createdAt));
+  return ok(c, { webhooks: rows });
+});
+
+/** 创建 Webhook */
+adminLotteryRoute.post("/webhooks", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ url: string; events?: string[] }>();
+  const url = String(body.url || "").trim();
+  if (!url) return fail(c, "请输入 Webhook URL", 400);
+  try { new URL(url); if (url.startsWith("http")) {} else throw 1; } catch { return fail(c, "URL 格式无效", 400); }
+
+  await db.insert(webhookConfigs).values({
+    id: crypto.randomUUID(),
+    tenantId,
+    url,
+    events: JSON.stringify(body.events || ["draw.completed", "prize.issued"]),
+  });
+  return ok(c, { created: true });
+});
+
+/** 删除 Webhook */
+adminLotteryRoute.delete("/webhooks/:id", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  await db.delete(webhookConfigs).where(and(eq(webhookConfigs.id, c.req.param("id")), eq(webhookConfigs.tenantId, tenantId)));
+  return ok(c, { deleted: true });
 });
