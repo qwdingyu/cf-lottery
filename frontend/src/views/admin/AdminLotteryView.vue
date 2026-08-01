@@ -176,6 +176,13 @@
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
+                  :title="'查看活动漏斗和外部回传'"
+                  @click="handleViewAnalytics(draw)"
+                >数据</button>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs"
+                  :disabled="operatingId === draw.id"
                   :title="$t('lottery.adminDuplicateHint')"
                   @click="handleDuplicate(draw)"
                 >{{ $t('lottery.adminDuplicate') }}</button>
@@ -609,6 +616,109 @@
 
     <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" @confirm="onConfirm" />
 
+    <!-- 活动数据：平台内漏斗 + 外部系统显式回传 -->
+    <AdminModal v-model="showAnalyticsModal" title="活动数据" max-width="860px">
+      <div class="analytics-modal-body">
+        <div class="analytics-modal-head">
+          <div>
+            <h3>{{ analyticsDraw?.title || '-' }}</h3>
+            <p>平台事件只代表浏览、参与和点击；外部转化只来自 API Key 回传。</p>
+          </div>
+          <button
+            class="btn btn-ghost btn-sm"
+            type="button"
+            :disabled="analyticsLoading || !analyticsDraw"
+            @click="analyticsDraw && handleViewAnalytics(analyticsDraw)"
+          >刷新</button>
+        </div>
+
+        <div v-if="analyticsLoading" class="empty-text">加载中...</div>
+        <div v-else-if="analyticsError" class="table-error" role="alert">
+          <span>{{ analyticsError }}</span>
+        </div>
+        <template v-else>
+          <div class="analytics-grid">
+            <div v-for="item in analyticsFunnelCards" :key="item.key" class="analytics-card">
+              <span class="analytics-value">{{ item.value }}</span>
+              <span class="analytics-label">{{ item.label }}</span>
+            </div>
+          </div>
+
+          <div class="analytics-section">
+            <h4>关键比率</h4>
+            <div class="analytics-rates">
+              <div>
+                <span>{{ completionRate }}</span>
+                <small>完成 / 浏览</small>
+              </div>
+              <div>
+                <span>{{ ctaRate }}</span>
+                <small>CTA / 完成</small>
+              </div>
+              <div>
+                <span>{{ externalConversionRate }}</span>
+                <small>外部回传 / CTA</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="analytics-section">
+            <div class="analytics-section-head">
+              <h4>外部回传类型</h4>
+              <span class="muted-text">只统计外部系统显式上报的事实</span>
+            </div>
+            <div v-if="conversionTypeRows.length > 0" class="analytics-type-list">
+              <div v-for="row in conversionTypeRows" :key="row.type">
+                <span>{{ conversionTypeLabel(row.type) }}</span>
+                <strong>{{ row.count }}</strong>
+                <small v-if="row.amountCents > 0">{{ row.amountCents }} 分</small>
+              </div>
+            </div>
+            <p v-else class="empty-text">暂无外部转化回传</p>
+          </div>
+
+          <div class="analytics-section">
+            <div class="analytics-section-head">
+              <h4>最近回传</h4>
+              <button
+                class="btn btn-ghost btn-xs"
+                type="button"
+                :disabled="analyticsConversions.length === 0"
+                @click="handleExportConversions"
+              >导出 CSV</button>
+            </div>
+            <div class="table-wrap analytics-table-wrap">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>类型</th>
+                    <th>来源</th>
+                    <th>外部事件</th>
+                    <th>身份</th>
+                    <th>金额</th>
+                    <th>发生时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in analyticsConversions" :key="item.id">
+                    <td>{{ conversionTypeLabel(item.conversionType) }}</td>
+                    <td>{{ item.source || '-' }}</td>
+                    <td>{{ item.externalEventId }}</td>
+                    <td>{{ conversionIdentity(item) }}</td>
+                    <td>{{ conversionAmount(item) }}</td>
+                    <td>{{ formatDate(item.occurredAt) }}</td>
+                  </tr>
+                  <tr v-if="analyticsConversions.length === 0">
+                    <td colspan="6" class="empty-text">暂无外部回传记录</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+      </div>
+    </AdminModal>
+
     <!-- 二维码弹窗 -->
     <AdminModal v-model="showQrModal" title="活动二维码" max-width="400px">
       <div class="qr-modal-body">
@@ -669,6 +779,45 @@ type LotteryWinner = {
   emailSent?: number; emailError?: string;
 };
 
+type ActivityEventSummary = {
+  totals: Record<string, number>;
+  pageViews: number;
+  participationCompleted: number;
+  ctaClicks: number;
+  shareClicks: number;
+  attributedJoins: number;
+  externalConversionsReported: number;
+};
+
+type ExternalConversionSummary = {
+  totalCount: number;
+  totalAmountCents: number;
+  totals: Record<string, { count: number; amountCents: number }>;
+};
+
+type DrawAnalyticsStats = {
+  entryCount: number;
+  events: ActivityEventSummary;
+  externalConversions: ExternalConversionSummary;
+};
+
+type ExternalConversion = {
+  id: string;
+  drawId: string;
+  entryId: string;
+  externalEventId: string;
+  conversionType: string;
+  source: string;
+  refCode: string;
+  amountCents: number | null;
+  currency: string;
+  identityType: string;
+  identityValue: string;
+  payloadJson: string;
+  occurredAt: string;
+  createdAt: string;
+};
+
 const { t, locale } = useI18n()
 const { showToast } = useToast()
 useAdminAuth()
@@ -684,6 +833,8 @@ const performLotteryDraw = async (_token: string, id: string) => adminRequest(`/
 const cancelLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/cancel`, { method: 'POST' });
 const deleteLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}`, { method: 'DELETE' });
 const fetchLotteryWinners = async (_token: string, id: string) => adminRequest<{ winners: LotteryWinner[] }>(`/api/admin/draws/${id}/winners`);
+const fetchDrawAnalyticsStats = async (_token: string, id: string) => adminRequest<DrawAnalyticsStats>(`/api/admin/draws/${id}/stats`);
+const fetchDrawConversions = async (_token: string, id: string) => adminRequest<{ conversions: ExternalConversion[]; summary: ExternalConversionSummary }>(`/api/admin/draws/${id}/conversions?limit=50`);
 const fetchAdminLottery = async (_token: string, path: string, method: string) => adminRequest(path, { method });
 const retryAdminLotteryEmail = async (_token: string, id: string) => adminRequest<{ sent: number; failed: number }>(`/api/admin/draws/${id}/retry-email`, { method: 'POST' });
 const recoverLotteryDraw = async (_token: string, id: string) => adminRequest<{ healed: 'drawn' | 'open' }>(`/api/admin/draws/${id}/recover`, { method: 'POST' });
@@ -737,11 +888,17 @@ const loading = ref(false)
 const loadError = ref('')
 const showCreateModal = ref(false)
 const showWinnersModal = ref(false)
+const showAnalyticsModal = ref(false)
 const showQrModal = ref(false)
 const qrImageUrl = ref('')
 const qrDrawUrl = ref('')
 const winners = ref<LotteryWinner[]>([])
 const winnersLoading = ref(false)
+const analyticsLoading = ref(false)
+const analyticsError = ref('')
+const analyticsDraw = ref<LotteryDraw | null>(null)
+const analyticsStats = ref<DrawAnalyticsStats | null>(null)
+const analyticsConversions = ref<ExternalConversion[]>([])
 /** 中奖弹窗对应的活动 id，便于弹窗内一键重发失败邮件 */
 const winnersModalDrawId = ref('')
 const creating = ref(false)
@@ -781,6 +938,37 @@ const {
 
 const winnersEmailFailureCount = computed(() => countLotteryEmailFailures(winners.value))
 const winnersEmailPendingCount = computed(() => winners.value.filter((winner) => Number(winner.emailSent) !== 1 && !winner.emailError).length)
+const analyticsFunnelCards = computed(() => {
+  const stats = analyticsStats.value
+  const events = stats?.events
+  return [
+    { key: 'page_view', label: '浏览', value: events?.pageViews ?? 0 },
+    { key: 'participation_started', label: '开始参与', value: events?.totals.participation_started ?? 0 },
+    { key: 'participation_completed', label: '完成参与', value: events?.participationCompleted ?? 0 },
+    { key: 'cta_click', label: 'CTA 点击', value: events?.ctaClicks ?? 0 },
+    { key: 'share_click', label: '分享点击', value: events?.shareClicks ?? 0 },
+    { key: 'attributed_join', label: '有效邀请', value: events?.attributedJoins ?? 0 },
+    { key: 'external_conversion_reported', label: '外部回传', value: events?.externalConversionsReported ?? 0 },
+  ]
+})
+const conversionTypeRows = computed(() => {
+  const totals = analyticsStats.value?.externalConversions?.totals || {}
+  return Object.entries(totals)
+    .map(([type, row]) => ({ type, count: Number(row.count || 0), amountCents: Number(row.amountCents || 0) }))
+    .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type))
+})
+const completionRate = computed(() => percent(
+  analyticsStats.value?.events.participationCompleted || 0,
+  analyticsStats.value?.events.pageViews || 0,
+))
+const ctaRate = computed(() => percent(
+  analyticsStats.value?.events.ctaClicks || 0,
+  analyticsStats.value?.events.participationCompleted || 0,
+))
+const externalConversionRate = computed(() => percent(
+  analyticsStats.value?.externalConversions.totalCount || 0,
+  analyticsStats.value?.events.ctaClicks || 0,
+))
 
 const emptyForm = () => ({
   id: '',
@@ -887,6 +1075,83 @@ function emailStatusClass(w: LotteryWinner): string {
   if (Number(w.emailSent) === 1) return 'tag-success'
   if (w.emailError) return 'tag-danger'
   return 'tag-warning'
+}
+
+function percent(numerator: number, denominator: number): string {
+  if (!denominator || denominator <= 0) return '-'
+  return `${((numerator / denominator) * 100).toFixed(1)}%`
+}
+
+function conversionTypeLabel(type: string): string {
+  const map: Record<string, string> = {
+    registration: '注册',
+    purchase: '购买',
+    coupon_redeemed: '券码核销',
+    lead_qualified: '线索合格',
+    offline_redeemed: '线下核销',
+    custom: '自定义',
+  }
+  return map[type] || type || '-'
+}
+
+function conversionIdentity(item: ExternalConversion): string {
+  if (!item.identityValue) return '-'
+  return item.identityType ? `${item.identityType}:${item.identityValue}` : item.identityValue
+}
+
+function conversionAmount(item: ExternalConversion): string {
+  if (item.amountCents === null || item.amountCents === undefined) return '-'
+  const currency = item.currency ? `${item.currency} ` : ''
+  return `${currency}${item.amountCents} 分`
+}
+
+async function handleViewAnalytics(draw: LotteryDraw) {
+  analyticsDraw.value = draw
+  showAnalyticsModal.value = true
+  analyticsLoading.value = true
+  analyticsError.value = ''
+  analyticsStats.value = null
+  analyticsConversions.value = []
+  operatingId.value = draw.id
+  try {
+    const [stats, conversionData] = await Promise.all([
+      fetchDrawAnalyticsStats(requireToken(), draw.id),
+      fetchDrawConversions(requireToken(), draw.id),
+    ])
+    analyticsStats.value = {
+      ...stats,
+      externalConversions: conversionData.summary || stats.externalConversions,
+    }
+    analyticsConversions.value = conversionData.conversions || []
+  } catch (e: any) {
+    analyticsError.value = e?.message || '活动数据加载失败'
+    showToast(analyticsError.value, 'error')
+  } finally {
+    analyticsLoading.value = false
+    operatingId.value = ''
+  }
+}
+
+function handleExportConversions() {
+  if (analyticsConversions.value.length === 0) return
+  const rows = [
+    ['类型', '来源', '外部事件', '身份类型', '身份值', 'ref', '金额分', '币种', '发生时间', '回传时间'],
+    ...analyticsConversions.value.map((item) => [
+      conversionTypeLabel(item.conversionType),
+      item.source || '',
+      item.externalEventId,
+      item.identityType || '',
+      item.identityValue || '',
+      item.refCode || '',
+      item.amountCents === null || item.amountCents === undefined ? '' : String(item.amountCents),
+      item.currency || '',
+      item.occurredAt || '',
+      item.createdAt || '',
+    ]),
+  ]
+  const idPart = (analyticsDraw.value?.id || 'conversions').slice(0, 40)
+  downloadCsv(`activity-conversions-${idPart}-${new Date().toISOString().slice(0, 10)}.csv`, rows)
+  showToast('外部回传已导出', 'success')
 }
 
 function stopWinnersStatusPolling() {
@@ -1547,4 +1812,105 @@ onMounted(loadData)
 .qr-image { width: 240px; height: 240px; border-radius: 8px; background: #fff; padding: 8px; }
 .qr-hint { font-size: 13px; color: var(--tg-hint, #9aa4b2); }
 .qr-actions { display: flex; gap: 8px; }
+
+.analytics-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.analytics-modal-head,
+.analytics-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analytics-modal-head h3,
+.analytics-section h4 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.analytics-modal-head p {
+  margin: 4px 0 0;
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px;
+}
+
+.analytics-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--r-md, 8px);
+  background: var(--tg-secondary-bg, #151b28);
+  min-width: 0;
+}
+
+.analytics-value {
+  color: var(--admin-accent, #f59e0b);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.analytics-label {
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 12px;
+}
+
+.analytics-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.analytics-rates,
+.analytics-type-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.analytics-rates > div,
+.analytics-type-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--r-md, 8px);
+  background: var(--surface, rgba(255, 255, 255, 0.04));
+  min-width: 0;
+}
+
+.analytics-rates span,
+.analytics-type-list strong {
+  color: var(--tg-text, #f0f2f5);
+  font-weight: 700;
+}
+
+.analytics-rates small,
+.analytics-type-list small {
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 12px;
+}
+
+.analytics-table-wrap {
+  flex: 0 1 auto;
+  max-height: 280px;
+}
 </style>

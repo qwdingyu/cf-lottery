@@ -216,8 +216,14 @@ export function getTenantPlanLimits(plan?: string | null): TenantPlanLimits {
 }
 
 export async function getTenantUsage(db: DbType, tenantId: string) {
+  // 查询租户信息，含兑换码购买的额外额度
   const [tenant] = await db
-    .select({ plan: tenants.plan })
+    .select({
+      plan: tenants.plan,
+      extraActivityQuota: tenants.extraActivityQuota,
+      extraParticipantQuota: tenants.extraParticipantQuota,
+      extraQuotaExpiresAt: tenants.extraQuotaExpiresAt,
+    })
     .from(tenants)
     .where(eq(tenants.id, tenantId))
     .limit(1);
@@ -242,9 +248,19 @@ export async function getTenantUsage(db: DbType, tenantId: string) {
     .from(webhookConfigs)
     .where(and(eq(webhookConfigs.tenantId, tenantId), eq(webhookConfigs.active, 1)));
 
+  // 兑换码额外额度仅在有效期内生效
+  const extraValid = tenant?.extraQuotaExpiresAt ? new Date() < new Date(tenant.extraQuotaExpiresAt) : false;
+  const extraActivities = extraValid ? (tenant?.extraActivityQuota || 0) : 0;
+  const extraParticipants = extraValid ? (tenant?.extraParticipantQuota || 0) : 0;
+
+  // 返回有效额度 = 套餐基础额度 + 兑换码额外额度（未过期）
   return {
     plan: limits.plan,
-    limits,
+    limits: {
+      ...limits,
+      maxActivities: limits.maxActivities !== null ? limits.maxActivities + extraActivities : null,
+      maxParticipantsPerActivity: limits.maxParticipantsPerActivity + extraParticipants,
+    },
     usage: {
       activities: Number(activityCount || 0),
       members: Number(memberCount || 0),

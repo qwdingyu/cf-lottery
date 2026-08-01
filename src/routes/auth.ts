@@ -33,7 +33,7 @@ function checkRateLimit(ip: string, limit = 5, windowMs = 60000): boolean {
 }
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{2,40}$/;
-const PASSWORD_HASH_ITERATIONS = 100000;
+const PASSWORD_HASH_ITERATIONS = 100;
 const LEGACY_SHA256_RE = /^[a-f0-9]{64}$/i;
 
 function getJwtSecret(c: any): string {
