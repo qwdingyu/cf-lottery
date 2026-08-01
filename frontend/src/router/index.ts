@@ -6,6 +6,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AdminLoginView from '@/views/AdminLoginView.vue'
 import AdminLayout from '@/views/AdminLayout.vue'
+import LandingView from '@/views/LandingView.vue'
 import { readAdminToken } from '@/composables/useAdminAuth'
 
 const router = createRouter({
@@ -13,7 +14,8 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      redirect: '/lottery',
+      name: 'Landing',
+      component: LandingView,
     },
     {
       path: '/lottery/:slug(.*)?',
