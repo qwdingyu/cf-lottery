@@ -824,17 +824,8 @@ import AdminModal from '@/components/AdminModal.vue'
 import AdminPagination from '@/components/AdminPagination.vue'
 import { useTablePagination } from '@/composables/useTablePagination'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import { adminRequest } from '@/composables/useAdminRequest'
 
-/** 管理端 API 请求封装 */
-async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = (() => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } })();
-  const headers: Record<string,string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(path, { ...options, headers });
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.message || `请求失败: ${res.status}`);
-  return data as T;
-}
 
 type LotteryDraw = {
   id: string; tenantId: string; publicSlug: string; title: string; name?: string; description: string;

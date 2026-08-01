@@ -81,6 +81,7 @@ import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/composables/useFormat'
+import { adminRequest } from '@/composables/useAdminRequest'
 
 const router = useRouter()
 const { showToast } = useToast()
@@ -126,15 +127,6 @@ function statusClass(status: string): string {
   return map[status] || 'tag-muted';
 }
 
-async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = (() => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } })();
-  const headers: Record<string,string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(path, { ...options, headers });
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.message || `请求失败: ${res.status}`);
-  return data as T;
-}
 
 async function loadData() {
   try {

@@ -4,7 +4,7 @@
  * 使用真实 libSQL 数据库，测试 084 文档规定的全部使用场景。
  */
 import { createClient, type Client } from "@libsql/client";
-import { afterEach, describe, expect, it, beforeAll } from "vitest";
+import { afterAll, afterEach, describe, expect, it, beforeAll } from "vitest";
 import { createDb } from "../db/client";
 import {
   createDraw,
@@ -34,9 +34,10 @@ let client: Client;
 let db: ReturnType<typeof createDb>;
 const TENANT = "test-tenant-001";
 const USER = "test-user-001";
+const DB_URL = `file:test-lottery-${crypto.randomUUID()}.db`;
 
 beforeAll(async () => {
-  client = createClient({ url: "file:test-lottery.db" });
+  client = createClient({ url: DB_URL });
   db = createDb(client);
   await client.execute(`CREATE TABLE IF NOT EXISTS tenants (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'free',
@@ -189,6 +190,10 @@ beforeAll(async () => {
   await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)", args: [USER, "test", "hash"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO tenant_members (tenant_id, user_id) VALUES (?, ?)", args: [TENANT, USER] });
+});
+
+afterAll(async () => {
+  await client.close();
 });
 
 afterEach(async () => {

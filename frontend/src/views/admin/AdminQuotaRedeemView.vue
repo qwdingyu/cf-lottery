@@ -54,6 +54,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/composables/useFormat'
+import { adminRequest } from '@/composables/useAdminRequest'
 
 type RedeemResult = {
   redeemed: boolean
@@ -69,16 +70,6 @@ const { showToast } = useToast()
 const code = ref('')
 const submitting = ref(false)
 const result = ref<RedeemResult | null>(null)
-
-async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = (() => { try { return localStorage.getItem('admin_token') || '' } catch { return '' } })()
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (token) headers.Authorization = `Bearer ${token}`
-  const res = await fetch(path, { ...options, headers })
-  const data = await res.json()
-  if (!data.ok) throw new Error(data.message || `请求失败: ${res.status}`)
-  return data as T
-}
 
 async function handleRedeem() {
   const normalizedCode = code.value.trim().toUpperCase()

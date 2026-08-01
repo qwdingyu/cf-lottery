@@ -1,11 +1,19 @@
 /**
  * 邮件通知服务 — Resend provider（cf-lottery 精简版）
  *
- * 从 cf-shop 抽取，只保留 lottery_winner 模板。
+ * 从 cf-shop 抽取，只保留抽奖中奖和邮箱验证码模板。
  * 配置通过 wrangler secret put 设置 RESEND_API_KEY / EMAIL_FROM。
  */
 import lotteryWinnerHtml from "./templates/lottery_winner";
 import emailAccessCodeHtml from "./templates/email_access_code";
+
+/**
+ * Resend API 响应类型（仅定义本服务关心的字段）
+ */
+interface ResendResponse {
+  id?: string;
+  message?: string;
+}
 
 const templates: Record<string, string> = {
   lottery_winner: lotteryWinnerHtml,
@@ -93,7 +101,7 @@ export async function sendEmail(
       }),
     });
 
-    const body = await res.json() as any;
+    const body = await res.json() as ResendResponse;
     if (res.ok) return { ok: true, id: body.id };
     return { ok: false, message: body.message || "发送失败" };
   } catch (err: any) {
@@ -111,14 +119,7 @@ export async function sendAccessCode(
   drawName: string,
   code: string,
 ): Promise<{ ok: boolean; message: string }> {
-  const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-    <h2>验证码</h2>
-    <p>您参与的 <strong>${escapeHtml(drawName)}</strong> 需要邮箱验证。</p>
-    <div style="background:#f5f5f5;padding:20px;border-radius:8px;text-align:center;margin:15px 0">
-      <span style="font-size:32px;font-weight:bold;letter-spacing:8px">${escapeHtml(code)}</span>
-    </div>
-    <p style="color:#888;font-size:12px">验证码 10 分钟内有效，请勿泄露给他人。</p>
-  </div>`;
+  const html = interpolate(emailAccessCodeHtml, { drawName, code });
 
   if (!emailEnv.resendApiKey) {
     console.warn("[email] RESEND_API_KEY not configured");
@@ -139,7 +140,7 @@ export async function sendAccessCode(
         html,
       }),
     });
-    const body = await res.json() as any;
+    const body = await res.json() as ResendResponse;
     if (res.ok) return { ok: true, message: "发送成功" };
     return { ok: false, message: body.message || "发送失败" };
   } catch (err: any) {

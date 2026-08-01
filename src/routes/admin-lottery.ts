@@ -111,6 +111,12 @@ function parseTenantMemberRole(value: unknown, fallback = "admin"): string | nul
   return TENANT_MEMBER_ROLES.has(role) ? role : null;
 }
 
+function isUniqueConstraintError(error: unknown): boolean {
+  const err = error as { message?: unknown; code?: unknown; cause?: { message?: unknown } };
+  const message = [err.code, err.message, err.cause?.message].filter(Boolean).join(" ");
+  return message.includes("UNIQUE constraint failed");
+}
+
 // 所有租户后台路由都必须同时满足：已登录 + 仍是当前租户成员 + 命中轻量能力门禁。
 adminLotteryRoute.use("*", requireAuth, requireTenantMember(), requireTenantRouteCapability);
 
@@ -980,6 +986,7 @@ adminLotteryRoute.post("/draws/:id/roster", async (c) => {
   if (draw.status !== "draft") return fail(c, "仅草稿状态的活动可导入名单", 400);
 
   let imported = 0;
+  let skipped = 0;
   for (const m of body.members) {
     try {
       await db.insert(lotteryRosterMembers).values({
@@ -990,10 +997,14 @@ adminLotteryRoute.post("/draws/:id/roster", async (c) => {
         displayName: m.name || "",
       });
       imported++;
-    } catch { /* 重复跳过 */ }
+    } catch (err) {
+      // 只把唯一索引冲突视为“重复名单”跳过；数据库锁、字段缺失等真实故障不能静默吞掉。
+      if (!isUniqueConstraintError(err)) throw err;
+      skipped++;
+    }
   }
 
-  return ok(c, { imported });
+  return ok(c, { imported, skipped });
 });
 
 /** 生成邀请码（invite_code 模式） */
@@ -1514,6 +1525,7 @@ adminLotteryRoute.post("/coupons/import", async (c) => {
   const body = await c.req.json<{ codes: string[]; label?: string; expiresAt?: string }>();
   if (!body.codes || body.codes.length === 0) return fail(c, "请提供至少一个码", 400);
   let count = 0;
+  let skipped = 0;
   for (const code of body.codes) {
     try {
       await db.insert(couponCodes).values({
@@ -1521,9 +1533,13 @@ adminLotteryRoute.post("/coupons/import", async (c) => {
         label: body.label || "", expiresAt: body.expiresAt || null,
       });
       count++;
-    } catch { /* 跳过重复码 */ }
+    } catch (err) {
+      // 只把唯一索引冲突视为“重复券码”跳过；其他数据库错误必须暴露，避免导入半成功却不可感知。
+      if (!isUniqueConstraintError(err)) throw err;
+      skipped++;
+    }
   }
-  return ok(c, { imported: count });
+  return ok(c, { imported: count, skipped });
 });
 
 /** 核销优惠券（CAS 条件更新防止并发重复核销） */

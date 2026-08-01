@@ -30,6 +30,7 @@ import {
 
 let db: DbType;
 let client: Client;
+const DB_URL = `file:test-auth-${crypto.randomUUID()}.db`;
 
 const DDL = [
   `CREATE TABLE IF NOT EXISTS tenants (id TEXT PRIMARY KEY, name TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'free', status TEXT NOT NULL DEFAULT 'active', brand_config TEXT NOT NULL DEFAULT '{}', extra_activity_quota INTEGER NOT NULL DEFAULT 0, extra_participant_quota INTEGER NOT NULL DEFAULT 0, extra_quota_expires_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
@@ -49,7 +50,7 @@ const DDL = [
 ];
 
 beforeAll(async () => {
-  client = createClient({ url: "file:test-auth.db" });
+  client = createClient({ url: DB_URL });
   db = createDb(client);
   for (const stmt of DDL) await client.execute(stmt);
   await client.execute("ALTER TABLE tenants ADD COLUMN extra_activity_quota INTEGER NOT NULL DEFAULT 0").catch(() => undefined);

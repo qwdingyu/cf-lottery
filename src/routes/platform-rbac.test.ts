@@ -29,6 +29,7 @@ const OWNER_ID = "user-owner";
 const VIEWER_ID = "user-viewer";
 const PLATFORM_ID = "user-platform-owner";
 const INVITEE_ID = "user-invitee";
+const DB_URL = `file:test-platform-rbac-${crypto.randomUUID()}.db`;
 
 const TEST_ENV = {
   TURSO_URL: "",
@@ -44,13 +45,15 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS platform_audit_logs (id TEXT PRIMARY KEY, actor_user_id TEXT NOT NULL, actor_role TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL DEFAULT '', tenant_id TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS system_config (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS lottery_draws (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, public_slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', activity_kind TEXT NOT NULL DEFAULT 'lottery', participation_mode TEXT NOT NULL DEFAULT 'open', experience_type TEXT NOT NULL DEFAULT 'wheel', draw_trigger TEXT NOT NULL DEFAULT 'manual', result_mode TEXT NOT NULL DEFAULT 'manual', allocation_policy TEXT NOT NULL DEFAULT 'capacity', policy_version INTEGER NOT NULL DEFAULT 1, start_at TEXT NOT NULL DEFAULT '', end_at TEXT NOT NULL DEFAULT '', draw_at TEXT, access_password TEXT NOT NULL DEFAULT '', max_participants INTEGER, winner_count INTEGER NOT NULL DEFAULT 1, show_participant_count INTEGER NOT NULL DEFAULT 1, show_winner_count INTEGER NOT NULL DEFAULT 1, show_winner_list INTEGER NOT NULL DEFAULT 0, drawn_at TEXT, failure_reason TEXT NOT NULL DEFAULT '', draw_seed_hash TEXT NOT NULL DEFAULT '', draw_seed TEXT NOT NULL DEFAULT '', algorithm_version TEXT NOT NULL DEFAULT 'uniform_v1', product_link TEXT NOT NULL DEFAULT '{}', promotion_config TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE TABLE IF NOT EXISTS lottery_roster_members (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, identity_type TEXT NOT NULL DEFAULT 'email', identity_value TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(tenant_id, draw_id, identity_type, identity_value))`,
   `CREATE TABLE IF NOT EXISTS webhook_configs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, url TEXT NOT NULL, secret TEXT NOT NULL DEFAULT '', events TEXT NOT NULL DEFAULT '[]', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE TABLE IF NOT EXISTS coupon_codes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT, code TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'available', recipient_email TEXT, redeemed_at TEXT, expires_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(tenant_id, code))`,
   `CREATE TABLE IF NOT EXISTS redemption_codes (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, plan TEXT NOT NULL DEFAULT 'custom', activity_quota INTEGER NOT NULL DEFAULT 0, participant_quota INTEGER NOT NULL DEFAULT 0, duration_days INTEGER NOT NULL DEFAULT 30, max_uses INTEGER NOT NULL DEFAULT 1, used_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active', note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS redemption_records (id TEXT PRIMARY KEY, code_id TEXT NOT NULL, code TEXT NOT NULL, tenant_id TEXT NOT NULL, tenant_name TEXT NOT NULL DEFAULT '', activity_quota_granted INTEGER NOT NULL DEFAULT 0, participant_quota_granted INTEGER NOT NULL DEFAULT 0, duration_days_granted INTEGER NOT NULL DEFAULT 30, expires_at TEXT, redeemed_at TEXT NOT NULL DEFAULT (datetime('now')))`,
 ];
 
 beforeAll(async () => {
-  client = createClient({ url: "file:test-platform-rbac.db" });
+  client = createClient({ url: DB_URL });
   db = createDb(client);
   for (const stmt of DDL) await client.execute(stmt);
 });
@@ -60,7 +63,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  for (const table of ["platform_audit_logs", "redemption_records", "redemption_codes", "webhook_configs", "lottery_draws", "system_config", "platform_members", "tenant_members", "users", "tenants"]) {
+  for (const table of ["platform_audit_logs", "redemption_records", "redemption_codes", "coupon_codes", "webhook_configs", "lottery_roster_members", "lottery_draws", "system_config", "platform_members", "tenant_members", "users", "tenants"]) {
     await client.execute(`DELETE FROM ${table}`);
   }
 });
@@ -225,6 +228,46 @@ describe("RBAC-lite 路由分层", () => {
       body: JSON.stringify({ role: "viewer" }),
     }, TEST_ENV);
     expect(selfDemoteRes.status).toBe(400);
+  });
+
+  it("名单导入重复项只计入 skipped，不静默吞掉导入结果", async () => {
+    await seedUsers();
+    const app = createTestApp();
+    const now = new Date().toISOString();
+    await client.execute({
+      sql: "INSERT INTO lottery_draws (id, tenant_id, public_slug, title, status, start_at, end_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)",
+      args: ["draw-roster", TENANT_ID, "draw-roster", "名单导入", now, now, now, now],
+    });
+
+    const res = await app.request("/api/admin/draws/draw-roster/roster", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader(OWNER_ID)) },
+      body: JSON.stringify({
+        members: [
+          { email: "same@example.com", name: "A" },
+          { email: " SAME@example.com ", name: "B" },
+        ],
+      }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const payload = await res.json() as { imported: number; skipped: number };
+    expect(payload).toMatchObject({ imported: 1, skipped: 1 });
+  });
+
+  it("优惠券导入重复码只计入 skipped，不误报全部成功", async () => {
+    await seedUsers();
+    const app = createTestApp();
+
+    const res = await app.request("/api/admin/coupons/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader(OWNER_ID)) },
+      body: JSON.stringify({ codes: ["COUPON-1", "COUPON-1"] }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const payload = await res.json() as { imported: number; skipped: number };
+    expect(payload).toMatchObject({ imported: 1, skipped: 1 });
   });
 
   it("平台发码只走 /api/platform/redemption-codes，生成结果可落库追溯", async () => {
