@@ -195,6 +195,7 @@ afterEach(async () => {
   await client.execute("DELETE FROM lottery_entries");
   await client.execute("DELETE FROM lottery_invite_codes");
   await client.execute("DELETE FROM lottery_roster_members");
+  await client.execute("DELETE FROM lottery_blacklist");
   await client.execute("DELETE FROM lottery_prize_tiers");
   await client.execute("DELETE FROM lottery_draws");
   await client.execute("DELETE FROM prize_codes");
@@ -249,6 +250,23 @@ async function setupSignupChain(opts?: { maxParticipants?: number; allocationPol
     allocationPolicy: opts?.allocationPolicy,
     maxParticipants: opts?.maxParticipants,
     winnerCount: 1,
+  });
+  await publishDraw(db, TENANT, id);
+  return { id, publicSlug };
+}
+
+async function setupCheckinActivity() {
+  const now = new Date();
+  const future = new Date(now.getTime() + 3600000);
+  const { id, publicSlug } = await createDraw(db, TENANT, {
+    title: "签到活动",
+    startAt: now.toISOString(),
+    endAt: future.toISOString(),
+    activityKind: "checkin",
+    participationMode: "open",
+    experienceType: "checkin",
+    resultMode: "no_result",
+    winnerCount: 0,
   });
   await publishDraw(db, TENANT, id);
   return { id, publicSlug };
@@ -947,6 +965,34 @@ describe("最大参与人数和参与时间", () => {
     });
     await publishDraw(db, TENANT, id);
     expect((await joinDraw(db, publicSlug, "u@t.com")).joined).toBe(false);
+  });
+});
+
+describe("签到活动", () => {
+  it("checkin：同一身份同一天只能签到一次，入库唯一值带日期后缀", async () => {
+    const { id, publicSlug } = await setupCheckinActivity();
+    const first = await joinDraw(db, publicSlug, "Daily@T.com");
+    expect(first.joined).toBe(true);
+
+    await expect(joinDraw(db, publicSlug, "daily@t.com")).rejects.toThrow();
+
+    const rows = await client.execute({
+      sql: "SELECT identity_value FROM lottery_entries WHERE tenant_id = ? AND draw_id = ?",
+      args: [TENANT, id],
+    });
+    expect(rows.rows[0]?.identity_value).toBe(`daily@t.com:${new Date().toISOString().slice(0, 10)}`);
+  });
+
+  it("checkin：黑名单仍按原始身份校验，不能被日期后缀绕过", async () => {
+    const { publicSlug } = await setupCheckinActivity();
+    await client.execute({
+      sql: "INSERT INTO lottery_blacklist (id, tenant_id, identity_value, note) VALUES (?, ?, ?, ?)",
+      args: ["blacklist-checkin", TENANT, "blocked@test.com", "blocked"],
+    });
+
+    const result = await joinDraw(db, publicSlug, "Blocked@Test.com");
+    expect(result.joined).toBe(false);
+    expect(result.message).toContain("限制参与");
   });
 });
 

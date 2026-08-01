@@ -1190,16 +1190,20 @@ export async function joinDraw(
     .limit(1);
 
   if (!draw) throw new Error("活动不存在");
-  // 只有 open 状态的活动可以参与
+  // 只有 open 状态的活动可以参与（draft/paused/drawing/drawn/cancelled 均不可参与）
   if (draw.status !== "open") throw new Error("活动未开启");
 
-  // 检查是否在黑名单中
+  // ── 身份标识归一化 ──
+  // 统一转小写去空格，确保同一邮箱的不同写法被识别为同一身份
   let normalizedValue = identityValue.trim().toLowerCase();
-  // 签到活动：identity_value 附加日期后缀，允许同一人每天签到一次
-  if (draw.activityKind === "checkin") {
-    const today = new Date().toISOString().slice(0, 10);
-    normalizedValue = `${normalizedValue}:${today}`;
-  }
+
+  // ── 签到活动特殊处理 ──
+  // 签到活动（checkin）允许同一人每天签到一次，但 UNIQUE(tenant_id,draw_id,identity_type,identity_value)
+  // 约束会阻止同一天重复签到。解决方案：identity_value 附加日期后缀（如 "user@test.com:2026-08-01"），
+  // 使每天生成不同的 identity_value，既允许每日签到，又防止同一天重复。
+  // 注意：黑名单和名单模式使用原始 value 做校验，只有写入时使用日期后缀 value。
+  const checkinDateSuffix = draw.activityKind === "checkin" ? `:${new Date().toISOString().slice(0, 10)}` : "";
+  const uniqueValue = normalizedValue + checkinDateSuffix;
   const [banned] = await db
     .select({ id: lotteryBlacklist.id })
     .from(lotteryBlacklist)
@@ -1290,9 +1294,13 @@ export async function joinDraw(
       const capacityClause = acceptsWaitlist
         ? sql`1 = 1`
         : sql`(SELECT COUNT(*) FROM lottery_entries WHERE tenant_id = ${draw.tenantId} AND draw_id = ${draw.id}) < ${effectiveMax}`;
+      // 写入参与记录。使用条件 INSERT 确保并发安全：
+      // 1. 活动级容量检查（capacityClause）：防止同时写入超过 maxParticipants
+      // 2. 签到活动使用 uniqueValue（含日期后缀）作为 identity_value，
+      //    使 UNIQUE 约束允许每日签到但不允许同一天重复。
       const insertResult = await tx.run(sql`
         INSERT INTO lottery_entries (id, tenant_id, draw_id, identity_type, identity_value, invite_code_id, ip_hash, joined_at)
-        SELECT ${entryId}, ${draw.tenantId}, ${draw.id}, ${identityType}, ${normalizedValue}, ${inviteCodeId}, ${options?.ipHash || ""}, ${nowIso}
+        SELECT ${entryId}, ${draw.tenantId}, ${draw.id}, ${identityType}, ${checkinDateSuffix ? uniqueValue : normalizedValue}, ${inviteCodeId}, ${options?.ipHash || ""}, ${nowIso}
         WHERE ${capacityClause}
       `);
 
