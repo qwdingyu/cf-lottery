@@ -4,7 +4,7 @@
  * 测试 verifyJwt 和 signJwt 函数。
  * 使用 Web Crypto API（Cloudflare Workers 原生支持）。
  */
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect } from "vitest";
 import { signJwt, verifyJwt } from "../middleware/auth";
 
 const TEST_SECRET = "test-jwt-secret-0123456789abcdef";
