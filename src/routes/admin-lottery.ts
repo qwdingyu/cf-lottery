@@ -35,6 +35,7 @@ import {
   processPendingWebhookDeliveries,
   createPrize,
   importPrizeCodes,
+  defaultResultModeForActivity,
 } from "../services/lottery-service";
 import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
 import { readSystemConfigMap } from "../lib/system-config-registry";
@@ -1079,18 +1080,7 @@ function defaultExperienceForActivity(activityKind: string, participationMode: s
   return defaultExperienceForParticipation(participationMode);
 }
 
-function defaultResultModeForActivity(activityKind: string, drawTrigger: string): string {
-  if (activityKind === "signup_chain") return "ordered_assignment";
-  if (activityKind === "reservation") return "capacity_assignment";
-  if (activityKind === "vote") return "vote_tally";
-  if (activityKind === "survey") return "no_result";
-  if (activityKind === "checkin") return "no_result";
-  if (activityKind === "waitlist") return "ordered_assignment";
-  if (activityKind === "approval") return "review_decision";
-  if (activityKind === "claim") return "instant";
-  if (activityKind === "assignment") return "ordered_assignment";
-  return drawTrigger === "scheduled" ? "scheduled" : "manual";
-}
+// defaultResultModeForActivity 已从 ../services/lottery-service 导入，此处不再重复定义。
 
 /** 安全解析 JSON 字符串 */
 function tryParseJson(s: string): any {

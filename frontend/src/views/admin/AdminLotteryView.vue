@@ -2,7 +2,7 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
-        <select v-model="statusFilter" :aria-label="$t('lottery.adminStatus')">
+        <select v-model="statusFilter" :aria-label="$t('lottery.adminStatus')" @change="loadData">
           <option value="">{{ $t('lottery.adminStatusAll') }}</option>
           <option value="draft">{{ $t('lottery.adminDrawDraft') }}</option>
           <option value="open">{{ $t('lottery.statusOpen') }}</option>
@@ -281,7 +281,7 @@
       </table>
     </div>
 
-    <!-- 创建/编辑活动：对齐商品编辑分区布局 + 时间快捷与校验 -->
+    <!-- 创建/编辑活动 -->
     <AdminModal
       v-model="showCreateModal"
       :title="isEditing ? $t('lottery.adminDrawEdit') : $t('lottery.adminDrawCreate')"

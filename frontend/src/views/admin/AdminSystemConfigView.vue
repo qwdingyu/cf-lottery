@@ -74,7 +74,7 @@
               <div class="config-test-main">
                 <label>
                   <span>{{ $t('adminConfig.emailTest.toLabel') }}</span>
-                  <input v-model="testEmailTo" type="email" :placeholder="t('checkout.emailPlaceholder')" />
+                  <input v-model="testEmailTo" type="email" :placeholder="$t('adminConfig.emailTest.emailPlaceholder')" />
                 </label>
                 <button
                   type="button"

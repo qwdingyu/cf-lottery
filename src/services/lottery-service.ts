@@ -1047,7 +1047,18 @@ function defaultExperienceForActivity(activityKind: string, participationMode: s
   return defaultExperienceForParticipation(participationMode);
 }
 
-function defaultResultModeForActivity(activityKind: string, drawTrigger: string): string {
+/**
+ * 根据活动类型和开奖触发方式计算默认结果模式。
+ *
+ * 这是活动引擎的规则入口：不同 activity_kind 对应不同的结果分配方式。
+ * 抽奖类默认 manual（管理员手动开奖）或 scheduled（定时开奖）；
+ * 接龙类默认 ordered_assignment（按报名顺序分配）；
+ * 问卷/签到类默认 no_result（无结果分配）。
+ *
+ * 该函数同时被 lottery-service（创建活动）和 admin-lottery（路由层校验）使用，
+ * 因此导出为公共函数，避免两处维护不同步。
+ */
+export function defaultResultModeForActivity(activityKind: string, drawTrigger: string): string {
   if (activityKind === "signup_chain") return "ordered_assignment";
   if (activityKind === "reservation") return "capacity_assignment";
   if (activityKind === "vote") return "vote_tally";
