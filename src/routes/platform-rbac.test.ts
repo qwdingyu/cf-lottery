@@ -155,6 +155,25 @@ describe("RBAC-lite 路由分层", () => {
     expect(writeRes.status).toBe(403);
   });
 
+  it("租户成员角色只能使用基线角色，不能写入 operator/member 等历史同义词", async () => {
+    await seedUsers();
+    const app = createTestApp();
+
+    const invalidRoleRes = await app.request(`/api/admin/members/${VIEWER_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader(OWNER_ID)) },
+      body: JSON.stringify({ role: "operator" }),
+    }, TEST_ENV);
+    expect(invalidRoleRes.status).toBe(400);
+
+    const selfDemoteRes = await app.request(`/api/admin/members/${OWNER_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader(OWNER_ID)) },
+      body: JSON.stringify({ role: "viewer" }),
+    }, TEST_ENV);
+    expect(selfDemoteRes.status).toBe(400);
+  });
+
   it("平台发码只走 /api/platform/redemption-codes，生成结果可落库追溯", async () => {
     await seedUsers();
     await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_operator" });

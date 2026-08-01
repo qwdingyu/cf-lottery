@@ -7,6 +7,7 @@
 import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../bindings";
+import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
 import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants } from "../db/schema";
@@ -68,6 +69,7 @@ const RESULT_MODES = new Set([
   "no_result",
 ]);
 const ALLOCATION_POLICIES = new Set(["capacity", "waitlist", "fifo", "priority", "random", "weighted_random", "approval"]);
+const TENANT_MEMBER_ROLES = new Set(["owner", "admin", "viewer"]);
 
 /**
  * 租户后台能力门禁。
@@ -99,6 +101,11 @@ async function requireTenantRouteCapability(c: Context<AppEnv>, next: Next) {
   }
 
   await next();
+}
+
+function parseTenantMemberRole(value: unknown, fallback = "admin"): string | null {
+  const role = String(value ?? fallback).trim();
+  return TENANT_MEMBER_ROLES.has(role) ? role : null;
 }
 
 // 所有租户后台路由都必须同时满足：已登录 + 仍是当前租户成员 + 命中轻量能力门禁。
@@ -549,18 +556,29 @@ adminLotteryRoute.get("/draws/:id/conversions", async (c) => {
   return ok(c, { conversions, summary });
 });
 
-/** 导出 CSV */
+/** 导出 CSV
+ *
+ * 限制：单次导出最多 10,000 条参与记录，超出时提示用户缩小范围。
+ * 10ms CPU 和 128MB 内存不适合一次性生成大文件，大活动应分批导出。
+ */
 adminLotteryRoute.get("/draws/:id/export", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const drawId = c.req.param("id");
+  const MAX_EXPORT_ROWS = 10000;
 
   const draw = await getDraw(db, drawId, tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
 
+  // 先检查总参与人数，超出限制时提示
+  const entryCount = await getDrawEntriesCount(db, tenantId, drawId);
+  if (entryCount > MAX_EXPORT_ROWS) {
+    return fail(c, `参与人数超出单次导出上限（${MAX_EXPORT_ROWS}），请分批导出或联系平台运营`, 400);
+  }
+
   const winners = await getDrawWinners(db, drawId, tenantId);
-  const entries = await getEntries(db, tenantId, drawId, 10000);
-  const outcomes = draw.activityKind === "lottery" ? [] : await getActivityOutcomes(db, tenantId, drawId, 10000);
+  const entries = await getEntries(db, tenantId, drawId, MAX_EXPORT_ROWS);
+  const outcomes = draw.activityKind === "lottery" ? [] : await getActivityOutcomes(db, tenantId, drawId, MAX_EXPORT_ROWS);
 
   // 构建 CSV 内容
   const lines: string[] = [
@@ -1008,6 +1026,8 @@ adminLotteryRoute.post("/members", async (c) => {
   const tenantId = c.get("tenantId") as string;
   const body = await c.req.json<{ username: string; role?: string }>();
   const username = String(body.username || "").trim();
+  const role = parseTenantMemberRole(body.role);
+  if (!role) return fail(c, "成员角色无效，仅支持 owner/admin/viewer", 400);
 
   const [user] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
   if (!user) return fail(c, "用户不存在", 404);
@@ -1033,10 +1053,30 @@ adminLotteryRoute.post("/members", async (c) => {
   await db.insert(tenantMembers).values({
     tenantId,
     userId: user.id,
-    role: body.role || "admin",
+    role,
   });
 
   return ok(c, { added: true });
+});
+
+/** 修改成员角色（仅 owner；禁止自我降权，避免租户后台无人可管） */
+adminLotteryRoute.patch("/members/:userId", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const targetUserId = c.req.param("userId");
+  const body = await c.req.json<{ role: string }>();
+  const role = parseTenantMemberRole(body.role, "");
+
+  if (!role) return fail(c, "成员角色无效，仅支持 owner/admin/viewer", 400);
+  // 角色变更是租户安全边界操作；禁止 owner 把自己改成 viewer/admin 后失去管理入口。
+  if (targetUserId === c.get("userId")) return fail(c, "不能修改自己的角色", 400);
+
+  const result = await db
+    .update(tenantMembers)
+    .set({ role })
+    .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, targetUserId)));
+  if ((result.rowsAffected ?? 0) === 0) return fail(c, "成员不存在", 404);
+  return ok(c, { updated: true });
 });
 
 /** 删除成员 */
@@ -1383,62 +1423,6 @@ adminLotteryRoute.get("/draws/:id/shares", async (c) => {
 });
 
 // ═════════════════════════════════════════════════════════
-// 租户成员管理
-// ═════════════════════════════════════════════════════════
-
-/** 成员列表 */
-adminLotteryRoute.get("/members", async (c) => {
-  const db = getDb(c);
-  const tenantId = c.get("tenantId") as string;
-  const rows = await db
-    .select({ userId: tenantMembers.userId, role: tenantMembers.role, username: users.username, email: users.email, createdAt: tenantMembers.createdAt })
-    .from(tenantMembers)
-    .innerJoin(users, eq(tenantMembers.userId, users.id))
-    .where(eq(tenantMembers.tenantId, tenantId))
-    .orderBy(tenantMembers.createdAt);
-  return ok(c, { members: rows });
-});
-
-/** 邀请成员 */
-adminLotteryRoute.post("/members", async (c) => {
-  const db = getDb(c);
-  const tenantId = c.get("tenantId") as string;
-  const body = await c.req.json<{ username: string; role?: string }>();
-  const username = String(body.username || "").trim();
-  if (!username) return fail(c, "请输入用户名", 400);
-
-  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
-  if (!user) return fail(c, "用户不存在", 404);
-
-  const [existing] = await db.select({ userId: tenantMembers.userId }).from(tenantMembers).where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, user.id))).limit(1);
-  if (existing) return fail(c, "该用户已是成员", 409);
-
-  await db.insert(tenantMembers).values({ tenantId, userId: user.id, role: body.role || "admin" });
-  return ok(c, { invited: true });
-});
-
-/** 修改成员角色 */
-adminLotteryRoute.patch("/members/:userId", async (c) => {
-  const db = getDb(c);
-  const tenantId = c.get("tenantId") as string;
-  const body = await c.req.json<{ role: string }>();
-  if (!body.role) return fail(c, "请指定角色", 400);
-
-  const result = await db.update(tenantMembers).set({ role: body.role }).where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, c.req.param("userId"))));
-  if ((result.rowsAffected ?? 0) === 0) return fail(c, "成员不存在", 404);
-  return ok(c, { updated: true });
-});
-
-/** 移除成员 */
-adminLotteryRoute.delete("/members/:userId", async (c) => {
-  const db = getDb(c);
-  const tenantId = c.get("tenantId") as string;
-  const result = await db.delete(tenantMembers).where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, c.req.param("userId"))));
-  if ((result.rowsAffected ?? 0) === 0) return fail(c, "成员不存在", 404);
-  return ok(c, { removed: true });
-});
-
-// ═════════════════════════════════════════════════════════
 // 兑换码管理（运营者生成，终端用户兑换）
 // ═════════════════════════════════════════════════════════
 
@@ -1462,73 +1446,82 @@ adminLotteryRoute.post("/redemption-codes/redeem", async (c) => {
 
   if (!codeInput) return fail(c, "请输入兑换码", 400);
 
-  // 查找兑换码
-  const [codeRecord] = await db
-    .select()
-    .from(redemptionCodes)
-    .where(eq(redemptionCodes.code, codeInput))
-    .limit(1);
+  try {
+    const grant = await withDbTransaction(db, async (tx) => {
+      // 查找兑换码和发放额度必须与后续 CAS、租户加额、兑换记录同事务提交。
+      // 否则网络抖动或写锁错误会留下“码已用但额度未到账”的半成功状态。
+      const [codeRecord] = await tx
+        .select()
+        .from(redemptionCodes)
+        .where(eq(redemptionCodes.code, codeInput))
+        .limit(1);
 
-  if (!codeRecord) return fail(c, "兑换码不存在", 404);
-  if (codeRecord.status !== "active") return fail(c, "兑换码已失效", 400);
-  if (new Date() > new Date(codeRecord.expiresAt)) return fail(c, "兑换码已过期", 400);
+      if (!codeRecord) throw new RedeemError("兑换码不存在", 404);
+      if (codeRecord.status !== "active") throw new RedeemError("兑换码已失效", 400);
+      if (new Date() > new Date(codeRecord.expiresAt)) throw new RedeemError("兑换码已过期", 400);
 
-  // CAS 条件更新：原子性地递增 used_count，只有未用完时才更新成功
-  const updateResult = await db.update(redemptionCodes)
-    .set({
-      usedCount: sql`used_count + 1`,
-      status: sql`CASE WHEN used_count + 1 >= max_uses THEN 'used' ELSE 'active' END`,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(
-      and(
-        eq(redemptionCodes.id, codeRecord.id),
-        eq(redemptionCodes.status, "active"),
-        sql`used_count < max_uses`
-      )
-    );
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + codeRecord.durationDays * 86400000).toISOString();
 
-  // 如果影响行数为 0，说明并发下已被其他请求用完
-  if ((updateResult.rowsAffected ?? 0) === 0) {
-    return fail(c, "兑换码已被使用", 409);
+      // CAS 条件更新：原子递增 used_count，只有未用完且状态仍 active 时才成功。
+      const updateResult = await tx.update(redemptionCodes)
+        .set({
+          usedCount: sql`used_count + 1`,
+          status: sql`CASE WHEN used_count + 1 >= max_uses THEN 'used' ELSE 'active' END`,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(redemptionCodes.id, codeRecord.id),
+          eq(redemptionCodes.status, "active"),
+          sql`used_count < max_uses`,
+        ));
+
+      if ((updateResult.rowsAffected ?? 0) === 0) {
+        throw new RedeemError("兑换码已被使用", 409);
+      }
+
+      await tx.update(tenants).set({
+        extraActivityQuota: sql`COALESCE(extra_activity_quota, 0) + ${codeRecord.activityQuota}`,
+        extraParticipantQuota: sql`COALESCE(extra_participant_quota, 0) + ${codeRecord.participantQuota}`,
+        extraQuotaExpiresAt: expiresAt,
+        updatedAt: now,
+      }).where(eq(tenants.id, tenantId));
+
+      const [tenant] = await tx
+        .select({ name: tenants.name })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .limit(1);
+
+      await tx.insert(redemptionRecords).values({
+        id: crypto.randomUUID(),
+        codeId: codeRecord.id,
+        code: codeInput,
+        tenantId,
+        tenantName: tenant?.name || "",
+        activityQuotaGranted: codeRecord.activityQuota,
+        participantQuotaGranted: codeRecord.participantQuota,
+        durationDaysGranted: codeRecord.durationDays,
+        expiresAt,
+        redeemedAt: now,
+      });
+
+      return {
+        activityQuota: codeRecord.activityQuota,
+        participantQuota: codeRecord.participantQuota,
+        expiresAt,
+      };
+    });
+
+    return ok(c, { redeemed: true, ...grant });
+  } catch (err) {
+    if (err instanceof RedeemError) return fail(c, err.message, err.status);
+    throw err;
   }
-
-  // 更新租户额外额度
-  const now = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + codeRecord.durationDays * 86400000).toISOString();
-
-  await db.update(tenants).set({
-    extraActivityQuota: sql`COALESCE(extra_activity_quota, 0) + ${codeRecord.activityQuota}`,
-    extraParticipantQuota: sql`COALESCE(extra_participant_quota, 0) + ${codeRecord.participantQuota}`,
-    extraQuotaExpiresAt: expiresAt,
-    updatedAt: now,
-  }).where(eq(tenants.id, tenantId));
-
-  // 获取租户名称用于记录
-  const [tenant] = await db
-    .select({ name: tenants.name })
-    .from(tenants)
-    .where(eq(tenants.id, tenantId))
-    .limit(1);
-
-  // 记录兑换记录
-  await db.insert(redemptionRecords).values({
-    id: crypto.randomUUID(),
-    codeId: codeRecord.id,
-    code: codeInput,
-    tenantId,
-    tenantName: tenant?.name || "",
-    activityQuotaGranted: codeRecord.activityQuota,
-    participantQuotaGranted: codeRecord.participantQuota,
-    durationDaysGranted: codeRecord.durationDays,
-    expiresAt,
-    redeemedAt: now,
-  });
-
-  return ok(c, {
-    redeemed: true,
-    activityQuota: codeRecord.activityQuota,
-    participantQuota: codeRecord.participantQuota,
-    expiresAt,
-  });
 });
+
+class RedeemError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}

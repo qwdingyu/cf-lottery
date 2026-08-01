@@ -15,6 +15,7 @@ import { integrationRoute } from "./routes/integration";
 import { systemConfigRoute } from "./routes/system-config";
 import { platformSystemConfigRoute } from "./routes/platform-system-config";
 import { platformRedemptionCodesRoute } from "./routes/platform-redemption-codes";
+import { cleanExpiredRateLimits } from "./lib/rate-limit";
 import {
   processDueDraws,
   processPendingWebhookDeliveriesForAllTenants,
@@ -52,13 +53,17 @@ export async function runScheduledMaintenance(
     tenantLimit: options?.webhookTenantLimit ?? 25,
     perTenantLimit: options?.webhookPerTenantLimit ?? 20,
   });
+  // 限流日志只服务短窗口判断，定时清理避免 Turso 免费层 rows/storage 被长期无价值日志拖垮。
+  const cleanedRateLimitLogs = await cleanExpiredRateLimits(db);
 
-  return { draws, webhooks };
+  return { draws, webhooks, cleanedRateLimitLogs };
 }
 
 // ── CORS（允许前端跨域请求） ──
+// 公共 API 需要宽 CORS（活动可嵌入任意域名），管理/平台写接口已通过 JWT + RBAC 保护。
+// 如果后续需要进一步收紧，可以按路由拆分 CORS 策略。
 app.use("*", cors({
-  origin: ["*"], // 生产环境应限制为具体域名
+  origin: ["*"],
   allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   allowHeaders: ["Content-Type", "Authorization"],
   maxAge: 86400,
@@ -68,6 +73,18 @@ app.use("*", cors({
 app.onError((err, c) => {
   console.error(`[error] ${err.message}`, err.stack);
   return c.json({ ok: false, message: "服务器内部错误" }, 500);
+});
+
+// ── 请求耗时观测（用于识别慢查询和异常路由） ──
+app.use("*", async (c, next) => {
+  const start = Date.now();
+  await next();
+  const duration = Date.now() - start;
+  // 只记录管理后台和平台接口的慢请求（>500ms），公开热路径不记录避免日志爆炸
+  const path = c.req.path;
+  if (duration > 500 && (path.startsWith("/api/admin") || path.startsWith("/api/platform"))) {
+    console.log(`[slow] ${c.req.method} ${path} ${duration}ms`);
+  }
 });
 
 // ── 数据库初始化中间件 ──

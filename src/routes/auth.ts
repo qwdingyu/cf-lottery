@@ -15,6 +15,7 @@ import { users, tenantMembers, tenants, emailAccessCodes } from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { signJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
+import { checkDbRateLimit } from "../lib/rate-limit";
 
 export const authRoute = new Hono<AppEnv>();
 
@@ -82,6 +83,11 @@ authRoute.post("/register", async (c) => {
     }
 
     const db = getDb(c);
+    // 数据库级限流：多实例下全局一致
+    if (!(await checkDbRateLimit(db, `register:${ip}`, 3, 60000))) {
+      return c.json({ ok: false, message: "注册过于频繁，请稍后再试" }, 429);
+    }
+
     const body = await c.req.json<{ username: string; password: string; email: string }>();
     const username = String(body.username || "").trim();
     const password = String(body.password || "");
@@ -206,6 +212,11 @@ authRoute.post("/login", async (c) => {
   }
 
   const db = getDb(c);
+  // 数据库级限流：多实例下全局一致
+  if (!(await checkDbRateLimit(db, `login:${ip}`, 5, 60000))) {
+    return c.json({ ok: false, message: "登录过于频繁，请稍后再试" }, 429);
+  }
+
   const body = await c.req.json<{ username: string; password: string }>();
   const username = String(body.username || "").trim();
   const password = String(body.password || "");

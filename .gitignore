@@ -5,6 +5,7 @@ public/
 .dev.vars
 .env
 *.db
+*.db-journal
 *.db-wal
 *.db-shm
 .DS_Store

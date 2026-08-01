@@ -62,6 +62,24 @@ export const platformMembers = sqliteTable("platform_members", {
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
+/**
+ * 持久化限流日志表
+ *
+ * 替代内存 Map 实现多 Worker 实例下一致的限流。
+ * 每次受限操作写入一条记录，查询时按 key + action + 时间窗口 COUNT。
+ * 旧记录由定时清理任务删除，或由写入时附带清理。
+ *
+ * key 格式：`action:identifier`，如 `login:ip_hash`、`register:email`
+ */
+export const rateLimitLog = sqliteTable("rate_limit_log", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull(),
+  action: text("action").notNull(),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  keyActionIdx: index("idx_rate_limit_key_action").on(t.key, t.action, t.createdAt),
+}));
+
 // ── 奖品与码池 ──
 export const prizes = sqliteTable("prizes", {
   id: text("id").primaryKey(),
@@ -90,7 +108,9 @@ export const prizeCodes = sqliteTable("prize_codes", {
   issuedAt: text("issued_at"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
-  prizeStatusIdx: uniqueIndex("idx_prize_codes_prize_status").on(t.tenantId, t.prizeId, t.status, t.createdAt),
+  // 这是按租户、奖品、状态领取可用码的性能索引，不是业务唯一约束。
+  // 如果误用 uniqueIndex，同一秒导入多条可用码会被数据库拒绝，直接破坏码池能力。
+  prizeStatusIdx: index("idx_prize_codes_prize_status").on(t.tenantId, t.prizeId, t.status, t.createdAt),
 }));
 
 // ── 抽奖活动 ──
@@ -129,8 +149,10 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
-  tenantStatusIdx: uniqueIndex("idx_draws_tenant_status").on(t.tenantId, t.status, t.createdAt),
-  dueIdx: uniqueIndex("idx_draws_due").on(t.status, t.drawAt),
+  // 后台列表和定时任务只需要普通索引；同一租户同一状态下当然允许存在多个活动。
+  tenantStatusIdx: index("idx_draws_tenant_status").on(t.tenantId, t.status, t.createdAt),
+  // 同一开奖时间可能对应多个活动，定时扫描必须是普通索引，不能限制业务并发排期。
+  dueIdx: index("idx_draws_due").on(t.status, t.drawAt),
 }));
 
 export const lotteryPrizeTiers = sqliteTable("lottery_prize_tiers", {
@@ -255,7 +277,9 @@ export const emailAccessCodes = sqliteTable("email_access_codes", {
   used: integer("used").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
-  emailDrawIdx: uniqueIndex("idx_email_code_draw").on(t.email, t.drawId, t.used),
+  // 只限制“未使用验证码”唯一，允许历史 used=1 记录保留审计痕迹。
+  // 旧的 UNIQUE(email, draw_id, used) 会在第二次发码时把多个 used=1 历史记录互相冲突。
+  activeEmailDrawUnique: uniqueIndex("idx_email_code_active").on(t.email, t.drawId).where(sql`used = 0`),
 }));
 
 // ── 系统配置（key-value 存储，供管理后台动态配置） ──
