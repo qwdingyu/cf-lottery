@@ -15,6 +15,8 @@ import {
   getDrawWinners,
   getActivityOutcomes,
   getTenantUsage,
+  recordActivityEvent,
+  getActivityEventSummary,
   createPrize,
   importPrizeCodes,
   randomSelect,
@@ -113,6 +115,14 @@ beforeAll(async () => {
     active INTEGER NOT NULL DEFAULT 1, last_sent_at TEXT, last_error TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS activity_events (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL,
+    entry_id TEXT NOT NULL DEFAULT '', event_type TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '', medium TEXT NOT NULL DEFAULT '', campaign TEXT NOT NULL DEFAULT '',
+    ref_code TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}',
+    ip_hash TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
   await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)", args: [USER, "test", "hash"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO tenant_members (tenant_id, user_id) VALUES (?, ?)", args: [TENANT, USER] });
@@ -130,6 +140,7 @@ afterEach(async () => {
   await client.execute("DELETE FROM prizes");
   await client.execute("DELETE FROM audit_logs");
   await client.execute("DELETE FROM webhook_configs");
+  await client.execute("DELETE FROM activity_events");
   await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["free", TENANT] });
 });
 
@@ -481,6 +492,52 @@ describe("活动引擎默认规则", () => {
     const draw = await getDraw(db, id, TENANT);
     expect(draw?.resultMode).toBe("scheduled");
     expect(draw?.winnerCount).toBe(1);
+  });
+});
+
+describe("活动事件", () => {
+  it("记录并汇总活动漏斗事件", async () => {
+    const { id } = await createDraw(db, TENANT, {
+      title: "事件活动",
+      startAt: new Date().toISOString(),
+      endAt: new Date(Date.now() + 3600000).toISOString(),
+      winnerCount: 1,
+    });
+
+    await recordActivityEvent(db, {
+      tenantId: TENANT,
+      drawId: id,
+      eventType: "page_view",
+      source: "wechat",
+      medium: "share",
+      campaign: "launch",
+    });
+    await recordActivityEvent(db, {
+      tenantId: TENANT,
+      drawId: id,
+      eventType: "cta_click",
+      metadata: { placement: "result_modal" },
+    });
+    await recordActivityEvent(db, {
+      tenantId: TENANT,
+      drawId: id,
+      eventType: "cta_click",
+    });
+
+    const summary = await getActivityEventSummary(db, TENANT, id);
+    expect(summary.pageViews).toBe(1);
+    expect(summary.ctaClicks).toBe(2);
+    expect(summary.totals.page_view).toBe(1);
+    expect(summary.totals.cta_click).toBe(2);
+    expect(summary.externalConversionsReported).toBe(0);
+  });
+
+  it("拒绝未知事件类型，避免污染统计口径", async () => {
+    await expect(recordActivityEvent(db, {
+      tenantId: TENANT,
+      drawId: "draw-1",
+      eventType: "paid_order" as any,
+    })).rejects.toThrow("活动事件类型无效");
   });
 });
 

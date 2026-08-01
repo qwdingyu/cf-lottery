@@ -37,8 +37,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-
-interface PrizeItem { name: string; color?: string }
+import type { PrizeItem } from './types'
 
 const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean }>()
 const emit = defineEmits<{ play: [] }>()

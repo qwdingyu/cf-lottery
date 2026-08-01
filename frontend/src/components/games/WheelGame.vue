@@ -27,12 +27,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-
-/** 奖品项 */
-interface PrizeItem {
-  name: string
-  color: string
-}
+import type { PrizeItem } from './types'
 
 const props = defineProps<{
   prizes: PrizeItem[]
