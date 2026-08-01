@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { fail, getDb, ok } from "../lib/http";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
-import { tenants, auditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws } from "../db/schema";
+import { tenants, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 
 export const platformRoute = new Hono<AppEnv>();
@@ -20,6 +20,12 @@ function combinedWhere(conditions: SQL[]): SQL | undefined {
   return conditions.length > 0 ? and(...conditions) : undefined;
 }
 
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.trunc(parsed), min), max);
+}
+
 // ═════════════════════════════════════════════════════════
 // 租户管理
 // ═════════════════════════════════════════════════════════
@@ -27,8 +33,8 @@ function combinedWhere(conditions: SQL[]): SQL | undefined {
 /** 租户列表（分页） */
 platformRoute.get("/tenants", async (c) => {
   const db = getDb(c);
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const limit = clampInteger(c.req.query("limit"), 50, 1, 200);
+  const offset = clampInteger(c.req.query("offset"), 0, 0, 100_000);
   const status = c.req.query("status") || "";
   const plan = c.req.query("plan") || "";
 
@@ -97,20 +103,22 @@ platformRoute.get("/tenants/:id/summary", async (c) => {
 /** 平台审计日志（分页，支持按租户/操作筛选） */
 platformRoute.get("/audit-logs", async (c) => {
   const db = getDb(c);
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const limit = clampInteger(c.req.query("limit"), 50, 1, 200);
+  const offset = clampInteger(c.req.query("offset"), 0, 0, 100_000);
   const tenantId = c.req.query("tenantId") || "";
   const action = c.req.query("action") || "";
+  const actorUserId = c.req.query("actorUserId") || "";
 
   const conditions: SQL[] = [];
-  if (tenantId) conditions.push(eq(auditLogs.tenantId, tenantId));
-  if (action) conditions.push(eq(auditLogs.action, action));
+  if (tenantId) conditions.push(eq(platformAuditLogs.tenantId, tenantId));
+  if (action) conditions.push(eq(platformAuditLogs.action, action));
+  if (actorUserId) conditions.push(eq(platformAuditLogs.actorUserId, actorUserId));
 
   const rows = await db
     .select()
-    .from(auditLogs)
+    .from(platformAuditLogs)
     .where(combinedWhere(conditions))
-    .orderBy(desc(auditLogs.createdAt))
+    .orderBy(desc(platformAuditLogs.createdAt))
     .limit(limit).offset(offset);
 
   return ok(c, { logs: rows });
@@ -124,8 +132,8 @@ platformRoute.get("/audit-logs", async (c) => {
 platformRoute.get("/usage-snapshots", async (c) => {
   const db = getDb(c);
   const tenantId = c.req.query("tenantId") || "";
-  const limit = Math.min(Number(c.req.query("limit") || "31"), 365);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const limit = clampInteger(c.req.query("limit"), 31, 1, 365);
+  const offset = clampInteger(c.req.query("offset"), 0, 0, 100_000);
 
   const conditions: SQL[] = [];
   if (tenantId) conditions.push(eq(tenantUsageSnapshots.tenantId, tenantId));
@@ -147,8 +155,8 @@ platformRoute.get("/usage-snapshots", async (c) => {
 /** 失败投递列表（分页，支持按租户筛选） */
 platformRoute.get("/webhook-deliveries", async (c) => {
   const db = getDb(c);
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const limit = clampInteger(c.req.query("limit"), 50, 1, 200);
+  const offset = clampInteger(c.req.query("offset"), 0, 0, 100_000);
   const tenantId = c.req.query("tenantId") || "";
   const status = c.req.query("status") || "";
 

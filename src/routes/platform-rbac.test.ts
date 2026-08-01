@@ -14,9 +14,10 @@ import { createDb, type DbType } from "../db/client";
 import { systemConfigRoute } from "./system-config";
 import { platformSystemConfigRoute } from "./platform-system-config";
 import { platformRedemptionCodesRoute } from "./platform-redemption-codes";
+import { platformRoute } from "./platform";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt } from "../middleware/auth";
-import { platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
+import { platformAuditLogs, platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 let client: Client;
@@ -40,6 +41,7 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, email TEXT NOT NULL DEFAULT '', email_verified INTEGER NOT NULL DEFAULT 0, password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS tenant_members (tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'owner', created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (tenant_id, user_id))`,
   `CREATE TABLE IF NOT EXISTS platform_members (user_id TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE TABLE IF NOT EXISTS platform_audit_logs (id TEXT PRIMARY KEY, actor_user_id TEXT NOT NULL, actor_role TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL DEFAULT '', tenant_id TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS system_config (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS lottery_draws (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, public_slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', activity_kind TEXT NOT NULL DEFAULT 'lottery', participation_mode TEXT NOT NULL DEFAULT 'open', experience_type TEXT NOT NULL DEFAULT 'wheel', draw_trigger TEXT NOT NULL DEFAULT 'manual', result_mode TEXT NOT NULL DEFAULT 'manual', allocation_policy TEXT NOT NULL DEFAULT 'capacity', policy_version INTEGER NOT NULL DEFAULT 1, start_at TEXT NOT NULL DEFAULT '', end_at TEXT NOT NULL DEFAULT '', draw_at TEXT, access_password TEXT NOT NULL DEFAULT '', max_participants INTEGER, winner_count INTEGER NOT NULL DEFAULT 1, show_participant_count INTEGER NOT NULL DEFAULT 1, show_winner_count INTEGER NOT NULL DEFAULT 1, show_winner_list INTEGER NOT NULL DEFAULT 0, drawn_at TEXT, failure_reason TEXT NOT NULL DEFAULT '', draw_seed_hash TEXT NOT NULL DEFAULT '', draw_seed TEXT NOT NULL DEFAULT '', algorithm_version TEXT NOT NULL DEFAULT 'uniform_v1', product_link TEXT NOT NULL DEFAULT '{}', promotion_config TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS webhook_configs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, url TEXT NOT NULL, secret TEXT NOT NULL DEFAULT '', events TEXT NOT NULL DEFAULT '[]', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
@@ -58,7 +60,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  for (const table of ["redemption_records", "redemption_codes", "webhook_configs", "lottery_draws", "system_config", "platform_members", "tenant_members", "users", "tenants"]) {
+  for (const table of ["platform_audit_logs", "redemption_records", "redemption_codes", "webhook_configs", "lottery_draws", "system_config", "platform_members", "tenant_members", "users", "tenants"]) {
     await client.execute(`DELETE FROM ${table}`);
   }
 });
@@ -73,6 +75,7 @@ function createTestApp() {
   app.route("/api/system-config", systemConfigRoute);
   app.route("/api/platform/system-config", platformSystemConfigRoute);
   app.route("/api/platform/redemption-codes", platformRedemptionCodesRoute);
+  app.route("/api/platform", platformRoute);
   return app;
 }
 
@@ -123,6 +126,17 @@ describe("RBAC-lite 路由分层", () => {
       body: JSON.stringify({ key: "platform_name", value: "RBAC 平台" }),
     }, TEST_ENV);
     expect(writeRes.status).toBe(200);
+
+    const auditRes = await app.request("/api/platform/audit-logs?limit=bad&action=platform.system_config.update", {
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(auditRes.status).toBe(200);
+    const auditPayload = await auditRes.json() as { logs: Array<{ action: string; targetId: string }> };
+    expect(auditPayload.logs).toHaveLength(1);
+    expect(auditPayload.logs[0]).toMatchObject({
+      action: "platform.system_config.update",
+      targetId: "platform_name",
+    });
   });
 
   it("旧 admin 平台入口不再提供系统配置和发码能力", async () => {
@@ -232,6 +246,10 @@ describe("RBAC-lite 路由分层", () => {
 
     const rows = await db.select().from(redemptionCodes).where(eq(redemptionCodes.createdBy, PLATFORM_ID));
     expect(rows).toHaveLength(2);
+
+    const [audit] = await db.select().from(platformAuditLogs).where(eq(platformAuditLogs.actorUserId, PLATFORM_ID)).limit(1);
+    expect(audit?.action).toBe("platform.redemption_codes.batch_create");
+    expect(audit?.targetType).toBe("redemption_code_batch");
   });
 
   it("租户侧兑换入口保留在 /api/admin/redemption-codes/redeem，并用 CAS 防止重复使用", async () => {

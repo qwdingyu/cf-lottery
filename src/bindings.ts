@@ -41,6 +41,8 @@ export type AppEnv = {
   Variables: {
     db: DbType | undefined;
     executionCtx: ExecutionContext;
+    /** 数据库初始化失败时的错误信息（db 中间件注入） */
+    dbInitError?: string;
     /** 登录用户 ID（requireAuth 中间件注入） */
     userId: string;
     /** 登录用户所属租户 ID（requireAuth 中间件注入） */

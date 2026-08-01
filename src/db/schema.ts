@@ -63,6 +63,32 @@ export const platformMembers = sqliteTable("platform_members", {
 });
 
 /**
+ * 平台审计日志（L3 平台运营者写操作）
+ *
+ * 平台后台跨租户管理系统配置、额度码、租户状态等能力，不能继续复用租户 audit_logs。
+ * 单独落表可以避免 tenant_id='__platform__' 这类特殊租户污染租户隔离、统计和审计口径。
+ */
+export const platformAuditLogs = sqliteTable("platform_audit_logs", {
+  id: text("id").primaryKey(),
+  actorUserId: text("actor_user_id").notNull(),
+  actorRole: text("actor_role").notNull().default(""),
+  action: text("action").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull().default(""),
+  tenantId: text("tenant_id").notNull().default(""),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  createdIdx: index("idx_platform_audit_created").on(t.createdAt),
+  // 平台审计是低频写入、高价值排查数据；租户和动作筛选必须走索引，
+  // 否则审计表增长后平台后台会在 Turso 上产生不必要 rows read 和延迟。
+  tenantIdx: index("idx_platform_audit_tenant").on(t.tenantId, t.createdAt),
+  actionIdx: index("idx_platform_audit_action").on(t.action, t.createdAt),
+  actorIdx: index("idx_platform_audit_actor").on(t.actorUserId, t.createdAt),
+  targetIdx: index("idx_platform_audit_target").on(t.targetType, t.targetId, t.createdAt),
+}));
+
+/**
  * 持久化限流日志表
  *
  * 替代内存 Map 实现多 Worker 实例下一致的限流。

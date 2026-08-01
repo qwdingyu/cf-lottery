@@ -79,7 +79,9 @@ function scratchAt(x: number, y: number) {
 }
 
 function getTouchPos(e: TouchEvent) {
-  const rect = canvasRef.value!.getBoundingClientRect()
+  const canvas = canvasRef.value
+  if (!canvas) return { x: 0, y: 0 }
+  const rect = canvas.getBoundingClientRect()
   return { x: e.touches[0]!.clientX - rect.left, y: e.touches[0]!.clientY - rect.top }
 }
 

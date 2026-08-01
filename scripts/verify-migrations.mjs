@@ -11,6 +11,11 @@ import { join } from "path";
 const DB_PATH = "test-migration.db";
 const MIGRATIONS_DIR = new URL("../migrations", import.meta.url).pathname;
 
+function isExpectedRepeatError(message) {
+  return message.includes("duplicate column")
+    || message.includes("already exists");
+}
+
 async function main() {
   // 清理旧测试数据库
   for (const suffix of ["", "-wal", "-shm"]) {
@@ -52,10 +57,13 @@ async function main() {
   console.log("\n📋 测试 2: 验证表结构");
   const tables = [
     "tenants", "users", "tenant_members",
+    "platform_members", "platform_audit_logs",
     "prizes", "prize_codes",
     "lottery_draws", "lottery_prize_tiers", "lottery_entries",
     "lottery_winners", "lottery_roster_members", "lottery_invite_codes",
     "email_access_codes", "audit_logs", "system_config",
+    "activity_events", "webhook_deliveries", "redemption_codes", "redemption_records",
+    "external_conversions", "rate_limit_log", "tenant_usage_snapshots",
   ];
   for (const table of tables) {
     try {
@@ -83,8 +91,24 @@ async function main() {
     }
   }
 
-  // 4. 重复执行验证
-  console.log("\n📋 测试 4: 重复执行迁移（幂等性）");
+  // 4. 验证平台审计表列
+  console.log("\n📋 测试 4: 验证 platform_audit_logs 列");
+  const platformAuditColumns = [
+    "actor_user_id", "actor_role", "action", "target_type",
+    "target_id", "tenant_id", "metadata_json", "created_at",
+  ];
+  for (const col of platformAuditColumns) {
+    try {
+      await client.execute(`SELECT ${col} FROM platform_audit_logs LIMIT 1`);
+      console.log(`  ✅ ${col}`);
+    } catch {
+      console.error(`  ❌ ${col} 缺失`);
+      process.exit(1);
+    }
+  }
+
+  // 5. 重复执行验证
+  console.log("\n📋 测试 5: 重复执行迁移（已存在容错）");
   for (const file of files) {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8").trim();
     const upSql = sql.includes("-- UP") 
@@ -94,19 +118,13 @@ async function main() {
     for (const stmt of statements) {
       try {
         await client.execute(stmt);
-        // 如果执行成功，检查是否是 CREATE TABLE IF NOT EXISTS 或 ALTER TABLE
-        if (stmt.includes("CREATE TABLE IF NOT EXISTS")) {
-          console.log(`  ✅ ${file}: 幂等正确`);
-        } else if (stmt.includes("ADD COLUMN")) {
-          console.log(`  ⚠️ ${file}: ADD COLUMN 重复执行失败（预期行为）`);
-        } else {
-          console.log(`  ✅ ${file}: 幂等正确`);
-        }
+        console.log(`  ✅ ${file}: 重复执行可通过`);
       } catch (err) {
-        if (err.message.includes("duplicate column")) {
-          console.log(`  ✅ ${file}: ADD COLUMN 幂等（已存在）`);
+        if (isExpectedRepeatError(err.message)) {
+          console.log(`  ✅ ${file}: 已存在，符合重复执行容错预期`);
         } else {
           console.error(`  ❌ ${file}: ${err.message}`);
+          process.exit(1);
         }
       }
     }

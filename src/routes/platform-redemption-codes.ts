@@ -10,6 +10,7 @@ import { fail, getDb, ok, safeJsonBody } from "../lib/http";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
 import { redemptionCodes } from "../db/schema";
 import { eq, desc, count } from "drizzle-orm";
+import { writePlatformAudit } from "../services/admin/platform-audit";
 
 export const platformRedemptionCodesRoute = new Hono<AppEnv>();
 
@@ -124,6 +125,22 @@ platformRedemptionCodesRoute.post("/batch", async (c) => {
       }
     }
   }
+
+  await writePlatformAudit(db, {
+    actorUserId: userId,
+    actorRole: c.get("platformRole") as string,
+    action: "platform.redemption_codes.batch_create",
+    targetType: "redemption_code_batch",
+    metadata: {
+      count: codes.length,
+      requestedCount: batchCount,
+      activityQuota,
+      participantQuota,
+      durationDays,
+      maxUses,
+      hasNote: Boolean(note),
+    },
+  });
 
   return ok(c, { codes, count: batchCount, activityQuota, participantQuota, durationDays });
 });

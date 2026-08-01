@@ -17,6 +17,7 @@ import {
   normalizeSystemConfigValue,
 } from "../lib/system-config-registry";
 import { getSystemConfig, upsertSystemConfig, deleteSystemConfig } from "../services/admin/system-config";
+import { writePlatformAudit } from "../services/admin/platform-audit";
 
 export const platformSystemConfigRoute = new Hono<AppEnv>();
 
@@ -47,6 +48,15 @@ platformSystemConfigRoute.put("/", async (c) => {
   await upsertSystemConfig(db, body.key, normalized.value, c.env?.CREDENTIALS_ENCRYPTION_KEY);
 
   const sensitive = isSensitiveSystemConfigKey(body.key);
+  await writePlatformAudit(db, {
+    actorUserId: c.get("userId") as string,
+    actorRole: c.get("platformRole") as string,
+    action: "platform.system_config.update",
+    targetType: "system_config",
+    targetId: body.key,
+    metadata: { key: body.key, sensitive, configured: Boolean(normalized.value) },
+  });
+
   return ok(c, {
     key: body.key,
     value: sensitive ? "" : normalized.value,
@@ -62,5 +72,13 @@ platformSystemConfigRoute.delete("/:key", async (c) => {
   }
   const db = getDb(c);
   await deleteSystemConfig(db, key);
+  await writePlatformAudit(db, {
+    actorUserId: c.get("userId") as string,
+    actorRole: c.get("platformRole") as string,
+    action: "platform.system_config.delete",
+    targetType: "system_config",
+    targetId: key,
+    metadata: { key },
+  });
   return ok(c, { deleted: key });
 });

@@ -70,7 +70,7 @@ export async function runScheduledMaintenance(
 // 公共 API 需要宽 CORS（活动可嵌入任意域名），管理/平台写接口已通过 JWT + RBAC 保护。
 // 如果后续需要进一步收紧，可以按路由拆分 CORS 策略。
 app.use("*", cors({
-  origin: ["*"],
+  origin: "*",
   allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   allowHeaders: ["Content-Type", "Authorization"],
   maxAge: 86400,
@@ -108,12 +108,14 @@ app.use("*", async (c, next) => {
 });
 
 // ── 数据库初始化中间件 ──
+// 如果 TURSO_URL 未配置（开发环境），db 为 undefined，health 端点返回 db: false。
+// 如果初始化抛异常（凭证错误等），标记 dbInitError 让 health 端点和 getDb 区分场景。
 app.use("*", async (c, next) => {
   try {
     c.set("db", createDbFromEnv(c.env));
   } catch (err) {
     console.error("[db] 数据库初始化失败:", err);
-    // 不阻止请求，health 路由可以正常返回
+    c.set("dbInitError", String((err as Error).message || "数据库连接失败"));
   }
   await next();
 });
@@ -132,7 +134,11 @@ app.route("/api/platform/redemption-codes", platformRedemptionCodesRoute);
 app.route("/api/platform", platformRoute);
 
 // 健康检查
-app.get("/api/health", (c) => c.json({ ok: true, db: !!c.get("db") }));
+app.get("/api/health", (c) => c.json({
+  ok: true,
+  db: !!c.get("db"),
+  dbError: c.get("dbInitError") || null,
+}));
 
 // Cron 手动入口：处理到期活动。线上自动任务使用 Worker scheduled() handler。
 // 安全：需要通过 CRON_SECRET 认证，防止未授权触发

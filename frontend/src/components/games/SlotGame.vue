@@ -73,12 +73,13 @@ async function spinReel(reel: HTMLDivElement, delay: number, duration: number) {
 
 async function handlePull() {
   if (spinning.value || props.disabled) return
+  if (!reel1Ref.value || !reel2Ref.value || !reel3Ref.value) return
   spinning.value = true
   emit('play')
   await Promise.all([
-    spinReel(reel1Ref.value!, 0, 1200),
-    spinReel(reel2Ref.value!, 300, 1000),
-    spinReel(reel3Ref.value!, 600, 800),
+    spinReel(reel1Ref.value, 0, 1200),
+    spinReel(reel2Ref.value, 300, 1000),
+    spinReel(reel3Ref.value, 600, 800),
   ])
   spinning.value = false
 }

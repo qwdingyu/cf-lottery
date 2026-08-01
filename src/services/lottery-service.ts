@@ -1996,7 +1996,7 @@ export async function processDueDraws(
   for (const draw of staleDrawings) {
     try {
       await healDrawingState(db, draw.id, draw.tenantId);
-    } catch { /* 治愈失败不影响后续流程 */ }
+    } catch (err) { console.error(`[heal] 状态自愈失败 draw=${draw.id}`, err); }
   }
 
   for (const draw of due) {
