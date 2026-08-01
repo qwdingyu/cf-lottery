@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, auditLogs, tenantMembers, users, tenants } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
@@ -23,6 +23,8 @@ import {
   getDrawEntriesCount,
   getActivityOutcomes,
   getActivityEventSummary,
+  getExternalConversionSummary,
+  listExternalConversions,
   getTenantUsage,
   hashAccessPassword,
   createWebhookSigningSecret,
@@ -482,7 +484,8 @@ adminLotteryRoute.get("/draws/:id/stats", async (c) => {
 
   const entryCount = await getDrawEntriesCount(db, drawId, tenantId);
   const events = await getActivityEventSummary(db, tenantId, drawId);
-  return ok(c, { entryCount, events });
+  const externalConversions = await getExternalConversionSummary(db, tenantId, drawId);
+  return ok(c, { entryCount, events, externalConversions });
 });
 
 /** 活动事件汇总：导流漏斗基础事实，不代表外部成交 */
@@ -495,6 +498,22 @@ adminLotteryRoute.get("/draws/:id/events/summary", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
 
   return ok(c, await getActivityEventSummary(db, tenantId, drawId));
+});
+
+/** 外部转化回传列表：只展示外部系统显式回传的事实 */
+adminLotteryRoute.get("/draws/:id/conversions", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
+  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+
+  const draw = await getDraw(db, drawId, tenantId);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  const conversions = await listExternalConversions(db, tenantId, drawId, limit, offset);
+  const summary = await getExternalConversionSummary(db, tenantId, drawId);
+  return ok(c, { conversions, summary });
 });
 
 /** 导出 CSV */
@@ -1376,4 +1395,175 @@ adminLotteryRoute.delete("/members/:userId", async (c) => {
   const result = await db.delete(tenantMembers).where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, c.req.param("userId"))));
   if ((result.rowsAffected ?? 0) === 0) return fail(c, "成员不存在", 404);
   return ok(c, { removed: true });
+});
+
+// ═════════════════════════════════════════════════════════
+// 兑换码管理（运营者生成，终端用户兑换）
+// ═════════════════════════════════════════════════════════
+
+/** 生成唯一兑换码 */
+function generateCode(): string {
+  const prefix = "LK";
+  const seg1 = crypto.randomUUID().slice(0, 4).toUpperCase();
+  const seg2 = crypto.randomUUID().slice(0, 4).toUpperCase();
+  return `${prefix}-${seg1}-${seg2}`;
+}
+
+/** 兑换码列表 */
+adminLotteryRoute.get("/redemption-codes", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const status = c.req.query("status") || "";
+  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
+  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+
+  const conditions = [eq(redemptionCodes.createdBy, tenantId)];
+  if (status) conditions.push(eq(redemptionCodes.status, status));
+
+  const rows = await db
+    .select()
+    .from(redemptionCodes)
+    .where(and(...conditions))
+    .orderBy(desc(redemptionCodes.createdAt))
+    .limit(limit).offset(offset);
+
+  return ok(c, { codes: rows });
+});
+
+/** 批量生成兑换码 */
+adminLotteryRoute.post("/redemption-codes/batch", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{
+    count: number;           // 生成数量（1-100）
+    activityQuota: number;   // 活动次数
+    participantQuota: number; // 参与人数
+    durationDays: number;    // 有效天数
+    maxUses?: number;        // 最大使用次数
+    note?: string;           // 备注
+  }>();
+
+  const count = Math.min(Math.max(1, body.count || 1), 100);
+  const activityQuota = Math.max(0, body.activityQuota || 0);
+  const participantQuota = Math.max(0, body.participantQuota || 0);
+  const durationDays = Math.max(1, body.durationDays || 30);
+
+  if (activityQuota === 0 && participantQuota === 0) {
+    return fail(c, "活动次数和参与人数不能同时为 0", 400);
+  }
+
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + durationDays * 86400000).toISOString();
+  const codes: string[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const code = generateCode();
+    await db.insert(redemptionCodes).values({
+      id: crypto.randomUUID(), code,
+      plan: "custom",
+      activityQuota, participantQuota, durationDays,
+      maxUses: body.maxUses || 1,
+      note: body.note || "",
+      createdBy: tenantId,
+      createdAt: now, expiresAt, updatedAt: now,
+    });
+    codes.push(code);
+  }
+
+  return ok(c, { codes, count, activityQuota, participantQuota, durationDays });
+});
+
+/** 兑换码统计 */
+adminLotteryRoute.get("/redemption-codes/stats", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+
+  const [total] = await db
+    .select({ total: count() })
+    .from(redemptionCodes)
+    .where(eq(redemptionCodes.createdBy, tenantId));
+
+  const [used] = await db
+    .select({ total: count() })
+    .from(redemptionCodes)
+    .where(and(eq(redemptionCodes.createdBy, tenantId), eq(redemptionCodes.status, "used")));
+
+  const [active] = await db
+    .select({ total: count() })
+    .from(redemptionCodes)
+    .where(and(eq(redemptionCodes.createdBy, tenantId), eq(redemptionCodes.status, "active")));
+
+  return ok(c, {
+    total: Number(total?.total ?? 0),
+    used: Number(used?.total ?? 0),
+    active: Number(active?.total ?? 0),
+  });
+});
+
+/** 兑换码兑换（租户侧：输入兑换码，获得额度） */
+adminLotteryRoute.post("/redemption-codes/redeem", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ code: string }>();
+  const codeInput = String(body.code || "").trim().toUpperCase();
+
+  if (!codeInput) return fail(c, "请输入兑换码", 400);
+
+  // 查找兑换码
+  const [codeRecord] = await db
+    .select()
+    .from(redemptionCodes)
+    .where(eq(redemptionCodes.code, codeInput))
+    .limit(1);
+
+  if (!codeRecord) return fail(c, "兑换码不存在", 404);
+  if (codeRecord.status !== "active") return fail(c, "兑换码已失效", 400);
+  if (codeRecord.usedCount >= codeRecord.maxUses) return fail(c, "兑换码已用完", 400);
+  if (new Date() > new Date(codeRecord.expiresAt)) return fail(c, "兑换码已过期", 400);
+
+  // 获取租户信息
+  const [tenant] = await db
+    .select({ name: tenants.name })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .limit(1);
+
+  // 更新兑换码使用次数
+  await db.update(redemptionCodes).set({
+    usedCount: codeRecord.usedCount + 1,
+    status: codeRecord.usedCount + 1 >= codeRecord.maxUses ? "used" : "active",
+    updatedAt: new Date().toISOString(),
+  }).where(eq(redemptionCodes.id, codeRecord.id));
+
+  // 更新租户额外额度
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + codeRecord.durationDays * 86400000).toISOString();
+
+  await db.update(tenants).set({
+    extraActivityQuota: sql`COALESCE(extra_activity_quota, 0) + ${codeRecord.activityQuota}`,
+    extraParticipantQuota: sql`COALESCE(extra_participant_quota, 0) + ${codeRecord.participantQuota}`,
+    extraQuotaExpiresAt: expiresAt,
+    updatedAt: now,
+  }).where(eq(tenants.id, tenantId));
+
+  // 记录兑换记录
+  await db.insert(redemptionRecords).values({
+    id: crypto.randomUUID(),
+    codeId: codeRecord.id,
+    code: codeInput,
+    tenantId,
+    tenantName: tenant?.name || "",
+    activityQuotaGranted: codeRecord.activityQuota,
+    participantQuotaGranted: codeRecord.participantQuota,
+    durationDaysGranted: codeRecord.durationDays,
+    expiresAt,
+    redeemedAt: now,
+  });
+
+  return ok(c, {
+    redeemed: true,
+    activityQuota: codeRecord.activityQuota,
+    participantQuota: codeRecord.participantQuota,
+    expiresAt,
+  });
 });

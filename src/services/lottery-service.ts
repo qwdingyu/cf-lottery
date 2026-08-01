@@ -317,6 +317,169 @@ export async function getActivityEventSummary(db: DbType, tenantId: string, draw
   };
 }
 
+export async function authenticateApiKey(db: DbType, rawKey: string) {
+  const key = String(rawKey || "").trim();
+  if (!key) return null;
+
+  const [row] = await db
+    .select({ id: apiKeys.id, tenantId: apiKeys.tenantId, name: apiKeys.name })
+    .from(apiKeys)
+    .where(and(eq(apiKeys.key, key), eq(apiKeys.active, 1)))
+    .limit(1);
+
+  return row || null;
+}
+
+export async function recordExternalConversion(db: DbType, input: RecordExternalConversionInput) {
+  if (!EXTERNAL_CONVERSION_TYPES.has(input.conversionType)) {
+    throw new Error("外部转化类型无效");
+  }
+  const externalEventId = truncateForEvent(String(input.externalEventId || "").trim(), 160);
+  if (!externalEventId) throw new Error("缺少外部事件 ID");
+
+  const source = truncateForEvent(String(input.source || "api").trim() || "api", 80);
+  const occurredAt = input.occurredAt ? new Date(input.occurredAt) : new Date();
+  if (Number.isNaN(occurredAt.getTime())) throw new Error("外部转化时间无效");
+  const amountCents = input.amountCents === null || input.amountCents === undefined
+    ? null
+    : Math.max(0, Math.trunc(Number(input.amountCents)));
+  const currency = truncateForEvent(String(input.currency || "").trim().toUpperCase(), 12);
+
+  return withDbTransaction(db, async (tx) => {
+    const [draw] = await tx
+      .select({ id: lotteryDraws.id, publicSlug: lotteryDraws.publicSlug })
+      .from(lotteryDraws)
+      .where(and(
+        eq(lotteryDraws.tenantId, input.tenantId),
+        input.drawId
+          ? eq(lotteryDraws.id, input.drawId)
+          : eq(lotteryDraws.publicSlug, String(input.publicSlug || "")),
+      ))
+      .limit(1);
+    if (!draw) throw new Error("活动不存在");
+
+    const [existing] = await tx
+      .select()
+      .from(externalConversions)
+      .where(and(
+        eq(externalConversions.tenantId, input.tenantId),
+        eq(externalConversions.source, source),
+        eq(externalConversions.externalEventId, externalEventId),
+      ))
+      .limit(1);
+    if (existing) {
+      return { created: false, conversion: existing };
+    }
+
+    const normalizedIdentityType = truncateForEvent(String(input.identityType || "").trim().toLowerCase(), 32);
+    const normalizedIdentityValue = truncateForEvent(String(input.identityValue || "").trim().toLowerCase(), 200);
+    let entryId = truncateForEvent(String(input.entryId || "").trim(), 80);
+    if (entryId) {
+      const [entry] = await tx
+        .select({ id: lotteryEntries.id })
+        .from(lotteryEntries)
+        .where(and(
+          eq(lotteryEntries.tenantId, input.tenantId),
+          eq(lotteryEntries.drawId, draw.id),
+          eq(lotteryEntries.id, entryId),
+        ))
+        .limit(1);
+      if (!entry) throw new Error("参与记录不存在");
+    } else if (normalizedIdentityValue) {
+      const [entry] = await tx
+        .select({ id: lotteryEntries.id })
+        .from(lotteryEntries)
+        .where(and(
+          eq(lotteryEntries.tenantId, input.tenantId),
+          eq(lotteryEntries.drawId, draw.id),
+          eq(lotteryEntries.identityValue, normalizedIdentityValue),
+        ))
+        .limit(1);
+      entryId = entry?.id || "";
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const conversion = {
+      id,
+      tenantId: input.tenantId,
+      drawId: draw.id,
+      entryId,
+      externalEventId,
+      conversionType: input.conversionType,
+      source,
+      refCode: truncateForEvent(String(input.refCode || "").trim(), 80),
+      amountCents,
+      currency,
+      identityType: normalizedIdentityType,
+      identityValue: normalizedIdentityValue,
+      payloadJson: jsonStringifyLimited(input.payload || {}, 10000),
+      occurredAt: occurredAt.toISOString(),
+      createdAt: now,
+    };
+    await tx.insert(externalConversions).values(conversion);
+
+    await recordActivityEvent(tx, {
+      tenantId: input.tenantId,
+      drawId: draw.id,
+      entryId,
+      eventType: "external_conversion_reported",
+      source,
+      refCode: conversion.refCode,
+      metadata: {
+        conversionId: id,
+        conversionType: input.conversionType,
+        externalEventId,
+        amountCents,
+        currency,
+      },
+    });
+
+    return { created: true, conversion };
+  });
+}
+
+export async function listExternalConversions(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  limit = 50,
+  offset = 0,
+) {
+  return db
+    .select()
+    .from(externalConversions)
+    .where(and(eq(externalConversions.tenantId, tenantId), eq(externalConversions.drawId, drawId)))
+    .orderBy(externalConversions.createdAt)
+    .limit(Math.max(1, Math.min(200, limit)))
+    .offset(Math.max(0, offset));
+}
+
+export async function getExternalConversionSummary(db: DbType, tenantId: string, drawId: string) {
+  const rows = await db
+    .select({
+      conversionType: externalConversions.conversionType,
+      total: count(),
+      amountCents: sql<number>`coalesce(sum(${externalConversions.amountCents}), 0)`,
+    })
+    .from(externalConversions)
+    .where(and(eq(externalConversions.tenantId, tenantId), eq(externalConversions.drawId, drawId)))
+    .groupBy(externalConversions.conversionType);
+
+  const totals: Record<string, { count: number; amountCents: number }> = {};
+  let totalCount = 0;
+  let totalAmountCents = 0;
+  for (const row of rows) {
+    const countValue = Number(row.total || 0);
+    const amountValue = Number(row.amountCents || 0);
+    totals[row.conversionType] = { count: countValue, amountCents: amountValue };
+    totalCount += countValue;
+    totalAmountCents += amountValue;
+  }
+
+  return { totalCount, totalAmountCents, totals };
+}
+
 export function createWebhookSigningSecret(): string {
   return `whsec_${crypto.randomUUID().replace(/-/g, "")}`;
 }
@@ -545,6 +708,11 @@ export async function listWebhookDeliveries(
 
 function truncateForEvent(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
+}
+
+function jsonStringifyLimited(value: Record<string, unknown>, max: number): string {
+  const text = JSON.stringify(value || {});
+  return text.length > max ? text.slice(0, max) : text;
 }
 
 function webhookConfigAcceptsEvent(eventsJson: string, eventType: WebhookEventType): boolean {

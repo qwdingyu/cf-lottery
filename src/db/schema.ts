@@ -382,3 +382,40 @@ export const externalConversions = sqliteTable("external_conversions", {
   conversionEntryIdx: index("idx_external_conversions_entry").on(t.tenantId, t.drawId, t.entryId, t.createdAt),
   conversionRefIdx: index("idx_external_conversions_ref").on(t.tenantId, t.drawId, t.refCode, t.createdAt),
 }));
+
+// ── 兑换码（运营者生成，终端用户兑换获取活动额度） ──
+export const redemptionCodes = sqliteTable("redemption_codes", {
+  id: text("id").primaryKey(),
+  code: text("code").notNull().unique(),          // 兑换码，如 LUCKY-XXXX-XXXX
+  plan: text("plan").notNull().default("custom"),  // 套餐标识
+  activityQuota: integer("activity_quota").notNull().default(0),   // 额外活动次数
+  participantQuota: integer("participant_quota").notNull().default(0), // 额外参与人数
+  durationDays: integer("duration_days").notNull().default(30),     // 有效天数
+  maxUses: integer("max_uses").notNull().default(1),  // 最大使用次数
+  usedCount: integer("used_count").notNull().default(0), // 已使用次数
+  status: text("status").notNull().default("active"),   // active/used/expired/disabled
+  note: text("note").notNull().default(""),              // 备注
+  createdBy: text("created_by").notNull().default(""),   // 创建者
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  expiresAt: text("expires_at").notNull(),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  codeStatusIdx: index("idx_redemption_code_status").on(t.status, t.expiresAt, t.createdAt),
+}));
+
+// ── 兑换记录（谁在什么时候兑换了什么码） ──
+export const redemptionRecords = sqliteTable("redemption_records", {
+  id: text("id").primaryKey(),
+  codeId: text("code_id").notNull(),               // 兑换码 ID
+  code: text("code").notNull(),                    // 兑换码原文
+  tenantId: text("tenant_id").notNull(),            // 兑换的租户 ID
+  tenantName: text("tenant_name").notNull().default(""), // 兑换的租户名
+  activityQuotaGranted: integer("activity_quota_granted").notNull().default(0),  // 获得的活动次数
+  participantQuotaGranted: integer("participant_quota_granted").notNull().default(0), // 获得的参与人数
+  durationDaysGranted: integer("duration_days_granted").notNull().default(30),  // 获得的有效天数
+  expiresAt: text("expires_at"),                   // 额度到期时间
+  redeemedAt: text("redeemed_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  recordTenantIdx: index("idx_redemption_record_tenant").on(t.tenantId, t.redeemedAt),
+  recordCodeIdx: index("idx_redemption_record_code").on(t.codeId, t.redeemedAt),
+}));

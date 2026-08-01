@@ -11,6 +11,7 @@ import { createDb } from "./db/client";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
+import { integrationRoute } from "./routes/integration";
 import { systemConfigRoute } from "./routes/system-config";
 import { adminSystemConfigRoute } from "./routes/admin-system-config";
 import {
@@ -83,6 +84,7 @@ app.use("*", async (c, next) => {
 app.route("/api/auth", authRoute);
 app.route("/api/admin", adminLotteryRoute);
 app.route("/api/public", publicLotteryRoute);
+app.route("/api/integration", integrationRoute);
 app.route("/api/system-config", systemConfigRoute);
 app.route("/api/admin/system-config", adminSystemConfigRoute);
 

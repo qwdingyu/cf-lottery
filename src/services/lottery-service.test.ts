@@ -17,6 +17,10 @@ import {
   getTenantUsage,
   recordActivityEvent,
   getActivityEventSummary,
+  authenticateApiKey,
+  recordExternalConversion,
+  listExternalConversions,
+  getExternalConversionSummary,
   enqueueWebhookEvent,
   dispatchWebhookDelivery,
   processPendingWebhookDeliveriesForAllTenants,
@@ -120,6 +124,11 @@ beforeAll(async () => {
     active INTEGER NOT NULL DEFAULT 1, last_sent_at TEXT, last_error TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL,
+    key TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
   await client.execute("ALTER TABLE webhook_configs ADD COLUMN signing_secret TEXT NOT NULL DEFAULT ''").catch(() => undefined);
   await client.execute(`CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, webhook_config_id TEXT NOT NULL,
@@ -145,6 +154,16 @@ beforeAll(async () => {
     clicked_count INTEGER NOT NULL DEFAULT 0, joined_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS external_conversions (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL,
+    entry_id TEXT NOT NULL DEFAULT '', external_event_id TEXT NOT NULL,
+    conversion_type TEXT NOT NULL, source TEXT NOT NULL DEFAULT '',
+    ref_code TEXT NOT NULL DEFAULT '', amount_cents INTEGER,
+    currency TEXT NOT NULL DEFAULT '', identity_type TEXT NOT NULL DEFAULT '',
+    identity_value TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL DEFAULT '{}',
+    occurred_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(tenant_id, source, external_event_id)
+  )`);
   await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)", args: [USER, "test", "hash"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO tenant_members (tenant_id, user_id) VALUES (?, ?)", args: [TENANT, USER] });
@@ -163,8 +182,10 @@ afterEach(async () => {
   await client.execute("DELETE FROM audit_logs");
   await client.execute("DELETE FROM webhook_deliveries");
   await client.execute("DELETE FROM webhook_configs");
+  await client.execute("DELETE FROM api_keys");
   await client.execute("DELETE FROM activity_events");
   await client.execute("DELETE FROM share_records");
+  await client.execute("DELETE FROM external_conversions");
   await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["free", TENANT] });
 });
 
@@ -589,6 +610,78 @@ describe("活动事件", () => {
     const summary = await getActivityEventSummary(db, TENANT, id);
     expect(summary.totals.attributed_join).toBe(1);
     expect(summary.attributedJoins).toBe(1);
+  });
+});
+
+describe("外部转化回传", () => {
+  it("API Key 只解析 active 密钥所属租户", async () => {
+    await client.execute({
+      sql: "INSERT INTO api_keys (id, tenant_id, name, key, active) VALUES (?, ?, ?, ?, ?)",
+      args: ["key-1", TENANT, "Default", "cl_test_active", 1],
+    });
+    await client.execute({
+      sql: "INSERT INTO api_keys (id, tenant_id, name, key, active) VALUES (?, ?, ?, ?, ?)",
+      args: ["key-2", TENANT, "Disabled", "cl_test_disabled", 0],
+    });
+
+    expect((await authenticateApiKey(db, "cl_test_active"))?.tenantId).toBe(TENANT);
+    expect(await authenticateApiKey(db, "cl_test_disabled")).toBeNull();
+    expect(await authenticateApiKey(db, "missing")).toBeNull();
+  });
+
+  it("外部转化按 tenant/source/externalEventId 幂等，并同步写入事件汇总", async () => {
+    const { id, publicSlug } = await setupDraw("open", { maxParticipants: 10 });
+    const joined = await joinDraw(db, publicSlug, "buyer@test.com");
+    const entryId = "entryId" in joined ? joined.entryId : "";
+
+    const first = await recordExternalConversion(db, {
+      tenantId: TENANT,
+      publicSlug,
+      externalEventId: "order-001",
+      conversionType: "purchase",
+      source: "shopify",
+      identityType: "email",
+      identityValue: "buyer@test.com",
+      refCode: "ref-001",
+      amountCents: 19900,
+      currency: "cny",
+      payload: { orderNo: "order-001", rawValue: "not used as platform GMV without explicit reporting" },
+    });
+    const second = await recordExternalConversion(db, {
+      tenantId: TENANT,
+      drawId: id,
+      externalEventId: "order-001",
+      conversionType: "purchase",
+      source: "shopify",
+    });
+
+    expect(first.created).toBe(true);
+    expect(first.conversion.entryId).toBe(entryId);
+    expect(first.conversion.currency).toBe("CNY");
+    expect(second.created).toBe(false);
+    expect(second.conversion.id).toBe(first.conversion.id);
+
+    const conversions = await listExternalConversions(db, TENANT, id);
+    expect(conversions).toHaveLength(1);
+    expect(conversions[0]?.amountCents).toBe(19900);
+
+    const summary = await getExternalConversionSummary(db, TENANT, id);
+    expect(summary.totalCount).toBe(1);
+    expect(summary.totalAmountCents).toBe(19900);
+    expect(summary.totals.purchase).toEqual({ count: 1, amountCents: 19900 });
+
+    const events = await getActivityEventSummary(db, TENANT, id);
+    expect(events.externalConversionsReported).toBe(1);
+  });
+
+  it("外部转化必须绑定当前租户活动，不能跨租户写入", async () => {
+    const { id } = await setupDraw("open");
+    await expect(recordExternalConversion(db, {
+      tenantId: "other-tenant",
+      drawId: id,
+      externalEventId: "evt-cross-tenant",
+      conversionType: "registration",
+    })).rejects.toThrow("活动不存在");
   });
 });
 
