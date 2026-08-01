@@ -294,12 +294,27 @@ adminLotteryRoute.get("/draws/:id", async (c) => {
   return ok(c, { draw });
 });
 
-/** 获取活动模板列表 */
+/** 获取活动模板列表
+ *
+ * 返回预置活动模板列表，每个模板包含：
+ * - 名称、描述、图标、分类（营销获客/互动传播/转化留资/调研分析）
+ * - 默认配置：activityKind、experienceType、participationMode、resultMode 等
+ * - 创建提示文案
+ *
+ * 前端根据此列表渲染模板选择弹窗，用户选择后自动填充创建表单。
+ * 模板定义在 src/lib/activity-templates.ts 中维护。
+ */
 adminLotteryRoute.get("/templates", async (c) => {
   return ok(c, { templates: ACTIVITY_TEMPLATES });
 });
 
-/** 复制活动（复制配置，不包括参与数据） */
+/** 复制活动（复制配置，不包括参与数据）
+ *
+ * 复制完整活动配置到新活动，生成新的 public_slug。
+ * 复制内容：标题、描述、活动类型、参与模式、体验类型、时间设置、密码、容量、奖品配置、导流配置。
+ * 不复制：参与记录、中奖记录、审计日志、事件数据。
+ * 新活动标题自动添加"（副本）"后缀，状态为 draft。
+ */
 adminLotteryRoute.post("/draws/:id/copy", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
@@ -308,16 +323,17 @@ adminLotteryRoute.post("/draws/:id/copy", async (c) => {
   const draw = await getDraw(db, drawId, tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  // 复制活动配置，生成新的 public_slug
+  // 复制活动配置，生成新的 public_slug（取 UUID 前 8 位，不可枚举）
   const newId = crypto.randomUUID();
   const newSlug = crypto.randomUUID().slice(0, 8);
   const now = new Date().toISOString();
 
+  // 插入新活动记录，复制源活动的全部配置字段
   await db.insert(lotteryDraws).values({
     id: newId,
     tenantId,
     publicSlug: newSlug,
-    title: `${draw.title}（副本）`,
+    title: `${draw.title}（副本）`,  // 自动添加副本后缀，避免混淆
     description: draw.description,
     activityKind: draw.activityKind,
     participationMode: draw.participationMode,
@@ -553,7 +569,16 @@ adminLotteryRoute.get("/draws/:id/entries", async (c) => {
   return ok(c, { entries: rows });
 });
 
-/** 审核申请：批准或拒绝（仅 approval 活动可用） */
+/** 审核申请：批准或拒绝（仅 approval 活动可用）
+ *
+ * 审核流程：
+ * 1. 用户提交申请 → 创建 lottery_entry 参与记录
+ * 2. 管理员审查 → 调用此 API 批准或拒绝
+ * 3. 审批结果写入 activity_outcomes 表，outcomeType='review'
+ * 4. 通过后可通过 Webhook 通知用户（需额外配置）
+ *
+ * 注意：审批结果一旦写入不可撤回，如需重新审核需重新提交申请。
+ */
 adminLotteryRoute.post("/draws/:id/review", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
@@ -561,11 +586,12 @@ adminLotteryRoute.post("/draws/:id/review", async (c) => {
   const body = await c.req.json<{ entryId: string; decision: "approved" | "rejected"; reason?: string }>();
   if (!body.entryId || !body.decision) return fail(c, "请指定参与记录和审批结果", 400);
 
+  // 校验活动存在且是审批类型
   const draw = await getDraw(db, drawId, tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.activityKind !== "approval") return fail(c, "仅审核活动支持审批操作", 400);
 
-  // 检查 entry 是否存在
+  // 校验参与记录存在且属于该活动
   const [entry] = await db
     .select({ id: lotteryEntries.id })
     .from(lotteryEntries)
@@ -574,18 +600,20 @@ adminLotteryRoute.post("/draws/:id/review", async (c) => {
   if (!entry) return fail(c, "参与记录不存在", 404);
 
   const now = new Date().toISOString();
-  // 写入审批结果到 activity_outcomes
+  // 写入审批结果到 activity_outcomes 表
+  // outcomeType='review' 区分于接龙的 'assignment'
+  // status 记录审批结论：approved/rejected
   await db.insert(activityOutcomes).values({
     id: crypto.randomUUID(),
     tenantId,
     drawId,
     entryId: body.entryId,
-    outcomeType: "review",
-    status: body.decision,
-    sequenceNo: 0,
-    resultKey: body.decision,
+    outcomeType: "review",          // 区分于接龙的 assignment
+    status: body.decision,          // approved | rejected
+    sequenceNo: 0,                  // 审批不涉及排序
+    resultKey: body.decision,       // 与 status 一致，便于前端按 resultKey 筛选
     resultLabel: body.decision === "approved" ? "已通过" : "已拒绝",
-    metadataJson: JSON.stringify({ reason: body.reason || "" }),
+    metadataJson: JSON.stringify({ reason: body.reason || "" }), // 审批理由存 metadata
     decidedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -632,21 +660,27 @@ adminLotteryRoute.get("/draws/:id/events/summary", async (c) => {
   return ok(c, await getActivityEventSummary(db, tenantId, drawId));
 });
 
-/** 投票统计：按选项统计票数（仅 vote 活动可用） */
+/** 投票统计：按选项统计票数（仅 vote 活动可用）
+ *
+ * 投票活动（vote）的 identity_value 存储的是用户选择的选项。
+ * 此 API 按 identity_value 分组 COUNT，得出每个选项的得票数。
+ * 使用降序排列，得票最多的选项排第一。
+ */
 adminLotteryRoute.get("/draws/:id/tally", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const drawId = c.req.param("id");
 
+  // 校验活动存在且是投票类型
   const draw = await getDraw(db, drawId, tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.activityKind !== "vote") return fail(c, "仅投票活动支持票数统计", 400);
 
-  // 按参与者身份标识分组统计票数
+  // 按参与者身份标识（即投票选项）分组统计票数
   const rows = await db
     .select({
-      option: lotteryEntries.identityValue,
-      count: count(),
+      option: lotteryEntries.identityValue,  // 投票选项（用户提交时 identity_value 填的选项值）
+      count: count(),                        // 该选项获得的票数
     })
     .from(lotteryEntries)
     .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId)))
