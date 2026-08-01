@@ -13,6 +13,7 @@ export const tenants = sqliteTable("tenants", {
   name: text("name").notNull(),
   plan: text("plan").notNull().default("free"),
   status: text("status").notNull().default("active"),
+  brandConfig: text("brand_config").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });

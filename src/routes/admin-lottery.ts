@@ -769,6 +769,11 @@ function defaultExperienceForParticipation(participationMode: string): string {
   return "wheel";
 }
 
+/** 安全解析 JSON 字符串 */
+function tryParseJson(s: string): any {
+  try { return JSON.parse(s); } catch { return undefined; }
+}
+
 // ═════════════════════════════════════════════════════════
 // 参与者黑名单
 // ═════════════════════════════════════════════════════════
@@ -1101,4 +1106,33 @@ adminLotteryRoute.post("/coupons/redeem", async (c) => {
   await db.update(couponCodes).set({ status: "redeemed", redeemedAt: new Date().toISOString() })
     .where(eq(couponCodes.id, coupon.id));
   return ok(c, { redeemed: true, label: coupon.label });
+});
+
+// ═════════════════════════════════════════════════════════
+// 租户品牌配置（白标）
+// ═════════════════════════════════════════════════════════
+
+/** 获取品牌配置 */
+adminLotteryRoute.get("/brand", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const [tenant] = await db.select({ brandConfig: tenants.brandConfig }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+  if (!tenant) return fail(c, "租户不存在", 404);
+  const config = tryParseJson(tenant.brandConfig);
+  return ok(c, { config });
+});
+
+/** 更新品牌配置 */
+adminLotteryRoute.put("/brand", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<any>();
+  const config = {
+    logo: body.logo || "",
+    primaryColor: body.primaryColor || "",
+    companyName: body.companyName || "",
+    domain: body.domain || "",
+  };
+  await db.update(tenants).set({ brandConfig: JSON.stringify(config), updatedAt: new Date().toISOString() }).where(eq(tenants.id, tenantId));
+  return ok(c, { config });
 });
