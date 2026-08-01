@@ -64,6 +64,7 @@ info "步骤 2/4：数据库迁移..."
 TURSO_URL="$(cred_load TURSO_URL || true)"
 TURSO_TOKEN="$(cred_load TURSO_TOKEN || true)"
 if [ -n "$TURSO_URL" ] && [ -n "$TURSO_TOKEN" ]; then
+  export TURSO_URL TURSO_TOKEN
   # 安全检查：确认数据库可连接
   node -e "
     const { createClient } = require('@libsql/client');
@@ -80,8 +81,8 @@ if [ -n "$TURSO_URL" ] && [ -n "$TURSO_TOKEN" ]; then
     })();
   " 2>&1 || warn "⚠️ 数据库连接检查失败，请确认 TURSO_URL/TURSO_TOKEN 正确"
 
-  # 使用 drizzle-kit 执行迁移
-  npx drizzle-kit migrate
+  # 使用仓库内固定版本的 drizzle-kit，避免 npx 自动拉取新版导致配置不兼容。
+  npm run db:migrate
   info "数据库迁移完成"
 else
   warn "跳过迁移：缺少 TURSO_URL 或 TURSO_TOKEN"
@@ -96,7 +97,9 @@ trap 'rm -f "$SECRETS_FILE"' EXIT
 append_secret() {
   local name="$1" value
   value="$(cred_load "$name" 2>/dev/null || true)"
-  [ -n "$value" ] && echo "${name}=${value}" >> "$SECRETS_FILE"
+  if [ -n "$value" ]; then
+    echo "${name}=${value}" >> "$SECRETS_FILE"
+  fi
 }
 
 # 写入 wrangler 需要的 secrets
