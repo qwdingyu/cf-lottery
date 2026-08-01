@@ -17,6 +17,10 @@ import {
   getTenantUsage,
   recordActivityEvent,
   getActivityEventSummary,
+  enqueueWebhookEvent,
+  dispatchWebhookDelivery,
+  processPendingWebhookDeliveriesForAllTenants,
+  listWebhookDeliveries,
   createPrize,
   importPrizeCodes,
   randomSelect,
@@ -112,8 +116,20 @@ beforeAll(async () => {
   await client.execute(`CREATE TABLE IF NOT EXISTS webhook_configs (
     id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, url TEXT NOT NULL,
     events TEXT NOT NULL DEFAULT '["draw.completed","prize.issued"]',
+    signing_secret TEXT NOT NULL DEFAULT '',
     active INTEGER NOT NULL DEFAULT 1, last_sent_at TEXT, last_error TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await client.execute("ALTER TABLE webhook_configs ADD COLUMN signing_secret TEXT NOT NULL DEFAULT ''").catch(() => undefined);
+  await client.execute(`CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, webhook_config_id TEXT NOT NULL,
+    event_id TEXT NOT NULL, event_type TEXT NOT NULL, url TEXT NOT NULL,
+    payload_json TEXT NOT NULL, signature TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_retry_at TEXT, response_status INTEGER, response_body TEXT NOT NULL DEFAULT '',
+    last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')), sent_at TEXT,
+    UNIQUE(webhook_config_id, event_id)
   )`);
   await client.execute(`CREATE TABLE IF NOT EXISTS activity_events (
     id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL,
@@ -121,6 +137,12 @@ beforeAll(async () => {
     source TEXT NOT NULL DEFAULT '', medium TEXT NOT NULL DEFAULT '', campaign TEXT NOT NULL DEFAULT '',
     ref_code TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}',
     ip_hash TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS share_records (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL,
+    sharer_entry_id TEXT NOT NULL, share_code TEXT NOT NULL UNIQUE,
+    clicked_count INTEGER NOT NULL DEFAULT 0, joined_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
@@ -139,8 +161,10 @@ afterEach(async () => {
   await client.execute("DELETE FROM prize_codes");
   await client.execute("DELETE FROM prizes");
   await client.execute("DELETE FROM audit_logs");
+  await client.execute("DELETE FROM webhook_deliveries");
   await client.execute("DELETE FROM webhook_configs");
   await client.execute("DELETE FROM activity_events");
+  await client.execute("DELETE FROM share_records");
   await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["free", TENANT] });
 });
 
@@ -538,6 +562,190 @@ describe("活动事件", () => {
       drawId: "draw-1",
       eventType: "paid_order" as any,
     })).rejects.toThrow("活动事件类型无效");
+  });
+
+  it("有效邀请只在新参与者成功入库后归因，点击和重复参与不计入 joined_count", async () => {
+    const { id, publicSlug } = await setupDraw("open", { maxParticipants: 10 });
+    const sharer = await joinDraw(db, publicSlug, "sharer@test.com");
+    expect(sharer.joined).toBe(true);
+    const sharerEntryId = "entryId" in sharer ? sharer.entryId : "";
+    await client.execute({
+      sql: `INSERT INTO share_records (id, tenant_id, draw_id, sharer_entry_id, share_code, clicked_count, joined_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ["share-1", TENANT, id, sharerEntryId, "ref-001", 7, 0],
+    });
+
+    const invited = await joinDraw(db, publicSlug, "invited@test.com", "email", {
+      refCode: "ref-001",
+      ipHash: "ip-hash",
+      userAgent: "test-agent",
+    });
+    expect(invited.joined).toBe(true);
+    await expect(joinDraw(db, publicSlug, "invited@test.com", "email", { refCode: "ref-001" })).rejects.toThrow();
+
+    const shareRows = await client.execute("SELECT clicked_count, joined_count FROM share_records WHERE id = 'share-1'");
+    expect(Number(shareRows.rows[0]?.clicked_count)).toBe(7);
+    expect(Number(shareRows.rows[0]?.joined_count)).toBe(1);
+
+    const summary = await getActivityEventSummary(db, TENANT, id);
+    expect(summary.totals.attributed_join).toBe(1);
+    expect(summary.attributedJoins).toBe(1);
+  });
+});
+
+describe("Webhook delivery", () => {
+  it("按配置事件生成投递记录，并对同一 eventId 保持幂等", async () => {
+    await client.execute({
+      sql: "INSERT INTO webhook_configs (id, tenant_id, url, events, signing_secret) VALUES (?,?,?,?,?)",
+      args: ["webhook-1", TENANT, "https://example.com/webhook", JSON.stringify(["draw.completed"]), "whsec_test"],
+    });
+    await client.execute({
+      sql: "INSERT INTO webhook_configs (id, tenant_id, url, events, signing_secret) VALUES (?,?,?,?,?)",
+      args: ["webhook-2", TENANT, "https://example.com/ignored", JSON.stringify(["entry.created"]), "whsec_test"],
+    });
+
+    const first = await enqueueWebhookEvent(db, {
+      tenantId: TENANT,
+      eventType: "draw.completed",
+      eventId: "evt_fixed",
+      data: { drawId: "draw-1" },
+    });
+    const second = await enqueueWebhookEvent(db, {
+      tenantId: TENANT,
+      eventType: "draw.completed",
+      eventId: "evt_fixed",
+      data: { drawId: "draw-1" },
+    });
+
+    expect(first.deliveryIds).toHaveLength(1);
+    expect(second.deliveryIds).toHaveLength(0);
+    const deliveries = await listWebhookDeliveries(db, TENANT);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.eventType).toBe("draw.completed");
+    expect(JSON.parse(deliveries[0]!.payloadJson).id).toBe("evt_fixed");
+  });
+
+  it("成功投递时带签名 headers 并标记 sent", async () => {
+    await client.execute({
+      sql: "INSERT INTO webhook_configs (id, tenant_id, url, events, signing_secret) VALUES (?,?,?,?,?)",
+      args: ["webhook-1", TENANT, "https://example.com/webhook", JSON.stringify(["draw.completed"]), "whsec_test"],
+    });
+    const queued = await enqueueWebhookEvent(db, {
+      tenantId: TENANT,
+      eventType: "draw.completed",
+      data: { drawId: "draw-1" },
+    });
+
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const result = await dispatchWebhookDelivery(db, TENANT, queued.deliveryIds[0]!, async (url, init) => {
+      calls.push({ url, init });
+      return new Response("ok", { status: 200 });
+    });
+
+    expect(result.delivered).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://example.com/webhook");
+    expect((calls[0]?.init.headers as Record<string, string>)["X-CF-Lottery-Event"]).toBe("draw.completed");
+    expect((calls[0]?.init.headers as Record<string, string>)["X-CF-Lottery-Signature"]).toMatch(/^v1=/);
+
+    const deliveries = await listWebhookDeliveries(db, TENANT);
+    expect(deliveries[0]?.status).toBe("sent");
+    expect(deliveries[0]?.attemptCount).toBe(1);
+    expect(deliveries[0]?.responseStatus).toBe(200);
+  });
+
+  it("投递失败时记录失败状态和下一次重试时间", async () => {
+    await client.execute({
+      sql: "INSERT INTO webhook_configs (id, tenant_id, url, events, signing_secret) VALUES (?,?,?,?,?)",
+      args: ["webhook-1", TENANT, "https://example.com/webhook", JSON.stringify(["draw.completed"]), "whsec_test"],
+    });
+    const queued = await enqueueWebhookEvent(db, {
+      tenantId: TENANT,
+      eventType: "draw.completed",
+      data: { drawId: "draw-1" },
+    });
+
+    const result = await dispatchWebhookDelivery(db, TENANT, queued.deliveryIds[0]!, async () =>
+      new Response("bad gateway", { status: 502 }));
+
+    expect(result.delivered).toBe(false);
+    const deliveries = await listWebhookDeliveries(db, TENANT);
+    expect(deliveries[0]?.status).toBe("failed");
+    expect(deliveries[0]?.attemptCount).toBe(1);
+    expect(deliveries[0]?.responseStatus).toBe(502);
+    expect(deliveries[0]?.nextRetryAt).toBeTruthy();
+  });
+
+  it("周期性调度只处理到期且未超过重试上限的跨租户 Webhook", async () => {
+    const otherTenant = "test-tenant-002";
+    await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [otherTenant, "Other"] });
+    await client.execute({
+      sql: "INSERT INTO webhook_configs (id, tenant_id, url, events, signing_secret) VALUES (?,?,?,?,?)",
+      args: ["webhook-1", TENANT, "https://example.com/tenant-1", JSON.stringify(["draw.completed"]), "whsec_test"],
+    });
+    await client.execute({
+      sql: "INSERT INTO webhook_configs (id, tenant_id, url, events, signing_secret) VALUES (?,?,?,?,?)",
+      args: ["webhook-2", otherTenant, "https://example.com/tenant-2", JSON.stringify(["draw.completed"]), "whsec_test"],
+    });
+
+    const dueTenant = await enqueueWebhookEvent(db, {
+      tenantId: TENANT,
+      eventType: "draw.completed",
+      eventId: "evt_due_tenant_1",
+      data: { drawId: "draw-1" },
+    });
+    const dueOtherTenant = await enqueueWebhookEvent(db, {
+      tenantId: otherTenant,
+      eventType: "draw.completed",
+      eventId: "evt_due_tenant_2",
+      data: { drawId: "draw-2" },
+    });
+    const futureRetry = await enqueueWebhookEvent(db, {
+      tenantId: TENANT,
+      eventType: "draw.completed",
+      eventId: "evt_future_retry",
+      data: { drawId: "draw-3" },
+    });
+    const exhausted = await enqueueWebhookEvent(db, {
+      tenantId: TENANT,
+      eventType: "draw.completed",
+      eventId: "evt_exhausted",
+      data: { drawId: "draw-4" },
+    });
+
+    await client.execute({
+      sql: "UPDATE webhook_deliveries SET status = 'failed', next_retry_at = ?, attempt_count = 1 WHERE id = ?",
+      args: [new Date(Date.now() + 3600000).toISOString(), futureRetry.deliveryIds[0]],
+    });
+    await client.execute({
+      sql: "UPDATE webhook_deliveries SET status = 'failed', next_retry_at = ?, attempt_count = 5 WHERE id = ?",
+      args: [new Date(Date.now() - 3600000).toISOString(), exhausted.deliveryIds[0]],
+    });
+
+    const calls: string[] = [];
+    const result = await processPendingWebhookDeliveriesForAllTenants(db, async (url) => {
+      calls.push(url);
+      return new Response("ok", { status: 200 });
+    });
+
+    expect(result.tenantCount).toBe(2);
+    expect(result.processed).toBe(2);
+    expect(result.sent).toBe(2);
+    expect(result.failed).toBe(0);
+    expect(calls.sort()).toEqual(["https://example.com/tenant-1", "https://example.com/tenant-2"]);
+
+    const tenantDeliveries = await listWebhookDeliveries(db, TENANT);
+    const sentDue = tenantDeliveries.find((delivery) => delivery.id === dueTenant.deliveryIds[0]);
+    const notDue = tenantDeliveries.find((delivery) => delivery.id === futureRetry.deliveryIds[0]);
+    const notRetried = tenantDeliveries.find((delivery) => delivery.id === exhausted.deliveryIds[0]);
+    expect(sentDue?.status).toBe("sent");
+    expect(notDue?.status).toBe("failed");
+    expect(notDue?.attemptCount).toBe(1);
+    expect(notRetried?.status).toBe("failed");
+    expect(notRetried?.attemptCount).toBe(5);
+
+    const otherDeliveries = await listWebhookDeliveries(db, otherTenant);
+    const sentOther = otherDeliveries.find((delivery) => delivery.id === dueOtherTenant.deliveryIds[0]);
+    expect(sentOther?.status).toBe("sent");
   });
 });
 

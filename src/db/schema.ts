@@ -271,6 +271,7 @@ export const webhookConfigs = sqliteTable("webhook_configs", {
   tenantId: text("tenant_id").notNull(),
   url: text("url").notNull(),
   events: text("events").notNull().default("[\"draw.completed\",\"prize.issued\"]"),
+  signingSecret: text("signing_secret").notNull().default(""),
   active: integer("active").notNull().default(1),
   lastSentAt: text("last_sent_at"),
   lastError: text("last_error"),
@@ -278,6 +279,30 @@ export const webhookConfigs = sqliteTable("webhook_configs", {
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   webhookTenantIdx: index("idx_webhook_tenant").on(t.tenantId, t.active, t.createdAt),
+}));
+
+// ── Webhook 投递记录（签名、重试、失败原因） ──
+export const webhookDeliveries = sqliteTable("webhook_deliveries", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  webhookConfigId: text("webhook_config_id").notNull(),
+  eventId: text("event_id").notNull(),
+  eventType: text("event_type").notNull(),
+  url: text("url").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  signature: text("signature").notNull().default(""),
+  status: text("status").notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextRetryAt: text("next_retry_at"),
+  responseStatus: integer("response_status"),
+  responseBody: text("response_body").notNull().default(""),
+  lastError: text("last_error").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  sentAt: text("sent_at"),
+}, (t) => ({
+  deliveryTenantIdx: index("idx_webhook_deliveries_tenant").on(t.tenantId, t.status, t.createdAt),
+  deliveryEventIdx: uniqueIndex("idx_webhook_deliveries_event").on(t.webhookConfigId, t.eventId),
 }));
 
 // ── 优惠券码池（唯一码，支持核销） ──

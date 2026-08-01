@@ -9,7 +9,10 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { eq, and } from "drizzle-orm";
+import { Hono } from "hono";
+import type { AppEnv } from "../bindings";
 import { createDb, type DbType } from "../db/client";
+import { authRoute } from "../routes/auth";
 import {
   activityOutcomes,
   auditLogs,
@@ -61,6 +64,11 @@ afterEach(async () => {
 
 const TENANT = "test-auth-tenant";
 const USER = "test-auth-user";
+const TEST_ENV = {
+  TURSO_URL: "",
+  ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+  JWT_SECRET: "test-jwt-secret-0123456789abcdef",
+};
 
 /** 对未来时间取整，避免毫秒差异 */
 function futureTimeISO(minutes: number): string {
@@ -70,6 +78,22 @@ function futureTimeISO(minutes: number): string {
   return d.toISOString();
 }
 
+function createAuthTestApp() {
+  const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("db", db);
+    await next();
+  });
+  app.route("/auth", authRoute);
+  return app;
+}
+
+async function legacySha256(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(password));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 /* ── 测试：注册 ──────────────────────────────────────────── */
 
 // 由于 Hono 测试需要完整的应用上下文和 JWT 密钥，
@@ -77,6 +101,46 @@ function futureTimeISO(minutes: number): string {
 // 完整的路由层测试需要集成测试环境。
 
 describe("用户注册数据完整性", () => {
+  it("注册路由使用 PBKDF2 salt:hash 存储密码，并创建邮箱验证码", async () => {
+    const app = createAuthTestApp();
+    const res = await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.1" },
+      body: JSON.stringify({ username: "routeuser", password: "Password123", email: "route@test.com" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const [user] = await db.select().from(users).where(eq(users.username, "routeuser")).limit(1);
+    expect(user?.passwordHash).toMatch(/^[a-f0-9]{32}:[a-f0-9]{64}$/);
+    const [code] = await db.select().from(emailAccessCodes).where(eq(emailAccessCodes.email, "route@test.com")).limit(1);
+    expect(code).toBeTruthy();
+  });
+
+  it("旧 SHA-256 密码登录成功后自动升级为 PBKDF2 格式", async () => {
+    const app = createAuthTestApp();
+    const userId = crypto.randomUUID();
+    const tenantId = crypto.randomUUID();
+    await db.insert(users).values({
+      id: userId,
+      username: "legacyuser",
+      email: "legacy@test.com",
+      emailVerified: 1,
+      passwordHash: await legacySha256("Password123"),
+    });
+    await db.insert(tenants).values({ id: tenantId, name: "legacy" });
+    await db.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
+
+    const res = await app.request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.2" },
+      body: JSON.stringify({ username: "legacyuser", password: "Password123" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const [upgraded] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    expect(upgraded?.passwordHash).toMatch(/^[a-f0-9]{32}:[a-f0-9]{64}$/);
+  });
+
   it("注册后自动创建租户和成员记录", async () => {
     // 验证 users、tenants、tenant_members 三表数据一致性
     const userId = crypto.randomUUID();

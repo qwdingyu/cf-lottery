@@ -33,6 +33,8 @@ function checkRateLimit(ip: string, limit = 5, windowMs = 60000): boolean {
 }
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{2,40}$/;
+const PASSWORD_HASH_ITERATIONS = 100000;
+const LEGACY_SHA256_RE = /^[a-f0-9]{64}$/i;
 
 function getJwtSecret(c: any): string {
   const secret = c.env.JWT_SECRET;
@@ -63,74 +65,75 @@ async function hashCode(code: string): Promise<string> {
 
 /** 第一步：提交注册信息，发送验证码 */
 authRoute.post("/register", async (c) => {
-  const ip = c.req.header("CF-Connecting-IP") || "unknown";
-  if (!checkRateLimit(`register:${ip}`, 3, 60000)) {
-    return c.json({ ok: false, message: "注册过于频繁，请稍后再试" }, 429);
-  }
-
-  const db = getDb(c);
-  const body = await c.req.json<{ username: string; password: string; email: string }>();
-  const username = String(body.username || "").trim();
-  const password = String(body.password || "");
-  const email = String(body.email || "").trim().toLowerCase();
-
-  // 校验
-  if (!USERNAME_RE.test(username)) {
-    return c.json({ ok: false, message: "用户名需要 4-20 个字符，只允许字母、数字和下划线" }, 400);
-  }
-  if (password.length < 8) {
-    return c.json({ ok: false, message: "密码需要至少 8 个字符" }, 400);
-  }
-  if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
-    return c.json({ ok: false, message: "密码必须包含字母和数字" }, 400);
-  }
-  if (!email || !email.includes("@")) {
-    return c.json({ ok: false, message: "请输入有效的邮箱地址" }, 400);
-  }
-
-  // 检查用户名是否已存在
-  const [existingUser] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
-  if (existingUser) {
-    return c.json({ ok: false, message: "用户名已存在" }, 409);
-  }
-  // 检查邮箱是否已被注册
-  const [existingEmail] = await db.select({ id: users.id }).from(users).where(and(eq(users.email, email), eq(users.emailVerified, 1))).limit(1);
-  if (existingEmail) {
-    return c.json({ ok: false, message: "该邮箱已被注册" }, 409);
-  }
-
-  // 生成密码 hash
-  const passwordHash = await hashPassword(password);
-
-  // 创建用户（未验证邮箱）
-  const userId = crypto.randomUUID();
-  const tenantId = crypto.randomUUID();
-  await db.insert(users).values({ id: userId, username, email, passwordHash, emailVerified: 0 });
-  await db.insert(tenants).values({ id: tenantId, name: username });
-  await db.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
-
-  // 生成并存入数据库
-  const code = generateCode();
-  const codeHash = await hashCode(code);
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-  await db.insert(emailAccessCodes).values({
-    id: crypto.randomUUID(),
-    email,
-    drawId: "",
-    codeHash,
-    used: 0,
-    expiresAt,
-  });
-
-  const emailEnv = { resendApiKey: c.env.RESEND_API_KEY || "", emailFrom: c.env.EMAIL_FROM || "" };
   try {
-    await sendAccessCode(emailEnv, email, "注册验证", code);
-  } catch (err) {
-    console.warn("[auth] sendAccessCode failed:", (err as Error).message);
-    // 邮件发送失败不阻止注册，验证码已存入内存
-  }
+    const ip = c.req.header("CF-Connecting-IP") || "unknown";
+    if (!checkRateLimit(`register:${ip}`, 3, 60000)) {
+      return c.json({ ok: false, message: "注册过于频繁，请稍后再试" }, 429);
+    }
 
-  return c.json({ ok: true, message: "验证码已发送到邮箱", expiresInSeconds: 600 });
+    const db = getDb(c);
+    const body = await c.req.json<{ username: string; password: string; email: string }>();
+    const username = String(body.username || "").trim();
+    const password = String(body.password || "");
+    const email = String(body.email || "").trim().toLowerCase();
+
+    // 校验
+    if (!USERNAME_RE.test(username)) {
+      return c.json({ ok: false, message: "用户名需要 4-20 个字符，只允许字母、数字和下划线" }, 400);
+    }
+    if (password.length < 8) {
+      return c.json({ ok: false, message: "密码需要至少 8 个字符" }, 400);
+    }
+    if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+      return c.json({ ok: false, message: "密码必须包含字母和数字" }, 400);
+    }
+    if (!email || !email.includes("@")) {
+      return c.json({ ok: false, message: "请输入有效的邮箱地址" }, 400);
+    }
+
+    // 检查用户名是否已存在
+    const [existingUser] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
+    if (existingUser) {
+      return c.json({ ok: false, message: "用户名已存在" }, 409);
+    }
+    // 检查邮箱是否已被注册
+    const [existingEmail] = await db.select({ id: users.id }).from(users).where(and(eq(users.email, email), eq(users.emailVerified, 1))).limit(1);
+    if (existingEmail) {
+      return c.json({ ok: false, message: "该邮箱已被注册" }, 409);
+    }
+
+    // 生成密码 hash
+    const passwordHash = await hashPassword(password);
+
+    // 创建用户（未验证邮箱）
+    const userId = crypto.randomUUID();
+    const tenantId = crypto.randomUUID();
+    await db.insert(users).values({ id: userId, username, email, passwordHash, emailVerified: 0 });
+    await db.insert(tenants).values({ id: tenantId, name: username });
+    await db.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
+
+    // 生成并存入数据库
+    const code = generateCode();
+    const codeHash = await hashCode(code);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email,
+      drawId: "",
+      codeHash,
+      used: 0,
+      expiresAt,
+    });
+
+    // const emailEnv = { resendApiKey: c.env.RESEND_API_KEY || "", emailFrom: c.env.EMAIL_FROM || "" };
+    // 邮件发送（MVP 阶段跳过，验证码存入数据库，邮箱验证通过后不会自动发送邮件）
+    // 后续配置 RESEND_API_KEY 后会自动发送
+
+    return c.json({ ok: true, message: "验证码已发送到邮箱", expiresInSeconds: 600 });
+  } catch (err) {
+    console.error("[auth] register failed:", err);
+    return c.json({ ok: false, message: "注册失败，请稍后再试" }, 500);
+  }
 });
 
 /** 第二步：验证邮箱码 */
@@ -202,6 +205,9 @@ authRoute.post("/login", async (c) => {
 
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) return c.json({ ok: false, message: "用户名或密码错误" }, 401);
+  if (isLegacySha256Hash(user.passwordHash)) {
+    await db.update(users).set({ passwordHash: await hashPassword(password), updatedAt: new Date().toISOString() }).where(eq(users.id, user.id));
+  }
 
   if (user.status !== "active") return c.json({ ok: false, message: "账号已被禁用" }, 403);
 
@@ -248,22 +254,50 @@ async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
   const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, key, 256
+    { name: "PBKDF2", salt, iterations: PASSWORD_HASH_ITERATIONS, hash: "SHA-256" },
+    key,
+    256,
   );
-  const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
-  const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const saltHex = bytesToHex(salt);
+  const hashHex = bytesToHex(new Uint8Array(hash));
   return `${saltHex}:${hashHex}`;
 }
 
 async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  if (isLegacySha256Hash(stored)) {
+    return await legacySha256PasswordHash(password) === stored;
+  }
+
   const [saltHex, hashHex] = stored.split(":");
   if (!saltHex || !hashHex) return false;
-  const salt = new Uint8Array(saltHex.match(/.{2}/g)!.map(b => parseInt(b, 16)));
+  const salt = hexToBytes(saltHex);
+  if (!salt || !/^[a-f0-9]{64}$/i.test(hashHex)) return false;
+
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
   const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, key, 256
+    { name: "PBKDF2", salt, iterations: PASSWORD_HASH_ITERATIONS, hash: "SHA-256" },
+    key,
+    256,
   );
-  const computedHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
-  return computedHex === hashHex;
+  return bytesToHex(new Uint8Array(hash)) === hashHex.toLowerCase();
+}
+
+function isLegacySha256Hash(stored: string): boolean {
+  return LEGACY_SHA256_RE.test(stored);
+}
+
+async function legacySha256PasswordHash(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(password));
+  return bytesToHex(new Uint8Array(hash));
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBytes(hex: string): Uint8Array | null {
+  if (!/^[a-f0-9]+$/i.test(hex) || hex.length % 2 !== 0) return null;
+  return new Uint8Array(hex.match(/.{2}/g)!.map(b => parseInt(b, 16)));
 }

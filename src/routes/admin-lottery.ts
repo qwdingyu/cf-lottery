@@ -25,6 +25,10 @@ import {
   getActivityEventSummary,
   getTenantUsage,
   hashAccessPassword,
+  createWebhookSigningSecret,
+  listWebhookDeliveries,
+  dispatchWebhookDelivery,
+  processPendingWebhookDeliveries,
   createPrize,
   importPrizeCodes,
 } from "../services/lottery-service";
@@ -1123,7 +1127,17 @@ adminLotteryRoute.get("/webhooks", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const rows = await db
-    .select()
+    .select({
+      id: webhookConfigs.id,
+      tenantId: webhookConfigs.tenantId,
+      url: webhookConfigs.url,
+      events: webhookConfigs.events,
+      active: webhookConfigs.active,
+      lastSentAt: webhookConfigs.lastSentAt,
+      lastError: webhookConfigs.lastError,
+      createdAt: webhookConfigs.createdAt,
+      updatedAt: webhookConfigs.updatedAt,
+    })
     .from(webhookConfigs)
     .where(eq(webhookConfigs.tenantId, tenantId))
     .orderBy(desc(webhookConfigs.createdAt));
@@ -1137,7 +1151,12 @@ adminLotteryRoute.post("/webhooks", async (c) => {
   const body = await c.req.json<{ url: string; events?: string[] }>();
   const url = String(body.url || "").trim();
   if (!url) return fail(c, "请输入 Webhook URL", 400);
-  try { new URL(url); if (url.startsWith("http")) {} else throw 1; } catch { return fail(c, "URL 格式无效", 400); }
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("invalid protocol");
+  } catch {
+    return fail(c, "URL 格式无效", 400);
+  }
 
   const quota = await getTenantUsage(db, tenantId);
   if (quota.limits.maxWebhooks !== null) {
@@ -1150,13 +1169,15 @@ adminLotteryRoute.post("/webhooks", async (c) => {
     }
   }
 
+  const signingSecret = createWebhookSigningSecret();
   await db.insert(webhookConfigs).values({
     id: crypto.randomUUID(),
     tenantId,
     url,
     events: JSON.stringify(body.events || ["draw.completed", "prize.issued"]),
+    signingSecret,
   });
-  return ok(c, { created: true });
+  return ok(c, { created: true, signingSecret });
 });
 
 /** 删除 Webhook */
@@ -1165,6 +1186,33 @@ adminLotteryRoute.delete("/webhooks/:id", async (c) => {
   const tenantId = c.get("tenantId") as string;
   await db.delete(webhookConfigs).where(and(eq(webhookConfigs.id, c.req.param("id")), eq(webhookConfigs.tenantId, tenantId)));
   return ok(c, { deleted: true });
+});
+
+/** Webhook 投递记录 */
+adminLotteryRoute.get("/webhook-deliveries", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
+  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const deliveries = await listWebhookDeliveries(db, tenantId, limit, offset);
+  return ok(c, { deliveries });
+});
+
+/** 重试单条 Webhook 投递 */
+adminLotteryRoute.post("/webhook-deliveries/:id/retry", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const result = await dispatchWebhookDelivery(db, tenantId, c.req.param("id"));
+  return ok(c, result);
+});
+
+/** 批量处理待重试 Webhook 投递 */
+adminLotteryRoute.post("/webhook-deliveries/process", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const body = await c.req.json<{ limit?: number }>().catch((): { limit?: number } => ({}));
+  const result = await processPendingWebhookDeliveries(db, tenantId, fetch, body.limit || 20);
+  return ok(c, result);
 });
 
 // ═════════════════════════════════════════════════════════

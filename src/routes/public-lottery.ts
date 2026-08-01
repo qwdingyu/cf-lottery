@@ -251,7 +251,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
   }
   const db = getDb(c);
   const slug = c.req.param("slug");
-  const body = await c.req.json<{ email: string; code: string; accessPassword?: string; inviteCode?: string }>();
+  const body = await c.req.json<{ email: string; code: string; accessPassword?: string; inviteCode?: string; refCode?: string }>();
   const email = String(body.email || "").trim().toLowerCase();
   const code = String(body.code || "").trim();
 
@@ -301,6 +301,8 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       accessPassword: body.accessPassword,
       inviteCode: body.inviteCode,
       ipHash: ip,
+      refCode: body.refCode,
+      userAgent: c.req.header("User-Agent") || "",
     });
     if (!result.joined) {
       return fail(c, result.message || "参与失败", 400);
@@ -329,7 +331,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
   const db = getDb(c);
-  const body = await c.req.json<{ email: string }>();
+  const body = await c.req.json<{ email: string; refCode?: string }>();
   const email = String(body.email || "").trim().toLowerCase();
 
   if (!email || !email.includes("@")) {
@@ -337,7 +339,11 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
   }
 
   try {
-    const result = await joinDraw(db, c.req.param("slug"), email, "email");
+    const result = await joinDraw(db, c.req.param("slug"), email, "email", {
+      ipHash: ip,
+      refCode: body.refCode,
+      userAgent: c.req.header("User-Agent") || "",
+    });
     if (!result.joined) {
       return fail(c, result.message || "参与失败", 400);
     }

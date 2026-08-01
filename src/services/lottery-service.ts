@@ -19,7 +19,7 @@
  * - 邀请码防超发：条件 UPDATE WHERE used_count < max_uses
  * - 锁码防重：条件 UPDATE WHERE status = 'available'
  */
-import { withDbTransaction, type DbType } from "../db/client";
+import { withDbTransaction, type DbType, type DbWriteScope } from "../db/client";
 import { and, eq, count, sql } from "drizzle-orm";
 import { buildLotteryWinnerTemplateData, sendEmail } from "./email-service";
 import {
@@ -37,7 +37,9 @@ import {
   tenants,               // SaaS 租户与套餐
   tenantMembers,         // 团队成员配额统计
   webhookConfigs,        // Webhook 配额统计
+  webhookDeliveries,     // Webhook 投递生命周期
   activityEvents,        // 活动事件与导流漏斗
+  shareRecords,          // 分享裂变归因
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
@@ -99,6 +101,25 @@ export type RecordActivityEventInput = {
   userAgent?: string;
 };
 
+export type WebhookEventType =
+  | "draw.published"
+  | "draw.completed"
+  | "entry.created"
+  | "outcome.assigned"
+  | "prize.issued"
+  | "share.created"
+  | "share.clicked"
+  | "activity.event.recorded";
+
+export type EnqueueWebhookEventInput = {
+  tenantId: string;
+  eventType: WebhookEventType;
+  data: Record<string, unknown>;
+  eventId?: string;
+};
+
+export type WebhookFetch = (url: string, init: RequestInit) => Promise<Response>;
+
 const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "page_view",
   "participation_started",
@@ -110,6 +131,17 @@ const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "share_click",
   "attributed_join",
   "external_conversion_reported",
+]);
+
+const WEBHOOK_EVENT_TYPES = new Set<WebhookEventType>([
+  "draw.published",
+  "draw.completed",
+  "entry.created",
+  "outcome.assigned",
+  "prize.issued",
+  "share.created",
+  "share.clicked",
+  "activity.event.recorded",
 ]);
 
 const DEFAULT_ACTIVITY_PARTICIPANT_CAP = 5000;
@@ -202,7 +234,7 @@ async function enforceTenantActivityQuota(
   return usage.limits;
 }
 
-export async function recordActivityEvent(db: DbType, input: RecordActivityEventInput) {
+export async function recordActivityEvent(db: DbWriteScope, input: RecordActivityEventInput) {
   if (!ACTIVITY_EVENT_TYPES.has(input.eventType)) {
     throw new Error("活动事件类型无效");
   }
@@ -244,12 +276,281 @@ export async function getActivityEventSummary(db: DbType, tenantId: string, draw
     participationCompleted: totals.participation_completed || 0,
     ctaClicks: totals.cta_click || 0,
     shareClicks: totals.share_click || 0,
+    attributedJoins: totals.attributed_join || 0,
     externalConversionsReported: totals.external_conversion_reported || 0,
   };
 }
 
+export function createWebhookSigningSecret(): string {
+  return `whsec_${crypto.randomUUID().replace(/-/g, "")}`;
+}
+
+export async function enqueueWebhookEvent(db: DbType, input: EnqueueWebhookEventInput) {
+  if (!WEBHOOK_EVENT_TYPES.has(input.eventType)) {
+    throw new Error("Webhook 事件类型无效");
+  }
+
+  const configs = await db
+    .select()
+    .from(webhookConfigs)
+    .where(and(eq(webhookConfigs.tenantId, input.tenantId), eq(webhookConfigs.active, 1)));
+
+  const eventId = input.eventId || `evt_${crypto.randomUUID().replace(/-/g, "")}`;
+  const now = new Date().toISOString();
+  const payload = {
+    id: eventId,
+    type: input.eventType,
+    createdAt: now,
+    tenantId: input.tenantId,
+    data: input.data,
+  };
+  const payloadJson = JSON.stringify(payload);
+  const deliveryIds: string[] = [];
+
+  for (const config of configs) {
+    if (!webhookConfigAcceptsEvent(config.events, input.eventType)) continue;
+
+    let signingSecret = config.signingSecret || "";
+    if (!signingSecret) {
+      signingSecret = createWebhookSigningSecret();
+      await db
+        .update(webhookConfigs)
+        .set({ signingSecret, updatedAt: now })
+        .where(and(eq(webhookConfigs.id, config.id), eq(webhookConfigs.tenantId, input.tenantId)));
+    }
+
+    const deliveryId = crypto.randomUUID();
+    const signature = await signWebhookPayload(signingSecret, now, payloadJson);
+    const [existingDelivery] = await db
+      .select({ id: webhookDeliveries.id })
+      .from(webhookDeliveries)
+      .where(and(eq(webhookDeliveries.webhookConfigId, config.id), eq(webhookDeliveries.eventId, eventId)))
+      .limit(1);
+    if (existingDelivery) continue;
+
+    await db.insert(webhookDeliveries).values({
+      id: deliveryId,
+      tenantId: input.tenantId,
+      webhookConfigId: config.id,
+      eventId,
+      eventType: input.eventType,
+      url: config.url,
+      payloadJson,
+      signature,
+      status: "pending",
+      attemptCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    deliveryIds.push(deliveryId);
+  }
+
+  return { eventId, deliveryIds };
+}
+
+export async function dispatchWebhookDelivery(
+  db: DbType,
+  tenantId: string,
+  deliveryId: string,
+  fetcher: WebhookFetch = fetch,
+) {
+  const [delivery] = await db
+    .select()
+    .from(webhookDeliveries)
+    .where(and(eq(webhookDeliveries.id, deliveryId), eq(webhookDeliveries.tenantId, tenantId)))
+    .limit(1);
+  if (!delivery) throw new Error("Webhook 投递记录不存在");
+  if (delivery.status === "sent") return { delivered: true, status: "sent" };
+
+  const now = new Date().toISOString();
+  const attempt = delivery.attemptCount + 1;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const [config] = await db
+    .select({ signingSecret: webhookConfigs.signingSecret })
+    .from(webhookConfigs)
+    .where(and(eq(webhookConfigs.id, delivery.webhookConfigId), eq(webhookConfigs.tenantId, tenantId)))
+    .limit(1);
+  const signature = await signWebhookPayload(config?.signingSecret || "", timestamp, delivery.payloadJson);
+
+  try {
+    const response = await fetcher(delivery.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "cf-lottery-webhook/1.0",
+        "X-CF-Lottery-Event": delivery.eventType,
+        "X-CF-Lottery-Event-Id": delivery.eventId,
+        "X-CF-Lottery-Timestamp": timestamp,
+        "X-CF-Lottery-Signature": signature,
+      },
+      body: delivery.payloadJson,
+    });
+    const responseText = truncateForEvent(await response.text().catch(() => ""), 1000);
+    const sent = response.status >= 200 && response.status < 300;
+    const failedNextRetry = sent ? null : nextWebhookRetryAt(attempt);
+    await db
+      .update(webhookDeliveries)
+      .set({
+        status: sent ? "sent" : "failed",
+        attemptCount: attempt,
+        nextRetryAt: failedNextRetry,
+        responseStatus: response.status,
+        responseBody: responseText,
+        lastError: sent ? "" : `HTTP ${response.status}`,
+        signature,
+        sentAt: sent ? now : null,
+        updatedAt: now,
+      })
+      .where(and(eq(webhookDeliveries.id, delivery.id), eq(webhookDeliveries.tenantId, tenantId)));
+    await updateWebhookConfigDeliveryState(db, tenantId, delivery.webhookConfigId, sent ? "" : `HTTP ${response.status}`);
+    return { delivered: sent, status: sent ? "sent" : "failed", responseStatus: response.status };
+  } catch (err) {
+    const message = err instanceof Error ? err.message.slice(0, 500) : "Webhook 投递失败";
+    await db
+      .update(webhookDeliveries)
+      .set({
+        status: "failed",
+        attemptCount: attempt,
+        nextRetryAt: nextWebhookRetryAt(attempt),
+        lastError: message,
+        signature,
+        updatedAt: now,
+      })
+      .where(and(eq(webhookDeliveries.id, delivery.id), eq(webhookDeliveries.tenantId, tenantId)));
+    await updateWebhookConfigDeliveryState(db, tenantId, delivery.webhookConfigId, message);
+    return { delivered: false, status: "failed", error: message };
+  }
+}
+
+export async function processPendingWebhookDeliveries(
+  db: DbType,
+  tenantId: string,
+  fetcher: WebhookFetch = fetch,
+  limit = 20,
+) {
+  const now = new Date().toISOString();
+  const deliveries = await db
+    .select({ id: webhookDeliveries.id })
+    .from(webhookDeliveries)
+    .where(and(
+      eq(webhookDeliveries.tenantId, tenantId),
+      sql`${webhookDeliveries.status} <> 'sent'`,
+      sql`(${webhookDeliveries.nextRetryAt} IS NULL OR ${webhookDeliveries.nextRetryAt} <= ${now})`,
+      sql`${webhookDeliveries.attemptCount} < 5`,
+    ))
+    .limit(Math.max(1, Math.min(50, limit)));
+
+  let sent = 0;
+  let failed = 0;
+  for (const delivery of deliveries) {
+    const result = await dispatchWebhookDelivery(db, tenantId, delivery.id, fetcher);
+    if (result.delivered) sent++;
+    else failed++;
+  }
+  return { processed: deliveries.length, sent, failed };
+}
+
+export async function processPendingWebhookDeliveriesForAllTenants(
+  db: DbType,
+  fetcher: WebhookFetch = fetch,
+  options?: { tenantLimit?: number; perTenantLimit?: number },
+) {
+  const now = new Date().toISOString();
+  const tenantLimit = Math.max(1, Math.min(100, options?.tenantLimit ?? 25));
+  const perTenantLimit = Math.max(1, Math.min(50, options?.perTenantLimit ?? 20));
+  const rows = await db
+    .select({ tenantId: webhookDeliveries.tenantId })
+    .from(webhookDeliveries)
+    .where(and(
+      sql`${webhookDeliveries.status} <> 'sent'`,
+      sql`(${webhookDeliveries.nextRetryAt} IS NULL OR ${webhookDeliveries.nextRetryAt} <= ${now})`,
+      sql`${webhookDeliveries.attemptCount} < 5`,
+    ))
+    .orderBy(webhookDeliveries.createdAt)
+    .limit(tenantLimit * perTenantLimit);
+
+  const tenantIds = Array.from(new Set(rows.map((row) => row.tenantId))).slice(0, tenantLimit);
+  const tenantsProcessed: Array<{ tenantId: string; processed: number; sent: number; failed: number }> = [];
+  let processed = 0;
+  let sent = 0;
+  let failed = 0;
+
+  for (const tenantId of tenantIds) {
+    const result = await processPendingWebhookDeliveries(db, tenantId, fetcher, perTenantLimit);
+    tenantsProcessed.push({ tenantId, ...result });
+    processed += result.processed;
+    sent += result.sent;
+    failed += result.failed;
+  }
+
+  return {
+    tenantCount: tenantIds.length,
+    processed,
+    sent,
+    failed,
+    tenants: tenantsProcessed,
+  };
+}
+
+export async function listWebhookDeliveries(
+  db: DbType,
+  tenantId: string,
+  limit = 50,
+  offset = 0,
+) {
+  return db
+    .select()
+    .from(webhookDeliveries)
+    .where(eq(webhookDeliveries.tenantId, tenantId))
+    .orderBy(webhookDeliveries.createdAt)
+    .limit(Math.max(1, Math.min(200, limit)))
+    .offset(Math.max(0, offset));
+}
+
 function truncateForEvent(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
+}
+
+function webhookConfigAcceptsEvent(eventsJson: string, eventType: WebhookEventType): boolean {
+  try {
+    const events = JSON.parse(eventsJson);
+    return Array.isArray(events) && (events.includes("*") || events.includes(eventType));
+  } catch {
+    return false;
+  }
+}
+
+async function signWebhookPayload(secret: string, timestamp: string, payloadJson: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const data = encoder.encode(`${timestamp}.${payloadJson}`);
+  const signature = await crypto.subtle.sign("HMAC", key, data);
+  const hex = Array.from(new Uint8Array(signature)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `v1=${hex}`;
+}
+
+function nextWebhookRetryAt(attempt: number): string | null {
+  if (attempt >= 5) return null;
+  const delaySeconds = Math.min(3600, 60 * 2 ** Math.max(0, attempt - 1));
+  return new Date(Date.now() + delaySeconds * 1000).toISOString();
+}
+
+async function updateWebhookConfigDeliveryState(
+  db: DbType,
+  tenantId: string,
+  webhookConfigId: string,
+  lastError: string,
+) {
+  await db
+    .update(webhookConfigs)
+    .set({ lastSentAt: new Date().toISOString(), lastError, updatedAt: new Date().toISOString() })
+    .where(and(eq(webhookConfigs.id, webhookConfigId), eq(webhookConfigs.tenantId, tenantId)));
 }
 
 /* ── 内部工具 ─────────────────────────────────────────────── */
@@ -590,6 +891,8 @@ export async function joinDraw(
     accessPassword?: string;       // 密码模式下的访问密码
     inviteCode?: string;           // 邀请码模式下的邀请码
     ipHash?: string;               // 参与者 IP hash（用于轻量防刷）
+    refCode?: string;              // 分享码。只有成功入库的新参与才计为有效邀请。
+    userAgent?: string;
   },
 ) {
   // 通过 public_slug 查找活动（不暴露活动 ID）
@@ -702,7 +1005,15 @@ export async function joinDraw(
       }
 
       if (draw.activityKind !== "signup_chain") {
-        return { joined: true, entryId };
+        const attribution = await recordAttributedJoin(tx, {
+          tenantId: draw.tenantId,
+          drawId: draw.id,
+          entryId,
+          refCode: options?.refCode,
+          ipHash: options?.ipHash,
+          userAgent: options?.userAgent,
+        });
+        return { joined: true, entryId, activityKind: draw.activityKind, attribution };
       }
 
       const [{ total }] = await tx
@@ -733,9 +1044,20 @@ export async function joinDraw(
         updatedAt: nowIso,
       });
 
+      const attribution = await recordAttributedJoin(tx, {
+        tenantId: draw.tenantId,
+        drawId: draw.id,
+        entryId,
+        refCode: options?.refCode,
+        ipHash: options?.ipHash,
+        userAgent: options?.userAgent,
+      });
+
       return {
         joined: true,
         entryId,
+        activityKind: draw.activityKind,
+        attribution,
         outcome: {
           id: outcomeId,
           drawId: draw.id,
@@ -755,6 +1077,56 @@ export async function joinDraw(
     }
     throw err;
   }
+}
+
+async function recordAttributedJoin(
+  db: DbWriteScope,
+  input: {
+    tenantId: string;
+    drawId: string;
+    entryId: string;
+    refCode?: string;
+    ipHash?: string;
+    userAgent?: string;
+  },
+) {
+  const refCode = String(input.refCode || "").trim();
+  if (!refCode) return { attributed: false };
+
+  const [share] = await db
+    .select({
+      id: shareRecords.id,
+      sharerEntryId: shareRecords.sharerEntryId,
+    })
+    .from(shareRecords)
+    .where(and(
+      eq(shareRecords.tenantId, input.tenantId),
+      eq(shareRecords.drawId, input.drawId),
+      eq(shareRecords.shareCode, refCode),
+    ))
+    .limit(1);
+  if (!share) return { attributed: false };
+
+  await db
+    .update(shareRecords)
+    .set({ joinedCount: sql`${shareRecords.joinedCount} + 1` })
+    .where(eq(shareRecords.id, share.id));
+
+  await recordActivityEvent(db, {
+    tenantId: input.tenantId,
+    drawId: input.drawId,
+    entryId: input.entryId,
+    eventType: "attributed_join",
+    refCode,
+    ipHash: input.ipHash,
+    userAgent: input.userAgent,
+    metadata: {
+      shareRecordId: share.id,
+      sharerEntryId: share.sharerEntryId,
+    },
+  });
+
+  return { attributed: true, refCode, shareRecordId: share.id };
 }
 
 /**
@@ -1052,6 +1424,17 @@ export async function performDraw(
     if (emailEnv?.resendApiKey) {
       void sendWinnerNotifications(db, tenantId, drawId, emailEnv).catch((err) => {
         console.error(`[lottery] sendWinnerNotifications failed for ${drawId}:`, err);
+      });
+    }
+
+    const webhookEvent = await enqueueWebhookEvent(db, {
+      tenantId,
+      eventType: "draw.completed",
+      data: { drawId, winnerCount: entryIndex, candidateCount },
+    });
+    for (const deliveryId of webhookEvent.deliveryIds) {
+      void dispatchWebhookDelivery(db, tenantId, deliveryId).catch((err) => {
+        console.error(`[lottery] dispatchWebhookDelivery failed for ${deliveryId}:`, err);
       });
     }
 

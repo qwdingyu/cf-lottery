@@ -293,6 +293,7 @@
                       target="_blank"
                       rel="noopener noreferrer"
                       class="btn btn-primary btn-sm"
+                      @click="handleCtaClick(draw, 'joined_product_card')"
                     >查看商品</a>
                   </div>
                 </div>
@@ -414,7 +415,7 @@
  * - 个人状态用普通对象（非 Map.set 原地修改）保证 Vue 响应式
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
@@ -426,6 +427,7 @@ const { showToast } = useToast()
 
 const props = defineProps<{ id?: string }>()
 const router = useRouter()
+const route = useRoute()
 
 /** 深链 /lottery/:id 时只展示单活动 */
 const isDeepLinked = computed(() => Boolean(props.id && String(props.id).trim()))
@@ -458,6 +460,12 @@ type ActivityOutcome = {
 type MyEntry = {
   drawId: string; joinedAt?: string; drawName?: string; drawStatus?: string; drawTime?: string;
 };
+
+type ActivityEventType =
+  | 'page_view'
+  | 'participation_started'
+  | 'participation_completed'
+  | 'cta_click'
 
 const loading = ref(true)
 const recordsLoading = ref(false)
@@ -517,6 +525,7 @@ const codeCooldown = ref(0)
 const loginError = ref('')
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
+const trackedPageViews = new Set<string>()
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
@@ -611,8 +620,65 @@ function productUtmUrl(url: string, drawId: string, publicSlug?: string): string
   }
 }
 
+function drawSlug(drawId: string): string {
+  const draw = draws.value.find((d) => d.id === drawId)
+  return draw?.publicSlug || drawId
+}
+
+function routeParam(name: string): string {
+  const value = route.query[name]
+  return Array.isArray(value) ? String(value[0] || '') : String(value || '')
+}
+
+function activityEventContext() {
+  return {
+    source: routeParam('utm_source') || 'direct',
+    medium: routeParam('utm_medium'),
+    campaign: routeParam('utm_campaign'),
+    refCode: routeParam('ref'),
+  }
+}
+
+async function recordActivityEvent(drawId: string, eventType: ActivityEventType, metadata?: Record<string, unknown>) {
+  const slug = drawSlug(drawId)
+  if (!slug) return
+  try {
+    await fetch(API_BASE + '/public/draws/' + encodeURIComponent(slug) + '/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventType,
+        ...activityEventContext(),
+        metadata,
+      }),
+    })
+  } catch (error) {
+    console.debug('[lottery] activity event ignored:', eventType, error)
+  }
+}
+
+function trackPageView(draw: LotteryDraw) {
+  const key = draw.publicSlug || draw.id
+  if (!key || trackedPageViews.has(key)) return
+  trackedPageViews.add(key)
+  void recordActivityEvent(draw.id, 'page_view', {
+    activityKind: draw.activityKind || 'lottery',
+    experienceType: draw.experienceType || '',
+    status: draw.status,
+  })
+}
+
+function handleCtaClick(draw: LotteryDraw, placement: string) {
+  void recordActivityEvent(draw.id, 'cta_click', {
+    placement,
+    destination: 'product_link',
+    activityKind: draw.activityKind || 'lottery',
+  })
+}
+
 function openLogin(drawId?: string) {
   pendingJoinDrawId.value = drawId || null
+  if (drawId) void recordActivityEvent(drawId, 'participation_started')
   loginError.value = ''
   showLoginModal.value = true
 }
@@ -688,6 +754,7 @@ async function fetchDraws() {
       if (data.ok) {
         draws.value = [{ ...data, id: props.id } as LotteryDraw]
         expandedId.value = props.id
+        trackPageView(draws.value[0]!)
         const title = String(data.title || '').trim()
         if (title) document.title = title + ' - 抽奖'
         void fetchDrawDetail(props.id)
@@ -706,6 +773,7 @@ async function fetchDraws() {
 async function handleJoin(drawId: string) {
   // 打开登录弹窗，验证码验证后参与
   pendingJoinDrawId.value = drawId
+  void recordActivityEvent(drawId, 'participation_started')
   showLoginModal.value = true
 }
 
@@ -768,6 +836,7 @@ async function handleVerifyCode() {
       body: JSON.stringify({
         email: loginEmail.value.trim(),
         code: loginCode.value.trim(),
+        refCode: routeParam('ref'),
       }),
     })
     const data = await res.json() as any
@@ -778,6 +847,10 @@ async function handleVerifyCode() {
       if (data.outcome) {
         myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
       }
+      void recordActivityEvent(joinedDrawId, 'participation_completed', {
+        activityKind: data.activityKind || '',
+        outcomeStatus: data.outcome?.status || '',
+      })
       showLoginModal.value = false
       pendingJoinDrawId.value = null
       loginEmail.value = ''

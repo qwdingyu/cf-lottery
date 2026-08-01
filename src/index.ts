@@ -5,7 +5,7 @@
  */
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AppEnv } from "./bindings";
+import type { AppEnv, Bindings } from "./bindings";
 import { createClient } from "@libsql/client";
 import { createDb } from "./db/client";
 import { authRoute } from "./routes/auth";
@@ -13,9 +13,46 @@ import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
 import { systemConfigRoute } from "./routes/system-config";
 import { adminSystemConfigRoute } from "./routes/admin-system-config";
-import { processDueDraws } from "./services/lottery-service";
+import {
+  processDueDraws,
+  processPendingWebhookDeliveriesForAllTenants,
+  type WebhookFetch,
+} from "./services/lottery-service";
 
 const app = new Hono<AppEnv>();
+
+function createDbFromEnv(env: Bindings) {
+  if (!env.TURSO_URL) return undefined;
+  const client = createClient({ url: env.TURSO_URL, authToken: env.TURSO_TOKEN });
+  return createDb(client);
+}
+
+export async function runScheduledMaintenance(
+  env: Bindings,
+  options?: {
+    fetcher?: WebhookFetch;
+    drawLimit?: number;
+    webhookTenantLimit?: number;
+    webhookPerTenantLimit?: number;
+  },
+) {
+  const db = createDbFromEnv(env);
+  if (!db) throw new Error("数据库未配置");
+
+  const draws = await processDueDraws(db, {
+    limit: options?.drawLimit ?? 20,
+    emailEnv: {
+      resendApiKey: env.RESEND_API_KEY || "",
+      emailFrom: env.EMAIL_FROM || "",
+    },
+  });
+  const webhooks = await processPendingWebhookDeliveriesForAllTenants(db, options?.fetcher ?? fetch, {
+    tenantLimit: options?.webhookTenantLimit ?? 25,
+    perTenantLimit: options?.webhookPerTenantLimit ?? 20,
+  });
+
+  return { draws, webhooks };
+}
 
 // ── CORS（允许前端跨域请求） ──
 app.use("*", cors({
@@ -33,14 +70,11 @@ app.onError((err, c) => {
 
 // ── 数据库初始化中间件 ──
 app.use("*", async (c, next) => {
-  if (c.env.TURSO_URL) {
-    try {
-      const client = createClient({ url: c.env.TURSO_URL, authToken: c.env.TURSO_TOKEN });
-      c.set("db", createDb(client));
-    } catch (err) {
-      console.error("[db] 数据库初始化失败:", err);
-      // 不阻止请求，health 路由可以正常返回
-    }
+  try {
+    c.set("db", createDbFromEnv(c.env));
+  } catch (err) {
+    console.error("[db] 数据库初始化失败:", err);
+    // 不阻止请求，health 路由可以正常返回
   }
   await next();
 });
@@ -55,21 +89,7 @@ app.route("/api/admin/system-config", adminSystemConfigRoute);
 // 健康检查
 app.get("/api/health", (c) => c.json({ ok: true, db: !!c.get("db") }));
 
-// 前端静态资源：所有非 /api 请求返回 index.html（SPA）
-app.get("*", async (c) => {
-  try {
-    const asset = await c.env.ASSETS.fetch(c.req.raw);
-    if (asset.status === 404) {
-      // SPA fallback: 返回 index.html
-      return c.env.ASSETS.fetch(new Request(new URL("/index.html", c.req.url)));
-    }
-    return asset;
-  } catch {
-    return c.env.ASSETS.fetch(new Request(new URL("/index.html", c.req.url)));
-  }
-});
-
-// Cron 定时开奖：每 5 分钟执行一次，处理到期活动
+// Cron 手动入口：处理到期活动。线上自动任务使用 Worker scheduled() handler。
 // 安全：需要通过 CRON_SECRET 认证，防止未授权触发
 app.get("/api/cron/draw", async (c) => {
   const db = c.get("db");
@@ -108,4 +128,55 @@ app.get("/api/cron/draw", async (c) => {
   }
 });
 
-export default app;
+// Cron 手动入口：处理到期开奖和 Webhook 重试，便于运维侧主动补偿。
+app.post("/api/cron/maintenance", async (c) => {
+  const cronSecret = c.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = c.req.header("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (token !== cronSecret) {
+      return c.json({ ok: false, message: "未授权" }, 403);
+    }
+  }
+
+  try {
+    const result = await runScheduledMaintenance(c.env);
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    console.error("[cron] maintenance failed:", err);
+    return c.json({ ok: false, message: "定时维护任务执行失败" }, 500);
+  }
+});
+
+// 前端静态资源：所有非 /api 请求返回 index.html（SPA）
+app.get("*", async (c) => {
+  try {
+    const asset = await c.env.ASSETS.fetch(c.req.raw);
+    if (asset.status === 404) {
+      // SPA fallback: 返回 index.html
+      return c.env.ASSETS.fetch(new Request(new URL("/index.html", c.req.url)));
+    }
+    return asset;
+  } catch {
+    return c.env.ASSETS.fetch(new Request(new URL("/index.html", c.req.url)));
+  }
+});
+
+const worker: ExportedHandler<Bindings> = {
+  fetch(request, env, ctx) {
+    return app.fetch(request, env, ctx);
+  },
+  scheduled(_event, env, ctx) {
+    ctx.waitUntil((async () => {
+      try {
+        const result = await runScheduledMaintenance(env);
+        console.log("[cron] maintenance complete", JSON.stringify(result));
+      } catch (err) {
+        console.error("[cron] maintenance failed:", err);
+      }
+    })());
+  },
+};
+
+export { app };
+export default worker;
