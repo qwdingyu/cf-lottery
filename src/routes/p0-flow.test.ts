@@ -4,24 +4,23 @@
  * 模拟真实用户操作完整闭环，覆盖所有活动类型（抽奖/接龙/问卷/签到/投票/审批/资料领取）。
  * 每个场景验证：创建成功 → 状态机正确 → 参与成功 → 结果可查。
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createClient, type Client } from "@libsql/client";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
-import { createDb, type DbType } from "../db/client";
+import type { DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
 import { activityEvents, activitySubmissions, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
 import { eq } from "drizzle-orm";
+import { clearTestData, getTestDb } from "../test-setup";
 
-let client: Client;
+let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
 
 const JWT_SECRET = "test-p0-flow-secret-0123456789abcdef";
 const TENANT_ID = "tenant-p0";
 const OWNER_ID = "user-p0-owner";
-const DB_URL = `file:test-p0-flow-${crypto.randomUUID()}.db`;
 
 const TEST_ENV = {
   TURSO_URL: "",
@@ -29,53 +28,12 @@ const TEST_ENV = {
   JWT_SECRET,
 };
 
-/** 建表 SQL（覆盖 P0 流程涉及的全部表） */
-const DDL = [
-  `CREATE TABLE IF NOT EXISTS tenants (id TEXT PRIMARY KEY, name TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'free', status TEXT NOT NULL DEFAULT 'active', brand_config TEXT NOT NULL DEFAULT '{}', extra_activity_quota INTEGER NOT NULL DEFAULT 0, extra_participant_quota INTEGER NOT NULL DEFAULT 0, extra_quota_expires_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, email TEXT NOT NULL DEFAULT '', email_verified INTEGER NOT NULL DEFAULT 0, password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS tenant_members (tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'owner', created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (tenant_id, user_id))`,
-  `CREATE TABLE IF NOT EXISTS platform_members (user_id TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS system_config (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS lottery_draws (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, public_slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', activity_kind TEXT NOT NULL DEFAULT 'lottery', participation_mode TEXT NOT NULL DEFAULT 'open', experience_type TEXT NOT NULL DEFAULT 'wheel', draw_trigger TEXT NOT NULL DEFAULT 'manual', result_mode TEXT NOT NULL DEFAULT 'manual', allocation_policy TEXT NOT NULL DEFAULT 'capacity', policy_version INTEGER NOT NULL DEFAULT 1, start_at TEXT NOT NULL, end_at TEXT NOT NULL, draw_at TEXT, access_password TEXT NOT NULL DEFAULT '', max_participants INTEGER, winner_count INTEGER NOT NULL DEFAULT 1, show_participant_count INTEGER NOT NULL DEFAULT 1, show_winner_count INTEGER NOT NULL DEFAULT 1, show_winner_list INTEGER NOT NULL DEFAULT 0, drawn_at TEXT, failure_reason TEXT NOT NULL DEFAULT '', draw_seed_hash TEXT NOT NULL DEFAULT '', draw_seed TEXT NOT NULL DEFAULT '', algorithm_version TEXT NOT NULL DEFAULT 'uniform_v1', product_link TEXT NOT NULL DEFAULT '{}', promotion_config TEXT NOT NULL DEFAULT '{}', activity_config TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS lottery_entries (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, identity_type TEXT NOT NULL DEFAULT 'email', identity_value TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', invite_code_id TEXT DEFAULT '', ip_hash TEXT NOT NULL DEFAULT '', joined_at TEXT NOT NULL, UNIQUE(tenant_id, draw_id, identity_type, identity_value))`,
-  `CREATE TABLE IF NOT EXISTS lottery_winners (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, tier_id TEXT NOT NULL, entry_id TEXT NOT NULL, identity_type TEXT NOT NULL, identity_value TEXT NOT NULL, prize_code_id TEXT DEFAULT '', drawn_at TEXT NOT NULL, notification_status TEXT NOT NULL DEFAULT 'pending', notification_error TEXT NOT NULL DEFAULT '', UNIQUE(tenant_id, draw_id, entry_id))`,
-  `CREATE TABLE IF NOT EXISTS activity_outcomes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, entry_id TEXT NOT NULL, outcome_type TEXT NOT NULL DEFAULT 'assignment', status TEXT NOT NULL DEFAULT 'assigned', sequence_no INTEGER NOT NULL, assignment_no INTEGER, result_key TEXT NOT NULL DEFAULT '', result_label TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', decided_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS activity_submissions (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, entry_id TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}', idempotency_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_submissions_entry ON activity_submissions(tenant_id, draw_id, entry_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_activity_submissions_draw ON activity_submissions(tenant_id, draw_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS prizes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', image_url TEXT NOT NULL DEFAULT '', value_text TEXT NOT NULL DEFAULT '', prize_type TEXT NOT NULL DEFAULT 'code', fulfillment_note TEXT NOT NULL DEFAULT '', total_count INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS prize_codes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, prize_id TEXT NOT NULL, code TEXT NOT NULL, secret TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'available', winner_id TEXT DEFAULT '', issued_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS coupon_codes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT, code TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'available', recipient_email TEXT, redeemed_at TEXT, expires_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(tenant_id, code))`,
-  `CREATE TABLE IF NOT EXISTS lottery_prize_tiers (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, prize_id TEXT NOT NULL, tier_name TEXT NOT NULL DEFAULT '中奖', winner_count INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 100, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS lottery_roster_members (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, identity_type TEXT NOT NULL DEFAULT 'email', identity_value TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(tenant_id, draw_id, identity_type, identity_value))`,
-  `CREATE TABLE IF NOT EXISTS lottery_invite_codes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, code TEXT NOT NULL, max_uses INTEGER NOT NULL DEFAULT 1, used_count INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS lottery_blacklist (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, identity_value TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS email_access_codes (id TEXT PRIMARY KEY, email TEXT NOT NULL, draw_id TEXT NOT NULL, code_hash TEXT NOT NULL, expires_at TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS activity_events (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, entry_id TEXT DEFAULT '', event_type TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', medium TEXT NOT NULL DEFAULT '', campaign TEXT NOT NULL DEFAULT '', ref_code TEXT NOT NULL DEFAULT '', ip_hash TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS share_records (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, sharer_entry_id TEXT NOT NULL, share_code TEXT NOT NULL, clicked_count INTEGER NOT NULL DEFAULT 0, joined_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS external_conversions (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, entry_id TEXT DEFAULT '', external_event_id TEXT NOT NULL, conversion_type TEXT NOT NULL DEFAULT 'purchase', amount_cents INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT '', medium TEXT NOT NULL DEFAULT '', campaign TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, actor_user_id TEXT NOT NULL, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS webhook_configs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL DEFAULT '["draw.completed","prize.issued"]', signing_secret TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, last_sent_at TEXT, last_error TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS webhook_deliveries (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, webhook_config_id TEXT NOT NULL, event_id TEXT NOT NULL, event_type TEXT NOT NULL, url TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL DEFAULT '{}', signature TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0, next_retry_at TEXT, response_status INTEGER, response_body TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), sent_at TEXT, UNIQUE(webhook_config_id, event_id))`,
-  `CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, key_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS redemption_codes (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, plan TEXT NOT NULL DEFAULT 'custom', activity_quota INTEGER NOT NULL DEFAULT 0, participant_quota INTEGER NOT NULL DEFAULT 0, duration_days INTEGER NOT NULL DEFAULT 30, max_uses INTEGER NOT NULL DEFAULT 1, used_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active', note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS redemption_records (id TEXT PRIMARY KEY, code_id TEXT NOT NULL, code TEXT NOT NULL, tenant_id TEXT NOT NULL, tenant_name TEXT NOT NULL DEFAULT '', activity_quota_granted INTEGER NOT NULL DEFAULT 0, participant_quota_granted INTEGER NOT NULL DEFAULT 0, duration_days_granted INTEGER NOT NULL DEFAULT 30, expires_at TEXT, redeemed_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-];
-
 beforeAll(async () => {
-  client = createClient({ url: DB_URL });
-  db = createDb(client);
-  for (const stmt of DDL) await client.execute(stmt);
-});
-
-afterAll(async () => {
-  await client.close();
+  ({ client, db } = await getTestDb());
 });
 
 afterEach(async () => {
-  for (const table of ["webhook_deliveries", "webhook_configs", "audit_logs", "external_conversions", "share_records", "activity_events", "email_access_codes", "lottery_blacklist", "lottery_invite_codes", "lottery_roster_members", "lottery_prize_tiers", "coupon_codes", "prize_codes", "prizes", "activity_submissions", "activity_outcomes", "lottery_winners", "lottery_entries", "lottery_draws", "system_config", "platform_members", "tenant_members", "users", "tenants"]) {
-    await client.execute(`DELETE FROM ${table}`);
-  }
+  await clearTestData(client);
 });
 
 function createTestApp() {

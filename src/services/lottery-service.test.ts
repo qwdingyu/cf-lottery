@@ -3,9 +3,7 @@
  *
  * 使用真实 libSQL 数据库，测试 084 文档规定的全部使用场景。
  */
-import { createClient, type Client } from "@libsql/client";
-import { afterAll, afterEach, describe, expect, it, beforeAll } from "vitest";
-import { createDb } from "../db/client";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createDraw,
   publishDraw,
@@ -30,202 +28,25 @@ import {
   randomSelect,
 } from "../services/lottery-service";
 import { lotteryPrizeTiers } from "../db/schema";
+import { clearTestData, getTestDb } from "../test-setup";
 
-let client: Client;
-let db: ReturnType<typeof createDb>;
+let client: Awaited<ReturnType<typeof getTestDb>>["client"];
+let db: Awaited<ReturnType<typeof getTestDb>>["db"];
 const TENANT = "test-tenant-001";
 const USER = "test-user-001";
-const DB_URL = `file:test-lottery-${crypto.randomUUID()}.db`;
 
 beforeAll(async () => {
-  client = createClient({ url: DB_URL });
-  db = createDb(client);
-  await client.execute(`CREATE TABLE IF NOT EXISTS tenants (
-    id TEXT PRIMARY KEY, name TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'free',
-    status TEXT NOT NULL DEFAULT 'active', brand_config TEXT NOT NULL DEFAULT '{}',
-    extra_activity_quota INTEGER NOT NULL DEFAULT 0,
-    extra_participant_quota INTEGER NOT NULL DEFAULT 0,
-    extra_quota_expires_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute("ALTER TABLE tenants ADD COLUMN brand_config TEXT NOT NULL DEFAULT '{}'").catch(() => undefined);
-  await client.execute("ALTER TABLE tenants ADD COLUMN extra_activity_quota INTEGER NOT NULL DEFAULT 0").catch(() => undefined);
-  await client.execute("ALTER TABLE tenants ADD COLUMN extra_participant_quota INTEGER NOT NULL DEFAULT 0").catch(() => undefined);
-  await client.execute("ALTER TABLE tenants ADD COLUMN extra_quota_expires_at TEXT").catch(() => undefined);
-  await client.execute(`CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, email TEXT NOT NULL DEFAULT '',
-    password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS tenant_members (
-    tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'owner', created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (tenant_id, user_id)
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS prizes (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-    image_url TEXT NOT NULL DEFAULT '', value_text TEXT NOT NULL DEFAULT '', prize_type TEXT NOT NULL DEFAULT 'code', fulfillment_note TEXT NOT NULL DEFAULT '',
-    total_count INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute("ALTER TABLE prizes ADD COLUMN image_url TEXT NOT NULL DEFAULT ''").catch(() => undefined);
-  await client.execute("ALTER TABLE prizes ADD COLUMN value_text TEXT NOT NULL DEFAULT ''").catch(() => undefined);
-  await client.execute(`CREATE TABLE IF NOT EXISTS prize_codes (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, prize_id TEXT NOT NULL, code TEXT NOT NULL,
-    secret TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'available',
-    winner_id TEXT DEFAULT '', issued_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS lottery_draws (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, public_slug TEXT NOT NULL UNIQUE,
-    title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft',
-    participation_mode TEXT NOT NULL DEFAULT 'open', draw_trigger TEXT NOT NULL DEFAULT 'manual',
-    start_at TEXT NOT NULL, end_at TEXT NOT NULL, draw_at TEXT, access_password TEXT NOT NULL DEFAULT '',
-    max_participants INTEGER, winner_count INTEGER NOT NULL DEFAULT 1,
-    show_participant_count INTEGER NOT NULL DEFAULT 1, show_winner_count INTEGER NOT NULL DEFAULT 1,
-    show_winner_list INTEGER NOT NULL DEFAULT 0, drawn_at TEXT, failure_reason TEXT NOT NULL DEFAULT '',
-    draw_seed_hash TEXT NOT NULL DEFAULT '', draw_seed TEXT NOT NULL DEFAULT '', algorithm_version TEXT NOT NULL DEFAULT 'uniform_v1', product_link TEXT NOT NULL DEFAULT '{}', promotion_config TEXT NOT NULL DEFAULT '{}', activity_config TEXT NOT NULL DEFAULT '{}', activity_kind TEXT NOT NULL DEFAULT 'lottery', experience_type TEXT NOT NULL DEFAULT 'wheel', result_mode TEXT NOT NULL DEFAULT 'manual', policy_version INTEGER NOT NULL DEFAULT 1, allocation_policy TEXT NOT NULL DEFAULT 'capacity',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS lottery_prize_tiers (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, prize_id TEXT NOT NULL,
-    tier_name TEXT NOT NULL DEFAULT '中奖', winner_count INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 100
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS lottery_roster_members (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, identity_type TEXT NOT NULL DEFAULT 'email',
-    identity_value TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(tenant_id, draw_id, identity_type, identity_value)
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS lottery_invite_codes (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, code TEXT NOT NULL,
-    max_uses INTEGER NOT NULL DEFAULT 1, used_count INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(tenant_id, draw_id, code)
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS lottery_entries (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, identity_type TEXT NOT NULL DEFAULT 'email',
-    identity_value TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', invite_code_id TEXT NOT NULL DEFAULT '',
-    ip_hash TEXT NOT NULL DEFAULT '', joined_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(tenant_id, draw_id, identity_type, identity_value)
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS lottery_winners (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, tier_id TEXT NOT NULL DEFAULT '',
-    entry_id TEXT NOT NULL, identity_type TEXT NOT NULL, identity_value TEXT NOT NULL, prize_code_id TEXT DEFAULT '',
-    drawn_at TEXT NOT NULL DEFAULT (datetime('now')), notification_status TEXT NOT NULL DEFAULT 'pending',
-    notification_error TEXT NOT NULL DEFAULT '', UNIQUE(tenant_id, draw_id, entry_id)
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS audit_logs (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, actor_user_id TEXT NOT NULL, action TEXT NOT NULL,
-    target_type TEXT NOT NULL, target_id TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS lottery_blacklist (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, identity_value TEXT NOT NULL,
-    note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS activity_outcomes (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, entry_id TEXT NOT NULL,
-    outcome_type TEXT NOT NULL DEFAULT 'assignment', status TEXT NOT NULL DEFAULT 'assigned',
-    sequence_no INTEGER NOT NULL, assignment_no INTEGER,
-    result_key TEXT NOT NULL DEFAULT '', result_label TEXT NOT NULL DEFAULT '',
-    metadata_json TEXT NOT NULL DEFAULT '{}', decided_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(tenant_id, draw_id, outcome_type, entry_id),
-    UNIQUE(tenant_id, draw_id, outcome_type, sequence_no),
-    UNIQUE(tenant_id, draw_id, outcome_type, assignment_no)
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS webhook_configs (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, url TEXT NOT NULL,
-    events TEXT NOT NULL DEFAULT '["draw.completed","prize.issued"]',
-    signing_secret TEXT NOT NULL DEFAULT '',
-    active INTEGER NOT NULL DEFAULT 1, last_sent_at TEXT, last_error TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS api_keys (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL,
-    key TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute("ALTER TABLE webhook_configs ADD COLUMN signing_secret TEXT NOT NULL DEFAULT ''").catch(() => undefined);
-  await client.execute(`CREATE TABLE IF NOT EXISTS webhook_deliveries (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, webhook_config_id TEXT NOT NULL,
-    event_id TEXT NOT NULL, event_type TEXT NOT NULL, url TEXT NOT NULL,
-    payload_json TEXT NOT NULL, signature TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0,
-    next_retry_at TEXT, response_status INTEGER, response_body TEXT NOT NULL DEFAULT '',
-    last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')), sent_at TEXT,
-    UNIQUE(webhook_config_id, event_id)
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS activity_events (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL,
-    entry_id TEXT NOT NULL DEFAULT '', event_type TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT '', medium TEXT NOT NULL DEFAULT '', campaign TEXT NOT NULL DEFAULT '',
-    ref_code TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}',
-    ip_hash TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS share_records (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL,
-    sharer_entry_id TEXT NOT NULL, share_code TEXT NOT NULL UNIQUE,
-    clicked_count INTEGER NOT NULL DEFAULT 0, joined_count INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS external_conversions (
-    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL,
-    entry_id TEXT NOT NULL DEFAULT '', external_event_id TEXT NOT NULL,
-    conversion_type TEXT NOT NULL, source TEXT NOT NULL DEFAULT '',
-    ref_code TEXT NOT NULL DEFAULT '', amount_cents INTEGER,
-    currency TEXT NOT NULL DEFAULT '', identity_type TEXT NOT NULL DEFAULT '',
-    identity_value TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL DEFAULT '{}',
-    occurred_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(tenant_id, source, external_event_id)
-  )`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS system_config (
-    key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  // 插入默认套餐额度配置（与硬编码 PLAN_LIMITS 一致，确保测试可重复）
-  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_free_max_activities", "10"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_free_max_participants_per_activity", "200"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_pro_max_activities", "200"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_pro_max_participants_per_activity", "5000"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_team_max_activities", "1000"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_team_max_participants_per_activity", "20000"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_enterprise_max_activities", "0"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)", args: ["plan_enterprise_max_participants_per_activity", "100000"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)", args: [USER, "test", "hash"] });
-  await client.execute({ sql: "INSERT OR IGNORE INTO tenant_members (tenant_id, user_id) VALUES (?, ?)", args: [TENANT, USER] });
+  ({ client, db } = await getTestDb());
 });
 
-afterAll(async () => {
-  await client.close();
-});
-
-afterEach(async () => {
-  await client.execute("DELETE FROM activity_outcomes");
-  await client.execute("DELETE FROM lottery_winners");
-  await client.execute("DELETE FROM lottery_entries");
-  await client.execute("DELETE FROM lottery_invite_codes");
-  await client.execute("DELETE FROM lottery_roster_members");
-  await client.execute("DELETE FROM lottery_blacklist");
-  await client.execute("DELETE FROM lottery_prize_tiers");
-  await client.execute("DELETE FROM lottery_draws");
-  await client.execute("DELETE FROM prize_codes");
-  await client.execute("DELETE FROM prizes");
-  await client.execute("DELETE FROM audit_logs");
-  await client.execute("DELETE FROM webhook_deliveries");
-  await client.execute("DELETE FROM webhook_configs");
-  await client.execute("DELETE FROM api_keys");
-  await client.execute("DELETE FROM activity_events");
-  await client.execute("DELETE FROM share_records");
-  await client.execute("DELETE FROM external_conversions");
-  await client.execute("DELETE FROM system_config");
-  // 恢复默认套餐额度配置
-  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_free_max_activities", "10"] });
-  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_free_max_participants_per_activity", "200"] });
-  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_pro_max_activities", "200"] });
-  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_pro_max_participants_per_activity", "5000"] });
-  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_team_max_activities", "1000"] });
-  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_team_max_participants_per_activity", "20000"] });
-  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_enterprise_max_activities", "0"] });
-  await client.execute({ sql: "INSERT INTO system_config (key, value) VALUES (?, ?)", args: ["plan_enterprise_max_participants_per_activity", "100000"] });
-  await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["free", TENANT] });
+beforeEach(async () => {
+  await clearTestData(client);
+  await client.execute({ sql: "INSERT INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
+  await client.execute({
+    sql: "INSERT INTO users (id, username, email, email_verified, password_hash) VALUES (?, ?, ?, ?, ?)",
+    args: [USER, "test", "test@example.com", 1, "hash"],
+  });
+  await client.execute({ sql: "INSERT INTO tenant_members (tenant_id, user_id) VALUES (?, ?)", args: [TENANT, USER] });
 });
 
 /* ── 辅助函数 ── */

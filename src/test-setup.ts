@@ -5,16 +5,19 @@
  * 目标：
  * - 全仓库只维护一份测试数据库入口，避免每个测试文件重复建库/复制 DDL。
  * - 测试库直接跑项目 migrations，和生产 schema 同源。
- * - 所有测试共享同一个文件型 libSQL 数据库，但通过串行执行和清表保持隔离。
+ * - 所有测试共享同一个进程级 libSQL 数据库，但通过串行执行和清表保持隔离。
+ * - 数据库文件放到系统临时目录并按进程隔离，避免项目根目录 test-*.db 泛滥。
  */
 import { createClient, type Client } from "@libsql/client";
 import { createDb } from "./db/client";
 import type { DbType } from "./db/client";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-const TEST_DB_URL = "file:test-shared.db";
+const TEST_DB_PATH = join(tmpdir(), `cf-lottery-vitest-${process.pid}.db`);
+const TEST_DB_URL = process.env.CF_LOTTERY_TEST_DB_URL || `file:${TEST_DB_PATH}`;
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 const DEFAULT_SYSTEM_CONFIGS: Array<[string, string]> = [
   ["plan_free_max_activities", "10"],
@@ -30,6 +33,21 @@ const DEFAULT_SYSTEM_CONFIGS: Array<[string, string]> = [
 let _client: Client | null = null;
 let _db: DbType | null = null;
 let _initPromise: Promise<{ client: Client; db: DbType }> | null = null;
+let cleanupRegistered = false;
+
+function registerTempDbCleanup() {
+  if (cleanupRegistered || process.env.CF_LOTTERY_TEST_DB_URL) return;
+  cleanupRegistered = true;
+  process.once("exit", () => {
+    for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+      try {
+        unlinkSync(`${TEST_DB_PATH}${suffix}`);
+      } catch {
+        /* 测试库可能尚未创建对应旁路文件；忽略即可。 */
+      }
+    }
+  });
+}
 
 function parseMigrationStatements(content: string): string[] {
   const upMatch = content.match(/--\s*UP\s*\n([\s\S]*?)(?=--\s*DOWN|$)/);
@@ -112,6 +130,7 @@ async function seedSystemConfigDefaults(client: Client) {
 }
 
 async function initializeTestDb(): Promise<{ client: Client; db: DbType }> {
+  registerTempDbCleanup();
   const client = createClient({ url: TEST_DB_URL });
   const db = createDb(client);
   await applyMigrations(client);
