@@ -42,7 +42,17 @@
         </button>
       </div>
 
-      <form v-if="showRegister" class="register-form" @submit.prevent="handleRegister">
+      <form v-if="showRegister && !showVerifyCode" class="register-form" @submit.prevent="handleRegister">
+        <label class="field-label">
+          <span>邮箱</span>
+          <input
+            v-model="regEmail"
+            type="email"
+            placeholder="your@email.com"
+            autocomplete="email"
+            :disabled="loading"
+          />
+        </label>
         <label class="field-label">
           <span>用户名</span>
           <input
@@ -53,21 +63,44 @@
             :disabled="loading"
           />
         </label>
-
         <label class="field-label">
           <span>密码</span>
           <input
             v-model="regPassword"
             type="password"
-            placeholder="至少 6 个字符"
+            placeholder="至少 8 位，包含字母和数字"
             autocomplete="new-password"
             :disabled="loading"
           />
         </label>
 
         <button class="btn btn-primary login-btn" type="submit" :disabled="loading">
-          {{ loading ? '注册中…' : '注册并登录' }}
+          {{ loading ? '发送验证码…' : '注册' }}
         </button>
+      </form>
+
+      <!-- 验证码输入 -->
+      <form v-if="showRegister && showVerifyCode" class="register-form" @submit.prevent="handleVerifyEmail">
+        <p class="field-hint">验证码已发送到 <strong>{{ regEmail }}</strong></p>
+        <label class="field-label">
+          <span>验证码</span>
+          <input
+            v-model="regCode"
+            type="text"
+            maxlength="6"
+            placeholder="请输入 6 位验证码"
+            autocomplete="off"
+            :disabled="verifying"
+          />
+        </label>
+        <button class="btn btn-primary login-btn" type="submit" :disabled="verifying || !regCode">
+          {{ verifying ? '验证中…' : '验证并完成注册' }}
+        </button>
+        <p class="field-hint" style="text-align:center;margin-top:8px;">
+          <button type="button" class="btn btn-ghost btn-xs" :disabled="loading" @click="handleRegister">
+            重新发送验证码
+          </button>
+        </p>
       </form>
     </div>
   </div>
@@ -88,6 +121,10 @@ const username = ref('')
 const password = ref('')
 const regUsername = ref('')
 const regPassword = ref('')
+const regEmail = ref('')
+const regCode = ref('')
+const showVerifyCode = ref(false)
+const verifying = ref(false)
 const loading = ref(false)
 const error = ref('')
 const showRegister = ref(false)
