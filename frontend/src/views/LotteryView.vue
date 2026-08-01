@@ -606,8 +606,10 @@ function focusDraw(drawId: string) {
 }
 
 async function handleCopyPublicLink(drawId: string) {
+  const draw = draws.value.find(d => d.id === drawId)
+  const slug = draw?.publicSlug || drawId
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
-  const url = `${origin}/lottery/${drawId}`
+  const url = `${origin}/lottery/${slug}`
   try {
     await writeClipboardText(url)
     showToast(t('lottery.shareLinkCopied'))
