@@ -375,3 +375,35 @@ function defaultExperienceForParticipation(participationMode: string): string {
   if (participationMode === "roster") return "card";
   return "wheel";
 }
+
+/** 接龙模式：公开参与列表（按参与时间排序） */
+publicLotteryRoute.get("/draws/:slug/signup-list", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, activityKind: lotteryDraws.activityKind })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.activityKind !== "signup_chain") return fail(c, "该活动不是接龙模式", 400);
+
+  const entries = await db
+    .select({
+      identityValue: lotteryEntries.identityValue,
+      joinedAt: lotteryEntries.joinedAt,
+    })
+    .from(lotteryEntries)
+    .where(eq(lotteryEntries.drawId, draw.id))
+    .orderBy(lotteryEntries.joinedAt);
+
+  // 脱敏展示邮箱
+  const masked = entries.map((e, i) => ({
+    order: i + 1,
+    identity: maskIdentity(e.identityValue),
+    joinedAt: e.joinedAt,
+  }));
+
+  return ok(c, { entries: masked, total: entries.length });
+});

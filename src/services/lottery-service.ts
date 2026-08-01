@@ -33,6 +33,7 @@ import {
   lotteryInviteCodes,    // 邀请码表
   auditLogs,             // 审计日志表
   lotteryBlacklist,      // 参与者黑名单
+  activityAssignments,   // 接龙/预约等活动的统一分配结果
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
@@ -42,6 +43,19 @@ export type DrawResult = {
   drawId: string;        // 活动 ID
   winnerCount: number;   // 实际中奖人数
   candidateCount: number; // 候选池总人数
+};
+
+export type ActivityAssignment = {
+  id: string;
+  drawId: string;
+  entryId: string;
+  assignmentType: string;
+  status: string;
+  position: number;
+  label: string;
+  metadataJson: string;
+  assignedAt: string;
+  updatedAt: string;
 };
 
 /* ── 内部工具 ─────────────────────────────────────────────── */
@@ -152,6 +166,7 @@ export async function createDraw(
     experienceType?: string;       // 前端体验：wheel/slot/scratch/card/submit...
     drawTrigger?: string;          // 开奖触发：manual/scheduled
     resultMode?: string;           // 结果模式：manual/scheduled/instant/ordered_assignment...
+    allocationPolicy?: string;     // 分配策略：capacity/waitlist/fifo/priority...
     policyVersion?: number;        // 规则版本，便于后续活动引擎演进
     startAt: string;               // 参与开始时间（ISO 8601）
     endAt: string;                 // 参与结束时间（ISO 8601）
@@ -191,6 +206,9 @@ export async function createDraw(
   // 取 UUID 前 8 位作为公开链接 slug，不可枚举
   const publicSlug = crypto.randomUUID().slice(0, 8);
   const now = new Date().toISOString();
+  const activityKind = data.activityKind || "lottery";
+  const experienceType = data.experienceType || defaultExperienceForActivity(activityKind, data.participationMode || "open");
+  const resultMode = data.resultMode || data.drawTrigger || (activityKind === "signup_chain" ? "ordered_assignment" : "manual");
 
   await db.insert(lotteryDraws).values({
     id,
@@ -198,11 +216,12 @@ export async function createDraw(
     publicSlug,
     title: data.title,
     description: data.description || "",
-    activityKind: data.activityKind || "lottery",
+    activityKind,
     participationMode: data.participationMode || "open",
-    experienceType: data.experienceType || defaultExperienceForParticipation(data.participationMode || "open"),
+    experienceType,
     drawTrigger: data.drawTrigger || "manual",
-    resultMode: data.resultMode || data.drawTrigger || "manual",
+    resultMode,
+    allocationPolicy: data.allocationPolicy || (activityKind === "signup_chain" ? "capacity" : "capacity"),
     policyVersion: data.policyVersion || 1,
     startAt: data.startAt,
     endAt: data.endAt,
@@ -228,6 +247,11 @@ function defaultExperienceForParticipation(participationMode: string): string {
   if (participationMode === "password") return "scratch";
   if (participationMode === "roster") return "card";
   return "wheel";
+}
+
+function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
+  if (activityKind === "signup_chain") return "list";
+  return defaultExperienceForParticipation(participationMode);
 }
 
 /**
@@ -391,27 +415,8 @@ export async function joinDraw(
     }
   }
 
-  // 邀请码模式：CAS 原子扣减使用次数
-  if (draw.participationMode === "invite_code") {
-    if (!options?.inviteCode) {
-      return { joined: false, message: "请输入邀请码" };
-    }
-    // 条件 UPDATE：原子性保证 used_count 不会超过 max_uses
-    // SQLite 的 UPDATE 是原子操作，配合 WHERE 条件实现 CAS
-    const result = await db
-      .update(lotteryInviteCodes)
-      .set({ usedCount: sql`${lotteryInviteCodes.usedCount} + 1` })
-      .where(and(
-        eq(lotteryInviteCodes.drawId, draw.id),
-        eq(lotteryInviteCodes.code, options.inviteCode),
-        eq(lotteryInviteCodes.active, 1),
-        // 核心 CAS：仅当 used_count < max_uses 时才执行更新
-        sql`${lotteryInviteCodes.usedCount} < ${lotteryInviteCodes.maxUses}`,
-      ));
-    // rowsAffected = 0 表示邀请码无效或已用完
-    if ((result.rowsAffected ?? 0) === 0) {
-      return { joined: false, message: "邀请码无效或已用完" };
-    }
+  if (draw.participationMode === "invite_code" && !options?.inviteCode) {
+    return { joined: false, message: "请输入邀请码" };
   }
 
   // ── 参与时间校验 ──
@@ -420,19 +425,95 @@ export async function joinDraw(
     return { joined: false, message: "不在参与时间内" };
   }
 
-  // ── 最大参与人数校验（原子写入，防竞态） ──
-  // 使用 INSERT ... SELECT 合并容量检查与写入，避免先 count 再 insert 的竞态窗口
-  const effectiveMax = draw.maxParticipants ?? 50000;
   const nowIso = now.toISOString();
 
   try {
-    // 原子写入：利用 INSERT ... SELECT 合并容量检查
-    // 如果候选池已满，SELECT 不返回行，INSERT 不会执行
-    await db.run(sql`
-      INSERT INTO lottery_entries (id, tenant_id, draw_id, identity_type, identity_value, invite_code_id, ip_hash, joined_at)
-      SELECT ${crypto.randomUUID()}, ${draw.tenantId}, ${draw.id}, ${identityType}, ${normalizedValue}, ${options?.inviteCode || ""}, ${options?.ipHash || ""}, ${nowIso}
-      WHERE (SELECT COUNT(*) FROM lottery_entries WHERE draw_id = ${draw.id}) < ${effectiveMax}
-    `);
+    return await withDbTransaction(db, async (tx) => {
+      // 邀请码扣减和参与记录写入必须在同一事务中，避免重复/满额时白白消耗邀请码。
+      let inviteCodeId = "";
+      if (draw.participationMode === "invite_code") {
+        const inviteResult = await tx
+          .update(lotteryInviteCodes)
+          .set({ usedCount: sql`${lotteryInviteCodes.usedCount} + 1` })
+          .where(and(
+            eq(lotteryInviteCodes.tenantId, draw.tenantId),
+            eq(lotteryInviteCodes.drawId, draw.id),
+            eq(lotteryInviteCodes.code, options!.inviteCode!),
+            eq(lotteryInviteCodes.active, 1),
+            sql`${lotteryInviteCodes.usedCount} < ${lotteryInviteCodes.maxUses}`,
+          ));
+        if ((inviteResult.rowsAffected ?? 0) === 0) {
+          return { joined: false, message: "邀请码无效或已用完" };
+        }
+        const [invite] = await tx
+          .select({ id: lotteryInviteCodes.id })
+          .from(lotteryInviteCodes)
+          .where(and(
+            eq(lotteryInviteCodes.tenantId, draw.tenantId),
+            eq(lotteryInviteCodes.drawId, draw.id),
+            eq(lotteryInviteCodes.code, options!.inviteCode!),
+          ))
+          .limit(1);
+        inviteCodeId = invite?.id || "";
+      }
+
+      const entryId = crypto.randomUUID();
+      const effectiveMax = draw.maxParticipants ?? 50000;
+      const acceptsWaitlist = draw.activityKind === "signup_chain" && draw.allocationPolicy === "waitlist";
+      const capacityClause = acceptsWaitlist
+        ? sql`1 = 1`
+        : sql`(SELECT COUNT(*) FROM lottery_entries WHERE tenant_id = ${draw.tenantId} AND draw_id = ${draw.id}) < ${effectiveMax}`;
+      const insertResult = await tx.run(sql`
+        INSERT INTO lottery_entries (id, tenant_id, draw_id, identity_type, identity_value, invite_code_id, ip_hash, joined_at)
+        SELECT ${entryId}, ${draw.tenantId}, ${draw.id}, ${identityType}, ${normalizedValue}, ${inviteCodeId}, ${options?.ipHash || ""}, ${nowIso}
+        WHERE ${capacityClause}
+      `);
+
+      if ((insertResult.rowsAffected ?? 0) === 0) {
+        return { joined: false, message: acceptsWaitlist ? "参与失败，请稍后重试" : "活动名额已满" };
+      }
+
+      if (draw.activityKind !== "signup_chain") {
+        return { joined: true, entryId };
+      }
+
+      const [{ total }] = await tx
+        .select({ total: count() })
+        .from(lotteryEntries)
+        .where(and(eq(lotteryEntries.tenantId, draw.tenantId), eq(lotteryEntries.drawId, draw.id)));
+      const position = Number(total);
+      const status = draw.maxParticipants && position > draw.maxParticipants ? "waitlisted" : "confirmed";
+      const assignmentId = crypto.randomUUID();
+      const assignedAt = nowIso;
+      await tx.insert(activityAssignments).values({
+        id: assignmentId,
+        tenantId: draw.tenantId,
+        drawId: draw.id,
+        entryId,
+        assignmentType: "slot",
+        status,
+        position,
+        label: status === "confirmed" ? `第 ${position} 位` : `候补第 ${position - (draw.maxParticipants || 0)} 位`,
+        metadataJson: JSON.stringify({ source: "signup_chain", allocationPolicy: draw.allocationPolicy }),
+        assignedAt,
+        updatedAt: assignedAt,
+      });
+
+      return {
+        joined: true,
+        entryId,
+        assignment: {
+          id: assignmentId,
+          drawId: draw.id,
+          entryId,
+          assignmentType: "slot",
+          status,
+          position,
+          label: status === "confirmed" ? `第 ${position} 位` : `候补第 ${position - (draw.maxParticipants || 0)} 位`,
+          assignedAt,
+        },
+      };
+    });
   } catch (err: any) {
     // UNIQUE 约束冲突：同一参与者重复提交
     if (err.message?.includes("UNIQUE constraint")) {
@@ -440,8 +521,44 @@ export async function joinDraw(
     }
     throw err;
   }
+}
 
-  return { joined: true };
+/**
+ * 查询参与者在活动中的分配结果。
+ * 公开接口只能通过活动 slug + 身份查找，管理接口必须额外传租户。
+ */
+export async function getActivityAssignment(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  entryId: string,
+) {
+  const [assignment] = await db
+    .select()
+    .from(activityAssignments)
+    .where(and(
+      eq(activityAssignments.tenantId, tenantId),
+      eq(activityAssignments.drawId, drawId),
+      eq(activityAssignments.entryId, entryId),
+    ))
+    .limit(1);
+  return assignment || null;
+}
+
+export async function getActivityAssignments(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  limit = 100,
+  offset = 0,
+) {
+  return db
+    .select()
+    .from(activityAssignments)
+    .where(and(eq(activityAssignments.tenantId, tenantId), eq(activityAssignments.drawId, drawId)))
+    .orderBy(activityAssignments.position)
+    .limit(limit)
+    .offset(offset);
 }
 
 /**

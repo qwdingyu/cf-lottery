@@ -4,7 +4,7 @@
  * 从 cf-shop 抽取，只保留抽奖核心表，新增 SaaS 多租户表。
  * 不包含：products、orders、cards、coupons、referral、voucher、storefront。
  */
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 // ── SaaS 多租户 ──
@@ -157,7 +157,7 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
   joinedAt: text("joined_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
-  identityIdx: uniqueIndex("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),
+  identityIdx: index("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),
 }));
 
 export const lotteryWinners = sqliteTable("lottery_winners", {
@@ -188,26 +188,35 @@ export const auditLogs = sqliteTable("audit_logs", {
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 
-// ── 活动结果/顺序分配 ──
-// 抽奖继续使用 lottery_winners；接龙、预约、候补等活动使用统一 assignment 记录。
-export const activityAssignments = sqliteTable("activity_assignments", {
+// ── 活动结果 ──
+// 抽奖继续使用 lottery_winners；接龙、预约、候补、审核等活动使用统一 outcome 记录。
+export const activityOutcomes = sqliteTable("activity_outcomes", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").notNull(),
   drawId: text("draw_id").notNull(),
   entryId: text("entry_id").notNull(),
-  assignmentType: text("assignment_type").notNull().default("slot"),
-  status: text("status").notNull().default("confirmed"),
-  position: integer("position").notNull(),
-  label: text("label").notNull().default(""),
+  outcomeType: text("outcome_type").notNull().default("assignment"),
+  status: text("status").notNull().default("assigned"),
+  sequenceNo: integer("sequence_no").notNull(),
+  assignmentNo: integer("assignment_no"),
+  resultKey: text("result_key").notNull().default(""),
+  resultLabel: text("result_label").notNull().default(""),
   metadataJson: text("metadata_json").notNull().default("{}"),
-  assignedAt: text("assigned_at").notNull().default(sql`(datetime('now'))`),
+  decidedAt: text("decided_at"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
-  entryUnique: uniqueIndex("idx_activity_assignment_entry").on(
-    t.tenantId, t.drawId, t.entryId, t.assignmentType,
+  entryUnique: uniqueIndex("idx_activity_outcomes_entry").on(
+    t.tenantId, t.drawId, t.outcomeType, t.entryId,
   ),
-  positionUnique: uniqueIndex("idx_activity_assignment_position").on(
-    t.tenantId, t.drawId, t.assignmentType, t.position,
+  sequenceUnique: uniqueIndex("idx_activity_outcomes_sequence").on(
+    t.tenantId, t.drawId, t.outcomeType, t.sequenceNo,
+  ),
+  assignmentUnique: uniqueIndex("idx_activity_outcomes_assignment").on(
+    t.tenantId, t.drawId, t.outcomeType, t.assignmentNo,
+  ),
+  drawStatusIdx: index("idx_activity_outcomes_draw_status").on(
+    t.tenantId, t.drawId, t.outcomeType, t.status, t.sequenceNo,
   ),
 }));
 

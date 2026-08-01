@@ -27,11 +27,11 @@ import {
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 
-const ACTIVITY_KINDS = new Set(["lottery"]);
+const ACTIVITY_KINDS = new Set(["lottery", "signup_chain"]);
 const PARTICIPATION_MODES = new Set(["open", "roster", "password", "invite_code"]);
 const EXPERIENCE_TYPES = new Set(["submit", "wheel", "slot", "scratch", "card"]);
 const DRAW_TRIGGERS = new Set(["manual", "scheduled"]);
-const RESULT_MODES = new Set(["manual", "scheduled", "instant"]);
+const RESULT_MODES = new Set(["manual", "scheduled", "instant", "ordered_assignment"]);
 
 // 所有管理端路由需要登录
 adminLotteryRoute.use("*", requireAuth);
@@ -901,4 +901,35 @@ adminLotteryRoute.get("/stats", async (c) => {
     recentParticipants: Number(recentEntries?.total ?? 0),
     totalWinners: Number(winnerCount?.total ?? 0),
   });
+});
+
+// ═════════════════════════════════════════════════════════
+// 接龙模式：参与列表
+// ═════════════════════════════════════════════════════════
+
+/** 接龙参与列表（按参与时间排序） */
+adminLotteryRoute.get("/draws/:id/signup-list", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const [draw] = await db
+    .select({ activityKind: lotteryDraws.activityKind })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.activityKind !== "signup_chain") return fail(c, "该活动不是接龙模式", 400);
+
+  const entries = await db
+    .select({
+      id: lotteryEntries.id,
+      identityValue: lotteryEntries.identityValue,
+      joinedAt: lotteryEntries.joinedAt,
+    })
+    .from(lotteryEntries)
+    .where(eq(lotteryEntries.drawId, drawId))
+    .orderBy(lotteryEntries.joinedAt);
+
+  return ok(c, { entries, total: entries.length });
 });
