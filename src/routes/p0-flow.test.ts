@@ -12,7 +12,7 @@ import { createDb, type DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
-import { tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig } from "../db/schema";
+import { activityEvents, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 let client: Client;
@@ -295,5 +295,61 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     }, TEST_ENV);
     // 空标题应被拒绝
     expect([400, 500]).toContain(createRes.status);
+  });
+
+  it("公开事件治理：非法事件类型和大 payload 被拒绝且不写库", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const { id, publicSlug } = await createAndPublish(app, "lottery");
+
+    const invalidRes = await app.request(`/api/public/draws/${publicSlug}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.1.1" },
+      body: JSON.stringify({ eventType: "paid_order" }),
+    }, TEST_ENV);
+    expect(invalidRes.status).toBe(400);
+
+    const largePayloadRes = await app.request(`/api/public/draws/${publicSlug}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.1.2" },
+      body: JSON.stringify({
+        eventType: "page_view",
+        metadata: { text: "x".repeat(2050) },
+      }),
+    }, TEST_ENV);
+    expect(largePayloadRes.status).toBe(400);
+
+    const rows = await db.select().from(activityEvents).where(eq(activityEvents.drawId, id));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("公开事件治理：合法事件可写入并限制字段长度", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const { id, publicSlug } = await createAndPublish(app, "lottery");
+
+    const validRes = await app.request(`/api/public/draws/${publicSlug}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.1.3" },
+      body: JSON.stringify({
+        eventType: "cta_click",
+        source: "wechat",
+        medium: "share",
+        campaign: "launch",
+        metadata: { placement: "result" },
+      }),
+    }, TEST_ENV);
+    expect(validRes.status).toBe(200);
+
+    const tooLongSourceRes = await app.request(`/api/public/draws/${publicSlug}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.1.4" },
+      body: JSON.stringify({ eventType: "cta_click", source: "x".repeat(201) }),
+    }, TEST_ENV);
+    expect(tooLongSourceRes.status).toBe(400);
+
+    const rows = await db.select().from(activityEvents).where(eq(activityEvents.drawId, id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.eventType).toBe("cta_click");
   });
 });

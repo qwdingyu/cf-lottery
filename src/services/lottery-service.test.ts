@@ -555,6 +555,26 @@ describe("SaaS 套餐配额", () => {
     expect(usage.limits.maxParticipantsPerActivity).toBe(200);
   });
 
+  it("Free 套餐 Webhook 数量配置为 0 时表示禁止创建，不是无限制", async () => {
+    await client.execute({
+      sql: "INSERT INTO system_config (key, value) VALUES (?, ?)",
+      args: ["free_plan_max_webhooks", "0"],
+    });
+
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.limits.maxWebhooks).toBe(0);
+  });
+
+  it("Free 套餐 Webhook 数量可通过系统配置开放 1 个试用名额", async () => {
+    await client.execute({
+      sql: "INSERT INTO system_config (key, value) VALUES (?, ?)",
+      args: ["free_plan_max_webhooks", "1"],
+    });
+
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.limits.maxWebhooks).toBe(1);
+  });
+
   it("pro：允许更高的单活动参与上限", async () => {
     await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["pro", TENANT] });
     const { id } = await createDraw(db, TENANT, {

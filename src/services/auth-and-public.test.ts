@@ -150,6 +150,24 @@ describe("用户注册数据完整性", () => {
     expect(member?.role).toBe("owner");
   });
 
+  it("公开注册关闭时拒绝新用户且不写数据库限流日志", async () => {
+    const app = createAuthTestApp();
+    await db.insert(systemConfig).values({ key: "enable_registration", value: "false" });
+
+    const res = await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.90" },
+      body: JSON.stringify({ username: "closeduser", password: "Password123", email: "closed@test.com" }),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(403);
+    const usersRows = await db.select().from(users).where(eq(users.username, "closeduser"));
+    expect(usersRows).toHaveLength(0);
+
+    const logs = await client.execute("SELECT COUNT(*) AS total FROM rate_limit_log");
+    expect(Number(logs.rows[0]?.total || 0)).toBe(0);
+  });
+
   it("注册时用户名已存在返回 409", async () => {
     const app = createAuthTestApp();
     // 先注册一个用户
