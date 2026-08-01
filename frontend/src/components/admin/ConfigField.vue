@@ -81,13 +81,23 @@ const emit = defineEmits<{
   reset: [key: string]
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const localError = ref('')
 
-const localizedLabel = computed(() => t(`adminConfig.fields.${props.item.key}.label`, {}, { default: props.item.label }))
-const localizedDescription = computed(() => t(`adminConfig.fields.${props.item.key}.description`, {}, { default: props.item.description || '' }))
-const localizedEffect = computed(() => t(`adminConfig.fields.${props.item.key}.effect`, {}, { default: props.item.effect || '' }))
+/**
+ * 系统配置定义来自后端，label/description/effect 可能包含邮箱、URL、Webhook 示例等普通文本。
+ * 这些文本不能作为 vue-i18n default message 传入 t()，否则裸 @、花括号示例会被 message compiler
+ * 当成 i18n 语法解析并在运行时抛 SyntaxError。这里先判断翻译 key 是否存在，不存在就直接展示后端原文。
+ */
+function translateConfigText(suffix: 'label' | 'description' | 'effect', fallback: string) {
+  const key = `adminConfig.fields.${props.item.key}.${suffix}`
+  return te(key) ? t(key) : fallback
+}
+
+const localizedLabel = computed(() => translateConfigText('label', props.item.label))
+const localizedDescription = computed(() => translateConfigText('description', props.item.description || ''))
+const localizedEffect = computed(() => translateConfigText('effect', props.item.effect || ''))
 
 /** 库内分为整数、UI 按人民币元展示的配置项 */
 const isCentsMoney = computed(() => props.item.type === 'integer' && props.item.unit === 'cents')

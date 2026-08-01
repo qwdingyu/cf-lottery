@@ -10,6 +10,7 @@ export default defineConfig({
   test: {
     environment: "node",
     testTimeout: 15_000,
+    fileParallelism: false,
     include: ["src/**/*.test.ts", "shared/**/*.test.ts"],
     coverage: {
       provider: "v8",

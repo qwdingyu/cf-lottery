@@ -4,24 +4,21 @@
  * 奖品图片是低频后台运营能力，但公开读取会经过 /api/media 并计入 Worker 请求。
  * 这组测试锁住 Free 层最重要的边界：权限、R2 缺失、文件签名、路径受控和缓存头。
  */
-import { createClient, type Client } from "@libsql/client";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
-import { createDb, type DbType } from "../db/client";
 import { auditLogs, tenantMembers, tenants, users } from "../db/schema";
 import { signJwt } from "../middleware/auth";
 import { adminMediaRoute, mediaRoute } from "./media";
+import { clearTestData, getTestDb } from "../test-setup";
 
-let client: Client;
-let db: DbType;
+let db: ReturnType<typeof import("../db/client").createDb>;
+let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 
 const JWT_SECRET = "test-media-secret-0123456789abcdef";
 const TENANT_ID = "tenant-media";
 const OWNER_ID = "user-media-owner";
 const VIEWER_ID = "user-media-viewer";
-const DB_URL = `file:test-media-${crypto.randomUUID()}.db`;
-
 const BASE_ENV = {
   TURSO_URL: "",
   ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
@@ -71,22 +68,11 @@ function createMemoryR2Bucket(): R2Bucket {
 }
 
 beforeAll(async () => {
-  client = createClient({ url: DB_URL });
-  db = createDb(client);
-  await client.execute(`CREATE TABLE IF NOT EXISTS tenants (id TEXT PRIMARY KEY, name TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'free', status TEXT NOT NULL DEFAULT 'active', brand_config TEXT NOT NULL DEFAULT '{}', extra_activity_quota INTEGER NOT NULL DEFAULT 0, extra_participant_quota INTEGER NOT NULL DEFAULT 0, extra_quota_expires_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, email TEXT NOT NULL DEFAULT '', email_verified INTEGER NOT NULL DEFAULT 0, password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS tenant_members (tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'owner', created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (tenant_id, user_id))`);
-  await client.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, actor_user_id TEXT NOT NULL, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')))`);
-});
-
-afterAll(async () => {
-  await client.close();
+  ({ client, db } = await getTestDb());
 });
 
 afterEach(async () => {
-  for (const table of ["audit_logs", "tenant_members", "users", "tenants"]) {
-    await client.execute(`DELETE FROM ${table}`);
-  }
+  await clearTestData(client);
 });
 
 function createTestApp() {
