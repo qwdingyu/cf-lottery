@@ -1818,6 +1818,17 @@ export async function performDraw(
       });
     }
 
+    // 活动后承接：未中奖自动发券（需在活动配置中启用 loserReward.enabled）
+    // 在开奖状态更新之后执行，保证"是否中奖"已尘埃落定；不阻塞主流程，失败不影响开奖结果。
+    try {
+      const loserRewardResult = await grantLoserRewards(db, tenantId, drawId);
+      if (loserRewardResult.granted > 0) {
+        console.log(`[lottery] loser rewards granted: ${loserRewardResult.granted} for draw ${drawId}`);
+      }
+    } catch (err) {
+      console.error(`[lottery] grantLoserRewards failed for ${drawId}:`, err);
+    }
+
     return { drawId, winnerCount: entryIndex, candidateCount };
   } catch (error) {
     // 开奖失败：恢复为 open 状态并记录失败原因

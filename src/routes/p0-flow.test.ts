@@ -577,11 +577,19 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     await joinByEmail(app, slug2, "lose2@test.com");
     await app.request(`/api/admin/draws/${drawId2}/draw`, { method: "POST", headers: { ...(await authHeader()) } }, TEST_ENV);
 
+    const winnerRows = await db.select({ entryId: lotteryWinners.entryId }).from(lotteryWinners).where(eq(lotteryWinners.drawId, drawId2));
+    const winnerEntries = await db.select({ id: lotteryEntries.id, email: lotteryEntries.identityValue }).from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId2));
+    const winnerEmails = new Set(
+      winnerEntries.filter((entry) => winnerRows.some((winner) => winner.entryId === entry.id)).map((entry) => entry.email),
+    );
+
     // 2 张券应被发放（状态 issued + recipientEmail 非空）
     const issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
     expect(issued.length).toBe(2);
-    // 发放对象是未中奖用户
-    expect(issued.map(c => c.recipientEmail).sort()).toEqual(["lose1@test.com", "lose2@test.com"]);
+    // 发放对象是未中奖用户，不能包含中奖者
+    expect(issued.map((c) => c.recipientEmail).sort()).toEqual(
+      winnerEntries.filter((entry) => !winnerEmails.has(entry.email)).map((entry) => entry.email).sort(),
+    );
   });
 
   it("活动后承接：优惠券不足时只发放可用数量，中奖者不发券", async () => {
@@ -599,18 +607,29 @@ describe("P0 核心流程：创建活动 → 发布", () => {
     await joinByEmail(app, publicSlug, "lose2@test.com");
     await app.request(`/api/admin/draws/${id}/draw`, { method: "POST", headers: { ...(await authHeader()) } }, TEST_ENV);
 
+    const winnerRows = await db.select({ entryId: lotteryWinners.entryId }).from(lotteryWinners).where(eq(lotteryWinners.drawId, id));
+    const winnerEntries = await db.select({ id: lotteryEntries.id, email: lotteryEntries.identityValue }).from(lotteryEntries).where(eq(lotteryEntries.drawId, id));
+    const winnerEmails = new Set(
+      winnerEntries.filter((entry) => winnerRows.some((winner) => winner.entryId === entry.id)).map((entry) => entry.email),
+    );
+
     // 只有 1 张券被发放
     const issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
     expect(issued.length).toBe(1);
+    expect(issued[0]?.recipientEmail).toBeDefined();
+    expect(issued[0]?.recipientEmail ? !winnerEmails.has(issued[0]!.recipientEmail) : false).toBe(true);
   });
 });
 
 /** 通过公开端参与（open 模式直接参与，无需验证码） */
-async function joinByEmail(app: Hono, slug: string, email: string) {
+async function joinByEmail(app: Hono<AppEnv>, slug: string, email: string) {
   const res = await app.request(`/api/public/draws/${slug}/join`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.9.1" },
     body: JSON.stringify({ email }),
   }, TEST_ENV);
+  if (res.status !== 200) {
+    throw new Error(await res.text());
+  }
   expect(res.status).toBe(200);
 }
