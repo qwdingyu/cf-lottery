@@ -8,6 +8,7 @@
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
+import { withDbTransaction } from "../db/client";
 import { fail, getDb, ok, safeJsonBody } from "../lib/http";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
 import {
@@ -45,16 +46,18 @@ platformSystemConfigRoute.put("/", async (c) => {
   if (!normalized.ok) return fail(c, normalized.message, 400);
 
   const db = getDb(c);
-  await upsertSystemConfig(db, body.key, normalized.value, c.env?.CREDENTIALS_ENCRYPTION_KEY);
-
   const sensitive = isSensitiveSystemConfigKey(body.key);
-  await writePlatformAudit(db, {
-    actorUserId: c.get("userId") as string,
-    actorRole: c.get("platformRole") as string,
-    action: "platform.system_config.update",
-    targetType: "system_config",
-    targetId: body.key,
-    metadata: { key: body.key, sensitive, configured: Boolean(normalized.value) },
+  await withDbTransaction(db, async (tx) => {
+    await upsertSystemConfig(tx, body.key, normalized.value, c.env?.CREDENTIALS_ENCRYPTION_KEY);
+    // 平台配置变更和审计必须同成同败，避免出现“配置已生效但接口 500、审计缺失”的半成功状态。
+    await writePlatformAudit(tx, {
+      actorUserId: c.get("userId") as string,
+      actorRole: c.get("platformRole") as string,
+      action: "platform.system_config.update",
+      targetType: "system_config",
+      targetId: body.key,
+      metadata: { key: body.key, sensitive, configured: Boolean(normalized.value) },
+    });
   });
 
   return ok(c, {
@@ -71,14 +74,17 @@ platformSystemConfigRoute.delete("/:key", async (c) => {
     return fail(c, `内置配置项 "${key}" 不可删除，请使用 PUT 接口修改其值`, 400);
   }
   const db = getDb(c);
-  await deleteSystemConfig(db, key);
-  await writePlatformAudit(db, {
-    actorUserId: c.get("userId") as string,
-    actorRole: c.get("platformRole") as string,
-    action: "platform.system_config.delete",
-    targetType: "system_config",
-    targetId: key,
-    metadata: { key },
+  await withDbTransaction(db, async (tx) => {
+    await deleteSystemConfig(tx, key);
+    // 非内置配置删除同样必须和平台审计同成同败，平台后台才能按日志复盘所有人工变更。
+    await writePlatformAudit(tx, {
+      actorUserId: c.get("userId") as string,
+      actorRole: c.get("platformRole") as string,
+      action: "platform.system_config.delete",
+      targetType: "system_config",
+      targetId: key,
+      metadata: { key },
+    });
   });
   return ok(c, { deleted: key });
 });

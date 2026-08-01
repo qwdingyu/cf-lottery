@@ -8,7 +8,7 @@
  * 配置项的定义与默认值归 lib/system-config-registry。
  */
 import { eq, inArray } from "drizzle-orm";
-import type { DbType } from "../../db/client";
+import type { DbType, DbWriteScope } from "../../db/client";
 import { systemConfig } from "../../db/schema";
 import { decryptSecretConfigValue, encryptSecretConfigValue } from "../../lib/secret-config";
 import {
@@ -40,7 +40,7 @@ export async function getSystemConfig(
 // ── G19: 更新系统配置 ──────────────────────────────
 
 export async function upsertSystemConfig(
-  db: DbType,
+  db: DbType | DbWriteScope,
   key: string,
   value: string,
   encryptionKey?: string,
@@ -61,9 +61,8 @@ export async function upsertSystemConfig(
 // ── G20: 删除系统配置 ──────────────────────────────
 
 export async function deleteSystemConfig(
-  db: DbType,
+  db: DbType | DbWriteScope,
   key: string,
 ): Promise<void> {
   await db.delete(systemConfig).where(eq(systemConfig.key, key));
 }
-

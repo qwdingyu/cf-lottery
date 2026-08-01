@@ -6,6 +6,7 @@
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
+import { withDbTransaction } from "../db/client";
 import { fail, getDb, ok, safeJsonBody } from "../lib/http";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
 import { redemptionCodes } from "../db/schema";
@@ -44,6 +45,13 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.trunc(parsed), min), max);
+}
+
+function isRedemptionCodeCollision(error: unknown): boolean {
+  const err = error as { message?: unknown; code?: unknown; cause?: { message?: unknown } };
+  const message = [err.code, err.message, err.cause?.message].filter(Boolean).join(" ");
+  return message.includes("UNIQUE constraint failed")
+    && message.includes("redemption_codes.code");
 }
 
 /** 兑换码列表（分页，支持按状态筛选） */
@@ -102,44 +110,51 @@ platformRedemptionCodesRoute.post("/batch", async (c) => {
 
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + durationDays * 86400000).toISOString();
-  const codes: string[] = [];
 
-  for (let i = 0; i < batchCount; i++) {
-    // 唯一码碰撞概率极低，但 UNIQUE 约束仍是最后防线；有界重试比预查更省 rows read。
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const code = generateCode();
-      try {
-        await db.insert(redemptionCodes).values({
-          id: crypto.randomUUID(), code,
-          plan: "custom",
-          activityQuota, participantQuota, durationDays,
-          maxUses,
-          note,
-          createdBy: userId,  // 平台运营者生成，记录 userId，后续平台审计可追溯。
-          createdAt: now, expiresAt, updatedAt: now,
-        });
-        codes.push(code);
-        break;
-      } catch (err) {
-        if (attempt === 4) throw err;
+  const codes = await withDbTransaction(db, async (tx) => {
+    const createdCodes: string[] = [];
+    for (let i = 0; i < batchCount; i++) {
+      // 唯一码碰撞概率极低，但 UNIQUE 约束仍是最后防线；有界重试比预查更省 rows read。
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const code = generateCode();
+        try {
+          await tx.insert(redemptionCodes).values({
+            id: crypto.randomUUID(), code,
+            plan: "custom",
+            activityQuota, participantQuota, durationDays,
+            maxUses,
+            note,
+            createdBy: userId,  // 平台运营者生成，记录 userId，后续平台审计可追溯。
+            createdAt: now, expiresAt, updatedAt: now,
+          });
+          createdCodes.push(code);
+          break;
+        } catch (err) {
+          // 只有兑换码唯一索引冲突才重试；锁竞争、结构错误等必须交给事务层处理或直接暴露。
+          if (!isRedemptionCodeCollision(err)) throw err;
+          if (attempt === 4) throw err;
+        }
       }
     }
-  }
 
-  await writePlatformAudit(db, {
-    actorUserId: userId,
-    actorRole: c.get("platformRole") as string,
-    action: "platform.redemption_codes.batch_create",
-    targetType: "redemption_code_batch",
-    metadata: {
-      count: codes.length,
-      requestedCount: batchCount,
-      activityQuota,
-      participantQuota,
-      durationDays,
-      maxUses,
-      hasNote: Boolean(note),
-    },
+    // 发码是平台可售权益的创建动作；码记录和审计必须同成同败，
+    // 否则运维重试会生成额外可兑换资产且难以追溯。
+    await writePlatformAudit(tx, {
+      actorUserId: userId,
+      actorRole: c.get("platformRole") as string,
+      action: "platform.redemption_codes.batch_create",
+      targetType: "redemption_code_batch",
+      metadata: {
+        count: createdCodes.length,
+        requestedCount: batchCount,
+        activityQuota,
+        participantQuota,
+        durationDays,
+        maxUses,
+        hasNote: Boolean(note),
+      },
+    });
+    return createdCodes;
   });
 
   return ok(c, { codes, count: batchCount, activityQuota, participantQuota, durationDays });

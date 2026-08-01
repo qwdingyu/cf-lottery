@@ -3,7 +3,7 @@
     <div class="toolbar">
       <div class="filters">
         <button class="btn btn-ghost btn-sm" type="button" :disabled="loading" @click="loadData">
-          刷新
+          {{ loading ? '加载中…' : '刷新' }}
         </button>
       </div>
       <div class="toolbar-actions">
@@ -11,6 +11,11 @@
           创建奖品
         </button>
       </div>
+    </div>
+
+    <div v-if="loadError" class="table-error" role="alert">
+      <span>{{ loadError }}</span>
+      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">重试</button>
     </div>
 
     <div class="table-wrap">
@@ -26,7 +31,12 @@
             <th class="col-actions">操作</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody v-if="loading">
+          <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row">
+            <td :colspan="7"><div class="skeleton-cell" /></td>
+          </tr>
+        </tbody>
+        <tbody v-else>
           <tr v-for="prize in prizes" :key="prize.id">
             <td>
               <img :src="prizeImageUrl(prize.imageUrl)" :alt="prize.name || '奖品'" class="prize-thumb" />
@@ -129,6 +139,7 @@ import AdminModal from '@/components/AdminModal.vue'
 const { showToast } = useToast()
 
 const loading = ref(false)
+const loadError = ref('')
 const submitting = ref(false)
 const importing = ref(false)
 const uploadingImage = ref(false)
@@ -197,6 +208,7 @@ async function uploadPrizeImage(event: Event) {
 
 async function loadData() {
   loading.value = true
+  loadError.value = ''
   try {
     const res = await fetch('/api/admin/prizes', {
       headers: { Authorization: `Bearer ${localStorage.getItem('admin_token') || ''}` },
@@ -204,9 +216,11 @@ async function loadData() {
     const data = await res.json()
     if (data.ok) {
       prizes.value = data.prizes || []
+    } else {
+      throw new Error(data.message || '加载失败')
     }
-  } catch {
-    showToast('加载失败', 'error')
+  } catch (err: any) {
+    loadError.value = err.message || '加载失败'
   } finally {
     loading.value = false
   }
