@@ -100,7 +100,10 @@ beforeAll(async () => {
     sequence_no INTEGER NOT NULL, assignment_no INTEGER,
     result_key TEXT NOT NULL DEFAULT '', result_label TEXT NOT NULL DEFAULT '',
     metadata_json TEXT NOT NULL DEFAULT '{}', decided_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(tenant_id, draw_id, outcome_type, entry_id),
+    UNIQUE(tenant_id, draw_id, outcome_type, sequence_no),
+    UNIQUE(tenant_id, draw_id, outcome_type, assignment_no)
   )`);
   await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)", args: [USER, "test", "hash"] });
@@ -108,6 +111,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  await client.execute("DELETE FROM activity_outcomes");
   await client.execute("DELETE FROM lottery_winners");
   await client.execute("DELETE FROM lottery_entries");
   await client.execute("DELETE FROM lottery_invite_codes");
@@ -134,6 +138,7 @@ async function setupDraw(mode = "open", opts?: { maxParticipants?: number; winne
   await publishDraw(db, TENANT, id);
   return { id, publicSlug };
 }
+
 
 /* ── 测试用例 ── */
 
@@ -330,17 +335,9 @@ describe("最大参与人数和参与时间", () => {
     const { publicSlug } = await setupDraw("open", { maxParticipants: 2 });
     await joinDraw(db, publicSlug, "u1@t.com");
     await joinDraw(db, publicSlug, "u2@t.com");
-    // 第三个用户参与，上限已到，应被拒绝
-    // INSERT ... SELECT WHERE 在 SQLite 中有竞争窗口，实际依赖 UNIQUE 约束兜底
-    try {
-      const result = await joinDraw(db, publicSlug, "u3@t.com");
-      // 如果 INSERT ... SELECT 成功阻止，joined 为 false
-      // 如果竞争窗口未阻止，UNIQUE 约束会抛出异常
-      expect(result.joined || result.message?.includes("上限")).toBeTruthy();
-    } catch {
-      // UNIQUE 约束兜底
-      expect(true).toBe(true);
-    }
+    const result = await joinDraw(db, publicSlug, "u3@t.com");
+    expect(result.joined).toBe(false);
+    expect(result.message).toContain("名额已满");
   });
 
   it("未开始的活动不能参与", async () => {
@@ -351,5 +348,52 @@ describe("最大参与人数和参与时间", () => {
     });
     await publishDraw(db, TENANT, id);
     expect((await joinDraw(db, publicSlug, "u@t.com")).joined).toBe(false);
+  });
+});
+
+describe("接龙活动", () => {
+  it("signup_chain：按加入顺序分配正式名额", async () => {
+    const { id, publicSlug } = await setupSignupChain({ maxParticipants: 3 });
+    const first = await joinDraw(db, publicSlug, "u1@t.com");
+    const second = await joinDraw(db, publicSlug, "u2@t.com");
+
+    expect(first.joined).toBe(true);
+    expect(second.joined).toBe(true);
+    expect("outcome" in first ? first.outcome?.status : "").toBe("assigned");
+    expect("outcome" in first ? first.outcome?.assignmentNo : 0).toBe(1);
+    expect("outcome" in second ? second.outcome?.assignmentNo : 0).toBe(2);
+
+    const outcomes = await getActivityOutcomes(db, TENANT, id);
+    expect(outcomes.map((o) => o.sequenceNo)).toEqual([1, 2]);
+    expect(outcomes.map((o) => o.assignmentNo)).toEqual([1, 2]);
+  });
+
+  it("signup_chain：capacity 策略满额后拒绝", async () => {
+    const { id, publicSlug } = await setupSignupChain({ maxParticipants: 1, allocationPolicy: "capacity" });
+    expect((await joinDraw(db, publicSlug, "u1@t.com")).joined).toBe(true);
+
+    const full = await joinDraw(db, publicSlug, "u2@t.com");
+    expect(full.joined).toBe(false);
+    expect(full.message).toContain("名额已满");
+
+    const outcomes = await getActivityOutcomes(db, TENANT, id);
+    expect(outcomes).toHaveLength(1);
+  });
+
+  it("signup_chain：waitlist 策略满额后进入候补", async () => {
+    const { publicSlug } = await setupSignupChain({ maxParticipants: 1, allocationPolicy: "waitlist" });
+    const assigned = await joinDraw(db, publicSlug, "u1@t.com");
+    const waitlisted = await joinDraw(db, publicSlug, "u2@t.com");
+
+    expect("outcome" in assigned ? assigned.outcome?.status : "").toBe("assigned");
+    expect("outcome" in waitlisted ? waitlisted.outcome?.status : "").toBe("waitlisted");
+    expect("outcome" in waitlisted ? waitlisted.outcome?.assignmentNo : 1).toBeNull();
+    expect("outcome" in waitlisted ? waitlisted.outcome?.sequenceNo : 0).toBe(2);
+  });
+
+  it("signup_chain：同一身份不能重复接龙", async () => {
+    const { publicSlug } = await setupSignupChain({ maxParticipants: 3 });
+    await joinDraw(db, publicSlug, "u1@t.com");
+    await expect(joinDraw(db, publicSlug, "u1@t.com")).rejects.toThrow();
   });
 });
