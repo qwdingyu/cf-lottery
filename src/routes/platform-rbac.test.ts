@@ -17,7 +17,7 @@ import { platformRedemptionCodesRoute } from "./platform-redemption-codes";
 import { platformRoute } from "./platform";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt } from "../middleware/auth";
-import { platformAuditLogs, platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
+import { lotteryDraws, platformAuditLogs, platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 let client: Client;
@@ -46,7 +46,7 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS system_config (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS lottery_draws (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, public_slug TEXT NOT NULL UNIQUE, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', activity_kind TEXT NOT NULL DEFAULT 'lottery', participation_mode TEXT NOT NULL DEFAULT 'open', experience_type TEXT NOT NULL DEFAULT 'wheel', draw_trigger TEXT NOT NULL DEFAULT 'manual', result_mode TEXT NOT NULL DEFAULT 'manual', allocation_policy TEXT NOT NULL DEFAULT 'capacity', policy_version INTEGER NOT NULL DEFAULT 1, start_at TEXT NOT NULL DEFAULT '', end_at TEXT NOT NULL DEFAULT '', draw_at TEXT, access_password TEXT NOT NULL DEFAULT '', max_participants INTEGER, winner_count INTEGER NOT NULL DEFAULT 1, show_participant_count INTEGER NOT NULL DEFAULT 1, show_winner_count INTEGER NOT NULL DEFAULT 1, show_winner_list INTEGER NOT NULL DEFAULT 0, drawn_at TEXT, failure_reason TEXT NOT NULL DEFAULT '', draw_seed_hash TEXT NOT NULL DEFAULT '', draw_seed TEXT NOT NULL DEFAULT '', algorithm_version TEXT NOT NULL DEFAULT 'uniform_v1', product_link TEXT NOT NULL DEFAULT '{}', promotion_config TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS lottery_roster_members (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, identity_type TEXT NOT NULL DEFAULT 'email', identity_value TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(tenant_id, draw_id, identity_type, identity_value))`,
-  `CREATE TABLE IF NOT EXISTS webhook_configs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, url TEXT NOT NULL, secret TEXT NOT NULL DEFAULT '', events TEXT NOT NULL DEFAULT '[]', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE TABLE IF NOT EXISTS webhook_configs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL DEFAULT '["draw.completed","prize.issued"]', signing_secret TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1, last_sent_at TEXT, last_error TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS coupon_codes (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT, code TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'available', recipient_email TEXT, redeemed_at TEXT, expires_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(tenant_id, code))`,
   `CREATE TABLE IF NOT EXISTS redemption_codes (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, plan TEXT NOT NULL DEFAULT 'custom', activity_quota INTEGER NOT NULL DEFAULT 0, participant_quota INTEGER NOT NULL DEFAULT 0, duration_days INTEGER NOT NULL DEFAULT 30, max_uses INTEGER NOT NULL DEFAULT 1, used_count INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active', note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS redemption_records (id TEXT PRIMARY KEY, code_id TEXT NOT NULL, code TEXT NOT NULL, tenant_id TEXT NOT NULL, tenant_name TEXT NOT NULL DEFAULT '', activity_quota_granted INTEGER NOT NULL DEFAULT 0, participant_quota_granted INTEGER NOT NULL DEFAULT 0, duration_days_granted INTEGER NOT NULL DEFAULT 30, expires_at TEXT, redeemed_at TEXT NOT NULL DEFAULT (datetime('now')))`,
@@ -189,6 +189,25 @@ describe("RBAC-lite 路由分层", () => {
       body: JSON.stringify({ title: "viewer 不应创建活动" }),
     }, TEST_ENV);
     expect(writeRes.status).toBe(403);
+  });
+
+  it("租户后台列表遇到非法分页参数时使用安全默认值", async () => {
+    await seedUsers();
+    const app = createTestApp();
+    const now = new Date().toISOString();
+    await db.insert(lotteryDraws).values([
+      { id: "draw-page-1", tenantId: TENANT_ID, publicSlug: "draw-page-1", title: "分页活动 1", status: "draft", startAt: now, endAt: now },
+      { id: "draw-page-2", tenantId: TENANT_ID, publicSlug: "draw-page-2", title: "分页活动 2", status: "draft", startAt: now, endAt: now },
+    ]);
+
+    const res = await app.request("/api/admin/draws?limit=bad&offset=-10", {
+      headers: await authHeader(OWNER_ID),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const payload = await res.json() as { draws: Array<{ id: string }>; total: number };
+    expect(payload.draws).toHaveLength(2);
+    expect(payload.total).toBe(2);
   });
 
   it("租户 owner 仍可通过 /api/admin/members 添加已有用户为团队成员", async () => {

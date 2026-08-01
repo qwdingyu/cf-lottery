@@ -69,6 +69,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import AdminPagination from '@/components/AdminPagination.vue'
+import { adminRequest } from '@/composables/useAdminRequest'
 import { useTablePagination } from '@/composables/useTablePagination'
 
 const loading = ref(false)
@@ -87,14 +88,6 @@ function copyText(text: string) {
   if (text) navigator.clipboard.writeText(text).catch(() => {})
 }
 
-async function adminFetch<T>(path: string): Promise<T> {
-  const token = localStorage.getItem('admin_token') || ''
-  const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } })
-  const data = await res.json()
-  if (!data.ok) throw new Error(data.message || '请求失败')
-  return data as T
-}
-
 async function loadData() {
   loading.value = true
   loadError.value = ''
@@ -102,7 +95,7 @@ async function loadData() {
     const params = new URLSearchParams({ limit: String(pagination.limit.value), offset: String((pagination.page.value - 1) * pagination.limit.value) })
     if (filter.value.tenantId) params.set('tenantId', filter.value.tenantId)
     if (filter.value.action) params.set('action', filter.value.action)
-    const data = await adminFetch<{ logs: any[] }>(`/api/platform/audit-logs?${params}`)
+    const data = await adminRequest<{ logs: any[] }>(`/api/platform/audit-logs?${params}`)
     logs.value = data.logs || []
     pagination.setTotal(data.logs?.length === pagination.limit.value ? pagination.page.value * pagination.limit.value + 1 : (pagination.page.value - 1) * pagination.limit.value + (data.logs?.length || 0))
   } catch (err: any) {

@@ -117,6 +117,27 @@ function isUniqueConstraintError(error: unknown): boolean {
   return message.includes("UNIQUE constraint failed");
 }
 
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.trunc(parsed), min), max);
+}
+
+/**
+ * 管理端列表统一分页边界。
+ *
+ * 为什么要集中处理：
+ * - `Number("bad")` 会得到 NaN，继续传给 Drizzle 的 limit/offset 可能触发运行时错误。
+ * - Cloudflare Workers Free 更怕无边界查询导致响应变慢，Turso 也会增加 rows read。
+ * - 后台低频列表可以保留 COUNT/分页，但 limit/offset 必须有默认值和上限。
+ */
+function parseAdminPagination(c: Context<AppEnv>, fallbackLimit = 50, maxLimit = 200) {
+  return {
+    limit: clampInteger(c.req.query("limit"), fallbackLimit, 1, maxLimit),
+    offset: clampInteger(c.req.query("offset"), 0, 0, 100_000),
+  };
+}
+
 // 所有租户后台路由都必须同时满足：已登录 + 仍是当前租户成员 + 命中轻量能力门禁。
 adminLotteryRoute.use("*", requireAuth, requireTenantMember(), requireTenantRouteCapability);
 
@@ -238,8 +259,12 @@ adminLotteryRoute.post("/prizes", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const body = await c.req.json<{ name: string; description?: string; prizeType?: string; imageUrl?: string; valueText?: string }>();
-  const { id } = await createPrize(db, tenantId, body);
-  return ok(c, { id });
+  try {
+    const { id } = await createPrize(db, tenantId, body);
+    return ok(c, { id });
+  } catch (err) {
+    return fail(c, err instanceof Error ? err.message : "创建奖品失败", 400);
+  }
 });
 
 /** 编辑奖品 */
@@ -247,7 +272,7 @@ adminLotteryRoute.patch("/prizes/:id", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const prizeId = c.req.param("id");
-  const body = await c.req.json<{ name?: string; description?: string; prizeType?: string }>();
+  const body = await c.req.json<{ name?: string; description?: string; prizeType?: string; imageUrl?: string; valueText?: string }>();
 
   const [existing] = await db
     .select()
@@ -256,13 +281,16 @@ adminLotteryRoute.patch("/prizes/:id", async (c) => {
     .limit(1);
 
   if (!existing) return fail(c, "奖品不存在", 404);
+  if (body.name !== undefined && !String(body.name).trim()) return fail(c, "奖品名称不能为空", 400);
 
   await db
     .update(prizes)
     .set({
-      ...(body.name !== undefined ? { name: body.name } : {}),
-      ...(body.description !== undefined ? { description: body.description } : {}),
+      ...(body.name !== undefined ? { name: String(body.name).trim() } : {}),
+      ...(body.description !== undefined ? { description: String(body.description).trim() } : {}),
       ...(body.prizeType !== undefined ? { prizeType: body.prizeType } : {}),
+      ...(body.imageUrl !== undefined ? { imageUrl: String(body.imageUrl).trim() } : {}),
+      ...(body.valueText !== undefined ? { valueText: String(body.valueText).trim() } : {}),
       updatedAt: new Date().toISOString(),
     })
     .where(and(eq(prizes.id, prizeId), eq(prizes.tenantId, tenantId)));
@@ -293,8 +321,7 @@ adminLotteryRoute.post("/prizes/:id/codes/import", async (c) => {
 adminLotteryRoute.get("/draws", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const { limit, offset } = parseAdminPagination(c);
   const status = c.req.query("status") || "";
   const query = c.req.query("query") || "";
 
@@ -735,8 +762,7 @@ adminLotteryRoute.get("/draws/:id/conversions", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const drawId = c.req.param("id");
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const { limit, offset } = parseAdminPagination(c);
 
   const draw = await getDraw(db, drawId, tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
@@ -820,6 +846,77 @@ adminLotteryRoute.delete("/draws/:id", async (c) => {
 // ═════════════════════════════════════════════════════════
 // P0 运营工具：补发码 + 重发通知 + 发布前校验
 // ═════════════════════════════════════════════════════════
+
+/** 奖项配置：替换活动的整组奖项 */
+adminLotteryRoute.post("/draws/:id/tiers", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+  const body = await c.req.json<{
+    tiers: Array<{ prizeId: string; tierName?: string; winnerCount?: number; sortOrder?: number }>;
+  }>();
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, status: lotteryDraws.status, activityKind: lotteryDraws.activityKind })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.activityKind !== "lottery") return fail(c, "只有抽奖活动需要配置奖项", 400);
+  if (draw.status !== "draft") return fail(c, "只有草稿状态的活动可以配置奖项", 400);
+  if (!Array.isArray(body.tiers) || body.tiers.length === 0) return fail(c, "请至少配置一个奖项", 400);
+  if (body.tiers.length > 10) return fail(c, "单个活动最多配置 10 个奖项", 400);
+
+  const normalizedTiers: Array<{
+    id: string;
+    tenantId: string;
+    drawId: string;
+    prizeId: string;
+    tierName: string;
+    winnerCount: number;
+    sortOrder: number;
+  }> = [];
+  const seenPrizeIds = new Set<string>();
+
+  for (const [index, tier] of body.tiers.entries()) {
+    const prizeId = String(tier.prizeId || "").trim();
+    const tierName = String(tier.tierName || `奖项 ${index + 1}`).trim().slice(0, 50);
+    const winnerCount = Number(tier.winnerCount ?? 1);
+    const sortOrder = Number(tier.sortOrder ?? (index + 1) * 100);
+
+    if (!prizeId) return fail(c, "奖项必须选择奖品", 400);
+    if (seenPrizeIds.has(prizeId)) return fail(c, "同一奖品不能重复配置为多个奖项", 400);
+    if (!Number.isInteger(winnerCount) || winnerCount < 1 || winnerCount > 1000) return fail(c, "中奖名额必须是 1-1000 的整数", 400);
+    if (!Number.isFinite(sortOrder)) return fail(c, "奖项排序值无效", 400);
+
+    const [prize] = await db
+      .select({ id: prizes.id })
+      .from(prizes)
+      .where(and(eq(prizes.id, prizeId), eq(prizes.tenantId, tenantId), eq(prizes.active, 1)))
+      .limit(1);
+    if (!prize) return fail(c, "奖品不存在或已停用", 404);
+
+    seenPrizeIds.add(prizeId);
+    normalizedTiers.push({
+      id: crypto.randomUUID(),
+      tenantId,
+      drawId,
+      prizeId,
+      tierName,
+      winnerCount,
+      sortOrder: Math.trunc(sortOrder),
+    });
+  }
+
+  // 替换整组奖项比逐条增删改更适合轻量 SaaS：前端保存当前表格即可，避免复杂同步状态。
+  await withDbTransaction(db, async (tx) => {
+    await tx.delete(lotteryPrizeTiers).where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)));
+    await tx.insert(lotteryPrizeTiers).values(normalizedTiers);
+  });
+
+  return ok(c, { tiers: normalizedTiers });
+});
 
 /** 补发奖品码（中奖者无码时运营手动补发） */
 adminLotteryRoute.post("/draws/:id/winners/:winnerId/retry-code", async (c) => {
@@ -1014,8 +1111,8 @@ adminLotteryRoute.post("/draws/:id/invite-codes", async (c) => {
   const drawId = c.req.param("id");
   const body = await c.req.json<{ count?: number; maxUses?: number }>();
 
-  const count = Math.min(body.count || 10, 1000);
-  const maxUses = body.maxUses || 1;
+  const count = clampInteger(body.count, 10, 1, 1000);
+  const maxUses = clampInteger(body.maxUses, 1, 1, 1000);
 
   const [draw] = await db
     .select({ id: lotteryDraws.id, status: lotteryDraws.status })
@@ -1051,8 +1148,7 @@ adminLotteryRoute.get("/logs", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const action = c.req.query("action") || "";
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const { limit, offset } = parseAdminPagination(c);
 
   const conditions = [eq(auditLogs.tenantId, tenantId)];
   if (action) conditions.push(eq(auditLogs.action, action));
@@ -1132,8 +1228,7 @@ function tryParseJson(s: string): any {
 adminLotteryRoute.get("/blacklist", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const { limit, offset } = parseAdminPagination(c);
 
   const rows = await db
     .select()
@@ -1476,8 +1571,7 @@ adminLotteryRoute.delete("/webhooks/:id", async (c) => {
 adminLotteryRoute.get("/webhook-deliveries", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const { limit, offset } = parseAdminPagination(c);
   const deliveries = await listWebhookDeliveries(db, tenantId, limit, offset);
   return ok(c, { deliveries });
 });
@@ -1495,7 +1589,7 @@ adminLotteryRoute.post("/webhook-deliveries/process", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const body = await c.req.json<{ limit?: number }>().catch((): { limit?: number } => ({}));
-  const result = await processPendingWebhookDeliveries(db, tenantId, fetch, body.limit || 20);
+  const result = await processPendingWebhookDeliveries(db, tenantId, fetch, clampInteger(body.limit, 20, 1, 100));
   return ok(c, result);
 });
 
@@ -1507,8 +1601,7 @@ adminLotteryRoute.post("/webhook-deliveries/process", async (c) => {
 adminLotteryRoute.get("/coupons", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const { limit, offset } = parseAdminPagination(c);
   const rows = await db
     .select()
     .from(couponCodes)

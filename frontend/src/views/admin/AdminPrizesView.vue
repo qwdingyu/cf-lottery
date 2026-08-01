@@ -134,6 +134,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useToast } from '@/composables/useToast'
+import { adminRequest } from '@/composables/useAdminRequest'
 import AdminModal from '@/components/AdminModal.vue'
 
 const { showToast } = useToast()
@@ -190,13 +191,10 @@ async function uploadPrizeImage(event: Event) {
   try {
     const body = new FormData()
     body.append('file', file)
-    const res = await fetch('/api/admin/media/images', {
+    const data = await adminRequest<{ url: string }>('/api/admin/media/images', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${localStorage.getItem('admin_token') || ''}` },
       body,
     })
-    const data = await res.json()
-    if (!data.ok) throw new Error(data.message || `图片上传失败：${res.status}`)
     form.value.imageUrl = data.url || ''
     showToast('奖品图片已上传', 'success')
   } catch (err: any) {
@@ -210,15 +208,8 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await fetch('/api/admin/prizes', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('admin_token') || ''}` },
-    })
-    const data = await res.json()
-    if (data.ok) {
-      prizes.value = data.prizes || []
-    } else {
-      throw new Error(data.message || '加载失败')
-    }
+    const data = await adminRequest<{ prizes: any[] }>('/api/admin/prizes')
+    prizes.value = data.prizes || []
   } catch (err: any) {
     loadError.value = err.message || '加载失败'
   } finally {
@@ -229,25 +220,16 @@ async function loadData() {
 async function handleCreate() {
   submitting.value = true
   try {
-    const res = await fetch('/api/admin/prizes', {
+    await adminRequest('/api/admin/prizes', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('admin_token') || ''}`,
-      },
       body: JSON.stringify(form.value),
     })
-    const data = await res.json()
-    if (data.ok) {
-      showToast('创建成功', 'success')
-      showCreate.value = false
-      form.value = { name: '', description: '', prizeType: 'code', imageUrl: '', valueText: '' }
-      await loadData()
-    } else {
-      showToast(data.message || '创建失败', 'error')
-    }
-  } catch {
-    showToast('创建失败', 'error')
+    showToast('创建成功', 'success')
+    showCreate.value = false
+    form.value = { name: '', description: '', prizeType: 'code', imageUrl: '', valueText: '' }
+    await loadData()
+  } catch (err: any) {
+    showToast(err?.message || '创建失败', 'error')
   } finally {
     submitting.value = false
   }
@@ -276,23 +258,14 @@ async function handleImport() {
       return
     }
 
-    const res = await fetch(`/api/admin/prizes/${importPrize.value.id}/codes/import`, {
+    const data = await adminRequest<{ imported?: number; skipped?: number }>(`/api/admin/prizes/${importPrize.value.id}/codes/import`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('admin_token') || ''}`,
-      },
       body: JSON.stringify({ codes }),
     })
-    const data = await res.json()
-    if (data.ok) {
-      showToast(`成功导入 ${codes.length} 个码`, 'success')
-      showImportModal.value = false
-    } else {
-      showToast(data.message || '导入失败', 'error')
-    }
-  } catch {
-    showToast('导入失败', 'error')
+    showToast(`成功导入 ${data.imported ?? codes.length} 个码${data.skipped ? `，跳过 ${data.skipped} 个重复码` : ''}`, 'success')
+    showImportModal.value = false
+  } catch (err: any) {
+    showToast(err?.message || '导入失败', 'error')
   } finally {
     importing.value = false
   }

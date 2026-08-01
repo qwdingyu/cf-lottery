@@ -128,6 +128,7 @@
 import { ref } from 'vue'
 import AdminModal from '@/components/AdminModal.vue'
 import AdminPagination from '@/components/AdminPagination.vue'
+import { adminRequest } from '@/composables/useAdminRequest'
 import { useTablePagination } from '@/composables/useTablePagination'
 
 const loading = ref(false)
@@ -149,14 +150,6 @@ function copyId(id: string) {
   navigator.clipboard.writeText(id).catch(() => {})
 }
 
-async function adminFetch<T>(path: string): Promise<T> {
-  const token = localStorage.getItem('admin_token') || ''
-  const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } })
-  const data = await res.json()
-  if (!data.ok) throw new Error(data.message || '请求失败')
-  return data as T
-}
-
 async function loadData() {
   loading.value = true
   loadError.value = ''
@@ -164,13 +157,13 @@ async function loadData() {
     const params = new URLSearchParams({ limit: String(pagination.limit.value), offset: String((pagination.page.value - 1) * pagination.limit.value) })
     if (filter.value.status) params.set('status', filter.value.status)
     if (filter.value.plan) params.set('plan', filter.value.plan)
-    const data = await adminFetch<{ tenants: any[] }>(`/api/platform/tenants?${params}`)
+    const data = await adminRequest<{ tenants: any[] }>(`/api/platform/tenants?${params}`)
     tenants.value = data.tenants || []
     pagination.setTotal(data.tenants?.length === pagination.limit.value ? pagination.page.value * pagination.limit.value + 1 : (pagination.page.value - 1) * pagination.limit.value + (data.tenants?.length || 0))
     // 并行加载用量摘要
     await Promise.all(tenants.value.map(async (t) => {
       try {
-        const summary = await adminFetch<{ usage: any }>(`/api/platform/tenants/${t.id}/summary`)
+        const summary = await adminRequest<{ usage: any }>(`/api/platform/tenants/${t.id}/summary`)
         usageMap.value[t.id] = summary.usage || {}
       } catch { /* 忽略 */ }
     }))
@@ -195,7 +188,7 @@ async function showDetail(t: any) {
   showDetailModal.value = true
   detailLoading.value = true
   try {
-    const data = await adminFetch<{ usage: any }>(`/api/platform/tenants/${t.id}/summary`)
+    const data = await adminRequest<{ usage: any }>(`/api/platform/tenants/${t.id}/summary`)
     detailUsage.value = data.usage
   } catch { /* 忽略 */ }
   detailLoading.value = false

@@ -963,14 +963,20 @@ export async function createDraw(
   },
 ) {
   const requestedMaxParticipants = data.maxParticipants ? Number(data.maxParticipants) : undefined;
-  const planLimits = await enforceTenantActivityQuota(db, tenantId, requestedMaxParticipants);
+  const title = String(data.title || "").trim();
   const activityKind = data.activityKind || "lottery";
   const drawTrigger = data.drawTrigger || "manual";
   const winnerCount = normalizeWinnerCount(activityKind, data.winnerCount);
 
+  // 创建阶段就拒绝无法发布的活动，避免运营者生成“看似保存成功、后续必然失败”的草稿。
+  if (!title) throw new Error("活动标题不能为空");
+
   // 校验参与时间合法性
   const start = new Date(data.startAt);
   const end = new Date(data.endAt);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new Error("活动时间格式无效");
+  }
   if (start >= end) throw new Error("参与开始时间必须早于结束时间");
 
   // 定时开奖必须设置开奖时间
@@ -981,6 +987,7 @@ export async function createDraw(
   // 开奖时间必须在参与结束后
   if (data.drawAt) {
     const draw = new Date(data.drawAt);
+    if (Number.isNaN(draw.getTime())) throw new Error("开奖时间格式无效");
     if (end >= draw) throw new Error("开奖时间必须在参与结束后");
   }
 
@@ -988,6 +995,8 @@ export async function createDraw(
   if (requiresWinnerCount(activityKind) && winnerCount < 1) {
     throw new Error("中奖名额至少为 1");
   }
+
+  const planLimits = await enforceTenantActivityQuota(db, tenantId, requestedMaxParticipants);
 
   const id = crypto.randomUUID();
   // 取 UUID 前 8 位作为公开链接 slug，不可枚举
@@ -1000,7 +1009,7 @@ export async function createDraw(
     id,
     tenantId,
     publicSlug,
-    title: data.title,
+    title,
     description: data.description || "",
     activityKind,
     participationMode: data.participationMode || "open",
@@ -1907,15 +1916,18 @@ export async function createPrize(
   tenantId: string,
   data: { name: string; description?: string; prizeType?: string; imageUrl?: string; valueText?: string },
 ) {
+  const name = String(data.name || "").trim();
+  if (!name) throw new Error("奖品名称不能为空");
+
   const id = crypto.randomUUID();
   await db.insert(prizes).values({
     id,
     tenantId,
-    name: data.name,
-    description: data.description || "",
-    imageUrl: data.imageUrl || "",   // 奖品图片 URL（可选）
-    valueText: data.valueText || "",  // 展示价值文案，不参与金额计算
-    prizeType: data.prizeType || "code",  // 默认卡密类型
+    name,
+    description: String(data.description || "").trim(),
+    imageUrl: String(data.imageUrl || "").trim(),   // 奖品图片 URL（可选）
+    valueText: String(data.valueText || "").trim(), // 展示价值文案，不参与金额计算
+    prizeType: data.prizeType || "code",            // 默认卡密类型
   });
   return { id };
 }

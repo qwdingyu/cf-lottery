@@ -304,11 +304,10 @@ describe("活动生命周期", () => {
     expect(draw!.status).toBe("open");
   });
 
-  it("发布校验：标题为空拒绝", async () => {
-    const { id } = await createDraw(db, TENANT, {
+  it("创建校验：标题为空拒绝", async () => {
+    await expect(createDraw(db, TENANT, {
       title: "", startAt: new Date().toISOString(), endAt: new Date(Date.now() + 3600000).toISOString(), winnerCount: 1,
-    });
-    await expect(publishDraw(db, TENANT, id)).rejects.toThrow("标题");
+    })).rejects.toThrow("标题");
   });
 
   it("发布校验：定时开奖必须设置开奖时间", async () => {
