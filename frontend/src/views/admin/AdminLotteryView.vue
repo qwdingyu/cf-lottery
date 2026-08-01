@@ -27,7 +27,7 @@
         >{{ $t('lottery.adminListCount', { shown: filteredDraws.length, total: draws.length }) }}</span>
       </div>
       <div class="toolbar-actions">
-        <button class="btn btn-primary btn-sm" type="button" :disabled="loading || creating" @click="openCreate">
+        <button class="btn btn-primary btn-sm" type="button" :disabled="loading || creating" @click="openTemplatePicker">
           {{ $t('lottery.adminDrawCreate') }}
         </button>
       </div>
@@ -542,6 +542,28 @@
       </form>
     </AdminModal>
 
+    <!-- 模板选择弹窗 -->
+    <AdminModal v-model="showTemplateModal" title="选择活动模板" max-width="720px">
+      <div class="template-grid">
+        <button
+          v-for="tpl in templates"
+          :key="tpl.id"
+          class="template-card"
+          @click="applyTemplate(tpl)"
+        >
+          <span class="template-icon">{{ tpl.icon }}</span>
+          <span class="template-name">{{ tpl.name }}</span>
+          <span class="template-desc">{{ tpl.description }}</span>
+          <span class="template-category tag" :class="'tag-' + tpl.category">{{ categoryLabel(tpl.category) }}</span>
+        </button>
+        <button class="template-card template-card--blank" @click="openCreate">
+          <span class="template-icon">📄</span>
+          <span class="template-name">空白活动</span>
+          <span class="template-desc">从零开始创建，所有选项手动配置</span>
+        </button>
+      </div>
+    </AdminModal>
+
     <!-- 中奖结果 -->
     <AdminModal v-model="showWinnersModal" :title="$t('lottery.drawResult')" max-width="720px">
       <div v-if="winnersLoading" class="empty-text">{{ $t('lottery.adminWinnersLoading') }}</div>
@@ -887,6 +909,8 @@ const listQuery = ref('')
 const loading = ref(false)
 const loadError = ref('')
 const showCreateModal = ref(false)
+const showTemplateModal = ref(false)
+const templates = ref<any[]>([])
 const showWinnersModal = ref(false)
 const showAnalyticsModal = ref(false)
 const showQrModal = ref(false)
@@ -1355,6 +1379,51 @@ function closeEditor() {
   isEditing.value = false
   rosterInput.value = ''
   inviteCodeCount.value = 10
+}
+
+function openTemplatePicker() {
+  // 加载模板列表（首次打开时）
+  if (templates.value.length === 0) {
+    fetchTemplates()
+  }
+  showTemplateModal.value = true
+}
+
+async function fetchTemplates() {
+  try {
+    const data = await adminRequest<any>('/api/admin/templates')
+    templates.value = data.templates || []
+  } catch {
+    // 加载失败时允许用户直接创建空白活动
+    templates.value = []
+  }
+}
+
+function categoryLabel(cat: string): string {
+  const map: Record<string,string> = { marketing:'营销获客', engagement:'互动传播', conversion:'转化留资', research:'调研分析' }
+  return map[cat] || cat
+}
+
+function applyTemplate(tpl: any) {
+  showTemplateModal.value = false
+  const base = emptyForm()
+  // 应用模板默认值
+  form.value = {
+    ...base,
+    id: '',
+    name: '',
+    description: '',
+    activityKind: tpl.defaults.activityKind,
+    experienceType: tpl.defaults.experienceType,
+    participationMode: tpl.defaults.participationMode,
+    allocationPolicy: tpl.defaults.allocationPolicy,
+    winnerCount: tpl.defaults.winnerCount,
+    maxParticipants: null,
+    expectedParticipants: 0,
+  }
+  isEditing.value = false
+  applyTimePreset('1d')
+  showCreateModal.value = true
 }
 
 function openCreate() {
@@ -1912,5 +1981,57 @@ onMounted(loadData)
 .analytics-table-wrap {
   flex: 0 1 auto;
   max-height: 280px;
+}
+
+/* 模板选择网格 */
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  padding: 8px 0;
+}
+.template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 12px;
+  background: var(--tg-secondary-bg, #151b28);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+.template-card:hover {
+  border-color: var(--admin-accent, #f59e0b);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+.template-card--blank {
+  border-style: dashed;
+  opacity: 0.7;
+}
+.template-card--blank:hover {
+  opacity: 1;
+}
+.template-icon {
+  font-size: 32px;
+  line-height: 1;
+}
+.template-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tg-text, #f3f4f6);
+}
+.template-desc {
+  font-size: 11px;
+  color: var(--tg-hint, #9aa4b2);
+  line-height: 1.4;
+}
+.template-category {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
 }
 </style>

@@ -38,19 +38,19 @@
       </div>
     </section>
 
-    <!-- 游戏模式 -->
+    <!-- 活动目标模板 -->
     <section class="landing-section landing-section-alt">
-      <h2 class="section-title">四种游戏模式，提升参与感</h2>
-      <p class="section-desc">每种参与模式对应一种游戏交互，让等待不再枯燥</p>
+      <h2 class="section-title">按活动目标选择模板</h2>
+      <p class="section-desc">抽奖、接龙、问卷只是入口，真正交付的是创建速度、规则确定性和后续承接。</p>
       <div class="mode-grid">
         <div class="mode-card">
           <div class="mode-preview wheel-preview">
             <div class="wheel-mini"></div>
           </div>
           <div class="mode-info">
-            <h3>🎰 大转盘</h3>
-            <span class="mode-tag">公开抽奖</span>
-            <p>旋转指针，悬念感十足。适合店铺促销、粉丝福利。</p>
+            <h3>福利抽奖</h3>
+            <span class="mode-tag">拉新 / 促活</span>
+            <p>适合粉丝福利、门店活动、展会抽奖，重点是公平开奖、码池发放和结果复盘。</p>
           </div>
         </div>
         <div class="mode-card">
@@ -58,9 +58,9 @@
             <div class="scratch-mini"></div>
           </div>
           <div class="mode-info">
-            <h3>🎫 刮刮卡</h3>
-            <span class="mode-tag">密码进入</span>
-            <p>刮开涂层，揭晓惊喜。适合社群活动、VIP 专属。</p>
+            <h3>报名接龙</h3>
+            <span class="mode-tag">容量 / 候补</span>
+            <p>适合课程、线下活动、社群报名，重点是名额顺序、满额候补和导出名单。</p>
           </div>
         </div>
         <div class="mode-card">
@@ -68,9 +68,9 @@
             <div class="slot-mini"></div>
           </div>
           <div class="mode-info">
-            <h3>🎲 老虎机</h3>
-            <span class="mode-tag">邀请码</span>
-            <p>三列滚动，逐列停止。适合招商引流、定向邀请。</p>
+            <h3>资料领取 / 问卷</h3>
+            <span class="mode-tag">留资 / 调研</span>
+            <p>适合白皮书、课程资料、用户调研，重点是低摩擦提交和后续 CTA 承接。</p>
           </div>
         </div>
         <div class="mode-card">
@@ -78,9 +78,9 @@
             <div class="card-mini"></div>
           </div>
           <div class="mode-info">
-            <h3>🃏 卡片翻转</h3>
-            <span class="mode-tag">名单抽奖</span>
-            <p>翻牌揭晓，正式感强。适合企业年会、班级抽奖。</p>
+            <h3>预约 / 审核</h3>
+            <span class="mode-tag">筛选 / 确认</span>
+            <p>适合体验课、内测资格、咨询预约，重点是资格确认、审核结果和候补转化。</p>
           </div>
         </div>
       </div>
@@ -88,78 +88,88 @@
 
     <!-- 核心能力 -->
     <section class="landing-section">
-      <h2 class="section-title">不只抽奖，更是运营工具</h2>
+      <h2 class="section-title">客户真正买的是运营确定性</h2>
       <div class="capability-grid">
         <div class="capability-item">
-          <div class="capability-icon">📧</div>
-          <h3>自动发码通知</h3>
-          <p>中奖后自动从码池发放卡密，邮件通知中奖者，无需人工干预。</p>
+          <div class="capability-icon">1</div>
+          <h3>快速创建</h3>
+          <p>模板、复制、二维码和默认规则，减少每次活动从零开始配置的时间。</p>
         </div>
         <div class="capability-item">
-          <div class="capability-icon">🔐</div>
-          <h3>公平可验证</h3>
-          <p>开奖前记录随机种子 hash，开奖后可展示原始种子，参与者可自行验证。</p>
+          <div class="capability-icon">2</div>
+          <h3>少出错</h3>
+          <p>资格校验、去重、容量、候补、码池和 CAS 发放，降低重复发放和超额参与风险。</p>
         </div>
         <div class="capability-item">
-          <div class="capability-icon">📊</div>
-          <h3>数据导出</h3>
-          <p>CSV 导出中奖名单和参与数据，支持运营复盘和效果分析。</p>
+          <div class="capability-icon">3</div>
+          <h3>能复盘</h3>
+          <p>浏览、开始、完成、CTA、分享和外部转化回传，活动结束后能说清楚效果。</p>
         </div>
         <div class="capability-item">
-          <div class="capability-icon">🏢</div>
-          <h3>多租户隔离</h3>
-          <p>每个客户独立管理自己的活动和数据，互不干扰，安全可靠。</p>
+          <div class="capability-icon">4</div>
+          <h3>能承接</h3>
+          <p>中奖、候补、未中奖、提交成功后都能配置 CTA、资料、优惠或下一活动。</p>
+        </div>
+        <div class="capability-item">
+          <div class="capability-icon">5</div>
+          <h3>能接系统</h3>
+          <p>Webhook、API Key、导出和外部转化回传，让活动结果进入已有业务系统。</p>
+        </div>
+        <div class="capability-item">
+          <div class="capability-icon">6</div>
+          <h3>能托管运营</h3>
+          <p>平台方能查看租户、套餐、用量、失败任务和异常，不靠直接查数据库救火。</p>
         </div>
       </div>
     </section>
 
     <!-- 适合场景 -->
     <section class="landing-section landing-section-alt">
-      <h2 class="section-title">适合你的场景</h2>
+      <h2 class="section-title">适合这些活动负责人</h2>
       <div class="scenario-grid">
         <div class="scenario-card">
           <div class="scenario-icon">📱</div>
           <h3>社群运营</h3>
-          <p>微信群抽奖，收集用户邮箱，自动发码</p>
+          <p>微信群报名、福利领取、活动复盘</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">🏪</div>
           <h3>门店促销</h3>
-          <p>扫码参与抽奖，中奖核销，带动到店</p>
+          <p>扫码参与、领券核销、带动到店</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">🎉</div>
           <h3>企业年会</h3>
-          <p>名单抽奖，公平随机，大屏展示</p>
+          <p>名单抽奖、签到报名、结果导出</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">📚</div>
           <h3>课程福利</h3>
-          <p>学员福利抽奖，自动发放课程码</p>
+          <p>报名接龙、资料领取、训练营打卡</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">⭐</div>
           <h3>粉丝抽奖</h3>
-          <p>博主粉丝福利，公平报告增强信任</p>
+          <p>粉丝福利、问卷调研、下一活动承接</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">🎪</div>
           <h3>展会活动</h3>
-          <p>现场扫码参与，大屏实时开奖</p>
+          <p>现场扫码、名额确认、会后转化回传</p>
         </div>
       </div>
     </section>
 
     <!-- CTA -->
     <section class="landing-cta">
-      <h2>准备好了吗？</h2>
-      <p>免费注册，3 分钟创建你的第一个抽奖活动</p>
+      <h2>先创建一个能复盘的活动</h2>
+      <p>从模板开始，先跑通参与、结果、承接和复盘闭环</p>
       <RouterLink to="/admin/register" class="btn btn-primary btn-lg">免费注册</RouterLink>
     </section>
 
     <footer class="landing-footer">
       <div class="footer-main">
-        <span>© 2026 Lucky Draw</span>
+        <span>© 2026 运营活动引擎</span>
         <span class="footer-dot">·</span>
         <span>由 <a href="https://eforge.xyz">eforge.xyz</a> 提供</span>
       </div>
