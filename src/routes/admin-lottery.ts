@@ -8,8 +8,8 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryBlacklist, auditLogs, tenantMembers, users, tenants } from "../db/schema";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, auditLogs, tenantMembers, users, tenants } from "../db/schema";
+import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
   publishDraw,
@@ -857,4 +857,48 @@ adminLotteryRoute.delete("/members/:userId", async (c) => {
     .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.userId, userId)));
 
   return ok(c, { deleted: true });
+});
+
+// ═════════════════════════════════════════════════════════
+// 统计概览
+// ═════════════════════════════════════════════════════════
+
+/** 租户级别统计概览 */
+adminLotteryRoute.get("/stats", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+
+  const [drawCount] = await db
+    .select({ total: count() })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.tenantId, tenantId));
+
+  const [openCount] = await db
+    .select({ total: count() })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "open")));
+
+  const [drawnCount] = await db
+    .select({ total: count() })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "drawn")));
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const [recentEntries] = await db
+    .select({ total: count() })
+    .from(lotteryEntries)
+    .where(and(eq(lotteryEntries.tenantId, tenantId), sql`${lotteryEntries.joinedAt} >= ${sevenDaysAgo}`));
+
+  const [winnerCount] = await db
+    .select({ total: count() })
+    .from(lotteryWinners)
+    .where(eq(lotteryWinners.tenantId, tenantId));
+
+  return ok(c, {
+    totalDraws: Number(drawCount?.total ?? 0),
+    openDraws: Number(openCount?.total ?? 0),
+    drawnDraws: Number(drawnCount?.total ?? 0),
+    recentParticipants: Number(recentEntries?.total ?? 0),
+    totalWinners: Number(winnerCount?.total ?? 0),
+  });
 });

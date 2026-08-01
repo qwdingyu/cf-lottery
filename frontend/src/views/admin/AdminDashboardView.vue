@@ -14,8 +14,12 @@
         <span class="stat-label">已开奖</span>
       </div>
       <div class="stat-card">
-        <span class="stat-value">{{ stats.due }}</span>
-        <span class="stat-label">待开奖</span>
+        <span class="stat-value">{{ stats.recentParticipants }}</span>
+        <span class="stat-label">近 7 天参与</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ stats.totalWinners }}</span>
+        <span class="stat-label">累计中奖</span>
       </div>
     </div>
 
@@ -65,7 +69,7 @@ import { formatDate } from '@/composables/useFormat'
 const router = useRouter()
 const { showToast } = useToast()
 
-const stats = ref({ open: 0, draft: 0, drawn: 0, due: 0 })
+const stats = ref({ open: 0, draft: 0, drawn: 0, recentParticipants: 0, totalWinners: 0 })
 const recentDraws = ref<any[]>([])
 
 function statusLabel(status: string): string {
@@ -89,14 +93,19 @@ async function adminRequest<T>(path: string, options?: RequestInit): Promise<T> 
 
 async function loadData() {
   try {
-    const data = await adminRequest<{ draws: any[] }>('/api/admin/draws')
-    const draws = data.draws || []
+    // 并行加载统计数据
+    const [statsData, drawsData] = await Promise.all([
+      adminRequest<any>('/api/admin/stats'),
+      adminRequest<{ draws: any[] }>('/api/admin/draws'),
+    ])
+    const draws = drawsData.draws || []
     recentDraws.value = draws.slice(0, 10)
     stats.value = {
-      open: draws.filter((d: any) => d.status === 'open').length,
-      draft: draws.filter((d: any) => d.status === 'draft').length,
-      drawn: draws.filter((d: any) => d.status === 'drawn').length,
-      due: draws.filter((d: any) => d.status === 'open' && d.drawTrigger === 'scheduled' && d.drawAt && new Date(d.drawAt) <= new Date()).length,
+      open: statsData.openDraws ?? draws.filter((d: any) => d.status === 'open').length,
+      draft: statsData.totalDraws - statsData.openDraws - statsData.drawnDraws,
+      drawn: statsData.drawnDraws ?? 0,
+      recentParticipants: statsData.recentParticipants ?? 0,
+      totalWinners: statsData.totalWinners ?? 0,
     }
   } catch (err: any) {
     showToast(err.message || '加载失败', 'error')
