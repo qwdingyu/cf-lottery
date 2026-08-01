@@ -8,11 +8,10 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryInviteCodes } from "../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers } from "../db/schema";
 import { eq, and, count, sql } from "drizzle-orm";
-import { joinDraw } from "../services/lottery-service";
+import { getActivityOutcome, joinDraw } from "../services/lottery-service";
 import { sendAccessCode } from "../services/email-service";
-import { hashAccessPassword } from "../services/lottery-service";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
@@ -84,6 +83,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     participationMode: draw.participationMode,
     experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode),
     resultMode: draw.resultMode || draw.drawTrigger,
+    allocationPolicy: draw.allocationPolicy || "capacity",
     policyVersion: draw.policyVersion || 1,
     startAt: draw.startAt,
     endAt: draw.endAt,
@@ -92,6 +92,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     showWinnerCount: draw.showWinnerCount,
     participantCount: draw.showParticipantCount ? Number(total) : undefined,
     winnerCount: draw.showWinnerCount ? draw.winnerCount : undefined,
+    maxParticipants: draw.maxParticipants,
     // 导流：关联商品链接（仅在活动中开放时返回）
     productLink: draw.productLink && draw.productLink !== "{}" ? tryParseJson(draw.productLink) : undefined,
     promotionConfig: draw.promotionConfig && draw.promotionConfig !== "{}" ? tryParseJson(draw.promotionConfig) : undefined,
@@ -242,43 +243,20 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     .set({ used: 1 })
     .where(eq(emailAccessCodes.id, validCode.id));
 
-  // 校验参与模式：password 和 invite_code
-  if (draw.participationMode === "password") {
-    const inputHash = await hashAccessPassword(body.accessPassword || "");
-    if (inputHash !== draw.accessPassword) {
-      return fail(c, "访问密码错误", 403);
-    }
-  }
-  if (draw.participationMode === "invite_code") {
-    if (!body.inviteCode) {
-      return fail(c, "请输入邀请码", 400);
-    }
-    // CAS 更新邀请码使用次数
-    const updated = await db
-      .update(lotteryInviteCodes)
-      .set({ usedCount: sql`used_count + 1` })
-      .where(and(
-        eq(lotteryInviteCodes.drawId, draw.id),
-        eq(lotteryInviteCodes.code, body.inviteCode),
-        eq(lotteryInviteCodes.active, 1),
-        sql`${lotteryInviteCodes.usedCount} < ${lotteryInviteCodes.maxUses}`,
-      ));
-    if (updated.rowsAffected === 0) {
-      return fail(c, "邀请码无效或已用完", 403);
-    }
-  }
-
-  // 加入候选池
   try {
-    await db.insert(lotteryEntries).values({
-      id: crypto.randomUUID(),
-      tenantId: draw.tenantId,
-      drawId: draw.id,
-      identityType: "email",
-      identityValue: email,
-      joinedAt: new Date().toISOString(),
+    const result = await joinDraw(db, slug, email, "email", {
+      accessPassword: body.accessPassword,
+      inviteCode: body.inviteCode,
+      ipHash: ip,
     });
-    return ok(c, { joined: true });
+    if (!result.joined) {
+      return fail(c, result.message || "参与失败", 400);
+    }
+    return ok(c, {
+      joined: true,
+      activityKind: draw.activityKind || "lottery",
+      outcome: "outcome" in result ? result.outcome : undefined,
+    });
   } catch (err: any) {
     if (err.message?.includes("UNIQUE constraint")) {
       return fail(c, "您已参与此活动", 409);
@@ -310,7 +288,11 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
     if (!result.joined) {
       return fail(c, result.message || "参与失败", 400);
     }
-    return ok(c, { joined: true });
+    return ok(c, {
+      joined: true,
+      activityKind: "activityKind" in result ? result.activityKind : undefined,
+      outcome: "outcome" in result ? result.outcome : undefined,
+    });
   } catch (err) {
     if (err instanceof Error && err.message.includes("UNIQUE constraint")) {
       return fail(c, "您已参与此活动", 409);
@@ -352,7 +334,19 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
 
   const result: any = { joined: true, joinedAt: entry.joinedAt, status: draw.status };
 
-  if (draw.status === "drawn") {
+  if (draw.activityKind === "signup_chain") {
+    const outcome = await getActivityOutcome(db, draw.tenantId, draw.id, entry.id);
+    result.activityKind = draw.activityKind;
+    result.outcome = outcome ? {
+      id: outcome.id,
+      outcomeType: outcome.outcomeType,
+      status: outcome.status,
+      sequenceNo: outcome.sequenceNo,
+      assignmentNo: outcome.assignmentNo,
+      resultLabel: outcome.resultLabel,
+      decidedAt: outcome.decidedAt,
+    } : undefined;
+  } else if (draw.status === "drawn") {
     const [winner] = await db
       .select()
       .from(lotteryWinners)

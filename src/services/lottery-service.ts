@@ -33,7 +33,7 @@ import {
   lotteryInviteCodes,    // 邀请码表
   auditLogs,             // 审计日志表
   lotteryBlacklist,      // 参与者黑名单
-  activityAssignments,   // 接龙/预约等活动的统一分配结果
+  activityOutcomes,      // 接龙/预约等活动的统一结果
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
@@ -45,16 +45,19 @@ export type DrawResult = {
   candidateCount: number; // 候选池总人数
 };
 
-export type ActivityAssignment = {
+export type ActivityOutcome = {
   id: string;
   drawId: string;
   entryId: string;
-  assignmentType: string;
+  outcomeType: string;
   status: string;
-  position: number;
-  label: string;
+  sequenceNo: number;
+  assignmentNo: number | null;
+  resultKey: string;
+  resultLabel: string;
   metadataJson: string;
-  assignedAt: string;
+  decidedAt: string | null;
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -481,36 +484,42 @@ export async function joinDraw(
         .select({ total: count() })
         .from(lotteryEntries)
         .where(and(eq(lotteryEntries.tenantId, draw.tenantId), eq(lotteryEntries.drawId, draw.id)));
-      const position = Number(total);
-      const status = draw.maxParticipants && position > draw.maxParticipants ? "waitlisted" : "confirmed";
-      const assignmentId = crypto.randomUUID();
-      const assignedAt = nowIso;
-      await tx.insert(activityAssignments).values({
-        id: assignmentId,
+      const sequenceNo = Number(total);
+      const status = draw.maxParticipants && sequenceNo > draw.maxParticipants ? "waitlisted" : "assigned";
+      const assignmentNo = status === "assigned" ? sequenceNo : null;
+      const resultLabel = status === "assigned"
+        ? `第 ${sequenceNo} 位`
+        : `候补第 ${sequenceNo - (draw.maxParticipants || 0)} 位`;
+      const outcomeId = crypto.randomUUID();
+      await tx.insert(activityOutcomes).values({
+        id: outcomeId,
         tenantId: draw.tenantId,
         drawId: draw.id,
         entryId,
-        assignmentType: "slot",
+        outcomeType: "assignment",
         status,
-        position,
-        label: status === "confirmed" ? `第 ${position} 位` : `候补第 ${position - (draw.maxParticipants || 0)} 位`,
+        sequenceNo,
+        assignmentNo,
+        resultKey: status === "assigned" ? `slot_${sequenceNo}` : `waitlist_${sequenceNo - (draw.maxParticipants || 0)}`,
+        resultLabel,
         metadataJson: JSON.stringify({ source: "signup_chain", allocationPolicy: draw.allocationPolicy }),
-        assignedAt,
-        updatedAt: assignedAt,
+        decidedAt: nowIso,
+        createdAt: nowIso,
+        updatedAt: nowIso,
       });
 
       return {
         joined: true,
         entryId,
-        assignment: {
-          id: assignmentId,
+        outcome: {
+          id: outcomeId,
           drawId: draw.id,
           entryId,
-          assignmentType: "slot",
+          outcomeType: "assignment",
           status,
-          position,
-          label: status === "confirmed" ? `第 ${position} 位` : `候补第 ${position - (draw.maxParticipants || 0)} 位`,
-          assignedAt,
+          sequenceNo,
+          assignmentNo,
+          resultLabel,
         },
       };
     });
@@ -524,28 +533,28 @@ export async function joinDraw(
 }
 
 /**
- * 查询参与者在活动中的分配结果。
+ * 查询参与者在活动中的结果。
  * 公开接口只能通过活动 slug + 身份查找，管理接口必须额外传租户。
  */
-export async function getActivityAssignment(
+export async function getActivityOutcome(
   db: DbType,
   tenantId: string,
   drawId: string,
   entryId: string,
 ) {
-  const [assignment] = await db
+  const [outcome] = await db
     .select()
-    .from(activityAssignments)
+    .from(activityOutcomes)
     .where(and(
-      eq(activityAssignments.tenantId, tenantId),
-      eq(activityAssignments.drawId, drawId),
-      eq(activityAssignments.entryId, entryId),
+      eq(activityOutcomes.tenantId, tenantId),
+      eq(activityOutcomes.drawId, drawId),
+      eq(activityOutcomes.entryId, entryId),
     ))
     .limit(1);
-  return assignment || null;
+  return outcome || null;
 }
 
-export async function getActivityAssignments(
+export async function getActivityOutcomes(
   db: DbType,
   tenantId: string,
   drawId: string,
@@ -554,9 +563,9 @@ export async function getActivityAssignments(
 ) {
   return db
     .select()
-    .from(activityAssignments)
-    .where(and(eq(activityAssignments.tenantId, tenantId), eq(activityAssignments.drawId, drawId)))
-    .orderBy(activityAssignments.position)
+    .from(activityOutcomes)
+    .where(and(eq(activityOutcomes.tenantId, tenantId), eq(activityOutcomes.drawId, drawId)))
+    .orderBy(activityOutcomes.sequenceNo)
     .limit(limit)
     .offset(offset);
 }

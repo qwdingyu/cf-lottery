@@ -94,6 +94,14 @@ beforeAll(async () => {
     id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, identity_value TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS activity_outcomes (
+    id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, draw_id TEXT NOT NULL, entry_id TEXT NOT NULL,
+    outcome_type TEXT NOT NULL DEFAULT 'assignment', status TEXT NOT NULL DEFAULT 'assigned',
+    sequence_no INTEGER NOT NULL, assignment_no INTEGER,
+    result_key TEXT NOT NULL DEFAULT '', result_label TEXT NOT NULL DEFAULT '',
+    metadata_json TEXT NOT NULL DEFAULT '{}', decided_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
   await client.execute({ sql: "INSERT OR IGNORE INTO tenants (id, name) VALUES (?, ?)", args: [TENANT, "Test"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)", args: [USER, "test", "hash"] });
   await client.execute({ sql: "INSERT OR IGNORE INTO tenant_members (tenant_id, user_id) VALUES (?, ?)", args: [TENANT, USER] });
