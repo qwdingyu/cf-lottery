@@ -4,7 +4,7 @@
       <!-- 底层：奖品内容 -->
       <div class="scratch-prize">
         <span class="prize-icon">🎁</span>
-        <span class="prize-text">{{ prizeName }}</span>
+        <span class="prize-text">已参与 ✓</span>
       </div>
       <!-- 上层：涂层（Canvas 刮开） -->
       <canvas
@@ -46,11 +46,8 @@ const canvasRef = ref<HTMLCanvasElement>()
 const scratched = ref(false)
 const isDrawing = ref(false)
 
-/** 随机展示一个奖品名称 */
-const prizeName = computed(() => {
-  if (props.prizes.length === 0) return '?'
-  return props.prizes[Math.floor(Math.random() * props.prizes.length)]!.name
-})
+/** 展示参与状态（不展示随机奖品，避免误导用户以为已中奖） */
+const prizeName = ref('')
 
 function initCanvas() {
   const canvas = canvasRef.value

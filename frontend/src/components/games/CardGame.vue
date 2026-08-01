@@ -13,7 +13,7 @@
             <span class="card-number">{{ i + 1 }}</span>
           </div>
           <div class="card-back" :style="{ background: getColor(i) }">
-            <span class="card-prize-name">{{ card.prize?.name || '?' }}</span>
+            <span class="card-prize-name">🎁</span>
           </div>
         </div>
       </div>
@@ -40,10 +40,10 @@ const emit = defineEmits<{ play: [] }>()
 
 const defaultColors = ['#f43f5e', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899']
 
-/** 生成卡片：每张随机分配一个奖品 */
+/** 生成卡片：每张显示中性图标（不展示奖品名称，避免误导用户以为已中奖） */
 const cards = ref(
   Array.from({ length: 6 }, () => ({
-    prize: props.prizes[Math.floor(Math.random() * Math.max(props.prizes.length, 1))],
+    prize: { name: '' },
     flipped: false,
   }))
 )

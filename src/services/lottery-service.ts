@@ -146,8 +146,12 @@ export async function createDraw(
   data: {
     title: string;
     description?: string;
+    activityKind?: string;         // 活动类型：lottery/signup_chain/reservation...
     participationMode?: string;   // 参与模式：open/roster/password/invite_code
+    experienceType?: string;       // 前端体验：wheel/slot/scratch/card/submit...
     drawTrigger?: string;          // 开奖触发：manual/scheduled
+    resultMode?: string;           // 结果模式：manual/scheduled/instant/ordered_assignment...
+    policyVersion?: number;        // 规则版本，便于后续活动引擎演进
     startAt: string;               // 参与开始时间（ISO 8601）
     endAt: string;                 // 参与结束时间（ISO 8601）
     drawAt?: string;               // 定时开奖时间（ISO 8601）
@@ -157,6 +161,8 @@ export async function createDraw(
     showParticipantCount?: number; // 是否公开参与人数（0/1）
     showWinnerCount?: number;      // 是否公开中奖人数（0/1）
     showWinnerList?: number;       // 是否公开中奖名单（0/1）
+    productLink?: string;          // 旧导流配置，JSON 字符串
+    promotionConfig?: string;      // 活动引擎导流配置，JSON 字符串
   },
 ) {
   // 校验参与时间合法性
@@ -191,8 +197,12 @@ export async function createDraw(
     publicSlug,
     title: data.title,
     description: data.description || "",
+    activityKind: data.activityKind || "lottery",
     participationMode: data.participationMode || "open",
+    experienceType: data.experienceType || defaultExperienceForParticipation(data.participationMode || "open"),
     drawTrigger: data.drawTrigger || "manual",
+    resultMode: data.resultMode || data.drawTrigger || "manual",
+    policyVersion: data.policyVersion || 1,
     startAt: data.startAt,
     endAt: data.endAt,
     drawAt: data.drawAt || null,
@@ -202,12 +212,21 @@ export async function createDraw(
     showParticipantCount: data.showParticipantCount ?? 1,
     showWinnerCount: data.showWinnerCount ?? 1,
     showWinnerList: data.showWinnerList ?? 0,
+    productLink: data.productLink || "{}",
+    promotionConfig: data.promotionConfig || "{}",
     status: "draft",
     createdAt: now,
     updatedAt: now,
   });
 
   return { id, publicSlug };
+}
+
+function defaultExperienceForParticipation(participationMode: string): string {
+  if (participationMode === "invite_code") return "slot";
+  if (participationMode === "password") return "scratch";
+  if (participationMode === "roster") return "card";
+  return "wheel";
 }
 
 /**

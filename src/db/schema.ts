@@ -76,8 +76,12 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   title: text("title").notNull(),
   description: text("description").notNull().default(""),
   status: text("status").notNull().default("draft"),
+  activityKind: text("activity_kind").notNull().default("lottery"),
   participationMode: text("participation_mode").notNull().default("open"),
+  experienceType: text("experience_type").notNull().default("wheel"),
   drawTrigger: text("draw_trigger").notNull().default("manual"),
+  resultMode: text("result_mode").notNull().default("manual"),
+  policyVersion: integer("policy_version").notNull().default(1),
   startAt: text("start_at").notNull(),
   endAt: text("end_at").notNull(),
   drawAt: text("draw_at"),
@@ -94,6 +98,8 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   algorithmVersion: text("algorithm_version").notNull().default("uniform_v1"),
   // 导流：关联商品推广链接（JSON 格式：{url, title, imageUrl, price}）
   productLink: text("product_link").notNull().default("{}"),
+  // 活动引擎导流配置（版本化 JSON）。productLink 保留为旧字段兼容。
+  promotionConfig: text("promotion_config").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({

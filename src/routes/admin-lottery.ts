@@ -27,6 +27,12 @@ import {
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 
+const ACTIVITY_KINDS = new Set(["lottery"]);
+const PARTICIPATION_MODES = new Set(["open", "roster", "password", "invite_code"]);
+const EXPERIENCE_TYPES = new Set(["submit", "wheel", "slot", "scratch", "card"]);
+const DRAW_TRIGGERS = new Set(["manual", "scheduled"]);
+const RESULT_MODES = new Set(["manual", "scheduled", "instant"]);
+
 // 所有管理端路由需要登录
 adminLotteryRoute.use("*", requireAuth);
 
@@ -223,8 +229,12 @@ adminLotteryRoute.post("/draws", async (c) => {
     const { id, publicSlug } = await createDraw(db, tenantId, {
       title: String(body.title || ""),
       description: String(body.description || ""),
-      participationMode: String(body.participationMode || "open"),
-      drawTrigger: String(body.drawTrigger || "manual"),
+      activityKind: coerceEnum(body.activityKind, ACTIVITY_KINDS, "lottery"),
+      participationMode: coerceEnum(body.participationMode, PARTICIPATION_MODES, "open"),
+      experienceType: coerceEnum(body.experienceType, EXPERIENCE_TYPES, defaultExperienceForParticipation(String(body.participationMode || "open"))),
+      drawTrigger: coerceEnum(body.drawTrigger, DRAW_TRIGGERS, "manual"),
+      resultMode: coerceEnum(body.resultMode || body.drawTrigger, RESULT_MODES, "manual"),
+      policyVersion: 1,
       startAt: String(body.startAt || ""),
       endAt: String(body.endAt || ""),
       drawAt: body.drawAt || undefined,
@@ -276,8 +286,11 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     .set({
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(body.description !== undefined ? { description: body.description } : {}),
-      ...(body.participationMode !== undefined ? { participationMode: body.participationMode } : {}),
-      ...(body.drawTrigger !== undefined ? { drawTrigger: body.drawTrigger } : {}),
+      ...(body.activityKind !== undefined ? { activityKind: coerceEnum(body.activityKind, ACTIVITY_KINDS, "lottery") } : {}),
+      ...(body.participationMode !== undefined ? { participationMode: coerceEnum(body.participationMode, PARTICIPATION_MODES, draw.participationMode) } : {}),
+      ...(body.experienceType !== undefined ? { experienceType: coerceEnum(body.experienceType, EXPERIENCE_TYPES, draw.experienceType || defaultExperienceForParticipation(draw.participationMode)) } : {}),
+      ...(body.drawTrigger !== undefined ? { drawTrigger: coerceEnum(body.drawTrigger, DRAW_TRIGGERS, draw.drawTrigger) } : {}),
+      ...(body.resultMode !== undefined ? { resultMode: coerceEnum(body.resultMode, RESULT_MODES, draw.resultMode || draw.drawTrigger) } : {}),
       ...(body.startAt !== undefined ? { startAt: body.startAt } : {}),
       ...(body.endAt !== undefined ? { endAt: body.endAt } : {}),
       ...(body.drawAt !== undefined ? { drawAt: body.drawAt } : {}),
@@ -709,4 +722,16 @@ function validateProductLink(link: any): string | null {
   if (typeof link.imageUrl === "string" && link.imageUrl.length > 2000) return "图片链接过长";
   if (typeof link.price === "string" && link.price.length > 50) return "展示价格过长";
   return null;
+}
+
+function coerceEnum(value: unknown, allowed: Set<string>, fallback: string): string {
+  const normalized = String(value || "").trim();
+  return allowed.has(normalized) ? normalized : fallback;
+}
+
+function defaultExperienceForParticipation(participationMode: string): string {
+  if (participationMode === "invite_code") return "slot";
+  if (participationMode === "password") return "scratch";
+  if (participationMode === "roster") return "card";
+  return "wheel";
 }
