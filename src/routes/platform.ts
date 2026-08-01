@@ -8,8 +8,9 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { fail, getDb, ok } from "../lib/http";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
-import { tenants, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws } from "../db/schema";
+import { tenants, platformMembers, users, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
+import { writePlatformAudit } from "../services/admin/platform-audit";
 
 export const platformRoute = new Hono<AppEnv>();
 
@@ -25,6 +26,132 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.trunc(parsed), min), max);
 }
+
+// ═════════════════════════════════════════════════════════
+// 平台成员管理（仅 platform_owner）
+// ═════════════════════════════════════════════════════════
+
+/** 平台成员列表 */
+platformRoute.get("/members", requirePlatformMember(["platform_owner"]), async (c) => {
+  const db = getDb(c);
+  const rows = await db
+    .select()
+    .from(platformMembers)
+    .orderBy(desc(platformMembers.createdAt));
+
+  return ok(c, { members: rows });
+});
+
+/** 添加平台成员（按用户名或邮箱查找用户，加入平台成员表） */
+platformRoute.post("/members", requirePlatformMember(["platform_owner"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const body = await c.req.json<{ username?: string; email?: string; role?: string }>();
+  const role = String(body.role || "platform_operator");
+  const PLATFORM_ROLES = ["platform_owner", "platform_operator", "platform_support"];
+  if (!PLATFORM_ROLES.includes(role)) return fail(c, "无效的平台角色", 400);
+
+  // 按用户名或邮箱查找用户
+  const conditions: SQL[] = [];
+  if (body.username) conditions.push(eq(users.username, String(body.username).trim()));
+  if (body.email) conditions.push(eq(users.email, String(body.email).trim().toLowerCase()));
+  if (conditions.length === 0) return fail(c, "请提供用户名或邮箱", 400);
+
+  const [user] = await db.select().from(users).where(and(...conditions)).limit(1);
+  if (!user) return fail(c, "用户不存在，请确认用户名或邮箱", 404);
+
+  // 检查是否已是平台成员
+  const [existing] = await db
+    .select({ userId: platformMembers.userId })
+    .from(platformMembers)
+    .where(eq(platformMembers.userId, user.id))
+    .limit(1);
+  if (existing) return fail(c, "该用户已是平台成员", 409);
+
+  // 加入平台成员表
+  await db.insert(platformMembers).values({
+    userId: user.id,
+    role,
+    status: "active",
+  });
+
+  // 平台审计：添加平台成员是敏感操作，必须留痕
+  await writePlatformAudit(db, {
+    actorUserId,
+    actorRole: "platform_owner",
+    action: "platform.member.create",
+    targetType: "platform_member",
+    targetId: user.id,
+    metadata: { username: user.username, role },
+  });
+
+  return ok(c, { userId: user.id, username: user.username, role });
+});
+
+/** 修改平台成员角色或状态 */
+platformRoute.patch("/members/:userId", requirePlatformMember(["platform_owner"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const targetUserId = c.req.param("userId");
+  if (!targetUserId) return fail(c, "缺少用户 ID", 400);
+  const body = await c.req.json<{ role?: string; status?: string }>();
+
+  // 不能修改自己的角色（防止 owner 自降级导致平台失控）
+  if (targetUserId === actorUserId) return fail(c, "不能修改自己的平台角色", 400);
+
+  const PLATFORM_ROLES = ["platform_owner", "platform_operator", "platform_support"];
+  if (body.role && !PLATFORM_ROLES.includes(body.role)) return fail(c, "无效的平台角色", 400);
+  if (body.status && !["active", "disabled"].includes(body.status)) return fail(c, "无效的状态", 400);
+
+  const [existing] = await db
+    .select()
+    .from(platformMembers)
+    .where(eq(platformMembers.userId, targetUserId))
+    .limit(1);
+  if (!existing) return fail(c, "平台成员不存在", 404);
+
+  await db.update(platformMembers)
+    .set({
+      ...(body.role ? { role: body.role } : {}),
+      ...(body.status ? { status: body.status } : {}),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(platformMembers.userId, targetUserId));
+
+  await writePlatformAudit(db, {
+    actorUserId,
+    actorRole: "platform_owner",
+    action: "platform.member.update",
+    targetType: "platform_member",
+    targetId: targetUserId,
+    metadata: { role: body.role, status: body.status },
+  });
+
+  return ok(c, { updated: true });
+});
+
+/** 移除平台成员 */
+platformRoute.delete("/members/:userId", requirePlatformMember(["platform_owner"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const targetUserId = c.req.param("userId");
+  if (!targetUserId) return fail(c, "缺少用户 ID", 400);
+
+  // 不能移除自己（防止平台无人管理）
+  if (targetUserId === actorUserId) return fail(c, "不能移除自己", 400);
+
+  await db.delete(platformMembers).where(eq(platformMembers.userId, targetUserId));
+
+  await writePlatformAudit(db, {
+    actorUserId,
+    actorRole: "platform_owner",
+    action: "platform.member.delete",
+    targetType: "platform_member",
+    targetId: targetUserId,
+  });
+
+  return ok(c, { deleted: true });
+});
 
 // ═════════════════════════════════════════════════════════
 // 租户管理
