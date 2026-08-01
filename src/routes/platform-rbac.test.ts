@@ -11,11 +11,12 @@ import { createClient, type Client } from "@libsql/client";
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { createDb, type DbType } from "../db/client";
+import { systemConfigRoute } from "./system-config";
 import { platformSystemConfigRoute } from "./platform-system-config";
 import { platformRedemptionCodesRoute } from "./platform-redemption-codes";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt } from "../middleware/auth";
-import { platformMembers, redemptionCodes, tenantMembers, tenants, users } from "../db/schema";
+import { platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 let client: Client;
@@ -69,6 +70,7 @@ function createTestApp() {
     await next();
   });
   app.route("/api/admin", adminLotteryRoute);
+  app.route("/api/system-config", systemConfigRoute);
   app.route("/api/platform/system-config", platformSystemConfigRoute);
   app.route("/api/platform/redemption-codes", platformRedemptionCodesRoute);
   return app;
@@ -138,6 +140,21 @@ describe("RBAC-lite 路由分层", () => {
       body: JSON.stringify({ count: 1, activityQuota: 1, participantQuota: 0, durationDays: 30 }),
     }, TEST_ENV);
     expect(batchRes.status).toBe(404);
+  });
+
+  it("公开系统配置只走白名单接口，不需要平台权限也不泄漏管理项", async () => {
+    const app = createTestApp();
+    await db.insert(systemConfig).values([
+      { key: "platform_name", value: "公开平台名" },
+      { key: "email_from_name", value: "内部发件名" },
+    ]);
+
+    const res = await app.request("/api/system-config/system-config", {}, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const payload = await res.json() as { config: Record<string, string | undefined> };
+    expect(payload.config.platform_name).toBe("公开平台名");
+    expect(payload.config.email_from_name).toBeUndefined();
   });
 
   it("viewer 可以读取租户后台，但不能执行写操作", async () => {

@@ -36,6 +36,7 @@ import {
   createPrize,
   importPrizeCodes,
 } from "../services/lottery-service";
+import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 
@@ -291,6 +292,56 @@ adminLotteryRoute.get("/draws/:id", async (c) => {
   const draw = await getDraw(db, c.req.param("id"), tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
   return ok(c, { draw });
+});
+
+/** 获取活动模板列表 */
+adminLotteryRoute.get("/templates", async (c) => {
+  return ok(c, { templates: ACTIVITY_TEMPLATES });
+});
+
+/** 复制活动（复制配置，不包括参与数据） */
+adminLotteryRoute.post("/draws/:id/copy", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const draw = await getDraw(db, drawId, tenantId);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  // 复制活动配置，生成新的 public_slug
+  const newId = crypto.randomUUID();
+  const newSlug = crypto.randomUUID().slice(0, 8);
+  const now = new Date().toISOString();
+
+  await db.insert(lotteryDraws).values({
+    id: newId,
+    tenantId,
+    publicSlug: newSlug,
+    title: `${draw.title}（副本）`,
+    description: draw.description,
+    activityKind: draw.activityKind,
+    participationMode: draw.participationMode,
+    experienceType: draw.experienceType,
+    drawTrigger: draw.drawTrigger,
+    resultMode: draw.resultMode,
+    allocationPolicy: draw.allocationPolicy,
+    policyVersion: draw.policyVersion,
+    startAt: draw.startAt,
+    endAt: draw.endAt,
+    drawAt: draw.drawAt,
+    accessPassword: draw.accessPassword,
+    maxParticipants: draw.maxParticipants,
+    winnerCount: draw.winnerCount,
+    showParticipantCount: draw.showParticipantCount,
+    showWinnerCount: draw.showWinnerCount,
+    showWinnerList: draw.showWinnerList,
+    promotionConfig: draw.promotionConfig,
+    status: "draft",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return ok(c, { id: newId, publicSlug: newSlug, title: `${draw.title}（副本）` });
 });
 
 /** 创建活动 */

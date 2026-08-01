@@ -2,38 +2,38 @@
   <div class="landing-page">
     <!-- 顶部导航 -->
     <nav class="landing-nav">
-      <span class="nav-brand">🎯 Lucky Draw</span>
+      <span class="nav-brand">运营活动引擎</span>
       <RouterLink to="/admin/login" class="nav-link">登录</RouterLink>
     </nav>
 
     <!-- Hero -->
     <header class="landing-hero">
-      <h1 class="hero-title">3 分钟创建抽奖活动<br>自动发奖，公平开奖</h1>
-      <p class="hero-subtitle">社群运营、门店促销、企业年会 — 四种游戏模式，提升参与感</p>
+      <h1 class="hero-title">3 分钟搭建可复盘的活动<br>从参与到承接一步到位</h1>
+      <p class="hero-subtitle">面向站长、社群运营和活动负责人，用模板、规则校验、二维码和数据复盘快速完成留资、发券、报名、抽奖和导流目标。</p>
       <div class="hero-actions">
         <RouterLink to="/admin/register" class="btn btn-primary btn-lg">免费注册，开始使用</RouterLink>
-        <p class="hero-note">无需信用卡，免费套餐支持 3 个活动</p>
+        <p class="hero-note">无需信用卡，先用免费套餐验证活动目标</p>
       </div>
     </header>
 
-    <!-- 四步流程 -->
+    <!-- 创建流程 -->
     <section class="landing-section">
-      <h2 class="section-title">三步完成抽奖活动</h2>
+      <h2 class="section-title">三步把活动跑起来</h2>
       <div class="steps-grid">
         <div class="step-card">
           <div class="step-number">1</div>
-          <h3>创建活动</h3>
-          <p>设置活动名称、奖品、参与规则。支持公开、名单、密码、邀请码四种模式。</p>
+          <h3>选择活动目标</h3>
+          <p>从福利抽奖、报名接龙、资料领取、问卷调研等模板开始，默认规则先帮你选好。</p>
         </div>
         <div class="step-card">
           <div class="step-number">2</div>
-          <h3>分享链接</h3>
-          <p>一键复制活动链接或二维码，分享到微信群、朋友圈、公众号。</p>
+          <h3>确认规则并发布</h3>
+          <p>校验资格、去重、容量、候补、码池和时间设置，减少活动开始后的人工补救。</p>
         </div>
         <div class="step-card">
           <div class="step-number">3</div>
-          <h3>自动开奖</h3>
-          <p>定时自动开奖或手动开奖，中奖者自动收到邮件通知和卡密。</p>
+          <h3>分享、复盘、承接</h3>
+          <p>复制链接和二维码，跟踪浏览、参与、CTA、分享和外部转化，把结果继续导向下一步。</p>
         </div>
       </div>
     </section>
