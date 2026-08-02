@@ -19,8 +19,8 @@
         </div>
       </div>
       <div class="session-bar">
-        <template v-if="sessionEmail">
-          <span class="session-email" :title="sessionEmail">{{ sessionEmail }}</span>
+        <template v-if="sessionEmail || registeredUsername">
+          <span class="session-email" :title="registeredUsername || sessionEmail">{{ registeredUsername || sessionEmail }}</span>
           <button type="button" class="btn btn-ghost btn-sm" @click="handleLogout">
             {{ $t('lottery.logout') }}
           </button>
@@ -410,9 +410,31 @@
     <!-- 登录弹窗 -->
     <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLogin">
       <div class="modal-content" role="dialog" aria-modal="true" :aria-label="$t('lottery.emailVerify')">
-        <h3 class="modal-title">{{ $t('lottery.emailVerify') }}</h3>
-        <p class="modal-hint">{{ $t('lottery.emailVerifyHint') }}</p>
-        <div class="modal-form">
+        <h3 class="modal-title">{{ isRegisteredJoin ? '登录参与' : $t('lottery.emailVerify') }}</h3>
+        <p class="modal-hint">{{ isRegisteredJoin ? '此活动需要注册账号后才能参与' : $t('lottery.emailVerifyHint') }}</p>
+
+        <!-- registered 模式：用户名密码登录 -->
+        <div v-if="isRegisteredJoin" class="modal-form">
+          <label>
+            <span>用户名</span>
+            <input v-model="regLoginUsername" type="text" autocomplete="username" @keyup.enter="handleRegisteredLogin" />
+          </label>
+          <label>
+            <span>密码</span>
+            <input v-model="regLoginPassword" type="password" autocomplete="current-password" @keyup.enter="handleRegisteredLogin" />
+          </label>
+          <p v-if="loginError" class="field-hint" style="color:var(--tg-danger)">{{ loginError }}</p>
+          <button class="btn btn-primary" style="width:100%" :disabled="regLoginLoading" @click="handleRegisteredLogin">
+            {{ regLoginLoading ? '登录中…' : '登录并参与' }}
+          </button>
+          <p class="field-hint" style="text-align:center;margin-top:8px">
+            还没有账号？
+            <a href="/admin/register" target="_blank" class="btn btn-ghost btn-xs">去注册</a>
+          </p>
+        </div>
+
+        <!-- open 模式：邮箱验证码（保留原逻辑） -->
+        <div v-else class="modal-form">
           <label>
             <span>{{ $t('lottery.emailPlaceholder') }}</span>
             <input
@@ -674,6 +696,20 @@ const recordsLoading = ref(false)
 const draws = ref<LotteryDraw[]>([])
 const expandedId = ref<string | null>(null)
 const sessionEmail = ref('')
+/** registered 模式：已登录用户的 JWT token */
+const registeredToken = ref('')
+/** registered 模式：已登录用户名（展示用） */
+const registeredUsername = ref('')
+/** registered 模式登录表单 */
+const regLoginUsername = ref('')
+const regLoginPassword = ref('')
+const regLoginLoading = ref(false)
+/** 当前登录弹窗对应的活动是否是 registered 模式 */
+const isRegisteredJoin = computed(() => {
+  if (!pendingJoinDrawId.value) return false
+  const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
+  return draw?.participationMode === 'registered'
+})
 const myJoinedById = ref<Record<string, true>>({})
 const myWonById = ref<Record<string, any>>({})
 const myOutcomeById = ref<Record<string, ActivityOutcome>>({})
@@ -1141,6 +1177,55 @@ async function fetchDraws() {
     draws.value = []
   } finally {
     loading.value = false
+  }
+}
+
+/** registered 模式：用户名密码登录后直接参与 */
+async function handleRegisteredLogin() {
+  if (!regLoginUsername.value || !regLoginPassword.value) {
+    loginError.value = '请输入用户名和密码'
+    return
+  }
+  if (!pendingJoinDrawId.value) return
+
+  regLoginLoading.value = true
+  loginError.value = ''
+  try {
+    // 1. 登录获取 JWT
+    const loginRes = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: regLoginUsername.value, password: regLoginPassword.value }),
+    })
+    const loginData = await loginRes.json()
+    if (!loginData.ok) { loginError.value = loginData.message || '登录失败'; return }
+
+    const token = loginData.token
+    registeredToken.value = token
+    registeredUsername.value = regLoginUsername.value
+    sessionEmail.value = regLoginUsername.value
+
+    // 2. 带 JWT 调 access-code（registered 模式后端检测 JWT 后跳过验证码直接参与）
+    const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/access-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ email: registeredUsername.value, submission: draw ? buildSubmissionPayload(draw) : undefined }),
+    })
+    const data = await res.json()
+    if (data.ok && data.joined) {
+      const joinedDrawId = pendingJoinDrawId.value
+      myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
+      closeLogin()
+      showToast('参与成功', 'success')
+      void recordActivityEvent(joinedDrawId, 'participation_completed')
+    } else {
+      loginError.value = data.message || '参与失败'
+    }
+  } catch {
+    loginError.value = '网络错误'
+  } finally {
+    regLoginLoading.value = false
   }
 }
 
