@@ -13,3 +13,4 @@ public/
 coverage/
 .env
 *.tsbuildinfo
+data/
