@@ -19,6 +19,7 @@
  * - 邀请码防超发：条件 UPDATE WHERE used_count < max_uses
  * - 锁码防重：条件 UPDATE WHERE status = 'available'
  */
+import type { DbType } from "../db/client";
 import { and, eq, sql } from "drizzle-orm";
 import { sendEmail } from "./email-service";
 import {
