@@ -22,7 +22,6 @@
 import { withDbTransaction, type DbType, type DbWriteScope } from "../db/client";
 import { and, eq, count, inArray, sql, asc } from "drizzle-orm";
 import { buildLotteryWinnerTemplateData, sendEmail } from "./email-service";
-import { buildPublishCheckForDraw } from "./publish-check-service";
 import {
   lotteryDraws,          // 抽奖活动表
   lotteryEntries,        // 候选池表
@@ -43,12 +42,10 @@ import {
   couponCodes,           // 优惠券码池（用于未中奖自动发券）
 } from "../db/schema";
 
-// ── 拆分模块（docs/049 #17：类型/套餐/纯工具/集成已迁至 services/lottery/） ──
+// ── 拆分模块（docs/049 #17：类型/套餐/纯工具/集成/活动管理已迁至 services/lottery/） ──
 // 内部使用：原文件剩余业务逻辑引用的符号从子模块导入
-import { DEFAULT_ACTIVITY_PARTICIPANT_CAP } from "./lottery/types";
 import type { DrawResult } from "./lottery/types";
-import { enforceTenantActivityQuota } from "./lottery/plan";
-import { randomSelect, hashAccessPassword, verifyAccessPassword } from "./lottery/utils";
+import { randomSelect, verifyAccessPassword } from "./lottery/utils";
 // 集成/事件域：参与域（recordAttributedJoin）与开奖域（enqueue/dispatch webhook）复用
 import { recordActivityEvent, enqueueWebhookEvent, dispatchWebhookDelivery } from "./lottery/integration";
 
