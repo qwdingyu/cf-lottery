@@ -1,23 +1,22 @@
 /**
- * 安全审计验证测试（2026-08-02 代码审查配套，2026-08-02 修复复核更新）
+ * 安全审计验证测试（2026-08-02 代码审查配套，修复后行为断言版）
  *
  * 目的：用真实数据库验证代码审查报告中的关键发现，避免"凭感觉报漏洞"。
  * 每个用例对应审查报告中的一个发现，测试通过才认定为真实问题。
  *
- * 覆盖（对应 docs/049 报告条目）：
- * 1. 开奖一致性缺陷（报告 #4）：performDraw 中 winners 写入与 status=drawn 更新分离，
- *    故障残留（winners 已存在但状态被回滚为 open）会导致活动永久无法再次开奖（自锁）。
- *    【尚未修复】测试断言缺陷仍然存在。
- * 2. 限流竞态（报告 #6）：checkDbRateLimit 是 check-then-insert 非原子实现，
- *    并发请求可同时通过检查，绕过限流阈值。
- *    【尚未修复】测试断言缺陷仍然存在。
- * 3. verify-email 无限流（报告 #1）：修复后已加 IP 限流（10 次/15 分钟）。
- *    【已修复】测试断言修复后行为：前 10 次返回 400，第 11 次起返回 429。
- * 4. /result 端点邮箱枚举（报告 #3.5）：修复后与 my-result 对齐，要求验证码。
- *    【已修复】测试断言修复后行为：无验证码/错误验证码被拒，有效验证码可查询。
+ * 覆盖（对应 docs/049 报告条目，2026-08-02 三处已修复）：
+ * 1. 开奖一致性（#3.4 已修复）：winners 与 status=drawn 合并同一事务。
+ *    【已修复】断言修复后行为：正常开奖二者原子落库；事务失败时全部回滚、
+ *    状态回滚 open 可重试，不再产生"winners 残留 + open 状态"的自锁。
+ * 2. 限流竞态（#6 已修复）：checkDbRateLimit 改为单条原子条件 INSERT。
+ *    【已修复】断言修复后行为：同一 key 20 并发、阈值 3，通过数严格等于 3。
+ * 3. verify-email 验证码猜测（#3.1 已修复）：加 IP 限流（内存 + DB 双层，10 次/15 分钟）。
+ *    【已修复】断言修复后行为：前 10 次返回 400，第 11 次起返回 429。
+ * 4. /result 端点邮箱枚举（#3.5 已修复）：与 my-result 对齐，要求验证码。
+ *    【已修复】断言修复后行为：无验证码/错误验证码被拒，有效验证码可查询。
  *
- * 说明：这组测试是"验证审查结论"的正式测试，保留作为知识沉淀；
- * 修复对应缺陷后，相关用例应被更新为"断言修复后行为"而非删除。
+ * 说明：这组测试是"验证审查结论"的正式测试，保留作为回归保护——
+ * 未来任何一处改回缺陷实现，对应用例会立即失败。
  */
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { Hono } from "hono";
@@ -37,6 +36,7 @@ import {
 import {
   emailAccessCodes,
   lotteryDraws,
+  lotteryEntries,
   lotteryPrizeTiers,
   lotteryWinners,
   tenantMembers,
@@ -121,32 +121,65 @@ async function setupOneWinnerDraw() {
   return { id, publicSlug };
 }
 
-/* ── 测试 1：开奖一致性缺陷（winners 与 drawn 状态分离） ── */
+/* ── 测试 1：开奖一致性（winners 与 status=drawn 同事务，修复后行为） ── */
 
-describe("开奖一致性：winners 写入与 status=drawn 更新分离", () => {
-  it("故障残留（winners 已存在但状态回滚 open）后，活动永久无法再次开奖", async () => {
+describe("开奖一致性：winners 写入与 status=drawn 同事务", () => {
+  it("修复后：正常开奖 winners 与 drawn 状态原子落库（状态必为 drawn）", async () => {
     await seedOwner();
     const { id, publicSlug } = await setupOneWinnerDraw();
 
-    // 唯一参与者 → 第二次开奖必然选中同一人 → UNIQUE(tenantId, drawId, entryId) 冲突必然触发
     const join = await joinDraw(db, publicSlug, "victim@test.com");
     expect(join.joined).toBe(true);
 
-    // 第一次开奖正常完成（对照组，证明流程本身可用）
-    const first = await performDraw(db, TENANT, id, USER);
-    expect(first.winnerCount).toBe(1);
+    const result = await performDraw(db, TENANT, id, USER);
+    expect(result.winnerCount).toBe(1);
 
-    // 模拟故障残留：performDraw 中"事务提交 winners 成功、但随后 status=drawn 更新失败"，
-    // 此时 catch 分支会把状态回滚为 open（lottery-service.ts:2054），winners 残留。
-    await db
-      .update(lotteryDraws)
-      .set({ status: "open", failureReason: "模拟：drawn 状态更新失败", updatedAt: new Date().toISOString() })
-      .where(eq(lotteryDraws.id, id));
+    // 原子性：开奖成功后 winners 存在且状态必为 drawn（二者同事务，不可能出现"有 winners 但状态 open"）
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, id))
+      .limit(1);
+    expect(draw?.status).toBe("drawn");
 
-    // 第二次开奖：重新随机抽取必然选中已中奖的同一人 → UNIQUE 冲突 → 开奖失败并再次回滚 open
+    const winners = await db
+      .select()
+      .from(lotteryWinners)
+      .where(and(eq(lotteryWinners.drawId, id), eq(lotteryWinners.tenantId, TENANT)));
+    expect(winners.length).toBe(1);
+  });
+
+  it("修复后：事务中途失败时 winners 与 drawn 全部回滚，活动回滚 open 可重试（不再残留自锁）", async () => {
+    await seedOwner();
+    const { id, publicSlug } = await setupOneWinnerDraw();
+
+    await joinDraw(db, publicSlug, "victim@test.com");
+
+    // 预置一条与参与者同 entry 的 winner 记录，制造 UNIQUE(tenantId, drawId, entryId) 冲突，
+    // 模拟开奖事务中途写入失败（并发残留或历史脏数据场景）。
+    const [entry] = await db
+      .select()
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.drawId, id))
+      .limit(1);
+    await db.insert(lotteryWinners).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      tierId: "tier-preset",
+      entryId: entry!.id,
+      identityType: "email",
+      identityValue: "victim@test.com",
+      prizeCodeId: "",
+      drawnAt: new Date().toISOString(),
+      notificationStatus: "pending",
+    });
+
+    // 开奖：winners 插入必然 UNIQUE 冲突 → 整个事务（含 status=drawn 更新）回滚
     await expect(performDraw(db, TENANT, id, USER)).rejects.toThrow();
 
-    // 活动既无法进入 drawn，也无法通过 healDrawingState 治愈（该函数只处理 drawing 状态）→ 永久自锁
+    // 状态回滚为 open（可重试）：修复前残留场景会因二次开奖再冲突而永久自锁，
+    // 修复后事务失败不落任何新数据，catch 将状态回滚 open 让运营者可重新开奖。
     const [draw] = await db
       .select()
       .from(lotteryDraws)
@@ -154,29 +187,32 @@ describe("开奖一致性：winners 写入与 status=drawn 更新分离", () => 
       .limit(1);
     expect(draw?.status).toBe("open");
 
-    // winners 残留未清理：运营者视角看到"已开奖数据"与"未开奖状态"矛盾
+    // winners 表无新增（事务原子性）：只有预置的那条，无新残留
     const winners = await db
       .select()
       .from(lotteryWinners)
       .where(and(eq(lotteryWinners.drawId, id), eq(lotteryWinners.tenantId, TENANT)));
-    expect(winners.length).toBeGreaterThan(0);
+    expect(winners.length).toBe(1);
   });
 });
 
 /* ── 测试 2：限流竞态（check-then-insert 非原子） ── */
 
-describe("checkDbRateLimit 并发竞态", () => {
-  it("并发请求可绕过限流阈值（check-then-insert 非原子）", async () => {
+describe("checkDbRateLimit 并发限流", () => {
+  it("修复后：同一 key 20 并发、阈值 3，通过数严格等于 3（原子条件 INSERT）", async () => {
     const limit = 3;
+    // key 在测试开始时固定：所有并发调用共享同一计数窗口（修复前用例误用 Date.now() 生成
+    // 不同 key 导致各自独立计数，无法证明竞态；本次固定 key 才能验证限流正确性）
+    const key = `race:${Date.now()}`;
     const concurrency = 20;
     const calls = Array.from({ length: concurrency }, () =>
-      checkDbRateLimit(db, `race:${Date.now()}`, limit, 60000),
+      checkDbRateLimit(db, key, limit, 60000),
     );
     const results = await Promise.all(calls);
     const passed = results.filter(Boolean).length;
 
-    // 原子实现下通过数 ≤ limit；check-then-insert 下多个并发请求会先全部通过检查再各自写入
-    expect(passed).toBeGreaterThan(limit);
+    // 原子实现下通过数严格等于 limit（前 limit 个通过，其余拒绝）
+    expect(passed).toBe(limit);
   });
 });
 

@@ -37,8 +37,12 @@ function checkRateLimit(ip: string, limit = 5, windowMs = 60000): boolean {
 }
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{2,40}$/;
+// 密码存储方案依据 docs/023（Cloudflare 免费版与 Turso 约束下认证和运行安全方案）：
+// 免费层 CPU 10ms/请求的硬约束下，注册/登录热路径禁止高迭代 KDF（PBKDF2 高迭代/bcrypt/Argon2 会
+// 触发 1102 CPU 超限，且攻击者撞接口可用极低成本耗尽免费 CPU）。
+// 故维持"低 CPU 单次 HMAC-SHA256 + 服务端 pepper"方案，离线防护依赖 pepper 保密；
+// 升级路线（023 §3.3）：中期 passwordless（邮箱验证码/魔法链接），长期付费层后迁移 Argon2id/高迭代 PBKDF2。
 const PASSWORD_HASH_ALGORITHM = "hmac_sha256_v1";
-// 免费 Workers 的登录热路径不能默认尝试高迭代 PBKDF2；当前仓库已发布过的旧格式使用 100 次。
 const LEGACY_PBKDF2_ITERATIONS = [100];
 const LEGACY_SHA256_RE = /^[a-f0-9]{64}$/i;
 
@@ -170,11 +174,16 @@ authRoute.post("/register", async (c) => {
 /** 第二步：验证邮箱码 */
 authRoute.post("/verify-email", async (c) => {
   const ip = getClientIp(c);
-  // ★ P0 安全：邮箱验证码试错限流（10次/15分钟/邮箱），防暴力破解
+  // ★ P0 安全：邮箱验证码试错限流（10 次/15 分钟/IP），防暴力破解。
+  // 双层限流与 register/login 一致：内存限流兜底 + DB 级限流（跨 Worker 实例一致，
+  // 023 §6"登录失败限流持久化"落地；DB 层为单条原子条件 INSERT，CPU 成本低）。
   if (!checkRateLimit(`verify-email:${ip}`, 10, 900000)) {
     return c.json({ ok: false, message: "尝试次数过多，请 15 分钟后再试" }, 429);
   }
   const db = getDb(c);
+  if (!(await checkDbRateLimit(db, `verify-email:${ip}`, 10, 900000))) {
+    return c.json({ ok: false, message: "尝试次数过多，请 15 分钟后再试" }, 429);
+  }
   const body = await c.req.json<{ email: string; code: string }>();
   const email = String(body.email || "").trim().toLowerCase();
   const code = String(body.code || "").trim();
