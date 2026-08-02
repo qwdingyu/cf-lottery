@@ -19,10 +19,10 @@ const FILE = path.join(ROOT, "src/services/lottery-service.ts");
 
 const lines = fs.readFileSync(FILE, "utf8").split("\n");
 
-/** 行边界断言：行号（1-based）内容必须包含期望子串（当前阶段：第二轮） */
+/** 行边界断言：行号（1-based）内容必须包含期望子串（当前阶段：第三轮） */
 const ASSERTIONS = [
-  { line: 75, expect: "export async function recordActivityEvent" },
-  { line: 591, expect: "查询函数" },
+  { line: 61, expect: "查询函数" },
+  { line: 380, expect: "候选池" },
 ];
 
 for (const { line, expect } of ASSERTIONS) {
@@ -34,10 +34,10 @@ for (const { line, expect } of ASSERTIONS) {
   }
 }
 
-// 1-based 闭区间 [start, end]，含端点（当前阶段：第二轮——集成/事件域）
-// 历史：第一轮（types 54-190 / plan 192-373 / utils 890-968）已完成并提交。
+// 1-based 闭区间 [start, end]，含端点（当前阶段：第三轮——查询 + 活动管理域）
+// 历史：第一轮（types/plan/utils）、第二轮（integration）已完成并提交。
 const SECTIONS = [
-  { file: "src/services/lottery/integration.ts", start: 75, end: 590, label: "集成/事件域（活动事件、API key、外部转化、Webhook）" },
+  { file: "src/services/lottery/draws.ts", start: 61, end: 379, label: "查询 + 活动管理（getDraw/createDraw/publish/pause/resume/cancel）" },
 ];
 
 // 收集删除行（0-based）

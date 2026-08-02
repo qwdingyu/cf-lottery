@@ -1,38 +1,13 @@
 <template>
   <div class="lottery-view">
-    <header class="page-header">
-      <div class="page-header-main">
-        <h1>{{ $t('lottery.title') }}</h1>
-        <p class="page-subtitle">{{ $t('lottery.pageHint') }}</p>
-        <div v-if="isDeepLinked" class="deep-link-bar">
-          <RouterLink class="btn btn-ghost btn-sm" to="/lottery">
-            {{ $t('lottery.backToAllDraws') }}
-          </RouterLink>
-          <button
-            v-if="draws[0]"
-            type="button"
-            class="btn btn-ghost btn-sm"
-            @click="handleCopyPublicLink(draws[0].id)"
-          >
-            {{ $t('lottery.copyShareLink') }}
-          </button>
-        </div>
-      </div>
-      <div class="session-bar">
+    <header class="lottery-header">
+      <h1 class="lottery-title">{{ drawTitle }}</h1>
+      <div class="lottery-header-actions">
         <template v-if="sessionEmail || registeredUsername">
-          <span class="session-email" :title="registeredUsername || sessionEmail">{{ registeredUsername || sessionEmail }}</span>
-          <button type="button" class="btn btn-ghost btn-sm" @click="handleLogout">
-            {{ $t('lottery.logout') }}
-          </button>
+          <span class="lottery-user">{{ registeredUsername || sessionEmail }}</span>
+          <button class="lottery-logout" @click="handleLogout">退出</button>
         </template>
-        <button
-          v-else
-          type="button"
-          class="btn btn-primary btn-sm"
-          @click="openLogin()"
-        >
-          {{ $t('lottery.loginFirst') }}
-        </button>
+        <button v-else class="lottery-login-btn" @click="openLogin()">登录查看记录</button>
       </div>
     </header>
 
@@ -726,6 +701,21 @@ const isRegisteredJoin = computed(() => {
 })
 /** 结果查询弹窗对应的活动是否是 registered 模式（决定是否用 JWT 查询） */
 const isRegMyResult = computed(() => myResultDraw.value?.participationMode === 'registered')
+
+/** 头部标题：单活动模式用活动名，多活动模式用默认标题 */
+const drawTitle = computed(() => {
+  const d = draws.value[0]
+  return d && draws.value.length === 1 ? d.name : '抽奖活动'
+})
+/** 状态精简文案 */
+const statusText = (s: string) =>
+  ({ draft: '草稿', open: '进行中', paused: '已暂停', drawing: '开奖中', drawn: '已结束', cancelled: '已取消' } as Record<string,string>)[s] || s
+/** 参与时间 */
+const joinedTimeText = (draw: any): string => {
+  const e = sortedMyEntries.value.find((r: any) => r.drawId === draw.id)
+  return e?.joinedAt ? formatTime(e.joinedAt) : ''
+}
+
 const myJoinedById = ref<Record<string, true>>({})
 const myWonById = ref<Record<string, any>>({})
 const myOutcomeById = ref<Record<string, ActivityOutcome>>({})
@@ -1424,6 +1414,51 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ── 头部 ── */
+.lottery-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.lottery-title { margin:0; font-size:20px; font-weight:700; }
+.lottery-user { font-size:13px; color:rgba(255,255,255,0.6); margin-right:8px; }
+.lottery-logout { font-size:12px; color:rgba(255,255,255,0.4); background:none; border:none; cursor:pointer; }
+.lottery-login-btn { font-size:13px; background:none; border:1px solid rgba(255,255,255,0.2); color:#fff; padding:4px 12px; border-radius:6px; cursor:pointer; }
+
+/* ── 中心容器 ── */
+.lottery-center { text-align:center; padding:60px 20px; color:var(--tg-hint,#9aa4b2); }
+
+/* ── 活动卡片 ── */
+.lottery-main { max-width:720px; margin:0 auto; padding:20px; }
+.lottery-card { background:#1a1a2e; border-radius:12px; margin-bottom:16px; overflow:hidden; border:1px solid rgba(255,255,255,0.06); }
+.lottery-card-head { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; cursor:pointer; }
+.lottery-card-head:hover { background:rgba(255,255,255,0.03); }
+.lottery-card-title { margin:0 0 4px; font-size:17px; font-weight:600; }
+.lottery-card-tags { display:flex; gap:6px; flex-wrap:wrap; }
+.lottery-tag { font-size:11px; padding:2px 8px; border-radius:4px; background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.5); }
+.lottery-tag.open { background:rgba(245,158,11,0.15); color:#f59e0b; }
+.lottery-tag.drawn, .lottery-tag.muted { background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.3); }
+.lottery-tag.won { background:rgba(34,197,94,0.15); color:#22c55e; }
+.lottery-tag.joined { background:rgba(59,130,246,0.15); color:#3b82f6; }
+.lottery-tag.count { background:transparent; }
+.lottery-expand-btn { font-size:12px; color:rgba(255,255,255,0.4); background:none; border:none; cursor:pointer; white-space:nowrap; }
+
+/* ── 展开区 ── */
+.lottery-card-body { border-top:1px solid rgba(255,255,255,0.06); }
+.lottery-game-area { padding:24px 20px; display:flex; justify-content:center; }
+.lottery-join-bar { display:flex; align-items:center; justify-content:center; gap:12px; padding:16px 20px; border-top:1px solid rgba(255,255,255,0.06); }
+.lottery-join-btn { font-size:15px; font-weight:600; padding:10px 32px; border-radius:8px; background:var(--admin-accent,#f59e0b); color:#000; border:none; cursor:pointer; }
+.lottery-join-btn:disabled { opacity:0.5; cursor:not-allowed; }
+.lottery-join-hint { font-size:13px; color:rgba(255,255,255,0.5); }
+.lottery-result-btn { font-size:12px; background:none; border:1px solid rgba(255,255,255,0.15); color:rgba(255,255,255,0.6); padding:4px 12px; border-radius:6px; cursor:pointer; }
+
+/* ── 参与记录 ── */
+.lottery-records { max-width:720px; margin:0 auto; padding:0 20px 40px; }
+.lottery-section-title { font-size:15px; font-weight:600; margin:0 0 12px; }
+.lottery-records-list { display:flex; flex-wrap:wrap; gap:6px; }
+.lottery-record { display:flex; align-items:center; gap:8px; padding:6px 12px; background:#1a1a2e; border-radius:8px; font-size:13px; }
+.lottery-record-name { color:rgba(255,255,255,0.7); }
+
+/* ── 保留旧样式（兼容） ── */
 /* 暗色主题：全部使用 base.css 的 CSS 变量，不写死颜色值 */
 
 .lottery-view {
