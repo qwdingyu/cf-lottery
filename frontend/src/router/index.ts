@@ -12,6 +12,22 @@ import LandingView from '@/views/LandingView.vue'
 import { readAdminToken } from '@/composables/useAdminAuth'
 import { readPlatformRole } from '@/composables/useAdminAuth'
 
+/**
+ * 从 JWT payload 解析 tenantId。
+ * 路由守卫用它判断"已登录但无租户"（方案 C：新注册用户无租户），
+ * 重定向到 onboarding，避免访问 /admin 撞后端 403"无租户上下文"。
+ */
+function jwtTenantId(token: string): string {
+  try {
+    const payloadB64 = token.split('.')[1]
+    if (!payloadB64) return ''
+    const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof payload.tenantId === 'string' ? payload.tenantId : ''
+  } catch {
+    return ''
+  }
+}
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -164,6 +180,15 @@ router.beforeEach((to) => {
 
   if (requiresAuth && !adminToken) {
     return { name: 'AdminLogin', query: { redirect: to.fullPath }, replace: true }
+  }
+
+  // ★ 045 方案 C 闭环：已登录但无租户的用户（新注册/未 onboarding），
+  // 访问租户后台（/admin）时重定向 onboarding 引导创建租户。
+  // 排除：
+  // - /platform（L3 平台成员可能没有租户，不强制创建）
+  // - onboarding 本身（避免死循环）
+  if (requiresAuth && adminToken && !isPlatformRoute && to.path !== '/admin/onboarding' && !jwtTenantId(adminToken)) {
+    return { name: 'Onboarding', replace: true }
   }
 
   // 平台路由额外要求平台成员身份。readPlatformRole() 返回 undefined 表示
