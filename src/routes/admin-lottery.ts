@@ -10,8 +10,9 @@ import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger, isValidEmail } from "../lib/http";
+import type { DbType } from "../db/client";
 import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions, externalConversions, systemConfig } from "../db/schema";
-import { eq, and, desc, sql, count } from "drizzle-orm";
+import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import {
   createDraw,
   publishDraw,
@@ -44,6 +45,34 @@ import { buildPublishCheck } from "../services/publish-check-service";
 import { parseActivityConfig } from "../lib/activity-config";
 
 export const adminLotteryRoute = new Hono<AppEnv>();
+
+/**
+ * 参与者身份展示解析（L2 管理员视角闭环）。
+ *
+ * registered 模式的 entry/winner.identity_value 是 userId（UUID），直接展示对管理员
+ * 不可读；此函数对 user_id 身份关联 users 表解析出「用户名(邮箱)」，写入
+ * identityDisplay 字段（保留 identityValue 供去重/审计）。
+ *
+ * 中奖名单 / 参与者列表 / CSV 导出统一使用，一处定义三处消费。
+ * 顺带修复既有展示 bug：前端曾读 w.email（lotteryWinners 无该字段，恒为空）。
+ */
+async function decorateIdentityDisplay(
+  db: DbType,
+  rows: Array<{ identityType?: string | null; identityValue: string }>,
+): Promise<void> {
+  const userIds = [...new Set(rows.filter(r => r.identityType === "user_id" && r.identityValue).map(r => r.identityValue))];
+  if (userIds.length === 0) return;
+  const userRows = await db
+    .select({ id: users.id, username: users.username, email: users.email })
+    .from(users)
+    .where(inArray(users.id, userIds));
+  const nameMap = new Map(userRows.map(u => [u.id, `${u.username}（${u.email}）`] as const));
+  for (const r of rows) {
+    if (r.identityType === "user_id") {
+      (r as any).identityDisplay = nameMap.get(r.identityValue) || `用户 ${r.identityValue.slice(0, 8)}`;
+    }
+  }
+}
 
 const ACTIVITY_KINDS = new Set(["lottery", "signup_chain", "reservation", "vote", "survey", "checkin", "waitlist", "approval", "claim"]);
 const PARTICIPATION_MODES = new Set(["open", "roster", "password", "invite_code", "registered"]);
@@ -960,6 +989,8 @@ adminLotteryRoute.get("/draws/:id/winners", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const rows = await getDrawWinners(db, c.req.param("id"), tenantId);
+  // L2 可读性：user_id 身份（registered）解析为用户名(邮箱)，email 身份原样
+  await decorateIdentityDisplay(db, rows);
   return ok(c, { winners: rows });
 });
 
@@ -968,6 +999,7 @@ adminLotteryRoute.get("/draws/:id/entries", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const rows = await getEntries(db, tenantId, c.req.param("id"));
+  await decorateIdentityDisplay(db, rows);
   return ok(c, { entries: rows });
 });
 
@@ -1202,18 +1234,21 @@ adminLotteryRoute.get("/draws/:id/export", async (c) => {
   const winners = await getDrawWinners(db, drawId, tenantId);
   const entries = await getEntries(db, tenantId, drawId, MAX_EXPORT_ROWS);
   const outcomes = draw.activityKind === "lottery" ? [] : await getActivityOutcomes(db, tenantId, drawId, MAX_EXPORT_ROWS);
+  // L2 可读性：CSV 中的参与者/中奖者用可读身份（registered 用户显示用户名(邮箱)）
+  await decorateIdentityDisplay(db, winners);
+  await decorateIdentityDisplay(db, entries);
 
   // 构建 CSV 内容（所有用户输入经 csvEscape 转义）
   const lines: string[] = [
     "活动名称,状态,参与人数,中奖人数",
     `${csvEscape(draw.title)},${csvEscape(draw.status)},${entries.length},${draw.activityKind === "lottery" ? winners.length : outcomes.length}`,
     "",
-    "参与者邮箱,参与时间",
-    ...entries.map((e) => `${csvEscape(e.identityValue)},${csvEscape(e.joinedAt)}`),
+    "参与者,参与时间",
+    ...entries.map((e) => `${csvEscape(e.identityDisplay || e.identityValue)},${csvEscape(e.joinedAt)}`),
   ];
 
   if (draw.activityKind === "lottery") {
-    lines.push("", "中奖者邮箱,中奖时间", ...winners.map((w) => `${csvEscape(w.identityValue)},${csvEscape(w.drawnAt)}`));
+    lines.push("", "中奖者,中奖时间", ...winners.map((w) => `${csvEscape(w.identityDisplay || w.identityValue)},${csvEscape(w.drawnAt)}`));
   } else {
     lines.push(
       "",
@@ -1872,12 +1907,16 @@ adminLotteryRoute.get("/draws/:id/signup-list", async (c) => {
   const entries = await db
     .select({
       id: lotteryEntries.id,
+      identityType: lotteryEntries.identityType,
       identityValue: lotteryEntries.identityValue,
       joinedAt: lotteryEntries.joinedAt,
     })
     .from(lotteryEntries)
     .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId)))
     .orderBy(lotteryEntries.joinedAt);
+
+  // L2 可读性：registered（user_id 身份）解析为用户名(邮箱)
+  await decorateIdentityDisplay(db, entries);
 
   return ok(c, { entries, total: entries.length });
 });

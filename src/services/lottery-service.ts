@@ -1315,10 +1315,19 @@ export async function joinDraw(
   // 注意：黑名单和名单模式使用原始 value 做校验，只有写入时使用日期后缀 value。
   const checkinDateSuffix = draw.activityKind === "checkin" ? `:${new Date().toISOString().slice(0, 10)}` : "";
   const uniqueValue = normalizedValue + checkinDateSuffix;
+  // ── 黑名单检查 ──
+  // 黑名单按邮箱配置（L2 运营者在管理台输入邮箱）。邮箱身份直接匹配；
+  // registered（user_id）身份需同时匹配 userId 和其注册邮箱——否则运营者按邮箱
+  // 拉黑后，该用户换 registered 身份仍可参与（身份模型统一的副作用，必须封堵）。
+  const blacklistKeys = [normalizedValue];
+  if (identityType === "user_id") {
+    const [u] = await db.select({ email: users.email }).from(users).where(eq(users.id, normalizedValue)).limit(1);
+    if (u?.email) blacklistKeys.push(u.email.toLowerCase());
+  }
   const [banned] = await db
     .select({ id: lotteryBlacklist.id })
     .from(lotteryBlacklist)
-    .where(and(eq(lotteryBlacklist.tenantId, draw.tenantId), eq(lotteryBlacklist.identityValue, normalizedValue)))
+    .where(and(eq(lotteryBlacklist.tenantId, draw.tenantId), inArray(lotteryBlacklist.identityValue, blacklistKeys)))
     .limit(1);
   if (banned) {
     return { joined: false, message: "您已被限制参与此活动" };
