@@ -4,7 +4,7 @@
       <!-- 底层：奖品内容 -->
       <div class="scratch-prize">
         <span class="prize-icon">🎁</span>
-        <span class="prize-text">已参与 ✓</span>
+        <span class="prize-text">$t('lottery.joined') ✓</span>
       </div>
       <!-- 上层：涂层（Canvas 刮开） -->
       <canvas
@@ -13,7 +13,7 @@
         :width="300"
         :height="200"
         role="img"
-        :aria-label="scratched ? '已刮开' : '刮开涂层参与抽奖'"
+        :aria-label="scratched ? $t('lottery.joined') : $t('lottery.gameScratchHint')"
         :tabindex="disabled ? -1 : 0"
         @mousedown="startScratch"
         @mousemove="scratch"

@@ -1,14 +1,14 @@
 <template>
   <div class="form-game">
-    <p class="form-hint">请填写以下信息提交</p>
+    <p class="form-hint">$t('lottery.gameFormHint')</p>
     <div class="form-fields">
       <label class="form-field">
-        <span>姓名</span>
-        <input v-model="name" type="text" placeholder="请输入姓名" maxlength="50" :disabled="disabled || loading" />
+        <span>{{ $t('lottery.gameFormNameLabel') }}</span>
+        <input v-model="name" type="text" :placeholder="$t('lottery.gameFormNamePlaceholder')" maxlength="50" :disabled="disabled || loading" />
       </label>
       <label class="form-field">
-        <span>邮箱</span>
-        <input v-model="email" type="email" placeholder="请输入邮箱" maxlength="120" :disabled="disabled || loading" />
+        <span>{{ $t('lottery.gameFormEmailLabel') }}</span>
+        <input v-model="email" type="email" :placeholder="$t('lottery.gameFormEmailPlaceholder')" maxlength="120" :disabled="disabled || loading" />
       </label>
     </div>
     <button class="btn btn-primary btn-lg form-btn" :disabled="disabled || loading || !name || !email" @click="submit">

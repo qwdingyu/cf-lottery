@@ -5,8 +5,8 @@
         <button class="result-close" @click="emit('close')">✕</button>
 
         <div class="result-icon">✅</div>
-        <h2 class="result-title">参与成功！</h2>
-        <p class="result-hint">开奖后将通过邮件通知您，请留意查收</p>
+        <h2 class="result-title">$t('lottery.joinSuccess')</h2>
+        <p class="result-hint">$t('lottery.pageHint')</p>
 
         <!-- 裂变引导卡片：仅在 viralConfig.enabled 且已加载分享链接时展示 -->
         <div v-if="viralEnabled && shareLoaded" class="viral-card">
@@ -15,11 +15,11 @@
           <div class="viral-stats">
             <div class="viral-stat">
               <span class="viral-stat-value">{{ shareData?.joinedCount ?? 0 }}</span>
-              <span class="viral-stat-label">已邀请</span>
+              <span class="viral-stat-label">$t('lottery.viralInvitedLabel')</span>
             </div>
             <div class="viral-stat">
               <span class="viral-stat-value">{{ maxExtraEntries }}</span>
-              <span class="viral-stat-label">最多额外次数</span>
+              <span class="viral-stat-label">$t('lottery.viralMaxLabel')</span>
             </div>
           </div>
 
@@ -44,10 +44,10 @@
         </div>
 
         <!-- 分享链接加载中 -->
-        <div v-else-if="entryId" class="result-hint" style="margin-top:12px">加载分享链接…</div>
+        <div v-else-if="entryId" class="result-hint" style="margin-top:12px">$t('lottery.viralLoadShareLink')</div>
 
         <div class="result-actions">
-          <button class="btn btn-primary" @click="emit('close')">知道了</button>
+          <button class="btn btn-primary" @click="emit('close')">{{ $t('lottery.gotIt') }}</button>
         </div>
       </div>
     </div>

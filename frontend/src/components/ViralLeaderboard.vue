@@ -4,12 +4,12 @@
     <div v-if="entryId && myStats" class="my-viral-card">
       <div class="my-viral-head">
         <span class="my-viral-title">🎁 我的邀请</span>
-        <span class="my-viral-extra">每邀请 1 人额外获得 {{ myStats.extraEntriesPerInvite }} 次抽奖机会</span>
+        <span class="my-viral-extra">$t('lottery.viralInviteHint', { n: myStats.extraEntriesPerInvite })</span>
       </div>
       <div class="my-viral-body">
         <div class="my-viral-stat">
           <span class="my-viral-num">{{ myStats.invitedCount }}</span>
-          <span class="my-viral-label">已邀请</span>
+          <span class="my-viral-label">{{ $t('lottery.viralInvitedLabel') }}</span>
         </div>
         <div class="my-viral-progress-wrap">
           <div class="my-viral-progress">
@@ -33,7 +33,7 @@
     <div class="leaderboard-card">
       <h4 class="leaderboard-title">🏆 邀请排行榜</h4>
       <div v-if="leaderboard.length === 0" class="leaderboard-empty">
-        还没有人邀请好友，快来成为第一个！
+        $t('lottery.viralEmptyHint')
       </div>
       <ol v-else class="leaderboard-list">
         <li
@@ -50,7 +50,7 @@
       <!-- 我的排名（不在 Top 20 时展示） -->
       <div v-if="myRank && myRank.rank > 20" class="leaderboard-my-rank">
         <span class="leaderboard-rank">{{ myRank.rank }}</span>
-        <span class="leaderboard-name">我</span>
+        <span class="leaderboard-name">{{ $t('lottery.viralMe') }}</span>
         <span class="leaderboard-count">{{ myRank.invitedCount }} 人</span>
       </div>
     </div>

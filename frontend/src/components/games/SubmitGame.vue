@@ -5,7 +5,7 @@
       :disabled="disabled || loading"
       @click="emit('play')"
     >
-      {{ loading ? '提交中…' : '立即参与' }}
+      {{ loading ? $t('lottery.gameSubmitSubmitting') : $t('lottery.gameSubmitJoin') }}
     </button>
   </div>
 </template>

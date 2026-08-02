@@ -29,7 +29,7 @@
         @keydown.space.prevent="handlePull"
         :class="{ pulling: spinning }"
       >
-        <span class="lever-text">{{ spinning ? '...' : '拉杆' }}</span>
+        <span class="lever-text">{{ spinning ? $t('lottery.gameSlotPulling') : $t('lottery.gameSlotPull') }}</span>
       </div>
     </div>
   </div>
