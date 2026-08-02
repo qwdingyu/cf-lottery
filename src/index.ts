@@ -10,6 +10,7 @@ import { createClient } from "@libsql/client";
 import { createDb } from "./db/client";
 import { and, sql } from "drizzle-orm";
 import { fail } from "./lib/http";
+import { getEnv } from "./lib/platform";
 import { systemConfig, auditLogs, lotteryDraws } from "./db/schema";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
@@ -195,7 +196,7 @@ app.get("/api/cron/draw", async (c) => {
   // CRON_SECRET 认证：Cloudflare Cron Triggers 不支持自定义 header，
   // 因此使用查询参数 ?secret=xxx 作为认证方式。
   // 生产环境应配合 Cloudflare WAF 限制仅允许 Cloudflare IP 访问。
-  const cronSecret = c.env.CRON_SECRET;
+  const cronSecret = getEnv(c, "CRON_SECRET");
   // 未配置 CRON_SECRET 时拒绝所有 cron 请求，防止内部端点意外暴露
   if (!cronSecret) return c.json({ ok: false, message: "未配置 CRON_SECRET" }, 503);
   const authHeader = c.req.header("Authorization") || "";
@@ -209,8 +210,8 @@ app.get("/api/cron/draw", async (c) => {
     const result = await processDueDraws(db, {
       limit: 20,
       emailEnv: {
-        resendApiKey: c.env.RESEND_API_KEY || "",
-        emailFrom: c.env.EMAIL_FROM || "",
+        resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+        emailFrom: getEnv(c, "EMAIL_FROM") || "",
       },
     });
     return c.json({
@@ -227,7 +228,7 @@ app.get("/api/cron/draw", async (c) => {
 
 // Cron 手动入口：处理到期开奖和 Webhook 重试，便于运维侧主动补偿。
 app.post("/api/cron/maintenance", async (c) => {
-  const cronSecret = c.env.CRON_SECRET;
+  const cronSecret = getEnv(c, "CRON_SECRET");
   if (!cronSecret) return c.json({ ok: false, message: "未配置 CRON_SECRET" }, 503);
   const authHeader = c.req.header("Authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
@@ -245,16 +246,20 @@ app.post("/api/cron/maintenance", async (c) => {
 });
 
 // 前端静态资源：所有非 /api 请求返回 index.html（SPA）
-app.get("*", async (c) => {
+// Cloudflare：ASSETS binding 托管静态资源（run_worker_first 让 API 走 Worker）；
+// Node（server.ts）：无 ASSETS binding → next() 交给 @hono/node-server 的 serveStatic。
+app.get("*", async (c, next) => {
+  const assets = c.env.ASSETS as Fetcher | undefined;
+  if (!assets) return next();
   try {
-    const asset = await c.env.ASSETS.fetch(c.req.raw);
+    const asset = await assets.fetch(c.req.raw);
     if (asset.status === 404) {
       // SPA fallback: 返回 index.html
-      return c.env.ASSETS.fetch(new Request(new URL("/index.html", c.req.url)));
+      return assets.fetch(new Request(new URL("/index.html", c.req.url)));
     }
     return asset;
   } catch {
-    return c.env.ASSETS.fetch(new Request(new URL("/index.html", c.req.url)));
+    return assets.fetch(new Request(new URL("/index.html", c.req.url)));
   }
 });
 

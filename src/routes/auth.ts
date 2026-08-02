@@ -10,6 +10,7 @@
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
+import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, isValidEmail } from "../lib/http";
 import { withDbTransaction } from "../db/client";
 import { users, tenantMembers, tenants, emailAccessCodes, systemConfig } from "../db/schema";
@@ -42,13 +43,13 @@ const LEGACY_PBKDF2_ITERATIONS = [100];
 const LEGACY_SHA256_RE = /^[a-f0-9]{64}$/i;
 
 function getJwtSecret(c: any): string {
-  const secret = c.env.JWT_SECRET;
+  const secret = getEnv(c, "JWT_SECRET");
   if (!secret) throw new Error("JWT_SECRET 未配置");
   return secret;
 }
 
 function getPasswordPepper(c: any): string {
-  const pepper = c.env.PASSWORD_PEPPER || c.env.JWT_SECRET;
+  const pepper = getEnv(c, "PASSWORD_PEPPER") || getEnv(c, "JWT_SECRET");
   if (!pepper || String(pepper).length < 16) {
     throw new Error("PASSWORD_PEPPER 或 JWT_SECRET 未配置");
   }
@@ -79,7 +80,7 @@ async function hashCode(code: string): Promise<string> {
 /** 第一步：提交注册信息，发送验证码 */
 authRoute.post("/register", async (c) => {
   try {
-    const ip = c.req.header("CF-Connecting-IP") || "unknown";
+    const ip = getClientIp(c);
     if (!checkRateLimit(`register:${ip}`, 3, 60000)) {
       return c.json({ ok: false, message: "注册过于频繁，请稍后再试" }, 429);
     }
@@ -217,7 +218,7 @@ authRoute.post("/verify-email", async (c) => {
 
 /** 登录（仅已验证邮箱的用户可登录） */
 authRoute.post("/login", async (c) => {
-  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  const ip = getClientIp(c);
   try {
   const db = getDb(c);
   // 读取系统配置的登录限流值（闭环：L3 配置 → 登录限流生效）

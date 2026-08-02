@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "dev": "wrangler dev --port 8787",
+    "dev:local": "tsx src/server.ts",
     "deploy": "npm run frontend:build && npx wrangler deploy",
     "deps:ci": "npm ci",
     "type-check": "tsc --noEmit",
@@ -23,6 +24,7 @@
     "verify:delivery": "npm run type-check && npm run test && npm run frontend:build"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.12",
     "@libsql/client": "^0.14.0",
     "drizzle-orm": "0.45.2",
     "hono": "^4.12.22"

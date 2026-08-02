@@ -7,6 +7,7 @@
  */
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "../bindings";
+import { getClientIp } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
 import type { DbType } from "../db/client";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
@@ -293,7 +294,7 @@ publicLotteryRoute.post("/draws/:slug/events", async (c) => {
   }
 
   // ── 限流：同一 IP 每分钟最多 30 次事件上报 ──
-  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  const ip = getClientIp(c);
   if (!checkRateLimit(`events:${ip}`, 30, 60000)) {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
@@ -320,7 +321,7 @@ publicLotteryRoute.post("/draws/:slug/events", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  const ipHash = await hashEventValue(c.req.header("CF-Connecting-IP") || "");
+  const ipHash = await hashEventValue(getClientIp(c) || "");
   await recordActivityEvent(db, {
     tenantId: draw.tenantId,
     drawId: draw.id,
@@ -352,7 +353,7 @@ publicLotteryRoute.post("/draws/:slug/events", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
-  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  const ip = getClientIp(c);
   const db = getDb(c);
   // 读取系统配置的验证码限流值（闭环：L3 配置 → 公开参与限流生效）
   const [rlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_access_code")).limit(1);
@@ -462,7 +463,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
 
 publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
   // 限流：同一 IP 每分钟最多 N 次参与（由 platform system_config.rate_limit_join_per_minute 控制）
-  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  const ip = getClientIp(c);
   const db = getDb(c);
   const [joinRlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
   const joinLimit = Math.min(Math.max(parseInt(joinRlCfg?.value || "", 10) || 10, 1), 100);
@@ -678,7 +679,7 @@ publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
 
 publicLotteryRoute.post("/draws/:slug/join", async (c) => {
   // 限流：同一 IP 每分钟最多 N 次参与（由 platform system_config.rate_limit_join_per_minute 控制）
-  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  const ip = getClientIp(c);
   const db = getDb(c);
   const [joinRlCfg2] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
   const joinLimit2 = Math.min(Math.max(parseInt(joinRlCfg2?.value || "", 10) || 10, 1), 100);
@@ -999,7 +1000,7 @@ publicLotteryRoute.get("/draws/:slug/ref/:shareCode", async (c) => {
       drawId: share.drawId,
       eventType: "share_click",
       refCode: shareCode,
-      ipHash: await hashEventValue(c.req.header("CF-Connecting-IP") || ""),
+      ipHash: await hashEventValue(getClientIp(c) || ""),
       userAgent: c.req.header("User-Agent") || "",
     });
   }
