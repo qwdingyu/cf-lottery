@@ -480,6 +480,9 @@
 
   <GameResultModal
     :show="showResult"
+    :draw-slug="lastJoinDrawSlug"
+    :entry-id="lastJoinResult?.entryId"
+    :viral-config="lastJoinViralConfig"
     @close="showResult = false"
   />
 
@@ -666,6 +669,8 @@ const sortedMyEntries = computed(() => {
 
 const joiningId = ref('')
 const showResult = ref(false)
+/** 参与成功后暂存 drawId + entryId，传递给 GameResultModal 生成归因分享链接 */
+const lastJoinResult = ref<{ drawId: string; entryId: string } | null>(null)
 
 // ── 查询我的结果（中奖卡密/安慰奖券） ──
 const showMyResultModal = ref(false)
@@ -675,6 +680,21 @@ const myResultCode = ref('')
 const myResultLoading = ref(false)
 const myResultData = ref<{ joined: boolean; won: boolean; prizeCode: string | null; consolationCoupon: string | null } | null>(null)
 const myResultError = ref('')
+
+/** 从最近参与的活动数据中提取 publicSlug，供 GameResultModal 调用 /share API */
+const lastJoinDrawSlug = computed(() => {
+  if (!lastJoinResult.value) return undefined
+  const draw = draws.value.find(d => d.id === lastJoinResult.value!.drawId)
+  return draw?.publicSlug
+})
+
+/** 从最近参与的活动数据中提取裂变配置 */
+const lastJoinViralConfig = computed(() => {
+  if (!lastJoinResult.value) return undefined
+  const draw = draws.value.find(d => d.id === lastJoinResult.value!.drawId)
+  const pc = (draw as any)?.promotionConfig
+  return pc?.viral ?? undefined
+})
 
 function openMyResult(draw: LotteryDraw) {
   myResultDraw.value = draw
@@ -1160,6 +1180,10 @@ async function handleVerifyCode() {
       loginCode.value = ''
       codeSent.value = false
       showToast(data.outcome?.resultLabel ? `参与成功：${data.outcome.resultLabel}` : '参与成功')
+      // 暂存参与结果，供 GameResultModal 生成归因分享链接
+      if (data.entryId) {
+        lastJoinResult.value = { drawId: joinedDrawId, entryId: data.entryId }
+      }
       showResult.value = true
     } else {
       loginError.value = data.message || '验证失败'
