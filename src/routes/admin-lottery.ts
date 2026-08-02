@@ -529,6 +529,7 @@ adminLotteryRoute.post("/draws/:id/copy", async (c) => {
     showWinnerList: draw.showWinnerList,
     promotionConfig: draw.promotionConfig,
     activityConfig: draw.activityConfig,
+    productLink: draw.productLink,  // 复制导流商品链接（参与后展示的 CTA）
     status: "draft",
     createdAt: now,
     updatedAt: now,
