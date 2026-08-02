@@ -61,6 +61,8 @@
             <td class="time-cell">{{ formatTime(t.createdAt) }}</td>
             <td class="col-actions">
               <button class="btn btn-ghost btn-xs" @click="showDetail(t)">详情</button>
+              <!-- L3→L2 路径快捷入口：列表行内直接以租户身份进入后台（owner 专属能力） -->
+              <button class="btn btn-ghost btn-xs" :disabled="impersonating" @click="handleImpersonateTenant(t.id)">进入后台</button>
               <button class="btn btn-ghost btn-xs" :title="'复制租户 ID'" @click="copyId(t.id)">复制 ID</button>
             </td>
           </tr>
@@ -254,11 +256,16 @@ async function handleAdjust() {
 
 const impersonating = ref(false)
 
-async function handleImpersonate() {
-  if (!detailTenant.value) return
+/**
+ * L3→L2 模拟登录（平台 owner 专属）：调 impersonate API 拿一次性 token，
+ * 在新标签页打开 /admin?token=... 以租户 owner 身份进入后台。
+ * 列表行内"进入后台"与详情弹窗"模拟登录"共用此函数。
+ */
+async function handleImpersonateTenant(tenantId: string) {
+  if (!tenantId || impersonating.value) return
   impersonating.value = true
   try {
-    const data = await adminRequest<{ token: string }>(`/api/platform/tenants/${detailTenant.value.id}/impersonate`, {
+    const data = await adminRequest<{ token: string }>(`/api/platform/tenants/${tenantId}/impersonate`, {
       method: 'POST',
     })
     // 在新标签页打开管理后台，URL 中附上 token（一次性的模拟登录 Token）
@@ -269,6 +276,11 @@ async function handleImpersonate() {
   } finally {
     impersonating.value = false
   }
+}
+
+async function handleImpersonate() {
+  if (!detailTenant.value) return
+  await handleImpersonateTenant(detailTenant.value.id)
 }
 </script>
 

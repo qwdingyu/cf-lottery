@@ -188,7 +188,9 @@ router.beforeEach((to) => {
       typeof claims.exp === 'number' &&
       claims.exp * 1000 > Date.now()
     if (validImpersonation) {
-      localStorage.setItem('admin_token', JSON.stringify({ token: urlToken, expiry: Date.now() + 3600000 }))
+      // 写入独立 key（impersonated_token）：不覆盖运营者自己的 admin_token 会话，
+      // 保证运营者模拟租户身份后能随时清除模拟态返回平台（L3→L2 路径闭环）。
+      localStorage.setItem('impersonated_token', JSON.stringify({ token: urlToken, expiry: Date.now() + 3600000 }))
     }
     // 无论 token 是否有效，都从 URL 移除，避免泄露到浏览器历史
     const cleanQuery = { ...to.query }

@@ -63,6 +63,13 @@
         </RouterView>
       </main>
     </div>
+
+    <!-- 模拟登录横幅（L3→L2 路径）：平台运营者以租户身份查看时全屏提示，
+         所有操作将以该租户 owner 身份执行；提供"返回平台"清除模拟态回到运营者会话 -->
+    <div v-if="impersonating" class="impersonate-banner" role="alert">
+      <span class="impersonate-banner-text">🔍 模拟中：以租户身份查看，操作将以该租户 owner 身份执行</span>
+      <button class="btn btn-primary btn-xs" type="button" @click="handleReturnToPlatform">返回平台</button>
+    </div>
   </div>
 </template>
 
@@ -71,7 +78,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
-import { readPlatformRole } from '@/composables/useAdminAuth'
+import { readPlatformRole, isImpersonating, clearImpersonation } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 
 const route = useRoute()
@@ -80,6 +87,15 @@ const { t } = useI18n()
 const { clearToken } = useAdminAuth()
 const { showToast } = useToast()
 const isPlatformMember = ref(!!readPlatformRole())
+// 模拟登录态（L3→L2 路径）：挂载时读取；模拟会话存在时显示横幅 + 返回平台按钮
+const impersonating = ref(isImpersonating())
+
+/** 返回平台：清除模拟态（impersonated_token），回到运营者自己的会话并跳转平台租户列表 */
+function handleReturnToPlatform() {
+  clearImpersonation()
+  showToast('已退出模拟登录，返回平台', 'success')
+  router.push('/platform/tenants')
+}
 
 // ── 侧边栏响应式控制 ──
 /** 是否小屏（<1024px），侧边栏默认隐藏，通过 hamburger 切换 */
@@ -333,6 +349,37 @@ function handleLogout() {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ── 模拟登录横幅（L3→L2 路径） ── */
+.impersonate-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: #7c2d12;
+  color: #fff;
+  font-size: 12px;
+}
+
+.impersonate-banner-text {
+  font-weight: 500;
+}
+
+.impersonate-banner .btn {
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+
+.impersonate-banner .btn:hover {
+  background: rgba(255, 255, 255, 0.26);
 }
 
 /* ── 侧边栏遮罩（小屏） ── */

@@ -167,23 +167,22 @@ async function handleRedeem() {
   color: var(--tg-hint, #9aa4b2);
 }
 
-/* 兑换表单：输入框 + 按钮一行，底部对齐 */
+/* 兑换表单：标签 + 输入框 + 按钮一行，水平对齐 */
 .redeem-form {
   display: grid;
   grid-template-columns: minmax(220px, 420px) auto;
   gap: 12px;
-  align-items: end;
+  align-items: center;
   margin-top: 12px;
 }
 .redeem-input-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: contents;
 }
 .redeem-input-label {
   font-size: 13px;
   font-weight: 600;
   color: var(--tg-text, #f0f2f5);
+  white-space: nowrap;
 }
 .redeem-form input {
   padding: 10px 12px;
@@ -194,14 +193,16 @@ async function handleRedeem() {
   font-size: 14px;
   font-family: monospace;
   letter-spacing: 0.5px;
+  grid-column: 1;
+  grid-row: 2;
 }
-.redeem-form input:focus {
-  outline: none;
-  border-color: var(--admin-accent, #f59e0b);
+.redeem-input-label {
+  grid-column: 1;
+  grid-row: 1;
 }
-
-/* 兑换按钮：加宽 + 图标，突出主操作 */
 .redeem-btn {
+  grid-column: 2;
+  grid-row: 1;
   min-width: 140px;
   padding: 10px 20px;
   font-size: 14px;
