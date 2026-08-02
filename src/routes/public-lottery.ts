@@ -154,6 +154,52 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
   return ok(c, result);
 });
 
+// ═════════════════════════════════════════════════════════
+// Open Graph 元数据端点（供社交爬虫抓取活动卡片）
+// ═════════════════════════════════════════════════════════
+
+publicLotteryRoute.get("/draws/:slug/og", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+  const [draw] = await db
+    .select({ title: lotteryDraws.title, description: lotteryDraws.description })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return c.html("<!DOCTYPE html><html><body><h1>活动不存在</h1></body></html>", 404);
+
+  const title = escapeHtml(draw.title);
+  const desc = escapeHtml(draw.description || "快来参与活动吧！");
+  const origin = c.env.APP_ORIGIN || "https://lucky.eforge.xyz";
+  const pageUrl = `${origin}/lottery/${slug}`;
+
+  return c.html(`<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta property="og:title" content="${title}" />
+  <meta property="og:description" content="${desc}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="${pageUrl}" />
+  <meta property="og:site_name" content="运营活动引擎" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="${title}" />
+  <meta name="twitter:description" content="${desc}" />
+  <meta http-equiv="refresh" content="0;url=${pageUrl}" />
+</head>
+<body>
+  <p>正在跳转到活动页…<a href="${pageUrl}">点击这里</a></p>
+</body>
+</html>`);
+});
+
+/** HTML 转义（防 XSS） */
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c] ?? c));
+}
+
 /** 活动事件上报：只记录平台内事实，不把点击命名为成交 */
 publicLotteryRoute.post("/draws/:slug/events", async (c) => {
   const db = getDb(c);

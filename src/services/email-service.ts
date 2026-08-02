@@ -6,6 +6,8 @@
  */
 import lotteryWinnerHtml from "./templates/lottery_winner";
 import emailAccessCodeHtml from "./templates/email_access_code";
+import drawReminderHtml from "./templates/draw_reminder";
+import loserConsolationHtml from "./templates/loser_consolation";
 
 /**
  * Resend API 响应类型（仅定义本服务关心的字段）
@@ -18,11 +20,15 @@ interface ResendResponse {
 const templates: Record<string, string> = {
   lottery_winner: lotteryWinnerHtml,
   email_access_code: emailAccessCodeHtml,
+  draw_reminder: drawReminderHtml,
+  loser_consolation: loserConsolationHtml,
 };
 
 const templateSubjects: Record<string, string> = {
   lottery_winner: "🎉 恭喜中奖！奖品卡密已发放",
   email_access_code: "您的抽奖验证码",
+  draw_reminder: "⏰ 开奖提醒",
+  loser_consolation: "🎁 开奖结果 + 专属优惠",
 };
 
 /** 构建中奖邮件模板数据 */

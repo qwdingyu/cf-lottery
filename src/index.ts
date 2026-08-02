@@ -26,6 +26,7 @@ import { refreshAllTenantSnapshots } from "./services/admin/usage-snapshots";
 import {
   processDueDraws,
   processPendingWebhookDeliveriesForAllTenants,
+  sendDrawReminders,
   type WebhookFetch,
 } from "./services/lottery-service";
 
@@ -66,8 +67,13 @@ export async function runScheduledMaintenance(
   const usageSnapshots = await refreshAllTenantSnapshots(db);
   // 数据保留清理：根据系统配置定期删除过期数据（兜底：未配置 = 不清理）
   const cleanedRetention = await runRetentionCleanup(db);
+  // 营销邮件：开奖前 1 小时提醒
+  const drawReminders = await sendDrawReminders(db, {
+    resendApiKey: env.RESEND_API_KEY || "",
+    emailFrom: env.EMAIL_FROM || "",
+  });
 
-  return { draws, webhooks, cleanedRateLimitLogs, usageSnapshots: usageSnapshots.processed, cleanedRetention };
+  return { draws, webhooks, cleanedRateLimitLogs, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
 }
 
 /**

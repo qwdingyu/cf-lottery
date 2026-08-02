@@ -1342,6 +1342,55 @@ function validateProductLink(link: any): string | null {
   return null;
 }
 
+/**
+ * 校验 Webhook URL（SSRF 防护）。
+ *
+ * 为什么需要：Webhook 投递由平台 Worker 发起请求。若允许配置内网/保留地址，
+ * 有租户权限的攻击者可利用平台作为代理访问内部服务或云元数据（如 169.254.169.254）。
+ *
+ * 防护范围：
+ * - 仅 http/https
+ * - 拒绝 localhost / 127.0.0.1 / ::1
+ * - 拒绝私网 IP（10.x / 172.16-31.x / 192.168.x）
+ * - 拒绝云元数据（169.254.169.254）和其他保留地址
+ *
+ * 注：域名解析后的 IP（DNS rebinding）无法在 URL 层面检测，MVP 接受该残余风险。
+ */
+function validateWebhookUrl(rawUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return "URL 格式无效";
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return "Webhook 仅支持 http 和 https 协议";
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  // 本机地址
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]") {
+    return "Webhook 不能指向本地地址";
+  }
+  // IPv4 私网/保留地址检查（处理 IPv4 和 IPv6 映射）
+  const ipv4 = hostname.replace(/^\[|\]$/g, "");
+  const isIpv4 = /^\d+\.\d+\.\d+\.\d+$/.test(ipv4);
+  if (isIpv4) {
+    const parts = ipv4.split(".").map(Number);
+    const [a, b] = parts;
+    const isPrivate =
+      a === 10 ||                                // 10.0.0.0/8
+      (a === 172 && b >= 16 && b <= 31) ||       // 172.16.0.0/12
+      (a === 192 && b === 168) ||                // 192.168.0.0/16
+      a === 127 ||                               // 127.0.0.0/8
+      a === 0 ||                                 // 0.0.0.0/8
+      (a === 169 && b === 254) ||                // 169.254.0.0/16（含云元数据）
+      (a === 100 && b >= 64 && b <= 127);        // 100.64.0.0/10（CGN）
+    if (isPrivate) return "Webhook 不能指向内网地址";
+  }
+  if (parsed.href.length > 2000) return "Webhook URL 过长";
+  return null;
+}
+
 function coerceEnum(value: unknown, allowed: Set<string>, fallback: string): string {
   const normalized = String(value || "").trim();
   return allowed.has(normalized) ? normalized : fallback;
@@ -1692,12 +1741,8 @@ adminLotteryRoute.post("/webhooks", async (c) => {
   const body = await c.req.json<{ url: string; events?: string[] }>();
   const url = String(body.url || "").trim();
   if (!url) return fail(c, "请输入 Webhook URL", 400);
-  try {
-    const parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("invalid protocol");
-  } catch {
-    return fail(c, "URL 格式无效", 400);
-  }
+  const urlError = validateWebhookUrl(url);
+  if (urlError) return fail(c, urlError, 400);
 
   const quota = await getTenantUsage(db, tenantId);
   if (quota.limits.maxWebhooks !== null) {

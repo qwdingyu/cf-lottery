@@ -2000,6 +2000,12 @@ export async function performDraw(
       const loserRewardResult = await grantLoserRewards(db, tenantId, drawId);
       if (loserRewardResult.granted > 0) {
         console.log(`[lottery] loser rewards granted: ${loserRewardResult.granted} for draw ${drawId}`);
+        // 发券成功后发送安慰邮件（异步，不阻塞开奖主流程）
+        if (emailEnv?.resendApiKey) {
+          void sendLoserConsolationEmails(db, emailEnv, tenantId, drawId, draw.title).catch((err) => {
+            console.error(`[lottery] sendLoserConsolationEmails failed for ${drawId}:`, err);
+          });
+        }
       }
     } catch (err) {
       console.error(`[lottery] grantLoserRewards failed for ${drawId}:`, err);
@@ -2406,4 +2412,123 @@ async function hashDrawSeed(seed: string): Promise<string> {
   const encoder = new TextEncoder();
   const hash = await crypto.subtle.digest("SHA-256", encoder.encode(seed));
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ═════════════════════════════════════════════════════════
+// 营销邮件：开奖前 1 小时提醒
+// ═════════════════════════════════════════════════════════
+
+/**
+ * 发送开奖前提醒邮件。
+ *
+ * 扫描 status='open' 且 drawAt 在未来 55-65 分钟内的活动，
+ * 向每个参与者发送提醒邮件，告知即将开奖并引导分享裂变。
+ *
+ * 由 runScheduledMaintenance 触发（Cron 每 5 分钟执行一次，
+ * 55-65 分钟窗口确保每分钟的 Cron 触发都能捕捉到 1 小时后的开奖）。
+ */
+export async function sendDrawReminders(
+  db: DbType,
+  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string },
+): Promise<{ drawsProcessed: number; emailsSent: number; failed: number }> {
+  if (!emailEnv.resendApiKey) return { drawsProcessed: 0, emailsSent: 0, failed: 0 };
+
+  const now = new Date();
+  const windowStart = new Date(now.getTime() + 55 * 60000).toISOString();
+  const windowEnd = new Date(now.getTime() + 65 * 60000).toISOString();
+
+  // 查找即将在 1 小时后开奖的活动
+  const dueDraws = await db
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, title: lotteryDraws.title, publicSlug: lotteryDraws.publicSlug })
+    .from(lotteryDraws)
+    .where(and(
+      eq(lotteryDraws.status, "open"),
+      sql`${lotteryDraws.drawAt} >= ${windowStart}`,
+      sql`${lotteryDraws.drawAt} <= ${windowEnd}`,
+    ))
+    .limit(20);
+
+  let drawsProcessed = 0;
+  let emailsSent = 0;
+  let failed = 0;
+
+  for (const draw of dueDraws) {
+    drawsProcessed++;
+    try {
+      const entries = await db
+        .select({ identityValue: lotteryEntries.identityValue })
+        .from(lotteryEntries)
+        .where(and(eq(lotteryEntries.tenantId, draw.tenantId), eq(lotteryEntries.drawId, draw.id)))
+        .limit(500);
+
+      const shareUrl = draw.publicSlug ? `${draw.publicSlug}` : "";
+      for (const entry of entries) {
+        if (!entry.identityValue.includes("@")) continue;
+        try {
+          await sendEmail(db, emailEnv, {
+            to: entry.identityValue,
+            template: "draw_reminder",
+            templateData: { drawName: draw.title, shareUrl },
+          });
+          emailsSent++;
+        } catch { failed++; }
+      }
+    } catch { /* 单个活动失败不影响其他 */ }
+  }
+
+  return { drawsProcessed, emailsSent, failed };
+}
+
+// ═════════════════════════════════════════════════════════
+// 营销邮件：未中奖安慰邮件
+// ═════════════════════════════════════════════════════════
+
+/**
+ * 对刚被 grantLoserRewards 发放优惠券的未中奖用户发送安慰邮件。
+ *
+ * 仅在 grantLoserRewards 成功发放优惠券后调用，告知用户未中奖但有专属优惠，
+ * 引导用户回到平台使用优惠券，实现"流失用户再激活"。
+ */
+export async function sendLoserConsolationEmails(
+  db: DbType,
+  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string },
+  tenantId: string,
+  drawId: string,
+  drawTitle: string,
+): Promise<{ sent: number; failed: number }> {
+  if (!emailEnv.resendApiKey) return { sent: 0, failed: 0 };
+
+  // 查询本次开奖发放的优惠券（status='issued' 且 drawId 匹配）
+  const issuedCoupons = await db
+    .select({ code: couponCodes.code, label: couponCodes.label, recipientEmail: couponCodes.recipientEmail })
+    .from(couponCodes)
+    .where(and(
+      eq(couponCodes.tenantId, tenantId),
+      eq(couponCodes.drawId, drawId),
+      eq(couponCodes.status, "issued"),
+    ))
+    .limit(500);
+
+  let sent = 0;
+  let failed = 0;
+  const origin = "";  // APP_ORIGIN 由调用方传入，这里用相对路径
+
+  for (const coupon of issuedCoupons) {
+    if (!coupon.recipientEmail || !coupon.recipientEmail.includes("@")) continue;
+    try {
+      await sendEmail(db, emailEnv, {
+        to: coupon.recipientEmail,
+        template: "loser_consolation",
+        templateData: {
+          drawName: drawTitle,
+          couponCode: coupon.code,
+          couponLabel: coupon.label || "",
+          nextActivityUrl: origin || "",
+        },
+      });
+      sent++;
+    } catch { failed++; }
+  }
+
+  return { sent, failed };
 }
