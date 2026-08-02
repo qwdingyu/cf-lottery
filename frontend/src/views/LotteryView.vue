@@ -305,7 +305,6 @@ import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { getGameComponent } from '@/components/games/GameRegistry'
 import GameResultModal from '@/components/games/GameResultModal.vue'
-import ViralLeaderboard from '@/components/ViralLeaderboard.vue'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
@@ -353,20 +352,6 @@ type ActivityConfig =
       options: Array<{ id: string; label: string; description: string; imageUrl: string }>;
     };
 
-const DEFAULT_PRIZE_IMAGE = `data:image/svg+xml,${encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
-  <rect width="160" height="160" rx="18" fill="#1f2937"/>
-  <rect x="43" y="66" width="74" height="54" rx="8" fill="#f59e0b"/>
-  <rect x="38" y="52" width="84" height="20" rx="7" fill="#fbbf24"/>
-  <path d="M80 52c-18-18-38-8-24 12h24V52Zm0 0c18-18 38-8 24 12H80V52Z" fill="#fde68a"/>
-  <path d="M77 52h6v68h-6z" fill="#92400e" opacity=".45"/>
-</svg>
-`)}`
-
-function prizeImageUrl(url?: string) {
-  const trimmed = String(url || '').trim()
-  return trimmed || DEFAULT_PRIZE_IMAGE
-}
 
 type ActivityOutcome = {
   id?: string;
@@ -633,16 +618,6 @@ function validateSubmissionDraft(draw: LotteryDraw): string {
   return ''
 }
 
-function statusLabel(status: string): string {
-  const map: Record<string, string> = {
-    open: 'statusOpen',
-    drawn: 'statusDrawn',
-    drawing: 'statusDrawing',
-    paused: 'statusPaused',
-  }
-  return t('lottery.' + (map[status] || 'statusOpen'))
-}
-
 function defaultExperienceForParticipation(participationMode: string): string {
   if (participationMode === 'invite_code') return 'slot'
   if (participationMode === 'password') return 'scratch'
@@ -659,27 +634,6 @@ function formatTime(iso: string): string {
   } catch {
     return d.toLocaleString()
   }
-}
-
-/** 距开奖/参与结束的可读倒计时；已过期返回空 */
-function countdownText(draw: LotteryDraw): string {
-  const targetIso = draw.status === 'open' ? draw.drawTime : ''
-  if (!targetIso) return ''
-  const target = new Date(targetIso).getTime()
-  if (!Number.isFinite(target)) return ''
-  const diff = target - nowMs.value
-  if (diff <= 0) return ''
-  const totalSec = Math.floor(diff / 1000)
-  const days = Math.floor(totalSec / 86400)
-  const hours = Math.floor((totalSec % 86400) / 3600)
-  const minutes = Math.floor((totalSec % 3600) / 60)
-  const seconds = totalSec % 60
-  const parts: string[] = []
-  if (days > 0) parts.push(`${days}${t('lottery.days')}`)
-  parts.push(`${hours}${t('lottery.hours')}`)
-  parts.push(`${minutes}${t('lottery.minutes')}`)
-  if (days === 0) parts.push(`${seconds}${t('lottery.seconds')}`)
-  return parts.join(' ')
 }
 
 /**
@@ -704,54 +658,9 @@ function getResultCta(draw: LotteryDraw | null, key: 'after_win' | 'after_loss')
   return { url: cta.url, title: cta.title || '' }
 }
 
-/** 活动是否已结束（drawn/cancelled，或 open 态但 drawTime 已过） */
-function hasEnded(draw: LotteryDraw): boolean {
-  if (draw.status === 'drawn' || draw.status === 'cancelled') return true
-  // open 态但 drawTime 已过 → 后端懒开奖还未触发，用户端标记已过期
-  // 只对 open 态做时间判断：draft 未开始、paused 可能恢复，都不应标记结束
-  if (draw.status === 'open' && draw.drawTime) {
-    const t = new Date(draw.drawTime).getTime()
-    if (Number.isFinite(t) && t < nowMs.value) return true
-  }
-  return false
-}
 
 function clearSession() {
-  sessionEmail.value = ''
-  myJoinedById.value = {}
-  myWonById.value = {}
-  myOutcomeById.value = {}
   myEntryList.value = []
-}
-
-function joinedStatusText(draw: LotteryDraw): string {
-  const outcome = myOutcomeById.value[draw.id]
-  if (draw.activityKind === 'signup_chain') {
-    if (outcome?.status === 'waitlisted') return `已接龙 · ${outcome.resultLabel || '候补中'}`
-    if (outcome?.status === 'assigned') return `已接龙 · ${outcome.resultLabel || '已占位'}`
-    return '已接龙'
-  }
-  return `${t('lottery.joined')} · ${t('lottery.waitDraw')}`
-}
-
-/** 从活动数据中提取裂变配置 */
-function getDrawViral(draw: LotteryDraw): { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | undefined {
-  const pc = (draw as any)?.promotionConfig
-  return pc?.viral ?? undefined
-}
-
-/** 生成带 UTM 追踪参数的商品链接（使用公开 slug，不暴露内部 ID） */
-function productUtmUrl(url: string, drawId: string, publicSlug?: string): string {
-  try {
-    const u = new URL(url)
-    u.searchParams.set('utm_source', 'lottery')
-    u.searchParams.set('utm_medium', 'draw')
-    // 使用公开 slug 作为 campaign 标识，不暴露内部 ID
-    u.searchParams.set('utm_campaign', publicSlug || drawId)
-    return u.toString()
-  } catch {
-    return url
-  }
 }
 
 function drawSlug(drawId: string): string {
@@ -802,14 +711,6 @@ function trackPageView(draw: LotteryDraw) {
   })
 }
 
-function handleCtaClick(draw: LotteryDraw, placement: string) {
-  void recordActivityEvent(draw.id, 'cta_click', {
-    placement,
-    destination: 'product_link',
-    activityKind: draw.activityKind || 'lottery',
-  })
-}
-
 function openLogin(drawId?: string) {
   pendingJoinDrawId.value = drawId || null
   if (drawId) void recordActivityEvent(drawId, 'participation_started')
@@ -836,19 +737,6 @@ function toggleExpand(id: string) {
     if (draw) ensureSubmissionDraft(draw)
     void fetchDrawDetail(id)
   }
-}
-
-function focusDraw(drawId: string) {
-  // 列表页无该卡片时（例如仅深链其它活动），跳到该活动深链页
-  if (!draws.value.some((d) => d.id === drawId)) {
-    void router.push('/lottery/' + encodeURIComponent(drawId))
-    return
-  }
-  expandedId.value = drawId
-  void fetchDrawDetail(drawId)
-  requestAnimationFrame(() => {
-    document.getElementById('draw-' + drawId)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  })
 }
 
 async function handleCopyPublicLink(drawId: string) {
@@ -1799,3 +1687,13 @@ onUnmounted(() => {
 .result-share-win { margin-top: 12px; text-align: center; }
 .result-share-hint { font-size: 12px; color: var(--tg-hint); margin-bottom: 6px; }
 </style>
+
+
+
+
+
+
+
+
+
+
