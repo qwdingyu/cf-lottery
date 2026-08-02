@@ -1002,6 +1002,9 @@ adminLotteryRoute.get("/draws/:id/conversions", async (c) => {
  * 2. 结构破坏：字段含逗号/引号/换行时，不转义会破坏 CSV 行结构。
  *
  * 处理：危险前缀加 ' 阻止公式；特殊字符字段用双引号包裹（内部引号加倍）。
+ *
+ * 注意：前端 AdminLotteryView.vue 的 downloadCsv 有相同逻辑（客户端导出），
+ * 修改此处时必须同步修改前端版本，保持一致（跨运行环境不强行共享）。
  */
 function csvEscape(value: unknown): string {
   const raw = String(value ?? "");

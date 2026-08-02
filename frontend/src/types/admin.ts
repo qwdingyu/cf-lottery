@@ -623,6 +623,7 @@ export interface AdminSystemConfigDefinition {
   group?: string
   order?: number
   scope?: 'public' | 'admin'
+  difficulty?: 'basic' | 'advanced'
 }
 
 export interface AdminSystemConfigResult {
