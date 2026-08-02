@@ -512,6 +512,54 @@ adminLotteryRoute.get("/prizes/:id/codes", async (c) => {
 });
 
 // ═════════════════════════════════════════════════════════
+// 导出奖品码为 CSV
+// ═════════════════════════════════════════════════════════
+
+adminLotteryRoute.get("/prizes/:id/codes/export", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const prizeId = c.req.param("id");
+  const status = c.req.query("status") || "";
+
+  const [prize] = await db
+    .select({ name: prizes.name })
+    .from(prizes)
+    .where(and(eq(prizes.id, prizeId), eq(prizes.tenantId, tenantId)))
+    .limit(1);
+  if (!prize) return fail(c, "奖品不存在", 404);
+
+  const conditions: any[] = [
+    eq(prizeCodes.tenantId, tenantId),
+    eq(prizeCodes.prizeId, prizeId),
+  ];
+  if (status) conditions.push(eq(prizeCodes.status, status));
+
+  const rows = await db
+    .select({ code: prizeCodes.code, secret: prizeCodes.secret, status: prizeCodes.status, note: prizeCodes.note })
+    .from(prizeCodes)
+    .where(and(...conditions))
+    .orderBy(prizeCodes.createdAt)
+    .limit(10000);  // 单次最多导出 1 万条
+
+  // BOM 防中文乱码 + CSV 转义
+  const BOM = "\uFEFF";
+  const csvRows = [["卡密", "密钥", "状态", "备注"].join(",")];
+  for (const row of rows) {
+    const fields = [row.code, row.secret || "", row.status === "available" ? "可用" : "已发放", (row.note || "").replace(/"/g, '""')];
+    csvRows.push(fields.map(f => `"${f}"`).join(","));
+  }
+
+  const filename = encodeURIComponent(`${prize.name}-码池.csv`);
+  return new Response(BOM + csvRows.join("\n"), {
+    status: 200,
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename*=UTF-8''${filename}`,
+    },
+  });
+});
+
+// ═════════════════════════════════════════════════════════
 // 删除单个奖品码（仅 available 状态可删）
 // ═════════════════════════════════════════════════════════
 

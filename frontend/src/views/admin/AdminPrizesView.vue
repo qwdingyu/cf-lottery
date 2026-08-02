@@ -62,6 +62,7 @@
             <td class="col-actions">
               <button v-if="prize.prizeType === 'code'" class="btn btn-ghost btn-xs" @click="showImport(prize)">导入码</button>
               <button v-if="prize.prizeType === 'code'" class="btn btn-ghost btn-xs" @click="showCodes(prize)">查看码</button>
+              <button class="btn btn-ghost btn-xs" @click="showEdit(prize)">编辑</button>
               <button class="btn btn-ghost btn-xs" :title="prize.active ? '停用后活动不可选用此奖品' : '启用后活动可选用此奖品'" @click="toggleActive(prize)">
                 {{ prize.active !== 0 ? '停用' : '启用' }}
               </button>
@@ -129,6 +130,47 @@
       </form>
     </AdminModal>
 
+    <!-- 编辑奖品弹窗（复用创建表单） -->
+    <AdminModal v-model="showEditModal" title="编辑奖品" max-width="480px">
+      <form @submit.prevent="handleEdit">
+        <div class="modal-form">
+          <label>
+            <span>奖品名称</span>
+            <input v-model="editForm.name" required maxlength="100" placeholder="请输入奖品名称" />
+          </label>
+          <label>
+            <span>描述</span>
+            <textarea v-model="editForm.description" maxlength="500" rows="2" placeholder="奖品说明（可选）" />
+          </label>
+          <label>
+            <span>图片 URL</span>
+            <div class="prize-image-editor">
+              <img :src="prizeImageUrl(editForm.imageUrl)" alt="奖品图片预览" class="prize-preview" />
+              <div class="prize-image-fields">
+                <div class="image-upload-row">
+                  <label class="btn btn-ghost btn-sm image-upload-button" :class="{ 'is-disabled': uploadingImage }">
+                    {{ uploadingImage ? '上传中...' : '上传图片' }}
+                    <input type="file" accept="image/jpeg,image/png,image/webp,image/avif" :disabled="uploadingImage" @change="uploadEditImage" />
+                  </label>
+                </div>
+                <input v-model="editForm.imageUrl" maxlength="500" placeholder="不上传则使用默认图" />
+              </div>
+            </div>
+          </label>
+          <label>
+            <span>价值</span>
+            <input v-model="editForm.valueText" maxlength="50" placeholder="展示文案，如 50 USDT（可选）" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost btn-sm" @click="showEditModal = false">取消</button>
+          <button type="submit" class="btn btn-primary btn-sm" :disabled="submitting">
+            {{ submitting ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </form>
+    </AdminModal>
+
     <!-- 导入码弹窗 -->
     <AdminModal v-model="showImportModal" :title="'导入码 - ' + (importPrize?.name || '')" max-width="600px">
       <div class="tabs" style="margin-bottom:12px">
@@ -182,6 +224,8 @@
         </select>
         <span class="field-hint">共 {{ codesTotal }} 条（可用 {{ totalAvailable }} / 已发放 {{ totalIssued }}）</span>
         <button class="btn btn-ghost btn-xs" :disabled="codesLoading" @click="loadCodes(true)">刷新</button>
+        <button class="btn btn-primary btn-xs" @click="exportCodes">📥 导出 CSV</button>
+        <button v-if="codesFilter === 'available' && codesList.length > 0" class="btn btn-ghost btn-xs" style="color:var(--tg-danger)" @click="batchDeleteCodes">批量删除本页</button>
       </div>
       <div v-if="codesLoading" class="skeleton-list">
         <div v-for="i in 5" :key="'sk' + i" class="skeleton-line" />
@@ -246,7 +290,9 @@ const submitting = ref(false)
 const importing = ref(false)
 const uploadingImage = ref(false)
 const showCreate = ref(false)
-const showImportModal = ref(false)
+const showEditModal = ref(false)
+const editingPrize = ref<any>(null)
+const editForm = ref({ name: '', description: '', imageUrl: '', valueText: '' })
 const showCodesModal = ref(false)
 const codesPrize = ref<any>(null)
 const codesList = ref<any[]>([])
@@ -407,6 +453,86 @@ async function deleteCode(code: any) {
   } catch (err: any) {
     showToast(err?.message || '删除失败', 'error')
   }
+}
+
+async function exportCodes() {
+  if (!codesPrize.value) return
+  const params = new URLSearchParams()
+  if (codesFilter.value) params.set('status', codesFilter.value)
+  const token = localStorage.getItem('admin_token') || ''
+  const url = `/api/admin/prizes/${codesPrize.value.id}/codes/export?${params}`
+  // 直接用 fetch 下载文件，绕过 adminRequest 的 JSON 解析
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) { showToast('导出失败', 'error'); return }
+  const blob = await res.blob()
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `${codesPrize.value.name}-码池.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+async function batchDeleteCodes() {
+  if (!codesPrize.value) return
+  if (!confirm(`确认删除本页 ${codesList.value.length} 个可用码？此操作不可恢复。`)) return
+  codesLoading.value = true
+  let deleted = 0
+  let failed = 0
+  for (const c of codesList.value) {
+    try {
+      await adminRequest(`/api/admin/prizes/codes/${c.id}`, { method: 'DELETE' })
+      deleted++
+    } catch { failed++ }
+  }
+  showToast(`删除完成：${deleted} 成功${failed > 0 ? `，${failed} 失败` : ''}`, failed > 0 ? 'error' : 'success')
+  codesLoading.value = false
+  await loadCodes(true)
+  await loadData()
+}
+
+function showEdit(prize: any) {
+  editingPrize.value = prize
+  editForm.value = {
+    name: prize.name || '',
+    description: prize.description || '',
+    imageUrl: prize.imageUrl || '',
+    valueText: prize.valueText || '',
+  }
+  showEditModal.value = true
+}
+
+async function handleEdit() {
+  submitting.value = true
+  try {
+    await adminRequest(`/api/admin/prizes/${editingPrize.value.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(editForm.value),
+    })
+    showToast('保存成功', 'success')
+    showEditModal.value = false
+    await loadData()
+  } catch (err: any) {
+    showToast(err?.message || '保存失败', 'error')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function uploadEditImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || uploadingImage.value) return
+  if (file.size > 2 * 1024 * 1024) { showToast('图片不能超过 2MiB', 'error'); return }
+  uploadingImage.value = true
+  try {
+    const body = new FormData(); body.append('file', file)
+    const data = await adminRequest<{ url: string }>('/api/admin/media/images', { method: 'POST', body })
+    editForm.value.imageUrl = data.url || ''
+    showToast('图片已上传', 'success')
+  } catch (err: any) {
+    showToast(err?.message || '上传失败', 'error')
+  } finally { uploadingImage.value = false }
 }
 
 async function handleImport() {
