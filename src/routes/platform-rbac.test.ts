@@ -14,7 +14,7 @@ import { platformSystemConfigRoute } from "./platform-system-config";
 import { platformRedemptionCodesRoute } from "./platform-redemption-codes";
 import { platformRoute } from "./platform";
 import { adminLotteryRoute } from "./admin-lottery";
-import { signJwt } from "../middleware/auth";
+import { signJwt, verifyJwt } from "../middleware/auth";
 import { lotteryDraws, platformAuditLogs, platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
@@ -470,5 +470,91 @@ describe("RBAC-lite 路由分层", () => {
       body: JSON.stringify({ code: "LUCKY-ABCD-EFGH-2345" }),
     }, TEST_ENV);
     expect(second.status).toBe(400);
+  });
+});
+
+describe("L3→L2 模拟登录路径（impersonate）", () => {
+  it("平台 owner 可模拟登录：token 携带 impersonated 声明、sub 为目标租户 owner，可访问 L2 后台", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    const res = await app.request(`/api/platform/tenants/${TENANT_ID}/impersonate`, {
+      method: "POST",
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const data = await res.json() as { token: string; tenantId: string; userId: string };
+    expect(data.tenantId).toBe(TENANT_ID);
+    expect(data.userId).toBe(OWNER_ID);
+
+    // 模拟 token 声明校验：impersonated=true、sub=租户 owner、tenantId=目标租户
+    const claims = await verifyJwt(data.token, JWT_SECRET);
+    expect(claims).not.toBeNull();
+    expect(claims!.impersonated).toBe(true);
+    expect(claims!.sub).toBe(OWNER_ID);
+    expect(claims!.tenantId).toBe(TENANT_ID);
+
+    // 模拟 token 可访问 L2 后台（以租户 owner 身份）
+    const meRes = await app.request("/api/admin/me", {
+      headers: { Authorization: `Bearer ${data.token}` },
+    }, TEST_ENV);
+    expect(meRes.status).toBe(200);
+  });
+
+  it("平台 operator 不能模拟登录（403）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_operator" });
+    const app = createTestApp();
+
+    const res = await app.request(`/api/platform/tenants/${TENANT_ID}/impersonate`, {
+      method: "POST",
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(403);
+  });
+
+  it("租户管理员（非平台成员）不能模拟登录（403）", async () => {
+    await seedUsers();
+    const app = createTestApp();
+
+    const res = await app.request(`/api/platform/tenants/${TENANT_ID}/impersonate`, {
+      method: "POST",
+      headers: await authHeader(OWNER_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(403);
+  });
+
+  it("无 owner 成员的租户返回 404（拒绝模拟）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    await db.insert(tenants).values({ id: "tenant-no-owner", name: "无 owner 租户" });
+    const app = createTestApp();
+
+    const res = await app.request("/api/platform/tenants/tenant-no-owner/impersonate", {
+      method: "POST",
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(404);
+  });
+
+  it("模拟登录写入平台审计日志（高风险操作留痕）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    await app.request(`/api/platform/tenants/${TENANT_ID}/impersonate`, {
+      method: "POST",
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+
+    const logs = await db
+      .select()
+      .from(platformAuditLogs)
+      .where(eq(platformAuditLogs.action, "platform.tenant.impersonate"));
+    expect(logs.length).toBe(1);
+    expect(logs[0]!.actorUserId).toBe(PLATFORM_ID);
+    expect(logs[0]!.tenantId).toBe(TENANT_ID);
   });
 });
