@@ -179,11 +179,13 @@ describe("用户注册数据完整性", () => {
 
   it("create-tenant 后重新登录不再 needsTenant", async () => {
     const app = createAuthTestApp();
-    // 注册+验证+创建租户（复用上面创建的 ct1 用户，用直接 db 方式创建租户）
-    const tenantId = crypto.randomUUID();
+    // ct1 由上一个测试创建，直接查用户
     const [user] = await db.select().from(users).where(eq(users.username, "ct1")).limit(1);
+    if (!user) throw new Error("ct1 user not found - previous test may have failed");
+
+    const tenantId = crypto.randomUUID();
     await db.insert(tenants).values({ id: tenantId, name: "ct1-team" });
-    await db.insert(tenantMembers).values({ tenantId, userId: user!.id, role: "owner" });
+    await db.insert(tenantMembers).values({ tenantId, userId: user.id, role: "owner" });
 
     // 重新登录
     const res = await app.request("/auth/login", {

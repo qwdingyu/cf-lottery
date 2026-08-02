@@ -1513,7 +1513,12 @@ adminLotteryRoute.get("/logs", async (c) => {
     .limit(limit)
     .offset(offset);
 
-  return ok(c, { logs: rows });
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(auditLogs)
+    .where(and(...conditions));
+
+  return ok(c, { logs: rows, total: Number(total) });
 });
 
 /**
@@ -1639,7 +1644,12 @@ adminLotteryRoute.get("/blacklist", async (c) => {
     .limit(limit)
     .offset(offset);
 
-  return ok(c, { items: rows });
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(lotteryBlacklist)
+    .where(eq(lotteryBlacklist.tenantId, tenantId));
+
+  return ok(c, { items: rows, total: Number(total) });
 });
 
 /** 添加黑名单 */
@@ -1687,6 +1697,7 @@ adminLotteryRoute.delete("/blacklist/:id", async (c) => {
 adminLotteryRoute.get("/members", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
+  const { limit, offset } = parseAdminPagination(c, 50, 200);
 
   const rows = await db
     .select({
@@ -1698,9 +1709,16 @@ adminLotteryRoute.get("/members", async (c) => {
     .from(tenantMembers)
     .innerJoin(users, eq(tenantMembers.userId, users.id))
     .where(eq(tenantMembers.tenantId, tenantId))
-    .orderBy(desc(tenantMembers.createdAt));
+    .orderBy(desc(tenantMembers.createdAt))
+    .limit(limit)
+    .offset(offset);
 
-  return ok(c, { members: rows });
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(tenantMembers)
+    .where(eq(tenantMembers.tenantId, tenantId));
+
+  return ok(c, { members: rows, total: Number(total) });
 });
 
 /** 添加成员 */

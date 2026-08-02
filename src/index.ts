@@ -123,7 +123,8 @@ app.use("*", cors({
 
 // ── 全局错误处理 ──
 app.onError((err, c) => {
-  console.error(`[error] ${err.message}`, err.stack);
+  // 生产环境只记录 error.message，避免 err.stack 中的内部路径/凭证泄露到 Worker 日志
+  console.error(`[error] ${err.message}`);
   return c.json({ ok: false, message: "服务器内部错误" }, 500);
 });
 

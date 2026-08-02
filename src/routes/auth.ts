@@ -161,7 +161,7 @@ authRoute.post("/register", async (c) => {
 
     return c.json({ ok: true, message: "验证码已发送到邮箱", expiresInSeconds: 600 });
   } catch (err) {
-    console.error("[auth] register failed:", err, err instanceof Error ? err.message : String(err));
+    console.error("[auth] register failed:", err instanceof Error ? err.message : String(err));
     return c.json({ ok: false, message: "注册失败，请稍后再试" }, 500);
   }
 });
@@ -344,7 +344,7 @@ authRoute.post("/switch-tenant", requireAuth, async (c) => {
  * ★ 045 方案 C：显式创建租户（onboarding 引导后的主动创建）。
  * 每个用户允许创建多个租户（多品牌运营），不做一人一租户限制。
  */
-authRoute.post("/create-tenant", async (c) => {
+authRoute.post("/create-tenant", requireAuth, async (c) => {
   const db = getDb(c);
   const userId = c.get("userId") as string;
   const body = await c.req.json<{ name: string }>();
