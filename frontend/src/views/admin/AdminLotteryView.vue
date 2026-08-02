@@ -1262,8 +1262,8 @@ const posterPrizeList = computed(() => {
   return []
 })
 const posterTimeText = computed(() => {
-  const start = posterDrawData.value?.startTime
-  const end = posterDrawData.value?.endTime
+  const start = posterDrawData.value?.startAt || posterDrawData.value?.startTime
+  const end = posterDrawData.value?.endAt || posterDrawData.value?.endTime
   if (start && end) return `${formatDate(start)} ~ ${formatDate(end)}`
   return ''
 })

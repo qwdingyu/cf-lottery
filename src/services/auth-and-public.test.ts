@@ -148,6 +148,61 @@ describe("用户注册数据完整性", () => {
     expect(data.tenantId).toBe("");
   });
 
+  it("verify-email 返回 needsTenant=true（方案 C：新注册用户无租户）", async () => {
+    const app = createAuthTestApp();
+    await app.request("/auth/register", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.13" },
+      body: JSON.stringify({ username: "verifynt", password: "Test12345", email: "vnt@test.com" }),
+    }, TEST_ENV);
+    // 插入已知验证码完成邮箱验证
+    const encoder = new TextEncoder();
+    const hash = await crypto.subtle.digest("SHA-256", encoder.encode("654321"));
+    const codeHash = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(), email: "vnt@test.com", drawId: "",
+      codeHash, used: 0, expiresAt: futureTimeISO(10),
+    });
+
+    const res = await app.request("/auth/verify-email", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "vnt@test.com", code: "654321" }),
+    }, TEST_ENV);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.needsTenant).toBe(true);
+    expect(data.tenantId).toBe("");
+  });
+
+  it("create-tenant 租户名长度校验：过短/过长返回 400", async () => {
+    const app = createAuthTestApp();
+    await app.request("/auth/register", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.14" },
+      body: JSON.stringify({ username: "nametest", password: "Test12345", email: "namet@test.com" }),
+    }, TEST_ENV);
+    await db.update(users).set({ emailVerified: 1 }).where(eq(users.username, "nametest"));
+    const loginRes = await app.request("/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "nametest", password: "Test12345" }),
+    }, TEST_ENV);
+    const loginData = await loginRes.json() as any;
+
+    // 1 字符（过短）
+    const shortRes = await app.request("/auth/create-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + loginData.token },
+      body: JSON.stringify({ name: "a" }),
+    }, TEST_ENV);
+    expect(shortRes.status).toBe(400);
+
+    // 31 字符（过长）
+    const longRes = await app.request("/auth/create-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + loginData.token },
+      body: JSON.stringify({ name: "x".repeat(31) }),
+    }, TEST_ENV);
+    expect(longRes.status).toBe(400);
+  });
+
   it("create-tenant 完整流程：创建租户 → 重新登录不再 needsTenant", async () => {
     const app = createAuthTestApp();
     // 1. 注册+验证

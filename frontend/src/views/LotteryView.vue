@@ -498,7 +498,7 @@
               </button>
             </template>
             <button type="button" class="btn btn-ghost" @click="closeLogin">
-              {{ $t('app.cancel') }}
+              {{ $t('confirm.cancel') }}
             </button>
           </div>
           <p v-if="loginError" class="form-error">{{ loginError }}</p>
