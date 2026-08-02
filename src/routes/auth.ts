@@ -350,7 +350,10 @@ authRoute.post("/create-tenant", requireAuth, async (c) => {
   const userId = c.get("userId") as string;
   const body = await c.req.json<{ name: string }>();
   const name = String(body.name || "").trim();
-  if (!name) return c.json({ ok: false, message: "请输入租户名称" }, 400);
+  // 与前端 maxlength=30 对齐：租户名 2-30 字符，拒绝超长/单字符噪音
+  if (name.length < 2 || name.length > 30) {
+    return c.json({ ok: false, message: "租户名称需要 2-30 个字符" }, 400);
+  }
 
   const tenantId = crypto.randomUUID();
   await withDbTransaction(db, async (tx) => {
