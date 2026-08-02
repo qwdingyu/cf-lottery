@@ -43,7 +43,7 @@
       </div>
 
       <div v-if="recordsLoading && sortedMyEntries.length === 0" class="records-empty">
-        {{ '加载中…' }}
+        {{ $t('lottery.commonLoading') }}
       </div>
       <div v-else-if="sortedMyEntries.length === 0" class="records-empty">
         {{ $t('lottery.noMyRecords') }}
@@ -100,7 +100,7 @@
     </div>
 
     <!-- 加载中 -->
-    <div v-if="loading" class="loading-state">{{ '加载中…' }}</div>
+    <div v-if="loading" class="loading-state">{{ $t('lottery.commonLoading') }}</div>
 
     <!-- 活动列表 -->
     <div v-else-if="draws.length === 0" class="empty-state">
@@ -375,7 +375,7 @@
                       rel="noopener noreferrer"
                       class="btn btn-primary btn-sm"
                       @click="handleCtaClick(draw, 'joined_product_card')"
-                    >查看商品</a>
+                    >{{ $t("lottery.viewProduct") }}</a>
                   </div>
                 </div>
               </div>
@@ -424,7 +424,7 @@
             />
           </label>
           <div v-if="codeSent" class="verified-email-row">
-            <span>已验证邮箱 {{ loginEmail }}</span>
+            <span>{{ $t("lottery.emailVerified") }} {{ loginEmail }}</span>
             <button type="button" class="btn btn-primary btn-sm" :disabled="verifyingCode" @click="handleVerifyCode">
               一键继续
             </button>
@@ -506,35 +506,35 @@
           <input
             v-model="myResultEmail"
             type="email"
-            placeholder="参与时填写的邮箱"
+            :placeholder="$t("lottery.emailPlaceholder")"
             maxlength="120"
             :disabled="myResultLoading"
           />
           <input
             v-model="myResultCode"
             type="text"
-            placeholder="邮箱验证码"
+            :placeholder="$t("lottery.codePlaceholder")"
             maxlength="10"
             :disabled="myResultLoading"
           />
           <p class="result-hint">验证码需先在参与/登录时获取（或联系运营），用于验证邮箱归属</p>
           <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
-          <button class="btn btn-primary" :disabled="myResultLoading" @click="queryMyResult">
-            {{ myResultLoading ? '查询中…' : '查询' }}
+          <button type="button" class="btn btn-primary btn-sm" @click="queryMyResult">
+            {{ myResultLoading ? $t('lottery.commonQuerying') : $t('lottery.commonQuery') }}
           </button>
         </div>
 
         <!-- 查询结果 -->
         <div v-else class="result-detail">
           <template v-if="myResultData.won">
-            <div class="result-line">🎉 <strong>恭喜中奖！</strong></div>
+            <div class="result-line">🎉 <strong>{{ $t("lottery.congratsWon") }}</strong></div>
             <div v-if="myResultData.prizeCode" class="result-code-block">
-              <span class="result-code-label">奖品码：</span>
+              <span class="result-code-label">{{ $t("lottery.prizeCodeLabel") }}</span>
               <code class="result-code" @click="copyMyResult(myResultData.prizeCode)">{{ myResultData.prizeCode }}</code>
-              <small class="result-hint">点击复制</small>
+              <small class="result-hint">{{ $t("lottery.clickToCopy") }}</small>
             </div>
             <div class="result-share-win">
-              <p class="result-share-hint">🎁 分享你的好运，让更多人来参与！</p>
+              <p class="result-share-hint">🎁 {{ $t("lottery.shareYourLuck") }}</p>
               <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 分享活动</button>
             </div>
             <!-- 中奖后 CTA：运营者配置的导流卡片 -->
@@ -545,15 +545,15 @@
             </div>
           </template>
           <template v-else-if="myResultData.consolationCoupon">
-            <div class="result-line">🎁 <strong>获得安慰奖！</strong></div>
+            <div class="result-line">🎁 <strong>{{ $t("lottery.gotConsolation") }}</strong></div>
             <div class="result-code-block">
-              <span class="result-code-label">优惠券：</span>
+              <span class="result-code-label">{{ $t("lottery.couponLabel") }}</span>
               <code class="result-code" @click="copyMyResult(myResultData.consolationCoupon)">{{ myResultData.consolationCoupon }}</code>
-              <small class="result-hint">点击复制</small>
+              <small class="result-hint">{{ $t("lottery.clickToCopy") }}</small>
             </div>
           </template>
           <template v-else>
-            <div class="result-line">😊 感谢参与，本次活动未获得奖品</div>
+            <div class="result-line">😊 {{ $t("lottery.thanksForParticipating") }}</div>
           </template>
           <!-- 未中奖 CTA：运营者配置的导流卡片（安慰奖和未中奖都展示） -->
           <div v-if="!myResultData.won && getResultCta(myResultDraw, 'after_loss')" class="result-cta-card">
@@ -561,7 +561,7 @@
               {{ getResultCta(myResultDraw, 'after_loss')!.title || '查看详情' }}
             </a>
           </div>
-          <button class="btn btn-ghost" @click="showMyResultModal = false">知道了</button>
+          <button class="btn btn-ghost" @click="showMyResultModal = false">{{ $t("lottery.commonGotIt") }}</button>
         </div>
       </div>
     </div>

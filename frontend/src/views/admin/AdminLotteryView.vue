@@ -429,7 +429,7 @@
               <p class="form-section-desc">选择参与者如何加入活动</p>
             </header>
             <div class="form-grid two-cols">
-              <label v-if="showAdvanced || isEditing" class="field-span-2">
+              <label class="field-span-2">
                 <span>活动类型</span>
                 <select v-model="form.activityKind" @change="handleActivityKindChange">
                   <option value="lottery">抽奖</option>
@@ -452,7 +452,7 @@
                   <option value="invite_code">邀请码（输入邀请码后可参与）</option>
                 </select>
               </label>
-              <label v-if="showAdvanced || isEditing" class="field-span-2">
+              <label class="field-span-2">
                 <span>互动体验</span>
                 <select v-model="form.experienceType">
                   <option value="wheel">大转盘</option>
@@ -759,13 +759,6 @@
         </div>
 
         <div class="lottery-editor-footer modal-actions">
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs"
-            @click="showAdvanced = !showAdvanced"
-          >
-            {{ showAdvanced ? '收起高级设置 ▲' : '⚙️ 高级设置' }}
-          </button>
           <span style="flex:1" />
           <button
             type="button"
@@ -1391,8 +1384,6 @@ const emptyForm = () => ({
 
 const form = ref(emptyForm())
 const isEditing = ref(false)
-// 高级设置默认折叠：模板已预设正确的活动类型/互动体验/名额策略，99% 用户无需修改。
-const showAdvanced = ref(false)
 const rosterInput = ref('')
 const inviteCodeCount = ref(10)
 /** 奖品库（用于奖项配置下拉选择） */
