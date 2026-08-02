@@ -120,6 +120,36 @@ function isUniqueConstraintError(error: unknown): boolean {
 }
 
 /**
+ * 租户侧审计日志写入（L2 敏感操作统一留痕）。
+ *
+ * 为什么需要：租户管理员（owner/admin）的创建/发布/删除/核销等操作会影响业务数据，
+ * 必须可追溯"谁在什么时候做了什么"，支持排障和责任认定。
+ * 与平台审计（platform_audit_logs）分开：租户审计只记录本租户内的操作。
+ */
+async function recordTenantAudit(
+  c: Context<AppEnv>,
+  action: string,
+  targetType: string,
+  targetId: string,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await getDb(c).insert(auditLogs).values({
+      id: crypto.randomUUID(),
+      tenantId: c.get("tenantId") as string,
+      actorUserId: c.get("userId") as string,
+      action,
+      targetType,
+      targetId,
+      metadataJson: JSON.stringify(metadata || {}),
+    });
+  } catch (err) {
+    // 审计失败不影响主业务（审计是尽力而为的留痕，不阻塞操作）
+    console.error("[admin] audit write failed:", err);
+  }
+}
+
+/**
  * 管理端列表统一分页边界。
  *
  * 为什么要集中处理：
@@ -354,6 +384,7 @@ adminLotteryRoute.post("/prizes/:id/codes/generate", async (c) => {
   }
 
   await importPrizeCodes(db, tenantId, prizeId, codes);
+  await recordTenantAudit(c, "prize.codes.generate", "prize", prizeId, { count });
   return ok(c, { generated: count });
 });
 
@@ -555,6 +586,7 @@ adminLotteryRoute.post("/draws", async (c) => {
         ? (typeof body.activityConfig === "string" ? body.activityConfig : JSON.stringify(body.activityConfig))
         : "{}",
     });
+    await recordTenantAudit(c, "draw.create", "lottery_draw", id, { title: String(body.title || "") });
     return ok(c, { id, publicSlug });
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "创建活动失败", 400);
@@ -656,6 +688,7 @@ adminLotteryRoute.post("/draws/:id/publish", async (c) => {
   try {
     const result = await publishDraw(db, tenantId, drawId);
     if (!result) return fail(c, "活动不存在或已发布", 400);
+    await recordTenantAudit(c, "draw.publish", "lottery_draw", drawId);
     return ok(c, { status: "open" });
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "发布失败", 400);
@@ -670,6 +703,7 @@ adminLotteryRoute.post("/draws/:id/pause", async (c) => {
 
   const result = await pauseDraw(db, tenantId, drawId);
   if (!result) return fail(c, "活动不存在或未开启", 400);
+  await recordTenantAudit(c, "draw.pause", "lottery_draw", drawId);
   return ok(c, { status: "paused" });
 });
 
@@ -681,6 +715,7 @@ adminLotteryRoute.post("/draws/:id/resume", async (c) => {
 
   const result = await resumeDraw(db, tenantId, drawId);
   if (!result) return fail(c, "活动不存在或未暂停", 400);
+  await recordTenantAudit(c, "draw.resume", "lottery_draw", drawId);
   return ok(c, { status: "open" });
 });
 
@@ -693,6 +728,7 @@ adminLotteryRoute.post("/draws/:id/cancel", async (c) => {
   try {
     const result = await cancelDraw(db, tenantId, drawId);
     if (!result) return fail(c, "活动不存在或无法取消", 400);
+    await recordTenantAudit(c, "draw.cancel", "lottery_draw", drawId);
     return ok(c, { status: "cancelled" });
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "取消失败", 400);
@@ -988,6 +1024,7 @@ adminLotteryRoute.delete("/draws/:id", async (c) => {
     .delete(lotteryDraws)
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
 
+  await recordTenantAudit(c, "draw.delete", "lottery_draw", drawId);
   return ok(c, { deleted: true });
 });
 
@@ -1344,13 +1381,15 @@ adminLotteryRoute.post("/blacklist", async (c) => {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
 
+  const blacklistId = crypto.randomUUID();
   await db.insert(lotteryBlacklist).values({
-    id: crypto.randomUUID(),
+    id: blacklistId,
     tenantId,
     identityValue: email,
     note: String(body.note || "").trim(),
   });
 
+  await recordTenantAudit(c, "blacklist.add", "blacklist", blacklistId, { identityValue: email });
   return ok(c, { added: true });
 });
 
@@ -1364,6 +1403,7 @@ adminLotteryRoute.delete("/blacklist/:id", async (c) => {
     .delete(lotteryBlacklist)
     .where(and(eq(lotteryBlacklist.id, id), eq(lotteryBlacklist.tenantId, tenantId)));
 
+  await recordTenantAudit(c, "blacklist.remove", "blacklist", id);
   return ok(c, { deleted: true });
 });
 
@@ -1577,7 +1617,9 @@ adminLotteryRoute.post("/api-keys", async (c) => {
   if (!name) return fail(c, "请输入密钥名称", 400);
 
   const key = "cl_" + crypto.randomUUID().replace(/-/g, "").slice(0, 32);
-  await db.insert(apiKeys).values({ id: crypto.randomUUID(), tenantId, name, key });
+  const apiKeyId = crypto.randomUUID();
+  await db.insert(apiKeys).values({ id: apiKeyId, tenantId, name, key });
+  await recordTenantAudit(c, "apikey.create", "api_key", apiKeyId, { name });
   return ok(c, { key });
 });
 
@@ -1585,7 +1627,9 @@ adminLotteryRoute.post("/api-keys", async (c) => {
 adminLotteryRoute.delete("/api-keys/:id", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  await db.delete(apiKeys).where(and(eq(apiKeys.id, c.req.param("id")), eq(apiKeys.tenantId, tenantId)));
+  const apiKeyId = c.req.param("id");
+  await db.delete(apiKeys).where(and(eq(apiKeys.id, apiKeyId), eq(apiKeys.tenantId, tenantId)));
+  await recordTenantAudit(c, "apikey.delete", "api_key", apiKeyId);
   return ok(c, { deleted: true });
 });
 
@@ -1641,13 +1685,15 @@ adminLotteryRoute.post("/webhooks", async (c) => {
   }
 
   const signingSecret = createWebhookSigningSecret();
+  const webhookId = crypto.randomUUID();
   await db.insert(webhookConfigs).values({
-    id: crypto.randomUUID(),
+    id: webhookId,
     tenantId,
     url,
     events: JSON.stringify(body.events || ["draw.completed", "prize.issued"]),
     signingSecret,
   });
+  await recordTenantAudit(c, "webhook.create", "webhook_config", webhookId, { url });
   return ok(c, { created: true, signingSecret });
 });
 
@@ -1655,7 +1701,9 @@ adminLotteryRoute.post("/webhooks", async (c) => {
 adminLotteryRoute.delete("/webhooks/:id", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  await db.delete(webhookConfigs).where(and(eq(webhookConfigs.id, c.req.param("id")), eq(webhookConfigs.tenantId, tenantId)));
+  const webhookId = c.req.param("id");
+  await db.delete(webhookConfigs).where(and(eq(webhookConfigs.id, webhookId), eq(webhookConfigs.tenantId, tenantId)));
+  await recordTenantAudit(c, "webhook.delete", "webhook_config", webhookId);
   return ok(c, { deleted: true });
 });
 
@@ -1750,6 +1798,7 @@ adminLotteryRoute.post("/coupons/redeem", async (c) => {
     .where(and(eq(couponCodes.tenantId, tenantId), eq(couponCodes.code, code)))
     .limit(1);
 
+  await recordTenantAudit(c, "coupon.redeem", "coupon_code", code);
   return ok(c, { redeemed: true, label: coupon?.label || "" });
 });
 
@@ -1909,6 +1958,7 @@ adminLotteryRoute.post("/redemption-codes/redeem", async (c) => {
       };
     });
 
+    await recordTenantAudit(c, "redemption.redeem", "redemption_code", codeInput);
     return ok(c, { redeemed: true, ...grant });
   } catch (err) {
     if (err instanceof RedeemError) return fail(c, err.message, err.status);
