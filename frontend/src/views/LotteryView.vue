@@ -10,379 +10,78 @@
         <button v-else class="lottery-login-btn" @click="openLogin()">登录查看记录</button>
       </div>
     </header>
-
-    <!-- 我的记录：登录后汇总参与/中奖，不必逐卡展开 -->
-    <section v-if="sessionEmail" class="my-records" aria-labelledby="lottery-my-records">
-      <div class="section-head">
-        <h2 id="lottery-my-records" class="section-title">{{ $t('lottery.myRecords') }}</h2>
-      </div>
-
-      <div v-if="recordsLoading && sortedMyEntries.length === 0" class="records-empty">
-        {{ $t('lottery.loadingText') }}
-      </div>
-      <div v-else-if="sortedMyEntries.length === 0" class="records-empty">
-        {{ $t('lottery.noMyRecords') }}
-      </div>
-      <ul v-else class="records-list">
-        <li v-for="row in sortedMyEntries" :key="row.drawId" class="record-row">
-          <div class="record-main">
-            <span class="record-name">{{ row.drawName || row.drawId }}</span>
-            <span class="chip" :class="'chip-' + (row.drawStatus || 'open')">
-              {{ statusLabel(row.drawStatus || 'open') }}
-            </span>
-            <span
-              v-if="myWonById[row.drawId]"
-              class="chip chip-won"
-            >{{ $t('lottery.won') }}</span>
-            <span
-              v-else-if="row.drawStatus === 'drawn'"
-              class="chip chip-muted"
-            >{{ $t('lottery.notWon') }}</span>
-            <span
-              v-else
-              class="chip chip-muted"
-            >{{ $t('lottery.joined') }}</span>
-          </div>
-          <div class="record-meta">
-            <span v-if="row.joinedAt">{{ $t('lottery.joinedAt') }}: {{ formatTime(row.joinedAt) }}</span>
-            <span v-if="row.drawTime">{{ $t('lottery.drawTime') }}: {{ formatTime(row.drawTime) }}</span>
-            <RouterLink
-              v-if="myWonById[row.drawId]?.orderToken"
-              class="order-link"
-              :to="{ path: '/order', query: { token: myWonById[row.drawId].orderToken } }"
-              @click.stop
-            >
-              {{ $t('lottery.checkOrder') }}
-            </RouterLink>
-            <button
-              v-else
-              type="button"
-              class="btn btn-ghost btn-xs"
-              @click="focusDraw(row.drawId)"
-            >
-              {{ $t('lottery.viewDraw') }}
-            </button>
-          </div>
-        </li>
-      </ul>
-    </section>
-
-    <div v-else class="login-banner">
-      <p>{{ $t('lottery.loginBanner') }}</p>
-      <button type="button" class="btn btn-primary btn-sm" @click="openLogin()">
-        {{ $t('lottery.loginFirst') }}
-      </button>
+<!-- 加载 / 空态 -->
+    <div v-if="loading" class="lottery-center">加载中…</div>
+    <div v-else-if="draws.length === 0" class="lottery-center">
+      <p style="color:var(--tg-hint)">暂无活动</p>
     </div>
 
-    <!-- 加载中 -->
-    <div v-if="loading" class="loading-state">{{ $t('lottery.loadingText') }}</div>
-
-    <!-- 活动列表 -->
-    <div v-else-if="draws.length === 0" class="empty-state">
-      <p>{{ $t('lottery.noDraws') }}</p>
-    </div>
-
-    <div v-else class="draw-list">
+    <!-- 活动卡片 -->
+    <div v-else class="lottery-main">
       <div
         v-for="draw in draws"
         :key="draw.id"
-        class="draw-card"
+        class="lottery-card"
         :class="{ expanded: expandedId === draw.id }"
-        :id="'draw-' + draw.id"
       >
-        <div class="draw-card-header" @click="toggleExpand(draw.id)">
-          <div class="draw-card-info">
-            <h3 class="draw-name">{{ draw.name }}</h3>
-            <span class="chip" :class="'chip-' + draw.status">
-              {{ statusLabel(draw.status) }}
-            </span>
-            <span v-if="hasEnded(draw)" class="chip chip-muted">{{ $t('lottery.ended') }}</span>
-            <!-- 已满员标记（参与人数达上限） -->
-            <span v-else-if="draw.maxParticipants && (draw.entryCount ?? 0) >= draw.maxParticipants" class="chip chip-muted">{{ $t('lottery.full') }}</span>
-            <!-- 折叠态也展示个人状态，减少二次点击 -->
-            <span v-if="myWonById[draw.id]" class="chip chip-won">{{ $t('lottery.won') }}</span>
-            <span v-else-if="myJoinedById[draw.id]" class="chip chip-joined">{{ $t('lottery.joined') }}</span>
+        <div class="lottery-card-head" @click="toggleExpand(draw.id)">
+          <div class="lottery-card-left">
+            <h3 class="lottery-card-title">{{ draw.name }}</h3>
+            <div class="lottery-card-tags">
+              <span class="lottery-tag" :class="draw.status">{{ statusText(draw.status) }}</span>
+              <span v-if="myWonById[draw.id]" class="lottery-tag won">🎉 已中奖</span>
+              <span v-else-if="myJoinedById[draw.id]" class="lottery-tag joined">已参与</span>
+              <span v-if="draw.entryCount != null" class="lottery-tag count">{{ draw.entryCount }} 人参与</span>
+            </div>
           </div>
-          <div class="draw-card-meta">
-            <span
-              v-if="draw.productTitle || draw.productId"
-              class="draw-prize"
-            >{{ $t('lottery.product') }}: {{ draw.productTitle || draw.productId }}</span>
-            <span v-if="draw.showWinners" class="draw-count">{{ $t('lottery.drawCount', { count: draw.entryCount ?? 0 }) }}</span>
-            <span class="draw-time">{{ $t('lottery.drawTime') }}: {{ formatTime(draw.drawTime || draw.drawAt || '') }}</span>
-            <span
-              v-if="countdownText(draw)"
-              class="draw-countdown"
-            >{{ $t('lottery.countdown') }}: {{ countdownText(draw) }}</span>
-            <span
-              v-if="draw.status === 'drawn' && draw.showWinners && draw.winnerCount !== undefined && draw.winnerCount > 0"
-              class="draw-winners"
-            >{{ $t('lottery.actualWinnerCount') }}: {{ draw.winnerCount }}</span>
-          </div>
+          <button class="lottery-expand-btn">{{ expandedId === draw.id ? '收起 ▲' : '展开 ▼' }}</button>
         </div>
 
-        <!-- 折叠态快捷操作：不必展开即可参与/查单 -->
-        <div class="draw-card-quick" @click.stop>
-          <template v-if="draw.status === 'drawn'">
-            <RouterLink
-              v-if="myWonById[draw.id]?.orderToken"
-              class="btn btn-primary btn-sm"
-              :to="{ path: '/order', query: { token: myWonById[draw.id].orderToken } }"
-            >
-              {{ $t('lottery.checkOrder') }}
-            </RouterLink>
-            <span v-else-if="sessionEmail && myJoinedById[draw.id]" class="not-won">
-              {{ $t('lottery.notWon') }}
-            </span>
-            <button
-              v-else-if="!sessionEmail"
-              type="button"
-              class="btn btn-ghost btn-sm"
-              @click="openLogin()"
-            >
-              {{ $t('lottery.loginToCheck') }}
-            </button>
-            <!-- 查询我的结果：输入邮箱+验证码查看中奖卡密/安慰奖券 -->
-            <button
-              v-if="draw.showWinners"
-              type="button"
-              class="btn btn-ghost btn-sm"
-              @click="openMyResult(draw)"
-            >
-              查询结果
-            </button>
-          </template>
-          <template v-else-if="draw.status === 'drawing'">
-            <span class="drawing-state">{{ $t('lottery.statusDrawing') }}</span>
-          </template>
-          <template v-else-if="draw.status === 'open'">
-            <span v-if="myJoinedById[draw.id]" class="joined-badge">{{ joinedStatusText(draw) }}</span>
-            <button
-              v-else-if="!sessionEmail"
-              type="button"
-              class="btn btn-primary btn-sm"
-              @click="openLogin(draw.id)"
-            >
-              {{ $t('lottery.loginFirst') }}
-            </button>
-            <button
-              v-else
-              type="button"
-              class="btn btn-primary btn-sm"
-              :disabled="joiningId === draw.id"
-              @click="handleJoin(draw.id)"
-            >
-              {{ joiningId === draw.id ? '加载中…' : $t('lottery.join') }}
-            </button>
-          </template>
-          <component
-            :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
-            v-if="expandedId === draw.id && draw.status === 'open' && !requiresActivitySubmission(draw)"
-            :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || '奖品', color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
-            :disabled="joiningId === draw.id"
-            @play="handleJoin(draw.id)"
-          />
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            @click="toggleExpand(draw.id)"
-          >
-            {{ expandedId === draw.id ? $t('lottery.collapse') : $t('lottery.expand') }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            :title="$t('lottery.copyShareLink')"
-            @click="handleCopyPublicLink(draw.id)"
-          >
-            {{ $t('lottery.copyShareLink') }}
-          </button>
-        </div>
-
-        <!-- 展开详情 -->
-        <div v-if="expandedId === draw.id" class="draw-card-body">
-          <p v-if="draw.description" class="draw-desc">{{ draw.description }}</p>
-          <div v-if="draw.prizes && draw.prizes.length > 0" class="prize-showcase">
-            <div v-for="prize in draw.prizes" :key="`${prize.tierName || ''}-${prize.name || ''}`" class="prize-card">
-              <img :src="prizeImageUrl(prize.imageUrl)" :alt="prize.name || prize.tierName || '奖品'" class="prize-card-img" loading="lazy" />
-              <div class="prize-card-body">
-                <strong>{{ prize.name || prize.tierName || '奖品' }}</strong>
-                <span v-if="prize.valueText" class="prize-value">{{ prize.valueText }}</span>
-                <small v-if="prize.description">{{ prize.description }}</small>
-                <small v-if="prize.winnerCount">名额 {{ prize.winnerCount }}</small>
-              </div>
-            </div>
+        <div v-if="expandedId === draw.id" class="lottery-card-body">
+          <div class="lottery-game-area">
+            <component
+              :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
+              :key="draw.id"
+              :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || '奖品', color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
+              :disabled="joiningId === draw.id || !!myJoinedById[draw.id]"
+              @play="handleJoin(draw.id)"
+            />
           </div>
-          <div class="draw-detail-grid">
-            <div v-if="draw.productTitle || draw.productId" class="detail-item">
-              <span class="detail-label">{{ $t('lottery.product') }}</span>
-              <span class="detail-value">{{ draw.productTitle || draw.productId }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="detail-label">{{ $t('lottery.joinTime') }}</span>
-              <span class="detail-value">{{ formatTime(draw.startTime || draw.startAt || '') }} ~ {{ formatTime(draw.endTime || draw.endAt || '') }}</span>
-            </div>
-            <div class="detail-item">
-              <span class="detail-label">{{ $t('lottery.drawTime') }}</span>
-              <span class="detail-value">{{ formatTime(draw.drawTime || draw.drawAt || '') }}</span>
-            </div>
-            <div v-if="draw.showWinners" class="detail-item">
-              <span class="detail-label">{{ $t('lottery.winnerCount') }}</span>
-              <span class="detail-value">
-                <template v-if="draw.status === 'drawn' && draw.showWinners && draw.winnerCount !== undefined">
-                  {{ $t('lottery.actualWinnerCount') }}: {{ draw.winnerCount }}
-                </template>
-                <template v-else-if="draw.status !== 'drawn'">
-                  {{ $t('lottery.maxWinnerCount') }}: {{ draw.maxWinners }}
-                </template>
-              </span>
-            </div>
-            <div v-if="draw.showWinners && draw.maxParticipants" class="detail-item">
-              <span class="detail-label">{{ $t('lottery.maxParticipants') }}</span>
-              <span class="detail-value">{{ draw.entryCount ?? 0 }} / {{ draw.maxParticipants }}</span>
-            </div>
-          </div>
-
-          <div class="draw-actions">
-            <div v-if="draw.status === 'drawn'" class="result-section">
-              <span class="chip chip-drawn">{{ $t('lottery.drawResult') }}</span>
-              <template v-if="sessionEmail">
-                <div v-if="myWonById[draw.id]" class="won-badge">
-                  {{ $t('lottery.won') }}
-                  <RouterLink
-                    v-if="myWonById[draw.id].orderToken"
-                    class="order-link"
-                    :to="{ path: '/order', query: { token: myWonById[draw.id].orderToken } }"
-                  >
-                    {{ $t('lottery.checkOrder') }}
-                  </RouterLink>
-                </div>
-                <div v-else class="not-won">{{ $t('lottery.notWon') }}</div>
-              </template>
-              <div v-else class="login-prompt">
-                <button type="button" class="btn btn-primary btn-sm" @click="openLogin()">
-                  {{ $t('lottery.loginToCheck') }}
-                </button>
-              </div>
-            </div>
-
-            <div v-else-if="draw.status === 'drawing'" class="drawing-state">
-              {{ $t('lottery.statusDrawing') }}
-            </div>
-
-            <div v-else-if="draw.status === 'open'" class="join-section">
-              <div v-if="myJoinedById[draw.id]" class="joined-badge">
-                {{ joinedStatusText(draw) }}
-              </div>
-              <div
-                v-else-if="requiresActivitySubmission(draw)"
-                class="activity-submission"
-              >
-                <template v-if="draw.activityConfig?.kind === 'vote'">
-                  <label
-                    v-for="option in draw.activityConfig.options"
-                    :key="option.id"
-                    class="vote-option"
-                  >
-                    <input
-                      v-model="submissionDrafts[draw.id].optionId"
-                      type="radio"
-                      :name="'vote-' + draw.id"
-                      :value="option.id"
-                    />
-                    <span>
-                      <strong>{{ option.label }}</strong>
-                      <small v-if="option.description">{{ option.description }}</small>
-                    </span>
-                  </label>
-                </template>
-                <template v-else-if="draw.activityConfig?.kind === 'survey'">
-                  <label
-                    v-for="field in draw.activityConfig.fields"
-                    :key="field.id"
-                    class="survey-field"
-                  >
-                    <span>{{ field.label }}<em v-if="field.required">*</em></span>
-                    <textarea
-                      v-if="field.type === 'textarea'"
-                      v-model="submissionDrafts[draw.id].fields[field.id]"
-                      :maxlength="field.maxLength"
-                      rows="3"
-                    />
-                    <select
-                      v-else-if="field.type === 'select' || field.type === 'radio'"
-                      v-model="submissionDrafts[draw.id].fields[field.id]"
-                    >
-                      <option value="">请选择</option>
-                      <option v-for="option in field.options" :key="option.id" :value="option.id">{{ option.label }}</option>
-                    </select>
-                    <div v-else-if="field.type === 'checkbox'" class="checkbox-stack">
-                      <label v-for="option in field.options" :key="option.id" class="checkbox-option">
-                        <input
-                          v-model="submissionDrafts[draw.id].fields[field.id]"
-                          type="checkbox"
-                          :value="option.id"
-                        />
-                        <span>{{ option.label }}</span>
-                      </label>
-                    </div>
-                    <input
-                      v-else
-                      v-model="submissionDrafts[draw.id].fields[field.id]"
-                      :type="field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : 'text'"
-                      :maxlength="field.maxLength"
-                    />
-                  </label>
-                </template>
-              </div>
-              <!-- 导流：参与成功后展示商品卡片 -->
-              <div v-if="myJoinedById[draw.id] && draw.productLink" class="product-card">
-                <div class="product-card-inner">
-                  <div v-if="draw.productLink.imageUrl" class="product-card-img">
-                    <img :src="draw.productLink.imageUrl" :alt="draw.productLink.title" loading="lazy" />
-                  </div>
-                  <div class="product-card-body">
-                    <h4 class="product-card-title">{{ draw.productLink.title }}</h4>
-                    <p v-if="draw.productLink.price" class="product-card-price">{{ draw.productLink.price }}</p>
-                    <a
-                      :href="productUtmUrl(draw.productLink.url, draw.id, draw.publicSlug)"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="btn btn-primary btn-sm"
-                      @click="handleCtaClick(draw, 'joined_product_card')"
-                    >{{ $t('lottery.viewProduct') }}</a>
-                  </div>
-                </div>
-              </div>
-              <!-- 裂变排行榜（活动开启了 leaderboard 时展示） -->
-              <ViralLeaderboard
-                v-if="getDrawViral(draw)?.leaderboardEnabled"
-                :draw-slug="draw.publicSlug || draw.id"
-                :entry-id="lastJoinResult?.drawId === draw.id ? lastJoinResult.entryId : undefined"
-                :viral-config="getDrawViral(draw)"
-              />
-              <div v-else-if="!sessionEmail" class="login-prompt">
-                <button type="button" class="btn btn-primary" @click="openLogin(draw.id)">
-                  {{ $t('lottery.loginFirst') }}
-                </button>
-              </div>
-              <div v-else>
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  :disabled="joiningId === draw.id"
-                  @click="handleJoin(draw.id)"
-                >
-                  {{ joiningId === draw.id ? '加载中…' : $t('lottery.join') }}
-                </button>
-              </div>
-            </div>
+          <div class="lottery-join-bar">
+            <template v-if="draw.status !== 'open'">
+              <span class="lottery-join-hint">{{ statusText(draw.status) }}</span>
+            </template>
+            <template v-else-if="myJoinedById[draw.id]">
+              <span class="lottery-join-hint">✅ 已参与 · {{ joinedTimeText(draw) }}</span>
+              <button v-if="draw.showWinners" class="lottery-result-btn" @click="openMyResult(draw)">查询结果</button>
+            </template>
+            <template v-else-if="!sessionEmail && !registeredUsername">
+              <button class="lottery-join-btn" @click="openLogin(draw.id)">参与抽奖</button>
+            </template>
+            <template v-else>
+              <button class="lottery-join-btn" :disabled="joiningId === draw.id" @click="handleJoin(draw.id)">
+                {{ joiningId === draw.id ? '加载中…' : '参与抽奖' }}
+              </button>
+            </template>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 登录弹窗 -->
+    <!-- 我的参与记录 -->
+    <section v-if="(sessionEmail || registeredUsername) && sortedMyEntries.length > 0" class="lottery-records">
+      <h2 class="lottery-section-title">我的参与记录</h2>
+      <div v-if="recordsLoading" class="lottery-center">加载中…</div>
+      <div v-else class="lottery-records-list">
+        <div v-for="row in sortedMyEntries" :key="row.drawId" class="lottery-record">
+          <span class="lottery-record-name">{{ row.drawName || row.drawId }}</span>
+          <span v-if="myWonById[row.drawId]" class="lottery-tag won">🎉 已中奖</span>
+          <span v-else-if="row.drawStatus === 'drawn'" class="lottery-tag muted">未中奖</span>
+          <span v-else class="lottery-tag joined">已参与</span>
+        </div>
+      </div>
+    </section>
+
     <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLogin">
       <div class="modal-content" role="dialog" aria-modal="true" :aria-label="$t('lottery.emailVerify')">
         <h3 class="modal-title">{{ isRegisteredJoin ? '登录参与' : $t('lottery.emailVerify') }}</h3>

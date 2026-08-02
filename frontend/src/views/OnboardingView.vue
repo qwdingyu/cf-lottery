@@ -3,25 +3,25 @@
     <div class="onboarding-card">
       <div class="onboarding-hero">
         <div class="onboarding-icon">🎯</div>
-        <h1 class="onboarding-title">创建工作空间</h1>
+        <h1 class="onboarding-title">{{ $t('onboarding.title') }}</h1>
         <p class="onboarding-desc">
-          工作空间是您管理活动、奖品和团队成员的地方。<br />
-          您随时可以创建多个工作空间用于不同项目。
+          {{ $t('onboarding.descLine1') }}<br />
+          {{ $t('onboarding.descLine2') }}
         </p>
       </div>
 
       <form class="onboarding-form" @submit.prevent="handleCreate">
         <label class="field-label">
-          <span>工作空间名称</span>
+          <span>{{ $t('onboarding.workspaceName') }}</span>
           <input
             v-model="tenantName"
             type="text"
-            placeholder="例如：我的团队、市场部、社区运营"
+            :placeholder="$t('onboarding.workspacePlaceholder')"
             maxlength="30"
             :disabled="creating"
             autofocus
           />
-          <small class="field-hint">可随时修改，建议使用团队或项目名称</small>
+          <small class="field-hint">{{ $t('onboarding.workspaceHint') }}</small>
         </label>
 
         <button
@@ -29,14 +29,14 @@
           type="submit"
           :disabled="creating || !tenantName.trim()"
         >
-          {{ creating ? '创建中…' : '创建工作空间' }}
+          {{ creating ? $t('onboarding.creating') : $t('onboarding.createButton') }}
         </button>
 
         <p v-if="error" class="onboarding-error">{{ error }}</p>
       </form>
 
       <div class="onboarding-footer">
-        <a href="#" class="btn btn-ghost btn-sm" @click.prevent="handleSkip">稍后再说</a>
+        <a href="#" class="btn btn-ghost btn-sm" @click.prevent="handleSkip">{{ $t('onboarding.skip') }}</a>
       </div>
     </div>
   </div>

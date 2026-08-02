@@ -35,6 +35,21 @@ export default {
     nextLabel: "Next page",
   },
 
+  // ── Workspace onboarding ───────────────────────────────
+  onboarding: {
+    title: "Create workspace",
+    descLine1: "Workspaces are where you manage activities, prizes, and team members.",
+    descLine2: "You can create multiple workspaces for different projects at any time.",
+    workspaceName: "Workspace name",
+    workspacePlaceholder: "e.g. My team, Marketing, Community ops",
+    workspaceHint: "Editable anytime; use a team or project name",
+    creating: "Creating…",
+    createButton: "Create workspace",
+    skip: "Later",
+    createFailed: "Failed to create workspace",
+    networkError: "Network error",
+  },
+
   // ── Admin Layout ──────────────────────────────────────
   adminLayout: {
     title: "Admin",

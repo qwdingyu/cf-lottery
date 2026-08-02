@@ -37,6 +37,21 @@ export default {
     nextLabel: "下一页",
   },
 
+  // ── 工作空间创建（Onboarding） ─────────────────────────
+  onboarding: {
+    title: "创建工作空间",
+    descLine1: "工作空间是您管理活动、奖品和团队成员的地方。",
+    descLine2: "您随时可以创建多个工作空间用于不同项目。",
+    workspaceName: "工作空间名称",
+    workspacePlaceholder: "例如：我的团队、市场部、社区运营",
+    workspaceHint: "可随时修改，建议使用团队或项目名称",
+    creating: "创建中…",
+    createButton: "创建工作空间",
+    skip: "稍后再说",
+    createFailed: "创建失败",
+    networkError: "网络错误",
+  },
+
   // ── 管理后台布局（AdminLayout） ────────────────────
   adminLayout: {
     title: "管理后台",
