@@ -207,7 +207,8 @@ authRoute.post("/verify-email", async (c) => {
   const jwtSecret = getJwtSecret(c);
   const token = await signJwt({ sub: user.id, tenantId }, jwtSecret, 7 * 86400);
 
-  return c.json({ ok: true, token, tenantId });
+  // needsTenant 与 /login 对齐：方案 C 下新注册用户无租户，前端引导 onboarding
+  return c.json({ ok: true, token, tenantId, needsTenant: !member });
 });
 
 // ══════════════════════════════════════════════════════════
