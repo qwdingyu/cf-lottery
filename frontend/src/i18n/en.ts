@@ -248,34 +248,10 @@ export default {
       confirmPhrase: "Confirmation phrase (must match exactly)",
     },
     clearProfiles: {
-      runtime: {
-        title: "Runtime & Logs Only",
-        summary: "Clear request/email logs, rate limits, idempotency, old audits. Keeps orders, cards, balance, products, storefronts.",
-        detail: "Safest. For idempotency debris, rate-limit test blocks, log bloat. Ledger and catalog fully preserved.",
-        confirmation: "Clear runtime & logs",
-        buttonLabel: "Clear Runtime & Logs",
-      },
-      keep_trade: {
-        title: "Clear Ledger & Marketing (Keep Trades)",
-        summary: "Clear balance ledger, recharges, coupons/campaigns/referrals, logs, and runtime. Keeps products, storefronts, cards, orders.",
-        detail: "For clearing test balances and marketing debris while keeping orders and inventory. Card strategy: none. Note: clearing the ledger means historical order amounts can't be reconciled line-by-line — this is not a reconciliation tool.",
-        confirmation: "Clear ledger marketing keep trades",
-        buttonLabel: "Clear Ledger & Marketing",
-      },
-      keep_catalog: {
-        title: "Clear Trades (Keep Catalog)",
-        summary: "Clear orders, all cards, balance ledger, marketing, logs, and runtime. Keeps product catalog and storefronts.",
-        detail: "Acceptance profile. Cards are force-cleared (S1) to avoid orphaned deliveries. Re-import cards after testing; no need to reconfigure products and storefronts.",
-        confirmation: "Clear trade data keep catalog",
-        buttonLabel: "Clear Trades (Keep Catalog)",
-      },
-      full: {
-        title: "Clear All Business Data",
-        summary: "On top of the previous profile, also clear products and storefront-product mappings. System config, payment, categories, API keys, migrations preserved.",
-        detail: "Pre-launch smoke cleanup. Products are deleted and must be re-added. Confirmation phrase matches historical behavior.",
-        confirmation: "Clear all business data",
-        buttonLabel: "Clear All Business Data",
-      },
+
+
+
+
     },
     loadFailed: "Failed to load system config",
     resetSuccess: "Reset successfully",
@@ -283,226 +259,54 @@ export default {
     notSynced: ", but the public config could not be refreshed on this page. Reload the page to sync.",
     resetConfirm: "Confirm reset {key} to default?",
     fields: {
-      shop_name: {
-        label: "Shop Name",
-        description: "Brand name shown to customers.",
-        effect: "Displayed in the frontend header, storefront branding, and footer. Falls back to Shop when empty.",
-      },
+
       support_email: {
         label: "Support Email",
         description: "After-sales contact email shown to customers.",
         effect: "Displayed in the footer and storefront contact area; email templates may reuse this public contact.",
       },
-      offline_pay_qr_wechat: {
-        label: "WeChat Payment QR",
-        description: "Image URL for the WeChat offline payment QR code.",
-        effect: "Returned by /api/pay/unified for checkout display; offline order creation goes through the same API.",
-      },
-      balance_payment_enabled: {
-        label: "Enable Balance Payment",
-        description: "Whether customers can pay with account balance in checkout.",
-        effect: "When disabled, checkout hides balance payment and /api/pay/unified rejects balance payments; free orders still settle automatically.",
-      },
-      balance_recharge_enabled: {
-        label: "Enable Online Recharge",
-        description: "Whether customers can top up email balance through online payment.",
-        effect: "When enabled, the frontend shows recharge entry; email verification is required before recharge and successful payment writes balance atomically.",
-      },
-      balance_recharge_min_cents: {
-        label: "Minimum Online Recharge (yuan)",
-        description: "Minimum single recharge amount in CNY yuan, up to 2 decimals. Admin edits yuan; DB/API store integer cents.",
-        effect: "Backend validates in cents when creating recharge orders; frontend shows the yuan range. Default 1.00 yuan.",
-      },
-      balance_recharge_max_cents: {
-        label: "Maximum Online Recharge (yuan)",
-        description: "Maximum single recharge amount in CNY yuan, up to 2 decimals. Admin edits yuan; DB/API store integer cents.",
-        effect: "Backend validates in cents and requires it to be >= minimum. Default 5000.00 yuan.",
-      },
-      offline_pay_qr_alipay: {
-        label: "Alipay Payment QR",
-        description: "Image URL for the Alipay offline payment QR code.",
-        effect: "Returned by /api/pay/unified for checkout display; offline order creation goes through the same API.",
-      },
-      offline_pay_hint: {
-        label: "Offline Payment Instructions",
-        description: "Instructions shown after customers scan and pay offline.",
-        effect: "Payment API returns offlineHint and the frontend displays it directly in the offline payment step.",
-      },
-      turnstile_enabled: {
-        label: "Enable Turnstile",
-        description: "Whether to enable Cloudflare Turnstile bot verification site-wide.",
-        effect: "Frontend renders Turnstile only when enabled; backend enforces tokens for normal orders, voucher redemption, and email code sending. Balance payment and exact order lookup use short-lived email verification.",
-      },
-      turnstile_site_key: {
-        label: "Turnstile Site Key",
-        description: "Cloudflare Turnstile frontend site key.",
-        effect: "Frontend reads this key to render Turnstile after it is enabled. Must match the Secret Key.",
-      },
-      order_expire_minutes: {
-        label: "Order Expiry Minutes",
-        description: "Validity period for pending orders and locked cards.",
-        effect: "Used to calculate orders.expires_at and card lock expiry, then returned to the frontend countdown.",
-      },
-      order_rate_limit_window_seconds: {
-        label: "Email Order Rate Window (seconds)",
-        description: "How many seconds one canonical email is rate-limited for order creation; independent from IP limits.",
-        effect: "Used by checkOrderRateLimit, checkFreeClaimOrderRateLimit, and checkBalanceOrderRateLimit.",
-      },
-      order_rate_limit_max_orders: {
-        label: "Max Orders Per Email Window",
-        description: "Maximum orders allowed for the same email in the window. Paid counts pending/paid; free claim has stricter controls.",
-        effect: "Email rate overflow returns 429. Anti-abuse mainly relies on email purchase limits and OTP; this prevents rapid repeated clicks.",
-      },
-      ip_rate_pay_unified_limit: {
-        label: "IP Checkout Limit Per Minute",
-        description: "Maximum /pay/unified calls per minute from one exit IP, including failed retries. Keep loose for shared Wi-Fi.",
-        effect: "Applies enforceRateLimit(pay_unified). Email OTP/limits are primary anti-abuse; IP is a broad circuit breaker. Default 20.",
-      },
-      ip_rate_email_access_code_limit: {
-        label: "IP Email Code Limit Per Minute",
-        description: "Maximum email-code send requests per minute from one exit IP. Same email still has a 60-second cooldown.",
-        effect: "Applies enforceRateLimit(email_access_code). Checkout also pre-checks product purchase limits before sending. Default 10.",
-      },
-      ip_rate_free_claim_enabled: {
-        label: "Enable Free-Claim IP Limit",
-        description: "When off, successful free claims are no longer limited by IP. Email purchase limits and OTP still apply.",
-        effect: "When false, skips free_claim IP fixed-window counting. Default enabled.",
-      },
-      ip_rate_free_claim_limit: {
-        label: "IP Free Claims Per Hour",
-        description: "Maximum successful free-claim flow completions per exit IP within the window. Shared exits usually need 10-20.",
-        effect: "Applies enforceRateLimit(free_claim). Distributed abuse is still controlled by email limits; this blocks one-exit mass claiming. Default 15.",
-      },
-      ip_rate_free_claim_window_seconds: {
-        label: "IP Free-Claim Window (seconds)",
-        description: "Fixed-window length for free-claim IP limiting. Default 3600 (one hour).",
-        effect: "Used together with ip_rate_free_claim_limit.",
-      },
-      email_domain_restriction_enabled: {
-        label: "Enable Email Domain Restriction",
-        description: "When enabled, only domains in the whitelist can request codes and place orders. Disabled by default.",
-        effect: "Code sending checks before email; /pay/unified and /recharge/create check new write paths; balance lookup checks before verification. Enabled with an empty whitelist rejects all email domains.",
-      },
-      email_alias_block_enabled: {
-        label: "Block Email + Aliases",
-        description: "Reject addresses whose local-part contains +, such as user plus tag at domain dot com. Disabled by default. Purchase limits and OTP still canonicalize aliases even when this is off.",
-        effect: "Shares the domain-policy entry points: code sending, new order/recharge writes, and balance lookup. Successful idempotent replay and existing orders are unaffected.",
-      },
-      email_domain_whitelist: {
-        label: "Email Domain Whitelist",
-        description: "One domain per line, for example qq.com or gmail.com. Only used when domain restriction is enabled.",
-        effect: "Works with email_domain_restriction_enabled; saved domains are normalized to lowercase and deduplicated.",
-      },
-      admin_mask_buyer_pii: {
-        label: "Mask Buyer Contact In Admin",
-        description: "Mask buyer email/contact in order list, detail, and exports. Disabled by default for support search and copy.",
-        effect: "Admin order list/detail/CSV/finance exports mask buyerEmail and buyerContact when enabled. Search always matches plaintext stored values.",
-      },
-      inventory_warning_email_to: {
-        label: "Low Stock Alert Email",
-        description: "Recipient address for low-stock alert emails, usually the support email.",
-        effect: "Target address for low-stock warnings; empty means stock warning emails are skipped.",
-      },
-      inventory_warning_enabled: {
-        label: "Enable Low Stock Alert",
-        description: "Whether to enable the low-stock product list.",
-        effect: "/api/admin/low-stock-products returns an empty list when false.",
-      },
-      inventory_warning_threshold: {
-        label: "Low Stock Threshold",
-        description: "Inventory quantity threshold for low-stock products.",
-        effect: "/api/admin/low-stock-products filters products by this threshold.",
-      },
-      resend_api_key: {
-        label: "Resend API Key",
-        description: "Resend email service API key for order notifications and email access codes.",
-        effect: "sendEmail calls Resend with this key. When missing, normal notifications are skipped and balance lookup/payment, exact order lookup, and email-only delivery are disabled.",
-      },
-      email_from: {
-        label: "Resend Sender",
-        description: "Verified Resend sender, for example \"eshop <noreply at eforge.xyz>\".",
-        effect: "sendEmail uses this as the sender; when missing, the code fallback is used.",
-      },
-      turnstile_secret_key: {
-        label: "Turnstile Secret Key",
-        description: "Cloudflare Turnstile backend verification secret.",
-        effect: "When Turnstile is enabled, verifyTurnstile uses this secret to call Cloudflare verification. Missing secret makes the configuration incomplete.",
-      },
-      allow_turnstile_bypass_for_smoke: {
-        label: "Allow Smoke Turnstile Bypass",
-        description: "Whether remote smoke tests may bypass Turnstile with x-smoke-admin-token.",
-        effect: "verifyTurnstile uses this flag to allow or reject smoke requests. Defaults to false.",
-      },
-      operational_data_retention_enabled: {
-        label: "Enable Operational Data Cleanup",
-        description: "Controls whether scheduled cleanup deletes runtime data older than retention windows.",
-        effect: "When disabled, expired orders/cards are still processed, but deletion of rate limits, idempotency, request logs, email logs, and audit logs is paused.",
-      },
-      rate_limit_retention_days: {
-        label: "Rate Limit Retention Days",
-        description: "Maximum retention for completed rate-limit windows.",
-        effect: "Scheduled cleanup deletes rate_limit_windows older than this.",
-      },
-      idempotency_retention_days: {
-        label: "Idempotency Retention Days",
-        description: "Retention period for payment and write-operation idempotency records.",
-        effect: "Scheduled cleanup deletes idempotency_keys older than this.",
-      },
-      request_log_retention_days: {
-        label: "Request Log Retention Days",
-        description: "Retention period for admin request logs.",
-        effect: "Scheduled cleanup deletes request_logs older than this.",
-      },
-      email_log_retention_days: {
-        label: "Email Log Retention Days",
-        description: "Retention period for email delivery results and error records.",
-        effect: "Scheduled cleanup deletes email_logs older than this.",
-      },
-      business_log_retention_days: {
-        label: "Business Log Retention Days",
-        description: "Retention period for card operation logs and order events.",
-        effect: "Scheduled cleanup deletes card_logs and order_events older than this.",
-      },
-      admin_audit_retention_days: {
-        label: "Admin Audit Retention Days",
-        description: "Retention period for admin audit logs.",
-        effect: "Scheduled cleanup deletes admin_audit_logs older than this.",
-      },
-      referral_reward_enabled: {
-        label: "Enable Automatic Referral Rewards",
-        description: "Whether to automatically credit commission to the registered referral-code owner after successful payment.",
-        effect: "false prevents any referral code from changing balance automatically. true still requires active code, fixed/percent reward type, and a valid owner email. Attribution never blocks checkout.",
-      },
-      referral_reward_max_fixed_cents: {
-        label: "Max Commission Per Order (yuan)",
-        description: "Maximum credited amount per order in CNY yuan, up to 2 decimals. Fixed values and percent results are both capped.",
-        effect: "Admin validates fixed rewards and runtime clamps percent results to this cap. Default 500.00 yuan.",
-      },
-      referral_reward_skip_self_purchase: {
-        label: "Skip Self-Purchase Rewards",
-        description: "Whether to skip rewards when buyer email and owner email are the same canonical email.",
-        effect: "Defaults true to prevent self-purchase commission farming. Only affects automatic crediting, not the order itself.",
-      },
-      referral_reward_allow_percent: {
-        label: "Allow Percent Commission",
-        description: "Whether percent referral codes may credit commission by order amount after successful payment.",
-        effect: "Set false to emergency-disable all percent rewards without deleting percent codes. Fixed rewards are unaffected.",
-      },
-      referral_reward_max_percent: {
-        label: "Max Percent Commission",
-        description: "Maximum integer percentage for percent rewardValue, 1-100. Default 50.",
-        effect: "Admin template/code validation and runtime skip invalid or over-limit percent settings.",
-      },
-      referral_member_reward_type: {
-        label: "Member Referral Reward Type",
-        description: "Reward type assigned to automatically generated member referral codes. Global setting; users cannot edit it.",
-        effect: "none = attribution only; fixed = fixed cents; percent = integer percent of paid amount. Actual crediting still depends on the global reward switch.",
-      },
-      referral_member_reward_value_cents: {
-        label: "Member Referral Reward Value",
-        description: "For fixed, this is cents shown as yuan in UI; for percent, this is an integer percentage such as 10 = 10%.",
-        effect: "Interpreted by reward type. Fixed is capped by max fixed commission; percent is capped by max percent. Default fixed value is 100 cents.",
-      },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     },
   },
 
