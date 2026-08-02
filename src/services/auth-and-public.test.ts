@@ -538,6 +538,8 @@ describe("公开参与流程", () => {
     const body = await res.json() as any;
     expect(body.ok).toBe(true);
     expect(body.joined).toBe(true);
+    // 返回 entryId/outcome（前端结果弹窗与分享归因依赖）
+    expect(body.entryId).toBeTruthy();
 
     // entry 身份应为 user_id（不是 email），这是重复参与判重的关键
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId)).limit(1);
@@ -660,6 +662,51 @@ describe("公开参与流程", () => {
     const data = await withToken.json() as any;
     expect(data.ok).toBe(true);
     expect(data.joined).toBe(true);
+  });
+
+  it("registered 中奖者通知：user_id 身份关联 users 表真实邮箱发送", async () => {
+    const tenantId = TENANT;
+    const drawId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId, publicSlug: "reg-notify",
+      title: "通知测试", status: "drawn", participationMode: "registered",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    // 注册用户：真实邮箱在 users 表（registered 身份是 userId，不是邮箱）
+    await db.insert(users).values({
+      id: userId, username: "regwinner", email: "regwinner@test.com",
+      emailVerified: 1, passwordHash: "h",
+    });
+    await db.insert(lotteryWinners).values({
+      id: crypto.randomUUID(), tenantId, drawId, tierId: "tier-1", entryId: "notify-entry-1",
+      identityType: "user_id", identityValue: userId,
+      prizeCodeId: null, notificationStatus: "pending",
+    });
+
+    // mock Resend API：捕获收件人地址
+    let capturedTo = "";
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes("resend.com")) {
+        capturedTo = (JSON.parse(String(init?.body)) as { to: string }).to;
+        return new Response(JSON.stringify({ id: "mock-msg" }), { status: 200 });
+      }
+      return new Response("", { status: 404 });
+    });
+
+    await sendWinnerNotifications(db, tenantId, drawId, {
+      resendApiKey: "test-key",
+      emailFrom: "noreply@test.com",
+    });
+    vi.unstubAllGlobals();
+
+    // 收件人必须是 users 表里的真实邮箱，而不是 userId（UUID）
+    expect(capturedTo).toBe("regwinner@test.com");
+
+    // 通知状态应标记为已发送
+    const [winner] = await db.select().from(lotteryWinners).where(eq(lotteryWinners.drawId, drawId)).limit(1);
+    expect(winner?.notificationStatus).toBe("sent");
   });
 });
 
