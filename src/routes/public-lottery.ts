@@ -109,7 +109,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.status !== "open" && draw.status !== "drawn") return fail(c, "活动未开放", 404);
+  if (draw.status !== "open" && draw.status !== "drawn") return fail(c, "活动未开放", 400);
 
   const [{ total }] = await db
     .select({ total: count() })

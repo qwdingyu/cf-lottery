@@ -340,6 +340,28 @@ authRoute.post("/switch-tenant", requireAuth, async (c) => {
   return c.json({ ok: true, token, tenantId: targetTenantId, role: membership.role });
 });
 
+/**
+ * ★ 045 方案 C：显式创建租户（onboarding 引导后的主动创建）。
+ * 每个用户允许创建多个租户（多品牌运营），不做一人一租户限制。
+ */
+authRoute.post("/create-tenant", async (c) => {
+  const db = getDb(c);
+  const userId = c.get("userId") as string;
+  const body = await c.req.json<{ name: string }>();
+  const name = String(body.name || "").trim();
+  if (!name) return c.json({ ok: false, message: "请输入租户名称" }, 400);
+
+  const tenantId = crypto.randomUUID();
+  await withDbTransaction(db, async (tx) => {
+    await tx.insert(tenants).values({ id: tenantId, name });
+    await tx.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
+  });
+
+  const token = await signJwt({ sub: userId, tenantId }, getJwtSecret(c), 7 * 86400);
+
+  return c.json({ ok: true, tenantId, name, token });
+});
+
 /** 注销 */
 authRoute.post("/logout", async (c) => {
   return c.json({ ok: true, message: "已注销" });
