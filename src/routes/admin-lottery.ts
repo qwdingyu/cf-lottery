@@ -1244,11 +1244,11 @@ adminLotteryRoute.get("/draws/:id/export", async (c) => {
     `${csvEscape(draw.title)},${csvEscape(draw.status)},${entries.length},${draw.activityKind === "lottery" ? winners.length : outcomes.length}`,
     "",
     "参与者,参与时间",
-    ...entries.map((e) => `${csvEscape(e.identityDisplay || e.identityValue)},${csvEscape(e.joinedAt)}`),
+    ...entries.map((e) => `${csvEscape((e as any).identityDisplay || e.identityValue)},${csvEscape(e.joinedAt)}`),
   ];
 
   if (draw.activityKind === "lottery") {
-    lines.push("", "中奖者,中奖时间", ...winners.map((w) => `${csvEscape(w.identityDisplay || w.identityValue)},${csvEscape(w.drawnAt)}`));
+    lines.push("", "中奖者,中奖时间", ...winners.map((w) => `${csvEscape((w as any).identityDisplay || w.identityValue)},${csvEscape(w.drawnAt)}`));
   } else {
     lines.push(
       "",

@@ -835,7 +835,9 @@
             </thead>
             <tbody>
               <tr v-for="w in winners" :key="w.id">
-                <td>{{ w.email }}</td>
+                <!-- identityDisplay：后端已把 user_id 身份（registered）解析为用户名(邮箱)；
+                     email 身份等于 identityValue。兜底 identityValue 防止旧数据无字段 -->
+                <td>{{ w.identityDisplay || w.identityValue || '-' }}</td>
                 <td>
                   <RouterLink
                     v-if="w.orderNo"
@@ -1183,7 +1185,8 @@ const formatLotteryEntryProgress = (count?: number | null, max?: number | null) 
 const formatLotteryVisibilityLabel = (visible: number | undefined | null, labels: { public: string; hidden: string }) => visible ? labels.public : labels.hidden;
 const buildLotteryWinnersCsvRows = (winners: LotteryWinner[], labels: any) => {
   const header = [labels.email, labels.emailStatus];
-  const rows = winners.map((w: any) => [w.identityValue, w.notificationStatus === 'sent' ? labels.sent : w.notificationStatus === 'failed' ? labels.failed : labels.pending]);
+  // 与中奖名单展示一致：优先 identityDisplay（registered 用户为用户名(邮箱)）
+  const rows = winners.map((w: any) => [w.identityDisplay || w.identityValue, w.notificationStatus === 'sent' ? labels.sent : w.notificationStatus === 'failed' ? labels.failed : labels.pending]);
   return [header, ...rows];
 };
 const buildLotteryDuplicateDraft = (draw: any, opts: { nameSuffix: string; defaultName: string }) => ({

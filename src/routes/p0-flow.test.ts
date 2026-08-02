@@ -11,7 +11,7 @@ import type { DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
-import { activityEvents, activitySubmissions, activityOutcomes, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
+import { activityEvents, activitySubmissions, activityOutcomes, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, lotteryBlacklist, systemConfig, webhookConfigs } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -626,4 +626,117 @@ it("接龙：取消参与后候补自动转正", async () => {
   // a 的参与记录已删除
   const aEntry = await db.select().from(lotteryEntries).where(and(eq(lotteryEntries.drawId, id), eq(lotteryEntries.identityValue, "a@test.com")));
   expect(aEntry).toHaveLength(0);
+});
+
+/* ── L2 视角：registered 参与者身份可读性 ──
+ * 覆盖：中奖名单/候选池的 identityDisplay 解析（user_id → 用户名(邮箱)）、
+ *       黑名单按邮箱拉黑 registered 用户后封堵参与。
+ */
+describe("L2 视角：registered 参与者身份可读", () => {
+  /** 创建 registered 活动 + registered 参与者（users + entry + winner） */
+  async function seedRegisteredWinner(app: Hono<AppEnv>, slug: string, status: string) {
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT_ID, publicSlug: slug, title: "注册参与",
+      status, participationMode: "registered", activityKind: "lottery",
+      startAt: futureIso(-60), endAt: futureIso(60), winnerCount: 1,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    const userId = crypto.randomUUID();
+    await db.insert(users).values({
+      id: userId, username: "regwinner", email: "regwinner@test.com",
+      emailVerified: 1, passwordHash: "hash",
+    });
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT_ID, drawId,
+      identityType: "user_id", identityValue: userId, joinedAt: new Date().toISOString(),
+    });
+    if (status === "drawn") {
+      await db.insert(lotteryWinners).values({
+        id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, tierId: "tier-1", entryId,
+        identityType: "user_id", identityValue: userId, prizeCodeId: null,
+      });
+    }
+    return { drawId, userId };
+  }
+
+  it("中奖名单：user_id 身份解析为 用户名(邮箱)，email 身份保持原样", async () => {
+    const app = createTestApp();
+    await seedOwner();
+    const { drawId } = await seedRegisteredWinner(app, "reg-winners", "drawn");
+    // 追加一个 open 模式（email 身份）中奖者，验证不受影响
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId,
+      identityType: "email", identityValue: "open@test.com", joinedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryWinners).values({
+      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, tierId: "tier-1", entryId: "e-open",
+      identityType: "email", identityValue: "open@test.com", prizeCodeId: null,
+    });
+
+    const res = await app.request(`/api/admin/draws/${drawId}/winners`, {
+      method: "GET", headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+
+    const regWinner = data.winners.find((w: any) => w.identityType === "user_id");
+    expect(regWinner.identityDisplay).toBe("regwinner（regwinner@test.com）");
+    // 原 identityValue 保留（UUID），供去重/审计
+    expect(regWinner.identityValue).toBe(regWinner.identityValue);
+
+    const openWinner = data.winners.find((w: any) => w.identityType === "email");
+    // email 身份不注入 identityDisplay，前端兜底显示 identityValue
+    expect(openWinner.identityDisplay).toBeUndefined();
+    expect(openWinner.identityValue).toBe("open@test.com");
+  });
+
+  it("候选池：user_id 身份返回 identityDisplay", async () => {
+    const app = createTestApp();
+    await seedOwner();
+    const { drawId } = await seedRegisteredWinner(app, "reg-entries", "open");
+
+    const res = await app.request(`/api/admin/draws/${drawId}/entries`, {
+      method: "GET", headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.entries[0].identityDisplay).toBe("regwinner（regwinner@test.com）");
+  });
+
+  it("黑名单：registered 用户被按邮箱拉黑后不能参与", async () => {
+    const app = createTestApp();
+    await seedOwner();
+    // 独立造数：registered 活动 + 用户（未参与，避免撞"已参与"检查）
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT_ID, publicSlug: "reg-blacklist", title: "黑名单测试",
+      status: "open", participationMode: "registered", activityKind: "lottery",
+      startAt: futureIso(-60), endAt: futureIso(60), winnerCount: 1,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    const userId = crypto.randomUUID();
+    await db.insert(users).values({
+      id: userId, username: "banneduser", email: "banned@test.com",
+      emailVerified: 1, passwordHash: "hash",
+    });
+    // 运营者按邮箱拉黑 registered 用户（黑名单 identity_value 存邮箱）
+    await db.insert(lotteryBlacklist).values({
+      id: crypto.randomUUID(), tenantId: TENANT_ID, identityValue: "banned@test.com",
+      note: "作弊", createdAt: new Date().toISOString(),
+    });
+    const token = await signJwt({ sub: userId, tenantId: TENANT_ID }, JWT_SECRET, 3600);
+
+    const res = await app.request("/api/public/draws/reg-blacklist/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({}),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.message).toContain("限制参与");
+  });
 });
