@@ -4,16 +4,12 @@
  * 目的：用真实数据库验证代码审查报告中的关键发现，避免"凭感觉报漏洞"。
  * 每个用例对应审查报告中的一个发现，测试通过才认定为真实问题。
  *
- * 覆盖（对应 docs/049 报告条目，2026-08-02 三处已修复）：
- * 1. 开奖一致性（#3.4 已修复）：winners 与 status=drawn 合并同一事务。
- *    【已修复】断言修复后行为：正常开奖二者原子落库；事务失败时全部回滚、
- *    状态回滚 open 可重试，不再产生"winners 残留 + open 状态"的自锁。
- * 2. 限流竞态（#6 已修复）：checkDbRateLimit 改为单条原子条件 INSERT。
- *    【已修复】断言修复后行为：同一 key 20 并发、阈值 3，通过数严格等于 3。
- * 3. verify-email 验证码猜测（#3.1 已修复）：加 IP 限流（内存 + DB 双层，10 次/15 分钟）。
- *    【已修复】断言修复后行为：前 10 次返回 400，第 11 次起返回 429。
- * 4. /result 端点邮箱枚举（#3.5 已修复）：与 my-result 对齐，要求验证码。
- *    【已修复】断言修复后行为：无验证码/错误验证码被拒，有效验证码可查询。
+ * 覆盖（docs/049 报告条目，已修复项断言"修复后行为"）：
+ * 1. 开奖一致性（#3.4）：winners 与 status=drawn 同事务——正常原子落库、失败全回滚可重试。
+ * 2. 限流竞态（#6）：checkDbRateLimit 原子条件 INSERT——同一 key 并发通过数严格 ≤ limit。
+ * 3. verify-email 验证码猜测（#3.1）：内存 + DB 双层 IP 限流（10 次/15 分钟）。
+ * 4. /result 端点邮箱枚举（#3.5）：与 my-result 对齐，要求验证码。
+ * 5. 请求体大小闸门（#8）：chunked（无 content-length）请求体流式限幅，超限 413、正常可解析。
  *
  * 说明：这组测试是"验证审查结论"的正式测试，保留作为回归保护——
  * 未来任何一处改回缺陷实现，对应用例会立即失败。
@@ -24,6 +20,7 @@ import { eq, and } from "drizzle-orm";
 import type { AppEnv } from "./bindings";
 import { clearTestData, getTestDb } from "./test-setup";
 import { checkDbRateLimit } from "./lib/rate-limit";
+import { enforceRequestBodyLimit } from "./lib/body-limit";
 import { authRoute } from "./routes/auth";
 import { publicLotteryRoute } from "./routes/public-lottery";
 import {
@@ -273,7 +270,63 @@ describe("verify-email 验证码猜测", () => {
   });
 });
 
-/* ── 测试 4：/result 端点防枚举（对齐 my-result） ── */
+/* ── 测试 5：#8 请求体大小闸门（chunked 绕过防护） ── */
+
+describe("#8 请求体大小闸门", () => {
+  function createBodyLimitApp() {
+    const app = new Hono<AppEnv>();
+    app.use("*", enforceRequestBodyLimit);
+    app.post("/echo", async (c) => {
+      const body = await c.req.json<{ hello?: string }>();
+      return c.json({ ok: true, hello: body.hello });
+    });
+    return app;
+  }
+
+  /** 构造无 content-length 的请求（body 用 ReadableStream，阻止 Request 构造器自动加头） */
+  function chunkedRequest(payload: string): Request {
+    // node 运行时要求流式 body 带 duplex: "half"；workers RequestInit 类型无该字段，
+    // 故整体断言为 RequestInit 绕过 excess property 检查（测试环境为 node）
+    const init = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      duplex: "half" as const,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(payload));
+          controller.close();
+        },
+      }),
+    } as RequestInit;
+    return new Request("http://test/echo", init);
+  }
+
+  it("无 content-length（chunked）的超限请求体返回 413（绕过防护生效）", async () => {
+    const app = createBodyLimitApp();
+    const res = await app.request(chunkedRequest(JSON.stringify({ data: "x".repeat(200 * 1024) })));
+    expect(res.status).toBe(413);
+  });
+
+  it("无 content-length 的正常请求体被重建并可供下游解析（功能不回归）", async () => {
+    const app = createBodyLimitApp();
+    const res = await app.request(chunkedRequest(JSON.stringify({ hello: "world" })));
+    expect(res.status).toBe(200);
+    const data = await res.json() as { ok: boolean; hello: string };
+    expect(data.ok).toBe(true);
+    expect(data.hello).toBe("world");
+  });
+
+  it("有 content-length 的超限请求体返回 413（content-length 分支，手动设头）", async () => {
+    const app = createBodyLimitApp();
+    const payload = JSON.stringify({ data: "x".repeat(200 * 1024) });
+    const res = await app.request("http://test/echo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": String(payload.length) },
+      body: payload,
+    });
+    expect(res.status).toBe(413);
+  });
+});
 
 describe("/result 端点防邮箱枚举", () => {
   it("无验证码/错误验证码被拒，有效验证码可查询（与 my-result 行为对齐）", async () => {

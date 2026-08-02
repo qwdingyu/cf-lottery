@@ -7,6 +7,7 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { fail, getDb, ok } from "../lib/http";
+import { checkDbRateLimit } from "../lib/rate-limit";
 import {
   authenticateApiKey,
   recordExternalConversion,
@@ -24,6 +25,12 @@ const CONVERSION_TYPES = new Set<ExternalConversionType>([
   "custom",
 ]);
 
+// 外部转化回传限流：300 次/分钟/API key（#15）。
+// 正常业务量远低于此（回传按事件计数），阈值仅防滥用刷爆 external_conversions 表；
+// 使用 DB 级限流（单条原子条件 INSERT，跨 Worker 实例一致），不依赖内存 Map。
+const CONVERSION_RATE_LIMIT = 300;
+const CONVERSION_RATE_WINDOW_MS = 60000;
+
 function readApiKey(c: Context<AppEnv>): string {
   const authHeader = c.req.header("Authorization") || "";
   const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
@@ -35,6 +42,11 @@ integrationRoute.post("/conversions", async (c) => {
   const db = getDb(c);
   const apiKey = await authenticateApiKey(db, readApiKey(c));
   if (!apiKey) return fail(c, "API Key 无效", 401);
+
+  // 限流检查：以 API key 维度计数，防止单个 key 高频写入拖垮数据表与 Turso rows written 配额
+  if (!(await checkDbRateLimit(db, `integration:${apiKey.id}`, CONVERSION_RATE_LIMIT, CONVERSION_RATE_WINDOW_MS))) {
+    return fail(c, "调用过于频繁，请稍后再试", 429);
+  }
 
   const body = await c.req.json<{
     drawId?: string;

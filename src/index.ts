@@ -9,7 +9,6 @@ import type { AppEnv, Bindings } from "./bindings";
 import { createClient } from "@libsql/client";
 import { createDb } from "./db/client";
 import { and, sql } from "drizzle-orm";
-import { fail } from "./lib/http";
 import { getEnv } from "./lib/platform";
 import { systemConfig, auditLogs, lotteryDraws } from "./db/schema";
 import { authRoute } from "./routes/auth";
@@ -21,7 +20,7 @@ import { platformSystemConfigRoute } from "./routes/platform-system-config";
 import { platformRedemptionCodesRoute } from "./routes/platform-redemption-codes";
 import { platformRoute } from "./routes/platform";
 import { adminMediaRoute, mediaRoute } from "./routes/media";
-import { getApiBodyLimitBytes } from "./lib/api-body-limit";
+import { enforceRequestBodyLimit } from "./lib/body-limit";
 import { cleanExpiredRateLimits } from "./lib/rate-limit";
 import { refreshAllTenantSnapshots } from "./services/admin/usage-snapshots";
 import {
@@ -132,15 +131,9 @@ app.onError((err, c) => {
 // ── 请求体大小闸门 ──
 // Cloudflare Workers 免费层不适合让任意 API 接收大请求体。
 // 只有 /api/admin/media/images 允许 2MiB 图片上传，其余接口保持 100KB。
-app.use("*", async (c, next) => {
-  const length = Number(c.req.header("content-length") || "0");
-  const limit = getApiBodyLimitBytes(c.req.path);
-  if (Number.isFinite(length) && length > limit) {
-    const isMediaUpload = c.req.path === "/api/admin/media/images";
-    return fail(c, isMediaUpload ? "图片上传请求过大（图片最大 2MiB）" : "请求体过大（最大 100KB）", 413);
-  }
-  await next();
-});
+// #8 加固：对无 content-length（chunked 编码）的写请求流式读取计数，
+// 防止绕过大小闸门；未超限时重建请求体供下游解析。实现见 lib/body-limit.ts。
+app.use("*", enforceRequestBodyLimit);
 
 // ── 请求耗时观测（用于识别慢查询和异常路由） ──
 app.use("*", async (c, next) => {
@@ -195,16 +188,15 @@ app.get("/api/cron/draw", async (c) => {
   const db = c.get("db");
   if (!db) return c.json({ ok: false, message: "数据库未配置" }, 500);
 
-  // CRON_SECRET 认证：Cloudflare Cron Triggers 不支持自定义 header，
-  // 因此使用查询参数 ?secret=xxx 作为认证方式。
-  // 生产环境应配合 Cloudflare WAF 限制仅允许 Cloudflare IP 访问。
+  // CRON_SECRET 认证（#16）：只接受 Authorization: Bearer <secret>。
+  // 线上自动任务走 scheduled() handler 不经 HTTP，本端点是运维手动触发入口；
+  // 移除 query 参数 ?secret= 认证（secret 会进入访问日志/浏览器历史），与 maintenance 端点保持一致。
   const cronSecret = getEnv(c, "CRON_SECRET");
   // 未配置 CRON_SECRET 时拒绝所有 cron 请求，防止内部端点意外暴露
   if (!cronSecret) return c.json({ ok: false, message: "未配置 CRON_SECRET" }, 503);
   const authHeader = c.req.header("Authorization") || "";
-  const querySecret = c.req.query("secret") || "";
-  const token = authHeader.replace(/^Bearer\s+/i, "").trim() || querySecret;
-  if (token !== cronSecret) {
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token || token !== cronSecret) {
     return c.json({ ok: false, message: "未授权" }, 403);
   }
 

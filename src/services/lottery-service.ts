@@ -438,7 +438,7 @@ export async function authenticateApiKey(db: DbType, rawKey: string) {
   // 新创建的 key 一律哈希存储，旧明文 key 在过渡期仍可验证
   const keyHash = await hashApiKey(key);
   const [row] = await db
-    .select({ id: apiKeys.id, tenantId: apiKeys.tenantId, name: apiKeys.name })
+    .select({ id: apiKeys.id, tenantId: apiKeys.tenantId, name: apiKeys.name, key: apiKeys.key })
     .from(apiKeys)
     .where(and(
       eq(apiKeys.active, 1),
@@ -446,7 +446,18 @@ export async function authenticateApiKey(db: DbType, rawKey: string) {
     ))
     .limit(1);
 
-  return row || null;
+  if (!row) return null;
+
+  // #14 渐进式迁移：库中仍是明文的存量 key，验证通过后自动升级为哈希存储。
+  // 消除"数据库泄漏即明文 key 全量暴露"的窗口；下次验证只匹配哈希。
+  if (row.key !== keyHash) {
+    await db
+      .update(apiKeys)
+      .set({ key: keyHash, updatedAt: new Date().toISOString() })
+      .where(eq(apiKeys.id, row.id));
+  }
+
+  return row;
 }
 
 export async function recordExternalConversion(db: DbType, input: RecordExternalConversionInput) {
@@ -893,8 +904,14 @@ export async function randomSelect<T>(candidates: T[], count: number): Promise<T
 
   // 复制候选数组，避免修改原数组
   const result = [...candidates];
-  // Fisher-Yates 洗牌：从后往前，每次随机交换一个元素
-  for (let i = result.length - 1; i > 0; i--) {
+
+  // 部分 Fisher-Yates 洗牌（#12 优化）：
+  // 只洗尾部 n 个位置——每轮把 result[i] 与 [0, i] 中随机一个交换，
+  // 使 [length-n, length) 区间的元素成为等概率的随机子集，然后取尾部 n 个。
+  // 与全量洗牌概率等价，但 crypto.getRandomValues 调用从 O(N) 降为 O(n)：
+  // 大活动（10 万参与者）下全量洗牌需 10 万次密码学随机调用，远超免费层 CPU 预算
+  // （023 §5.1 红线：大数组排序/复杂随机）；部分洗牌仅需 n 次（n 通常 ≤ 千级）。
+  for (let i = result.length - 1; i >= result.length - n; i--) {
     const random = new Uint32Array(1);
     crypto.getRandomValues(random);
     // 取模运算产生 0 到 i 之间的随机索引
@@ -905,8 +922,8 @@ export async function randomSelect<T>(candidates: T[], count: number): Promise<T
     result[j] = tmp;
   }
 
-  // 洗牌后取前 n 个作为中奖者
-  return result.slice(0, n);
+  // 洗牌后取尾部 n 个作为中奖者
+  return result.slice(result.length - n);
 }
 
 /* ── 密码工具 ────────────────────────────────────────────── */
@@ -1065,41 +1082,56 @@ export async function createDraw(
   const planLimits = await enforceTenantActivityQuota(db, tenantId, requestedMaxParticipants);
 
   const id = crypto.randomUUID();
-  // 取 UUID 前 8 位作为公开链接 slug，不可枚举
-  const publicSlug = crypto.randomUUID().slice(0, 8);
   const now = new Date().toISOString();
   const experienceType = data.experienceType || defaultExperienceForActivity(activityKind, data.participationMode || "open");
   const resultMode = data.resultMode || defaultResultModeForActivity(activityKind, drawTrigger);
+  // 访问密码哈希移到循环外，避免 slug 冲突重试时重复计算（单次 SHA-256，成本低但没必要重复）
+  const accessPasswordHash = data.accessPassword ? await hashAccessPassword(data.accessPassword) : "";
 
-  await db.insert(lotteryDraws).values({
-    id,
-    tenantId,
-    publicSlug,
-    title,
-    description: data.description || "",
-    activityKind,
-    participationMode: data.participationMode || "open",
-    experienceType,
-    drawTrigger,
-    resultMode,
-    allocationPolicy: data.allocationPolicy || (activityKind === "signup_chain" ? "capacity" : "capacity"),
-    policyVersion: data.policyVersion || 1,
-    startAt: data.startAt,
-    endAt: data.endAt,
-    drawAt: data.drawAt || null,
-    accessPassword: data.accessPassword ? await hashAccessPassword(data.accessPassword) : "",
-    maxParticipants: requestedMaxParticipants || Math.min(DEFAULT_ACTIVITY_PARTICIPANT_CAP, planLimits.maxParticipantsPerActivity),
-    winnerCount,
-    showParticipantCount: data.showParticipantCount ?? 1,
-    showWinnerCount: data.showWinnerCount ?? 1,
-    showWinnerList: data.showWinnerList ?? 0,
-    productLink: data.productLink || "{}",
-    promotionConfig: data.promotionConfig || "{}",
-    activityConfig: data.activityConfig || "{}",
-    status: "draft",
-    createdAt: now,
-    updatedAt: now,
-  });
+  // public_slug 取 UUID 前 8 位（32-bit 空间）：活动量增长后按生日悖论存在偶发冲突
+  // （1 万活动约 1.2%、10 万约 11.6%）。INSERT 触发 UNIQUE 冲突时重新生成 slug 重试，
+  // 最多 3 次；仍冲突则抛错（概率约 10⁻⁷ 量级，可忽略）。
+  let publicSlug = "";
+  let inserted = false;
+  for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
+    publicSlug = crypto.randomUUID().slice(0, 8);
+    try {
+      await db.insert(lotteryDraws).values({
+        id,
+        tenantId,
+        publicSlug,
+        title,
+        description: data.description || "",
+        activityKind,
+        participationMode: data.participationMode || "open",
+        experienceType,
+        drawTrigger,
+        resultMode,
+        allocationPolicy: data.allocationPolicy || (activityKind === "signup_chain" ? "capacity" : "capacity"),
+        policyVersion: data.policyVersion || 1,
+        startAt: data.startAt,
+        endAt: data.endAt,
+        drawAt: data.drawAt || null,
+        accessPassword: accessPasswordHash,
+        maxParticipants: requestedMaxParticipants || Math.min(DEFAULT_ACTIVITY_PARTICIPANT_CAP, planLimits.maxParticipantsPerActivity),
+        winnerCount,
+        showParticipantCount: data.showParticipantCount ?? 1,
+        showWinnerCount: data.showWinnerCount ?? 1,
+        showWinnerList: data.showWinnerList ?? 0,
+        productLink: data.productLink || "{}",
+        promotionConfig: data.promotionConfig || "{}",
+        activityConfig: data.activityConfig || "{}",
+        status: "draft",
+        createdAt: now,
+        updatedAt: now,
+      });
+      inserted = true;
+    } catch (err: any) {
+      // 仅当是 public_slug 唯一约束冲突时才重试；其他错误（配额、连接等）直接抛出
+      if (!err?.message?.includes("UNIQUE constraint")) throw err;
+    }
+  }
+  if (!inserted) throw new Error("创建活动失败，请重试");
 
   return { id, publicSlug };
 }

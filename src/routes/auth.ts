@@ -37,6 +37,10 @@ function checkRateLimit(ip: string, limit = 5, windowMs = 60000): boolean {
 }
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{2,40}$/;
+// 会话 token 有效期：24 小时（#7）。7 天过长——token 存 localStorage 且无服务端吊销机制，
+// 泄露后影响窗口大；缩短为 24 小时 + 前端 8 小时 localStorage 管理（更早过期）是免费层下
+// 务实折中（引入吊销表会增加每次请求的 DB 读取，不符合 023 Turso rows read 约束）。
+const SESSION_TOKEN_TTL_SECONDS = 24 * 3600;
 // 密码存储方案依据 docs/023（Cloudflare 免费版与 Turso 约束下认证和运行安全方案）：
 // 免费层 CPU 10ms/请求的硬约束下，注册/登录热路径禁止高迭代 KDF（PBKDF2 高迭代/bcrypt/Argon2 会
 // 触发 1102 CPU 超限，且攻击者撞接口可用极低成本耗尽免费 CPU）。
@@ -220,7 +224,7 @@ authRoute.post("/verify-email", async (c) => {
 
   // 签发 JWT
   const jwtSecret = getJwtSecret(c);
-  const token = await signJwt({ sub: user.id, tenantId }, jwtSecret, 7 * 86400);
+  const token = await signJwt({ sub: user.id, tenantId }, jwtSecret, SESSION_TOKEN_TTL_SECONDS);
 
   // needsTenant 与 /login 对齐：方案 C 下新注册用户无租户，前端引导 onboarding
   return c.json({ ok: true, token, tenantId, needsTenant: !member });
@@ -310,7 +314,7 @@ authRoute.post("/login", async (c) => {
   const tenantId = memberships[0]?.tenantId || "";
 
   const jwtSecret = getJwtSecret(c);
-  const token = await signJwt({ sub: user.id, tenantId }, jwtSecret, 7 * 86400);
+  const token = await signJwt({ sub: user.id, tenantId }, jwtSecret, SESSION_TOKEN_TTL_SECONDS);
 
   return c.json({
     ok: true,
@@ -351,7 +355,7 @@ authRoute.post("/switch-tenant", requireAuth, async (c) => {
 
   // 签发新 JWT（切换后的租户上下文）
   const jwtSecret = getJwtSecret(c);
-  const token = await signJwt({ sub: userId, tenantId: targetTenantId }, jwtSecret, 7 * 86400);
+  const token = await signJwt({ sub: userId, tenantId: targetTenantId }, jwtSecret, SESSION_TOKEN_TTL_SECONDS);
 
   return c.json({ ok: true, token, tenantId: targetTenantId, role: membership.role });
 });
@@ -376,7 +380,7 @@ authRoute.post("/create-tenant", requireAuth, async (c) => {
     await tx.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
   });
 
-  const token = await signJwt({ sub: userId, tenantId }, getJwtSecret(c), 7 * 86400);
+  const token = await signJwt({ sub: userId, tenantId }, getJwtSecret(c), SESSION_TOKEN_TTL_SECONDS);
 
   return c.json({ ok: true, tenantId, name, token });
 });

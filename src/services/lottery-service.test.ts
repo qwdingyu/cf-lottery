@@ -16,6 +16,7 @@ import {
   recordActivityEvent,
   getActivityEventSummary,
   authenticateApiKey,
+  hashApiKey,
   recordExternalConversion,
   listExternalConversions,
   getExternalConversionSummary,
@@ -27,7 +28,7 @@ import {
   importPrizeCodes,
   randomSelect,
 } from "../services/lottery-service";
-import { lotteryPrizeTiers, shareRecords, lotteryEntries } from "../db/schema";
+import { lotteryPrizeTiers, shareRecords, lotteryEntries, apiKeys } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -138,6 +139,16 @@ describe("randomSelect 随机算法", () => {
   it("Fisher-Yates 洗牌，结果数量不超过候选池", async () => {
     const result = await randomSelect(["a", "b", "c", "d", "e"], 3);
     expect(result).toHaveLength(3);
+  });
+
+  it("部分洗牌结果：不重复且全部来自候选池（#12 优化后语义保持）", async () => {
+    const candidates = Array.from({ length: 200 }, (_, i) => `c${i}`);
+    const result = await randomSelect(candidates, 5);
+    expect(result).toHaveLength(5);
+    expect(new Set(result).size).toBe(5); // 无重复
+    for (const item of result) {
+      expect(candidates).toContain(item); // 全部来自候选池
+    }
   });
 
   it("抽取数超过候选池时返回全部", async () => {
@@ -606,6 +617,28 @@ describe("外部转化回传", () => {
     expect((await authenticateApiKey(db, "cl_test_active"))?.tenantId).toBe(TENANT);
     expect(await authenticateApiKey(db, "cl_test_disabled")).toBeNull();
     expect(await authenticateApiKey(db, "missing")).toBeNull();
+  });
+
+  it("#14 渐进迁移：明文 key 验证通过后自动升级为哈希存储", async () => {
+    await client.execute({
+      sql: "INSERT INTO api_keys (id, tenant_id, name, key, active) VALUES (?, ?, ?, ?, ?)",
+      args: ["key-migrate", TENANT, "Plain", "cl_migrate_plain", 1],
+    });
+
+    // 第一次验证：明文 key 可用
+    expect((await authenticateApiKey(db, "cl_migrate_plain"))?.tenantId).toBe(TENANT);
+
+    // 迁移断言：验证后库中不再是明文，而是 SHA-256 哈希
+    const [row] = await db
+      .select({ key: apiKeys.key })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, "key-migrate"))
+      .limit(1);
+    expect(row?.key).not.toBe("cl_migrate_plain");
+    expect(row?.key).toBe(await hashApiKey("cl_migrate_plain"));
+
+    // 迁移后仍可验证（哈希匹配路径）
+    expect((await authenticateApiKey(db, "cl_migrate_plain"))?.tenantId).toBe(TENANT);
   });
 
   it("外部转化按 tenant/source/externalEventId 幂等，并同步写入事件汇总", async () => {
