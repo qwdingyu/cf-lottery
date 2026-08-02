@@ -2,56 +2,56 @@
   <div class="landing-page">
     <!-- 顶部导航 -->
     <nav class="landing-nav">
-      <span class="nav-brand">运营活动引擎</span>
-      <RouterLink to="/admin/login" class="nav-link">登录</RouterLink>
+      <span class="nav-brand">{{ $t('landing.navBrand') }}</span>
+      <RouterLink to="/admin/login" class="nav-link">{{ $t('landing.login') }}</RouterLink>
     </nav>
 
     <!-- Hero -->
     <header class="landing-hero">
-      <h1 class="hero-title">3 分钟搭建可复盘的活动<br>从参与到承接一步到位</h1>
-      <p class="hero-subtitle">面向站长、社群运营和活动负责人，用模板、规则校验、二维码和数据复盘快速完成留资、发券、报名、抽奖和导流目标。</p>
+      <h1 class="hero-title">{{ $t('landing.heroTitle1') }}<br>{{ $t('landing.heroTitle2') }}</h1>
+      <p class="hero-subtitle">{{ $t('landing.heroSubtitle') }}</p>
       <div class="hero-actions">
-        <RouterLink to="/admin/register" class="btn btn-primary btn-lg">免费注册，开始使用</RouterLink>
-        <RouterLink to="/lottery/demo" class="btn btn-ghost btn-lg">查看示例活动</RouterLink>
-        <p class="hero-note">无需信用卡，先用免费套餐验证活动目标</p>
+        <RouterLink to="/admin/register" class="btn btn-primary btn-lg">{{ $t('landing.registerCta') }}</RouterLink>
+        <RouterLink to="/lottery/demo" class="btn btn-ghost btn-lg">{{ $t('landing.viewDemo') }}</RouterLink>
+        <p class="hero-note">{{ $t('landing.heroNote') }}</p>
       </div>
     </header>
 
     <!-- 创建流程 -->
     <section class="landing-section">
-      <h2 class="section-title">三步把活动跑起来</h2>
+      <h2 class="section-title">{{ $t('landing.stepsTitle') }}</h2>
       <div class="steps-grid">
         <div class="step-card">
           <div class="step-number">1</div>
-          <h3>选择活动目标</h3>
-          <p>从福利抽奖、报名接龙、资料领取、问卷调研等模板开始，默认规则先帮你选好。</p>
+          <h3>{{ $t('landing.step1Title') }}</h3>
+          <p>{{ $t('landing.step1Desc') }}</p>
         </div>
         <div class="step-card">
           <div class="step-number">2</div>
-          <h3>确认规则并发布</h3>
-          <p>校验资格、去重、容量、候补、码池和时间设置，减少活动开始后的人工补救。</p>
+          <h3>{{ $t('landing.step2Title') }}</h3>
+          <p>{{ $t('landing.step2Desc') }}</p>
         </div>
         <div class="step-card">
           <div class="step-number">3</div>
-          <h3>分享、复盘、承接</h3>
-          <p>复制链接和二维码，跟踪浏览、参与、CTA、分享和外部转化，把结果继续导向下一步。</p>
+          <h3>{{ $t('landing.step3Title') }}</h3>
+          <p>{{ $t('landing.step3Desc') }}</p>
         </div>
       </div>
     </section>
 
     <!-- 活动目标模板 -->
     <section class="landing-section landing-section-alt">
-      <h2 class="section-title">按活动目标选择模板</h2>
-      <p class="section-desc">抽奖、接龙、问卷只是入口，真正交付的是创建速度、规则确定性和后续承接。</p>
+      <h2 class="section-title">{{ $t('landing.templatesTitle') }}</h2>
+      <p class="section-desc">{{ $t('landing.templatesDesc') }}</p>
       <div class="mode-grid">
         <div class="mode-card">
           <div class="mode-preview wheel-preview">
             <div class="wheel-mini"></div>
           </div>
           <div class="mode-info">
-            <h3>福利抽奖</h3>
-            <span class="mode-tag">拉新 / 促活</span>
-            <p>适合粉丝福利、门店活动、展会抽奖，重点是公平开奖、码池发放和结果复盘。</p>
+            <h3>{{ $t('landing.modeLotteryTitle') }}</h3>
+            <span class="mode-tag">{{ $t('landing.modeLotteryTag') }}</span>
+            <p>{{ $t('landing.modeLotteryDesc') }}</p>
           </div>
         </div>
         <div class="mode-card">
@@ -59,9 +59,9 @@
             <div class="scratch-mini"></div>
           </div>
           <div class="mode-info">
-            <h3>报名接龙</h3>
-            <span class="mode-tag">容量 / 候补</span>
-            <p>适合课程、线下活动、社群报名，重点是名额顺序、满额候补和导出名单。</p>
+            <h3>{{ $t('landing.modeSignupTitle') }}</h3>
+            <span class="mode-tag">{{ $t('landing.modeSignupTag') }}</span>
+            <p>{{ $t('landing.modeSignupDesc') }}</p>
           </div>
         </div>
         <div class="mode-card">
@@ -69,9 +69,9 @@
             <div class="slot-mini"></div>
           </div>
           <div class="mode-info">
-            <h3>资料领取 / 问卷</h3>
-            <span class="mode-tag">留资 / 调研</span>
-            <p>适合白皮书、课程资料、用户调研，重点是低摩擦提交和后续 CTA 承接。</p>
+            <h3>{{ $t('landing.modeSurveyTitle') }}</h3>
+            <span class="mode-tag">{{ $t('landing.modeSurveyTag') }}</span>
+            <p>{{ $t('landing.modeSurveyDesc') }}</p>
           </div>
         </div>
         <div class="mode-card">
@@ -79,9 +79,9 @@
             <div class="card-mini"></div>
           </div>
           <div class="mode-info">
-            <h3>预约 / 审核</h3>
-            <span class="mode-tag">筛选 / 确认</span>
-            <p>适合体验课、内测资格、咨询预约，重点是资格确认、审核结果和候补转化。</p>
+            <h3>{{ $t('landing.modeReviewTitle') }}</h3>
+            <span class="mode-tag">{{ $t('landing.modeReviewTag') }}</span>
+            <p>{{ $t('landing.modeReviewDesc') }}</p>
           </div>
         </div>
       </div>
@@ -89,90 +89,90 @@
 
     <!-- 核心能力 -->
     <section class="landing-section">
-      <h2 class="section-title">客户真正买的是运营确定性</h2>
+      <h2 class="section-title">{{ $t('landing.capabilityTitle') }}</h2>
       <div class="capability-grid">
         <div class="capability-item">
           <div class="capability-icon">1</div>
-          <h3>快速创建</h3>
-          <p>模板、复制、二维码和默认规则，减少每次活动从零开始配置的时间。</p>
+          <h3>{{ $t('landing.capQuickTitle') }}</h3>
+          <p>{{ $t('landing.capQuickDesc') }}</p>
         </div>
         <div class="capability-item">
           <div class="capability-icon">2</div>
-          <h3>少出错</h3>
-          <p>资格校验、去重、容量、候补、码池和 CAS 发放，降低重复发放和超额参与风险。</p>
+          <h3>{{ $t('landing.capReliableTitle') }}</h3>
+          <p>{{ $t('landing.capReliableDesc') }}</p>
         </div>
         <div class="capability-item">
           <div class="capability-icon">3</div>
-          <h3>能复盘</h3>
-          <p>浏览、开始、完成、CTA、分享和外部转化回传，活动结束后能说清楚效果。</p>
+          <h3>{{ $t('landing.capReviewTitle') }}</h3>
+          <p>{{ $t('landing.capReviewDesc') }}</p>
         </div>
         <div class="capability-item">
           <div class="capability-icon">4</div>
-          <h3>能承接</h3>
-          <p>中奖、候补、未中奖、提交成功后都能配置 CTA、资料、优惠或下一活动。</p>
+          <h3>{{ $t('landing.capFollowTitle') }}</h3>
+          <p>{{ $t('landing.capFollowDesc') }}</p>
         </div>
         <div class="capability-item">
           <div class="capability-icon">5</div>
-          <h3>能接系统</h3>
-          <p>Webhook、API Key、导出和外部转化回传，让活动结果进入已有业务系统。</p>
+          <h3>{{ $t('landing.capIntegrateTitle') }}</h3>
+          <p>{{ $t('landing.capIntegrateDesc') }}</p>
         </div>
         <div class="capability-item">
           <div class="capability-icon">6</div>
-          <h3>能托管运营</h3>
-          <p>平台方能查看租户、套餐、用量、失败任务和异常，不靠直接查数据库救火。</p>
+          <h3>{{ $t('landing.capManagedTitle') }}</h3>
+          <p>{{ $t('landing.capManagedDesc') }}</p>
         </div>
       </div>
     </section>
 
     <!-- 适合场景 -->
     <section class="landing-section landing-section-alt">
-      <h2 class="section-title">适合这些活动负责人</h2>
+      <h2 class="section-title">{{ $t('landing.scenarioTitle') }}</h2>
       <div class="scenario-grid">
         <div class="scenario-card">
           <div class="scenario-icon">📱</div>
-          <h3>社群运营</h3>
-          <p>微信群报名、福利领取、活动复盘</p>
+          <h3>{{ $t('landing.scenarioCommunityTitle') }}</h3>
+          <p>{{ $t('landing.scenarioCommunityDesc') }}</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">🏪</div>
-          <h3>门店促销</h3>
-          <p>扫码参与、领券核销、带动到店</p>
+          <h3>{{ $t('landing.scenarioStoreTitle') }}</h3>
+          <p>{{ $t('landing.scenarioStoreDesc') }}</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">🎉</div>
-          <h3>企业年会</h3>
-          <p>名单抽奖、签到报名、结果导出</p>
+          <h3>{{ $t('landing.scenarioAnnualTitle') }}</h3>
+          <p>{{ $t('landing.scenarioAnnualDesc') }}</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">📚</div>
-          <h3>课程福利</h3>
-          <p>报名接龙、资料领取、训练营打卡</p>
+          <h3>{{ $t('landing.scenarioCourseTitle') }}</h3>
+          <p>{{ $t('landing.scenarioCourseDesc') }}</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">⭐</div>
-          <h3>粉丝抽奖</h3>
-          <p>粉丝福利、问卷调研、下一活动承接</p>
+          <h3>{{ $t('landing.scenarioFanTitle') }}</h3>
+          <p>{{ $t('landing.scenarioFanDesc') }}</p>
         </div>
         <div class="scenario-card">
           <div class="scenario-icon">🎪</div>
-          <h3>展会活动</h3>
-          <p>现场扫码、名额确认、会后转化回传</p>
+          <h3>{{ $t('landing.scenarioExpoTitle') }}</h3>
+          <p>{{ $t('landing.scenarioExpoDesc') }}</p>
         </div>
       </div>
     </section>
 
     <!-- CTA -->
     <section class="landing-cta">
-      <h2>先创建一个能复盘的活动</h2>
-      <p>从模板开始，先跑通参与、结果、承接和复盘闭环</p>
-      <RouterLink to="/admin/register" class="btn btn-primary btn-lg">免费注册</RouterLink>
+      <h2>{{ $t('landing.ctaTitle') }}</h2>
+      <p>{{ $t('landing.ctaDesc') }}</p>
+      <RouterLink to="/admin/register" class="btn btn-primary btn-lg">{{ $t('landing.ctaButton') }}</RouterLink>
     </section>
 
     <footer class="landing-footer">
       <div class="footer-main">
-        <span>© 2026 运营活动引擎</span>
+        <span>{{ $t('landing.footerCopyright') }}</span>
         <span class="footer-dot">·</span>
-        <span>由 <a href="https://eforge.xyz">eforge.xyz</a> 提供</span>
+        <span>{{ $t('landing.footerByPrefix') }} <a href="https://eforge.xyz">eforge.xyz</a>{{ $t('landing.footerBySuffix') }}</span>
       </div>
     </footer>
   </div>
