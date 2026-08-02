@@ -9,7 +9,7 @@ import type { Context, Next } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
-import { getDb, ok, fail } from "../lib/http";
+import { getDb, ok, fail, clampInteger } from "../lib/http";
 import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
@@ -117,12 +117,6 @@ function isUniqueConstraintError(error: unknown): boolean {
   const err = error as { message?: unknown; code?: unknown; cause?: { message?: unknown } };
   const message = [err.code, err.message, err.cause?.message].filter(Boolean).join(" ");
   return message.includes("UNIQUE constraint failed");
-}
-
-function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(Math.max(Math.trunc(parsed), min), max);
 }
 
 /**

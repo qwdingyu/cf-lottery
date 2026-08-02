@@ -398,6 +398,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     }
     return ok(c, {
       joined: true,
+      entryId: "entryId" in result ? result.entryId : undefined,
       activityKind: draw.activityKind || "lottery",
       outcome: "outcome" in result ? result.outcome : undefined,
       submissionId: "submissionId" in result ? result.submissionId : undefined,
@@ -599,6 +600,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
     }
     return ok(c, {
       joined: true,
+      entryId: "entryId" in result ? result.entryId : undefined,
       activityKind: "activityKind" in result ? result.activityKind : undefined,
       outcome: "outcome" in result ? result.outcome : undefined,
       submissionId: "submissionId" in result ? result.submissionId : undefined,

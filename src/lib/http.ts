@@ -54,3 +54,13 @@ export function getDb(c: Context<AppEnv>): DbType {
   if (!db) throw new Error("database not initialized");
   return db;
 }
+
+/**
+ * 整型值钳位 + NaN 防护。
+ * 用于解析 query 参数中的分页/计数/阈值等整型字段。
+ */
+export function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.trunc(parsed), min), max);
+}
