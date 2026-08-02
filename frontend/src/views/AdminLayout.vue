@@ -209,6 +209,13 @@ function handleLogout() {
   border-left-color: var(--admin-accent, #f59e0b);
 }
 
+/* 平台运营入口：视觉上分隔于常规菜单 */
+.nav-item--platform {
+  margin-top: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0;
+}
+
 .nav-icon {
   font-size: 16px;
   width: 20px;
