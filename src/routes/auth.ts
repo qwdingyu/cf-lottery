@@ -10,7 +10,7 @@
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
-import { getDb } from "../lib/http";
+import { getDb, isValidEmail } from "../lib/http";
 import { withDbTransaction } from "../db/client";
 import { users, tenantMembers, tenants, emailAccessCodes, systemConfig } from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
@@ -112,7 +112,7 @@ authRoute.post("/register", async (c) => {
     if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
       return c.json({ ok: false, message: "密码必须包含字母和数字" }, 400);
     }
-    if (!email || !email.includes("@")) {
+    if (!email || !isValidEmail(email)) {
       return c.json({ ok: false, message: "请输入有效的邮箱地址" }, 400);
     }
 
@@ -288,7 +288,7 @@ authRoute.post("/login", async (c) => {
   return c.json({ ok: true, token, tenantId });
   } catch (err) {
     console.error("[auth] login error:", (err as Error).message);
-    return c.json({ ok: false, message: `登录失败: ${(err as Error).message}` }, 400);
+    return c.json({ ok: false, message: "登录失败，请稍后重试" }, 400);
   }
 });
 

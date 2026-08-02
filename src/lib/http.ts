@@ -64,3 +64,8 @@ export function clampInteger(value: unknown, fallback: number, min: number, max:
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.trunc(parsed), min), max);
 }
+
+/** 统一 email 格式校验（比简单的 includes("@") 更严格，避免无效邮箱写入数据库） */
+export function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}

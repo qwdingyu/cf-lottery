@@ -9,7 +9,7 @@ import type { Context, Next } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
-import { getDb, ok, fail, clampInteger } from "../lib/http";
+import { getDb, ok, fail, clampInteger, isValidEmail } from "../lib/http";
 import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions, externalConversions, systemConfig } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
@@ -1493,7 +1493,7 @@ adminLotteryRoute.post("/blacklist", async (c) => {
   const body = await c.req.json<{ identityValue: string; note?: string }>();
   const email = String(body.identityValue || "").trim().toLowerCase();
 
-  if (!email || !email.includes("@")) {
+  if (!email || !isValidEmail(email)) {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
 

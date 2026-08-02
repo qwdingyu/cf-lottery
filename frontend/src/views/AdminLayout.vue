@@ -19,6 +19,11 @@
           <span class="nav-icon" v-html="item.icon" />
           <span class="nav-label">{{ item.label }}</span>
         </a>
+        <!-- L3 平台运营入口：仅 platform_owner/operator/support 可见 -->
+        <RouterLink v-if="isPlatformMember" to="/platform/tenants" class="nav-item nav-item--platform">
+          <span class="nav-icon">🏢</span>
+          <span class="nav-label">平台运营</span>
+        </RouterLink>
       </nav>
 
       <div class="sidebar-footer">
@@ -71,7 +76,7 @@ import { useToast } from '@/composables/useToast'
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const { clearToken } = useAdminAuth()
+const { clearToken, isPlatformMember } = useAdminAuth()
 const { showToast } = useToast()
 
 // ── 侧边栏响应式控制 ──

@@ -471,7 +471,7 @@
                 </select>
                 <small class="field-hint">互动体验只影响活动页展示，不决定参与资格或开奖结果</small>
               </label>
-              <label v-if="form.activityKind === 'signup_chain' && (showAdvanced || isEditing)" class="field-span-2">
+              <label v-if="form.activityKind === 'signup_chain'" class="field-span-2">
                 <span>名额策略</span>
                 <select v-model="form.allocationPolicy">
                   <option value="capacity">满额后拒绝</option>

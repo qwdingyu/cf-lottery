@@ -7,7 +7,7 @@
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
-import { getDb, ok, fail } from "../lib/http";
+import { getDb, ok, fail, isValidEmail } from "../lib/http";
 import type { DbType } from "../db/client";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
 import { eq, and, count, sql, asc, inArray } from "drizzle-orm";
@@ -332,7 +332,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   const body = await c.req.json<{ email: string }>();
   const email = String(body.email || "").trim().toLowerCase();
 
-  if (!email || !email.includes("@")) {
+  if (!email || !isValidEmail(email)) {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
 
@@ -414,7 +414,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
   const email = String(body.email || "").trim().toLowerCase();
   const code = String(body.code || "").trim();
 
-  if (!email || !email.includes("@")) {
+  if (!email || !isValidEmail(email)) {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
   if (!code || code.length !== 6) {
@@ -616,7 +616,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
   const body = await c.req.json<{ email: string; refCode?: string; submission?: Record<string, unknown> }>();
   const email = String(body.email || "").trim().toLowerCase();
 
-  if (!email || !email.includes("@")) {
+  if (!email || !isValidEmail(email)) {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
 
