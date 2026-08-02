@@ -396,6 +396,42 @@ export default {
     adminRetryFailed: "{failed} 封邮件发送失败",
     adminDrawDone: "开奖完成",
     adminDrawOpened: "已开启",
+    // 模板通用文本
+    loadingText: "加载中…",
+    queryText: "查询",
+    queryingText: "查询中…",
+    queryResult: "查询结果",
+    queryFailed: "查询失败",
+    networkError: "网络错误",
+    copied: "已复制",
+    gotIt: "知道了",
+    pleaseSelect: "请选择",
+    // 参与后
+    emailVerified: "已验证邮箱 {email}",
+    oneClickContinue: "一键继续",
+    switchEmail: "切换邮箱",
+    joinSuccessWithOutcome: "参与成功：{outcome}",
+    // 结果
+    prizeCodeLabel: "奖品码：",
+    clickToCopy: "点击复制",
+    shareYourLuck: "分享你的好运，让更多人来参与！",
+    shareActivityBtn: "分享活动",
+    gotConsolation: "获得安慰奖！",
+    couponLabel: "优惠券：",
+    thanksForParticipating: "感谢参与，本次活动未获得奖品",
+    codeHint: "验证码需先在参与/登录时获取，用于验证邮箱归属",
+    // 导流
+    viewProduct: "查看商品",
+    viewDetail: "查看详情",
+    quota: "名额 {n}",
+    // 接龙
+    signupStatus: "已接龙",
+    signupWaitlisted: "候补中",
+    signupAssigned: "已占位",
+    // 投票
+    voteRequired: "请选择一个投票选项",
+    // 奖品 fallback
+    productPlaceholder: "奖品",
     adminDrawCreated: "创建成功",
     adminDrawLimitPerEmail: "每邮箱限制",
     adminName: "名称",

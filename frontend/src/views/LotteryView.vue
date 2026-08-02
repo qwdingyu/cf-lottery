@@ -43,7 +43,7 @@
       </div>
 
       <div v-if="recordsLoading && sortedMyEntries.length === 0" class="records-empty">
-        {{ '加载中…' }}
+        {{ $t('lottery.loadingText') }}
       </div>
       <div v-else-if="sortedMyEntries.length === 0" class="records-empty">
         {{ $t('lottery.noMyRecords') }}
@@ -100,7 +100,7 @@
     </div>
 
     <!-- 加载中 -->
-    <div v-if="loading" class="loading-state">{{ '加载中…' }}</div>
+    <div v-if="loading" class="loading-state">{{ $t('lottery.loadingText') }}</div>
 
     <!-- 活动列表 -->
     <div v-else-if="draws.length === 0" class="empty-state">
@@ -375,7 +375,7 @@
                       rel="noopener noreferrer"
                       class="btn btn-primary btn-sm"
                       @click="handleCtaClick(draw, 'joined_product_card')"
-                    >查看商品</a>
+                    >{{ $t('lottery.viewProduct') }}</a>
                   </div>
                 </div>
               </div>
@@ -476,7 +476,7 @@
               </button>
             </template>
             <button type="button" class="btn btn-ghost" @click="closeLogin">
-              {{ '取消' }}
+              {{ $t('app.cancel') }}
             </button>
           </div>
           <p v-if="loginError" class="form-error">{{ loginError }}</p>
@@ -527,14 +527,14 @@
         <!-- 查询结果 -->
         <div v-else class="result-detail">
           <template v-if="myResultData.won">
-            <div class="result-line">🎉 <strong>恭喜中奖！</strong></div>
+            <div class="result-line">🎉 <strong>{{ $t('lottery.won') }}</strong></div>
             <div v-if="myResultData.prizeCode" class="result-code-block">
-              <span class="result-code-label">奖品码：</span>
+              <span class="result-code-label">{{ $t('lottery.prizeCodeLabel') }}</span>
               <code class="result-code" @click="copyMyResult(myResultData.prizeCode)">{{ myResultData.prizeCode }}</code>
-              <small class="result-hint">点击复制</small>
+              <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
             </div>
             <div class="result-share-win">
-              <p class="result-share-hint">🎁 分享你的好运，让更多人来参与！</p>
+              <p class="result-share-hint">🎁 {{ $t('lottery.shareYourLuck') }}</p>
               <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 分享活动</button>
             </div>
             <!-- 中奖后 CTA：运营者配置的导流卡片 -->
@@ -545,15 +545,15 @@
             </div>
           </template>
           <template v-else-if="myResultData.consolationCoupon">
-            <div class="result-line">🎁 <strong>获得安慰奖！</strong></div>
+            <div class="result-line">🎁 <strong>{{ $t('lottery.gotConsolation') }}</strong></div>
             <div class="result-code-block">
-              <span class="result-code-label">优惠券：</span>
+              <span class="result-code-label">{{ $t('lottery.couponLabel') }}</span>
               <code class="result-code" @click="copyMyResult(myResultData.consolationCoupon)">{{ myResultData.consolationCoupon }}</code>
-              <small class="result-hint">点击复制</small>
+              <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
             </div>
           </template>
           <template v-else>
-            <div class="result-line">😊 感谢参与，本次活动未获得奖品</div>
+            <div class="result-line">😊 {{ $t('lottery.thanksForParticipating') }}</div>
           </template>
           <!-- 未中奖 CTA：运营者配置的导流卡片（安慰奖和未中奖都展示） -->
           <div v-if="!myResultData.won && getResultCta(myResultDraw, 'after_loss')" class="result-cta-card">
@@ -561,7 +561,7 @@
               {{ getResultCta(myResultDraw, 'after_loss')!.title || '查看详情' }}
             </a>
           </div>
-          <button class="btn btn-ghost" @click="showMyResultModal = false">知道了</button>
+          <button class="btn btn-ghost" @click="showMyResultModal = false">{{ $t('lottery.gotIt') }}</button>
         </div>
       </div>
     </div>
@@ -731,7 +731,7 @@ function openMyResult(draw: LotteryDraw) {
 
 async function queryMyResult() {
   if (!myResultDraw.value || !myResultEmail.value.trim() || !myResultCode.value.trim()) {
-    myResultError.value = '请输入邮箱和验证码'
+    myResultError.value = t('lottery.emailCodeRequired') || ''
     return
   }
   myResultLoading.value = true
@@ -749,7 +749,7 @@ async function queryMyResult() {
       myResultError.value = data.message || '查询失败'
     }
   } catch {
-    myResultError.value = '网络错误'
+    myResultError.value = t('lottery.networkError') || ''
   } finally {
     myResultLoading.value = false
   }
@@ -758,7 +758,7 @@ async function queryMyResult() {
 function copyMyResult(text: string) {
   if (!text) return
   writeClipboardText(text)
-  showToast('已复制', 'success')
+  showToast(t('lottery.copied'), 'success')
 }
 
 /** 中奖后分享活动链接（归因到当前用户的分享记录） */
@@ -777,13 +777,13 @@ async function shareMyWin() {
       const data = await res.json()
       if (data.ok && data.shareUrl) {
         await writeClipboardText(origin + data.shareUrl)
-        showToast('分享链接已复制', 'success')
+        showToast(t('lottery.shareLinkCopied'), 'success')
         return
       }
     } catch { /* 降级到基础链接 */ }
   }
   await writeClipboardText(`${origin}/lottery/${slug}`)
-  showToast('活动链接已复制', 'success')
+  showToast(t('lottery.shareLinkCopied'), 'success')
 }
 
 const pendingJoinDrawId = ref<string | null>(null)
@@ -1061,7 +1061,7 @@ function closeLogin() {
 
 function handleLogout() {
   clearSession()
-  showToast('已退出')
+  showToast(t('lottery.loggedOut'))
 }
 
 function toggleExpand(id: string) {
@@ -1179,7 +1179,7 @@ function startCooldown(seconds: number) {
 
 async function handleSendCode() {
   if (!loginEmail.value.includes('@')) {
-    loginError.value = '请输入有效的邮箱地址'
+    loginError.value = t('lottery.invalidEmail')
     return
   }
   if (!pendingJoinDrawId.value) return
@@ -1207,7 +1207,7 @@ async function handleSendCode() {
       loginError.value = data.message || '发送失败'
     }
   } catch {
-    loginError.value = '网络错误'
+    loginError.value = t('lottery.networkError')
   } finally {
     sendingCode.value = false
   }
