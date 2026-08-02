@@ -454,7 +454,9 @@ platformRoute.get("/data/stats", async (c) => {
   const stats: Record<string, number> = {};
   for (const table of tables) {
     try {
-      const [row] = await db.$client.execute<{ count: number }>(sql`SELECT COUNT(*) AS count FROM ${sql.raw(table)}`);
+      // 表名来自上方代码常量白名单（非用户输入），直接拼接 SQL 无注入风险
+      const result = await db.$client.execute({ sql: `SELECT COUNT(*) AS count FROM ${table}`, args: [] });
+      const row = result.rows?.[0] as { count?: number | bigint } | undefined;
       stats[table] = Number(row?.count || 0);
     } catch { stats[table] = -1; }
   }
@@ -477,7 +479,8 @@ platformRoute.post("/data/cleanup", requirePlatformMember(["platform_owner"]), a
   const results: Record<string, number> = {};
   for (const table of targets) {
     try {
-      const result = await db.$client.execute(sql`DELETE FROM ${sql.raw(table)}`);
+      // 表名来自 allowed 白名单（非用户输入），直接拼接 SQL 无注入风险
+      const result = await db.$client.execute({ sql: `DELETE FROM ${table}`, args: [] });
       results[table] = result.rowsAffected ?? 0;
     } catch { results[table] = -1; }
   }
