@@ -27,7 +27,8 @@ import {
   importPrizeCodes,
   randomSelect,
 } from "../services/lottery-service";
-import { lotteryPrizeTiers } from "../db/schema";
+import { lotteryPrizeTiers, shareRecords, lotteryEntries } from "../db/schema";
+import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -914,5 +915,65 @@ describe("接龙活动", () => {
     const { publicSlug } = await setupSignupChain({ maxParticipants: 3 });
     await joinDraw(db, publicSlug, "u1@t.com");
     await expect(joinDraw(db, publicSlug, "u1@t.com")).rejects.toThrow();
+  });
+});
+
+describe("裂变加权开奖", () => {
+  it("无裂变配置时开奖行为不变（回归）", async () => {
+    const { id, publicSlug } = await setupDraw("open", { winnerCount: 1 });
+    await joinDraw(db, publicSlug, "u1@t.com");
+    await joinDraw(db, publicSlug, "u2@t.com");
+    const result = await performDraw(db, TENANT, id, USER);
+    expect(result.winnerCount).toBe(1);
+    expect(result.candidateCount).toBe(2);
+  });
+
+  it("裂变开启但无人分享时开奖正常完成", async () => {
+    const { id, publicSlug } = await setupDraw("open", { winnerCount: 1 });
+    // 更新 promotionConfig 开启裂变
+    await client.execute({
+      sql: "UPDATE lottery_draws SET promotion_config = ? WHERE id = ?",
+      args: [JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true } }), id],
+    });
+    await joinDraw(db, publicSlug, "u1@t.com");
+    await joinDraw(db, publicSlug, "u2@t.com");
+    const result = await performDraw(db, TENANT, id, USER);
+    expect(result.winnerCount).toBe(1);
+    expect(result.candidateCount).toBe(2);  // 无分享，候选数不变
+  });
+
+  it("有裂变分享时加权重不导致去重异常", async () => {
+    const { id, publicSlug } = await setupDraw("open", { winnerCount: 2 });
+    await client.execute({
+      sql: "UPDATE lottery_draws SET promotion_config = ? WHERE id = ?",
+      args: [JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true } }), id],
+    });
+
+    // 3 个参与者
+    await joinDraw(db, publicSlug, "u1@t.com");
+    await joinDraw(db, publicSlug, "u2@t.com");
+    await joinDraw(db, publicSlug, "u3@t.com");
+
+    // 获取 u1 的 entryId
+    const [u1Entry] = await db.select({ id: lotteryEntries.id }).from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT), eq(lotteryEntries.drawId, id), eq(lotteryEntries.identityValue, "u1@t.com")))
+      .limit(1);
+
+    // 模拟 u1 邀请了 5 人
+    if (u1Entry) {
+      await db.insert(shareRecords).values({
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId: id,
+        sharerEntryId: u1Entry.id,
+        shareCode: "test-share-001",
+        joinedCount: 5,
+      });
+    }
+
+    // 开奖应正常完成，不会因为 u1 在候选数组中出现 6 次而导致 UNIQUE 冲突
+    const result = await performDraw(db, TENANT, id, USER);
+    expect(result.winnerCount).toBe(2);
+    expect(result.candidateCount).toBe(3);  // 候选数仍为真实参与人数
   });
 });

@@ -210,4 +210,46 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(survey.infos.some((item) => item.code === "survey.config.ready")).toBe(true);
     expect(vote.infos.some((item) => item.code === "vote.config.ready")).toBe(true);
   });
+
+  it("裂变配置校验：非法值报错，排行榜关闭提示", async () => {
+    // 每邀请次数为 0 → 报错
+    const badPerInvite = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 0, maxExtraEntries: 10, leaderboardEnabled: true } }),
+    });
+    await addManualTier(badPerInvite.id);
+    const r1 = await buildPublishCheckForDraw(db, TENANT, badPerInvite as any);
+    expect(r1.errors.some((item) => item.code === "viral.extra_entries.invalid")).toBe(true);
+
+    // 最大次数为 0 → 报错
+    const badMax = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 0, leaderboardEnabled: true } }),
+    });
+    await addManualTier(badMax.id);
+    const r2 = await buildPublishCheckForDraw(db, TENANT, badMax as any);
+    expect(r2.errors.some((item) => item.code === "viral.max_extra.invalid")).toBe(true);
+
+    // 每邀请大于最大上限 → 警告
+    const perLarger = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 20, maxExtraEntries: 10, leaderboardEnabled: true } }),
+    });
+    await addManualTier(perLarger.id);
+    const r3 = await buildPublishCheckForDraw(db, TENANT, perLarger as any);
+    expect(r3.warnings.some((item) => item.code === "viral.extra_exceeds_max")).toBe(true);
+
+    // 排行榜关闭 → 提示
+    const noBoard = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: false } }),
+    });
+    await addManualTier(noBoard.id);
+    const r4 = await buildPublishCheckForDraw(db, TENANT, noBoard as any);
+    expect(r4.infos.some((item) => item.code === "viral.leaderboard.off")).toBe(true);
+
+    // 合法配置 → 无错误
+    const ok = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true } }),
+    });
+    await addManualTier(ok.id);
+    const r5 = await buildPublishCheckForDraw(db, TENANT, ok as any);
+    expect(r5.errors.some((item) => item.section === "promotion" && (item.code as string).startsWith("viral"))).toBe(false);
+  });
 });

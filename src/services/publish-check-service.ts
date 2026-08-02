@@ -209,6 +209,9 @@ async function validateLotteryPrizes(db: DbType, tenantId: string, draw: Lottery
 function validatePromotion(draw: LotteryDraw, result: PublishCheckResult) {
   const promotionConfig = parseJsonObject(draw.promotionConfig);
   const legacyProductLink = parseJsonObject(draw.productLink);
+  const viral = promotionConfig?.viral as Record<string, unknown> | undefined;
+
+  // 完全无配置时提示
   if (!promotionConfig && !legacyProductLink) {
     add(result.warnings, "promotion", "promotion.empty", "未配置参与完成后的承接动作，活动导流和转化会变弱");
     return;
@@ -219,15 +222,34 @@ function validatePromotion(draw: LotteryDraw, result: PublishCheckResult) {
     return;
   }
 
+  // 导流目标校验（仅在配置了 destination 时）
   const destination = promotionConfig?.destination as Record<string, unknown> | undefined;
-  const destinationUrl = destination?.url ?? legacyProductLink?.url;
-  if (!isSafeHttpUrl(destinationUrl)) {
-    add(result.errors, "promotion", "promotion.url.invalid", "导流链接必须是有效的 http/https 外部地址");
+  if (destination) {
+    if (!isSafeHttpUrl(destination.url)) {
+      add(result.errors, "promotion", "promotion.url.invalid", "导流链接必须是有效的 http/https 外部地址");
+    }
+    if (typeof destination.title !== "string" || !(destination.title as string).trim()) {
+      add(result.warnings, "promotion", "promotion.title.empty", "导流承接缺少展示标题，参与者可能不清楚下一步动作");
+    }
   }
 
-  const destinationTitle = destination?.title ?? legacyProductLink?.title;
-  if (typeof destinationTitle !== "string" || !destinationTitle.trim()) {
-    add(result.warnings, "promotion", "promotion.title.empty", "导流承接缺少展示标题，参与者可能不清楚下一步动作");
+  // 裂变配置校验
+  if (viral?.enabled) {
+    const perInvite = Number(viral.extraEntriesPerInvite ?? 0);
+    const maxExtra = Number(viral.maxExtraEntries ?? 0);
+    if (perInvite < 1) {
+      add(result.errors, "promotion", "viral.extra_entries.invalid", "裂变传播：每邀请额外次数必须大于 0");
+    }
+    if (maxExtra < 1) {
+      add(result.errors, "promotion", "viral.max_extra.invalid", "裂变传播：最多额外次数必须大于 0");
+    }
+    if (perInvite > maxExtra) {
+      add(result.warnings, "promotion", "viral.extra_exceeds_max", `裂变传播：每邀请 ${perInvite} 次超过了最多 ${maxExtra} 次上限，实际效果以最大值为准`);
+    }
+    // 裂变开启但排行榜未开启时提示
+    if (!viral.leaderboardEnabled) {
+      add(result.infos, "promotion", "viral.leaderboard.off", "裂变传播：排行榜未开启，参与者无法看到排行对比");
+    }
   }
 }
 
