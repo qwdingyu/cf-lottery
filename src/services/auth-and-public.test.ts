@@ -154,10 +154,13 @@ describe("用户注册数据完整性", () => {
       method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.13" },
       body: JSON.stringify({ username: "verifynt", password: "Test12345", email: "vnt@test.com" }),
     }, TEST_ENV);
-    // 插入已知验证码完成邮箱验证
+    // 插入已知验证码完成邮箱验证（先标记 register 生成的旧码失效，避免 UNIQUE 冲突）
     const encoder = new TextEncoder();
     const hash = await crypto.subtle.digest("SHA-256", encoder.encode("654321"));
     const codeHash = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+    await db.update(emailAccessCodes)
+      .set({ used: 1 })
+      .where(and(eq(emailAccessCodes.email, "vnt@test.com"), eq(emailAccessCodes.used, 0)));
     await db.insert(emailAccessCodes).values({
       id: crypto.randomUUID(), email: "vnt@test.com", drawId: "",
       codeHash, used: 0, expiresAt: futureTimeISO(10),
