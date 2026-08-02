@@ -6,19 +6,21 @@
  * - 模拟 Hono 请求，测试完整的请求-响应链路
  * - 覆盖：注册/登录/验证邮箱/注销/参与活动
  */
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { eq, and } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { authRoute } from "../routes/auth";
 import { publicLotteryRoute } from "../routes/public-lottery";
 import { signJwt } from "../middleware/auth";
+import { sendWinnerNotifications } from "./lottery-service";
 import {
   activityOutcomes,
   auditLogs,
   emailAccessCodes,
   lotteryDraws,
   lotteryEntries,
+  lotteryWinners,
   systemConfig,
   tenantMembers,
   tenants,

@@ -1528,7 +1528,7 @@ async function quickCreatePrize() {
   quickPrizeLoading.value = true
   try {
     // 1. 创建默认奖品
-    const prizeName = (form.value.title || '抽奖活动') + ' 奖品'
+    const prizeName = (form.value.name || form.value.title || '抽奖活动') + ' 奖品'
     const prizeData = await adminRequest<{ id: string }>('/api/admin/prizes', {
       method: 'POST',
       body: JSON.stringify({ name: prizeName, prizeType: 'code', valueText: '' }),
@@ -1539,7 +1539,7 @@ async function quickCreatePrize() {
       body: JSON.stringify({ count: 10, codeLength: 8 }),
     })
     // 3. 刷新奖品下拉
-    await fetchPrizeOptions()
+    await loadPrizeOptions()
     // 4. 自动选中新奖品到第一个奖项
     if (form.value.tiers.length > 0 && !form.value.tiers[0]!.prizeId) {
       form.value.tiers[0]!.prizeId = prizeData.id

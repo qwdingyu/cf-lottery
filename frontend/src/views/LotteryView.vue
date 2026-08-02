@@ -1245,9 +1245,22 @@ async function handleRegisteredLogin() {
     if (data.ok && data.joined) {
       const joinedDrawId = pendingJoinDrawId.value
       myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
+      // 结果/outcome 处理与 verify-join 对齐：registered 参与后同样展示结果弹窗
+      if (data.outcome) {
+        myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
+      }
+      void recordActivityEvent(joinedDrawId, 'participation_completed', {
+        activityKind: data.activityKind || '',
+        outcomeStatus: data.outcome?.status || '',
+      })
+      // 暂存参与结果，供 GameResultModal 生成归因分享链接
+      if (data.entryId) {
+        lastJoinResult.value = { drawId: joinedDrawId, entryId: data.entryId }
+      }
       closeLogin()
-      showToast('参与成功', 'success')
-      void recordActivityEvent(joinedDrawId, 'participation_completed')
+      regLoginPassword.value = ''
+      showToast(data.outcome?.resultLabel ? `参与成功：${data.outcome.resultLabel}` : '参与成功')
+      showResult.value = true
     } else {
       loginError.value = data.message || '参与失败'
     }

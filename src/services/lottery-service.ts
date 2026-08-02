@@ -27,6 +27,7 @@ import {
   lotteryDraws,          // 抽奖活动表
   lotteryEntries,        // 候选池表
   lotteryWinners,        // 中奖记录表
+  users,                 // 注册用户表（registered 模式中奖者关联真实邮箱）
   prizes,                // 奖品表
   prizeCodes,            // 奖品码池表
   lotteryPrizeTiers,     // 多奖项配置表
@@ -2067,11 +2068,24 @@ export async function sendWinnerNotifications(
     .select({
       winnerId: lotteryWinners.id,
       email: lotteryWinners.identityValue,
+      identityType: lotteryWinners.identityType,
       prizeCodeId: lotteryWinners.prizeCodeId,
       notificationStatus: lotteryWinners.notificationStatus,
     })
     .from(lotteryWinners)
     .where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
+
+  // registered 模式（identity_type = user_id）中奖者：identity_value 是 userId（UUID），
+  // 不是可投递邮箱，必须从 users 表关联注册时填写的真实邮箱（users.email 注册时必填）。
+  const userIds = [...new Set(winners.filter(w => w.identityType === "user_id" && w.email).map(w => w.email))];
+  const userEmailMap = new Map<string, string>();
+  if (userIds.length > 0) {
+    const userRows = await db
+      .select({ id: users.id, email: users.email })
+      .from(users)
+      .where(inArray(users.id, userIds));
+    for (const u of userRows) userEmailMap.set(u.id, u.email);
+  }
 
   // 批量查询所有中奖者的卡密信息（一次查询替代 N 次）
   const prizeCodeIds = [...new Set(winners.filter(w => w.prizeCodeId).map(w => w.prizeCodeId!))];
@@ -2095,9 +2109,12 @@ export async function sendWinnerNotifications(
       if (code) { accountLabel = code.code; deliverySecret = code.secret; }
     }
 
+    // 收件人解析：user_id 身份的 winner 用 users 表关联的真实邮箱（见上方 userEmailMap）
+    const toEmail = winner.identityType === "user_id" ? (userEmailMap.get(winner.email) || "") : winner.email;
+
     try {
       const result = await sendEmail(db, emailEnv, {
-        to: winner.email,
+        to: toEmail,
         template: "lottery_winner",
         templateData: buildLotteryWinnerTemplateData({
           drawName: draw.title,

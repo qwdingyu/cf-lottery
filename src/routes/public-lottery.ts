@@ -393,7 +393,15 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
         submissionPayload: body.submission,
       });
       if (!result.joined) return fail(c, result.message || "参与失败", 400);
-      return ok(c, { joined: true, activityKind: draw.activityKind, submissionId: "submissionId" in result ? result.submissionId : undefined });
+      // 返回 entryId/outcome（与 verify-join 对齐）：前端依赖它们弹出结果弹窗、
+      // 生成归因分享链接（GameResultModal 的 :entry-id 与 share API 均需要）。
+      return ok(c, {
+        joined: true,
+        entryId: "entryId" in result ? result.entryId : undefined,
+        activityKind: draw.activityKind,
+        outcome: "outcome" in result ? result.outcome : undefined,
+        submissionId: "submissionId" in result ? result.submissionId : undefined,
+      });
     } catch (err: any) {
       if (err.message?.includes("UNIQUE constraint")) return fail(c, "您已参与此活动", 409);
       return fail(c, "参与失败，请稍后重试", 400);
