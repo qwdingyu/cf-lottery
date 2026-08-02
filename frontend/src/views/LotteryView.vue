@@ -696,10 +696,14 @@ const recordsLoading = ref(false)
 const draws = ref<LotteryDraw[]>([])
 const expandedId = ref<string | null>(null)
 const sessionEmail = ref('')
-/** registered 模式：已登录用户的 JWT token */
-const registeredToken = ref('')
-/** registered 模式：已登录用户名（展示用） */
-const registeredUsername = ref('')
+/**
+ * registered 模式：已登录用户的 JWT token。
+ * 存 sessionStorage（会话级）：刷新页面不丢、关闭标签页自动清除；
+ * 与后台 admin_token（localStorage）隔离，避免参与登录态污染管理后台入口。
+ */
+const registeredToken = ref(sessionStorage.getItem('lottery_registered_token') || '')
+/** registered 模式：已登录用户名（展示用，随 token 一起会话级持久化） */
+const registeredUsername = ref(sessionStorage.getItem('lottery_registered_username') || '')
 /** registered 模式登录表单 */
 const regLoginUsername = ref('')
 const regLoginPassword = ref('')
@@ -1191,8 +1195,8 @@ async function handleRegisteredLogin() {
   regLoginLoading.value = true
   loginError.value = ''
   try {
-    // 1. 登录获取 JWT
-    const loginRes = await fetch('/api/auth/login', {
+    // 1. 登录获取 JWT（与后台同一认证体系，API_BASE 统一，支持子路径部署）
+    const loginRes = await fetch(API_BASE + '/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: regLoginUsername.value, password: regLoginPassword.value }),
@@ -1204,6 +1208,9 @@ async function handleRegisteredLogin() {
     registeredToken.value = token
     registeredUsername.value = regLoginUsername.value
     sessionEmail.value = regLoginUsername.value
+    // 会话级持久化：刷新页面免重复登录；关闭标签页自动清除，不残留敏感信息
+    sessionStorage.setItem('lottery_registered_token', token)
+    sessionStorage.setItem('lottery_registered_username', regLoginUsername.value)
 
     // 2. 带 JWT 调 access-code（registered 模式后端检测 JWT 后跳过验证码直接参与）
     const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
@@ -1267,7 +1274,10 @@ async function handleSendCode() {
     loginError.value = t('lottery.invalidEmail')
     return
   }
-  if (!pendingJoinDrawId.value) return
+  if (!pendingJoinDrawId.value) {
+    loginError.value = '活动未加载，请刷新页面后重试'
+    return
+  }
   const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
   if (draw) {
     const message = validateSubmissionDraft(draw)

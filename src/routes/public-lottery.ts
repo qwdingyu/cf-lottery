@@ -346,11 +346,16 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   // ── registered 模式：需注册登录才能参与，跳过邮箱校验 ──
   let registeredUserId: string | undefined;
   if (draw.participationMode === "registered") {
-    let token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
-    if (!token) token = c.req.query("token") || "";
+    // 只从 Authorization 头取 JWT，绝不用 URL query 传递 token：
+    // query 中的 token 会进入访问日志、浏览器历史与 Referer 头，是安全反模式。
+    const token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
     if (!token) return fail(c, "此活动需要登录后才能参与", 401);
+    // JWT_SECRET 未配置时显式报错（与 requireAuth 行为一致），
+    // 避免用空密钥静默验签导致"未配置密钥也可登录"的假安全。
+    const jwtSecret = c.env.JWT_SECRET;
+    if (!jwtSecret) return fail(c, "服务未配置 JWT 密钥", 500);
     try {
-      const payload = await verifyJwt(token, c.env.JWT_SECRET || "");
+      const payload = await verifyJwt(token, jwtSecret);
       if (payload?.sub) registeredUserId = payload.sub;
     } catch { /* JWT 无效 */ }
     if (!registeredUserId) return fail(c, "登录已过期，请重新登录", 401);
@@ -461,6 +466,15 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
 
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "open") return fail(c, "活动已结束", 400);
+
+  // ── registered 模式拦截 ──
+  // registered 活动的验证码在 access-code 端点永不生成（该端点 JWT 直通），
+  // 但活动从 open 改为 registered 时可能残留未过期的旧验证码。
+  // 若不拦截，攻击者可用旧验证码经 verify-join 以 email 身份参与，绕过登录门槛
+  // （entry 身份会被记为 email 而非 user_id，还会造成同一人两条 entry）。
+  if (draw.participationMode === "registered") {
+    return fail(c, "此活动需要登录后参与", 401);
+  }
 
   // 验证验证码（公共校验逻辑）
   const validCode = await verifyEmailAccessCode(db, email, draw.id, code);

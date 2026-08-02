@@ -8,8 +8,8 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { fail, getDb, ok } from "../lib/http";
-import { requireAuth, requirePlatformMember } from "../middleware/auth";
-import { tenants, platformMembers, users, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws } from "../db/schema";
+import { requireAuth, requirePlatformMember, signJwt } from "../middleware/auth";
+import { tenants, platformMembers, users, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
 import { dispatchWebhookDelivery } from "../services/lottery-service";
@@ -249,6 +249,28 @@ platformRoute.get("/tenants/:id/summary", async (c) => {
       snapshotDate: null,
     },
   });
+});
+
+// ═════════════════════════════════════════════════════════
+// 租户登录模拟（平台运营者以租户身份登录，排查问题）
+// ═════════════════════════════════════════════════════════
+
+platformRoute.post("/tenants/:id/impersonate", requirePlatformMember(["platform_owner"]), async (c) => {
+  const db = getDb(c);
+  const tenantId = c.req.param("id");
+
+  const [member] = await db
+    .select({ userId: tenantMembers.userId, tenantId: tenantMembers.tenantId })
+    .from(tenantMembers)
+    .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.role, "owner")))
+    .limit(1);
+
+  if (!member) return fail(c, "该租户没有 owner 成员，无法模拟登录", 404);
+
+  const jwtSecret = c.env.JWT_SECRET;
+  const token = await signJwt({ sub: member.userId, tenantId: member.tenantId, impersonated: true }, jwtSecret, 3600);
+
+  return ok(c, { token, tenantId: member.tenantId, userId: member.userId });
 });
 
 /** 调整租户套餐/状态/额外额度（平台运营者用于人工售卖、补偿、暂停租户）
