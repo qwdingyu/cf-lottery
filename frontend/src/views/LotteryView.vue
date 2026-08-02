@@ -525,25 +525,35 @@
 
         <!-- 查询表单 -->
         <div v-if="!myResultData" class="result-form">
-          <input
-            v-model="myResultEmail"
-            type="email"
-            placeholder="参与时填写的邮箱"
-            maxlength="120"
-            :disabled="myResultLoading"
-          />
-          <input
-            v-model="myResultCode"
-            type="text"
-            placeholder="邮箱验证码"
-            maxlength="10"
-            :disabled="myResultLoading"
-          />
-          <p class="result-hint">验证码需先在参与/登录时获取（或联系运营），用于验证邮箱归属</p>
-          <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
-          <button class="btn btn-primary" :disabled="myResultLoading" @click="queryMyResult">
-            {{ myResultLoading ? '查询中…' : '查询' }}
-          </button>
+          <!-- registered 模式：JWT 已证明身份，无需邮箱/验证码 -->
+          <template v-if="isRegMyResult">
+            <p class="result-hint">已登录：{{ registeredUsername }}，点击查询参与结果</p>
+            <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
+            <button class="btn btn-primary" :disabled="myResultLoading" @click="queryMyResult">
+              {{ myResultLoading ? '查询中…' : '查询' }}
+            </button>
+          </template>
+          <template v-else>
+            <input
+              v-model="myResultEmail"
+              type="email"
+              placeholder="参与时填写的邮箱"
+              maxlength="120"
+              :disabled="myResultLoading"
+            />
+            <input
+              v-model="myResultCode"
+              type="text"
+              placeholder="邮箱验证码"
+              maxlength="10"
+              :disabled="myResultLoading"
+            />
+            <p class="result-hint">验证码需先在参与/登录时获取（或联系运营），用于验证邮箱归属</p>
+            <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
+            <button class="btn btn-primary" :disabled="myResultLoading" @click="queryMyResult">
+              {{ myResultLoading ? '查询中…' : '查询' }}
+            </button>
+          </template>
         </div>
 
         <!-- 查询结果 -->
@@ -714,6 +724,8 @@ const isRegisteredJoin = computed(() => {
   const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
   return draw?.participationMode === 'registered'
 })
+/** 结果查询弹窗对应的活动是否是 registered 模式（决定是否用 JWT 查询） */
+const isRegMyResult = computed(() => myResultDraw.value?.participationMode === 'registered')
 const myJoinedById = ref<Record<string, true>>({})
 const myWonById = ref<Record<string, any>>({})
 const myOutcomeById = ref<Record<string, ActivityOutcome>>({})
@@ -770,17 +782,27 @@ function openMyResult(draw: LotteryDraw) {
 }
 
 async function queryMyResult() {
-  if (!myResultDraw.value || !myResultEmail.value.trim() || !myResultCode.value.trim()) {
+  if (!myResultDraw.value) return
+  const isReg = myResultDraw.value.participationMode === 'registered'
+  // registered 模式：已登录用户带 JWT 直接查询，无需邮箱/验证码；
+  // 其他模式仍需邮箱+验证码防枚举
+  if (!isReg && (!myResultEmail.value.trim() || !myResultCode.value.trim())) {
     myResultError.value = t('lottery.emailCodeRequired') || ''
     return
   }
   myResultLoading.value = true
   myResultError.value = ''
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    // registered 模式：JWT 即身份证明（后端按 userId 匹配 entry，跳过验证码）
+    if (isReg && registeredToken.value) headers['Authorization'] = 'Bearer ' + registeredToken.value
     const res = await fetch(`${API_BASE}/public/draws/${myResultDraw.value.publicSlug}/my-result`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: myResultEmail.value.trim(), code: myResultCode.value.trim() }),
+      headers,
+      body: JSON.stringify({
+        email: isReg ? registeredUsername.value : myResultEmail.value.trim(),
+        code: isReg ? '' : myResultCode.value.trim(),
+      }),
     })
     const data = await res.json()
     if (data.ok) {

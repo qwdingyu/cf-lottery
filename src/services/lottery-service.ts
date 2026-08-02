@@ -1297,9 +1297,14 @@ export async function joinDraw(
   // 只有 open 状态的活动可以参与（draft/paused/drawing/drawn/cancelled 均不可参与）
   if (draw.status !== "open") throw new Error("活动未开启");
 
-  // ── registered 模式：已登录用户以 userId 为身份标识，跳过邮箱验证码。 ──
-  // 未登录用户仍走 email + code 路径，但 registered 模式的前端不会展示邮箱表单。
-  if (draw.participationMode === "registered" && options?.userId) {
+  // ── registered 模式：必须已登录（userId）才能参与 ──
+  // 没有 userId 一律拒绝：堵住 /join 快捷参与等入口（该端点无 JWT 强制检查），
+  // 防止任意 email 冒充参与。roster/password/invite_code 在下文各自校验，
+  // registered 是唯一没有"参与资格"概念的维度，必须在此强制。
+  if (draw.participationMode === "registered") {
+    if (!options?.userId) {
+      return { joined: false, message: "此活动需要登录后参与" };
+    }
     identityType = "user_id";
     identityValue = options.userId;
   }

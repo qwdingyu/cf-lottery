@@ -535,19 +535,41 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   const email = String(body.email || "").trim().toLowerCase();
   const code = String(body.code || "").trim();
 
-  if (!email || !code) return fail(c, "请输入邮箱和验证码", 400);
-
   const [draw] = await db
-    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId })
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, participationMode: lotteryDraws.participationMode })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  // 验证码校验（公共逻辑；查询类操作不消耗验证码，仅校验身份防枚举）
-  const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
-  if (!validCode) {
-    return fail(c, "验证码无效或已过期", 400);
+  // ── registered 模式：以 JWT 中的 userId 查询（entry 身份为 user_id） ──
+  // registered 用户参与时 entry.identity_value = userId（UUID），邮箱+验证码无法匹配；
+  // JWT 即身份证明，跳过验证码。无 JWT 直接拒绝。
+  let registeredUserId: string | undefined;
+  if (draw.participationMode === "registered") {
+    const token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) return fail(c, "此活动需要登录后查询", 401);
+    const jwtSecret = c.env.JWT_SECRET;
+    if (!jwtSecret) return fail(c, "服务未配置 JWT 密钥", 500);
+    try {
+      const payload = await verifyJwt(token, jwtSecret);
+      if (payload?.sub) registeredUserId = payload.sub;
+    } catch { /* JWT 无效 */ }
+    if (!registeredUserId) return fail(c, "登录已过期，请重新登录", 401);
+  }
+
+  // 邮箱+验证码必填：仅非 registered 模式要求（registered 用 JWT 证明身份）
+  if (!registeredUserId && (!email || !code)) return fail(c, "请输入邮箱和验证码", 400);
+
+  // 查询身份键：registered 用 userId，其他模式用邮箱
+  const identityValue = registeredUserId || email;
+
+  // 验证码校验：仅非 registered 模式需要（查询类操作不消耗验证码，仅校验身份防枚举）
+  if (!registeredUserId) {
+    const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
+    if (!validCode) {
+      return fail(c, "验证码无效或已过期", 400);
+    }
   }
 
   const [entry] = await db
@@ -556,7 +578,7 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     .where(and(
       eq(lotteryEntries.tenantId, draw.tenantId),
       eq(lotteryEntries.drawId, draw.id),
-      eq(lotteryEntries.identityValue, email),
+      eq(lotteryEntries.identityValue, identityValue),
     ))
     .limit(1);
 
@@ -587,13 +609,14 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   }
 
   // 2. 安慰奖（未中奖自动发券）
+  // 查询键与 entry 身份一致：registered 用户 coupon.recipient_email 存的是 userId
   let consolationCoupon: string | null = null;
   const [coupon] = await db
     .select({ code: couponCodes.code, status: couponCodes.status })
     .from(couponCodes)
     .where(and(
       eq(couponCodes.tenantId, draw.tenantId),
-      eq(couponCodes.recipientEmail, email),
+      eq(couponCodes.recipientEmail, identityValue),
     ))
     .limit(1);
   if (coupon && coupon.status === "issued") {
@@ -614,10 +637,8 @@ publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
   const email = String(body.email || "").trim().toLowerCase();
   const code = String(body.code || "").trim();
 
-  if (!email || !code) return fail(c, "请输入邮箱和验证码", 400);
-
   const [draw] = await db
-    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, activityKind: lotteryDraws.activityKind })
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, activityKind: lotteryDraws.activityKind, participationMode: lotteryDraws.participationMode })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
     .limit(1);
@@ -627,11 +648,34 @@ publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
     return fail(c, "该活动不支持取消参与", 400);
   }
 
-  // 验证码校验（公共逻辑；取消操作不消耗验证码，防止他人冒用邮箱取消）
-  const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
-  if (!validCode) return fail(c, "验证码无效或已过期", 400);
+  // ── registered 模式：以 JWT 中的 userId 取消（entry 身份为 user_id） ──
+  let registeredUserId: string | undefined;
+  if (draw.participationMode === "registered") {
+    const token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) return fail(c, "此活动需要登录后取消", 401);
+    const jwtSecret = c.env.JWT_SECRET;
+    if (!jwtSecret) return fail(c, "服务未配置 JWT 密钥", 500);
+    try {
+      const payload = await verifyJwt(token, jwtSecret);
+      if (payload?.sub) registeredUserId = payload.sub;
+    } catch { /* JWT 无效 */ }
+    if (!registeredUserId) return fail(c, "登录已过期，请重新登录", 401);
+  }
 
-  const result = await cancelSignupChainEntry(db, draw.tenantId, draw.id, email);
+  // 邮箱+验证码必填：仅非 registered 模式要求（registered 用 JWT 证明身份）
+  if (!registeredUserId && (!email || !code)) return fail(c, "请输入邮箱和验证码", 400);
+
+  // 身份键：registered 用 userId，其他模式用邮箱
+  const identityValue = registeredUserId || email;
+
+  // 验证码校验（公共逻辑；取消操作不消耗验证码，防止他人冒用邮箱取消）：
+  // registered 模式 JWT 即身份证明，跳过验证码
+  if (!registeredUserId) {
+    const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
+    if (!validCode) return fail(c, "验证码无效或已过期", 400);
+  }
+
+  const result = await cancelSignupChainEntry(db, draw.tenantId, draw.id, identityValue);
   if (!result.cancelled) return fail(c, "未找到您的参与记录", 404);
 
   // 记录取消事件（漏斗可追踪）

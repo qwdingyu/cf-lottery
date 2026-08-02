@@ -122,6 +122,102 @@ describe("用户注册数据完整性", () => {
     expect(member).toBeUndefined();  // 不应自动建租户
   });
 
+  // ── 方案 C 测试：无租户用户流程 ──
+
+  it("新注册用户登录后 needsTenant=true（邮箱已验证后）", async () => {
+    const app = createAuthTestApp();
+    // 注册
+    await app.request("/auth/register", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.10" },
+      body: JSON.stringify({ username: "notenant1", password: "Test12345", email: "nt1@test.com" }),
+    }, TEST_ENV);
+    // 直接设置邮箱已验证
+    await db.update(users).set({ emailVerified: 1 }).where(eq(users.username, "notenant1"));
+
+    // 登录
+    const res = await app.request("/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "notenant1", password: "Test12345" }),
+    }, TEST_ENV);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.needsTenant).toBe(true);
+    expect(data.tenants).toHaveLength(0);
+    expect(data.tenantId).toBe("");
+  });
+
+  it("create-tenant 创建租户后返回新 JWT", async () => {
+    const app = createAuthTestApp();
+    // 注册+验证
+    await app.request("/auth/register", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.11" },
+      body: JSON.stringify({ username: "ct1", password: "Test12345", email: "ct1@test.com" }),
+    }, TEST_ENV);
+    await db.update(users).set({ emailVerified: 1 }).where(eq(users.username, "ct1"));
+    // 登录获取 token
+    const loginRes = await app.request("/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "ct1", password: "Test12345" }),
+    }, TEST_ENV);
+    const loginData = await loginRes.json() as any;
+    expect(loginData.needsTenant).toBe(true);
+
+    // 创建租户
+    const res = await app.request("/auth/create-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + loginData.token },
+      body: JSON.stringify({ name: "我的团队" }),
+    }, TEST_ENV);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.name).toBe("我的团队");
+    expect(data.token).toBeTruthy();
+    expect(data.tenantId).toBeTruthy();
+    // 新的 JWT 应该带租户 ID
+    expect(data.token).not.toBe(loginData.token);
+  });
+
+  it("create-tenant 后重新登录不再 needsTenant", async () => {
+    const app = createAuthTestApp();
+    // 注册+验证+创建租户（复用上面创建的 ct1 用户，用直接 db 方式创建租户）
+    const tenantId = crypto.randomUUID();
+    const [user] = await db.select().from(users).where(eq(users.username, "ct1")).limit(1);
+    await db.insert(tenants).values({ id: tenantId, name: "ct1-team" });
+    await db.insert(tenantMembers).values({ tenantId, userId: user!.id, role: "owner" });
+
+    // 重新登录
+    const res = await app.request("/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "ct1", password: "Test12345" }),
+    }, TEST_ENV);
+    const data = await res.json() as any;
+    expect(data.needsTenant).toBe(false);
+    expect(data.tenants.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("存量用户（有租户）登录 needsTenant=false", async () => {
+    const app = createAuthTestApp();
+    // 注册+验证+手动建租户
+    await app.request("/auth/register", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.12" },
+      body: JSON.stringify({ username: "hastenant", password: "Test12345", email: "ht@test.com" }),
+    }, TEST_ENV);
+    await db.update(users).set({ emailVerified: 1 }).where(eq(users.username, "hastenant"));
+    const [usr] = await db.select().from(users).where(eq(users.username, "hastenant")).limit(1);
+    const tid = crypto.randomUUID();
+    await db.insert(tenants).values({ id: tid, name: "hasteam" });
+    await db.insert(tenantMembers).values({ tenantId: tid, userId: usr!.id, role: "owner" });
+
+    const res = await app.request("/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "hastenant", password: "Test12345" }),
+    }, TEST_ENV);
+    const data = await res.json() as any;
+    expect(data.needsTenant).toBe(false);
+  });
+
+  // ── 方案 C 完 ──
+
   it("公开注册关闭时拒绝新用户且不写数据库限流日志", async () => {
     const app = createAuthTestApp();
     await db.insert(systemConfig).values({ key: "enable_registration", value: "false" });
@@ -512,6 +608,67 @@ describe("公开参与流程", () => {
     // 验证没有 entry 被创建（未绕过登录门槛）
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId)).limit(1);
     expect(entry).toBeFalsy();
+  });
+
+  it("registered 模式：/join 快捷参与被服务层拒绝（无 JWT 不能绕过登录）", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "registered-join-block",
+      title: "注册模式测试", status: "open", participationMode: "registered",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    // /join 快捷参与端点无 JWT 强制检查，必须靠 joinDraw 服务层拒绝（P1 兜底）
+    const res = await app.request("/public/draws/registered-join-block/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.40" },
+      body: JSON.stringify({ email: "sneak@test.com" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.message).toContain("登录");
+
+    // 确认没有 entry 被创建（未绕过登录门槛）
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId)).limit(1);
+    expect(entry).toBeFalsy();
+  });
+
+  it("registered 模式：my-result 带 JWT 按 userId 查到结果，无 JWT 拒绝", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "registered-myresult",
+      title: "注册模式测试", status: "open", participationMode: "registered",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    const userId = crypto.randomUUID();
+    const token = await signJwt({ sub: userId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      identityType: "user_id", identityValue: userId, joinedAt: new Date().toISOString(),
+    });
+
+    // 无 JWT → 401（邮箱+验证码路径对 registered 活动关闭）
+    const noToken = await app.request("/public/draws/registered-myresult/my-result", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.41" },
+      body: JSON.stringify({ email: "x@test.com", code: "123456" }),
+    }, TEST_ENV);
+    expect(noToken.status).toBe(401);
+
+    // 带 JWT → 200 按 userId 命中 entry（无需邮箱/验证码）
+    const withToken = await app.request("/public/draws/registered-myresult/my-result", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "CF-Connecting-IP": "10.0.0.41" },
+      body: JSON.stringify({ email: "", code: "" }),
+    }, TEST_ENV);
+    expect(withToken.status).toBe(200);
+    const data = await withToken.json() as any;
+    expect(data.ok).toBe(true);
+    expect(data.joined).toBe(true);
   });
 });
 
