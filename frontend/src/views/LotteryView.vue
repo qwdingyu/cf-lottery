@@ -777,7 +777,7 @@ async function queryMyResult() {
   myResultLoading.value = true
   myResultError.value = ''
   try {
-    const res = await fetch(`/api/public/draws/${myResultDraw.value.publicSlug}/my-result`, {
+    const res = await fetch(`${API_BASE}/public/draws/${myResultDraw.value.publicSlug}/my-result`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: myResultEmail.value.trim(), code: myResultCode.value.trim() }),
@@ -809,7 +809,7 @@ async function shareMyWin() {
   const origin = window.location.origin
   if (lastJoinResult.value && lastJoinResult.value.drawId === draw.id) {
     try {
-      const res = await fetch(`/api/public/draws/${encodeURIComponent(slug)}/share`, {
+      const res = await fetch(`${API_BASE}/public/draws/${encodeURIComponent(slug)}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entryId: lastJoinResult.value.entryId }),

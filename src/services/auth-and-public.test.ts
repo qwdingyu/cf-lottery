@@ -12,6 +12,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { authRoute } from "../routes/auth";
 import { publicLotteryRoute } from "../routes/public-lottery";
+import { signJwt } from "../middleware/auth";
 import {
   activityOutcomes,
   auditLogs,
@@ -405,6 +406,112 @@ describe("公开参与流程", () => {
     // 验证密码 hash 存储正确
     const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
     expect(draw!.accessPassword).toBe(hashHex);
+  });
+
+  /* ── registered 模式：需注册登录（JWT 认证）参与 ──
+   * 覆盖：无 token 拒绝、有效 JWT 直通跳过验证码、无效 JWT 拒绝、
+   *       verify-join 残留验证码绕过拦截（P1 回归）、重复参与按 userId 判重。
+   */
+  it("registered 模式：无 JWT 调用 access-code 返回 401", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "registered-no-token",
+      title: "注册模式测试", status: "open", participationMode: "registered",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    const res = await app.request("/public/draws/registered-no-token/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.30" },
+      body: JSON.stringify({ email: "anyone@test.com" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(401);
+  });
+
+  it("registered 模式：有效 JWT 直接参与并跳过邮箱验证码，重复参与按 userId 判重", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "registered-valid-jwt",
+      title: "注册模式测试", status: "open", participationMode: "registered",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    const userId = crypto.randomUUID();
+    const token = await signJwt({ sub: userId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+
+    const res = await app.request("/public/draws/registered-valid-jwt/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "CF-Connecting-IP": "10.0.0.31" },
+      body: JSON.stringify({ email: "reg@test.com" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.joined).toBe(true);
+
+    // entry 身份应为 user_id（不是 email），这是重复参与判重的关键
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId)).limit(1);
+    expect(entry?.identityType).toBe("user_id");
+    expect(entry?.identityValue).toBe(userId);
+
+    // 同一用户再次参与 → 409（按 userId 判重，而非 email）
+    const again = await app.request("/public/draws/registered-valid-jwt/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "CF-Connecting-IP": "10.0.0.31" },
+      body: JSON.stringify({ email: "reg@test.com" }),
+    }, TEST_ENV);
+    expect(again.status).toBe(409);
+  });
+
+  it("registered 模式：无效 JWT 返回 401", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "registered-bad-jwt",
+      title: "注册模式测试", status: "open", participationMode: "registered",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    const res = await app.request("/public/draws/registered-bad-jwt/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer invalid.token.here", "CF-Connecting-IP": "10.0.0.32" },
+      body: JSON.stringify({ email: "reg@test.com" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(401);
+  });
+
+  it("registered 模式：verify-join 用残留验证码被拦截（防止 open→registered 切换绕过登录）", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "registered-verify-block",
+      title: "注册模式测试", status: "open", participationMode: "registered",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    // 模拟活动从 open 改为 registered 时残留的未过期验证码（P1 漏洞场景）
+    const encoder = new TextEncoder();
+    const hash = await crypto.subtle.digest("SHA-256", encoder.encode("123456"));
+    const codeHash = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(), email: "victim@test.com", drawId,
+      codeHash, used: 0, expiresAt: futureTimeISO(10),
+    });
+
+    const res = await app.request("/public/draws/registered-verify-block/verify-join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.33" },
+      body: JSON.stringify({ email: "victim@test.com", code: "123456" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(401);
+
+    // 验证没有 entry 被创建（未绕过登录门槛）
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId)).limit(1);
+    expect(entry).toBeFalsy();
   });
 });
 
