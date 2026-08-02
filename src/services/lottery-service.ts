@@ -48,7 +48,6 @@ import {
   externalConversions,   // 外部成交/核销/注册回传事实
   activitySubmissions,   // 动态表单提交 payload
   couponCodes,           // 优惠券码池（用于未中奖自动发券）
-  emailAccessCodes,      // 邮箱验证码（verify-join 事务内消费）
 } from "../db/schema";
 
 /* ── 类型定义 ─────────────────────────────────────────────── */
