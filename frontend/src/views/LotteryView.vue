@@ -1,7 +1,13 @@
 <template>
   <div class="lottery-view">
     <header class="lottery-header">
-      <h1 class="lottery-title">{{ drawTitle }}</h1>
+      <div class="lottery-header-left">
+        <h1 class="lottery-title">{{ drawTitle }}</h1>
+        <div v-if="isDeepLinked && draws[0]" class="lottery-link-bar">
+          <button class="lottery-share-btn" @click="handleCopyPublicLink(draws[0].id)">📋 复制分享链接</button>
+          <RouterLink to="/lottery" class="lottery-share-btn">← 返回活动列表</RouterLink>
+        </div>
+      </div>
       <div class="lottery-header-actions">
         <template v-if="sessionEmail || registeredUsername">
           <span class="lottery-user">{{ registeredUsername || sessionEmail }}</span>
@@ -35,6 +41,13 @@
             </div>
           </div>
           <button class="lottery-expand-btn">{{ expandedId === draw.id ? '收起 ▲' : '展开 ▼' }}</button>
+        </div>
+        <!-- 折叠态快捷操作 -->
+        <div v-if="expandedId !== draw.id && draw.status === 'drawn' && !sessionEmail" class="lottery-quick-bar">
+          <button class="lottery-share-btn" @click="openLogin(draw.id)">登录查看结果</button>
+        </div>
+        <div v-if="expandedId !== draw.id && draw.status === 'drawn' && sessionEmail" class="lottery-quick-bar">
+          <button class="lottery-share-btn" @click="openMyResult(draw)">查询结果</button>
         </div>
 
         <div v-if="expandedId === draw.id" class="lottery-card-body">
@@ -1122,6 +1135,10 @@ onUnmounted(() => {
 .lottery-user { font-size:13px; color:rgba(255,255,255,0.6); margin-right:8px; }
 .lottery-logout { font-size:12px; color:rgba(255,255,255,0.4); background:none; border:none; cursor:pointer; }
 .lottery-login-btn { font-size:13px; background:none; border:1px solid rgba(255,255,255,0.2); color:#fff; padding:4px 12px; border-radius:6px; cursor:pointer; }
+.lottery-header-left { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.lottery-link-bar { display:flex; gap:8px; }
+.lottery-share-btn { font-size:12px; background:none; border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.5); padding:3px 10px; border-radius:4px; cursor:pointer; text-decoration:none; }
+.lottery-share-btn:hover { color:#fff; border-color:rgba(255,255,255,0.3); }
 
 /* ── 中心容器 ── */
 .lottery-center { text-align:center; padding:60px 20px; color:var(--tg-hint,#9aa4b2); }
