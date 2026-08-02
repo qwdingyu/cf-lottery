@@ -1976,13 +1976,17 @@ export async function performDraw(
           });
         }
       }
-    });
 
-    // 5. 更新活动状态为 drawn（开奖完成）
-    await db
-      .update(lotteryDraws)
-      .set({ status: "drawn", drawnAt: now, updatedAt: now, failureReason: "" })
-      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+      // ── 状态与中奖记录同事务（#3.4 修复） ──
+      // 修复前：winners 写入（本事务）与 status=drawn 更新（事务外）分离；
+      // 事务提交后、状态更新前发生 DB 失败时，catch 会把状态回滚为 open，
+      // 残留 winners 导致二次开奖 UNIQUE 冲突 → 活动永久自锁。
+      // 修复后：drawn 状态与 winners 在同一事务提交，要么全部成功要么全部回滚。
+      await tx
+        .update(lotteryDraws)
+        .set({ status: "drawn", drawnAt: now, updatedAt: now, failureReason: "" })
+        .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+    });
 
     // 6. 写审计日志（记录谁在什么时候开奖、结果如何）
     await db.insert(auditLogs).values({
@@ -2049,10 +2053,20 @@ export async function performDraw(
     // 开奖失败：恢复为 open 状态并记录失败原因
     // 不清除 drawSeedHash，保留审计线索
     const reason = error instanceof Error ? error.message.slice(0, 500) : "开奖失败（未知错误）";
-    await db
-      .update(lotteryDraws)
-      .set({ status: "open", failureReason: reason, updatedAt: new Date().toISOString() })
-      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+    // #3.4 修复：winners 与 drawn 状态同事务提交后，若后续步骤（审计/异步通知）失败，
+    // 活动已是 drawn，不得再回滚 open——否则会制造"winners 已存在 + 状态 open"的残留，
+    // 使二次开奖必然 UNIQUE 冲突、活动永久自锁。
+    const [curDraw] = await db
+      .select({ status: lotteryDraws.status })
+      .from(lotteryDraws)
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+      .limit(1);
+    if (curDraw?.status !== "drawn") {
+      await db
+        .update(lotteryDraws)
+        .set({ status: "open", failureReason: reason, updatedAt: new Date().toISOString() })
+        .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+    }
     throw error;
   }
 }
