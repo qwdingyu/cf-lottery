@@ -189,13 +189,13 @@ app.get("/api/cron/draw", async (c) => {
   // 因此使用查询参数 ?secret=xxx 作为认证方式。
   // 生产环境应配合 Cloudflare WAF 限制仅允许 Cloudflare IP 访问。
   const cronSecret = c.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = c.req.header("Authorization") || "";
-    const querySecret = c.req.query("secret") || "";
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim() || querySecret;
-    if (token !== cronSecret) {
-      return c.json({ ok: false, message: "未授权" }, 403);
-    }
+  // 未配置 CRON_SECRET 时拒绝所有 cron 请求，防止内部端点意外暴露
+  if (!cronSecret) return c.json({ ok: false, message: "未配置 CRON_SECRET" }, 503);
+  const authHeader = c.req.header("Authorization") || "";
+  const querySecret = c.req.query("secret") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim() || querySecret;
+  if (token !== cronSecret) {
+    return c.json({ ok: false, message: "未授权" }, 403);
   }
 
   try {
@@ -221,12 +221,11 @@ app.get("/api/cron/draw", async (c) => {
 // Cron 手动入口：处理到期开奖和 Webhook 重试，便于运维侧主动补偿。
 app.post("/api/cron/maintenance", async (c) => {
   const cronSecret = c.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = c.req.header("Authorization") || "";
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (token !== cronSecret) {
-      return c.json({ ok: false, message: "未授权" }, 403);
-    }
+  if (!cronSecret) return c.json({ ok: false, message: "未配置 CRON_SECRET" }, 503);
+  const authHeader = c.req.header("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (token !== cronSecret) {
+    return c.json({ ok: false, message: "未授权" }, 403);
   }
 
   try {

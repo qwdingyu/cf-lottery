@@ -133,6 +133,12 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
  * - Cloudflare Workers Free 更怕无边界查询导致响应变慢，Turso 也会增加 rows read。
  * - 后台低频列表可以保留 COUNT/分页，但 limit/offset 必须有默认值和上限。
  */
+
+/** 转义 LIKE 通配符，防止用户输入 % 和 _ 导致全表扫描 DoS */
+function escapeLike(value: string): string {
+  return value.replace(/[%_]/g, "\\$&");
+}
+
 function parseAdminPagination(c: Context<AppEnv>, fallbackLimit = 50, maxLimit = 200) {
   return {
     limit: clampInteger(c.req.query("limit"), fallbackLimit, 1, maxLimit),
@@ -371,7 +377,7 @@ adminLotteryRoute.get("/draws", async (c) => {
 
   const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
   if (status) conditions.push(eq(lotteryDraws.status, status));
-  if (query) conditions.push(sql`${lotteryDraws.title} LIKE ${'%' + query + '%'}`);
+  if (query) conditions.push(sql`${lotteryDraws.title} LIKE ${'%' + escapeLike(query) + '%'}`);
 
   const rows = await db
     .select()

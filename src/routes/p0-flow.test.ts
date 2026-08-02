@@ -12,7 +12,7 @@ import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
 import { activityEvents, activitySubmissions, activityOutcomes, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -583,7 +583,7 @@ describe("P0 核心流程：创建活动 → 发布", () => {
 async function joinByEmail(app: Hono<AppEnv>, slug: string, email: string) {
   const res = await app.request(`/api/public/draws/${slug}/join`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.9.1" },
+    headers: { "Content-Type": "application/json", "CF-Connecting-IP": `10.9.0.${(joinIpCounter++ % 200) + 1}` },
     body: JSON.stringify({ email }),
   }, TEST_ENV);
   if (res.status !== 200) {
@@ -591,6 +591,9 @@ async function joinByEmail(app: Hono<AppEnv>, slug: string, email: string) {
   }
   expect(res.status).toBe(200);
 }
+
+/** 参与 IP 计数器（避免限流） */
+let joinIpCounter = 0
 
 it("接龙：取消参与后候补自动转正", async () => {
   await seedOwner();
