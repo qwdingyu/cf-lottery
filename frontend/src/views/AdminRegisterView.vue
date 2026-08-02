@@ -81,7 +81,15 @@ async function handleVerify() {
   try {
     const res = await fetch('/api/auth/verify-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.value.trim().toLowerCase(), code: c }) })
     const data = await res.json() as any
-    if (data.ok) { localStorage.setItem('admin_token', data.token); router.push('/admin') }
+    if (data.ok) {
+      localStorage.setItem('admin_token', data.token)
+      // ★ 045 方案 C：新注册用户无租户（needsTenant=true），引导 onboarding 创建租户
+      if (data.needsTenant) {
+        router.replace({ name: 'Onboarding' })
+      } else {
+        router.push('/admin')
+      }
+    }
     else { error.value = data.message || '验证失败' }
   } catch { error.value = '网络错误，请重试' }
   finally { verifying.value = false }

@@ -78,8 +78,9 @@ async function handleCreate() {
 }
 
 function handleSkip() {
-  // 无租户无法访问管理功能，提示用户必须创建
-  error.value = '需要创建工作空间后才能开始使用'
+  // 允许暂不创建租户离开（如 registered 参与者只参与活动、无需管理后台）。
+  // 后续访问 /admin 时路由守卫会再次引导 onboarding。
+  router.replace('/')
 }
 </script>
 
