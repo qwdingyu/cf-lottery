@@ -20,7 +20,7 @@
  * - 锁码防重：条件 UPDATE WHERE status = 'available'
  */
 import { withDbTransaction, type DbType, type DbWriteScope } from "../db/client";
-import { and, eq, count, inArray, sql } from "drizzle-orm";
+import { and, eq, count, inArray, sql, asc } from "drizzle-orm";
 import { buildLotteryWinnerTemplateData, sendEmail } from "./email-service";
 import { buildPublishCheckForDraw } from "./publish-check-service";
 import {
@@ -85,6 +85,7 @@ export type ActivityEventType =
   | "page_view"
   | "participation_started"
   | "participation_completed"
+  | "participation_cancelled"
   | "outcome_assigned"
   | "cta_impression"
   | "cta_click"
@@ -1452,6 +1453,93 @@ export async function joinDraw(
     }
     throw err;
   }
+}
+
+/**
+ * 接龙活动：取消参与 + 候补转正。
+ *
+ * 场景：用户报名接龙后想退出（如行程变化），释放名额后应让候补队列第一位自动补位。
+ *
+ * 处理流程（事务内）：
+ * 1. 删除该用户的活动参与记录（lottery_entries）和结果（activity_outcomes）
+ * 2. 若有候补用户（status='waitlisted'），把序列号最小的一位转正为 assigned，
+ *    分配被释放的序号——保证"先到先得"的候补队列公平性
+ *
+ * 返回：
+ * - cancelled: 是否成功取消
+ * - promoted: 是否有候补转正（名额被释放）
+ */
+export async function cancelSignupChainEntry(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  email: string,
+): Promise<{ cancelled: boolean; promoted: boolean }> {
+  const normalizedEmail = email.trim().toLowerCase();
+  return withDbTransaction(db, async (tx) => {
+    // 查找参与记录（identity_value 为该邮箱）
+    const [entry] = await tx
+      .select({ id: lotteryEntries.id })
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.tenantId, tenantId),
+        eq(lotteryEntries.drawId, drawId),
+        eq(lotteryEntries.identityValue, normalizedEmail),
+      ))
+      .limit(1);
+    if (!entry) return { cancelled: false, promoted: false };
+
+    // 查找该参与者的结果（assigned 或 waitlisted）
+    const [outcome] = await tx
+      .select({ id: activityOutcomes.id, status: activityOutcomes.status, sequenceNo: activityOutcomes.sequenceNo })
+      .from(activityOutcomes)
+      .where(and(
+        eq(activityOutcomes.tenantId, tenantId),
+        eq(activityOutcomes.drawId, drawId),
+        eq(activityOutcomes.entryId, entry.id),
+      ))
+      .limit(1);
+    if (!outcome) return { cancelled: false, promoted: false };
+
+    // 删除参与记录和结果
+    await tx.delete(activityOutcomes).where(eq(activityOutcomes.id, outcome.id));
+    await tx.delete(lotteryEntries).where(eq(lotteryEntries.id, entry.id));
+
+    let promoted = false;
+
+    // 若被取消者原本占用了名额（assigned），且存在候补 → 候补第 1 位转正
+    if (outcome.status === "assigned") {
+      const [nextWaitlisted] = await tx
+        .select({ id: activityOutcomes.id, entryId: activityOutcomes.entryId })
+        .from(activityOutcomes)
+        .where(and(
+          eq(activityOutcomes.tenantId, tenantId),
+          eq(activityOutcomes.drawId, drawId),
+          eq(activityOutcomes.status, "waitlisted"),
+        ))
+        .orderBy(asc(activityOutcomes.sequenceNo))
+        .limit(1);
+
+      if (nextWaitlisted) {
+        const now = new Date().toISOString();
+        // 候补第 1 位转正：分配被释放的序号，标记为已占位
+        await tx.update(activityOutcomes)
+          .set({
+            status: "assigned",
+            assignmentNo: outcome.sequenceNo, // 复用被释放的序号
+            sequenceNo: outcome.sequenceNo,
+            resultKey: `slot_${outcome.sequenceNo}`,
+            resultLabel: `第 ${outcome.sequenceNo} 位`,
+            updatedAt: now,
+            decidedAt: now,
+          })
+          .where(eq(activityOutcomes.id, nextWaitlisted.id));
+        promoted = true;
+      }
+    }
+
+    return { cancelled: true, promoted };
+  });
 }
 
 async function recordAttributedJoin(

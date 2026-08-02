@@ -11,7 +11,7 @@ import type { DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
-import { activityEvents, activitySubmissions, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
+import { activityEvents, activitySubmissions, activityOutcomes, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, systemConfig, webhookConfigs } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -591,3 +591,36 @@ async function joinByEmail(app: Hono<AppEnv>, slug: string, email: string) {
   }
   expect(res.status).toBe(200);
 }
+
+it("接龙：取消参与后候补自动转正", async () => {
+  await seedOwner();
+  const app = createTestApp();
+
+  // 创建接龙活动：2 个名额 + waitlist 策略
+  const { id, publicSlug } = await createAndPublish(app, "signup_chain", { allocationPolicy: "waitlist", maxParticipants: 2 });
+
+  // 3 人参与：2 人占位（assigned）+ 1 人候补（waitlisted）
+  await joinByEmail(app, publicSlug, "a@test.com");
+  await joinByEmail(app, publicSlug, "b@test.com");
+  await joinByEmail(app, publicSlug, "c@test.com");
+
+  // 验证：2 assigned + 1 waitlisted
+  const before = await db.select().from(activityOutcomes).where(eq(activityOutcomes.drawId, id));
+  expect(before.filter(o => o.status === "assigned")).toHaveLength(2);
+  expect(before.filter(o => o.status === "waitlisted")).toHaveLength(1);
+
+  // 第 1 人取消参与（走公开端 cancel，带验证码）
+  // 测试环境直接调用服务函数（验证码机制在真实流程中由前端引导获取）
+  const { cancelSignupChainEntry } = await import("../services/lottery-service");
+  const result = await cancelSignupChainEntry(db, TENANT_ID, id, "a@test.com");
+  expect(result.cancelled).toBe(true);
+  expect(result.promoted).toBe(true);
+
+  // 验证：候补 c 转正，最终 2 assigned + 0 waitlisted
+  const after = await db.select().from(activityOutcomes).where(eq(activityOutcomes.drawId, id));
+  expect(after.filter(o => o.status === "assigned")).toHaveLength(2);
+  expect(after.filter(o => o.status === "waitlisted")).toHaveLength(0);
+  // a 的参与记录已删除
+  const aEntry = await db.select().from(lotteryEntries).where(and(eq(lotteryEntries.drawId, id), eq(lotteryEntries.identityValue, "a@test.com")));
+  expect(aEntry).toHaveLength(0);
+});

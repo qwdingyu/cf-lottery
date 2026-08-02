@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { getDb, ok, fail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
 import { eq, and, count, sql, asc } from "drizzle-orm";
-import { getActivityOutcome, joinDraw, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
+import { getActivityOutcome, joinDraw, cancelSignupChainEntry, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
 import { sendAccessCode } from "../services/email-service";
 import { parseActivityConfig, validateSubmissionPayload } from "../lib/activity-config";
 
@@ -502,6 +502,61 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   }
 
   return ok(c, { joined: !!entry, won, prizeCode, consolationCoupon });
+});
+
+// ═════════════════════════════════════════════════════════
+// 取消参与（接龙活动：退出 + 候补自动转正）
+// ═════════════════════════════════════════════════════════
+
+publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+  const body = await c.req.json<{ email: string; code: string }>();
+  const email = String(body.email || "").trim().toLowerCase();
+  const code = String(body.code || "").trim();
+
+  if (!email || !code) return fail(c, "请输入邮箱和验证码", 400);
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, activityKind: lotteryDraws.activityKind })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+  // 仅接龙/报名类活动支持取消参与（抽奖参与后不可退出，防止刷量）
+  if (draw.activityKind !== "signup_chain" && draw.activityKind !== "reservation") {
+    return fail(c, "该活动不支持取消参与", 400);
+  }
+
+  // 验证码校验（防止他人冒用邮箱取消）
+  const codeHash = await hashCode(code);
+  const now = new Date().toISOString();
+  const [validCode] = await db
+    .select()
+    .from(emailAccessCodes)
+    .where(and(
+      eq(emailAccessCodes.email, email),
+      eq(emailAccessCodes.drawId, draw.id),
+      eq(emailAccessCodes.codeHash, codeHash),
+      eq(emailAccessCodes.used, 0),
+      sql`${emailAccessCodes.expiresAt} > ${now}`,
+    ))
+    .limit(1);
+  if (!validCode) return fail(c, "验证码无效或已过期", 400);
+  // 取消操作不消耗验证码（查询类语义）
+
+  const result = await cancelSignupChainEntry(db, draw.tenantId, draw.id, email);
+  if (!result.cancelled) return fail(c, "未找到您的参与记录", 404);
+
+  // 记录取消事件（漏斗可追踪）
+  await recordActivityEvent(db, {
+    tenantId: draw.tenantId,
+    drawId: draw.id,
+    eventType: "participation_cancelled",
+    entryId: "",
+  });
+
+  return ok(c, { cancelled: true, promoted: result.promoted });
 });
 
 // ═════════════════════════════════════════════════════════
