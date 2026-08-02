@@ -495,7 +495,7 @@ adminLotteryRoute.post("/draws/:id/copy", async (c) => {
 adminLotteryRoute.post("/draws", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  const body = await c.req.json();
+  const body = await c.req.json<any>();
 
   try {
     // 创建活动时校验 productLink
@@ -572,7 +572,7 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const drawId = c.req.param("id");
-  const body = await c.req.json();
+  const body = await c.req.json<any>();
 
   const [draw] = await db
     .select()
