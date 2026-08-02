@@ -1111,6 +1111,8 @@ type LotteryWinner = {
   drawnAt: string; notificationStatus: string; notificationError: string;
   email?: string; orderNo?: string; cardAccountLabel?: string; cardDeliverySecret?: string;
   emailSent?: number; emailError?: string;
+  /** 后端 decorateIdentityDisplay 注入：registered 身份解析为用户名(邮箱)；email 身份不注入 */
+  identityDisplay?: string;
 };
 
 type ActivityEventSummary = {

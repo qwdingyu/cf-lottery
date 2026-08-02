@@ -1,5 +1,5 @@
 /**
- * 安全审计验证测试（2026-08-02 代码审查配套）
+ * 安全审计验证测试（2026-08-02 代码审查配套，2026-08-02 修复复核更新）
  *
  * 目的：用真实数据库验证代码审查报告中的关键发现，避免"凭感觉报漏洞"。
  * 每个用例对应审查报告中的一个发现，测试通过才认定为真实问题。
@@ -7,10 +7,14 @@
  * 覆盖（对应 docs/049 报告条目）：
  * 1. 开奖一致性缺陷（报告 #4）：performDraw 中 winners 写入与 status=drawn 更新分离，
  *    故障残留（winners 已存在但状态被回滚为 open）会导致活动永久无法再次开奖（自锁）。
+ *    【尚未修复】测试断言缺陷仍然存在。
  * 2. 限流竞态（报告 #6）：checkDbRateLimit 是 check-then-insert 非原子实现，
  *    并发请求可同时通过检查，绕过限流阈值。
- * 3. verify-email 无限流（报告 #1）：6 位数字邮箱验证码可被无限次猜测（无任何 429），
- *    对照组 register 有内存限流（3 次/分钟/IP）会返回 429。
+ *    【尚未修复】测试断言缺陷仍然存在。
+ * 3. verify-email 无限流（报告 #1）：修复后已加 IP 限流（10 次/15 分钟）。
+ *    【已修复】测试断言修复后行为：前 10 次返回 400，第 11 次起返回 429。
+ * 4. /result 端点邮箱枚举（报告 #3.5）：修复后与 my-result 对齐，要求验证码。
+ *    【已修复】测试断言修复后行为：无验证码/错误验证码被拒，有效验证码可查询。
  *
  * 说明：这组测试是"验证审查结论"的正式测试，保留作为知识沉淀；
  * 修复对应缺陷后，相关用例应被更新为"断言修复后行为"而非删除。
@@ -22,6 +26,7 @@ import type { AppEnv } from "./bindings";
 import { clearTestData, getTestDb } from "./test-setup";
 import { checkDbRateLimit } from "./lib/rate-limit";
 import { authRoute } from "./routes/auth";
+import { publicLotteryRoute } from "./routes/public-lottery";
 import {
   createDraw,
   publishDraw,
@@ -30,6 +35,7 @@ import {
   createPrize,
 } from "./services/lottery-service";
 import {
+  emailAccessCodes,
   lotteryDraws,
   lotteryPrizeTiers,
   lotteryWinners,
@@ -66,6 +72,24 @@ async function seedOwner() {
     passwordHash: "hash",
   });
   await db.insert(tenantMembers).values({ tenantId: TENANT, userId: USER, role: "owner" });
+}
+
+/** SHA-256 hex（与后端 hashCode 一致的验证码 hash 算法，用于构造有效验证码） */
+async function sha256hex(value: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** 公开路由测试 app（与 auth-and-public.test.ts 约定一致） */
+function createPublicTestApp() {
+  const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("db", db);
+    await next();
+  });
+  app.route("/public", publicLotteryRoute);
+  return app;
 }
 
 /**
@@ -159,7 +183,7 @@ describe("checkDbRateLimit 并发竞态", () => {
 /* ── 测试 3：verify-email 无任何限流（对比 register） ── */
 
 describe("verify-email 验证码猜测", () => {
-  it("连续猜测错误验证码 30 次无任何 429（对照组 register 会返回 429）", async () => {
+  it("限流已生效：前 10 次验证码错误返回 400，第 11 次起返回 429（对照组 register 同样有限流）", async () => {
     const app = new Hono<AppEnv>();
     app.use("*", async (c, next) => {
       c.set("db", db);
@@ -192,10 +216,11 @@ describe("verify-email 验证码猜测", () => {
     }
     expect(register429).toBeGreaterThan(0);
 
-    // 目标组：verify-email 连续猜测 30 个错误验证码。
-    // 若存在限流/失败计数，应出现 429；当前实现没有任何限流 → 429 数恒为 0。
+    // 目标组：verify-email 已加 IP 限流（10 次/15 分钟，auth.ts）。
+    // 前 10 次通过限流 → 验证码错误返回 400；第 11 次起被限流 → 429。
+    let verify400 = 0;
     let verify429 = 0;
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 12; i++) {
       const r = await app.request("/auth/verify-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -204,16 +229,61 @@ describe("verify-email 验证码猜测", () => {
           code: String((100000 + i) % 1000000).padStart(6, "0"),
         }),
       });
+      if (r.status === 400) verify400++;
       if (r.status === 429) verify429++;
     }
-    expect(verify429).toBe(0);
+    expect(verify400).toBe(10);
+    expect(verify429).toBeGreaterThanOrEqual(2);
+  });
+});
 
-    // 佐证：验证码错误时返回 400（可区分成功/失败，便于攻击者探测命中）
-    const probe = await app.request("/auth/verify-email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "sec-user@test.com", code: "000000" }),
+/* ── 测试 4：/result 端点防枚举（对齐 my-result） ── */
+
+describe("/result 端点防邮箱枚举", () => {
+  it("无验证码/错误验证码被拒，有效验证码可查询（与 my-result 行为对齐）", async () => {
+    await seedOwner();
+    const { publicSlug } = await setupOneWinnerDraw();
+
+    // 参与者入库
+    const join = await joinDraw(db, publicSlug, "victim@test.com");
+    expect(join.joined).toBe(true);
+
+    // 直接构造一条有效验证码记录（模拟用户已通过邮件收到验证码；drawId 需匹配活动内部 ID）
+    const [draw] = await db
+      .select({ id: lotteryDraws.id })
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.publicSlug, publicSlug))
+      .limit(1);
+    const code = "123456";
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email: "victim@test.com",
+      drawId: draw!.id,
+      codeHash: await sha256hex(code),
+      used: 0,
+      expiresAt: new Date(Date.now() + 600000).toISOString(),
     });
-    expect(probe.status).toBe(400);
+
+    const app = createPublicTestApp();
+    const post = (body: Record<string, unknown>) =>
+      app.request(`/public/draws/${publicSlug}/result`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    // 无验证码 → 400（防枚举：任意邮箱无法探测是否参与）
+    const noCode = await post({ email: "victim@test.com" });
+    expect(noCode.status).toBe(400);
+
+    // 错误验证码 → 400
+    const wrongCode = await post({ email: "victim@test.com", code: "000000" });
+    expect(wrongCode.status).toBe(400);
+
+    // 有效验证码 → 200，可查询到参与状态
+    const okRes = await post({ email: "victim@test.com", code });
+    expect(okRes.status).toBe(200);
+    const data = await okRes.json() as { joined: boolean };
+    expect(data.joined).toBe(true);
   });
 });

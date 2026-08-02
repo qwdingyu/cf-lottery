@@ -28,6 +28,20 @@ function jwtTenantId(token: string): string {
   }
 }
 
+/**
+ * 解码 JWT payload（不验签——验签由后端完成；这里仅用于路由守卫读取声明做准入判断）。
+ * 返回 null 表示格式非法。
+ */
+function jwtClaims(token: string): Record<string, unknown> | null {
+  try {
+    const payloadB64 = token.split('.')[1]
+    if (!payloadB64) return null
+    return JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')))
+  } catch {
+    return null
+  }
+}
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -165,8 +179,18 @@ router.beforeEach((to) => {
   // 支持从 URL 参数注入 token（平台运营者模拟登录）
   const urlToken = to.query.token as string | undefined
   if (urlToken && to.path.startsWith('/admin')) {
-    localStorage.setItem('admin_token', JSON.stringify({ value: urlToken, expiresAt: Date.now() + 3600000 }))
-    // 去掉 token 参数，避免泄露到浏览器历史
+    // 会话固定防护：只接受带 impersonated=true 声明的未过期 JWT（平台模拟登录签发，1 小时有效）。
+    // 普通登录 token / 伪造声明 token 一律丢弃，防止任何人构造 /admin?token= 链接
+    // 把攻击者会话写入受害者浏览器（会话固定）。
+    const claims = jwtClaims(urlToken)
+    const validImpersonation =
+      claims?.impersonated === true &&
+      typeof claims.exp === 'number' &&
+      claims.exp * 1000 > Date.now()
+    if (validImpersonation) {
+      localStorage.setItem('admin_token', JSON.stringify({ token: urlToken, expiry: Date.now() + 3600000 }))
+    }
+    // 无论 token 是否有效，都从 URL 移除，避免泄露到浏览器历史
     const cleanQuery = { ...to.query }
     delete cleanQuery.token
     return { path: to.path, query: cleanQuery, replace: true }

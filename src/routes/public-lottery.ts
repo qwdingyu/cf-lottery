@@ -733,20 +733,30 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/result", async (c) => {
+  const ip = getClientIp(c);
+  // ★ P0 安全：对齐 my-result，必须提供验证码防邮箱枚举
+  if (!checkRateLimit(`result:${ip}`, 10, 60000)) {
+    return fail(c, "查询过于频繁，请稍后再试", 429);
+  }
   const db = getDb(c);
   const slug = c.req.param("slug");
-  const body = await c.req.json<{ email: string; submission?: Record<string, unknown> }>();
+  const body = await c.req.json<{ email: string; code: string }>();
   const email = String(body.email || "").trim().toLowerCase();
+  const code = String(body.code || "").trim();
 
-  if (!email) return fail(c, "请提供邮箱地址", 400);
+  if (!email || !code) return fail(c, "请提供邮箱地址和验证码", 400);
 
   const [draw] = await db
-    .select()
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, status: lotteryDraws.status, activityKind: lotteryDraws.activityKind })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
+
+  // 验证码校验（仅验证身份，不消耗验证码）
+  const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
+  if (!validCode) return fail(c, "验证码无效或已过期", 400);
 
   const [entry] = await db
     .select()

@@ -169,6 +169,11 @@ authRoute.post("/register", async (c) => {
 
 /** 第二步：验证邮箱码 */
 authRoute.post("/verify-email", async (c) => {
+  const ip = getClientIp(c);
+  // ★ P0 安全：邮箱验证码试错限流（10次/15分钟/邮箱），防暴力破解
+  if (!checkRateLimit(`verify-email:${ip}`, 10, 900000)) {
+    return c.json({ ok: false, message: "尝试次数过多，请 15 分钟后再试" }, 429);
+  }
   const db = getDb(c);
   const body = await c.req.json<{ email: string; code: string }>();
   const email = String(body.email || "").trim().toLowerCase();
