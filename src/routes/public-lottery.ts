@@ -5,7 +5,7 @@
  * 支持四种参与模式：open（公开）、password（密码）、roster（名单）、invite_code（邀请码）
  * 所有参与模式均需邮箱验证码验证。
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
 import type { DbType } from "../db/client";
@@ -30,6 +30,37 @@ function checkRateLimit(ip: string, limit = 10, windowMs = 60000): boolean {
   if (entry.count >= limit) return false;
   entry.count++;
   return true;
+}
+
+/**
+ * 统一解析参与者身份（最佳实践：身份在端点层一步解析，业务层只消费）。
+ *
+ * - registered 模式：从 Authorization Bearer JWT 解析 userId → (user_id, userId)
+ * - 其他模式：邮箱 → (email, email)
+ *
+ * 返回 null 表示未认证（registered 无 token / JWT 无效）。
+ * 三处复用（access-code / my-result / cancel），杜绝每端点复制 JWT 解析逻辑。
+ */
+async function resolveParticipantIdentity(
+  c: Context<AppEnv>,
+  participationMode: string,
+  email: string,
+): Promise<{ identityType: string; identityValue: string } | null> {
+  if (participationMode === "registered") {
+    // 只从 Authorization 头取 JWT，绝不用 URL query 传递 token：
+    // query 中的 token 会进入访问日志、浏览器历史与 Referer 头，是安全反模式。
+    const token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) return null;
+    // JWT_SECRET 未配置时显式抛错（与 requireAuth 行为一致），避免空密钥静默验签
+    const jwtSecret = c.env.JWT_SECRET;
+    if (!jwtSecret) throw new Error("JWT_SECRET 未配置");
+    try {
+      const payload = await verifyJwt(token, jwtSecret);
+      if (payload?.sub) return { identityType: "user_id", identityValue: payload.sub };
+    } catch { /* JWT 无效 */ }
+    return null;
+  }
+  return { identityType: "email", identityValue: email };
 }
 
 const PUBLIC_EVENT_TYPES = new Set<ActivityEventType>([
@@ -330,7 +361,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
   const slug = c.req.param("slug");
-  const body = await c.req.json<{ email: string; submission?: Record<string, unknown> }>();
+  const body = await c.req.json<{ email?: string; submission?: Record<string, unknown> }>();
   const email = String(body.email || "").trim().toLowerCase();
 
   // 查询活动
@@ -343,38 +374,24 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "open") return fail(c, "活动已结束", 400);
 
-  // ── registered 模式：需注册登录才能参与，跳过邮箱校验 ──
-  let registeredUserId: string | undefined;
-  if (draw.participationMode === "registered") {
-    // 只从 Authorization 头取 JWT，绝不用 URL query 传递 token：
-    // query 中的 token 会进入访问日志、浏览器历史与 Referer 头，是安全反模式。
-    const token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
-    if (!token) return fail(c, "此活动需要登录后才能参与", 401);
-    // JWT_SECRET 未配置时显式报错（与 requireAuth 行为一致），
-    // 避免用空密钥静默验签导致"未配置密钥也可登录"的假安全。
-    const jwtSecret = c.env.JWT_SECRET;
-    if (!jwtSecret) return fail(c, "服务未配置 JWT 密钥", 500);
-    try {
-      const payload = await verifyJwt(token, jwtSecret);
-      if (payload?.sub) registeredUserId = payload.sub;
-    } catch { /* JWT 无效 */ }
-    if (!registeredUserId) return fail(c, "登录已过期，请重新登录", 401);
-  } else {
-    // open/roster/password/invite_code 模式仍需邮箱校验
-    if (!email || !isValidEmail(email)) return fail(c, "请输入有效的邮箱地址", 400);
+  // ── 统一身份解析：registered → (user_id, userId)；其他 → (email, email) ──
+  // 身份在端点层一步解析，joinDraw 只消费不再覆盖，杜绝"传 email 存 userId"的兼容 hack。
+  const identity = await resolveParticipantIdentity(c, draw.participationMode, email);
+  if (!identity) return fail(c, "此活动需要登录后才能参与", 401);
+  if (identity.identityType === "email" && !isValidEmail(email)) {
+    return fail(c, "请输入有效的邮箱地址", 400);
   }
 
-  // 检查是否已参与（registered 模式用 userId，其他模式用 email）
-  const identityValue = registeredUserId || email;
+  // 检查是否已参与（按统一身份键判重）
   const [existing] = await db
     .select({ id: lotteryEntries.id })
     .from(lotteryEntries)
-    .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.identityValue, identityValue)))
+    .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.identityValue, identity.identityValue)))
     .limit(1);
   if (existing) return fail(c, "您已参与此活动", 409);
 
-  // 校验参与模式（registered 与 roster/password/invite_code 互斥，由参与模式控制）
-  if (!registeredUserId && draw.participationMode === "roster") {
+  // 名单模式校验（仅邮箱身份；registered 与 roster 互斥，由参与模式控制）
+  if (identity.identityType === "email" && draw.participationMode === "roster") {
     const [inRoster] = await db
       .select({ id: lotteryRosterMembers.id })
       .from(lotteryRosterMembers)
@@ -383,11 +400,10 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     if (!inRoster) return fail(c, "您不在本次活动名单中", 403);
   }
 
-  // ── registered 模式：已认证用户跳过邮箱验证码，直接参与 ──
-  if (registeredUserId) {
+  // ── registered 模式：JWT 已认证，身份即 userId，跳过邮箱验证码直接参与 ──
+  if (identity.identityType === "user_id") {
     try {
-      const result = await joinDraw(db, slug, email, "email", {
-        userId: registeredUserId,
+      const result = await joinDraw(db, slug, identity.identityValue, "user_id", {
         ipHash: ip,
         userAgent: c.req.header("User-Agent") || "",
         submissionPayload: body.submission,
@@ -550,35 +566,24 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  // ── registered 模式：以 JWT 中的 userId 查询（entry 身份为 user_id） ──
-  // registered 用户参与时 entry.identity_value = userId（UUID），邮箱+验证码无法匹配；
+  // ── 统一身份解析：registered → (user_id, userId)；其他 → (email, email) ──
+  // registered 用户参与时 entry.identity_value 是 userId（UUID），邮箱+验证码无法匹配；
   // JWT 即身份证明，跳过验证码。无 JWT 直接拒绝。
-  let registeredUserId: string | undefined;
-  if (draw.participationMode === "registered") {
-    const token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
-    if (!token) return fail(c, "此活动需要登录后查询", 401);
-    const jwtSecret = c.env.JWT_SECRET;
-    if (!jwtSecret) return fail(c, "服务未配置 JWT 密钥", 500);
-    try {
-      const payload = await verifyJwt(token, jwtSecret);
-      if (payload?.sub) registeredUserId = payload.sub;
-    } catch { /* JWT 无效 */ }
-    if (!registeredUserId) return fail(c, "登录已过期，请重新登录", 401);
-  }
+  const identity = await resolveParticipantIdentity(c, draw.participationMode, email);
+  if (!identity) return fail(c, "此活动需要登录后查询", 401);
 
-  // 邮箱+验证码必填：仅非 registered 模式要求（registered 用 JWT 证明身份）
-  if (!registeredUserId && (!email || !code)) return fail(c, "请输入邮箱和验证码", 400);
+  // 邮箱+验证码必填：仅邮箱身份要求（JWT 身份无需验证码）
+  if (identity.identityType === "email" && (!email || !code)) return fail(c, "请输入邮箱和验证码", 400);
 
-  // 查询身份键：registered 用 userId，其他模式用邮箱
-  const identityValue = registeredUserId || email;
-
-  // 验证码校验：仅非 registered 模式需要（查询类操作不消耗验证码，仅校验身份防枚举）
-  if (!registeredUserId) {
+  // 验证码校验：仅邮箱身份需要（查询类操作不消耗验证码，仅校验身份防枚举）
+  if (identity.identityType === "email") {
     const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
     if (!validCode) {
       return fail(c, "验证码无效或已过期", 400);
     }
   }
+
+  const identityValue = identity.identityValue;
 
   const [entry] = await db
     .select({ id: lotteryEntries.id })
@@ -656,34 +661,21 @@ publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
     return fail(c, "该活动不支持取消参与", 400);
   }
 
-  // ── registered 模式：以 JWT 中的 userId 取消（entry 身份为 user_id） ──
-  let registeredUserId: string | undefined;
-  if (draw.participationMode === "registered") {
-    const token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
-    if (!token) return fail(c, "此活动需要登录后取消", 401);
-    const jwtSecret = c.env.JWT_SECRET;
-    if (!jwtSecret) return fail(c, "服务未配置 JWT 密钥", 500);
-    try {
-      const payload = await verifyJwt(token, jwtSecret);
-      if (payload?.sub) registeredUserId = payload.sub;
-    } catch { /* JWT 无效 */ }
-    if (!registeredUserId) return fail(c, "登录已过期，请重新登录", 401);
-  }
+  // ── 统一身份解析：registered → (user_id, userId)；其他 → (email, email) ──
+  const identity = await resolveParticipantIdentity(c, draw.participationMode, email);
+  if (!identity) return fail(c, "此活动需要登录后取消", 401);
 
-  // 邮箱+验证码必填：仅非 registered 模式要求（registered 用 JWT 证明身份）
-  if (!registeredUserId && (!email || !code)) return fail(c, "请输入邮箱和验证码", 400);
-
-  // 身份键：registered 用 userId，其他模式用邮箱
-  const identityValue = registeredUserId || email;
+  // 邮箱+验证码必填：仅邮箱身份要求（JWT 身份无需验证码）
+  if (identity.identityType === "email" && (!email || !code)) return fail(c, "请输入邮箱和验证码", 400);
 
   // 验证码校验（公共逻辑；取消操作不消耗验证码，防止他人冒用邮箱取消）：
-  // registered 模式 JWT 即身份证明，跳过验证码
-  if (!registeredUserId) {
+  // 仅邮箱身份需要，JWT 即身份证明
+  if (identity.identityType === "email") {
     const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
     if (!validCode) return fail(c, "验证码无效或已过期", 400);
   }
 
-  const result = await cancelSignupChainEntry(db, draw.tenantId, draw.id, identityValue);
+  const result = await cancelSignupChainEntry(db, draw.tenantId, draw.id, identity.identityValue);
   if (!result.cancelled) return fail(c, "未找到您的参与记录", 404);
 
   // 记录取消事件（漏斗可追踪）

@@ -1283,8 +1283,6 @@ export async function joinDraw(
     userAgent?: string;
     /** 动态表单提交 payload（问卷答案/投票选项/资料请求等）。与 entry 同事务写入。 */
     submissionPayload?: Record<string, unknown>;
-    /** registered 模式：已登录用户 ID。参与资格以 userId 为身份标识，无需邮箱验证码。 */
-    userId?: string;
   },
 ) {
   // 通过 public_slug 查找活动（不暴露活动 ID）
@@ -1298,16 +1296,12 @@ export async function joinDraw(
   // 只有 open 状态的活动可以参与（draft/paused/drawing/drawn/cancelled 均不可参与）
   if (draw.status !== "open") throw new Error("活动未开启");
 
-  // ── registered 模式：必须已登录（userId）才能参与 ──
-  // 没有 userId 一律拒绝：堵住 /join 快捷参与等入口（该端点无 JWT 强制检查），
-  // 防止任意 email 冒充参与。roster/password/invite_code 在下文各自校验，
-  // registered 是唯一没有"参与资格"概念的维度，必须在此强制。
-  if (draw.participationMode === "registered") {
-    if (!options?.userId) {
-      return { joined: false, message: "此活动需要登录后参与" };
-    }
-    identityType = "user_id";
-    identityValue = options.userId;
+  // ── registered 模式：参与身份必须是 user_id（端点层已解析，此处服务层兜底） ──
+  // 身份由端点解析后传入（identityType/identityValue），业务层只消费不再覆盖。
+  // 校验防绕过：任何端点（如 /join 快捷参与）若以 email 身份请求 registered 活动，
+  // 一律拒绝——杜绝"传 email 存 userId"的兼容 hack，保证 entry 身份与模式一致。
+  if (draw.participationMode === "registered" && identityType !== "user_id") {
+    return { joined: false, message: "此活动需要登录后参与" };
   }
 
   // ── 身份标识归一化 ──

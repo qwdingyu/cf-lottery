@@ -1234,12 +1234,13 @@ async function handleRegisteredLogin() {
     sessionStorage.setItem('lottery_registered_token', token)
     sessionStorage.setItem('lottery_registered_username', regLoginUsername.value)
 
-    // 2. 带 JWT 调 access-code（registered 模式后端检测 JWT 后跳过验证码直接参与）
+    // 2. 带 JWT 调 access-code（registered 模式后端以 JWT 中的 userId 为身份，
+    // 无需也不应传邮箱——身份由 JWT 决定，杜绝"用户名当邮箱"的兼容 hack）
     const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/access-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body: JSON.stringify({ email: registeredUsername.value, submission: draw ? buildSubmissionPayload(draw) : undefined }),
+      body: JSON.stringify({ submission: draw ? buildSubmissionPayload(draw) : undefined }),
     })
     const data = await res.json()
     if (data.ok && data.joined) {
