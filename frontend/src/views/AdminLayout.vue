@@ -71,13 +71,15 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
+import { readPlatformRole } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const { clearToken, isPlatformMember } = useAdminAuth()
+const { clearToken } = useAdminAuth()
 const { showToast } = useToast()
+const isPlatformMember = ref(!!readPlatformRole())
 
 // ── 侧边栏响应式控制 ──
 /** 是否小屏（<1024px），侧边栏默认隐藏，通过 hamburger 切换 */
