@@ -525,6 +525,14 @@ export default {
     resetFailed: "重置失败",
     notSynced: "，但当前页面未能刷新前台配置；重新加载页面后可同步",
     resetConfirm: "确认重置 {key} 为默认值？",
+
+    fields: {
+      support_email: {
+        label: "售后邮箱",
+        description: "面向客户的售后联系邮箱，展示在页面底部和前台联系区。",
+        effect: "展示在页脚和前台联系区；邮件模板可能复用此公共联系方式。",
+      },
+    },
   },
 
   // ── 通用弹窗（AdminModal） ─────────────────────────

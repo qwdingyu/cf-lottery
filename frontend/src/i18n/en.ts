@@ -489,10 +489,34 @@ export default {
       confirmPhrase: "Confirmation phrase (must match exactly)",
     },
     clearProfiles: {
-
-
-
-
+      runtime: {
+        title: "Runtime & logs only",
+        summary: "Clears request/email logs, rate limits, idempotency keys, old audit logs. Does not touch orders, codes, balances, products, or channels.",
+        detail: "Safest. Good for idempotent dirty data, rate-limit test blocks, and log bloat. Ledger and catalog are fully preserved.",
+        confirmation: "Clear runtime & logs",
+        buttonLabel: "Clear runtime & logs",
+      },
+      keep_trade: {
+        title: "Clear ledger & marketing (keep trades)",
+        summary: "Clears balance ledger, top-ups, coupons/activities/promotions, logs, and runtime state. Preserves products, channels, codes, and orders.",
+        detail: "Good for clearing test balances and marketing dirty data while keeping full orders and inventory. Codes and orders are not touched (code policy is none). Note: clearing the ledger means historical order amounts cannot be reconciled line-by-line — this is not a reconciliation tool.",
+        confirmation: "Clear ledger & marketing, keep trades",
+        buttonLabel: "Clear ledger & marketing",
+      },
+      keep_catalog: {
+        title: "Clear trades (keep products & channels)",
+        summary: "Clears orders, all codes, balance ledger, marketing, logs, and runtime state. Preserves product catalog and display channels.",
+        detail: "Acceptance testing preset. Codes are always cleared (S1) to avoid dangling sold codes. Requires re-importing codes after testing; no need to reconfigure products and channels.",
+        confirmation: "Clear trade data, keep products",
+        buttonLabel: "Clear trades (keep catalog)",
+      },
+      full: {
+        title: "Clear all business data",
+        summary: "On top of the previous tier, also clears product-to-channel mappings. System config, payments, categories, API keys, and migrations remain.",
+        detail: "Pre-launch smoke cleanup. Deletes products, so they need to be re-listed. Confirmation phrase matches legacy behavior.",
+        confirmation: "Clear all business data",
+        buttonLabel: "Clear all business data",
+      },
     },
     loadFailed: "Failed to load system config",
     resetSuccess: "Reset successfully",
