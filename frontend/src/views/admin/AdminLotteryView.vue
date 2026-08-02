@@ -2182,6 +2182,17 @@ function applyTemplate(tpl: any) {
     expectedParticipants: 0,
     activityConfig: defaultActivityConfigForKind(tpl.defaults.activityKind) as any,
   }
+  // 模板智能增强：不同类型预设更合理的默认值，减少重复配置
+  if (tpl.id === 'signup-chain') {
+    form.value.maxParticipants = 30   // 预设容量，运营者可调整
+    form.value.allocationPolicy = 'waitlist'  // 候补默认开启
+  }
+  if (tpl.id === 'survey-feedback') {
+    // defaultActivityConfigForKind 已预设「联系邮箱」和「反馈内容」2 个字段
+  }
+  if (tpl.id === 'vote-pick') {
+    // defaultActivityConfigForKind 已预设「选项 A」和「选项 B」2 个选项
+  }
   isEditing.value = false
   applyTimePreset('1d')
   showCreateModal.value = true
