@@ -500,37 +500,24 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     return fail(c, "此活动需要登录后参与", 401);
   }
 
-  // 验证验证码（公共校验逻辑）
+  // 验证验证码（公共校验逻辑）——仅 SELECT，不 UPDATE
   const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
-  if (!validCode) {
-    return fail(c, "验证码无效或已过期", 400);
-  }
-
-  // 标记验证码为已使用（先占位，参与失败时恢复）
-  await db.update(emailAccessCodes)
-    .set({ used: 1 })
-    .where(eq(emailAccessCodes.id, validCode.id));
+  if (!validCode) return fail(c, "验证码无效或已过期", 400);
 
   try {
     const submission = validateSubmissionPayload(draw.activityKind, draw.activityConfig, body.submission);
-    if (!submission.ok) {
-      await db.update(emailAccessCodes).set({ used: 0 }).where(eq(emailAccessCodes.id, validCode.id));
-      return fail(c, submission.message || "提交内容无效", 400);
-    }
+    if (!submission.ok) return fail(c, submission.message || "提交内容无效", 400);
     const result = await joinDraw(db, slug, email, "email", {
       accessPassword: body.accessPassword,
       inviteCode: body.inviteCode,
       ipHash: ip,
       refCode: body.refCode,
       userAgent: c.req.header("User-Agent") || "",
-      // 传递动态表单提交 payload（问卷/投票/资料领取等）
       submissionPayload: submission.payload,
+      /** 验证码 ID：joinDraw 事务内标记为已使用，省一次 DB 往返 */
+      codeIdToConsume: validCode.id,
     });
-    if (!result.joined) {
-      // 参与失败（容量满/名单不匹配/邀请码无效等）：恢复验证码，允许用户修改条件后重试
-      await db.update(emailAccessCodes).set({ used: 0 }).where(eq(emailAccessCodes.id, validCode.id));
-      return fail(c, result.message || "参与失败", 400);
-    }
+    if (!result.joined) return fail(c, result.message || "参与失败", 400);
     return ok(c, {
       joined: true,
       entryId: "entryId" in result ? result.entryId : undefined,
@@ -539,11 +526,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       submissionId: "submissionId" in result ? result.submissionId : undefined,
     });
   } catch (err: any) {
-    // 异常（UNIQUE 约束冲突等）：恢复验证码，允许用户重试
-    await db.update(emailAccessCodes).set({ used: 0 }).where(eq(emailAccessCodes.id, validCode.id));
-    if (err.message?.includes("UNIQUE constraint")) {
-      return fail(c, "您已参与此活动", 409);
-    }
+    if (err.message?.includes("UNIQUE constraint")) return fail(c, "您已参与此活动", 409);
     return fail(c, "参与失败，请稍后重试", 400);
   }
 });

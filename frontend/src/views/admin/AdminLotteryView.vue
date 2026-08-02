@@ -11,6 +11,18 @@
           <option value="drawn">{{ $t('lottery.statusDrawn') }}</option>
           <option value="cancelled">{{ $t('lottery.adminDrawCancelled') }}</option>
         </select>
+        <!-- 活动类型筛选（047 文档 🔴） -->
+        <select v-model="activityKindFilter" aria-label="活动类型" @change="loadData">
+          <option value="">全部类型</option>
+          <option value="lottery">抽奖</option>
+          <option value="signup_chain">接龙</option>
+          <option value="reservation">预约</option>
+          <option value="vote">投票</option>
+          <option value="survey">问卷</option>
+          <option value="checkin">签到</option>
+          <option value="approval">审核</option>
+          <option value="claim">资料领取</option>
+        </select>
         <input
           v-model="listQuery"
           type="search"
@@ -18,6 +30,9 @@
           :aria-label="$t('lottery.adminSearchAria')"
           @keyup.enter="loadData"
         />
+        <!-- 创建时间范围筛选（047 文档 🟡） -->
+        <input v-model="createdFromFilter" type="date" aria-label="创建起始日期" title="创建起始日期" @change="loadData" />
+        <input v-model="createdToFilter" type="date" aria-label="创建结束日期" title="创建结束日期" @change="loadData" />
         <button class="btn btn-ghost btn-sm" type="button" :disabled="loading" @click="loadData">
           {{ $t('lottery.adminReload') }}
         </button>
@@ -1159,10 +1174,13 @@ const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDial
 
 // ── 兼容旧 API 调用（适配到新后端） ──
 
-const fetchLotteryDraws = async (params: { limit: number; offset: number; status?: string; query?: string }) => {
+const fetchLotteryDraws = async (params: { limit: number; offset: number; status?: string; query?: string; activityKind?: string; createdFrom?: string; createdTo?: string }) => {
   const search = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) })
   if (params.status) search.set('status', params.status)
   if (params.query) search.set('query', params.query)
+  if (params.activityKind) search.set('activityKind', params.activityKind)
+  if (params.createdFrom) search.set('createdFrom', params.createdFrom)
+  if (params.createdTo) search.set('createdTo', params.createdTo)
   return adminRequest<{ draws: LotteryDraw[]; total: number }>(`/api/admin/draws?${search}`)
 }
 const createLotteryDraw = async (body: any) => adminRequest<{ id: string; publicSlug: string }>('/api/admin/draws', { method: 'POST', body: JSON.stringify(body) });
@@ -1230,6 +1248,11 @@ const draws = ref<LotteryDraw[]>([])
 const statusFilter = ref('')
 /** 名称 / 奖品 / id 本地模糊搜索 */
 const listQuery = ref('')
+/** 活动类型筛选（047 文档 🔴） */
+const activityKindFilter = ref('')
+/** 创建时间范围筛选（047 文档 🟡）：ISO 日期（date input 值） */
+const createdFromFilter = ref('')
+const createdToFilter = ref('')
 const loading = ref(false)
 const loadError = ref('')
 const showCreateModal = ref(false)
@@ -2211,6 +2234,9 @@ async function loadData() {
       offset: (pagination.page.value - 1) * pagination.limit.value,
       status: statusFilter.value || undefined,
       query: listQuery.value || undefined,
+      activityKind: activityKindFilter.value || undefined,
+      createdFrom: createdFromFilter.value ? `${createdFromFilter.value}T00:00:00.000Z` : undefined,
+      createdTo: createdToFilter.value ? `${createdToFilter.value}T23:59:59.999Z` : undefined,
     })
     if (sequence !== loadSequence) return
     draws.value = data.draws || []

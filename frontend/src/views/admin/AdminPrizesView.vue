@@ -222,6 +222,15 @@
           <option value="available">可用</option>
           <option value="issued">已发放</option>
         </select>
+        <!-- 码文本搜索（047 文档 🔴）：导入几百个码后按码内容精确查找 -->
+        <input
+          v-model="codeSearch"
+          type="search"
+          placeholder="搜索码…"
+          aria-label="搜索码"
+          style="width:180px;padding:6px 10px;border-radius:6px;border:1px solid var(--border,rgba(255,255,255,0.15));background:var(--tg-bg,#1f2937);color:var(--tg-text,#f0f2f5)"
+          @keyup.enter="loadCodes(true)"
+        />
         <span class="field-hint">共 {{ codesTotal }} 条（可用 {{ totalAvailable }} / 已发放 {{ totalIssued }}）</span>
         <button class="btn btn-ghost btn-xs" :disabled="codesLoading" @click="loadCodes(true)">刷新</button>
         <button class="btn btn-primary btn-xs" @click="exportCodes">📥 导出 CSV</button>
@@ -299,6 +308,8 @@ const codesPrize = ref<any>(null)
 const codesList = ref<any[]>([])
 const codesLoading = ref(false)
 const codesFilter = ref('')
+/** 码文本搜索（047 文档 🔴） */
+const codeSearch = ref('')
 const codesPage = ref(0)
 const codesTotal = ref(0)
 const totalAvailable = ref(0)
@@ -405,6 +416,7 @@ function showImport(prize: any) {
 async function showCodes(prize: any) {
   codesPrize.value = prize
   codesFilter.value = ''
+  codeSearch.value = ''
   codesPage.value = 0
   totalAvailable.value = 0
   totalIssued.value = 0
@@ -419,6 +431,7 @@ async function loadCodes(resetPage = false) {
   try {
     const params = new URLSearchParams()
     if (codesFilter.value) params.set('status', codesFilter.value)
+    if (codeSearch.value.trim()) params.set('search', codeSearch.value.trim())
     params.set('limit', '50')
     params.set('offset', String(codesPage.value * 50))
     const data = await adminRequest<any>(`/api/admin/prizes/${codesPrize.value.id}/codes?${params}`)

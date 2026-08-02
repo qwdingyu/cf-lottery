@@ -484,6 +484,8 @@ adminLotteryRoute.get("/prizes/:id/codes", async (c) => {
   const prizeId = c.req.param("id");
   const { limit, offset } = parseAdminPagination(c, 50, 200);
   const status = c.req.query("status") || "";
+  // 码文本搜索（047 文档 🔴）：导入几百个码后可按码文本精确查找
+  const search = c.req.query("search") || "";
 
   // 校验奖品归属
   const [prize] = await db
@@ -498,6 +500,8 @@ adminLotteryRoute.get("/prizes/:id/codes", async (c) => {
     eq(prizeCodes.prizeId, prizeId),
   ];
   if (status) conditions.push(eq(prizeCodes.status, status));
+  // 码文本搜索：大小写不敏感（LIKE 匹配），按码内容过滤
+  if (search) conditions.push(sql`${prizeCodes.code} LIKE ${'%' + escapeLike(search) + '%'}`);
 
   const rows = await db
     .select({
@@ -624,10 +628,18 @@ adminLotteryRoute.get("/draws", async (c) => {
   const { limit, offset } = parseAdminPagination(c);
   const status = c.req.query("status") || "";
   const query = c.req.query("query") || "";
+  // 活动类型筛选（047 文档 🔴）：租户创建多种类型活动后可按类型查找
+  const activityKind = c.req.query("activityKind") || "";
+  // 时间范围筛选（047 文档 🟡）：createdFrom/createdTo 为 ISO 日期，按创建时间过滤
+  const createdFrom = c.req.query("createdFrom") || "";
+  const createdTo = c.req.query("createdTo") || "";
 
   const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
   if (status) conditions.push(eq(lotteryDraws.status, status));
   if (query) conditions.push(sql`${lotteryDraws.title} LIKE ${'%' + escapeLike(query) + '%'}`);
+  if (activityKind) conditions.push(eq(lotteryDraws.activityKind, activityKind));
+  if (createdFrom) conditions.push(sql`${lotteryDraws.createdAt} >= ${createdFrom}`);
+  if (createdTo) conditions.push(sql`${lotteryDraws.createdAt} <= ${createdTo}`);
 
   const rows = await db
     .select()

@@ -1283,6 +1283,8 @@ export async function joinDraw(
     userAgent?: string;
     /** 动态表单提交 payload（问卷答案/投票选项/资料请求等）。与 entry 同事务写入。 */
     submissionPayload?: Record<string, unknown>;
+    /** verify-join 优化：事务内标记验证码已使用，失败自动回滚，省一次 DB 往返 */
+    codeIdToConsume?: string;
   },
 ) {
   // 通过 public_slug 查找活动（不暴露活动 ID）
@@ -1425,6 +1427,11 @@ export async function joinDraw(
 
       if ((insertResult.rowsAffected ?? 0) === 0) {
         return { joined: false, message: acceptsWaitlist ? "参与失败，请稍后重试" : "活动名额已满" };
+      }
+
+      // 消费验证码（事务内标记 used=1，失败自动回滚）
+      if (options?.codeIdToConsume) {
+        await tx.update(emailAccessCodes).set({ used: 1 }).where(eq(emailAccessCodes.id, options.codeIdToConsume));
       }
 
       // 提交 payload（问卷/投票/资料领取等）：与 entry 同事务写入，保证原子性。
