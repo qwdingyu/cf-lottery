@@ -117,9 +117,9 @@ describe("用户注册数据完整性", () => {
     // 验证码应写入 email_access_codes 表
     const [code] = await db.select().from(emailAccessCodes).where(eq(emailAccessCodes.email, "route@test.com")).limit(1);
     expect(code).toBeTruthy();
-    // 应自动创建租户和成员记录
+    // ★ 045 方案 C：注册不自动创建租户（租户由 onboarding 显式创建）
     const [member] = await db.select().from(tenantMembers).where(eq(tenantMembers.userId, user!.id)).limit(1);
-    expect(member?.role).toBe("owner");
+    expect(member).toBeUndefined();  // 不应自动建租户
   });
 
   it("公开注册关闭时拒绝新用户且不写数据库限流日志", async () => {

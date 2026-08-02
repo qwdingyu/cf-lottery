@@ -174,9 +174,14 @@ async function handleLogin() {
     const data = await res.json()
 
     if (data.ok && data.token) {
-      // cf-lottery 使用 JWT token 作为 admin_token
       setToken(data.token)
       fetchPlatformRole(data.token)
+      // ★ 045 方案 C：无租户用户引导 onboarding 创建租户
+      if (data.needsTenant) {
+        showToast('请先创建您的第一个工作空间')
+        router.replace({ name: 'Onboarding' })
+        return
+      }
       showToast('登录成功', 'success')
       redirectAfterLogin()
     } else {
