@@ -957,10 +957,33 @@ adminLotteryRoute.get("/draws/:id/conversions", async (c) => {
   return ok(c, { conversions, summary });
 });
 
+/**
+ * CSV 字段转义（防公式注入 + 结构破坏）。
+ *
+ * 为什么需要：
+ * 1. 公式注入：Excel/Sheets 会把以 = + - @ 开头的单元格当公式执行。
+ *    恶意参与者可注入 `=HYPERLINK(...)`，运营者打开导出文件时触发。
+ * 2. 结构破坏：字段含逗号/引号/换行时，不转义会破坏 CSV 行结构。
+ *
+ * 处理：危险前缀加 ' 阻止公式；特殊字符字段用双引号包裹（内部引号加倍）。
+ */
+function csvEscape(value: unknown): string {
+  const raw = String(value ?? "");
+  let out = raw;
+  if (/^[=+\-@]/.test(out)) {
+    out = "'" + out;
+  }
+  if (/[",\n\r]/.test(out)) {
+    out = '"' + out.replace(/"/g, '""') + '"';
+  }
+  return out;
+}
+
 /** 导出 CSV
  *
  * 限制：单次导出最多 10,000 条参与记录，超出时提示用户缩小范围。
  * 10ms CPU 和 128MB 内存不适合一次性生成大文件，大活动应分批导出。
+ * 安全：所有用户输入字段经 csvEscape 转义，防止公式注入。
  */
 adminLotteryRoute.get("/draws/:id/export", async (c) => {
   const db = getDb(c);
@@ -981,22 +1004,22 @@ adminLotteryRoute.get("/draws/:id/export", async (c) => {
   const entries = await getEntries(db, tenantId, drawId, MAX_EXPORT_ROWS);
   const outcomes = draw.activityKind === "lottery" ? [] : await getActivityOutcomes(db, tenantId, drawId, MAX_EXPORT_ROWS);
 
-  // 构建 CSV 内容
+  // 构建 CSV 内容（所有用户输入经 csvEscape 转义）
   const lines: string[] = [
     "活动名称,状态,参与人数,中奖人数",
-    `${draw.title},${draw.status},${entries.length},${draw.activityKind === "lottery" ? winners.length : outcomes.length}`,
+    `${csvEscape(draw.title)},${csvEscape(draw.status)},${entries.length},${draw.activityKind === "lottery" ? winners.length : outcomes.length}`,
     "",
     "参与者邮箱,参与时间",
-    ...entries.map((e) => `${e.identityValue},${e.joinedAt}`),
+    ...entries.map((e) => `${csvEscape(e.identityValue)},${csvEscape(e.joinedAt)}`),
   ];
 
   if (draw.activityKind === "lottery") {
-    lines.push("", "中奖者邮箱,中奖时间", ...winners.map((w) => `${w.identityValue},${w.drawnAt}`));
+    lines.push("", "中奖者邮箱,中奖时间", ...winners.map((w) => `${csvEscape(w.identityValue)},${csvEscape(w.drawnAt)}`));
   } else {
     lines.push(
       "",
       "参与记录ID,状态,参与顺序,名额序号,结果说明,确认时间",
-      ...outcomes.map((o) => `${o.entryId},${o.status},${o.sequenceNo},${o.assignmentNo ?? ""},${o.resultLabel},${o.decidedAt || ""}`),
+      ...outcomes.map((o) => `${csvEscape(o.entryId)},${csvEscape(o.status)},${csvEscape(o.sequenceNo)},${csvEscape(o.assignmentNo ?? "")},${csvEscape(o.resultLabel)},${csvEscape(o.decidedAt || "")}`),
     );
   }
 
