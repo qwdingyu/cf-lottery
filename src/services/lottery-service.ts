@@ -1282,6 +1282,8 @@ export async function joinDraw(
     userAgent?: string;
     /** 动态表单提交 payload（问卷答案/投票选项/资料请求等）。与 entry 同事务写入。 */
     submissionPayload?: Record<string, unknown>;
+    /** registered 模式：已登录用户 ID。参与资格以 userId 为身份标识，无需邮箱验证码。 */
+    userId?: string;
   },
 ) {
   // 通过 public_slug 查找活动（不暴露活动 ID）
@@ -1294,6 +1296,13 @@ export async function joinDraw(
   if (!draw) throw new Error("活动不存在");
   // 只有 open 状态的活动可以参与（draft/paused/drawing/drawn/cancelled 均不可参与）
   if (draw.status !== "open") throw new Error("活动未开启");
+
+  // ── registered 模式：已登录用户以 userId 为身份标识，跳过邮箱验证码。 ──
+  // 未登录用户仍走 email + code 路径，但 registered 模式的前端不会展示邮箱表单。
+  if (draw.participationMode === "registered" && options?.userId) {
+    identityType = "user_id";
+    identityValue = options.userId;
+  }
 
   // ── 身份标识归一化 ──
   // 统一转小写去空格，确保同一邮箱的不同写法被识别为同一身份

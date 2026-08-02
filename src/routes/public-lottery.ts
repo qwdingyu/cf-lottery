@@ -12,6 +12,7 @@ import type { DbType } from "../db/client";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
 import { eq, and, count, sql, asc, inArray } from "drizzle-orm";
 import { getActivityOutcome, joinDraw, cancelSignupChainEntry, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
+import { verifyJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 import { parseActivityConfig, validateSubmissionPayload } from "../lib/activity-config";
 
@@ -329,7 +330,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
   const slug = c.req.param("slug");
-  const body = await c.req.json<{ email: string }>();
+  const body = await c.req.json<{ email: string; submission?: Record<string, unknown> }>();
   const email = String(body.email || "").trim().toLowerCase();
 
   if (!email || !isValidEmail(email)) {
@@ -345,6 +346,19 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
 
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "open") return fail(c, "活动已结束", 400);
+
+  // ── registered 模式：需注册登录才能参与 ──
+  let registeredUserId: string | undefined;
+  if (draw.participationMode === "registered") {
+    let token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) token = c.req.query("token") || "";
+    if (!token) return fail(c, "此活动需要登录后才能参与", 401);
+    try {
+      const payload = await verifyJwt(token, c.env.JWT_SECRET || "");
+      if (payload?.sub) registeredUserId = payload.sub;
+    } catch { /* JWT 无效 */ }
+    if (!registeredUserId) return fail(c, "登录已过期，请重新登录", 401);
+  }
 
   // 检查是否已参与
   const [existing] = await db
@@ -362,6 +376,23 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
       .where(and(eq(lotteryRosterMembers.drawId, draw.id), eq(lotteryRosterMembers.identityValue, email)))
       .limit(1);
     if (!inRoster) return fail(c, "您不在本次活动名单中", 403);
+  }
+
+  // ── registered 模式：已认证用户跳过邮箱验证码，直接参与 ──
+  if (registeredUserId) {
+    try {
+      const result = await joinDraw(db, slug, email, "email", {
+        userId: registeredUserId,
+        ipHash: ip,
+        userAgent: c.req.header("User-Agent") || "",
+        submissionPayload: body.submission,
+      });
+      if (!result.joined) return fail(c, result.message || "参与失败", 400);
+      return ok(c, { joined: true, activityKind: draw.activityKind, submissionId: "submissionId" in result ? result.submissionId : undefined });
+    } catch (err: any) {
+      if (err.message?.includes("UNIQUE constraint")) return fail(c, "您已参与此活动", 409);
+      return fail(c, "参与失败，请稍后重试", 400);
+    }
   }
 
   // 生成验证码
@@ -662,7 +693,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
 publicLotteryRoute.post("/draws/:slug/result", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
-  const body = await c.req.json<{ email: string }>();
+  const body = await c.req.json<{ email: string; submission?: Record<string, unknown> }>();
   const email = String(body.email || "").trim().toLowerCase();
 
   if (!email) return fail(c, "请提供邮箱地址", 400);
