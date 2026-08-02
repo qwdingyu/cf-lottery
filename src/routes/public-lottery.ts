@@ -700,7 +700,8 @@ publicLotteryRoute.get("/draws/:slug/signup-list", async (c) => {
     })
     .from(lotteryEntries)
     .where(eq(lotteryEntries.drawId, draw.id))
-    .orderBy(lotteryEntries.joinedAt);
+    .orderBy(lotteryEntries.joinedAt)
+    .limit(200);  // 公开 API 上限，防止数据炸弹
 
   // 脱敏展示邮箱
   const masked = entries.map((e, i) => ({

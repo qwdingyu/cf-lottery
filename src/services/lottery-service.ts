@@ -892,13 +892,41 @@ export async function randomSelect<T>(candidates: T[], count: number): Promise<T
 /* ── 密码工具 ────────────────────────────────────────────── */
 
 /**
- * 对访问密码做 SHA-256 hash。
- * 避免在数据库中明文存储密码。
+ * 哈希活动访问密码（带随机 salt，格式 `salt_v1:{salt_hex}:{sha256(salt+password)_hex}`）。
+ * 防止数据库泄漏后彩虹表反查。
  */
 export async function hashAccessPassword(password: string): Promise<string> {
   const encoder = new TextEncoder();
-  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(password));
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
+  const data = new Uint8Array(salt.length + encoder.encode(password).length);
+  data.set(salt);
+  data.set(encoder.encode(password), salt.length);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return `salt_v1:${saltHex}:${hashHex}`;
+}
+
+/**
+ * 验证访问密码。兼容新旧两种格式。
+ */
+async function verifyAccessPassword(inputPassword: string, storedHash: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  // 新格式：salt_v1:saltHex:hashHex
+  if (storedHash.startsWith("salt_v1:")) {
+    const [, saltHex, hashHex] = storedHash.split(":");
+    if (!saltHex || !hashHex) return false;
+    const salt = new Uint8Array(saltHex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
+    const data = new Uint8Array(salt.length + encoder.encode(inputPassword).length);
+    data.set(salt);
+    data.set(encoder.encode(inputPassword), salt.length);
+    const hash = await crypto.subtle.digest("SHA-256", data);
+    const computedHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+    return computedHex === hashHex;
+  }
+  // 旧格式：纯 SHA-256 hex（无 salt）
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(inputPassword));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("") === storedHash;
 }
 
 /* ── 查询函数 ────────────────────────────────────────────── */
@@ -1291,9 +1319,8 @@ export async function joinDraw(
     if (!options?.accessPassword) {
       return { joined: false, message: "请输入访问密码" };
     }
-    // 对输入的密码做 SHA-256 hash 后与存储的 hash 比较
-    const inputHash = await hashAccessPassword(options.accessPassword);
-    if (inputHash !== draw.accessPassword) {
+    // 使用 verifyAccessPassword 验证（兼容新旧两种哈希格式）
+    if (!(await verifyAccessPassword(options.accessPassword, draw.accessPassword))) {
       return { joined: false, message: "访问密码错误" };
     }
   }
@@ -2194,20 +2221,46 @@ export async function importPrizeCodes(
 
   if (!prize) throw new Error("奖品不存在");
 
-  for (const item of codes) {
-    await db.insert(prizeCodes).values({
+  // 批量 INSERT（一次写入替代 N 次往返），重复码通过 UNIQUE 约束自动跳过
+  let imported = 0;
+  // 分批插入：每批最多 200 条，避免单次 INSERT 过大
+  const BATCH_SIZE = 200;
+  for (let offset = 0; offset < codes.length; offset += BATCH_SIZE) {
+    const batch = codes.slice(offset, offset + BATCH_SIZE);
+    const values = batch.map(item => ({
       id: crypto.randomUUID(),
       tenantId,
       prizeId,
-      code: item.code,
-      secret: item.secret || "",
-      status: "available",  // 初始状态：可用
-    });
+      code: (item.code || "").trim(),
+      secret: (item.secret || "").trim(),
+      status: "available" as const,
+      createdAt: new Date().toISOString(),
+    }));
+    try {
+      await db.insert(prizeCodes).values(values);
+      imported += batch.length;
+    } catch (err: any) {
+      // UNIQUE 约束冲突时，回退到逐条插入以精确定位跳过的码
+      for (const item of batch) {
+        try {
+          await db.insert(prizeCodes).values({
+            id: crypto.randomUUID(),
+            tenantId,
+            prizeId,
+            code: (item.code || "").trim(),
+            secret: (item.secret || "").trim(),
+            status: "available",
+            createdAt: new Date().toISOString(),
+          });
+          imported++;
+        } catch { /* 跳过重复 */ }
+      }
+    }
   }
 
-  // 导入成功后更新奖品总数（total_count），保证运营者可看到码池余量
+  // 更新奖品 total_count（闭环：P0-1 已修复）
   await db.update(prizes)
-    .set({ totalCount: sql`total_count + ${codes.length}`, updatedAt: new Date().toISOString() })
+    .set({ totalCount: sql`total_count + ${imported}`, updatedAt: new Date().toISOString() })
     .where(eq(prizes.id, prizeId));
 }
 

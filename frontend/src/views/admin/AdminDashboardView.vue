@@ -39,6 +39,23 @@
       </div>
     </div>
 
+    <!-- 待办事项：提示运营者需要处理的事项 -->
+    <div v-if="hasTodos" class="todo-panel" role="region" aria-label="待办事项">
+      <div class="todo-panel-title">📋 待办事项</div>
+      <div class="todo-items">
+        <RouterLink v-if="todos.dueDraws > 0" to="/admin/draws" class="todo-item">
+          <span class="todo-badge">{{ todos.dueDraws }}</span>
+          <span>个定时活动到期待开奖</span>
+          <span class="todo-arrow">→</span>
+        </RouterLink>
+        <RouterLink v-if="todos.failedNotifications > 0" to="/admin/draws" class="todo-item">
+          <span class="todo-badge todo-badge-danger">{{ todos.failedNotifications }}</span>
+          <span>个中奖通知发送失败</span>
+          <span class="todo-arrow">→</span>
+        </RouterLink>
+      </div>
+    </div>
+
     <div class="toolbar">
       <div class="filters">
         <button class="btn btn-primary btn-sm" type="button" @click="router.push('/admin/draws')">
@@ -87,7 +104,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/composables/useFormat'
@@ -110,6 +127,9 @@ const stats = ref({
   participantLimit: null as number | null,
 })
 const recentDraws = ref<any[]>([])
+/** 待办事项（待开奖/通知失败） */
+const todos = ref({ dueDraws: 0, failedNotifications: 0 })
+const hasTodos = computed(() => todos.value.dueDraws > 0 || todos.value.failedNotifications > 0)
 
 const planLabelMap: Record<string, string> = {
   free: 'Free',
@@ -148,10 +168,11 @@ function statusClass(status: string): string {
 
 async function loadData() {
   try {
-    // 并行加载统计数据
-    const [statsData, drawsData] = await Promise.all([
+    // 并行加载统计数据 + 待办事项（dashboard 端点返回待开奖/通知失败数）
+    const [statsData, drawsData, dashboardData] = await Promise.all([
       adminRequest<any>('/api/admin/stats'),
       adminRequest<{ draws: any[] }>('/api/admin/draws'),
+      adminRequest<any>('/api/admin/dashboard').catch(() => null),
     ])
     const draws = drawsData.draws || []
     recentDraws.value = draws.slice(0, 10)
@@ -168,6 +189,11 @@ async function loadData() {
       participantUsage: statsData.usage?.participants ?? statsData.totalParticipants ?? 0,
       participantLimit: statsData.limits?.maxTotalParticipants ?? null,
     }
+    // 待办事项（dashboard 端点提供）
+    todos.value = {
+      dueDraws: dashboardData?.dueCount ?? 0,
+      failedNotifications: dashboardData?.failedNotifyCount ?? 0,
+    }
   } catch (err: any) {
     showToast(err.message || '加载失败', 'error')
   }
@@ -177,6 +203,16 @@ onMounted(loadData)
 </script>
 
 <style scoped>
+/* 待办事项面板 */
+.todo-panel { margin: 12px 0; padding: 12px 16px; background: var(--tg-secondary-bg, #151b28); border-radius: var(--r-lg, 12px); border: 1px solid var(--border, rgba(255,255,255,0.1)); }
+.todo-panel-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.todo-items { display: flex; flex-direction: column; gap: 6px; }
+.todo-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); color: var(--tg-text, #f0f2f5); font-size: 13px; text-decoration: none; transition: background 0.15s; }
+.todo-item:hover { background: rgba(245,158,11,0.15); }
+.todo-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--admin-accent, #f59e0b); color: #fff; font-size: 12px; font-weight: 700; }
+.todo-badge-danger { background: #ef4444; }
+.todo-arrow { margin-left: auto; color: var(--tg-hint, #9aa4b2); }
+
 .stats-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
