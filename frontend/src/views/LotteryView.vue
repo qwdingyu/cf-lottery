@@ -1202,7 +1202,7 @@ async function handleSendCode() {
     const data = await res.json() as any
     if (data.ok && data.sent) {
       codeSent.value = true
-      startCooldown(60)
+      startCooldown(data.expiresInSeconds || 60)
     } else {
       loginError.value = data.message || '发送失败'
     }

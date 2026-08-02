@@ -125,6 +125,11 @@ const router = createRouter({
           name: 'PlatformWebhookDeliveries',
           component: () => import('@/views/platform/PlatformWebhookDeliveriesView.vue'),
         },
+        {
+          path: 'data-cleanup',
+          name: 'PlatformDataCleanup',
+          component: () => import('@/views/platform/PlatformDataCleanupView.vue'),
+        },
       ],
     },
     {

@@ -376,5 +376,19 @@
     "group": "安全与验证",
     "order": 30,
     "difficulty": "basic"
+  },
+  {
+    "key": "dashboard_roi_days",
+    "label": "ROI 统计天数",
+    "description": "管理后台仪表盘展示近 N 天的转化数据。例如 30 表示展示近 30 天的 GMV 和转化数。",
+    "effect": "Dashboard ROI 汇总查询的时间窗口，影响 GMV 和转化率的展示范围。",
+    "scope": "admin",
+    "type": "integer",
+    "defaultValue": "30",
+    "min": 1,
+    "max": 365,
+    "group": "平台运营",
+    "order": 26,
+    "difficulty": "advanced"
   }
 ]

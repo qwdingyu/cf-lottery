@@ -436,3 +436,61 @@ platformRoute.post("/webhook-deliveries/:id/retry", requirePlatformMember(["plat
 
   return ok(c, result);
 });
+
+/** 数据统计：各表行数概览（供 L3 数据清理页使用） */
+platformRoute.get("/data/stats", async (c) => {
+  const db = getDb(c);
+  // 表名白名单（代码常量，非用户输入）：sql.raw 仅拼接白名单内的表名，无注入风险
+  const tables = [
+    "users", "tenants", "tenant_members", "platform_members",
+    "lottery_draws", "lottery_entries", "lottery_winners", "lottery_prize_tiers",
+    "prizes", "prize_codes", "lottery_roster_members", "lottery_invite_codes",
+    "lottery_blacklist", "email_access_codes",
+    "audit_logs", "platform_audit_logs", "activity_events", "activity_outcomes",
+    "activity_submissions", "share_records", "external_conversions",
+    "api_keys", "webhook_configs", "webhook_deliveries", "coupon_codes",
+    "redemption_codes", "redemption_records", "rate_limit_log", "system_config",
+  ];
+  const stats: Record<string, number> = {};
+  for (const table of tables) {
+    try {
+      const [row] = await db.$client.execute<{ count: number }>(sql`SELECT COUNT(*) AS count FROM ${sql.raw(table)}`);
+      stats[table] = Number(row?.count || 0);
+    } catch { stats[table] = -1; }
+  }
+  return ok(c, { stats });
+});
+
+/** 数据清理：删除指定类型的数据（仅平台 owner，用于重置测试环境）
+ *
+ * 为什么仅 owner：删除数据是破坏性操作，support/operator 应只有只读权限。
+ * 表名白名单校验（代码常量，非用户输入），防止注入。
+ */
+platformRoute.post("/data/cleanup", requirePlatformMember(["platform_owner"]), async (c) => {
+  const body = await c.req.json<{ targets: string[] }>();
+  const allowed = new Set(["email_access_codes", "rate_limit_log", "audit_logs", "platform_audit_logs", "activity_events", "webhook_deliveries"]);
+  const targets = (body.targets || []).filter(t => allowed.has(t));
+  if (targets.length === 0) return fail(c, "未指定有效清理目标", 400);
+
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const results: Record<string, number> = {};
+  for (const table of targets) {
+    try {
+      const result = await db.$client.execute(sql`DELETE FROM ${sql.raw(table)}`);
+      results[table] = result.rowsAffected ?? 0;
+    } catch { results[table] = -1; }
+  }
+
+  // 数据清理是敏感破坏性操作，必须留审计痕迹
+  await db.insert(platformAuditLogs).values({
+    id: crypto.randomUUID(),
+    actorUserId,
+    action: "platform.data.cleanup",
+    targetType: "data",
+    targetId: targets.join(","),
+    metadataJson: JSON.stringify({ targets, results }),
+  });
+
+  return ok(c, { results });
+});

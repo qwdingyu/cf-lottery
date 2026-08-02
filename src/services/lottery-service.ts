@@ -2483,13 +2483,14 @@ export async function sendDrawReminders(
         .limit(500);
 
       const shareUrl = draw.publicSlug ? `${draw.publicSlug}` : "";
+      const reminderText = minutes >= 120 ? `${Math.round(minutes / 60)} 小时` : `${minutes} 分钟`;
       for (const entry of entries) {
         if (!entry.identityValue.includes("@")) continue;
         try {
           await sendEmail(db, emailEnv, {
             to: entry.identityValue,
             template: "draw_reminder",
-            templateData: { drawName: draw.title, shareUrl },
+            templateData: { drawName: draw.title, shareUrl, reminderText },
           });
           emailsSent++;
         } catch { failed++; }

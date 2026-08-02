@@ -43,16 +43,20 @@
     <div v-if="roi.totalConversions > 0" class="stats-row" style="margin-top: 0;">
       <div class="stat-card stat-card-roi">
         <span class="stat-value">{{ roi.totalConversions }}</span>
-        <span class="stat-label">近 30 天转化</span>
+        <span class="stat-label">近 {{ roiDays }} 天转化</span>
       </div>
       <div class="stat-card stat-card-roi">
         <span class="stat-value">{{ formatAmountCents(roi.totalAmountCents) }}</span>
-        <span class="stat-label">近 30 天 GMV</span>
+        <span class="stat-label">近 {{ roiDays }} 天 GMV</span>
       </div>
       <div v-for="item in roi.byType" :key="item.type" class="stat-card stat-card-roi">
         <span class="stat-value">{{ item.count }}<small v-if="item.amountCents > 0" style="font-size:11px;color:var(--tg-hint)"> / {{ formatAmountCents(item.amountCents) }}</small></span>
         <span class="stat-label">{{ conversionLabel(item.type) }}</span>
       </div>
+    </div>
+    <div v-else class="roi-empty-hint">
+      💡 配置外部转化回传后，这里将展示 GMV 和转化数据。<br>
+      <small>通过 API Key 调用 <code>POST /api/integration/conversions</code> 回传成交、注册等转化事件。</small>
     </div>
 
     <!-- 待办事项：提示运营者需要处理的事项 -->
@@ -145,7 +149,8 @@ const stats = ref({
 const recentDraws = ref<any[]>([])
 /** 待办事项（待开奖/通知失败） */
 const todos = ref({ dueDraws: 0, failedNotifications: 0 })
-const roi = ref<{ totalConversions: number; totalAmountCents: number; byType: Array<{ type: string; count: number; amountCents: number }> }>({ totalConversions: 0, totalAmountCents: 0, byType: [] })
+const roi = ref<{ totalConversions: number; totalAmountCents: number; roiDays?: number; byType: Array<{ type: string; count: number; amountCents: number }> }>({ totalConversions: 0, totalAmountCents: 0, byType: [] })
+const roiDays = computed(() => roi.value.roiDays ?? 30)
 
 function formatAmountCents(cents: number): string {
   if (cents <= 0) return '¥0'
@@ -273,4 +278,6 @@ onMounted(loadData)
   font-size: 14px;
   font-weight: 600;
 }
+.roi-empty-hint { padding: 12px 16px; font-size: 13px; color: var(--tg-hint); background: var(--tg-secondary-bg, rgba(255,255,255,.03)); border-radius: 12px; line-height: 1.6; }
+.roi-empty-hint code { font-size: 11px; background: rgba(255,255,255,.05); padding: 1px 5px; border-radius: 3px; }
 </style>

@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb } from "../lib/http";
+import { withDbTransaction } from "../db/client";
 import { users, tenantMembers, tenants, emailAccessCodes, systemConfig } from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { signJwt } from "../middleware/auth";
@@ -129,12 +130,15 @@ authRoute.post("/register", async (c) => {
     // 生成密码 hash
     const passwordHash = await hashPassword(password, getPasswordPepper(c));
 
-    // 创建用户（未验证邮箱）
+    // 创建用户、租户、成员关系——事务保证原子性，杜绝孤儿记录。
+    // 如果租户或成员创建失败，用户也会回滚，不会出现 user 无 tenant 的半成功状态。
     const userId = crypto.randomUUID();
     const tenantId = crypto.randomUUID();
-    await db.insert(users).values({ id: userId, username, email, passwordHash, emailVerified: 0 });
-    await db.insert(tenants).values({ id: tenantId, name: username });
-    await db.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
+    await withDbTransaction(db, async (tx) => {
+      await tx.insert(users).values({ id: userId, username, email, passwordHash, emailVerified: 0 });
+      await tx.insert(tenants).values({ id: tenantId, name: username });
+      await tx.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
+    });
 
     // 生成验证码并存入数据库（先标记旧码失效，避免 UNIQUE(email,draw_id) WHERE used=0 冲突）
     const code = generateCode();

@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions, externalConversions } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions, externalConversions, systemConfig } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
@@ -219,8 +219,10 @@ adminLotteryRoute.get("/dashboard", async (c) => {
       eq(lotteryWinners.notificationStatus, "failed"),
     ));
 
-  // 营销 ROI 汇总（近 30 天外部转化数据）
-  const roiCutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  // 营销 ROI 汇总（天数由 platform system_config.dashboard_roi_days 控制，默认 30 天）
+  const [roiDaysCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "dashboard_roi_days")).limit(1);
+  const roiDays = Math.max(1, Math.min(365, parseInt(roiDaysCfg?.value || "30", 10) || 30));
+  const roiCutoff = new Date(Date.now() - roiDays * 86400000).toISOString();
   const [roiRow] = await db
     .select({
       totalConversions: sql<number>`COUNT(*)`,
@@ -256,6 +258,7 @@ adminLotteryRoute.get("/dashboard", async (c) => {
     limits: tenantUsage.limits,
     usage: tenantUsage.usage,
     roi: {
+      roiDays,
       totalConversions: Number(roiRow?.totalConversions || 0),
       totalAmountCents: Number(roiRow?.totalAmountCents || 0),
       byType: conversionTypeRows.map(r => ({

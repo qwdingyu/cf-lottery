@@ -50,7 +50,7 @@
                 :title="showAdvanced ? '隐藏高级参数' : '显示高级参数'"
                 @click="showAdvanced = !showAdvanced"
               >
-                {{ showAdvanced ? '⚙️ 高级' : '🔧 高级' }}
+                {{ showAdvanced ? '⚙️ 收起' : `🔧 高级 ${advancedItemCount}` }}
               </button>
               <span class="config-count">{{ $t('adminConfig.itemCount', { count: activeSectionItemCount }) }}</span>
             </div>
@@ -293,6 +293,16 @@ const activeGroupedDefinitions = computed(() => {
 const activeSectionItemCount = computed(
   () => sectionItemCounts.value[activeSection.value] ?? 0,
 )
+/** 当前 Tab 中高级参数的数量（仅在基础模式下显示，用于按钮提示） */
+const advancedItemCount = computed(() => {
+  const section = activeSectionDef.value
+  let count = 0
+  for (const name of section.groups) {
+    const items = groupsByName.value.get(name) ?? []
+    count += items.filter((item) => item.difficulty === "advanced").length
+  }
+  return count
+})
 
 const emailConfigSaving = computed(() =>
   emailConfigKeys.some((key) => fieldStatus[key] === 'saving'),

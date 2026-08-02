@@ -1013,7 +1013,7 @@ import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
-import { useAdminAuth, readAdminToken } from '@/composables/useAdminAuth'
+import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
@@ -1127,25 +1127,25 @@ const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDial
 
 // ── 兼容旧 API 调用（适配到新后端） ──
 
-const fetchLotteryDraws = async (_token: string, params: { limit: number; offset: number; status?: string; query?: string }) => {
+const fetchLotteryDraws = async (params: { limit: number; offset: number; status?: string; query?: string }) => {
   const search = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) })
   if (params.status) search.set('status', params.status)
   if (params.query) search.set('query', params.query)
   return adminRequest<{ draws: LotteryDraw[]; total: number }>(`/api/admin/draws?${search}`)
 }
-const createLotteryDraw = async (_token: string, body: any) => adminRequest<{ id: string; publicSlug: string }>('/api/admin/draws', { method: 'POST', body: JSON.stringify(body) });
-const updateLotteryDraw = async (_token: string, id: string, body: any) => adminRequest(`/api/admin/draws/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
-const fetchPublishCheck = async (_token: string, id: string) => adminRequest<PublishCheckResult>(`/api/admin/draws/${id}/publish-check`);
-const openLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/publish`, { method: 'POST' });
-const performLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/draw`, { method: 'POST' });
-const cancelLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}/cancel`, { method: 'POST' });
-const deleteLotteryDraw = async (_token: string, id: string) => adminRequest(`/api/admin/draws/${id}`, { method: 'DELETE' });
-const fetchLotteryWinners = async (_token: string, id: string) => adminRequest<{ winners: LotteryWinner[] }>(`/api/admin/draws/${id}/winners`);
-const fetchDrawAnalyticsStats = async (_token: string, id: string) => adminRequest<DrawAnalyticsStats>(`/api/admin/draws/${id}/stats`);
-const fetchDrawConversions = async (_token: string, id: string) => adminRequest<{ conversions: ExternalConversion[]; summary: ExternalConversionSummary }>(`/api/admin/draws/${id}/conversions?limit=50`);
-const fetchAdminLottery = async (_token: string, path: string, method: string) => adminRequest(path, { method });
-const retryAdminLotteryEmail = async (_token: string, id: string) => adminRequest<{ sent: number; failed: number }>(`/api/admin/draws/${id}/retry-email`, { method: 'POST' });
-const recoverLotteryDraw = async (_token: string, id: string) => adminRequest<{ healed: 'drawn' | 'open' }>(`/api/admin/draws/${id}/recover`, { method: 'POST' });
+const createLotteryDraw = async (body: any) => adminRequest<{ id: string; publicSlug: string }>('/api/admin/draws', { method: 'POST', body: JSON.stringify(body) });
+const updateLotteryDraw = async (id: string, body: any) => adminRequest(`/api/admin/draws/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+const fetchPublishCheck = async (id: string) => adminRequest<PublishCheckResult>(`/api/admin/draws/${id}/publish-check`);
+const openLotteryDraw = async (id: string) => adminRequest(`/api/admin/draws/${id}/publish`, { method: 'POST' });
+const performLotteryDraw = async (id: string) => adminRequest(`/api/admin/draws/${id}/draw`, { method: 'POST' });
+const cancelLotteryDraw = async (id: string) => adminRequest(`/api/admin/draws/${id}/cancel`, { method: 'POST' });
+const deleteLotteryDraw = async (id: string) => adminRequest(`/api/admin/draws/${id}`, { method: 'DELETE' });
+const fetchLotteryWinners = async (id: string) => adminRequest<{ winners: LotteryWinner[] }>(`/api/admin/draws/${id}/winners`);
+const fetchDrawAnalyticsStats = async (id: string) => adminRequest<DrawAnalyticsStats>(`/api/admin/draws/${id}/stats`);
+const fetchDrawConversions = async (id: string) => adminRequest<{ conversions: ExternalConversion[]; summary: ExternalConversionSummary }>(`/api/admin/draws/${id}/conversions?limit=50`);
+const fetchAdminLottery = async (path: string, method: string) => adminRequest(path, { method });
+const retryAdminLotteryEmail = async (id: string) => adminRequest<{ sent: number; failed: number }>(`/api/admin/draws/${id}/retry-email`, { method: 'POST' });
+const recoverLotteryDraw = async (id: string) => adminRequest<{ healed: 'drawn' | 'open' }>(`/api/admin/draws/${id}/recover`, { method: 'POST' });
 
 // ── 内联 lottery-ops 函数 ──
 const countLotteryEmailFailures = (winners: LotteryWinner[]) => winners.filter(w => w.notificationStatus === 'failed').length;
@@ -1690,8 +1690,8 @@ async function handleViewAnalytics(draw: LotteryDraw) {
   operatingId.value = draw.id
   try {
     const [stats, conversionData] = await Promise.all([
-      fetchDrawAnalyticsStats(readAdminToken(), draw.id),
-      fetchDrawConversions(readAdminToken(), draw.id),
+      fetchDrawAnalyticsStats(draw.id),
+      fetchDrawConversions(draw.id),
     ])
     analyticsStats.value = {
       ...stats,
@@ -1742,7 +1742,7 @@ async function refreshWinnersStatus(id: string) {
   if (winnersStatusInFlight || !showWinnersModal.value || winnersModalDrawId.value !== id) return
   winnersStatusInFlight = true
   try {
-    const data = await fetchLotteryWinners(readAdminToken(), id)
+    const data = await fetchLotteryWinners(id)
     winners.value = data.winners || []
     winnersStatusRefreshes += 1
     if (winnersEmailPendingCount.value === 0 || winnersStatusRefreshes >= MAX_WINNERS_STATUS_REFRESHES) {
@@ -2122,7 +2122,7 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await fetchLotteryDraws(readAdminToken(), {
+    const data = await fetchLotteryDraws({
       limit: pagination.limit.value,
       offset: (pagination.page.value - 1) * pagination.limit.value,
       status: statusFilter.value || undefined,
@@ -2145,7 +2145,7 @@ async function handleOpen(draw: LotteryDraw) {
   operatingId.value = draw.id
   try {
     // 发布前先展示同一套服务端门禁结果：运营者需要知道缺奖项、码池、CTA、Webhook 等具体阻断点。
-    const check = await fetchPublishCheck(readAdminToken(), draw.id)
+    const check = await fetchPublishCheck(draw.id)
     if (!check.canPublish) {
       showToast(formatPublishCheckItems(check.errors, '发布前需要先处理：'), 'error')
       return
@@ -2154,7 +2154,7 @@ async function handleOpen(draw: LotteryDraw) {
       const confirmed = await askConfirm(formatPublishCheckItems(check.warnings, '发布前仍有风险：') + '\n仍然发布吗？')
       if (!confirmed) return
     }
-    await openLotteryDraw(readAdminToken(), draw.id)
+    await openLotteryDraw(draw.id)
     // 发布后复制公开 slug 链接，避免把内部活动 id 发给参与者导致公开页 404。
     try {
       await writeClipboardText(publicShareUrl(draw.publicSlug))
@@ -2186,7 +2186,7 @@ async function handleDraw(draw: LotteryDraw) {
   operatingId.value = draw.id
   let drawOk = false
   try {
-    await performLotteryDraw(readAdminToken(), draw.id)
+    await performLotteryDraw(draw.id)
     drawOk = true
     showToast(t('lottery.adminDrawDone'), 'success')
     await loadData()
@@ -2209,7 +2209,7 @@ async function viewWinners(id: string) {
   showWinnersModal.value = true
   operatingId.value = id
   try {
-    const data = await fetchLotteryWinners(readAdminToken(), id)
+    const data = await fetchLotteryWinners(id)
     winners.value = data.winners || []
     startWinnersStatusPolling(id)
   } catch (e: any) {
@@ -2234,7 +2234,7 @@ async function handleCancel(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmCancel')))) return
   operatingId.value = id
   try {
-    await cancelLotteryDraw(readAdminToken(), id)
+    await cancelLotteryDraw(id)
     showToast(t('lottery.adminDrawCancelled'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2251,7 +2251,7 @@ async function handleDelete(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmDelete', { name: draw.name, status: statusLabel(draw.status) })))) return
   operatingId.value = id
   try {
-    await deleteLotteryDraw(readAdminToken(), id)
+    await deleteLotteryDraw(id)
     showToast(t('lottery.adminDrawDeleted'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2274,7 +2274,7 @@ async function batchDeleteDraws() {
     let failed = 0
     for (const id of selectedDraws.map((draw) => draw.id)) {
       try {
-        await deleteLotteryDraw(readAdminToken(), id)
+        await deleteLotteryDraw(id)
         success++
       } catch {
         failed++
@@ -2298,7 +2298,7 @@ async function handlePause(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmPause')))) return
   operatingId.value = id
   try {
-    await fetchAdminLottery(readAdminToken(), `/api/admin/draws/${id}/pause`, 'POST')
+    await fetchAdminLottery(`/api/admin/draws/${id}/pause`, 'POST')
     showToast(t('lottery.adminPaused'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2312,7 +2312,7 @@ async function handlePause(id: string) {
 async function handleResume(id: string) {
   operatingId.value = id
   try {
-    await fetchAdminLottery(readAdminToken(), `/api/admin/draws/${id}/resume`, 'POST')
+    await fetchAdminLottery(`/api/admin/draws/${id}/resume`, 'POST')
     showToast(t('lottery.adminResumed'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2356,7 +2356,7 @@ async function handleToggleVisibility(id: string, visible: number | undefined) {
   if (!(await askConfirm(t('lottery.adminConfirmToggleVisibility')))) return
   operatingId.value = id
   try {
-    await updateLotteryDraw(readAdminToken(), id, { visible: visible ? 0 : 1 })
+    await updateLotteryDraw(id, { visible: visible ? 0 : 1 })
     showToast(visible ? t('lottery.adminHidden') : t('lottery.adminShown'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2369,7 +2369,7 @@ async function handleToggleVisibility(id: string, visible: number | undefined) {
 async function handleRetryEmail(id: string) {
   operatingId.value = id
   try {
-    const result = await retryAdminLotteryEmail(readAdminToken(), id)
+    const result = await retryAdminLotteryEmail(id)
     if (result.sent > 0 || result.failed === 0) {
       showToast(t('lottery.adminRetrySuccess', { sent: result.sent }), 'success')
     } else {
@@ -2378,7 +2378,7 @@ async function handleRetryEmail(id: string) {
     // 若中奖弹窗正打开同一活动，刷新名单上的发送态
     if (showWinnersModal.value && winnersModalDrawId.value === id) {
       try {
-        const data = await fetchLotteryWinners(readAdminToken(), id)
+        const data = await fetchLotteryWinners(id)
         winners.value = data.winners || []
       } catch {
         /* 列表刷新失败不阻断主提示 */
@@ -2400,7 +2400,7 @@ async function handleRecover(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmRecover')))) return
   operatingId.value = id
   try {
-    const result = await recoverLotteryDraw(readAdminToken(), id)
+    const result = await recoverLotteryDraw(id)
     if (result.healed === 'drawn') {
       showToast(t('lottery.adminRecoverDoneDrawn'), 'success')
     } else {
@@ -2504,10 +2504,10 @@ async function handleCreate() {
         form.value = emptyForm()
         return
       }
-      await updateLotteryDraw(readAdminToken(), form.value.id, payload)
+      await updateLotteryDraw(form.value.id, payload)
       showToast('活动已更新', 'success')
     } else {
-      const created = await createLotteryDraw(readAdminToken(), payload)
+      const created = await createLotteryDraw(payload)
       if (created?.id) {
         // 如果是 roster 模式，导入名单
         if (form.value.participationMode === 'roster' && rosterInput.value.trim()) {
