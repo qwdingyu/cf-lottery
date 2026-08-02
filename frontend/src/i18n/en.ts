@@ -209,6 +209,7 @@ export default {
       admin_security: "Admin & Security",
       email_service: "Email Service",
       stock_alert: "Stock Alert",
+      marketing_email: "Marketing Email",
       referral_commission: "Referral & Commission",
       data_retention: "Data Retention & Cleanup",
       other: "Other",

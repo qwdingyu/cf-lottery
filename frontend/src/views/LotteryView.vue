@@ -918,13 +918,26 @@ function countdownText(draw: LotteryDraw): string {
   return parts.join(' ')
 }
 
-/** 从活动 promotionConfig 中提取指定状态的 CTA 配置 */
+/**
+ * 从活动 promotionConfig 中提取指定状态的 CTA 配置。
+ *
+ * 安全：只返回 http/https 协议的外部链接。
+ * 纵深防御：后端发布校验（publish-check）已拦截危险协议，这里再兜底一次，
+ * 防止历史数据或配置被绕过时 `<a href>` 渲染 javascript: 等危险协议。
+ */
 function getResultCta(draw: LotteryDraw | null, key: 'after_win' | 'after_loss'): { url: string; title: string } | null {
   if (!draw) return null
   const pc = (draw as any)?.promotionConfig
   const cta = pc?.ctas?.[key]
-  if (cta?.url) return { url: cta.url, title: cta.title || '' }
-  return null
+  if (!cta?.url) return null
+  // 协议白名单：仅 http/https，防止 javascript:/data: 等危险协议
+  try {
+    const parsed = new URL(cta.url)
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null
+  } catch {
+    return null // 非法 URL 不渲染，避免坏链接和注入
+  }
+  return { url: cta.url, title: cta.title || '' }
 }
 
 /** 活动是否已结束（drawn/cancelled，或 open 态但 drawTime 已过） */

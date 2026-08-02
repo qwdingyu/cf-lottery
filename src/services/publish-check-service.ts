@@ -233,6 +233,19 @@ function validatePromotion(draw: LotteryDraw, result: PublishCheckResult) {
     }
   }
 
+  // 多状态 CTA 校验（中奖后/未中奖后的导流卡片）。
+  // 为什么单独校验：这些 url 会在公开端结果弹窗中作为 <a href> 渲染，
+  // 若运营者误配了 javascript: 等危险协议，点击会执行脚本（XSS 纵深防御）。
+  const ctas = promotionConfig?.ctas as Record<string, { url?: string }> | undefined;
+  if (ctas) {
+    for (const key of ["after_win", "after_loss"] as const) {
+      const cta = ctas[key];
+      if (cta && typeof cta.url === "string" && cta.url.trim() && !isSafeHttpUrl(cta.url)) {
+        add(result.errors, "promotion", `promotion.cta.${key}.invalid`, `${key === "after_win" ? "中奖后" : "未中奖后"}导流链接必须是有效的 http/https 外部地址`);
+      }
+    }
+  }
+
   // 裂变配置校验
   if (viral?.enabled) {
     const perInvite = Number(viral.extraEntriesPerInvite ?? 0);

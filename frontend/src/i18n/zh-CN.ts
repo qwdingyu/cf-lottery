@@ -211,6 +211,7 @@ export default {
       admin_security: "后台与安全",
       email_service: "邮件服务",
       stock_alert: "库存预警",
+      marketing_email: "营销邮件",
       referral_commission: "分销与返佣",
       data_retention: "数据保留与清理",
       other: "其他",

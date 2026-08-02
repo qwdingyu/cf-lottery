@@ -289,5 +289,40 @@
     "defaultValue": "false",
     "group": "平台运营",
     "order": 23
+  },
+  {
+    "key": "marketing_draw_reminder_enabled",
+    "label": "开奖提醒邮件",
+    "description": "是否在开奖前向参与者发送提醒邮件。关闭后不再发送任何开奖提醒。",
+    "effect": "Cron 定时任务扫描到期活动时，根据此开关决定是否发送提醒邮件。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "false",
+    "group": "营销邮件",
+    "order": 1
+  },
+  {
+    "key": "marketing_draw_reminder_minutes",
+    "label": "开奖提醒提前分钟数",
+    "description": "在开奖前多少分钟发送提醒邮件。例如 60 表示开奖前 1 小时发送。建议 30-120 分钟。",
+    "effect": "Cron 扫描时以此值为中心 ±5 分钟窗口，匹配到期的开奖活动发送提醒。",
+    "scope": "admin",
+    "type": "integer",
+    "defaultValue": "60",
+    "min": 5,
+    "max": 1440,
+    "group": "营销邮件",
+    "order": 2
+  },
+  {
+    "key": "marketing_loser_consolation_enabled",
+    "label": "未中奖安慰邮件",
+    "description": "是否在开奖后向未中奖用户发送安慰邮件（含优惠券信息）。需要先配置未中奖发券功能。",
+    "effect": "开奖完成后发券时，根据此开关决定是否额外发送安慰邮件。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "false",
+    "group": "营销邮件",
+    "order": 3
   }
 ]

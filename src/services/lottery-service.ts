@@ -2421,11 +2421,12 @@ async function hashDrawSeed(seed: string): Promise<string> {
 /**
  * 发送开奖前提醒邮件。
  *
- * 扫描 status='open' 且 drawAt 在未来 55-65 分钟内的活动，
- * 向每个参与者发送提醒邮件，告知即将开奖并引导分享裂变。
+ * 由 platform system_config 控制：
+ * - marketing_draw_reminder_enabled：是否启用（默认 false，需平台运营者手动开启）
+ * - marketing_draw_reminder_minutes：开奖前多少分钟发送（默认 60）
  *
  * 由 runScheduledMaintenance 触发（Cron 每 5 分钟执行一次，
- * 55-65 分钟窗口确保每分钟的 Cron 触发都能捕捉到 1 小时后的开奖）。
+ * 以配置值为中心 ±5 分钟窗口，确保每次 Cron 都能捕捉到目标活动）。
  */
 export async function sendDrawReminders(
   db: DbType,
@@ -2433,11 +2434,24 @@ export async function sendDrawReminders(
 ): Promise<{ drawsProcessed: number; emailsSent: number; failed: number }> {
   if (!emailEnv.resendApiKey) return { drawsProcessed: 0, emailsSent: 0, failed: 0 };
 
-  const now = new Date();
-  const windowStart = new Date(now.getTime() + 55 * 60000).toISOString();
-  const windowEnd = new Date(now.getTime() + 65 * 60000).toISOString();
+  // 读取平台配置：是否启用 + 提前分钟数
+  const configRows = await db
+    .select({ key: systemConfig.key, value: systemConfig.value })
+    .from(systemConfig)
+    .where(sql`${systemConfig.key} IN ('marketing_draw_reminder_enabled', 'marketing_draw_reminder_minutes')`);
+  const cfg: Record<string, string> = {};
+  for (const row of configRows) cfg[row.key] = row.value;
 
-  // 查找即将在 1 小时后开奖的活动
+  const enabled = cfg["marketing_draw_reminder_enabled"] === "true";
+  if (!enabled) return { drawsProcessed: 0, emailsSent: 0, failed: 0 };
+
+  const minutes = Math.max(5, Math.min(1440, parseInt(cfg["marketing_draw_reminder_minutes"] || "60", 10) || 60));
+
+  const now = new Date();
+  const windowStart = new Date(now.getTime() + (minutes - 5) * 60000).toISOString();
+  const windowEnd = new Date(now.getTime() + (minutes + 5) * 60000).toISOString();
+
+  // 查找即将在 N 分钟后开奖的活动
   const dueDraws = await db
     .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, title: lotteryDraws.title, publicSlug: lotteryDraws.publicSlug })
     .from(lotteryDraws)
@@ -2486,6 +2500,9 @@ export async function sendDrawReminders(
 /**
  * 对刚被 grantLoserRewards 发放优惠券的未中奖用户发送安慰邮件。
  *
+ * 由 platform system_config 控制：
+ * - marketing_loser_consolation_enabled：是否启用（默认 false，需平台运营者手动开启）
+ *
  * 仅在 grantLoserRewards 成功发放优惠券后调用，告知用户未中奖但有专属优惠，
  * 引导用户回到平台使用优惠券，实现"流失用户再激活"。
  */
@@ -2497,6 +2514,14 @@ export async function sendLoserConsolationEmails(
   drawTitle: string,
 ): Promise<{ sent: number; failed: number }> {
   if (!emailEnv.resendApiKey) return { sent: 0, failed: 0 };
+
+  // 读取平台配置：是否启用安慰邮件
+  const [cfgRow] = await db
+    .select({ value: systemConfig.value })
+    .from(systemConfig)
+    .where(eq(systemConfig.key, "marketing_loser_consolation_enabled"))
+    .limit(1);
+  if (cfgRow?.value !== "true") return { sent: 0, failed: 0 };
 
   // 查询本次开奖发放的优惠券（status='issued' 且 drawId 匹配）
   const issuedCoupons = await db
