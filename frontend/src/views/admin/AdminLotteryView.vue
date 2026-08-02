@@ -1041,6 +1041,7 @@ import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { toPng } from 'html-to-image'
+import QRCode from 'qrcode'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
@@ -1268,6 +1269,27 @@ const posterTimeText = computed(() => {
 // 为什么缓存：二维码 URL 是确定性字符串（依赖 publicSlug），列表加载时预计算，
 // 打开弹窗直接复用，避免每次点开都重新拼接/请求，节省 Cloudflare Free 资源。
 const qrUrlMap = new Map<string, { url: string; qrImageUrl: string }>()
+// 本地生成的二维码 dataURL 缓存：url -> dataURL
+// 为什么本地生成：远程 qrserver API 有第三方依赖/跨域污染/隐私风险，
+// 且 html-to-image 截图远程图片若无 CORS 头会导致画布污染导出失败。
+// qrcode 库在浏览器本地生成（几 ms），零 Worker 资源，符合 Cloudflare Free 约束。
+const qrDataUrlCache = new Map<string, string>()
+
+/**
+ * 本地生成二维码 dataURL（惰性 + 缓存）。
+ * 首次生成后缓存，同一链接再次生成直接复用，避免重复计算。
+ */
+async function generateQrDataUrl(url: string): Promise<string> {
+  const cached = qrDataUrlCache.get(url)
+  if (cached) return cached
+  const dataUrl = await QRCode.toDataURL(url, {
+    width: 300,
+    margin: 1,
+    errorCorrectionLevel: 'M',  // 中等纠错：二维码美观与容错平衡
+  })
+  qrDataUrlCache.set(url, dataUrl)
+  return dataUrl
+}
 // 海报 dataURL 缓存：drawId -> dataURL
 // 首次生成后缓存，同一活动再次打开直接显示，避免重复 Canvas 绘制 + 远程图片加载。
 const posterCache = new Map<string, string>()
@@ -1871,20 +1893,19 @@ function handleOpenPublic(draw: LotteryDraw) {
 }
 
 /** 生成二维码 */
-function handleShowQrCode(draw: LotteryDraw) {
-  // 复用预计算缓存（loadData 时生成），避免每次点开重新拼接
+async function handleShowQrCode(draw: LotteryDraw) {
+  // 复用预计算缓存（loadData 时生成链接），二维码图本地生成（零第三方依赖）
   const cached = qrUrlMap.get(draw.id) || {
     url: `${window.location.origin}/lottery/${draw.publicSlug}`,
     qrImageUrl: '',
   }
-  // 兜底：缓存未命中时即时计算
-  if (!cached.qrImageUrl) {
+  if (!cached.url) {
     cached.url = `${window.location.origin}/lottery/${draw.publicSlug}`
-    cached.qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(cached.url)}`
     qrUrlMap.set(draw.id, cached)
   }
   qrDrawUrl.value = cached.url
-  qrImageUrl.value = cached.qrImageUrl
+  // 本地生成二维码 dataURL（带缓存），避免远程 API 依赖/跨域污染/隐私问题
+  qrImageUrl.value = await generateQrDataUrl(cached.url)
   showQrModal.value = true
 }
 
@@ -1911,18 +1932,18 @@ function handleCopyQrLink() {
  */
 async function handleShowPoster(draw: LotteryDraw) {
   posterDrawData.value = draw
-  // 复用预计算二维码缓存（loadData 时生成）
+  // 复用预计算二维码链接（loadData 时生成），二维码图本地生成
   const cachedQr = qrUrlMap.get(draw.id) || {
     url: `${window.location.origin}/lottery/${draw.publicSlug}`,
     qrImageUrl: '',
   }
-  if (!cachedQr.qrImageUrl) {
+  if (!cachedQr.url) {
     cachedQr.url = `${window.location.origin}/lottery/${draw.publicSlug}`
-    cachedQr.qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(cachedQr.url)}`
     qrUrlMap.set(draw.id, cachedQr)
   }
   qrDrawUrl.value = cachedQr.url
-  posterQrImageUrl.value = cachedQr.qrImageUrl
+  // 本地生成二维码（dataURL 带缓存），海报模板 <img> 直接引用，html-to-image 可截图
+  posterQrImageUrl.value = await generateQrDataUrl(cachedQr.url)
 
   showPosterModal.value = true
   // 命中缓存：直接显示，无需重新生成
@@ -2146,14 +2167,13 @@ async function loadData() {
     })
     if (sequence !== loadSequence) return
     draws.value = data.draws || []
-    // 预计算每个活动的二维码 URL（纯字符串拼接，零成本），打开弹窗直接复用
+    // 预计算每个活动的二维码链接（纯字符串拼接，零成本），打开弹窗再本地生成二维码图
     const origin = window.location.origin
     for (const d of draws.value) {
       if (!qrUrlMap.has(d.id)) {
-        const url = `${origin}/lottery/${d.publicSlug}`
         qrUrlMap.set(d.id, {
-          url,
-          qrImageUrl: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`,
+          url: `${origin}/lottery/${d.publicSlug}`,
+          qrImageUrl: '',  // 二维码图本地生成（异步），打开时惰性生成
         })
       }
     }
