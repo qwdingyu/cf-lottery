@@ -103,6 +103,8 @@
 import { ref, onMounted } from 'vue'
 import AdminModal from '@/components/AdminModal.vue'
 import { useToast } from '@/composables/useToast'
+import { readAdminToken } from '@/composables/useAdminAuth'
+import { adminRequest } from '@/composables/useAdminRequest'
 
 const { showToast } = useToast()
 const members = ref<any[]>([])
@@ -125,25 +127,17 @@ function copyText(text: string) {
   if (text) navigator.clipboard.writeText(text).catch(() => {})
 }
 
-async function adminFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('admin_token') || ''
-  const res = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } })
-  const data = await res.json()
-  if (!data.ok) throw new Error(data.message || '请求失败')
-  return data as T
-}
-
 async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    // 解析当前用户 ID（JWT payload）
+    // 解析当前用户 ID（JWT payload，用于标记"当前用户"不可操作）
     try {
-      const token = localStorage.getItem('admin_token') || ''
+      const token = readAdminToken()
       const payload = JSON.parse(atob(token.split('.')[1]))
       myUserId.value = payload.sub || ''
     } catch { /* 忽略 */ }
-    const data = await adminFetch<{ members: any[] }>('/api/platform/members')
+    const data = await adminRequest<{ members: any[] }>('/api/platform/members')
     members.value = data.members || []
   } catch (err: any) {
     loadError.value = err.message || '加载失败'
@@ -158,7 +152,7 @@ async function handleAdd() {
   try {
     const key = formKey.value.trim()
     const body = key.includes('@') ? { email: key, role: formRole.value } : { username: key, role: formRole.value }
-    await adminFetch('/api/platform/members', { method: 'POST', body: JSON.stringify(body) })
+    await adminRequest('/api/platform/members', { method: 'POST', body: JSON.stringify(body) })
     showToast('成员已添加', 'success')
     showAdd.value = false
     formKey.value = ''
@@ -174,7 +168,7 @@ async function updateRole(m: any, role: string) {
   if (operatingId.value || role === m.role) return
   operatingId.value = m.userId
   try {
-    await adminFetch(`/api/platform/members/${m.userId}`, { method: 'PATCH', body: JSON.stringify({ role }) })
+    await adminRequest(`/api/platform/members/${m.userId}`, { method: 'PATCH', body: JSON.stringify({ role }) })
     showToast('角色已更新', 'success')
     await loadData()
   } catch (err: any) {
@@ -189,7 +183,7 @@ async function toggleStatus(m: any) {
   operatingId.value = m.userId
   try {
     const status = m.status === 'active' ? 'disabled' : 'active'
-    await adminFetch(`/api/platform/members/${m.userId}`, { method: 'PATCH', body: JSON.stringify({ status }) })
+    await adminRequest(`/api/platform/members/${m.userId}`, { method: 'PATCH', body: JSON.stringify({ status }) })
     showToast(status === 'active' ? '已启用' : '已禁用', 'success')
     await loadData()
   } catch (err: any) {
@@ -204,7 +198,7 @@ async function handleRemove(m: any) {
   if (!window.confirm(`确认移除平台成员 ${m.userId.slice(0, 10)}…？`)) return
   operatingId.value = m.userId
   try {
-    await adminFetch(`/api/platform/members/${m.userId}`, { method: 'DELETE' })
+    await adminRequest(`/api/platform/members/${m.userId}`, { method: 'DELETE' })
     showToast('已移除', 'success')
     await loadData()
   } catch (err: any) {

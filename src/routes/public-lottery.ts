@@ -370,12 +370,14 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
-  // 限流：同一 IP 每分钟最多 10 次参与
+  // 限流：同一 IP 每分钟最多 N 次参与（由 platform system_config.rate_limit_join_per_minute 控制）
   const ip = c.req.header("CF-Connecting-IP") || "unknown";
-  if (!checkRateLimit(`join:${ip}`, 10, 60000)) {
+  const db = getDb(c);
+  const [joinRlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
+  const joinLimit = Math.min(Math.max(parseInt(joinRlCfg?.value || "", 10) || 10, 1), 100);
+  if (!checkRateLimit(`join:${ip}`, joinLimit, 60000)) {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
-  const db = getDb(c);
   const slug = c.req.param("slug");
   const body = await c.req.json<{ email: string; code: string; accessPassword?: string; inviteCode?: string; refCode?: string; submission?: Record<string, unknown> }>();
   const email = String(body.email || "").trim().toLowerCase();
@@ -611,12 +613,14 @@ publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/join", async (c) => {
-  // 限流：同一 IP 每分钟最多 10 次参与
+  // 限流：同一 IP 每分钟最多 N 次参与（由 platform system_config.rate_limit_join_per_minute 控制）
   const ip = c.req.header("CF-Connecting-IP") || "unknown";
-  if (!checkRateLimit(`join:${ip}`, 10, 60000)) {
+  const db = getDb(c);
+  const [joinRlCfg2] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
+  const joinLimit2 = Math.min(Math.max(parseInt(joinRlCfg2?.value || "", 10) || 10, 1), 100);
+  if (!checkRateLimit(`join:${ip}`, joinLimit2, 60000)) {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
-  const db = getDb(c);
   const body = await c.req.json<{ email: string; refCode?: string; submission?: Record<string, unknown> }>();
   const email = String(body.email || "").trim().toLowerCase();
 

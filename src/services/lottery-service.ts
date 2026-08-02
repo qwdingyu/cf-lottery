@@ -1976,11 +1976,18 @@ export async function performDraw(
     });
 
     // 异步发送中奖通知邮件（不阻塞主流程，失败不影响开奖结果）
-    // 仅在邮件配置可用时发送
+    // 由 platform system_config.notify_winner_email_enabled 控制（默认开启）
     if (emailEnv?.resendApiKey) {
-      void sendWinnerNotifications(db, tenantId, drawId, emailEnv).catch((err) => {
-        console.error(`[lottery] sendWinnerNotifications failed for ${drawId}:`, err);
-      });
+      const [notifyCfg] = await db
+        .select({ value: systemConfig.value })
+        .from(systemConfig)
+        .where(eq(systemConfig.key, "notify_winner_email_enabled"))
+        .limit(1);
+      if (notifyCfg?.value !== "false") {
+        void sendWinnerNotifications(db, tenantId, drawId, emailEnv).catch((err) => {
+          console.error(`[lottery] sendWinnerNotifications failed for ${drawId}:`, err);
+        });
+      }
     }
 
     const webhookEvent = await enqueueWebhookEvent(db, {

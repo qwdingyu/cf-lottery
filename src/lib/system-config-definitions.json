@@ -324,5 +324,29 @@
     "defaultValue": "false",
     "group": "营销邮件",
     "order": 3
+  },
+  {
+    "key": "notify_winner_email_enabled",
+    "label": "中奖通知邮件",
+    "description": "是否在开奖后向中奖者发送邮件通知。关闭后中奖者不会收到邮件，但仍可在公开页查询结果。",
+    "effect": "开奖完成后根据此开关决定是否发送中奖通知邮件。关闭不影响中奖记录写入和 Webhook 推送。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "true",
+    "group": "营销邮件",
+    "order": 4
+  },
+  {
+    "key": "rate_limit_join_per_minute",
+    "label": "参与限流（次/分钟）",
+    "description": "同一 IP 每分钟最多可参与次数。过高可能被刷量，过低影响正常用户。建议 5-20。",
+    "effect": "公开活动参与接口（/join 和 /verify-join）的 IP 限流阈值。",
+    "scope": "admin",
+    "type": "integer",
+    "defaultValue": "10",
+    "min": 1,
+    "max": 100,
+    "group": "安全与验证",
+    "order": 30
   }
 ]
