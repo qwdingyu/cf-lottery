@@ -1179,6 +1179,8 @@ const buildLotteryDrawConfirmMessage = (draw: any, labels: any) => `${labels.tit
 function downloadCsv(filename: string, rows: string[][]) {
   // 公式注入防护：Excel/Sheets 会把 = + - @ 开头的单元格当公式执行，
   // 加 ' 前缀阻止；结构上统一引号包裹 + 引号加倍。
+  // 注意：后端 admin-lottery.ts 的 csvEscape 有相同逻辑（服务端导出），
+  // 修改此处时必须同步修改后端版本，保持一致（跨运行环境不强行共享）。
   const escapeCell = (c: unknown): string => {
     const raw = String(c ?? '')
     const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw
