@@ -335,9 +335,10 @@
                     <button type="button" class="btn btn-ghost btn-xs" :disabled="form.tiers.length >= 10" @click="addTier">
                       + 添加奖项
                     </button>
-                    <button v-if="prizeOptions.length === 0" type="button" class="btn btn-ghost btn-xs" @click="goToPrizes">
-                      去创建奖品
+                    <button v-if="prizeOptions.length === 0" type="button" class="btn btn-primary btn-xs" :disabled="quickPrizeLoading" @click="quickCreatePrize">
+                      {{ quickPrizeLoading ? '创建中…' : '⚡ 快速创建奖品' }}
                     </button>
+                    <button v-else type="button" class="btn btn-ghost btn-xs" @click="goToPrizes">管理奖品</button>
                     <small class="field-hint">最多 10 个奖项，中奖名额总和不能超过参与人数</small>
                   </div>
                 </div>
@@ -1518,6 +1519,37 @@ function removeTier(idx: number) {
 
 function goToPrizes() {
   void router.push('/admin/prizes')
+}
+
+const quickPrizeLoading = ref(false)
+
+/** 在活动表单内一键创建默认奖品 + 自动生成码，消除跳转到奖品管理页面的流程断裂 */
+async function quickCreatePrize() {
+  quickPrizeLoading.value = true
+  try {
+    // 1. 创建默认奖品
+    const prizeName = (form.value.title || '抽奖活动') + ' 奖品'
+    const prizeData = await adminRequest<{ id: string }>('/api/admin/prizes', {
+      method: 'POST',
+      body: JSON.stringify({ name: prizeName, prizeType: 'code', valueText: '' }),
+    })
+    // 2. 自动生成 10 个码
+    await adminRequest(`/api/admin/prizes/${prizeData.id}/codes/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ count: 10, codeLength: 8 }),
+    })
+    // 3. 刷新奖品下拉
+    await fetchPrizeOptions()
+    // 4. 自动选中新奖品到第一个奖项
+    if (form.value.tiers.length > 0 && !form.value.tiers[0]!.prizeId) {
+      form.value.tiers[0]!.prizeId = prizeData.id
+    }
+    showToast(`已创建奖品「${prizeName}」并生成 10 个码`, 'success')
+  } catch (err: any) {
+    showToast(err?.message || '快速创建失败，请手动创建', 'error')
+  } finally {
+    quickPrizeLoading.value = false
+  }
 }
 
 /** 后端约束：drawTime > endTime > startTime */

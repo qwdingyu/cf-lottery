@@ -333,10 +333,6 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   const body = await c.req.json<{ email: string; submission?: Record<string, unknown> }>();
   const email = String(body.email || "").trim().toLowerCase();
 
-  if (!email || !isValidEmail(email)) {
-    return fail(c, "请输入有效的邮箱地址", 400);
-  }
-
   // 查询活动
   const [draw] = await db
     .select()
@@ -347,7 +343,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "open") return fail(c, "活动已结束", 400);
 
-  // ── registered 模式：需注册登录才能参与 ──
+  // ── registered 模式：需注册登录才能参与，跳过邮箱校验 ──
   let registeredUserId: string | undefined;
   if (draw.participationMode === "registered") {
     let token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
@@ -358,18 +354,22 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
       if (payload?.sub) registeredUserId = payload.sub;
     } catch { /* JWT 无效 */ }
     if (!registeredUserId) return fail(c, "登录已过期，请重新登录", 401);
+  } else {
+    // open/roster/password/invite_code 模式仍需邮箱校验
+    if (!email || !isValidEmail(email)) return fail(c, "请输入有效的邮箱地址", 400);
   }
 
-  // 检查是否已参与
+  // 检查是否已参与（registered 模式用 userId，其他模式用 email）
+  const identityValue = registeredUserId || email;
   const [existing] = await db
     .select({ id: lotteryEntries.id })
     .from(lotteryEntries)
-    .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.identityValue, email)))
+    .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.identityValue, identityValue)))
     .limit(1);
   if (existing) return fail(c, "您已参与此活动", 409);
 
-  // 校验参与模式
-  if (draw.participationMode === "roster") {
+  // 校验参与模式（registered 与 roster/password/invite_code 互斥，由参与模式控制）
+  if (!registeredUserId && draw.participationMode === "roster") {
     const [inRoster] = await db
       .select({ id: lotteryRosterMembers.id })
       .from(lotteryRosterMembers)
