@@ -39,6 +39,22 @@
       </div>
     </div>
 
+    <!-- 营销 ROI 卡片（近 30 天） -->
+    <div v-if="roi.totalConversions > 0" class="stats-row" style="margin-top: 0;">
+      <div class="stat-card stat-card-roi">
+        <span class="stat-value">{{ roi.totalConversions }}</span>
+        <span class="stat-label">近 30 天转化</span>
+      </div>
+      <div class="stat-card stat-card-roi">
+        <span class="stat-value">{{ formatAmountCents(roi.totalAmountCents) }}</span>
+        <span class="stat-label">近 30 天 GMV</span>
+      </div>
+      <div v-for="item in roi.byType" :key="item.type" class="stat-card stat-card-roi">
+        <span class="stat-value">{{ item.count }}<small v-if="item.amountCents > 0" style="font-size:11px;color:var(--tg-hint)"> / {{ formatAmountCents(item.amountCents) }}</small></span>
+        <span class="stat-label">{{ conversionLabel(item.type) }}</span>
+      </div>
+    </div>
+
     <!-- 待办事项：提示运营者需要处理的事项 -->
     <div v-if="hasTodos" class="todo-panel" role="region" aria-label="待办事项">
       <div class="todo-panel-title">📋 待办事项</div>
@@ -129,6 +145,16 @@ const stats = ref({
 const recentDraws = ref<any[]>([])
 /** 待办事项（待开奖/通知失败） */
 const todos = ref({ dueDraws: 0, failedNotifications: 0 })
+const roi = ref<{ totalConversions: number; totalAmountCents: number; byType: Array<{ type: string; count: number; amountCents: number }> }>({ totalConversions: 0, totalAmountCents: 0, byType: [] })
+
+function formatAmountCents(cents: number): string {
+  if (cents <= 0) return '¥0'
+  return '¥' + (cents / 100).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+}
+function conversionLabel(type: string): string {
+  const map: Record<string, string> = { purchase: '购买', registration: '注册', coupon_redeemed: '券核销', lead_qualified: '线索', offline_redeemed: '线下核销', custom: '自定义' }
+  return map[type] || type
+}
 const hasTodos = computed(() => todos.value.dueDraws > 0 || todos.value.failedNotifications > 0)
 
 const planLabelMap: Record<string, string> = {
@@ -194,6 +220,8 @@ async function loadData() {
       dueDraws: dashboardData?.dueCount ?? 0,
       failedNotifications: dashboardData?.failedNotifyCount ?? 0,
     }
+    // 营销 ROI 数据
+    roi.value = dashboardData?.roi ?? { totalConversions: 0, totalAmountCents: 0, byType: [] }
   } catch (err: any) {
     showToast(err.message || '加载失败', 'error')
   }

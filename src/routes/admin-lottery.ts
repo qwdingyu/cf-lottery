@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions, externalConversions } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
   createDraw,
@@ -219,6 +219,33 @@ adminLotteryRoute.get("/dashboard", async (c) => {
       eq(lotteryWinners.notificationStatus, "failed"),
     ));
 
+  // 营销 ROI 汇总（近 30 天外部转化数据）
+  const roiCutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  const [roiRow] = await db
+    .select({
+      totalConversions: sql<number>`COUNT(*)`,
+      totalAmountCents: sql<number>`COALESCE(SUM(${externalConversions.amountCents}), 0)`,
+    })
+    .from(externalConversions)
+    .where(and(
+      eq(externalConversions.tenantId, tenantId),
+      sql`${externalConversions.occurredAt} >= ${roiCutoff}`,
+    ));
+
+  // 按转化类型分组统计
+  const conversionTypeRows = await db
+    .select({
+      conversionType: externalConversions.conversionType,
+      count: sql<number>`COUNT(*)`,
+      amountCents: sql<number>`COALESCE(SUM(${externalConversions.amountCents}), 0)`,
+    })
+    .from(externalConversions)
+    .where(and(
+      eq(externalConversions.tenantId, tenantId),
+      sql`${externalConversions.occurredAt} >= ${roiCutoff}`,
+    ))
+    .groupBy(externalConversions.conversionType);
+
   return ok(c, {
     openCount: Number(openRow?.count || 0),
     draftCount: Number(draftRow?.count || 0),
@@ -228,6 +255,15 @@ adminLotteryRoute.get("/dashboard", async (c) => {
     plan: tenantUsage.plan,
     limits: tenantUsage.limits,
     usage: tenantUsage.usage,
+    roi: {
+      totalConversions: Number(roiRow?.totalConversions || 0),
+      totalAmountCents: Number(roiRow?.totalAmountCents || 0),
+      byType: conversionTypeRows.map(r => ({
+        type: r.conversionType,
+        count: Number(r.count),
+        amountCents: Number(r.amountCents),
+      })),
+    },
   });
 });
 
