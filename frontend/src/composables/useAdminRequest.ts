@@ -1,8 +1,9 @@
 /**
  * 管理后台 API 请求工具
  *
- * 统一所有 L2/L3 管理页面的 fetch 调用，避免 8 个视图文件各自复制 adminRequest 函数。
+ * 统一所有 L2/L3 管理页面的 fetch 调用，避免各视图文件各自复制 adminRequest 函数。
  * 使用 readAdminToken() 确保 token 读取逻辑一致（含过期检查）。
+ * 统一处理 401：token 过期/失效时清除登录态并跳转登录页。
  */
 import { readAdminToken } from './useAdminAuth'
 
@@ -23,6 +24,7 @@ function buildAdminHeaders(options?: RequestInit): Headers {
  * 发送带 JWT 认证的 API 请求。
  *
  * 自动附加 Authorization: Bearer <token> 头，并统一解析服务端 `{ ok, message }` 响应。
+ * 统一处理 401：清除本地 token 并跳转 /admin/login（带 redirect 参数，登录后回到原页）。
  * 这里同时支持 JSON 和 FormData，避免媒体上传页面重新复制一套 token/fetch 逻辑。
  *
  * @param path    API 路径（如 /api/admin/draws）
@@ -33,6 +35,18 @@ function buildAdminHeaders(options?: RequestInit): Headers {
 export async function adminRequest<T = any>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...options, headers: buildAdminHeaders(options) })
   const data = await res.json().catch(() => ({}))
+
+  // 401：登录态已失效（token 过期/被吊销），统一清除并跳转登录
+  if (res.status === 401) {
+    try { localStorage.removeItem('admin_token') } catch { /* 忽略 */ }
+    try { localStorage.removeItem('platform_role') } catch { /* 忽略 */ }
+    const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+    if (!window.location.pathname.startsWith('/admin/login')) {
+      window.location.href = `/admin/login?redirect=${redirect}`
+    }
+    throw new Error(data.message || '登录已过期，请重新登录')
+  }
+
   if (!res.ok || !data.ok) throw new Error(data.message || `请求失败: ${res.status}`)
   return data as T
 }

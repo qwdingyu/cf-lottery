@@ -555,6 +555,12 @@
           <template v-else>
             <div class="result-line">😊 感谢参与，本次活动未获得奖品</div>
           </template>
+          <!-- 未中奖 CTA：运营者配置的导流卡片（安慰奖和未中奖都展示） -->
+          <div v-if="!myResultData.won && getResultCta(myResultDraw, 'after_loss')" class="result-cta-card">
+            <a :href="getResultCta(myResultDraw, 'after_loss')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
+              {{ getResultCta(myResultDraw, 'after_loss')!.title || '查看详情' }}
+            </a>
+          </div>
           <button class="btn btn-ghost" @click="showMyResultModal = false">知道了</button>
         </div>
       </div>
@@ -910,6 +916,15 @@ function countdownText(draw: LotteryDraw): string {
   parts.push(`${minutes}${t('lottery.minutes')}`)
   if (days === 0) parts.push(`${seconds}${t('lottery.seconds')}`)
   return parts.join(' ')
+}
+
+/** 从活动 promotionConfig 中提取指定状态的 CTA 配置 */
+function getResultCta(draw: LotteryDraw | null, key: 'after_win' | 'after_loss'): { url: string; title: string } | null {
+  if (!draw) return null
+  const pc = (draw as any)?.promotionConfig
+  const cta = pc?.ctas?.[key]
+  if (cta?.url) return { url: cta.url, title: cta.title || '' }
+  return null
 }
 
 /** 活动是否已结束（drawn/cancelled，或 open 态但 drawTime 已过） */
@@ -1881,6 +1896,8 @@ onUnmounted(() => {
 .result-error { font-size: 13px; color: #ef4444; margin: 0; }
 .result-detail { display: flex; flex-direction: column; gap: 12px; align-items: center; }
 .result-line { font-size: 16px; }
+.result-cta-card { margin-top: 8px; }
+.result-cta-card .btn { display: inline-block; }
 .result-code-block { display: flex; flex-direction: column; gap: 4px; align-items: center; background: var(--tg-secondary-bg, #151b28); padding: 12px; border-radius: 8px; width: 100%; }
 .result-code-label { font-size: 12px; color: var(--tg-hint, #9aa4b2); }
 .result-code { font-size: 16px; font-weight: 700; color: var(--admin-accent, #f59e0b); cursor: pointer; word-break: break-all; }

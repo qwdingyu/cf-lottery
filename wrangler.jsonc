@@ -35,12 +35,12 @@
     "crons": ["*/5 * * * *"]
   },
 
-  // R2 图片存储：奖品图、活动图等公开媒体。
-  // 免费层目标是少量运营图片；不要在当前阶段引入媒体库、裁剪、批量上传或用户侧上传。
+  // R2 图片存储：奖品图、活动海报等媒体文件。
+  // 当前沿用 cf-shop 的 R2 bucket（cf-shop-public-media），统一管理跨项目静态资源。
   "r2_buckets": [
     {
       "binding": "LOTTERY_MEDIA",
-      "bucket_name": "cf-lottery-media"
+      "bucket_name": "cf-shop-public-media"
     }
   ],
 
