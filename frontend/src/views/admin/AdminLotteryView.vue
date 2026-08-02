@@ -984,17 +984,50 @@
     <!-- 海报弹窗 -->
     <AdminModal v-model="showPosterModal" title="活动海报" max-width="500px">
       <div class="poster-modal-body">
-        <div class="poster-canvas-wrap">
-          <canvas ref="posterCanvasRef" class="poster-canvas" :width="posterWidth" :height="posterHeight" />
+        <!-- 海报预览：显示已生成的 PNG（或加载中） -->
+        <div class="poster-preview-wrap">
+          <img v-if="posterDataUrl" :src="posterDataUrl" alt="活动海报" class="poster-preview" />
+          <div v-else class="poster-loading">{{ posterGenerating ? '生成中…' : '加载中…' }}</div>
         </div>
         <div class="poster-actions">
-          <button class="btn btn-primary btn-sm" :disabled="posterGenerating" @click="handleDownloadPoster">
-            {{ posterGenerating ? '生成中…' : '下载海报' }}
+          <button class="btn btn-primary btn-sm" :disabled="posterGenerating || !posterDataUrl" @click="handleDownloadPoster">
+            下载海报
           </button>
           <button class="btn btn-ghost btn-sm" @click="showPosterModal = false">关闭</button>
         </div>
       </div>
     </AdminModal>
+
+    <!-- 海报模板（隐藏 DOM，html-to-image 截图用） -->
+    <div v-show="showPosterModal" ref="posterDomRef" class="poster-template" aria-hidden="true">
+      <div class="poster-template-bg">
+        <div class="poster-template-orb poster-template-orb-1"></div>
+        <div class="poster-template-orb poster-template-orb-2"></div>
+        <div class="poster-template-orb poster-template-orb-3"></div>
+      </div>
+      <div class="poster-template-content">
+        <div class="poster-brand">{{ posterPlatformName }}</div>
+        <div class="poster-kind">{{ posterKindLabel }}</div>
+        <h2 class="poster-title">{{ (posterDrawData?.title || '活动').slice(0, 18) }}</h2>
+
+        <div class="poster-prizes" v-if="posterPrizeList.length > 0">
+          <div v-for="(p, i) in posterPrizeList.slice(0, 3)" :key="i" class="poster-prize-row">
+            <span class="poster-prize-medal">{{ ['🏆','🥈','🥉'][i] || '🎁' }}</span>
+            <span class="poster-prize-name">{{ p }}</span>
+          </div>
+        </div>
+        <div v-else class="poster-prizes-empty">🎁 惊喜大奖等你来</div>
+
+        <div class="poster-time" v-if="posterTimeText">{{ posterTimeText }}</div>
+
+        <div class="poster-qr-wrap">
+          <img v-if="posterQrImageUrl" :src="posterQrImageUrl" alt="活动二维码" class="poster-qr" />
+          <div class="poster-qr-hint">长按识别二维码<br />立即参与</div>
+        </div>
+
+        <div class="poster-footer">由抽奖平台提供技术支持</div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1007,6 +1040,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
+import { toPng } from 'html-to-image'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
@@ -1201,11 +1235,44 @@ const showQrModal = ref(false)
 const qrImageUrl = ref('')
 const showPosterModal = ref(false)
 const posterGenerating = ref(false)
-const posterCanvasRef = ref<HTMLCanvasElement | null>(null)
-const posterWidth = 400
-const posterHeight = 560
+const posterDomRef = ref<HTMLDivElement | null>(null)
+const posterDataUrl = ref('')
+const posterQrImageUrl = ref('')
 const posterDrawData = ref<any>(null)
 const qrDrawUrl = ref('')
+// ── 海报模板数据（computed 派生，供 HTML 模板渲染） ──
+const posterPlatformName = '抽奖平台'
+const posterKindLabel = computed(() => {
+  const map: Record<string, string> = {
+    lottery: '抽奖', signup_chain: '报名接龙', claim: '资料领取',
+    survey: '问卷调研', vote: '投票评选', checkin: '每日签到',
+    approval: '审核申请', reservation: '限量预约',
+  }
+  return map[posterDrawData.value?.activityKind || 'lottery'] || '活动'
+})
+const posterPrizeList = computed(() => {
+  // 从活动配置的奖项中提取奖品名（用于海报展示，增强吸引力）
+  const tiers = posterDrawData.value?.tiers
+  if (Array.isArray(tiers)) {
+    return tiers.map((t: any) => t.prizeName || t.tierName).filter(Boolean)
+  }
+  return []
+})
+const posterTimeText = computed(() => {
+  const start = posterDrawData.value?.startTime
+  const end = posterDrawData.value?.endTime
+  if (start && end) return `${formatDate(start)} ~ ${formatDate(end)}`
+  return ''
+})
+// 二维码/海报 URL 缓存：drawId -> { url, qrImageUrl }
+// 为什么缓存：二维码 URL 是确定性字符串（依赖 publicSlug），列表加载时预计算，
+// 打开弹窗直接复用，避免每次点开都重新拼接/请求，节省 Cloudflare Free 资源。
+const qrUrlMap = new Map<string, { url: string; qrImageUrl: string }>()
+// 海报 dataURL 缓存：drawId -> dataURL
+// 首次生成后缓存，同一活动再次打开直接显示，避免重复 Canvas 绘制 + 远程图片加载。
+const posterCache = new Map<string, string>()
+// 缓存上限：防止活动很多时内存膨胀（Worker/浏览器内存有限）
+const POSTER_CACHE_LIMIT = 30
 const winners = ref<LotteryWinner[]>([])
 const winnersLoading = ref(false)
 const analyticsLoading = ref(false)
@@ -1805,9 +1872,19 @@ function handleOpenPublic(draw: LotteryDraw) {
 
 /** 生成二维码 */
 function handleShowQrCode(draw: LotteryDraw) {
-  const url = `${window.location.origin}/lottery/${draw.publicSlug}`
-  qrDrawUrl.value = url
-  qrImageUrl.value = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`
+  // 复用预计算缓存（loadData 时生成），避免每次点开重新拼接
+  const cached = qrUrlMap.get(draw.id) || {
+    url: `${window.location.origin}/lottery/${draw.publicSlug}`,
+    qrImageUrl: '',
+  }
+  // 兜底：缓存未命中时即时计算
+  if (!cached.qrImageUrl) {
+    cached.url = `${window.location.origin}/lottery/${draw.publicSlug}`
+    cached.qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(cached.url)}`
+    qrUrlMap.set(draw.id, cached)
+  }
+  qrDrawUrl.value = cached.url
+  qrImageUrl.value = cached.qrImageUrl
   showQrModal.value = true
 }
 
@@ -1825,131 +1902,79 @@ function handleCopyQrLink() {
 
 /* ── 海报生成 ──────────────────────────────────────────── */
 
-/** 生成活动海报 */
+/** 生成活动海报
+ *
+ * 性能优化：海报 dataURL 缓存在内存 Map 中（posterCache），
+ * 同一活动再次打开直接显示缓存，避免重复 Canvas 绘制 + 远程二维码图片加载，
+ * 节省 Cloudflare Free 资源（CPU/请求）。
+ * 缓存超过 POSTER_CACHE_LIMIT 时清空最旧的，防止内存膨胀。
+ */
 async function handleShowPoster(draw: LotteryDraw) {
   posterDrawData.value = draw
-  // 设置二维码链接
-  const origin = window.location.origin
-  const url = `${origin}/lottery/${draw.publicSlug}`
-  qrDrawUrl.value = url
+  // 复用预计算二维码缓存（loadData 时生成）
+  const cachedQr = qrUrlMap.get(draw.id) || {
+    url: `${window.location.origin}/lottery/${draw.publicSlug}`,
+    qrImageUrl: '',
+  }
+  if (!cachedQr.qrImageUrl) {
+    cachedQr.url = `${window.location.origin}/lottery/${draw.publicSlug}`
+    cachedQr.qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(cachedQr.url)}`
+    qrUrlMap.set(draw.id, cachedQr)
+  }
+  qrDrawUrl.value = cachedQr.url
+  posterQrImageUrl.value = cachedQr.qrImageUrl
+
   showPosterModal.value = true
+  // 命中缓存：直接显示，无需重新生成
+  const cached = posterCache.get(draw.id)
+  if (cached) {
+    posterDataUrl.value = cached
+    return
+  }
   posterGenerating.value = true
-  // 等待 DOM 渲染后生成海报
+  // 等待 DOM 渲染后截图海报
   await nextTick()
-  await generatePoster(draw)
+  await generatePosterFromDom()
+  // 生成成功则缓存（防止内存膨胀，超出上限清最旧）
+  if (posterDataUrl.value) {
+    if (posterCache.size >= POSTER_CACHE_LIMIT) {
+      const oldestKey = posterCache.keys().next().value
+      if (oldestKey !== undefined) posterCache.delete(oldestKey)
+    }
+    posterCache.set(draw.id, posterDataUrl.value)
+  }
   posterGenerating.value = false
 }
 
-/** 用 Canvas 绘制海报 */
-async function generatePoster(draw: LotteryDraw) {
-  const canvas = posterCanvasRef.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-
-  const W = posterWidth
-  const H = posterHeight
-  const platformName = '抽奖平台'
-
-  // 清空画布
-  ctx.clearRect(0, 0, W, H)
-
-  // 背景渐变
-  const gradient = ctx.createLinearGradient(0, 0, 0, H)
-  gradient.addColorStop(0, '#1a1a2e')
-  gradient.addColorStop(0.5, '#16213e')
-  gradient.addColorStop(1, '#0f3460')
-  ctx.fillStyle = gradient
-  ctx.fillRect(0, 0, W, H)
-
-  // 装饰线条
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)'
-  ctx.lineWidth = 1
-  for (let i = 0; i < 5; i++) {
-    ctx.beginPath()
-    ctx.moveTo(0, i * 120 + 30)
-    ctx.lineTo(W, i * 120 + 30)
-    ctx.stroke()
+/**
+ * 从海报模板 DOM 生成 PNG 海报（替代 Canvas 绘制）。
+ *
+ * 为什么改用 HTML 模板：Canvas 绘制排版能力有限（简单文字堆叠），
+ * 且无法直接嵌入远程二维码图片（跨域污染画布导致无法导出）。
+ * HTML/CSS 模板可做出精美排版（渐变/圆角/卡片/奖品展示），
+ * 二维码用 <img> 标签直接显示，html-to-image 截图时保留。
+ */
+async function generatePosterFromDom() {
+  const node = posterDomRef.value
+  if (!node) return
+  try {
+    posterDataUrl.value = await toPng(node, {
+      pixelRatio: 2,  // 2x 输出保证清晰度（手机屏幕/印刷可用）
+      cacheBust: true,
+    })
+  } catch (err) {
+    console.warn('[poster] html-to-image failed:', err)
+    posterDataUrl.value = ''
   }
-
-  // 顶部品牌标识
-  ctx.fillStyle = '#f59e0b'
-  ctx.font = 'bold 18px sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillText(platformName, W / 2, 40)
-
-  // 分隔线
-  ctx.strokeStyle = '#f59e0b'
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.moveTo(W / 2 - 40, 52)
-  ctx.lineTo(W / 2 + 40, 52)
-  ctx.stroke()
-
-  // 活动标题
-  ctx.fillStyle = '#ffffff'
-  ctx.font = 'bold 22px sans-serif'
-  ctx.textAlign = 'center'
-  const title = draw.title || '活动'
-  const maxTitleWidth = W - 60
-  let displayTitle = title
-  if (ctx.measureText(title).width > maxTitleWidth) {
-    displayTitle = title.slice(0, 12) + '…'
-  }
-  ctx.fillText(displayTitle, W / 2, 95)
-
-  // 活动类型标签
-  const kindMap: Record<string, string> = {
-    lottery: '抽奖', signup_chain: '报名接龙', claim: '资料领取',
-    survey: '问卷调研', vote: '投票评选', checkin: '每日签到',
-    approval: '审核申请', reservation: '限量预约',
-  }
-  const kindLabel = kindMap[draw.activityKind || 'lottery'] || '活动'
-  ctx.fillStyle = '#f59e0b'
-  ctx.font = '13px sans-serif'
-  ctx.fillText(kindLabel, W / 2, 120)
-
-  // 活动时间
-  ctx.fillStyle = '#9aa4b2'
-  ctx.font = '12px sans-serif'
-  const startTime = draw.startTime ? formatDate(draw.startTime) : ''
-  const endTime = draw.endTime ? formatDate(draw.endTime) : ''
-  if (startTime && endTime) {
-    ctx.fillText(`${startTime} ~ ${endTime}`, W / 2, 150)
-  }
-
-  // 投放信息区域：不把远程二维码图片绘制进 canvas，避免跨域污染导致海报无法下载。
-  const qrSize = 160
-  const qrX = (W - qrSize) / 2
-  const qrY = 180
-  ctx.fillStyle = 'rgba(255,255,255,0.08)'
-  ctx.fillRect(qrX, qrY, qrSize, qrSize)
-  ctx.fillStyle = '#ffffff'
-  ctx.font = 'bold 16px sans-serif'
-  ctx.fillText('参与链接', W / 2, qrY + 46)
-  ctx.fillStyle = '#cbd5e1'
-  ctx.font = '12px monospace'
-  const linkText = qrDrawUrl.value || publicShareUrl(draw.publicSlug)
-  ctx.fillText(linkText.length > 34 ? `${linkText.slice(0, 34)}...` : linkText, W / 2, qrY + 84)
-  ctx.fillText('二维码请在活动列表单独下载', W / 2, qrY + 118)
-
-  // 二维码提示
-  ctx.fillStyle = '#9aa4b2'
-  ctx.font = '12px sans-serif'
-  ctx.fillText('扫码参与活动', W / 2, qrY + qrSize + 25)
-
-  // 底部信息
-  ctx.fillStyle = 'rgba(255,255,255,0.4)'
-  ctx.font = '10px sans-serif'
-  ctx.fillText('由抽奖平台提供技术支持', W / 2, H - 20)
 }
 
-/** 下载海报 */
 async function handleDownloadPoster() {
-  const canvas = posterCanvasRef.value
-  if (!canvas) return
+  if (!posterDataUrl.value) {
+    showToast('海报未生成，请稍候', 'error')
+    return
+  }
   const a = document.createElement('a')
-  a.href = canvas.toDataURL('image/png')
+  a.href = posterDataUrl.value
   a.download = 'poster.png'
   a.click()
   showToast('海报已下载', 'success')
@@ -2121,6 +2146,17 @@ async function loadData() {
     })
     if (sequence !== loadSequence) return
     draws.value = data.draws || []
+    // 预计算每个活动的二维码 URL（纯字符串拼接，零成本），打开弹窗直接复用
+    const origin = window.location.origin
+    for (const d of draws.value) {
+      if (!qrUrlMap.has(d.id)) {
+        const url = `${origin}/lottery/${d.publicSlug}`
+        qrUrlMap.set(d.id, {
+          url,
+          qrImageUrl: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`,
+        })
+      }
+    }
     pagination.setTotal(data.total || 0)
   } catch (e: any) {
     if (sequence !== loadSequence) return
@@ -2633,9 +2669,62 @@ onMounted(() => {
 
 /* 海报弹窗 */
 .poster-modal-body { display: flex; flex-direction: column; align-items: center; gap: 16px; }
-.poster-canvas-wrap { border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
-.poster-canvas { display: block; width: 100%; height: auto; }
+.poster-preview-wrap { border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.3); width: 100%; max-width: 360px; }
+.poster-preview { display: block; width: 100%; height: auto; }
+.poster-loading { display: flex; align-items: center; justify-content: center; height: 400px; color: var(--tg-hint, #9aa4b2); font-size: 14px; }
 .poster-actions { display: flex; gap: 8px; }
+
+/* 海报模板（html-to-image 截图目标） */
+.poster-template {
+  position: fixed; left: -10000px; top: 0; /* 移出视口避免闪现，v-show 控制显示 */
+  width: 400px; height: 560px;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: linear-gradient(160deg, #0f0c29 0%, #302b63 55%, #24243e 100%);
+  color: #fff;
+}
+.poster-template-bg { position: absolute; inset: 0; overflow: hidden; }
+.poster-template-orb {
+  position: absolute; border-radius: 50%; filter: blur(40px); opacity: 0.45;
+}
+.poster-template-orb-1 { width: 220px; height: 220px; background: #f59e0b; top: -60px; right: -60px; }
+.poster-template-orb-2 { width: 160px; height: 160px; background: #ef4444; bottom: 80px; left: -50px; }
+.poster-template-orb-3 { width: 120px; height: 120px; background: #3b82f6; bottom: -30px; right: 40px; }
+.poster-template-content {
+  position: relative; z-index: 1; height: 100%;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 32px 24px 20px; box-sizing: border-box; text-align: center;
+}
+.poster-brand { font-size: 15px; font-weight: 700; color: #f59e0b; letter-spacing: 2px; margin-bottom: 6px; }
+.poster-kind {
+  font-size: 11px; color: #fbbf24; background: rgba(245,158,11,0.15);
+  border: 1px solid rgba(245,158,11,0.4); border-radius: 20px;
+  padding: 3px 14px; margin-bottom: 16px;
+}
+.poster-title {
+  font-size: 26px; font-weight: 800; line-height: 1.3; margin: 0 0 18px;
+  word-break: break-all;
+}
+.poster-prizes {
+  display: flex; flex-direction: column; gap: 8px; width: 100%;
+  background: rgba(255,255,255,0.07); border-radius: 12px;
+  padding: 14px; margin-bottom: 16px; box-sizing: border-box;
+}
+.poster-prize-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.poster-prize-medal { font-size: 18px; }
+.poster-prize-name { font-weight: 600; }
+.poster-prizes-empty { font-size: 15px; color: #fbbf24; margin-bottom: 16px; font-weight: 600; }
+.poster-time { font-size: 12px; color: rgba(255,255,255,0.7); margin-bottom: 18px; }
+.poster-qr-wrap {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  width: 100%;
+}
+.poster-qr {
+  width: 170px; height: 170px; border-radius: 12px;
+  background: #fff; padding: 8px; box-sizing: border-box;
+}
+.poster-qr-hint { font-size: 12px; color: rgba(255,255,255,0.8); line-height: 1.5; }
+.poster-footer { font-size: 10px; color: rgba(255,255,255,0.4); margin-top: 8px; }
 
 .analytics-modal-body {
   display: flex;
