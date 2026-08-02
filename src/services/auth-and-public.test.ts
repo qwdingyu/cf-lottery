@@ -146,55 +146,42 @@ describe("用户注册数据完整性", () => {
     expect(data.tenantId).toBe("");
   });
 
-  it("create-tenant 创建租户后返回新 JWT", async () => {
+  it("create-tenant 完整流程：创建租户 → 重新登录不再 needsTenant", async () => {
     const app = createAuthTestApp();
-    // 注册+验证
+    // 1. 注册+验证
     await app.request("/auth/register", {
       method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.11" },
-      body: JSON.stringify({ username: "ct1", password: "Test12345", email: "ct1@test.com" }),
+      body: JSON.stringify({ username: "createflow", password: "Test12345", email: "cf@test.com" }),
     }, TEST_ENV);
-    await db.update(users).set({ emailVerified: 1 }).where(eq(users.username, "ct1"));
-    // 登录获取 token
-    const loginRes = await app.request("/auth/login", {
+    await db.update(users).set({ emailVerified: 1 }).where(eq(users.username, "createflow"));
+    // 2. 登录 → needsTenant
+    const loginRes1 = await app.request("/auth/login", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "ct1", password: "Test12345" }),
+      body: JSON.stringify({ username: "createflow", password: "Test12345" }),
     }, TEST_ENV);
-    const loginData = await loginRes.json() as any;
-    expect(loginData.needsTenant).toBe(true);
+    const loginData1 = await loginRes1.json() as any;
+    expect(loginData1.needsTenant).toBe(true);
 
-    // 创建租户
-    const res = await app.request("/auth/create-tenant", {
+    // 3. 创建租户 → 返回新 JWT
+    const createRes = await app.request("/auth/create-tenant", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + loginData.token },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + loginData1.token },
       body: JSON.stringify({ name: "我的团队" }),
     }, TEST_ENV);
-    const data = await res.json() as any;
-    expect(data.ok).toBe(true);
-    expect(data.name).toBe("我的团队");
-    expect(data.token).toBeTruthy();
-    expect(data.tenantId).toBeTruthy();
-    // 新的 JWT 应该带租户 ID
-    expect(data.token).not.toBe(loginData.token);
-  });
+    const createData = await createRes.json() as any;
+    expect(createData.ok).toBe(true);
+    expect(createData.name).toBe("我的团队");
+    expect(createData.token).toBeTruthy();
+    expect(createData.token).not.toBe(loginData1.token);
 
-  it("create-tenant 后重新登录不再 needsTenant", async () => {
-    const app = createAuthTestApp();
-    // ct1 由上一个测试创建，直接查用户
-    const [user] = await db.select().from(users).where(eq(users.username, "ct1")).limit(1);
-    if (!user) throw new Error("ct1 user not found - previous test may have failed");
-
-    const tenantId = crypto.randomUUID();
-    await db.insert(tenants).values({ id: tenantId, name: "ct1-team" });
-    await db.insert(tenantMembers).values({ tenantId, userId: user.id, role: "owner" });
-
-    // 重新登录
-    const res = await app.request("/auth/login", {
+    // 4. 重新登录 → needsTenant 为 false
+    const loginRes2 = await app.request("/auth/login", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "ct1", password: "Test12345" }),
+      body: JSON.stringify({ username: "createflow", password: "Test12345" }),
     }, TEST_ENV);
-    const data = await res.json() as any;
-    expect(data.needsTenant).toBe(false);
-    expect(data.tenants.length).toBeGreaterThanOrEqual(1);
+    const loginData2 = await loginRes2.json() as any;
+    expect(loginData2.needsTenant).toBe(false);
+    expect(loginData2.tenants.length).toBeGreaterThanOrEqual(1);
   });
 
   it("存量用户（有租户）登录 needsTenant=false", async () => {
