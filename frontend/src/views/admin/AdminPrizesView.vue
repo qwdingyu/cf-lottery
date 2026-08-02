@@ -175,13 +175,13 @@
     <!-- 查看码弹窗 -->
     <AdminModal v-model="showCodesModal" :title="'码池 - ' + (codesPrize?.name || '')" max-width="800px">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-        <select v-model="codesFilter" @change="loadCodes">
+        <select v-model="codesFilter" @change="loadCodes(true)">
           <option value="">全部状态</option>
           <option value="available">可用</option>
           <option value="issued">已发放</option>
         </select>
-        <span class="field-hint">可用 {{ totalAvailable }} / 已发放 {{ totalIssued }}</span>
-        <button class="btn btn-ghost btn-xs" :disabled="codesLoading" @click="loadCodes">刷新</button>
+        <span class="field-hint">共 {{ codesTotal }} 条（可用 {{ totalAvailable }} / 已发放 {{ totalIssued }}）</span>
+        <button class="btn btn-ghost btn-xs" :disabled="codesLoading" @click="loadCodes(true)">刷新</button>
       </div>
       <div v-if="codesLoading" class="skeleton-list">
         <div v-for="i in 5" :key="'sk' + i" class="skeleton-line" />
@@ -217,10 +217,16 @@
               <td>{{ c.issuedAt || '—' }}</td>
               <td class="col-actions">
                 <button class="btn btn-ghost btn-xs" @click="copyCode(c.code, c.secret)">复制</button>
+                <button v-if="c.status === 'available'" class="btn btn-ghost btn-xs" style="color:var(--tg-danger)" @click="deleteCode(c)">删除</button>
               </td>
             </tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="codesTotal > 50" style="margin-top:8px;display:flex;gap:8px;align-items:center;justify-content:center">
+        <button class="btn btn-ghost btn-xs" :disabled="codesPage <= 0" @click="codesPage--; loadCodes()">上一页</button>
+        <span class="field-hint">{{ codesPage * 50 + 1 }}-{{ Math.min((codesPage + 1) * 50, codesTotal) }} / {{ codesTotal }}</span>
+        <button class="btn btn-ghost btn-xs" :disabled="(codesPage + 1) * 50 >= codesTotal" @click="codesPage++; loadCodes()">下一页</button>
       </div>
     </AdminModal>
   </div>
@@ -246,6 +252,8 @@ const codesPrize = ref<any>(null)
 const codesList = ref<any[]>([])
 const codesLoading = ref(false)
 const codesFilter = ref('')
+const codesPage = ref(0)
+const codesTotal = ref(0)
 const totalAvailable = ref(0)
 const totalIssued = ref(0)
 const importPrize = ref<any>(null)
@@ -350,19 +358,25 @@ function showImport(prize: any) {
 async function showCodes(prize: any) {
   codesPrize.value = prize
   codesFilter.value = ''
+  codesPage.value = 0
   totalAvailable.value = 0
   totalIssued.value = 0
   showCodesModal.value = true
   await loadCodes()
 }
 
-async function loadCodes() {
+async function loadCodes(resetPage = false) {
   if (!codesPrize.value) return
+  if (resetPage) codesPage.value = 0
   codesLoading.value = true
   try {
-    const query = codesFilter.value ? `?status=${codesFilter.value}` : ''
-    const data = await adminRequest<any>(`/api/admin/prizes/${codesPrize.value.id}/codes${query}`)
+    const params = new URLSearchParams()
+    if (codesFilter.value) params.set('status', codesFilter.value)
+    params.set('limit', '50')
+    params.set('offset', String(codesPage.value * 50))
+    const data = await adminRequest<any>(`/api/admin/prizes/${codesPrize.value.id}/codes?${params}`)
     codesList.value = data.codes || []
+    codesTotal.value = data.total ?? 0
     totalAvailable.value = data.totalAvailable ?? 0
     totalIssued.value = data.totalIssued ?? 0
   } catch (err: any) {
@@ -379,6 +393,19 @@ async function copyCode(code: string, secret?: string) {
     showToast('已复制', 'success')
   } catch {
     showToast('复制失败，请手动选择复制', 'error')
+  }
+}
+
+async function deleteCode(code: any) {
+  if (!confirm(`确认删除卡密 ${code.code}？此操作不可恢复。`)) return
+  try {
+    await adminRequest(`/api/admin/prizes/codes/${code.id}`, { method: 'DELETE' })
+    showToast('已删除', 'success')
+    await loadCodes()
+    // 刷新奖品列表（更新码池余量）
+    await loadData()
+  } catch (err: any) {
+    showToast(err?.message || '删除失败', 'error')
   }
 }
 
@@ -405,6 +432,9 @@ async function handleImport() {
     })
     showToast(`成功导入 ${data.imported ?? codes.length} 个码${data.skipped ? `，跳过 ${data.skipped} 个重复码` : ''}`, 'success')
     showImportModal.value = false
+    await loadData()
+    // 自动打开码池查看
+    showCodes(importPrize.value)
   } catch (err: any) {
     showToast(err?.message || '导入失败', 'error')
   } finally {
@@ -440,7 +470,8 @@ async function handleGenerate() {
     })
     showToast(`成功生成 ${data.generated} 个码`, 'success')
     showImportModal.value = false
-    loadData()
+    await loadData()
+    showCodes(importPrize.value)
   } catch (err: any) {
     showToast(err?.message || '生成失败', 'error')
   } finally {

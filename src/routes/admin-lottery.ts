@@ -487,7 +487,12 @@ adminLotteryRoute.get("/prizes/:id/codes", async (c) => {
     .limit(limit)
     .offset(offset);
 
-  // 统计各状态数量
+  // 统计各状态数量 + 总数（用于分页）
+  const [totalCount] = await db
+    .select({ total: count() })
+    .from(prizeCodes)
+    .where(and(...conditions));
+
   const [availCount] = await db
     .select({ total: count() })
     .from(prizeCodes)
@@ -500,9 +505,35 @@ adminLotteryRoute.get("/prizes/:id/codes", async (c) => {
 
   return ok(c, {
     codes: rows,
+    total: Number(totalCount?.total || 0),
     totalAvailable: Number(availCount?.total || 0),
     totalIssued: Number(issuedCount?.total || 0),
   });
+});
+
+// ═════════════════════════════════════════════════════════
+// 删除单个奖品码（仅 available 状态可删）
+// ═════════════════════════════════════════════════════════
+
+adminLotteryRoute.delete("/prizes/codes/:codeId", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const codeId = c.req.param("codeId");
+
+  // 仅允许删除 available 状态的码，已发放的码保留审计线索
+  const result = await db
+    .delete(prizeCodes)
+    .where(and(
+      eq(prizeCodes.id, codeId),
+      eq(prizeCodes.tenantId, tenantId),
+      eq(prizeCodes.status, "available"),
+    ));
+
+  if ((result.rowsAffected ?? 0) === 0) {
+    return fail(c, "码不存在或已发放，无法删除", 404);
+  }
+
+  return ok(c, { deleted: true });
 });
 
 // ═════════════════════════════════════════════════════════
