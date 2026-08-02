@@ -446,10 +446,11 @@
               <label class="field-span-2">
                 <span>参与模式</span>
                 <select v-model="form.participationMode" @change="handleParticipationModeChange">
-                  <option value="open">公开参与（任何人都可参与）</option>
-                  <option value="roster">限定名单（仅导入的邮箱可参与）</option>
-                  <option value="password">访问密码（输入密码后可参与）</option>
-                  <option value="invite_code">邀请码（输入邀请码后可参与）</option>
+                  <option value="open">公开参与（邮箱验证码）</option>
+                  <option value="registered">需注册登录（JWT 认证）</option>
+                  <option value="roster">限定名单（仅导入邮箱）</option>
+                  <option value="password">访问密码</option>
+                  <option value="invite_code">邀请码</option>
                 </select>
               </label>
               <label class="field-span-2">

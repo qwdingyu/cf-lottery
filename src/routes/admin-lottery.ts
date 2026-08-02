@@ -46,7 +46,7 @@ import { parseActivityConfig } from "../lib/activity-config";
 export const adminLotteryRoute = new Hono<AppEnv>();
 
 const ACTIVITY_KINDS = new Set(["lottery", "signup_chain", "reservation", "vote", "survey", "checkin", "waitlist", "approval", "claim"]);
-const PARTICIPATION_MODES = new Set(["open", "roster", "password", "invite_code"]);
+const PARTICIPATION_MODES = new Set(["open", "roster", "password", "invite_code", "registered"]);
 const EXPERIENCE_TYPES = new Set([
   "submit",
   "wheel",
