@@ -5,8 +5,8 @@
       <p class="muted-text">输入平台发放的额度码，为当前租户增加活动次数或参与人数额度。</p>
 
       <form class="redeem-form" @submit.prevent="handleRedeem">
-        <label>
-          <span>额度码</span>
+        <label class="redeem-input-wrap">
+          <span class="redeem-input-label">额度码</span>
           <input
             v-model="code"
             type="text"
@@ -17,8 +17,9 @@
           />
           <small class="field-hint">兑换码只会作用于当前登录租户，不会展示平台码池。</small>
         </label>
-        <button class="btn btn-primary btn-sm" type="submit" :disabled="submitting">
-          {{ submitting ? '兑换中...' : '兑换' }}
+        <button class="btn btn-primary redeem-btn" type="submit" :disabled="submitting">
+          <span v-if="!submitting">🎟️ 兑换额度</span>
+          <span v-else>兑换中…</span>
         </button>
       </form>
     </section>
@@ -147,12 +148,69 @@ async function handleRedeem() {
 </script>
 
 <style scoped>
+/* 区块容器：卡片化视觉层次（此前 .section 未定义，页面扁平无层次） */
+.section {
+  background: var(--tg-secondary-bg, #151b28);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: var(--r-lg, 12px);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.section-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.muted-text {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--tg-hint, #9aa4b2);
+}
+
+/* 兑换表单：输入框 + 按钮一行，底部对齐 */
 .redeem-form {
   display: grid;
   grid-template-columns: minmax(220px, 420px) auto;
   gap: 12px;
   align-items: end;
   margin-top: 12px;
+}
+.redeem-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.redeem-input-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tg-text, #f0f2f5);
+}
+.redeem-form input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border, rgba(255,255,255,0.15));
+  background: var(--tg-bg, #1f2937);
+  color: var(--tg-text, #f0f2f5);
+  font-size: 14px;
+  font-family: monospace;
+  letter-spacing: 0.5px;
+}
+.redeem-form input:focus {
+  outline: none;
+  border-color: var(--admin-accent, #f59e0b);
+}
+
+/* 兑换按钮：加宽 + 图标，突出主操作 */
+.redeem-btn {
+  min-width: 140px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.redeem-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .quota-expiry {
@@ -162,6 +220,9 @@ async function handleRedeem() {
 @media (max-width: 720px) {
   .redeem-form {
     grid-template-columns: 1fr;
+  }
+  .redeem-btn {
+    width: 100%;
   }
 }
 </style>
