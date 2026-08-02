@@ -10,7 +10,7 @@ import { withDbTransaction } from "../db/client";
 import { fail, getDb, ok } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { requireAuth, requirePlatformMember, signJwt } from "../middleware/auth";
-import { tenants, platformMembers, users, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers } from "../db/schema";
+import { tenants, platformMembers, users, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
 import { dispatchWebhookDelivery } from "../services/lottery-service";
@@ -475,28 +475,29 @@ platformRoute.post("/webhook-deliveries/:id/retry", requirePlatformMember(["plat
   return ok(c, result);
 });
 
+// 平台数据统计/清理用表映射：表名（代码常量，白名单语义）→ drizzle schema 表对象。
+// 使用 ORM 代替手写 SQL（AGENTS.md 铁律），彻底消除拼接面；表对象来自 schema 定义，
+// 与数据库迁移保持单一事实源。
+const TABLE_MAP = {
+  users, tenants, tenantMembers, platformMembers,
+  lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers,
+  prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes,
+  lotteryBlacklist, emailAccessCodes, auditLogs, platformAuditLogs,
+  activityEvents, activityOutcomes, activitySubmissions, shareRecords,
+  externalConversions, apiKeys, webhookConfigs, webhookDeliveries,
+  couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig,
+} as const;
+
 /** 数据统计：各表行数概览（供 L3 数据清理页使用） */
 platformRoute.get("/data/stats", async (c) => {
   const db = getDb(c);
-  // 表名白名单（代码常量，非用户输入）：sql.raw 仅拼接白名单内的表名，无注入风险
-  const tables = [
-    "users", "tenants", "tenant_members", "platform_members",
-    "lottery_draws", "lottery_entries", "lottery_winners", "lottery_prize_tiers",
-    "prizes", "prize_codes", "lottery_roster_members", "lottery_invite_codes",
-    "lottery_blacklist", "email_access_codes",
-    "audit_logs", "platform_audit_logs", "activity_events", "activity_outcomes",
-    "activity_submissions", "share_records", "external_conversions",
-    "api_keys", "webhook_configs", "webhook_deliveries", "coupon_codes",
-    "redemption_codes", "redemption_records", "rate_limit_log", "system_config",
-  ];
   const stats: Record<string, number> = {};
-  for (const table of tables) {
+  for (const [tableName, schemaTable] of Object.entries(TABLE_MAP)) {
     try {
-      // 表名来自上方代码常量白名单（非用户输入），直接拼接 SQL 无注入风险
-      const result = await db.$client.execute({ sql: `SELECT COUNT(*) AS count FROM ${table}`, args: [] });
-      const row = result.rows?.[0] as { count?: number | bigint } | undefined;
-      stats[table] = Number(row?.count || 0);
-    } catch { stats[table] = -1; }
+      // ORM 计数：drizzle 编译为 SELECT COUNT(*) FROM <表>，表对象来自上方白名单
+      const [row] = await db.select({ total: count() }).from(schemaTable);
+      stats[tableName] = Number(row?.total ?? 0);
+    } catch { stats[tableName] = -1; }
   }
   return ok(c, { stats });
 });
@@ -516,9 +517,11 @@ platformRoute.post("/data/cleanup", requirePlatformMember(["platform_owner"]), a
   const actorUserId = c.get("userId") as string;
   const results: Record<string, number> = {};
   for (const table of targets) {
+    // 表名来自 allowed 白名单（代码常量），映射到 drizzle 表对象后 ORM 删除（无拼接面）
+    const schemaTable = TABLE_MAP[table as keyof typeof TABLE_MAP];
+    if (!schemaTable) continue;
     try {
-      // 表名来自 allowed 白名单（非用户输入），直接拼接 SQL 无注入风险
-      const result = await db.$client.execute({ sql: `DELETE FROM ${table}`, args: [] });
+      const result = await db.delete(schemaTable);
       results[table] = result.rowsAffected ?? 0;
     } catch { results[table] = -1; }
   }

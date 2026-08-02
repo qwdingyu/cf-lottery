@@ -2170,7 +2170,7 @@ export async function sendWinnerNotifications(
     const toEmail = winner.identityType === "user_id" ? (userEmailMap.get(winner.email) || "") : winner.email;
 
     try {
-      const result = await sendEmail(db, emailEnv, {
+      const result = await sendEmail(emailEnv, {
         to: toEmail,
         template: "lottery_winner",
         templateData: buildLotteryWinnerTemplateData({
@@ -2575,7 +2575,7 @@ export async function sendDrawReminders(
       for (const entry of entries) {
         if (!entry.identityValue.includes("@")) continue;
         try {
-          await sendEmail(db, emailEnv, {
+          await sendEmail(emailEnv, {
             to: entry.identityValue,
             template: "draw_reminder",
             templateData: { drawName: draw.title, shareUrl, reminderText },
@@ -2637,7 +2637,7 @@ export async function sendLoserConsolationEmails(
   for (const coupon of issuedCoupons) {
     if (!coupon.recipientEmail || !coupon.recipientEmail.includes("@")) continue;
     try {
-      await sendEmail(db, emailEnv, {
+      await sendEmail(emailEnv, {
         to: coupon.recipientEmail,
         template: "loser_consolation",
         templateData: {

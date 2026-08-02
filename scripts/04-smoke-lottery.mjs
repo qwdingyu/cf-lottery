@@ -7,11 +7,19 @@
  * 环境变量：
  *   BASE_URL     — 部署地址（默认 http://localhost:8787）
  *   ADMIN_USER   — 管理员用户名（默认 admin）
- *   ADMIN_PASS   — 管理员密码（默认 admin1234）
+ *   ADMIN_PASS   — 管理员密码（必填，脚本不内置默认口令，防止误连生产环境）
  */
 const BASE_URL = process.env.BASE_URL || "http://localhost:8787";
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
-const ADMIN_PASS = process.env.ADMIN_PASS || "admin1234";
+const ADMIN_PASS = process.env.ADMIN_PASS;
+
+// 安全（#21）：不内置默认弱口令。历史版本默认 admin1234，若 BASE_URL 误指生产
+// 即携带默认凭据执行写操作，风险高；现强制通过环境变量显式提供。
+if (!ADMIN_PASS) {
+  console.error("❌ 请通过环境变量 ADMIN_PASS 提供管理员密码，例如：");
+  console.error("   ADMIN_PASS='你的密码' node scripts/04-smoke-lottery.mjs");
+  process.exit(1);
+}
 
 let passed = 0;
 let failed = 0;

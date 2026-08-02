@@ -4,7 +4,7 @@
       <div class="sidebar-brand">{{ $t('app.title') }} - {{ $t('platformLayout.title') }}</div>
       <nav class="sidebar-nav">
         <a v-for="item in menuItems" :key="item.to" class="nav-item" :class="{ active: currentName === item.name }" :href="item.to" @click.prevent="onNavClick(item.to)">
-          <span class="nav-icon" v-html="item.icon" />
+          <span class="nav-icon">{{ item.icon }}</span>
           <span class="nav-label">{{ item.label }}</span>
         </a>
       </nav>
@@ -51,13 +51,13 @@ const { showToast } = useToast()
 
 /** 平台运营后台菜单（仅 L3 功能） */
 const menuItems = computed(() => [
-  { name: 'PlatformTenants', to: '/platform/tenants', label: t('platformLayout.menuTenants'), icon: '&#x1F3E2;' },
-  { name: 'PlatformMembers', to: '/platform/members', label: t('platformLayout.menuMembers'), icon: '&#x1F465;' },
-  { name: 'PlatformConfig', to: '/platform/config', label: t('platformLayout.menuConfig'), icon: '&#x2699;&#xFE0F;' },
-  { name: 'PlatformRedemptionCodes', to: '/platform/redemption-codes', label: t('platformLayout.menuRedemptionCodes'), icon: '&#x1F3B5;' },
-  { name: 'PlatformAuditLogs', to: '/platform/audit-logs', label: t('platformLayout.menuAuditLogs'), icon: '&#x1F4DD;' },
-  { name: 'PlatformWebhookDeliveries', to: '/platform/webhook-deliveries', label: t('platformLayout.menuWebhookDeliveries'), icon: '&#x1F4E8;' },
-  { name: 'PlatformDataCleanup', to: '/platform/data-cleanup', label: '数据清理', icon: '&#x1F9F9;' },
+  { name: 'PlatformTenants', to: '/platform/tenants', label: t('platformLayout.menuTenants'), icon: '🏢' },
+  { name: 'PlatformMembers', to: '/platform/members', label: t('platformLayout.menuMembers'), icon: '👥' },
+  { name: 'PlatformConfig', to: '/platform/config', label: t('platformLayout.menuConfig'), icon: '⚙️' },
+  { name: 'PlatformRedemptionCodes', to: '/platform/redemption-codes', label: t('platformLayout.menuRedemptionCodes'), icon: '🎵' },
+  { name: 'PlatformAuditLogs', to: '/platform/audit-logs', label: t('platformLayout.menuAuditLogs'), icon: '📝' },
+  { name: 'PlatformWebhookDeliveries', to: '/platform/webhook-deliveries', label: t('platformLayout.menuWebhookDeliveries'), icon: '📨' },
+  { name: 'PlatformDataCleanup', to: '/platform/data-cleanup', label: '数据清理', icon: '🧹' },
 ])
 
 const currentName = computed(() => route.name as string | undefined)

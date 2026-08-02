@@ -16,7 +16,7 @@
           :title="item.label"
           @click.prevent="onNavClick(item.to)"
         >
-          <span class="nav-icon" v-html="item.icon" />
+          <span class="nav-icon">{{ item.icon }}</span>
           <span class="nav-label">{{ item.label }}</span>
         </a>
         <!-- L3 平台运营入口：仅 platform_owner/operator/support 可见 -->
@@ -128,14 +128,14 @@ function toggleSidebar() {
 
 // ── 菜单数据（租户后台 L2 专属，平台后台功能迁移到 /platform/*） ──
 const menuItems = computed(() => [
-  { name: 'AdminDashboard', to: '/admin', label: t('adminLayout.menuDashboard'), icon: '&#x1F4CA;' },
-  { name: 'AdminLottery', to: '/admin/draws', label: t('adminLayout.menuLottery'), icon: '&#x1F3B0;' },
-  { name: 'AdminPrizes', to: '/admin/prizes', label: t('adminLayout.menuPrizes'), icon: '&#x1F381;' },
-  { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '&#x1F4DD;' },
-  { name: 'AdminMembers', to: '/admin/members', label: t('adminLayout.menuMembers'), icon: '&#x1F465;' },
-  { name: 'AdminBlacklist', to: '/admin/blacklist', label: t('adminLayout.menuBlacklist'), icon: '&#x1F6AB;' },
-  { name: 'AdminIntegrations', to: '/admin/integrations', label: t('adminLayout.menuIntegrations'), icon: '&#x1F517;' },
-  { name: 'AdminQuotaRedeem', to: '/admin/quota-redeem', label: t('adminLayout.menuQuotaRedeem'), icon: '&#x1F39F;' },
+  { name: 'AdminDashboard', to: '/admin', label: t('adminLayout.menuDashboard'), icon: '📊' },
+  { name: 'AdminLottery', to: '/admin/draws', label: t('adminLayout.menuLottery'), icon: '🎰' },
+  { name: 'AdminPrizes', to: '/admin/prizes', label: t('adminLayout.menuPrizes'), icon: '🎁' },
+  { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '📝' },
+  { name: 'AdminMembers', to: '/admin/members', label: t('adminLayout.menuMembers'), icon: '👥' },
+  { name: 'AdminBlacklist', to: '/admin/blacklist', label: t('adminLayout.menuBlacklist'), icon: '🚫' },
+  { name: 'AdminIntegrations', to: '/admin/integrations', label: t('adminLayout.menuIntegrations'), icon: '🔗' },
+  { name: 'AdminQuotaRedeem', to: '/admin/quota-redeem', label: t('adminLayout.menuQuotaRedeem'), icon: '🎟' },
 ])
 
 const currentName = computed(() => {
