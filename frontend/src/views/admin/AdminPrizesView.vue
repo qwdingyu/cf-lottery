@@ -61,6 +61,7 @@
             <td>{{ prize.createdAt }}</td>
             <td class="col-actions">
               <button v-if="prize.prizeType === 'code'" class="btn btn-ghost btn-xs" @click="showImport(prize)">导入码</button>
+              <button v-if="prize.prizeType === 'code'" class="btn btn-ghost btn-xs" @click="showCodes(prize)">查看码</button>
               <button class="btn btn-ghost btn-xs" :title="prize.active ? '停用后活动不可选用此奖品' : '启用后活动可选用此奖品'" @click="toggleActive(prize)">
                 {{ prize.active !== 0 ? '停用' : '启用' }}
               </button>
@@ -170,6 +171,58 @@
         </button>
       </div>
     </AdminModal>
+
+    <!-- 查看码弹窗 -->
+    <AdminModal v-model="showCodesModal" :title="'码池 - ' + (codesPrize?.name || '')" max-width="800px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <select v-model="codesFilter" @change="loadCodes">
+          <option value="">全部状态</option>
+          <option value="available">可用</option>
+          <option value="issued">已发放</option>
+        </select>
+        <span class="field-hint">可用 {{ totalAvailable }} / 已发放 {{ totalIssued }}</span>
+        <button class="btn btn-ghost btn-xs" :disabled="codesLoading" @click="loadCodes">刷新</button>
+      </div>
+      <div v-if="codesLoading" class="skeleton-list">
+        <div v-for="i in 5" :key="'sk' + i" class="skeleton-line" />
+      </div>
+      <div v-else-if="codesList.length === 0" class="empty-text">暂无码</div>
+      <div v-else class="table-wrap" style="max-height:400px;overflow-y:auto">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>卡密</th>
+              <th>密钥</th>
+              <th>状态</th>
+              <th>领取人</th>
+              <th>发放时间</th>
+              <th class="col-actions">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in codesList" :key="c.id">
+              <td>
+                <code class="code-cell">{{ c.code }}</code>
+              </td>
+              <td>
+                <code v-if="c.secret" class="code-cell" style="font-size:11px">{{ c.secret }}</code>
+                <span v-else class="field-hint">—</span>
+              </td>
+              <td>
+                <span :class="c.status === 'available' ? 'tag-success' : 'tag-muted'">
+                  {{ c.status === 'available' ? '可用' : '已发放' }}
+                </span>
+              </td>
+              <td>{{ c.winnerId || '—' }}</td>
+              <td>{{ c.issuedAt || '—' }}</td>
+              <td class="col-actions">
+                <button class="btn btn-ghost btn-xs" @click="copyCode(c.code, c.secret)">复制</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </AdminModal>
   </div>
 </template>
 
@@ -188,6 +241,13 @@ const importing = ref(false)
 const uploadingImage = ref(false)
 const showCreate = ref(false)
 const showImportModal = ref(false)
+const showCodesModal = ref(false)
+const codesPrize = ref<any>(null)
+const codesList = ref<any[]>([])
+const codesLoading = ref(false)
+const codesFilter = ref('')
+const totalAvailable = ref(0)
+const totalIssued = ref(0)
 const importPrize = ref<any>(null)
 const codesText = ref('')
 const importTab = ref<'paste' | 'generate'>('paste')
@@ -285,6 +345,41 @@ function showImport(prize: any) {
   importPrize.value = prize
   codesText.value = ''
   showImportModal.value = true
+}
+
+async function showCodes(prize: any) {
+  codesPrize.value = prize
+  codesFilter.value = ''
+  totalAvailable.value = 0
+  totalIssued.value = 0
+  showCodesModal.value = true
+  await loadCodes()
+}
+
+async function loadCodes() {
+  if (!codesPrize.value) return
+  codesLoading.value = true
+  try {
+    const query = codesFilter.value ? `?status=${codesFilter.value}` : ''
+    const data = await adminRequest<any>(`/api/admin/prizes/${codesPrize.value.id}/codes${query}`)
+    codesList.value = data.codes || []
+    totalAvailable.value = data.totalAvailable ?? 0
+    totalIssued.value = data.totalIssued ?? 0
+  } catch (err: any) {
+    showToast(err?.message || '加载失败', 'error')
+  } finally {
+    codesLoading.value = false
+  }
+}
+
+async function copyCode(code: string, secret?: string) {
+  const text = secret ? `${code}:${secret}` : code
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast('已复制', 'success')
+  } catch {
+    showToast('复制失败，请手动选择复制', 'error')
+  }
 }
 
 async function handleImport() {
@@ -412,4 +507,5 @@ onMounted(loadData)
   opacity: 0;
   pointer-events: none;
 }
+.code-cell { font-size: 13px; font-family: monospace; word-break: break-all; }
 </style>

@@ -302,11 +302,27 @@ adminLotteryRoute.get("/me", async (c) => {
     .where(eq(platformMembers.userId, userId))
     .limit(1);
 
+  // 查询用户的所有租户 membership（支持多租户切换）
+  const memberships = await db
+    .select({
+      tenantId: tenantMembers.tenantId,
+      role: tenantMembers.role,
+      tenantName: tenants.name,
+    })
+    .from(tenantMembers)
+    .innerJoin(tenants, eq(tenants.id, tenantMembers.tenantId))
+    .where(eq(tenantMembers.userId, userId));
+
   return ok(c, {
     user,
     tenant: tenant || { id: tenantId, name: "", plan: "free" },
     quota: await getTenantUsage(db, tenantId),
     platformRole: platformMember?.status === "active" ? platformMember.role : null,
+    tenants: memberships.map((m) => ({
+      id: m.tenantId,
+      name: m.tenantName,
+      role: m.role,
+    })),
   });
 });
 
@@ -426,6 +442,67 @@ adminLotteryRoute.post("/prizes/:id/codes/generate", async (c) => {
   await importPrizeCodes(db, tenantId, prizeId, codes);
   await recordTenantAudit(c, "prize.codes.generate", "prize", prizeId, { count });
   return ok(c, { generated: count });
+});
+
+// ═════════════════════════════════════════════════════════
+// 奖品码池查询（查看已导入/生成的卡密列表）
+// ═════════════════════════════════════════════════════════
+
+/** 查询某个奖品的码池列表（分页，支持按状态筛选） */
+adminLotteryRoute.get("/prizes/:id/codes", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const prizeId = c.req.param("id");
+  const { limit, offset } = parseAdminPagination(c, 50, 200);
+  const status = c.req.query("status") || "";
+
+  // 校验奖品归属
+  const [prize] = await db
+    .select({ id: prizes.id, name: prizes.name, prizeType: prizes.prizeType })
+    .from(prizes)
+    .where(and(eq(prizes.id, prizeId), eq(prizes.tenantId, tenantId)))
+    .limit(1);
+  if (!prize) return fail(c, "奖品不存在", 404);
+
+  const conditions: any[] = [
+    eq(prizeCodes.tenantId, tenantId),
+    eq(prizeCodes.prizeId, prizeId),
+  ];
+  if (status) conditions.push(eq(prizeCodes.status, status));
+
+  const rows = await db
+    .select({
+      id: prizeCodes.id,
+      code: prizeCodes.code,
+      secret: prizeCodes.secret,
+      note: prizeCodes.note,
+      status: prizeCodes.status,
+      winnerId: prizeCodes.winnerId,
+      issuedAt: prizeCodes.issuedAt,
+      createdAt: prizeCodes.createdAt,
+    })
+    .from(prizeCodes)
+    .where(and(...conditions))
+    .orderBy(desc(prizeCodes.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  // 统计各状态数量
+  const [availCount] = await db
+    .select({ total: count() })
+    .from(prizeCodes)
+    .where(and(eq(prizeCodes.tenantId, tenantId), eq(prizeCodes.prizeId, prizeId), eq(prizeCodes.status, "available")));
+
+  const [issuedCount] = await db
+    .select({ total: count() })
+    .from(prizeCodes)
+    .where(and(eq(prizeCodes.tenantId, tenantId), eq(prizeCodes.prizeId, prizeId), eq(prizeCodes.status, "issued")));
+
+  return ok(c, {
+    codes: rows,
+    totalAvailable: Number(availCount?.total || 0),
+    totalIssued: Number(issuedCount?.total || 0),
+  });
 });
 
 // ═════════════════════════════════════════════════════════

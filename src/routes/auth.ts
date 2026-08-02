@@ -14,6 +14,7 @@ import { getDb, isValidEmail } from "../lib/http";
 import { withDbTransaction } from "../db/client";
 import { users, tenantMembers, tenants, emailAccessCodes, systemConfig } from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
+import { requireAuth } from "../middleware/auth";
 import { signJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 import { checkDbRateLimit } from "../lib/rate-limit";
@@ -279,17 +280,67 @@ authRoute.post("/login", async (c) => {
     return c.json({ ok: false, message: "邮箱未验证，验证码已重新发送", email: user.email, needVerify: true });
   }
 
-  const [member] = await db.select({ tenantId: tenantMembers.tenantId }).from(tenantMembers).where(eq(tenantMembers.userId, user.id)).limit(1);
-  const tenantId = member?.tenantId || "";
+  // 查询用户的所有租户（不再 limit(1)）：支持多租户切换
+  // 背景：注册会为每个用户创建自己的租户；被其他租户添加为成员后，
+  // 用户拥有多个租户 membership。登录只进第一个租户会导致"团队成员无法
+  // 访问对方租户"的设计缺陷，因此登录返回全部租户，前端可切换。
+  const memberships = await db
+    .select({
+      tenantId: tenantMembers.tenantId,
+      role: tenantMembers.role,
+      tenantName: tenants.name,
+    })
+    .from(tenantMembers)
+    .innerJoin(tenants, eq(tenants.id, tenantMembers.tenantId))
+    .where(eq(tenantMembers.userId, user.id));
+
+  // 默认进入第一个租户（或空字符串表示无租户）
+  const tenantId = memberships[0]?.tenantId || "";
 
   const jwtSecret = getJwtSecret(c);
   const token = await signJwt({ sub: user.id, tenantId }, jwtSecret, 7 * 86400);
 
-  return c.json({ ok: true, token, tenantId });
+  return c.json({
+    ok: true,
+    token,
+    tenantId,
+    tenants: memberships.map((m) => ({
+      id: m.tenantId,
+      name: m.tenantName,
+      role: m.role,
+    })),
+  });
   } catch (err) {
     console.error("[auth] login error:", (err as Error).message);
     return c.json({ ok: false, message: "登录失败，请稍后重试" }, 400);
   }
+});
+
+/** 切换当前租户（多租户用户在不同租户间切换上下文）
+ *
+ * 背景：用户可能属于多个租户（自己的 + 被邀请加入的）。
+ * 切换时校验该用户确实是目标租户成员，再签发新的 JWT（新 tenantId）。
+ */
+authRoute.post("/switch-tenant", requireAuth, async (c) => {
+  const db = getDb(c);
+  const userId = c.get("userId") as string;
+  const body = await c.req.json<{ tenantId: string }>();
+  const targetTenantId = String(body.tenantId || "").trim();
+  if (!targetTenantId) return c.json({ ok: false, message: "缺少租户 ID" }, 400);
+
+  // 校验用户是目标租户的活跃成员
+  const [membership] = await db
+    .select({ tenantId: tenantMembers.tenantId, role: tenantMembers.role })
+    .from(tenantMembers)
+    .where(and(eq(tenantMembers.userId, userId), eq(tenantMembers.tenantId, targetTenantId)))
+    .limit(1);
+  if (!membership) return c.json({ ok: false, message: "您不是该租户的成员" }, 403);
+
+  // 签发新 JWT（切换后的租户上下文）
+  const jwtSecret = getJwtSecret(c);
+  const token = await signJwt({ sub: userId, tenantId: targetTenantId }, jwtSecret, 7 * 86400);
+
+  return c.json({ ok: true, token, tenantId: targetTenantId, role: membership.role });
 });
 
 /** 注销 */
