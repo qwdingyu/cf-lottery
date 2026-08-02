@@ -1985,6 +1985,17 @@ export async function sendWinnerNotifications(
     .from(lotteryWinners)
     .where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
 
+  // 批量查询所有中奖者的卡密信息（一次查询替代 N 次）
+  const prizeCodeIds = [...new Set(winners.filter(w => w.prizeCodeId).map(w => w.prizeCodeId!))];
+  const codeMap = new Map<string, { code: string; secret: string }>();
+  if (prizeCodeIds.length > 0) {
+    const codes = await db
+      .select({ id: prizeCodes.id, code: prizeCodes.code, secret: prizeCodes.secret })
+      .from(prizeCodes)
+      .where(inArray(prizeCodes.id, prizeCodeIds));
+    for (const c of codes) codeMap.set(c.id, { code: c.code, secret: c.secret });
+  }
+
   for (const winner of winners) {
     if (winner.notificationStatus === "sent") continue;
 
@@ -1992,11 +2003,7 @@ export async function sendWinnerNotifications(
     let deliverySecret = "";
 
     if (winner.prizeCodeId) {
-      const [code] = await db
-        .select({ code: prizeCodes.code, secret: prizeCodes.secret })
-        .from(prizeCodes)
-        .where(eq(prizeCodes.id, winner.prizeCodeId))
-        .limit(1);
+      const code = codeMap.get(winner.prizeCodeId);
       if (code) { accountLabel = code.code; deliverySecret = code.secret; }
     }
 
