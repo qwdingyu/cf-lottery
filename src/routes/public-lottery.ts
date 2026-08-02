@@ -8,6 +8,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail } from "../lib/http";
+import type { DbType } from "../db/client";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
 import { eq, and, count, sql, asc, inArray } from "drizzle-orm";
 import { getActivityOutcome, joinDraw, cancelSignupChainEntry, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
@@ -62,6 +63,36 @@ function maskIdentity(value: string): string {
     return name.slice(0, 2) + "***@" + domain;
   }
   return value.slice(0, 2) + "***";
+}
+
+/**
+ * 校验邮箱验证码（公共逻辑，供参与/查询结果/取消参与复用）。
+ *
+ * 为什么抽取：verify-join、my-result、cancel 三处此前复制了相同的验证码查询代码，
+ * 任何一处调整有效期/错误消息都容易遗漏其他处。抽取后逻辑单一来源。
+ *
+ * @returns 有效的验证码记录（调用方决定是否标记 used），无效返回 null
+ */
+async function verifyEmailAccessCode(
+  db: DbType,
+  email: string,
+  drawId: string,
+  code: string,
+): Promise<typeof emailAccessCodes.$inferSelect | null> {
+  const codeHash = await hashCode(code);
+  const now = new Date().toISOString();
+  const [validCode] = await db
+    .select()
+    .from(emailAccessCodes)
+    .where(and(
+      eq(emailAccessCodes.email, email),
+      eq(emailAccessCodes.drawId, drawId),
+      eq(emailAccessCodes.codeHash, codeHash),
+      eq(emailAccessCodes.used, 0),
+      sql`${emailAccessCodes.expiresAt} > ${now}`,
+    ))
+    .limit(1);
+  return validCode || null;
 }
 
 // ═════════════════════════════════════════════════════════
@@ -400,21 +431,8 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "open") return fail(c, "活动已结束", 400);
 
-  // 验证验证码
-  const codeHash = await hashCode(code);
-  const now = new Date().toISOString();
-  const [validCode] = await db
-    .select()
-    .from(emailAccessCodes)
-    .where(and(
-      eq(emailAccessCodes.email, email),
-      eq(emailAccessCodes.drawId, draw.id),
-      eq(emailAccessCodes.codeHash, codeHash),
-      eq(emailAccessCodes.used, 0),
-      sql`${emailAccessCodes.expiresAt} > ${now}`,
-    ))
-    .limit(1);
-
+  // 验证验证码（公共校验逻辑）
+  const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
   if (!validCode) {
     return fail(c, "验证码无效或已过期", 400);
   }
@@ -481,24 +499,11 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  // 验证码校验（复用邮箱验证码机制，防止他人用邮箱枚举查询结果）
-  const codeHash = await hashCode(code);
-  const now = new Date().toISOString();
-  const [validCode] = await db
-    .select()
-    .from(emailAccessCodes)
-    .where(and(
-      eq(emailAccessCodes.email, email),
-      eq(emailAccessCodes.drawId, draw.id),
-      eq(emailAccessCodes.codeHash, codeHash),
-      eq(emailAccessCodes.used, 0),
-      sql`${emailAccessCodes.expiresAt} > ${now}`,
-    ))
-    .limit(1);
+  // 验证码校验（公共逻辑；查询类操作不消耗验证码，仅校验身份防枚举）
+  const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
   if (!validCode) {
     return fail(c, "验证码无效或已过期", 400);
   }
-  // 查询类操作不消耗验证码（与参与不同），仅校验身份
 
   const [entry] = await db
     .select({ id: lotteryEntries.id })
@@ -577,22 +582,9 @@ publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
     return fail(c, "该活动不支持取消参与", 400);
   }
 
-  // 验证码校验（防止他人冒用邮箱取消）
-  const codeHash = await hashCode(code);
-  const now = new Date().toISOString();
-  const [validCode] = await db
-    .select()
-    .from(emailAccessCodes)
-    .where(and(
-      eq(emailAccessCodes.email, email),
-      eq(emailAccessCodes.drawId, draw.id),
-      eq(emailAccessCodes.codeHash, codeHash),
-      eq(emailAccessCodes.used, 0),
-      sql`${emailAccessCodes.expiresAt} > ${now}`,
-    ))
-    .limit(1);
+  // 验证码校验（公共逻辑；取消操作不消耗验证码，防止他人冒用邮箱取消）
+  const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
   if (!validCode) return fail(c, "验证码无效或已过期", 400);
-  // 取消操作不消耗验证码（查询类语义）
 
   const result = await cancelSignupChainEntry(db, draw.tenantId, draw.id, email);
   if (!result.cancelled) return fail(c, "未找到您的参与记录", 404);

@@ -1013,7 +1013,7 @@ import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
-import { useAdminAuth } from '@/composables/useAdminAuth'
+import { useAdminAuth, readAdminToken } from '@/composables/useAdminAuth'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
@@ -1126,7 +1126,7 @@ useAdminAuth()
 const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 
 // ── 兼容旧 API 调用（适配到新后端） ──
-const requireToken = () => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } };
+
 const fetchLotteryDraws = async (_token: string, params: { limit: number; offset: number; status?: string; query?: string }) => {
   const search = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) })
   if (params.status) search.set('status', params.status)
@@ -1688,8 +1688,8 @@ async function handleViewAnalytics(draw: LotteryDraw) {
   operatingId.value = draw.id
   try {
     const [stats, conversionData] = await Promise.all([
-      fetchDrawAnalyticsStats(requireToken(), draw.id),
-      fetchDrawConversions(requireToken(), draw.id),
+      fetchDrawAnalyticsStats(readAdminToken(), draw.id),
+      fetchDrawConversions(readAdminToken(), draw.id),
     ])
     analyticsStats.value = {
       ...stats,
@@ -1740,7 +1740,7 @@ async function refreshWinnersStatus(id: string) {
   if (winnersStatusInFlight || !showWinnersModal.value || winnersModalDrawId.value !== id) return
   winnersStatusInFlight = true
   try {
-    const data = await fetchLotteryWinners(requireToken(), id)
+    const data = await fetchLotteryWinners(readAdminToken(), id)
     winners.value = data.winners || []
     winnersStatusRefreshes += 1
     if (winnersEmailPendingCount.value === 0 || winnersStatusRefreshes >= MAX_WINNERS_STATUS_REFRESHES) {
@@ -2120,7 +2120,7 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await fetchLotteryDraws(requireToken(), {
+    const data = await fetchLotteryDraws(readAdminToken(), {
       limit: pagination.limit.value,
       offset: (pagination.page.value - 1) * pagination.limit.value,
       status: statusFilter.value || undefined,
@@ -2143,7 +2143,7 @@ async function handleOpen(draw: LotteryDraw) {
   operatingId.value = draw.id
   try {
     // 发布前先展示同一套服务端门禁结果：运营者需要知道缺奖项、码池、CTA、Webhook 等具体阻断点。
-    const check = await fetchPublishCheck(requireToken(), draw.id)
+    const check = await fetchPublishCheck(readAdminToken(), draw.id)
     if (!check.canPublish) {
       showToast(formatPublishCheckItems(check.errors, '发布前需要先处理：'), 'error')
       return
@@ -2152,7 +2152,7 @@ async function handleOpen(draw: LotteryDraw) {
       const confirmed = await askConfirm(formatPublishCheckItems(check.warnings, '发布前仍有风险：') + '\n仍然发布吗？')
       if (!confirmed) return
     }
-    await openLotteryDraw(requireToken(), draw.id)
+    await openLotteryDraw(readAdminToken(), draw.id)
     // 发布后复制公开 slug 链接，避免把内部活动 id 发给参与者导致公开页 404。
     try {
       await writeClipboardText(publicShareUrl(draw.publicSlug))
@@ -2184,7 +2184,7 @@ async function handleDraw(draw: LotteryDraw) {
   operatingId.value = draw.id
   let drawOk = false
   try {
-    await performLotteryDraw(requireToken(), draw.id)
+    await performLotteryDraw(readAdminToken(), draw.id)
     drawOk = true
     showToast(t('lottery.adminDrawDone'), 'success')
     await loadData()
@@ -2207,7 +2207,7 @@ async function viewWinners(id: string) {
   showWinnersModal.value = true
   operatingId.value = id
   try {
-    const data = await fetchLotteryWinners(requireToken(), id)
+    const data = await fetchLotteryWinners(readAdminToken(), id)
     winners.value = data.winners || []
     startWinnersStatusPolling(id)
   } catch (e: any) {
@@ -2232,7 +2232,7 @@ async function handleCancel(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmCancel')))) return
   operatingId.value = id
   try {
-    await cancelLotteryDraw(requireToken(), id)
+    await cancelLotteryDraw(readAdminToken(), id)
     showToast(t('lottery.adminDrawCancelled'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2249,7 +2249,7 @@ async function handleDelete(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmDelete', { name: draw.name, status: statusLabel(draw.status) })))) return
   operatingId.value = id
   try {
-    await deleteLotteryDraw(requireToken(), id)
+    await deleteLotteryDraw(readAdminToken(), id)
     showToast(t('lottery.adminDrawDeleted'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2272,7 +2272,7 @@ async function batchDeleteDraws() {
     let failed = 0
     for (const id of selectedDraws.map((draw) => draw.id)) {
       try {
-        await deleteLotteryDraw(requireToken(), id)
+        await deleteLotteryDraw(readAdminToken(), id)
         success++
       } catch {
         failed++
@@ -2296,7 +2296,7 @@ async function handlePause(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmPause')))) return
   operatingId.value = id
   try {
-    await fetchAdminLottery(requireToken(), `/api/admin/draws/${id}/pause`, 'POST')
+    await fetchAdminLottery(readAdminToken(), `/api/admin/draws/${id}/pause`, 'POST')
     showToast(t('lottery.adminPaused'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2310,7 +2310,7 @@ async function handlePause(id: string) {
 async function handleResume(id: string) {
   operatingId.value = id
   try {
-    await fetchAdminLottery(requireToken(), `/api/admin/draws/${id}/resume`, 'POST')
+    await fetchAdminLottery(readAdminToken(), `/api/admin/draws/${id}/resume`, 'POST')
     showToast(t('lottery.adminResumed'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2354,7 +2354,7 @@ async function handleToggleVisibility(id: string, visible: number | undefined) {
   if (!(await askConfirm(t('lottery.adminConfirmToggleVisibility')))) return
   operatingId.value = id
   try {
-    await updateLotteryDraw(requireToken(), id, { visible: visible ? 0 : 1 })
+    await updateLotteryDraw(readAdminToken(), id, { visible: visible ? 0 : 1 })
     showToast(visible ? t('lottery.adminHidden') : t('lottery.adminShown'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2367,7 +2367,7 @@ async function handleToggleVisibility(id: string, visible: number | undefined) {
 async function handleRetryEmail(id: string) {
   operatingId.value = id
   try {
-    const result = await retryAdminLotteryEmail(requireToken(), id)
+    const result = await retryAdminLotteryEmail(readAdminToken(), id)
     if (result.sent > 0 || result.failed === 0) {
       showToast(t('lottery.adminRetrySuccess', { sent: result.sent }), 'success')
     } else {
@@ -2376,7 +2376,7 @@ async function handleRetryEmail(id: string) {
     // 若中奖弹窗正打开同一活动，刷新名单上的发送态
     if (showWinnersModal.value && winnersModalDrawId.value === id) {
       try {
-        const data = await fetchLotteryWinners(requireToken(), id)
+        const data = await fetchLotteryWinners(readAdminToken(), id)
         winners.value = data.winners || []
       } catch {
         /* 列表刷新失败不阻断主提示 */
@@ -2398,7 +2398,7 @@ async function handleRecover(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmRecover')))) return
   operatingId.value = id
   try {
-    const result = await recoverLotteryDraw(requireToken(), id)
+    const result = await recoverLotteryDraw(readAdminToken(), id)
     if (result.healed === 'drawn') {
       showToast(t('lottery.adminRecoverDoneDrawn'), 'success')
     } else {
@@ -2502,10 +2502,10 @@ async function handleCreate() {
         form.value = emptyForm()
         return
       }
-      await updateLotteryDraw(requireToken(), form.value.id, payload)
+      await updateLotteryDraw(readAdminToken(), form.value.id, payload)
       showToast('活动已更新', 'success')
     } else {
-      const created = await createLotteryDraw(requireToken(), payload)
+      const created = await createLotteryDraw(readAdminToken(), payload)
       if (created?.id) {
         // 如果是 roster 模式，导入名单
         if (form.value.participationMode === 'roster' && rosterInput.value.trim()) {

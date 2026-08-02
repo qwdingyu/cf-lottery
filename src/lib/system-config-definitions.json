@@ -9,7 +9,8 @@
     "defaultValue": "抽奖平台",
     "maxLength": 40,
     "group": "基础信息",
-    "order": 1
+    "order": 1,
+    "difficulty": "basic"
   },
   {
     "key": "support_email",
@@ -22,7 +23,8 @@
     "format": "email",
     "maxLength": 120,
     "group": "基础信息",
-    "order": 2
+    "order": 2,
+    "difficulty": "basic"
   },
   {
     "key": "email_from_name",
@@ -34,7 +36,8 @@
     "defaultValue": "抽奖平台",
     "maxLength": 60,
     "group": "邮件通知",
-    "order": 3
+    "order": 3,
+    "difficulty": "basic"
   },
   {
     "key": "draw_default_winner_count",
@@ -47,7 +50,8 @@
     "min": 1,
     "max": 9999,
     "group": "抽奖设置",
-    "order": 4
+    "order": 4,
+    "difficulty": "basic"
   },
   {
     "key": "draw_max_participants",
@@ -60,7 +64,8 @@
     "min": 0,
     "max": 999999,
     "group": "抽奖设置",
-    "order": 5
+    "order": 5,
+    "difficulty": "basic"
   },
   {
     "key": "draw_max_duration_days",
@@ -73,7 +78,8 @@
     "min": 1,
     "max": 365,
     "group": "抽奖设置",
-    "order": 6
+    "order": 6,
+    "difficulty": "basic"
   },
   {
     "key": "access_code_expires_seconds",
@@ -86,7 +92,8 @@
     "min": 60,
     "max": 3600,
     "group": "安全设置",
-    "order": 7
+    "order": 7,
+    "difficulty": "basic"
   },
   {
     "key": "rate_limit_access_code",
@@ -99,7 +106,8 @@
     "min": 1,
     "max": 100,
     "group": "安全设置",
-    "order": 8
+    "order": 8,
+    "difficulty": "basic"
   },
   {
     "key": "rate_limit_login",
@@ -112,7 +120,8 @@
     "min": 1,
     "max": 100,
     "group": "安全设置",
-    "order": 9
+    "order": 9,
+    "difficulty": "basic"
   },
   {
     "key": "data_retention_days",
@@ -125,7 +134,8 @@
     "min": 30,
     "max": 3650,
     "group": "数据维护",
-    "order": 10
+    "order": 10,
+    "difficulty": "advanced"
   },
   {
     "key": "audit_log_retention_days",
@@ -138,7 +148,8 @@
     "min": 30,
     "max": 3650,
     "group": "数据维护",
-    "order": 11
+    "order": 11,
+    "difficulty": "advanced"
   },
   {
     "key": "plan_free_max_activities",
@@ -151,7 +162,8 @@
     "min": 0,
     "max": 9999,
     "group": "套餐额度",
-    "order": 12
+    "order": 12,
+    "difficulty": "advanced"
   },
   {
     "key": "plan_free_max_participants_per_activity",
@@ -164,7 +176,8 @@
     "min": 1,
     "max": 999999,
     "group": "套餐额度",
-    "order": 13
+    "order": 13,
+    "difficulty": "advanced"
   },
   {
     "key": "plan_pro_max_activities",
@@ -177,7 +190,8 @@
     "min": 0,
     "max": 99999,
     "group": "套餐额度",
-    "order": 14
+    "order": 14,
+    "difficulty": "advanced"
   },
   {
     "key": "plan_pro_max_participants_per_activity",
@@ -190,7 +204,8 @@
     "min": 1,
     "max": 999999,
     "group": "套餐额度",
-    "order": 15
+    "order": 15,
+    "difficulty": "advanced"
   },
   {
     "key": "plan_team_max_activities",
@@ -203,7 +218,8 @@
     "min": 0,
     "max": 999999,
     "group": "套餐额度",
-    "order": 16
+    "order": 16,
+    "difficulty": "advanced"
   },
   {
     "key": "plan_team_max_participants_per_activity",
@@ -216,7 +232,8 @@
     "min": 1,
     "max": 9999999,
     "group": "套餐额度",
-    "order": 17
+    "order": 17,
+    "difficulty": "advanced"
   },
   {
     "key": "plan_enterprise_max_activities",
@@ -229,7 +246,8 @@
     "min": 0,
     "max": 999999,
     "group": "套餐额度",
-    "order": 18
+    "order": 18,
+    "difficulty": "advanced"
   },
   {
     "key": "plan_enterprise_max_participants_per_activity",
@@ -242,7 +260,8 @@
     "min": 1,
     "max": 9999999,
     "group": "套餐额度",
-    "order": 19
+    "order": 19,
+    "difficulty": "advanced"
   },
   {
     "key": "enabled_activity_kinds",
@@ -253,7 +272,8 @@
     "type": "string",
     "defaultValue": "lottery,signup_chain,claim,survey,vote,checkin,approval,reservation",
     "group": "平台运营",
-    "order": 20
+    "order": 20,
+    "difficulty": "basic"
   },
   {
     "key": "enable_registration",
@@ -264,7 +284,8 @@
     "type": "boolean",
     "defaultValue": "true",
     "group": "平台运营",
-    "order": 21
+    "order": 21,
+    "difficulty": "basic"
   },
   {
     "key": "free_plan_max_webhooks",
@@ -277,7 +298,8 @@
     "min": 0,
     "max": 100,
     "group": "套餐额度",
-    "order": 22
+    "order": 22,
+    "difficulty": "advanced"
   },
   {
     "key": "enable_pricing_page",
@@ -288,7 +310,8 @@
     "type": "boolean",
     "defaultValue": "false",
     "group": "平台运营",
-    "order": 23
+    "order": 23,
+    "difficulty": "basic"
   },
   {
     "key": "marketing_draw_reminder_enabled",
@@ -299,7 +322,8 @@
     "type": "boolean",
     "defaultValue": "false",
     "group": "营销邮件",
-    "order": 1
+    "order": 1,
+    "difficulty": "basic"
   },
   {
     "key": "marketing_draw_reminder_minutes",
@@ -312,7 +336,8 @@
     "min": 5,
     "max": 1440,
     "group": "营销邮件",
-    "order": 2
+    "order": 2,
+    "difficulty": "advanced"
   },
   {
     "key": "marketing_loser_consolation_enabled",
@@ -323,7 +348,8 @@
     "type": "boolean",
     "defaultValue": "false",
     "group": "营销邮件",
-    "order": 3
+    "order": 3,
+    "difficulty": "basic"
   },
   {
     "key": "notify_winner_email_enabled",
@@ -334,7 +360,8 @@
     "type": "boolean",
     "defaultValue": "true",
     "group": "营销邮件",
-    "order": 4
+    "order": 4,
+    "difficulty": "basic"
   },
   {
     "key": "rate_limit_join_per_minute",
@@ -347,6 +374,7 @@
     "min": 1,
     "max": 100,
     "group": "安全与验证",
-    "order": 30
+    "order": 30,
+    "difficulty": "basic"
   }
 ]

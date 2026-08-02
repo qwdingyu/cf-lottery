@@ -27,6 +27,8 @@ export type SystemConfigDefinition = {
   max?: number;
   group?: string;
   order?: number;
+  /** difficulty 控制 UI 展示层级：basic=基础参数（默认展示），advanced=高级参数（折叠隐藏） */
+  difficulty?: "basic" | "advanced";
 };
 
 export const SYSTEM_CONFIG_DEFINITIONS = definitions as readonly SystemConfigDefinition[];

@@ -136,10 +136,11 @@ authRoute.post("/register", async (c) => {
     await db.insert(tenants).values({ id: tenantId, name: username });
     await db.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
 
-    // 生成并存入数据库
+    // 生成验证码并存入数据库（先标记旧码失效，避免 UNIQUE(email,draw_id) WHERE used=0 冲突）
     const code = generateCode();
     const codeHash = await hashCode(code);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await db.update(emailAccessCodes).set({ used: 1 }).where(and(eq(emailAccessCodes.email, email), eq(emailAccessCodes.drawId, ""), eq(emailAccessCodes.used, 0)));
     await db.insert(emailAccessCodes).values({
       id: crypto.randomUUID(),
       email,
@@ -215,6 +216,7 @@ authRoute.post("/verify-email", async (c) => {
 /** 登录（仅已验证邮箱的用户可登录） */
 authRoute.post("/login", async (c) => {
   const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  try {
   const db = getDb(c);
   // 读取系统配置的登录限流值（闭环：L3 配置 → 登录限流生效）
   const [rlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_login")).limit(1);
@@ -254,6 +256,8 @@ authRoute.post("/login", async (c) => {
     const code = generateCode();
     const codeHash = await hashCode(code);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    // 先将该邮箱所有未使用的旧验证码标记为失效（UNIQUE(email, draw_id) WHERE used=0 约束）
+    await db.update(emailAccessCodes).set({ used: 1 }).where(and(eq(emailAccessCodes.email, user.email), eq(emailAccessCodes.drawId, ""), eq(emailAccessCodes.used, 0)));
     await db.insert(emailAccessCodes).values({
       id: crypto.randomUUID(),
       email: user.email,
@@ -278,6 +282,10 @@ authRoute.post("/login", async (c) => {
   const token = await signJwt({ sub: user.id, tenantId }, jwtSecret, 7 * 86400);
 
   return c.json({ ok: true, token, tenantId });
+  } catch (err) {
+    console.error("[auth] login error:", (err as Error).message);
+    return c.json({ ok: false, message: `登录失败: ${(err as Error).message}` }, 400);
+  }
 });
 
 /** 注销 */

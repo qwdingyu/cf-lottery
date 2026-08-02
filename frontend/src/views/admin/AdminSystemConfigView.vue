@@ -43,7 +43,17 @@
               <h3 :id="`config-section-${activeSection}`">{{ $t('adminConfig.sectionLabels.' + activeSection) }}</h3>
               <p>{{ $t('adminConfig.sectionDescriptions.' + activeSection) }}</p>
             </div>
-            <span class="config-count">{{ $t('adminConfig.itemCount', { count: activeSectionItemCount }) }}</span>
+            <div class="config-head-actions">
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs"
+                :title="showAdvanced ? '隐藏高级参数' : '显示高级参数'"
+                @click="showAdvanced = !showAdvanced"
+              >
+                {{ showAdvanced ? '⚙️ 高级' : '🔧 高级' }}
+              </button>
+              <span class="config-count">{{ $t('adminConfig.itemCount', { count: activeSectionItemCount }) }}</span>
+            </div>
           </div>
 
           <div v-if="activeGroupedDefinitions.length === 0" class="empty-text config-empty">
@@ -211,6 +221,8 @@ const testEmailOk = ref(false)
 const activeSection = ref<SystemConfigSectionId>(
   resolveSystemConfigSectionId(route.query.tab),
 )
+/** 是否显示高级参数（默认只显示基础参数，降低认知负担） */
+const showAdvanced = ref(false)
 
 const clearProfiles = [
   { id: 'runtime' as const },
@@ -270,7 +282,9 @@ const activeGroupedDefinitions = computed(() => {
   const section = activeSectionDef.value
   return section.groups
     .map((name) => {
-      const items = groupsByName.value.get(name) ?? []
+      const items = (groupsByName.value.get(name) ?? [])
+        // 基础模式：只显示 basic 参数；高级模式：显示全部
+        .filter((item) => showAdvanced.value || item.difficulty !== "advanced")
       return { name, items }
     })
     .filter((group) => group.items.length > 0)
@@ -651,6 +665,13 @@ onMounted(loadData)
   line-height: 1.45;
   color: #fca5a5;
   word-break: break-word;
+}
+
+.config-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 @media (max-width: 560px) {
