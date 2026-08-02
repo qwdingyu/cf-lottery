@@ -4,22 +4,22 @@
       <div class="lottery-header-left">
         <h1 class="lottery-title">{{ drawTitle }}</h1>
         <div v-if="isDeepLinked && draws[0]" class="lottery-link-bar">
-          <button class="lottery-share-btn" @click="handleCopyPublicLink(draws[0].id)">📋 复制分享链接</button>
-          <RouterLink to="/lottery" class="lottery-share-btn">← 返回活动列表</RouterLink>
+          <button class="lottery-share-btn" @click="handleCopyPublicLink(draws[0].id)">📋 {{ $t('lottery.copyShareLink') }}</button>
+          <RouterLink to="/lottery" class="lottery-share-btn">← {{ $t('lottery.backToAllDraws') }}</RouterLink>
         </div>
       </div>
       <div class="lottery-header-actions">
         <template v-if="sessionEmail || registeredUsername">
           <span class="lottery-user">{{ registeredUsername || sessionEmail }}</span>
-          <button class="lottery-logout" @click="handleLogout">退出</button>
+          <button class="lottery-logout" @click="handleLogout">{{ $t('lottery.logout') }}</button>
         </template>
-        <button v-else class="lottery-login-btn" @click="openLogin()">登录查看记录</button>
+        <button v-else class="lottery-login-btn" @click="openLogin()">{{ $t('lottery.loginToViewRecords') }}</button>
       </div>
     </header>
 <!-- 加载 / 空态 -->
-    <div v-if="loading" class="lottery-center">加载中…</div>
+    <div v-if="loading" class="lottery-center">{{ $t('lottery.loadingText') }}</div>
     <div v-else-if="draws.length === 0" class="lottery-center">
-      <p style="color:var(--tg-hint)">暂无活动</p>
+      <p style="color:var(--tg-hint)">{{ $t('lottery.noActivity') }}</p>
     </div>
 
     <!-- 活动卡片 -->
@@ -35,19 +35,19 @@
             <h3 class="lottery-card-title">{{ draw.name }}</h3>
             <div class="lottery-card-tags">
               <span class="lottery-tag" :class="draw.status">{{ statusText(draw.status) }}</span>
-              <span v-if="myWonById[draw.id]" class="lottery-tag won">🎉 已中奖</span>
-              <span v-else-if="myJoinedById[draw.id]" class="lottery-tag joined">已参与</span>
-              <span v-if="draw.entryCount != null" class="lottery-tag count">{{ draw.entryCount }} 人参与</span>
+              <span v-if="myWonById[draw.id]" class="lottery-tag won">🎉 {{ $t('lottery.wonTag') }}</span>
+              <span v-else-if="myJoinedById[draw.id]" class="lottery-tag joined">{{ $t('lottery.joined') }}</span>
+              <span v-if="draw.entryCount != null" class="lottery-tag count">{{ $t('lottery.drawCount', { count: draw.entryCount }) }}</span>
             </div>
           </div>
-          <button class="lottery-expand-btn">{{ expandedId === draw.id ? '收起 ▲' : '展开 ▼' }}</button>
+          <button class="lottery-expand-btn">{{ expandedId === draw.id ? '▲ ' + $t('lottery.collapse') : '▼ ' + $t('lottery.expand') }}</button>
         </div>
         <!-- 折叠态快捷操作 -->
         <div v-if="expandedId !== draw.id && draw.status === 'drawn' && !sessionEmail" class="lottery-quick-bar">
-          <button class="lottery-share-btn" @click="openLogin(draw.id)">登录查看结果</button>
+          <button class="lottery-share-btn" @click="openLogin(draw.id)">{{ $t('lottery.loginToCheck') }}</button>
         </div>
         <div v-if="expandedId !== draw.id && draw.status === 'drawn' && sessionEmail" class="lottery-quick-bar">
-          <button class="lottery-share-btn" @click="openMyResult(draw)">查询结果</button>
+          <button class="lottery-share-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
         </div>
 
         <div v-if="expandedId === draw.id" class="lottery-card-body">
@@ -55,7 +55,7 @@
             <component
               :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
               :key="draw.id"
-              :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || '奖品', color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
+              :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || $t('lottery.productPlaceholder'), color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
               :disabled="joiningId === draw.id || !!myJoinedById[draw.id]"
               @play="handleJoin(draw.id)"
             />
@@ -65,15 +65,15 @@
               <span class="lottery-join-hint">{{ statusText(draw.status) }}</span>
             </template>
             <template v-else-if="myJoinedById[draw.id]">
-              <span class="lottery-join-hint">✅ 已参与 · {{ joinedTimeText(draw) }}</span>
-              <button v-if="draw.showWinners" class="lottery-result-btn" @click="openMyResult(draw)">查询结果</button>
+              <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
+              <button v-if="draw.showWinners" class="lottery-result-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
             </template>
             <template v-else-if="!sessionEmail && !registeredUsername">
-              <button class="lottery-join-btn" @click="openLogin(draw.id)">参与抽奖</button>
+              <button class="lottery-join-btn" @click="openLogin(draw.id)">{{ $t('lottery.join') }}</button>
             </template>
             <template v-else>
               <button class="lottery-join-btn" :disabled="joiningId === draw.id" @click="handleJoin(draw.id)">
-                {{ joiningId === draw.id ? '加载中…' : '参与抽奖' }}
+                {{ joiningId === draw.id ? $t('lottery.loadingText') : $t('lottery.join') }}
               </button>
             </template>
           </div>
@@ -83,40 +83,40 @@
 
     <!-- 我的参与记录 -->
     <section v-if="(sessionEmail || registeredUsername) && sortedMyEntries.length > 0" class="lottery-records">
-      <h2 class="lottery-section-title">我的参与记录</h2>
-      <div v-if="recordsLoading" class="lottery-center">加载中…</div>
+      <h2 class="lottery-section-title">{{ $t('lottery.myRecords') }}</h2>
+      <div v-if="recordsLoading" class="lottery-center">{{ $t('lottery.loadingText') }}</div>
       <div v-else class="lottery-records-list">
         <div v-for="row in sortedMyEntries" :key="row.drawId" class="lottery-record">
           <span class="lottery-record-name">{{ row.drawName || row.drawId }}</span>
-          <span v-if="myWonById[row.drawId]" class="lottery-tag won">🎉 已中奖</span>
-          <span v-else-if="row.drawStatus === 'drawn'" class="lottery-tag muted">未中奖</span>
-          <span v-else class="lottery-tag joined">已参与</span>
+          <span v-if="myWonById[row.drawId]" class="lottery-tag won">🎉 {{ $t('lottery.wonTag') }}</span>
+          <span v-else-if="row.drawStatus === 'drawn'" class="lottery-tag muted">{{ $t('lottery.notWonTag') }}</span>
+          <span v-else class="lottery-tag joined">{{ $t('lottery.joined') }}</span>
         </div>
       </div>
     </section>
 
     <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLogin">
       <div class="modal-content" role="dialog" aria-modal="true" :aria-label="$t('lottery.emailVerify')">
-        <h3 class="modal-title">{{ isRegisteredJoin ? '登录参与' : $t('lottery.emailVerify') }}</h3>
-        <p class="modal-hint">{{ isRegisteredJoin ? '此活动需要注册账号后才能参与' : $t('lottery.emailVerifyHint') }}</p>
+        <h3 class="modal-title">{{ isRegisteredJoin ? $t('lottery.loginAndJoin') : $t('lottery.emailVerify') }}</h3>
+        <p class="modal-hint">{{ isRegisteredJoin ? $t('lottery.registeredRequired') : $t('lottery.emailVerifyHint') }}</p>
 
         <!-- registered 模式：用户名密码登录 -->
         <div v-if="isRegisteredJoin" class="modal-form">
           <label>
-            <span>用户名</span>
+            <span>{{ $t('adminLogin.username') }}</span>
             <input v-model="regLoginUsername" type="text" autocomplete="username" @keyup.enter="handleRegisteredLogin" />
           </label>
           <label>
-            <span>密码</span>
+            <span>{{ $t('adminLogin.password') }}</span>
             <input v-model="regLoginPassword" type="password" autocomplete="current-password" @keyup.enter="handleRegisteredLogin" />
           </label>
           <p v-if="loginError" class="field-hint" style="color:var(--tg-danger)">{{ loginError }}</p>
           <button class="btn btn-primary" style="width:100%" :disabled="regLoginLoading" @click="handleRegisteredLogin">
-            {{ regLoginLoading ? '登录中…' : '登录并参与' }}
+            {{ regLoginLoading ? $t('adminLogin.loggingIn') : $t('lottery.loginAndJoin') }}
           </button>
           <p class="field-hint" style="text-align:center;margin-top:8px">
-            还没有账号？
-            <a href="/admin/register" target="_blank" class="btn btn-ghost btn-xs">去注册</a>
+            {{ $t('adminLogin.noAccount') }}
+            <a href="/admin/register" target="_blank" class="btn btn-ghost btn-xs">{{ $t('adminLogin.switchToRegister') }}</a>
           </p>
         </div>
 
@@ -133,12 +133,12 @@
             />
           </label>
           <div v-if="codeSent" class="verified-email-row">
-            <span>已验证邮箱 {{ loginEmail }}</span>
+            <span>{{ $t('lottery.emailVerified', { email: loginEmail }) }}</span>
             <button type="button" class="btn btn-primary btn-sm" :disabled="verifyingCode" @click="handleVerifyCode">
-              一键继续
+              {{ $t('lottery.oneClickContinue') }}
             </button>
             <button type="button" class="btn btn-ghost btn-sm" @click="loginEmail=''; loginCode=''; codeSent=false">
-              切换邮箱
+              {{ $t('lottery.switchEmail') }}
             </button>
           </div>
           <div v-if="codeSent" class="code-row">
@@ -164,7 +164,7 @@
               :disabled="sendingCode"
               @click="handleSendCode"
             >
-              {{ sendingCode ? '加载中…' : $t('lottery.sendCode') }}
+              {{ sendingCode ? $t('lottery.loadingText') : $t('lottery.sendCode') }}
             </button>
             <template v-else>
               <button
@@ -173,7 +173,7 @@
                 :disabled="verifyingCode"
                 @click="handleVerifyCode"
               >
-                {{ verifyingCode ? '加载中…' : $t('lottery.verifyAndJoin') }}
+                {{ verifyingCode ? $t('lottery.loadingText') : $t('lottery.verifyAndJoin') }}
               </button>
               <button
                 type="button"
@@ -208,37 +208,37 @@
       <div class="game-result-modal">
         <button class="result-close" @click="showMyResultModal = false">✕</button>
         <div class="result-icon">🎫</div>
-        <h2 class="result-title">查询我的结果</h2>
+        <h2 class="result-title">{{ $t('lottery.myResultTitle') }}</h2>
 
         <!-- 查询表单 -->
         <div v-if="!myResultData" class="result-form">
           <!-- registered 模式：JWT 已证明身份，无需邮箱/验证码 -->
           <template v-if="isRegMyResult">
-            <p class="result-hint">已登录：{{ registeredUsername }}，点击查询参与结果</p>
+            <p class="result-hint">{{ $t('lottery.loggedInQueryHint', { name: registeredUsername }) }}</p>
             <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
             <button class="btn btn-primary" :disabled="myResultLoading" @click="queryMyResult">
-              {{ myResultLoading ? '查询中…' : '查询' }}
+              {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.queryText') }}
             </button>
           </template>
           <template v-else>
             <input
               v-model="myResultEmail"
               type="email"
-              placeholder="参与时填写的邮箱"
+              :placeholder="$t('lottery.resultEmailPlaceholder')"
               maxlength="120"
               :disabled="myResultLoading"
             />
             <input
               v-model="myResultCode"
               type="text"
-              placeholder="邮箱验证码"
+              :placeholder="$t('lottery.resultCodePlaceholder')"
               maxlength="10"
               :disabled="myResultLoading"
             />
-            <p class="result-hint">验证码需先在参与/登录时获取（或联系运营），用于验证邮箱归属</p>
+            <p class="result-hint">{{ $t('lottery.codeHint') }}</p>
             <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
             <button class="btn btn-primary" :disabled="myResultLoading" @click="queryMyResult">
-              {{ myResultLoading ? '查询中…' : '查询' }}
+              {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.queryText') }}
             </button>
           </template>
         </div>
@@ -254,12 +254,12 @@
             </div>
             <div class="result-share-win">
               <p class="result-share-hint">🎁 {{ $t('lottery.shareYourLuck') }}</p>
-              <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 分享活动</button>
+              <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 {{ $t('lottery.shareActivityBtn') }}</button>
             </div>
             <!-- 中奖后 CTA：运营者配置的导流卡片 -->
             <div v-if="getResultCta(myResultDraw, 'after_win')" class="result-cta-card">
               <a :href="getResultCta(myResultDraw, 'after_win')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
-                {{ getResultCta(myResultDraw, 'after_win')!.title || '查看详情' }}
+                {{ getResultCta(myResultDraw, 'after_win')!.title || $t('lottery.viewDetail') }}
               </a>
             </div>
           </template>
@@ -277,7 +277,7 @@
           <!-- 未中奖 CTA：运营者配置的导流卡片（安慰奖和未中奖都展示） -->
           <div v-if="!myResultData.won && getResultCta(myResultDraw, 'after_loss')" class="result-cta-card">
             <a :href="getResultCta(myResultDraw, 'after_loss')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
-              {{ getResultCta(myResultDraw, 'after_loss')!.title || '查看详情' }}
+              {{ getResultCta(myResultDraw, 'after_loss')!.title || $t('lottery.viewDetail') }}
             </a>
           </div>
           <button class="btn btn-ghost" @click="showMyResultModal = false">{{ $t('lottery.gotIt') }}</button>
@@ -402,11 +402,11 @@ const isRegMyResult = computed(() => myResultDraw.value?.participationMode === '
 /** 头部标题：单活动模式用活动名，多活动模式用默认标题 */
 const drawTitle = computed(() => {
   const d = draws.value[0]
-  return d && draws.value.length === 1 ? d.name : '抽奖活动'
+  return d && draws.value.length === 1 ? d.name : t('lottery.title')
 })
 /** 状态精简文案 */
 const statusText = (s: string) =>
-  ({ draft: '草稿', open: '进行中', paused: '已暂停', drawing: '开奖中', drawn: '已结束', cancelled: '已取消' } as Record<string,string>)[s] || s
+  ({ draft: t('lottery.adminDrawDraft'), open: t('lottery.statusOpen'), paused: t('lottery.statusPaused'), drawing: t('lottery.statusDrawing'), drawn: t('lottery.ended'), cancelled: t('lottery.adminDrawCancelled') } as Record<string,string>)[s] || s
 /** 参与时间 */
 const joinedTimeText = (draw: any): string => {
   const e = sortedMyEntries.value.find((r: any) => r.drawId === draw.id)
@@ -495,7 +495,7 @@ async function queryMyResult() {
     if (data.ok) {
       myResultData.value = data
     } else {
-      myResultError.value = data.message || '查询失败'
+      myResultError.value = data.message || t('lottery.queryFailed')
     }
   } catch {
     myResultError.value = t('lottery.networkError') || ''
@@ -604,7 +604,7 @@ function validateSubmissionDraft(draw: LotteryDraw): string {
   ensureSubmissionDraft(draw)
   const draft = submissionDrafts.value[draw.id]
   if (draw.activityConfig?.kind === 'vote') {
-    return draft.optionId ? '' : '请选择一个投票选项'
+    return draft.optionId ? '' : t('lottery.voteRequired')
   }
   if (draw.activityConfig?.kind === 'survey') {
     // 防御：fields 未配置时跳过校验
@@ -612,7 +612,7 @@ function validateSubmissionDraft(draw: LotteryDraw): string {
     for (const field of fields) {
       const value = draft.fields[field.id]
       const empty = value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
-      if (field.required && empty) return `请填写：${field.label}`
+      if (field.required && empty) return t('lottery.requiredField', { label: field.label })
     }
   }
   return ''
@@ -782,7 +782,7 @@ async function fetchDraws() {
         expandedId.value = props.id
         trackPageView(draws.value[0]!)
         const title = String(data.title || '').trim()
-        if (title) document.title = title + ' - 抽奖'
+        if (title) document.title = title + ' - ' + t('lottery.title')
         void fetchDrawDetail(props.id)
       } else {
         draws.value = []
@@ -799,7 +799,7 @@ async function fetchDraws() {
 /** registered 模式：用户名密码登录后直接参与 */
 async function handleRegisteredLogin() {
   if (!regLoginUsername.value || !regLoginPassword.value) {
-    loginError.value = '请输入用户名和密码'
+    loginError.value = t('adminLogin.missingUsernamePassword')
     return
   }
   if (!pendingJoinDrawId.value) return
@@ -814,7 +814,7 @@ async function handleRegisteredLogin() {
       body: JSON.stringify({ username: regLoginUsername.value, password: regLoginPassword.value }),
     })
     const loginData = await loginRes.json()
-    if (!loginData.ok) { loginError.value = loginData.message || '登录失败'; return }
+    if (!loginData.ok) { loginError.value = loginData.message || t('adminLogin.loginFailed'); return }
 
     const token = loginData.token
     registeredToken.value = token
@@ -850,13 +850,13 @@ async function handleRegisteredLogin() {
       }
       closeLogin()
       regLoginPassword.value = ''
-      showToast(data.outcome?.resultLabel ? `参与成功：${data.outcome.resultLabel}` : '参与成功')
+      showToast(data.outcome?.resultLabel ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel }) : t('lottery.joinSuccess'))
       showResult.value = true
     } else {
-      loginError.value = data.message || '参与失败'
+      loginError.value = data.message || t('lottery.joinFailed')
     }
   } catch {
-    loginError.value = '网络错误'
+    loginError.value = t('lottery.networkError')
   } finally {
     regLoginLoading.value = false
   }
@@ -901,7 +901,7 @@ async function handleSendCode() {
     return
   }
   if (!pendingJoinDrawId.value) {
-    loginError.value = '活动未加载，请刷新页面后重试'
+    loginError.value = t('lottery.drawNotLoaded')
     return
   }
   const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
@@ -925,7 +925,7 @@ async function handleSendCode() {
       codeSent.value = true
       startCooldown(data.expiresInSeconds || 60)
     } else {
-      loginError.value = data.message || '发送失败'
+      loginError.value = data.message || t('lottery.sendFailed')
     }
   } catch {
     loginError.value = t('lottery.networkError')
@@ -936,7 +936,7 @@ async function handleSendCode() {
 
 async function handleVerifyCode() {
   if (!loginCode.value || loginCode.value.length !== 6) {
-    loginError.value = '请输入 6 位验证码'
+    loginError.value = t('lottery.invalidCode')
     return
   }
   if (!pendingJoinDrawId.value) return
@@ -978,17 +978,17 @@ async function handleVerifyCode() {
       loginEmail.value = ''
       loginCode.value = ''
       codeSent.value = false
-      showToast(data.outcome?.resultLabel ? `参与成功：${data.outcome.resultLabel}` : '参与成功')
+      showToast(data.outcome?.resultLabel ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel }) : t('lottery.joinSuccess'))
       // 暂存参与结果，供 GameResultModal 生成归因分享链接
       if (data.entryId) {
         lastJoinResult.value = { drawId: joinedDrawId, entryId: data.entryId }
       }
       showResult.value = true
     } else {
-      loginError.value = data.message || '验证失败'
+      loginError.value = data.message || t('lottery.verifyFailed')
     }
   } catch {
-    loginError.value = '网络错误'
+    loginError.value = t('lottery.networkError')
   } finally {
     verifyingCode.value = false
   }

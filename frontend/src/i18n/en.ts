@@ -1089,5 +1089,18 @@ export default {
     adminCreateDoneWithLink: "Activity created; link copied",
     adminCreated: "Activity created",
     adminCreateFailed: "Create failed",
+
+    // LotteryView user-facing copy
+    noActivity: "No activities",
+    wonTag: "Won",
+    notWonTag: "Not won",
+    loginToViewRecords: "Login to view records",
+    registeredRequired: "This activity requires a registered account to join",
+    requiredField: "Please fill in: {label}",
+    myResultTitle: "My Result",
+    loggedInQueryHint: "Logged in as {name}, click to query your entry",
+    resultEmailPlaceholder: "Email used to join",
+    resultCodePlaceholder: "Email code",
+    drawNotLoaded: "Activity not loaded, please refresh and retry",
   },
 };

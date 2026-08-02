@@ -1059,5 +1059,18 @@ export default {
     adminCreateDoneWithLink: "活动已创建，链接已复制",
     adminCreated: "活动已创建",
     adminCreateFailed: "创建失败",
+
+    // ── LotteryView 用户端 i18n 补全 ──
+    noActivity: "暂无活动",
+    wonTag: "已中奖",
+    notWonTag: "未中奖",
+    loginToViewRecords: "登录查看记录",
+    registeredRequired: "此活动需要注册账号后才能参与",
+    requiredField: "请填写：{label}",
+    myResultTitle: "查询我的结果",
+    loggedInQueryHint: "已登录：{name}，点击查询参与结果",
+    resultEmailPlaceholder: "参与时填写的邮箱",
+    resultCodePlaceholder: "邮箱验证码",
+    drawNotLoaded: "活动未加载，请刷新页面后重试",
   },
 };
