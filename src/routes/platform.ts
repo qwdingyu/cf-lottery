@@ -258,6 +258,8 @@ platformRoute.get("/tenants/:id/summary", async (c) => {
 platformRoute.post("/tenants/:id/impersonate", requirePlatformMember(["platform_owner"]), async (c) => {
   const db = getDb(c);
   const tenantId = c.req.param("id");
+  const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
   if (!tenantId) return fail(c, "缺少租户 ID", 400);
 
   const [member] = await db
@@ -268,10 +270,20 @@ platformRoute.post("/tenants/:id/impersonate", requirePlatformMember(["platform_
 
   if (!member) return fail(c, "该租户没有 owner 成员，无法模拟登录", 404);
 
-  // JWT_SECRET 未配置时显式报错（与 requireAuth 行为一致），避免空密钥静默签发出不可信 token
   const jwtSecret = c.env.JWT_SECRET;
   if (!jwtSecret) return fail(c, "服务未配置 JWT 密钥", 500);
   const token = await signJwt({ sub: member.userId, tenantId: member.tenantId, impersonated: true }, jwtSecret, 3600);
+
+  // 平台审计：模拟登录属于高风险操作，必须留痕
+  await writePlatformAudit(db, {
+    actorUserId,
+    actorRole,
+    action: "platform.tenant.impersonate",
+    targetType: "tenant",
+    targetId: tenantId,
+    tenantId,
+    metadata: { impersonatedUserId: member.userId },
+  });
 
   return ok(c, { token, tenantId: member.tenantId, userId: member.userId });
 });
