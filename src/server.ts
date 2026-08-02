@@ -2,6 +2,8 @@
  * Node.js 服务器入口（本地开发 / 云服务器部署）。
  *
  * 用法：
+ *   npm run dev:local
+ * 或：
  *   PLATFORM=local tsx src/server.ts
  *
  * Cloudflare 环境继续用 src/index.ts（wrangler deploy）。
@@ -12,9 +14,11 @@
  * - 本地开发时不需要 wrangler dev，node 直连 Turso + 静态文件服务
  * - 云服务器部署时用 pm2/systemd 管理进程
  */
+import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { app } from "./index";
 
 const PORT = parseInt(process.env.PORT || "8787", 10);
@@ -35,9 +39,26 @@ app.use("*", async (c, next) => {
 });
 
 /**
- * 静态资源 + SPA fallback。
+ * 静态资源服务。
+ * API 路由已注册在前，serveStatic 只匹配未被 API 处理的路径。
  */
 app.use("/*", serveStatic({ root: PUBLIC_DIR }));
+
+/**
+ * SPA fallback：非文件路径回退到 index.html。
+ * Cloudflare Workers 通过 not_found_handling: "single-page-application" 实现，
+ * Node 服务器需要在 API 和静态文件之后额外处理。
+ */
+app.use("/*", async (c, next) => {
+  await next();
+  // 响应为 404 且非 API 路径 → 尝试回退到 SPA index.html
+  if (c.res.status === 404 && !c.req.path.startsWith("/api/")) {
+    try {
+      const html = readFileSync(join(PUBLIC_DIR, "index.html"), "utf-8");
+      c.res = new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    } catch { /* index.html 不存在，保持 404 */ }
+  }
+});
 
 console.log(`[server] cf-lottery on http://localhost:${PORT}`);
 console.log(`[server] platform: ${process.env.PLATFORM || "local"}`);
