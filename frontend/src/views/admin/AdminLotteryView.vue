@@ -12,16 +12,16 @@
           <option value="cancelled">{{ $t('lottery.adminDrawCancelled') }}</option>
         </select>
         <!-- 活动类型筛选（047 文档 🔴） -->
-        <select v-model="activityKindFilter" aria-label="活动类型" @change="loadData">
-          <option value="">全部类型</option>
-          <option value="lottery">抽奖</option>
-          <option value="signup_chain">接龙</option>
-          <option value="reservation">预约</option>
-          <option value="vote">投票</option>
-          <option value="survey">问卷</option>
-          <option value="checkin">签到</option>
-          <option value="approval">审核</option>
-          <option value="claim">资料领取</option>
+        <select v-model="activityKindFilter" :aria-label="$t('lottery.adminActivityKind')" @change="loadData">
+          <option value="">{{ $t('lottery.adminFilterKindAll') }}</option>
+          <option value="lottery">{{ $t('lottery.adminKindLottery') }}</option>
+          <option value="signup_chain">{{ $t('lottery.adminFilterKindSignup') }}</option>
+          <option value="reservation">{{ $t('lottery.adminFilterKindReservation') }}</option>
+          <option value="vote">{{ $t('lottery.adminFilterKindVote') }}</option>
+          <option value="survey">{{ $t('lottery.adminFilterKindSurvey') }}</option>
+          <option value="checkin">{{ $t('lottery.adminFilterKindCheckin') }}</option>
+          <option value="approval">{{ $t('lottery.adminFilterKindApproval') }}</option>
+          <option value="claim">{{ $t('lottery.adminFilterKindClaim') }}</option>
         </select>
         <input
           v-model="listQuery"
@@ -31,8 +31,8 @@
           @keyup.enter="loadData"
         />
         <!-- 创建时间范围筛选（047 文档 🟡） -->
-        <input v-model="createdFromFilter" type="date" aria-label="创建起始日期" title="创建起始日期" @change="loadData" />
-        <input v-model="createdToFilter" type="date" aria-label="创建结束日期" title="创建结束日期" @change="loadData" />
+        <input v-model="createdFromFilter" type="date" :aria-label="$t('lottery.adminCreatedFrom')" :title="$t('lottery.adminCreatedFrom')" @change="loadData" />
+        <input v-model="createdToFilter" type="date" :aria-label="$t('lottery.adminCreatedTo')" :title="$t('lottery.adminCreatedTo')" @change="loadData" />
         <button class="btn btn-ghost btn-sm" type="button" :disabled="loading" @click="loadData">
           {{ $t('lottery.adminReload') }}
         </button>
@@ -88,7 +88,7 @@
               />
             </th>
             <th>{{ $t('lottery.adminName') }}</th>
-            <th>目标 / 类型</th>
+            <th>{{ $t('lottery.adminGoalType') }}</th>
             <th class="col-status">{{ $t('lottery.adminStatus') }}</th>
             <th class="col-num">{{ $t('lottery.adminEntryCount') }}</th>
             <th class="col-num">{{ $t('lottery.winnerCount') }}</th>
@@ -186,22 +186,22 @@
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs"
-                  :title="'生成二维码'"
+                  :title="$t('lottery.adminGenerateQr')"
                   @click="handleShowQrCode(draw)"
-                >二维码</button>
+                >{{ $t('lottery.adminQrCode') }}</button>
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs"
-                  :title="'生成海报'"
+                  :title="$t('lottery.adminGeneratePoster')"
                   @click="handleShowPoster(draw)"
-                >海报</button>
+                >{{ $t('lottery.adminPoster') }}</button>
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
-                  :title="'查看活动漏斗和外部回传'"
+                  :title="$t('lottery.adminViewAnalytics')"
                   @click="handleViewAnalytics(draw)"
-                >数据</button>
+                >{{ $t('lottery.adminAnalytics') }}</button>
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs"
@@ -222,28 +222,28 @@
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleOpen(draw)"
-                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminDrawOpen') }}</button>
+                >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminDrawOpen') }}</button>
                 <button
                   v-if="draw.status === 'open' && draw.activityKind === 'lottery'"
                   type="button"
                   class="btn btn-primary btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleDraw(draw)"
-                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminDrawNow') }}</button>
+                >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminDrawNow') }}</button>
                 <button
                   v-if="draw.status === 'open'"
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handlePause(draw.id)"
-                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminPause') }}</button>
+                >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminPause') }}</button>
                 <button
                   v-if="draw.status === 'paused'"
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleResume(draw.id)"
-                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminResume') }}</button>
+                >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminResume') }}</button>
                 <button
                   v-if="draw.status === 'drawn'"
                   type="button"
@@ -264,14 +264,14 @@
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleRecover(draw.id)"
-                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminRecoverDrawing') }}</button>
+                >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminRecoverDrawing') }}</button>
                 <button
                   v-if="draw.status === 'drawn'"
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleRetryEmail(draw.id)"
-                >{{ operatingId === draw.id ? '加载中…' : $t('lottery.adminRetryEmail') }}</button>
+                >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
                 <button
                   v-if="draw.status === 'draft' || draw.status === 'open' || draw.status === 'paused'"
                   type="button"
@@ -335,26 +335,26 @@
                 />
               </label>
               <label class="field-span-2" v-if="form.activityKind === 'lottery'">
-                <span>奖项配置</span>
+                <span>{{ $t('lottery.adminTierConfig') }}</span>
                 <div class="tier-list">
                   <div v-for="(tier, idx) in form.tiers" :key="idx" class="tier-row">
                     <select v-model="tier.prizeId" class="tier-prize" :disabled="creating">
-                      <option value="">选择奖品</option>
+                      <option value="">{{ $t('lottery.adminSelectPrize') }}</option>
                       <option v-for="p in prizeOptions" :key="p.id" :value="p.id">{{ p.name }}</option>
                     </select>
-                    <input v-model="tier.tierName" class="tier-name" placeholder="奖项名称" maxlength="50" />
-                    <input v-model.number="tier.winnerCount" type="number" class="tier-count" min="1" max="1000" placeholder="名额" />
+                    <input v-model="tier.tierName" class="tier-name" :placeholder="$t('lottery.adminTierNamePlaceholder')" maxlength="50" />
+                    <input v-model.number="tier.winnerCount" type="number" class="tier-count" min="1" max="1000" :placeholder="$t('lottery.adminTierSlotsPlaceholder')" />
                     <button type="button" class="btn btn-ghost btn-xs" @click="removeTier(idx)">✕</button>
                   </div>
                   <div class="tier-actions">
                     <button type="button" class="btn btn-ghost btn-xs" :disabled="form.tiers.length >= 10" @click="addTier">
-                      + 添加奖项
+                      {{ $t('lottery.adminAddTier') }}
                     </button>
                     <button v-if="prizeOptions.length === 0" type="button" class="btn btn-primary btn-xs" :disabled="quickPrizeLoading" @click="quickCreatePrize">
-                      {{ quickPrizeLoading ? '创建中…' : '⚡ 快速创建奖品' }}
+                      {{ quickPrizeLoading ? $t('lottery.adminCreating') : $t('lottery.adminQuickCreatePrize') }}
                     </button>
-                    <button v-else type="button" class="btn btn-ghost btn-xs" @click="goToPrizes">管理奖品</button>
-                    <small class="field-hint">最多 10 个奖项，中奖名额总和不能超过参与人数</small>
+                    <button v-else type="button" class="btn btn-ghost btn-xs" @click="goToPrizes">{{ $t('lottery.adminManagePrizes') }}</button>
+                    <small class="field-hint">{{ $t('lottery.adminTierLimitHint') }}</small>
                   </div>
                 </div>
               </label>
@@ -441,75 +441,75 @@
 
           <section class="form-section" aria-labelledby="lottery-mode">
             <header class="form-section-head">
-              <h4 id="lottery-mode" class="form-section-title">参与模式</h4>
-              <p class="form-section-desc">选择参与者如何加入活动</p>
+              <h4 id="lottery-mode" class="form-section-title">{{ $t('lottery.adminParticipationMode') }}</h4>
+              <p class="form-section-desc">{{ $t('lottery.adminParticipationModeDesc') }}</p>
             </header>
             <div class="form-grid two-cols">
               <label class="field-span-2">
-                <span>活动类型</span>
+                <span>{{ $t('lottery.adminActivityKind') }}</span>
                 <select v-model="form.activityKind" @change="handleActivityKindChange">
-                  <option value="lottery">抽奖</option>
-                  <option value="signup_chain">接龙 / 报名</option>
-                  <option value="claim">资料领取 / 领券</option>
-                  <option value="survey">问卷调研</option>
-                  <option value="vote">投票评选</option>
-                  <option value="checkin">签到 / 打卡</option>
-                  <option value="reservation">预约确认</option>
-                  <option value="approval">审核申请</option>
+                  <option value="lottery">{{ $t('lottery.adminKindLottery') }}</option>
+                  <option value="signup_chain">{{ $t('lottery.adminKindSignupChain') }}</option>
+                  <option value="claim">{{ $t('lottery.adminKindClaim') }}</option>
+                  <option value="survey">{{ $t('lottery.adminKindSurvey') }}</option>
+                  <option value="vote">{{ $t('lottery.adminKindVote') }}</option>
+                  <option value="checkin">{{ $t('lottery.adminKindCheckin') }}</option>
+                  <option value="reservation">{{ $t('lottery.adminKindReservation') }}</option>
+                  <option value="approval">{{ $t('lottery.adminKindApproval') }}</option>
                 </select>
-                <small class="field-hint">活动类型决定结果语义；互动体验只决定前台展示</small>
+                <small class="field-hint">{{ $t('lottery.adminActivityKindHint') }}</small>
               </label>
               <label class="field-span-2">
-                <span>参与模式</span>
+                <span>{{ $t('lottery.adminParticipationMode') }}</span>
                 <select v-model="form.participationMode" @change="handleParticipationModeChange">
-                  <option value="open">公开参与（邮箱验证码）</option>
-                  <option value="registered">需注册登录（JWT 认证）</option>
-                  <option value="roster">限定名单（仅导入邮箱）</option>
-                  <option value="password">访问密码</option>
-                  <option value="invite_code">邀请码</option>
+                  <option value="open">{{ $t('lottery.adminModeOpen') }}</option>
+                  <option value="registered">{{ $t('lottery.adminModeRegistered') }}</option>
+                  <option value="roster">{{ $t('lottery.adminModeRoster') }}</option>
+                  <option value="password">{{ $t('lottery.adminModePassword') }}</option>
+                  <option value="invite_code">{{ $t('lottery.adminModeInviteCode') }}</option>
                 </select>
               </label>
               <label class="field-span-2">
-                <span>互动体验</span>
+                <span>{{ $t('lottery.adminExperienceType') }}</span>
                 <select v-model="form.experienceType">
-                  <option value="wheel">大转盘</option>
-                  <option value="slot">老虎机</option>
-                  <option value="scratch">刮刮卡</option>
-                  <option value="card">卡片翻转</option>
-                  <option value="list">接龙列表</option>
-                  <option value="queue">排队队列</option>
-                  <option value="form">表单提交</option>
-                  <option value="ballot">投票选项</option>
-                  <option value="calendar">预约日历</option>
-                  <option value="checkin">签到按钮</option>
-                  <option value="reveal">领取揭晓</option>
-                  <option value="grid">九宫格</option>
-                  <option value="submit">普通提交</option>
+                  <option value="wheel">{{ $t('lottery.adminExpWheel') }}</option>
+                  <option value="slot">{{ $t('lottery.adminExpSlot') }}</option>
+                  <option value="scratch">{{ $t('lottery.adminExpScratch') }}</option>
+                  <option value="card">{{ $t('lottery.adminExpCard') }}</option>
+                  <option value="list">{{ $t('lottery.adminExpList') }}</option>
+                  <option value="queue">{{ $t('lottery.adminExpQueue') }}</option>
+                  <option value="form">{{ $t('lottery.adminExpForm') }}</option>
+                  <option value="ballot">{{ $t('lottery.adminExpBallot') }}</option>
+                  <option value="calendar">{{ $t('lottery.adminExpCalendar') }}</option>
+                  <option value="checkin">{{ $t('lottery.adminExpCheckin') }}</option>
+                  <option value="reveal">{{ $t('lottery.adminExpReveal') }}</option>
+                  <option value="grid">{{ $t('lottery.adminExpGrid') }}</option>
+                  <option value="submit">{{ $t('lottery.adminExpSubmit') }}</option>
                 </select>
-                <small class="field-hint">互动体验只影响活动页展示，不决定参与资格或开奖结果</small>
+                <small class="field-hint">{{ $t('lottery.adminExperienceHint') }}</small>
               </label>
               <label v-if="form.activityKind === 'signup_chain'" class="field-span-2">
-                <span>名额策略</span>
+                <span>{{ $t('lottery.adminAllocationPolicy') }}</span>
                 <select v-model="form.allocationPolicy">
-                  <option value="capacity">满额后拒绝</option>
-                  <option value="waitlist">满额后进入候补</option>
+                  <option value="capacity">{{ $t('lottery.adminPolicyCapacity') }}</option>
+                  <option value="waitlist">{{ $t('lottery.adminPolicyWaitlist') }}</option>
                 </select>
-                <small class="field-hint">接龙结果由后端按参与顺序分配，候补不会占用正式名额</small>
+                <small class="field-hint">{{ $t('lottery.adminAllocationHint') }}</small>
               </label>
               <label v-if="form.participationMode === 'password'" class="field-span-2">
-                <span>访问密码</span>
-                <input v-model="form.accessPassword" type="text" maxlength="20" placeholder="设置活动访问密码" />
-                <small class="field-hint">参与者需要输入此密码才能参与活动</small>
+                <span>{{ $t('lottery.adminAccessPassword') }}</span>
+                <input v-model="form.accessPassword" type="text" maxlength="20" :placeholder="$t('lottery.adminAccessPasswordPlaceholder')" />
+                <small class="field-hint">{{ $t('lottery.adminAccessPasswordHint') }}</small>
               </label>
               <label v-if="form.participationMode === 'roster'" class="field-span-2">
-                <span>导入名单（每行一个邮箱）</span>
+                <span>{{ $t('lottery.adminRosterLabel') }}</span>
                 <textarea v-model="rosterInput" rows="5" placeholder="user1@example.com&#10;user2@example.com&#10;user3@example.com" />
-                <small class="field-hint">导入后将在创建活动时自动添加名单，已存在的邮箱会被跳过</small>
+                <small class="field-hint">{{ $t('lottery.adminRosterHint') }}</small>
               </label>
               <label v-if="form.participationMode === 'invite_code'" class="field-span-2">
-                <span>生成邀请码数量</span>
+                <span>{{ $t('lottery.adminInviteCodeCount') }}</span>
                 <input v-model.number="inviteCodeCount" type="number" min="1" max="1000" step="1" />
-                <small class="field-hint">创建活动后将自动生成指定数量的邀请码，每码可使用 1 次</small>
+                <small class="field-hint">{{ $t('lottery.adminInviteCodeHint') }}</small>
               </label>
             </div>
           </section>
@@ -517,29 +517,29 @@
           <!-- 导流配置：关联商品推广 -->
           <section class="form-section" aria-labelledby="lottery-traffic">
             <header class="form-section-head">
-              <h4 id="lottery-traffic" class="form-section-title">导流配置</h4>
-              <p class="form-section-desc">关联商品链接，参与者在参与后可见商品卡片</p>
+              <h4 id="lottery-traffic" class="form-section-title">{{ $t('lottery.adminTrafficSection') }}</h4>
+              <p class="form-section-desc">{{ $t('lottery.adminTrafficSectionDesc') }}</p>
             </header>
             <div class="form-grid two-cols">
               <label class="field-span-2">
                 <input v-model="form.enableProductLink" type="checkbox" class="checkbox-inline" />
-                <span>关联商品推广</span>
+                <span>{{ $t('lottery.adminEnableProductLink') }}</span>
               </label>
               <template v-if="form.enableProductLink">
                 <label class="field-span-2">
-                  <span>商品链接 *</span>
+                  <span>{{ $t('lottery.adminProductLink') }}</span>
                   <input v-model="form.productLink.url" type="url" placeholder="https://shop.example.com/product/123" />
                 </label>
                 <label>
-                  <span>商品名称 *</span>
-                  <input v-model="form.productLink.title" maxlength="100" placeholder="AI 智能音箱 Pro Max" />
+                  <span>{{ $t('lottery.adminProductTitle') }}</span>
+                  <input v-model="form.productLink.title" maxlength="100" :placeholder="$t('lottery.adminProductTitlePlaceholder')" />
                 </label>
                 <label>
-                  <span>展示价格</span>
+                  <span>{{ $t('lottery.adminProductPrice') }}</span>
                   <input v-model="form.productLink.price" placeholder="¥299" />
                 </label>
                 <label class="field-span-2">
-                  <span>商品图片 URL</span>
+                  <span>{{ $t('lottery.adminProductImageUrl') }}</span>
                   <input v-model="form.productLink.imageUrl" type="url" placeholder="https://img.example.com/xxx.jpg" />
                 </label>
               </template>
@@ -549,29 +549,29 @@
           <!-- 裂变传播配置 -->
           <section class="form-section" aria-labelledby="lottery-viral">
             <header class="form-section-head">
-              <h4 id="lottery-viral" class="form-section-title">裂变传播</h4>
-              <p class="form-section-desc">开启后参与者分享活动可额外获得抽奖机会，并展示邀请排行榜</p>
+              <h4 id="lottery-viral" class="form-section-title">{{ $t('lottery.adminViralSection') }}</h4>
+              <p class="form-section-desc">{{ $t('lottery.adminViralSectionDesc') }}</p>
             </header>
             <div class="form-grid two-cols">
               <label class="field-span-2">
                 <input v-model="form.enableViral" type="checkbox" class="checkbox-inline" />
-                <span>开启裂变传播</span>
+                <span>{{ $t('lottery.adminEnableViral') }}</span>
               </label>
               <template v-if="form.enableViral">
                 <label>
-                  <span>每邀请 1 人额外获得</span>
+                  <span>{{ $t('lottery.adminViralPerInviteLabel') }}</span>
                   <input v-model.number="form.viralExtraEntriesPerInvite" type="number" min="1" max="10" />
-                  <small>次抽奖机会（建议 1-3）</small>
+                  <small>{{ $t('lottery.adminViralPerInviteSuffix') }}</small>
                 </label>
                 <label>
-                  <span>最多额外获得</span>
+                  <span>{{ $t('lottery.adminViralMaxLabel') }}</span>
                   <input v-model.number="form.viralMaxExtraEntries" type="number" min="1" max="100" />
-                  <small>次（建议 10-20）</small>
+                  <small>{{ $t('lottery.adminViralMaxSuffix') }}</small>
                 </label>
                 <label class="field-span-2">
                   <input v-model="form.viralLeaderboardEnabled" type="checkbox" class="checkbox-inline" />
-                  <span>展示邀请排行榜</span>
-                  <small>参与者可见谁邀请了最多人</small>
+                  <span>{{ $t('lottery.adminViralLeaderboard') }}</span>
+                  <small>{{ $t('lottery.adminViralLeaderboardHint') }}</small>
                 </label>
               </template>
             </div>
@@ -580,27 +580,27 @@
           <!-- 多状态 CTA 承接：中奖/未中奖不同导流 -->
           <section class="form-section" aria-labelledby="lottery-ctas">
             <header class="form-section-head">
-              <h4 id="lottery-ctas" class="form-section-title">CTA 承接配置</h4>
-              <p class="form-section-desc">中奖和未中奖用户展示不同的导流卡片，精准承接不同状态</p>
+              <h4 id="lottery-ctas" class="form-section-title">{{ $t('lottery.adminCtaSection') }}</h4>
+              <p class="form-section-desc">{{ $t('lottery.adminCtaSectionDesc') }}</p>
             </header>
             <div class="form-grid two-cols">
               <label class="field-span-2">
                 <input v-model="form.enableAfterWinCta" type="checkbox" class="checkbox-inline" />
-                <span>中奖后导流卡片</span>
-                <small>中奖用户在结果页可见</small>
+                <span>{{ $t('lottery.adminAfterWinCta') }}</span>
+                <small>{{ $t('lottery.adminAfterWinCtaHint') }}</small>
               </label>
               <template v-if="form.enableAfterWinCta">
-                <label class="field-span-2"><span>导流链接 *</span><input v-model="form.afterWinCtaUrl" type="url" placeholder="https://..." /></label>
-                <label><span>展示标题</span><input v-model="form.afterWinCtaTitle" maxlength="60" placeholder="中奖了！看看这个" /></label>
+                <label class="field-span-2"><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterWinCtaUrl" type="url" placeholder="https://..." /></label>
+                <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterWinCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterWinCtaTitlePlaceholder')" /></label>
               </template>
               <label class="field-span-2">
                 <input v-model="form.enableAfterLossCta" type="checkbox" class="checkbox-inline" />
-                <span>未中奖导流卡片</span>
-                <small>未中奖用户在结果页可见</small>
+                <span>{{ $t('lottery.adminAfterLossCta') }}</span>
+                <small>{{ $t('lottery.adminAfterLossCtaHint') }}</small>
               </label>
               <template v-if="form.enableAfterLossCta">
-                <label class="field-span-2"><span>导流链接 *</span><input v-model="form.afterLossCtaUrl" type="url" placeholder="https://..." /></label>
-                <label><span>展示标题</span><input v-model="form.afterLossCtaTitle" maxlength="60" placeholder="没中奖？试试这个" /></label>
+                <label class="field-span-2"><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterLossCtaUrl" type="url" placeholder="https://..." /></label>
+                <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterLossCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterLossCtaTitlePlaceholder')" /></label>
               </template>
             </div>
           </section>
@@ -611,8 +611,8 @@
             aria-labelledby="activity-config"
           >
             <header class="form-section-head">
-              <h4 id="activity-config" class="form-section-title">活动内容配置</h4>
-              <p class="form-section-desc">配置参与者实际要填写或选择的内容，发布前会由后端再次校验</p>
+              <h4 id="activity-config" class="form-section-title">{{ $t('lottery.adminActivityConfigSection') }}</h4>
+              <p class="form-section-desc">{{ $t('lottery.adminActivityConfigDesc') }}</p>
             </header>
 
             <div v-if="form.activityKind === 'survey'" class="activity-config-list">
@@ -623,28 +623,28 @@
               >
                 <div class="form-grid two-cols">
                   <label>
-                    <span>字段名称</span>
-                    <input v-model="field.label" maxlength="80" placeholder="如 公司名称 / 需求说明" />
+                    <span>{{ $t('lottery.adminFieldLabel') }}</span>
+                    <input v-model="field.label" maxlength="80" :placeholder="$t('lottery.adminFieldLabelPlaceholder')" />
                   </label>
                   <label>
-                    <span>字段类型</span>
+                    <span>{{ $t('lottery.adminFieldType') }}</span>
                     <select v-model="field.type" @change="normalizeSurveyFieldOptions(field)">
-                      <option value="text">短文本</option>
-                      <option value="email">邮箱</option>
-                      <option value="phone">手机号</option>
-                      <option value="textarea">长文本</option>
-                      <option value="select">下拉选择</option>
-                      <option value="radio">单选</option>
-                      <option value="checkbox">多选</option>
+                      <option value="text">{{ $t('lottery.adminFieldTypeText') }}</option>
+                      <option value="email">{{ $t('lottery.adminFieldTypeEmail') }}</option>
+                      <option value="phone">{{ $t('lottery.adminFieldTypePhone') }}</option>
+                      <option value="textarea">{{ $t('lottery.adminFieldTypeTextarea') }}</option>
+                      <option value="select">{{ $t('lottery.adminFieldTypeSelect') }}</option>
+                      <option value="radio">{{ $t('lottery.adminFieldTypeRadio') }}</option>
+                      <option value="checkbox">{{ $t('lottery.adminFieldTypeCheckbox') }}</option>
                     </select>
                   </label>
                   <label>
-                    <span>最大长度</span>
+                    <span>{{ $t('lottery.adminMaxLength') }}</span>
                     <input v-model.number="field.maxLength" type="number" min="1" max="2000" step="1" />
                   </label>
                   <label class="checkbox-label">
                     <input v-model="field.required" type="checkbox" />
-                    <span>必填</span>
+                    <span>{{ $t('lottery.adminRequired') }}</span>
                   </label>
                 </div>
                 <div v-if="isChoiceSurveyField(field)" class="choice-options">
@@ -653,11 +653,11 @@
                     :key="option.id"
                     class="choice-option-row"
                   >
-                    <span>选项</span>
-                    <input v-model="option.label" maxlength="80" placeholder="选项名称" />
-                    <button type="button" class="btn btn-ghost btn-xs" @click="removeSurveyOption(field, option.id)">删除</button>
+                    <span>{{ $t('lottery.adminOption') }}</span>
+                    <input v-model="option.label" maxlength="80" :placeholder="$t('lottery.adminOptionName')" />
+                    <button type="button" class="btn btn-ghost btn-xs" @click="removeSurveyOption(field, option.id)">{{ $t('lottery.adminDelete') }}</button>
                   </label>
-                  <button type="button" class="btn btn-ghost btn-xs" @click="addSurveyOption(field)">添加选项</button>
+                  <button type="button" class="btn btn-ghost btn-xs" @click="addSurveyOption(field)">{{ $t('lottery.adminAddOption') }}</button>
                 </div>
                 <button
                   type="button"
@@ -665,10 +665,10 @@
                   :disabled="form.activityConfig.fields.length <= 1"
                   @click="removeSurveyField(Number(index))"
                 >
-                  删除字段
+                  {{ $t('lottery.adminRemoveField') }}
                 </button>
               </div>
-              <button type="button" class="btn btn-ghost btn-sm" @click="addSurveyField">添加字段</button>
+              <button type="button" class="btn btn-ghost btn-sm" @click="addSurveyField">{{ $t('lottery.adminAddField') }}</button>
             </div>
 
             <div v-else class="activity-config-list">
@@ -679,16 +679,16 @@
               >
                 <div class="form-grid two-cols">
                   <label>
-                    <span>选项名称</span>
-                    <input v-model="option.label" maxlength="80" placeholder="如 方案 A" />
+                    <span>{{ $t('lottery.adminOptionName') }}</span>
+                    <input v-model="option.label" maxlength="80" :placeholder="$t('lottery.adminVoteOptionPlaceholder')" />
                   </label>
                   <label>
-                    <span>图片 URL</span>
-                    <input v-model="option.imageUrl" type="url" maxlength="2000" placeholder="可选，http/https 图片地址" />
+                    <span>{{ $t('lottery.adminImageUrl') }}</span>
+                    <input v-model="option.imageUrl" type="url" maxlength="2000" :placeholder="$t('lottery.adminImageUrlPlaceholder')" />
                   </label>
                   <label class="field-span-2">
-                    <span>说明</span>
-                    <input v-model="option.description" maxlength="300" placeholder="可选，展示给参与者的补充说明" />
+                    <span>{{ $t('lottery.adminOptionDesc') }}</span>
+                    <input v-model="option.description" maxlength="300" :placeholder="$t('lottery.adminOptionDescPlaceholder')" />
                   </label>
                 </div>
                 <button
@@ -697,32 +697,32 @@
                   :disabled="form.activityConfig.options.length <= 2"
                   @click="removeVoteOption(Number(index))"
                 >
-                  删除选项
+                  {{ $t('lottery.adminRemoveOption') }}
                 </button>
               </div>
-              <button type="button" class="btn btn-ghost btn-sm" @click="addVoteOption">添加投票选项</button>
+              <button type="button" class="btn btn-ghost btn-sm" @click="addVoteOption">{{ $t('lottery.adminAddVoteOption') }}</button>
             </div>
           </section>
 
           <!-- 活动后承接：未中奖自动发券（仅抽奖活动，需显式启用） -->
           <section v-if="form.activityKind === 'lottery'" class="form-section" aria-labelledby="lottery-loserreward">
             <header class="form-section-head">
-              <h4 id="lottery-loserreward" class="form-section-title">活动后承接</h4>
-              <p class="form-section-desc">未中奖用户自动发放优惠券，把流失用户转化为可再营销的潜在客户</p>
+              <h4 id="lottery-loserreward" class="form-section-title">{{ $t('lottery.adminLoserRewardSection') }}</h4>
+              <p class="form-section-desc">{{ $t('lottery.adminLoserRewardDesc') }}</p>
             </header>
             <div class="form-grid two-cols">
               <label class="field-span-2">
-                <span>未中奖自动发券</span>
+                <span>{{ $t('lottery.adminLoserRewardLabel') }}</span>
                 <select v-model="loserRewardEnabled" @change="syncLoserReward">
-                  <option :value="false">关闭</option>
-                  <option :value="true">启用</option>
+                  <option :value="false">{{ $t('lottery.adminOff') }}</option>
+                  <option :value="true">{{ $t('lottery.adminOn') }}</option>
                 </select>
-                <small class="field-hint">启用后，开奖时自动给未中奖用户发放优惠券码</small>
+                <small class="field-hint">{{ $t('lottery.adminLoserRewardHint') }}</small>
               </label>
               <label v-if="loserRewardEnabled" class="field-span-2">
-                <span>优惠券标签（可选）</span>
-                <input v-model="loserRewardCouponLabel" maxlength="50" placeholder="指定发放某个 label 的券池，留空发任意可用券" @change="syncLoserReward" />
-                <small class="field-hint">先在「奖品管理 → 优惠券」导入优惠券，可设置标签区分券池</small>
+                <span>{{ $t('lottery.adminCouponLabel') }}</span>
+                <input v-model="loserRewardCouponLabel" maxlength="50" :placeholder="$t('lottery.adminCouponLabelPlaceholder')" @change="syncLoserReward" />
+                <small class="field-hint">{{ $t('lottery.adminCouponLabelHint') }}</small>
               </label>
             </div>
           </section>
@@ -739,9 +739,9 @@
                 <small class="field-hint">{{ $t('lottery.winnerCountHint') }}</small>
               </label>
               <label v-else>
-                <span>结果规则</span>
+                <span>{{ $t('lottery.adminResultRule') }}</span>
                 <input :value="resultModeLabel(form.resultMode)" disabled />
-                <small class="field-hint">非抽奖活动不配置中奖人数，按活动类型自动分配或记录结果</small>
+                <small class="field-hint">{{ $t('lottery.adminResultRuleHint') }}</small>
               </label>
               <label>
                 <span>{{ $t('lottery.maxParticipants') }}</span>
@@ -793,7 +793,7 @@
     </AdminModal>
 
     <!-- 模板选择弹窗 -->
-    <AdminModal v-model="showTemplateModal" title="选择活动模板" max-width="720px">
+    <AdminModal v-model="showTemplateModal" :title="$t('lottery.adminSelectTemplate')" max-width="720px">
       <div class="template-grid">
         <button
           v-for="tpl in templates"
@@ -886,22 +886,22 @@
     <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" @confirm="onConfirm" />
 
     <!-- 活动数据：平台内漏斗 + 外部系统显式回传 -->
-    <AdminModal v-model="showAnalyticsModal" title="活动数据" max-width="860px">
+    <AdminModal v-model="showAnalyticsModal" :title="$t('lottery.adminAnalyticsTitle')" max-width="860px">
       <div class="analytics-modal-body">
         <div class="analytics-modal-head">
           <div>
             <h3>{{ analyticsDraw?.title || '-' }}</h3>
-            <p>平台事件只代表浏览、参与和点击；外部转化只来自 API Key 回传。</p>
+            <p>{{ $t('lottery.adminAnalyticsHint') }}</p>
           </div>
           <button
             class="btn btn-ghost btn-sm"
             type="button"
             :disabled="analyticsLoading || !analyticsDraw"
             @click="analyticsDraw && handleViewAnalytics(analyticsDraw)"
-          >刷新</button>
+          >{{ $t('lottery.adminRefresh') }}</button>
         </div>
 
-        <div v-if="analyticsLoading" class="empty-text">加载中...</div>
+        <div v-if="analyticsLoading" class="empty-text">{{ $t('lottery.loadingText') }}</div>
         <div v-else-if="analyticsError" class="table-error" role="alert">
           <span>{{ analyticsError }}</span>
         </div>
@@ -914,58 +914,58 @@
           </div>
 
           <div class="analytics-section">
-            <h4>关键比率</h4>
+            <h4>{{ $t('lottery.adminKeyRates') }}</h4>
             <div class="analytics-rates">
               <div>
                 <span>{{ completionRate }}</span>
-                <small>完成 / 浏览</small>
+                <small>{{ $t('lottery.adminRateCompletionView') }}</small>
               </div>
               <div>
                 <span>{{ ctaRate }}</span>
-                <small>CTA / 完成</small>
+                <small>{{ $t('lottery.adminRateCtaCompletion') }}</small>
               </div>
               <div>
                 <span>{{ externalConversionRate }}</span>
-                <small>外部回传 / CTA</small>
+                <small>{{ $t('lottery.adminRateExternalCta') }}</small>
               </div>
             </div>
           </div>
 
           <div class="analytics-section">
             <div class="analytics-section-head">
-              <h4>外部回传类型</h4>
-              <span class="muted-text">只统计外部系统显式上报的事实</span>
+              <h4>{{ $t('lottery.adminConversionTypes') }}</h4>
+              <span class="muted-text">{{ $t('lottery.adminConversionTypesHint') }}</span>
             </div>
             <div v-if="conversionTypeRows.length > 0" class="analytics-type-list">
               <div v-for="row in conversionTypeRows" :key="row.type">
                 <span>{{ conversionTypeLabel(row.type) }}</span>
                 <strong>{{ row.count }}</strong>
-                <small v-if="row.amountCents > 0">{{ row.amountCents }} 分</small>
+                <small v-if="row.amountCents > 0">{{ $t('lottery.adminCentsAmount', { amount: row.amountCents }) }}</small>
               </div>
             </div>
-            <p v-else class="empty-text">暂无外部转化回传</p>
+            <p v-else class="empty-text">{{ $t('lottery.adminNoConversions') }}</p>
           </div>
 
           <div class="analytics-section">
             <div class="analytics-section-head">
-              <h4>最近回传</h4>
+              <h4>{{ $t('lottery.adminRecentConversions') }}</h4>
               <button
                 class="btn btn-ghost btn-xs"
                 type="button"
                 :disabled="analyticsConversions.length === 0"
                 @click="handleExportConversions"
-              >导出 CSV</button>
+              >{{ $t('lottery.adminExportWinners') }}</button>
             </div>
             <div class="table-wrap analytics-table-wrap">
               <table class="admin-table">
                 <thead>
                   <tr>
-                    <th>类型</th>
-                    <th>来源</th>
-                    <th>外部事件</th>
-                    <th>身份</th>
-                    <th>金额</th>
-                    <th>发生时间</th>
+                    <th>{{ $t('lottery.adminConvType') }}</th>
+                    <th>{{ $t('lottery.adminConvSource') }}</th>
+                    <th>{{ $t('lottery.adminConvEvent') }}</th>
+                    <th>{{ $t('lottery.adminConvIdentity') }}</th>
+                    <th>{{ $t('lottery.adminConvAmount') }}</th>
+                    <th>{{ $t('lottery.adminConvOccurredAt') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -978,7 +978,7 @@
                     <td>{{ formatDate(item.occurredAt) }}</td>
                   </tr>
                   <tr v-if="analyticsConversions.length === 0">
-                    <td colspan="6" class="empty-text">暂无外部回传记录</td>
+                    <td colspan="6" class="empty-text">{{ $t('lottery.adminNoConversionRecords') }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -989,30 +989,30 @@
     </AdminModal>
 
     <!-- 二维码弹窗 -->
-    <AdminModal v-model="showQrModal" title="活动二维码" max-width="400px">
+    <AdminModal v-model="showQrModal" :title="$t('lottery.adminQrTitle')" max-width="400px">
       <div class="qr-modal-body">
-        <img :src="qrImageUrl" alt="活动二维码" class="qr-image" />
-        <p class="qr-hint">扫描二维码参与活动</p>
+        <img :src="qrImageUrl" :alt="$t('lottery.adminQrTitle')" class="qr-image" />
+        <p class="qr-hint">{{ $t('lottery.adminQrHint') }}</p>
         <div class="qr-actions">
-          <button class="btn btn-primary btn-sm" @click="handleDownloadQr">下载二维码</button>
-          <button class="btn btn-ghost btn-sm" @click="handleCopyQrLink">复制链接</button>
+          <button class="btn btn-primary btn-sm" @click="handleDownloadQr">{{ $t('lottery.adminDownloadQr') }}</button>
+          <button class="btn btn-ghost btn-sm" @click="handleCopyQrLink">{{ $t('lottery.adminCopyQrLink') }}</button>
         </div>
       </div>
     </AdminModal>
 
     <!-- 海报弹窗 -->
-    <AdminModal v-model="showPosterModal" title="活动海报" max-width="500px">
+    <AdminModal v-model="showPosterModal" :title="$t('lottery.adminPosterTitle')" max-width="500px">
       <div class="poster-modal-body">
         <!-- 海报预览：显示已生成的 PNG（或加载中） -->
         <div class="poster-preview-wrap">
-          <img v-if="posterDataUrl" :src="posterDataUrl" alt="活动海报" class="poster-preview" />
-          <div v-else class="poster-loading">{{ posterGenerating ? '生成中…' : '加载中…' }}</div>
+          <img v-if="posterDataUrl" :src="posterDataUrl" :alt="$t('lottery.adminPosterTitle')" class="poster-preview" />
+          <div v-else class="poster-loading">{{ posterGenerating ? $t('lottery.adminGenerating') : $t('lottery.loadingText') }}</div>
         </div>
         <div class="poster-actions">
           <button class="btn btn-primary btn-sm" :disabled="posterGenerating || !posterDataUrl" @click="handleDownloadPoster">
-            下载海报
+            {{ $t('lottery.adminDownloadPoster') }}
           </button>
-          <button class="btn btn-ghost btn-sm" @click="showPosterModal = false">关闭</button>
+          <button class="btn btn-ghost btn-sm" @click="showPosterModal = false">{{ $t('lottery.adminClose') }}</button>
         </div>
       </div>
     </AdminModal>
@@ -1027,7 +1027,7 @@
       <div class="poster-template-content">
         <div class="poster-brand">{{ posterPlatformName }}</div>
         <div class="poster-kind">{{ posterKindLabel }}</div>
-        <h2 class="poster-title">{{ (posterDrawData?.title || '活动').slice(0, 18) }}</h2>
+        <h2 class="poster-title">{{ (posterDrawData?.title || $t('lottery.adminActivity')).slice(0, 18) }}</h2>
 
         <div class="poster-prizes" v-if="posterPrizeList.length > 0">
           <div v-for="(p, i) in posterPrizeList.slice(0, 3)" :key="i" class="poster-prize-row">
@@ -1035,16 +1035,16 @@
             <span class="poster-prize-name">{{ p }}</span>
           </div>
         </div>
-        <div v-else class="poster-prizes-empty">🎁 惊喜大奖等你来</div>
+        <div v-else class="poster-prizes-empty">{{ $t('lottery.adminPosterSurprise') }}</div>
 
         <div class="poster-time" v-if="posterTimeText">{{ posterTimeText }}</div>
 
         <div class="poster-qr-wrap">
-          <img v-if="posterQrImageUrl" :src="posterQrImageUrl" alt="活动二维码" class="poster-qr" />
-          <div class="poster-qr-hint">长按识别二维码<br />立即参与</div>
+          <img v-if="posterQrImageUrl" :src="posterQrImageUrl" :alt="$t('lottery.adminQrTitle')" class="poster-qr" />
+          <div class="poster-qr-hint">{{ $t('lottery.adminPosterScanHint') }}<br />{{ $t('lottery.join') }}</div>
         </div>
 
-        <div class="poster-footer">由抽奖平台提供技术支持</div>
+        <div class="poster-footer">{{ $t('lottery.adminPosterFooter') }}</div>
       </div>
     </div>
   </div>
@@ -1272,14 +1272,14 @@ const posterQrImageUrl = ref('')
 const posterDrawData = ref<any>(null)
 const qrDrawUrl = ref('')
 // ── 海报模板数据（computed 派生，供 HTML 模板渲染） ──
-const posterPlatformName = '抽奖平台'
+const posterPlatformName = computed(() => t('lottery.adminPosterBrand'))
 const posterKindLabel = computed(() => {
   const map: Record<string, string> = {
-    lottery: '抽奖', signup_chain: '报名接龙', claim: '资料领取',
-    survey: '问卷调研', vote: '投票评选', checkin: '每日签到',
-    approval: '审核申请', reservation: '限量预约',
+    lottery: t('lottery.adminKindLottery'), signup_chain: t('lottery.adminKindSignupChain'), claim: t('lottery.adminKindClaim'),
+    survey: t('lottery.adminKindSurvey'), vote: t('lottery.adminKindVote'), checkin: t('lottery.adminKindCheckin'),
+    approval: t('lottery.adminKindApproval'), reservation: t('lottery.adminKindReservation'),
   }
-  return map[posterDrawData.value?.activityKind || 'lottery'] || '活动'
+  return map[posterDrawData.value?.activityKind || 'lottery'] || t('lottery.adminActivity')
 })
 const posterPrizeList = computed(() => {
   // 从活动配置的奖项中提取奖品名（用于海报展示，增强吸引力）
@@ -1371,13 +1371,13 @@ const analyticsFunnelCards = computed(() => {
   const stats = analyticsStats.value
   const events = stats?.events
   return [
-    { key: 'page_view', label: '浏览', value: events?.pageViews ?? 0 },
-    { key: 'participation_started', label: '开始参与', value: events?.totals.participation_started ?? 0 },
-    { key: 'participation_completed', label: '完成参与', value: events?.participationCompleted ?? 0 },
-    { key: 'cta_click', label: 'CTA 点击', value: events?.ctaClicks ?? 0 },
-    { key: 'share_click', label: '分享点击', value: events?.shareClicks ?? 0 },
-    { key: 'attributed_join', label: '有效邀请', value: events?.attributedJoins ?? 0 },
-    { key: 'external_conversion_reported', label: '外部回传', value: events?.externalConversionsReported ?? 0 },
+    { key: 'page_view', label: t('lottery.adminFunnelViews'), value: events?.pageViews ?? 0 },
+    { key: 'participation_started', label: t('lottery.adminFunnelStarted'), value: events?.totals.participation_started ?? 0 },
+    { key: 'participation_completed', label: t('lottery.adminFunnelCompleted'), value: events?.participationCompleted ?? 0 },
+    { key: 'cta_click', label: t('lottery.adminFunnelCta'), value: events?.ctaClicks ?? 0 },
+    { key: 'share_click', label: t('lottery.adminFunnelShares'), value: events?.shareClicks ?? 0 },
+    { key: 'attributed_join', label: t('lottery.adminFunnelJoins'), value: events?.attributedJoins ?? 0 },
+    { key: 'external_conversion_reported', label: t('lottery.adminFunnelConversions'), value: events?.externalConversionsReported ?? 0 },
   ]
 })
 const conversionTypeRows = computed(() => {
@@ -1409,8 +1409,8 @@ function defaultActivityConfigForKind(kind: string): ActivityConfigForm {
       version: 1,
       kind: 'survey',
       fields: [
-        { id: 'contact_email', label: '联系邮箱', type: 'email', required: true, maxLength: 120, options: [] },
-        { id: 'feedback', label: '反馈内容', type: 'textarea', required: true, maxLength: 1000, options: [] },
+        { id: 'contact_email', label: t('lottery.adminDefaultContactEmail'), type: 'email', required: true, maxLength: 120, options: [] },
+        { id: 'feedback', label: t('lottery.adminDefaultFeedback'), type: 'textarea', required: true, maxLength: 1000, options: [] },
       ],
     }
   }
@@ -1420,8 +1420,8 @@ function defaultActivityConfigForKind(kind: string): ActivityConfigForm {
       kind: 'vote',
       selection: 'single',
       options: [
-        { id: 'option_a', label: '选项 A', description: '', imageUrl: '' },
-        { id: 'option_b', label: '选项 B', description: '', imageUrl: '' },
+        { id: 'option_a', label: t('lottery.adminOptionNumber', { n: 'A' }), description: '', imageUrl: '' },
+        { id: 'option_b', label: t('lottery.adminOptionNumber', { n: 'B' }), description: '', imageUrl: '' },
       ],
     }
   }
@@ -1435,12 +1435,12 @@ function normalizeActivityConfig(kind: string, config: any): ActivityConfigForm 
     const fields = Array.isArray(config.fields) && config.fields.length > 0
       ? config.fields.map((field: any) => ({
           id: String(field.id || makeStableId('field')),
-          label: String(field.label || '未命名字段'),
+          label: String(field.label || t('lottery.adminUnnamedField')),
           type: (['text', 'email', 'phone', 'textarea', 'select', 'radio', 'checkbox'].includes(field.type) ? field.type : 'text') as SurveyFieldType,
           required: Boolean(field.required),
           maxLength: Number(field.maxLength || 120),
           options: Array.isArray(field.options)
-            ? field.options.map((option: any) => ({ id: String(option.id || makeStableId('opt')), label: String(option.label || '选项') }))
+            ? field.options.map((option: any) => ({ id: String(option.id || makeStableId('opt')), label: String(option.label || t('lottery.adminOption')) }))
             : [],
         }))
       : (defaultActivityConfigForKind('survey') as any).fields
@@ -1450,7 +1450,7 @@ function normalizeActivityConfig(kind: string, config: any): ActivityConfigForm 
     const options = Array.isArray(config.options) && config.options.length >= 2
       ? config.options.map((option: any) => ({
           id: String(option.id || makeStableId('opt')),
-          label: String(option.label || '选项'),
+          label: String(option.label || t('lottery.adminOption')),
           description: String(option.description || ''),
           imageUrl: String(option.imageUrl || ''),
         }))
@@ -1537,7 +1537,7 @@ async function loadPrizeOptions() {
 /** 添加一个奖项（最多 10 个） */
 function addTier() {
   if (form.value.tiers.length >= 10) return
-  form.value.tiers.push({ prizeId: '', tierName: `奖项 ${form.value.tiers.length + 1}`, winnerCount: 1 })
+  form.value.tiers.push({ prizeId: '', tierName: t('lottery.adminTierName', { n: form.value.tiers.length + 1 }), winnerCount: 1 })
 }
 
 /** 移除一个奖项 */
@@ -1556,7 +1556,7 @@ async function quickCreatePrize() {
   quickPrizeLoading.value = true
   try {
     // 1. 创建默认奖品
-    const prizeName = (form.value.name || '抽奖活动') + ' 奖品'
+    const prizeName = t('lottery.adminQuickPrizeName', { name: form.value.name || t('lottery.adminLotteryActivity') })
     const prizeData = await adminRequest<{ id: string }>('/api/admin/prizes', {
       method: 'POST',
       body: JSON.stringify({ name: prizeName, prizeType: 'code', valueText: '' }),
@@ -1572,9 +1572,9 @@ async function quickCreatePrize() {
     if (form.value.tiers.length > 0 && !form.value.tiers[0]!.prizeId) {
       form.value.tiers[0]!.prizeId = prizeData.id
     }
-    showToast(`已创建奖品「${prizeName}」并生成 10 个码`, 'success')
+    showToast(t('lottery.adminPrizeCreatedWithCodes', { name: prizeName }), 'success')
   } catch (err: any) {
-    showToast(err?.message || '快速创建失败，请手动创建', 'error')
+    showToast(err?.message || t('lottery.adminQuickPrizeFailed'), 'error')
   } finally {
     quickPrizeLoading.value = false
   }
@@ -1671,8 +1671,8 @@ function isChoiceSurveyField(field: SurveyFieldForm) {
 function normalizeSurveyFieldOptions(field: SurveyFieldForm) {
   if (isChoiceSurveyField(field) && field.options.length === 0) {
     field.options = [
-      { id: makeStableId('opt'), label: '选项 1' },
-      { id: makeStableId('opt'), label: '选项 2' },
+      { id: makeStableId('opt'), label: t('lottery.adminOptionNumber', { n: 1 }) },
+      { id: makeStableId('opt'), label: t('lottery.adminOptionNumber', { n: 2 }) },
     ]
   }
   if (!isChoiceSurveyField(field)) field.options = []
@@ -1683,7 +1683,7 @@ function addSurveyField() {
   const config = normalizeActivityConfig('survey', form.value.activityConfig) as Extract<ActivityConfigForm, { kind: 'survey' }>
   config.fields.push({
     id: makeStableId('field'),
-    label: '新字段',
+    label: t('lottery.adminNewField'),
     type: 'text',
     required: false,
     maxLength: 120,
@@ -1701,7 +1701,7 @@ function removeSurveyField(index: number) {
 
 function addSurveyOption(field: SurveyFieldForm) {
   if (!isChoiceSurveyField(field) || field.options.length >= 20) return
-  field.options.push({ id: makeStableId('opt'), label: `选项 ${field.options.length + 1}` })
+  field.options.push({ id: makeStableId('opt'), label: t('lottery.adminOptionNumber', { n: field.options.length + 1 }) })
 }
 
 function removeSurveyOption(field: SurveyFieldForm, optionId: string) {
@@ -1712,7 +1712,7 @@ function removeSurveyOption(field: SurveyFieldForm, optionId: string) {
 function addVoteOption() {
   const config = normalizeActivityConfig('vote', form.value.activityConfig) as Extract<ActivityConfigForm, { kind: 'vote' }>
   if (config.options.length >= 50) return
-  config.options.push({ id: makeStableId('option'), label: `选项 ${config.options.length + 1}`, description: '', imageUrl: '' })
+  config.options.push({ id: makeStableId('option'), label: t('lottery.adminOptionNumber', { n: config.options.length + 1 }), description: '', imageUrl: '' })
   form.value.activityConfig = config as any
 }
 
@@ -1725,48 +1725,48 @@ function removeVoteOption(index: number) {
 
 function activityKindLabel(kind: string): string {
   const map: Record<string, string> = {
-    lottery: '抽奖',
-    signup_chain: '接龙 / 报名',
-    claim: '资料领取 / 领券',
-    survey: '问卷调研',
-    vote: '投票评选',
-    checkin: '签到 / 打卡',
-    reservation: '预约确认',
-    approval: '审核申请',
-    waitlist: '候补名单',
+    lottery: t('lottery.adminKindLottery'),
+    signup_chain: t('lottery.adminKindSignupChain'),
+    claim: t('lottery.adminKindClaim'),
+    survey: t('lottery.adminKindSurvey'),
+    vote: t('lottery.adminKindVote'),
+    checkin: t('lottery.adminKindCheckin'),
+    reservation: t('lottery.adminKindReservation'),
+    approval: t('lottery.adminKindApproval'),
+    waitlist: t('lottery.adminKindWaitlist'),
   }
   return map[kind] || kind || '-'
 }
 
 function experienceTypeLabel(type: string): string {
   const map: Record<string, string> = {
-    submit: '普通提交',
-    wheel: '大转盘',
-    slot: '老虎机',
-    scratch: '刮刮卡',
-    card: '卡片翻转',
-    list: '接龙列表',
-    calendar: '预约日历',
-    form: '表单提交',
-    ballot: '投票选项',
-    checkin: '签到按钮',
-    queue: '排队队列',
-    reveal: '领取揭晓',
-    grid: '九宫格',
+    submit: t('lottery.adminExpSubmit'),
+    wheel: t('lottery.adminExpWheel'),
+    slot: t('lottery.adminExpSlot'),
+    scratch: t('lottery.adminExpScratch'),
+    card: t('lottery.adminExpCard'),
+    list: t('lottery.adminExpList'),
+    calendar: t('lottery.adminExpCalendar'),
+    form: t('lottery.adminExpForm'),
+    ballot: t('lottery.adminExpBallot'),
+    checkin: t('lottery.adminExpCheckin'),
+    queue: t('lottery.adminExpQueue'),
+    reveal: t('lottery.adminExpReveal'),
+    grid: t('lottery.adminExpGrid'),
   }
   return map[type] || type || '-'
 }
 
 function resultModeLabel(mode: string): string {
   const map: Record<string, string> = {
-    manual: '手动开奖',
-    scheduled: '定时开奖',
-    instant: '即时结果',
-    ordered_assignment: '按顺序分配',
-    capacity_assignment: '按容量确认',
-    vote_tally: '投票统计',
-    review_decision: '人工审核',
-    no_result: '只记录提交',
+    manual: t('lottery.adminResultManual'),
+    scheduled: t('lottery.adminResultScheduled'),
+    instant: t('lottery.adminResultInstant'),
+    ordered_assignment: t('lottery.adminResultOrdered'),
+    capacity_assignment: t('lottery.adminResultCapacity'),
+    vote_tally: t('lottery.adminResultVoteTally'),
+    review_decision: t('lottery.adminResultReview'),
+    no_result: t('lottery.adminResultNoResult'),
   }
   return map[mode] || mode || '-'
 }
@@ -1794,12 +1794,12 @@ function percent(numerator: number, denominator: number): string {
 
 function conversionTypeLabel(type: string): string {
   const map: Record<string, string> = {
-    registration: '注册',
-    purchase: '购买',
-    coupon_redeemed: '券码核销',
-    lead_qualified: '线索合格',
-    offline_redeemed: '线下核销',
-    custom: '自定义',
+    registration: t('lottery.adminConvReg'),
+    purchase: t('lottery.adminConvPurchase'),
+    coupon_redeemed: t('lottery.adminConvCouponRedeemed'),
+    lead_qualified: t('lottery.adminConvLead'),
+    offline_redeemed: t('lottery.adminConvOffline'),
+    custom: t('lottery.adminConvCustom'),
   }
   return map[type] || type || '-'
 }
@@ -1812,12 +1812,12 @@ function conversionIdentity(item: ExternalConversion): string {
 function conversionAmount(item: ExternalConversion): string {
   if (item.amountCents === null || item.amountCents === undefined) return '-'
   const currency = item.currency ? `${item.currency} ` : ''
-  return `${currency}${item.amountCents} 分`
+  return `${currency}${t('lottery.adminCentsAmount', { amount: item.amountCents })}`
 }
 
 function formatPublishCheckItems(items: PublishCheckItem[], prefix: string): string {
   const topItems = items.slice(0, 3).map((item) => item.message).join('\n')
-  const rest = items.length > 3 ? `\n还有 ${items.length - 3} 项，请查看发布前预检` : ''
+  const rest = items.length > 3 ? t('lottery.adminMoreCheckItems', { count: items.length - 3 }) : ''
   return `${prefix}\n${topItems}${rest}`
 }
 
@@ -1840,7 +1840,7 @@ async function handleViewAnalytics(draw: LotteryDraw) {
     }
     analyticsConversions.value = conversionData.conversions || []
   } catch (e: any) {
-    analyticsError.value = e?.message || '活动数据加载失败'
+    analyticsError.value = e?.message || t('lottery.adminAnalyticsLoadFailed')
     showToast(analyticsError.value, 'error')
   } finally {
     analyticsLoading.value = false
@@ -1851,7 +1851,7 @@ async function handleViewAnalytics(draw: LotteryDraw) {
 function handleExportConversions() {
   if (analyticsConversions.value.length === 0) return
   const rows = [
-    ['类型', '来源', '外部事件', '身份类型', '身份值', 'ref', '金额分', '币种', '发生时间', '回传时间'],
+    [t('lottery.adminConvType'), t('lottery.adminConvSource'), t('lottery.adminConvEvent'), t('lottery.adminCsvIdentityType'), t('lottery.adminCsvIdentityValue'), 'ref', t('lottery.adminCsvAmountCents'), t('lottery.adminCsvCurrency'), t('lottery.adminConvOccurredAt'), t('lottery.adminCsvReportedAt')],
     ...analyticsConversions.value.map((item) => [
       conversionTypeLabel(item.conversionType),
       item.source || '',
@@ -1867,7 +1867,7 @@ function handleExportConversions() {
   ]
   const idPart = (analyticsDraw.value?.id || 'conversions').slice(0, 40)
   downloadCsv(`activity-conversions-${idPart}-${new Date().toISOString().slice(0, 10)}.csv`, rows)
-  showToast('外部回传已导出', 'success')
+  showToast(t('lottery.adminConversionsExported'), 'success')
 }
 
 function stopWinnersStatusPolling() {
@@ -1979,7 +1979,7 @@ function handleDownloadQr() {
 
 function handleCopyQrLink() {
   writeClipboardText(qrDrawUrl.value)
-  showToast('链接已复制', 'success')
+  showToast(t('lottery.adminQrLinkCopied'), 'success')
 }
 
 /* ── 海报生成 ──────────────────────────────────────────── */
@@ -2052,14 +2052,14 @@ async function generatePosterFromDom() {
 
 async function handleDownloadPoster() {
   if (!posterDataUrl.value) {
-    showToast('海报未生成，请稍候', 'error')
+    showToast(t('lottery.adminPosterNotReady'), 'error')
     return
   }
   const a = document.createElement('a')
   a.href = posterDataUrl.value
   a.download = 'poster.png'
   a.click()
-  showToast('海报已下载', 'success')
+  showToast(t('lottery.adminPosterDownloaded'), 'success')
 }
 
 function handleExportWinners() {
@@ -2082,7 +2082,7 @@ function handleExportWinners() {
 }
 
 function handleDuplicate(draw: LotteryDraw) {
-  const draft = buildLotteryDuplicateDraft(draw, { nameSuffix: '(副本)', defaultName: '新活动' })
+  const draft = buildLotteryDuplicateDraft(draw, { nameSuffix: t('lottery.adminDuplicateSuffix'), defaultName: t('lottery.adminNewActivity') })
   form.value = {
     ...emptyForm(),
     id: '',
@@ -2110,7 +2110,7 @@ function handleDuplicate(draw: LotteryDraw) {
   }
   isEditing.value = false
   showCreateModal.value = true
-  showToast('已复制活动，请确认后创建', 'success')
+  showToast(t('lottery.adminDuplicatedToast'), 'success')
 }
 
 /** 列表内失败原因截断，完整内容放 title；避免 SQL 整段撑爆表格 */
@@ -2187,7 +2187,7 @@ async function fetchTemplates() {
 }
 
 function categoryLabel(cat: string): string {
-  const map: Record<string,string> = { marketing:'营销获客', engagement:'互动传播', conversion:'转化留资', research:'调研分析' }
+  const map: Record<string,string> = { marketing: t('lottery.adminCatMarketing'), engagement: t('lottery.adminCatEngagement'), conversion: t('lottery.adminCatConversion'), research: t('lottery.adminCatResearch') }
   return map[cat] || cat
 }
 
@@ -2269,11 +2269,11 @@ async function handleOpen(draw: LotteryDraw) {
     // 发布前先展示同一套服务端门禁结果：运营者需要知道缺奖项、码池、CTA、Webhook 等具体阻断点。
     const check = await fetchPublishCheck(draw.id)
     if (!check.canPublish) {
-      showToast(formatPublishCheckItems(check.errors, '发布前需要先处理：'), 'error')
+      showToast(formatPublishCheckItems(check.errors, t('lottery.adminPublishErrorsPrefix')), 'error')
       return
     }
     if (check.warnings.length > 0) {
-      const confirmed = await askConfirm(formatPublishCheckItems(check.warnings, '发布前仍有风险：') + '\n仍然发布吗？')
+      const confirmed = await askConfirm(formatPublishCheckItems(check.warnings, t('lottery.adminPublishWarningsPrefix')) + t('lottery.adminPublishStill'))
       if (!confirmed) return
     }
     await openLotteryDraw(draw.id)
@@ -2538,7 +2538,7 @@ async function handleRecover(id: string) {
 
 async function handleCreate() {
   if (!form.value.name || !form.value.startTime || !form.value.endTime) {
-    showToast('请填写活动名称和参与时间', 'error')
+    showToast(t('lottery.adminFillNameTime'), 'error')
     return
   }
   if (timeOrderError.value) {
@@ -2621,13 +2621,13 @@ async function handleCreate() {
     if (isEditing.value && form.value.id) {
       const current = draws.value.find((d) => d.id === form.value.id)
       if (current && current.status !== 'draft') {
-        showToast('只有草稿状态的活动可以编辑', 'error')
+        showToast(t('lottery.adminEditDraftOnly'), 'error')
         closeEditor()
         form.value = emptyForm()
         return
       }
       await updateLotteryDraw(form.value.id, payload)
-      showToast('活动已更新', 'success')
+      showToast(t('lottery.adminDrawUpdated'), 'success')
     } else {
       const created = await createLotteryDraw(payload)
       if (created?.id) {
@@ -2659,11 +2659,11 @@ async function handleCreate() {
         // 抽奖活动：创建成功后保存奖项配置（选择奖品库中的奖品 + 中奖名额）
         if (form.value.activityKind === 'lottery' && form.value.tiers.some(t => t.prizeId)) {
           const validTiers = form.value.tiers
-            .filter(t => t.prizeId)
-            .map((t, i) => ({
-              prizeId: t.prizeId,
-              tierName: t.tierName || `奖项 ${i + 1}`,
-              winnerCount: Math.max(1, Number(t.winnerCount) || 1),
+            .filter((tier) => tier.prizeId)
+            .map((tier, i) => ({
+              prizeId: tier.prizeId,
+              tierName: tier.tierName || t('lottery.adminTierName', { n: i + 1 }),
+              winnerCount: Math.max(1, Number(tier.winnerCount) || 1),
             }))
           if (validTiers.length > 0) {
             try {
@@ -2677,7 +2677,7 @@ async function handleCreate() {
         try {
           await writeClipboardText(publicShareUrl(created.publicSlug || created.id))
         } catch { /* 剪贴板写入失败不阻断 */ }
-        showToast('活动已创建，链接已复制', 'success')
+        showToast(t('lottery.adminCreateDoneWithLink'), 'success')
         closeEditor()
         form.value = emptyForm()
         await loadData()
@@ -2687,14 +2687,14 @@ async function handleCreate() {
           if (newDraw) handleEdit(newDraw)
         }
       } else {
-        showToast('活动已创建', 'success')
+        showToast(t('lottery.adminCreated'), 'success')
         closeEditor()
         form.value = emptyForm()
         await loadData()
       }
     }
   } catch (e: any) {
-    showToast(e?.message || '创建失败', 'error')
+    showToast(e?.message || t('lottery.adminCreateFailed'), 'error')
   } finally {
     creating.value = false
   }
