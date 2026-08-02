@@ -7,7 +7,7 @@
  */
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "../bindings";
-import { getClientIp } from "../lib/platform";
+import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
 import type { DbType } from "../db/client";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
@@ -53,7 +53,7 @@ async function resolveParticipantIdentity(
     const token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
     if (!token) return null;
     // JWT_SECRET 未配置时显式抛错（与 requireAuth 行为一致），避免空密钥静默验签
-    const jwtSecret = c.env.JWT_SECRET;
+    const jwtSecret = getEnv(c, "JWT_SECRET");
     if (!jwtSecret) throw new Error("JWT_SECRET 未配置");
     try {
       const payload = await verifyJwt(token, jwtSecret);
@@ -234,7 +234,7 @@ publicLotteryRoute.get("/draws/:slug/og", async (c) => {
 
   const title = escapeHtml(draw.title);
   const desc = escapeHtml(draw.description || "快来参与活动吧！");
-  const origin = c.env.APP_ORIGIN || "https://lucky.eforge.xyz";
+  const origin = getEnv(c, "APP_ORIGIN") || "https://lucky.eforge.xyz";
   const pageUrl = `${origin}/lottery/${slug}`;
 
   return c.html(`<!DOCTYPE html>
@@ -447,7 +447,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   });
 
   // 发送邮件
-  const emailEnv = { resendApiKey: c.env.RESEND_API_KEY || "", emailFrom: c.env.EMAIL_FROM || "" };
+  const emailEnv = { resendApiKey: getEnv(c, "RESEND_API_KEY") || "", emailFrom: getEnv(c, "EMAIL_FROM") || "" };
   const sendResult = await sendAccessCode(emailEnv, email, draw.title, code);
 
   return ok(c, {

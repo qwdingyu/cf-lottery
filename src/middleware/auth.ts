@@ -8,6 +8,7 @@
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb } from "../lib/http";
+import { getEnv } from "../lib/platform";
 import { tenantMembers, platformMembers } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 
@@ -19,7 +20,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
   }
 
   // JWT 验证
-  const jwtSecret = c.env.JWT_SECRET;
+  const jwtSecret = getEnv(c, "JWT_SECRET");
   if (!jwtSecret) {
     return c.json({ ok: false, message: "服务未配置 JWT 密钥" }, 500);
   }

@@ -157,9 +157,11 @@ app.use("*", async (c, next) => {
 // ── 数据库初始化中间件 ──
 // 如果 TURSO_URL 未配置（开发环境），db 为 undefined，health 端点返回 db: false。
 // 如果初始化抛异常（凭证错误等），标记 dbInitError 让 health 端点和 getDb 区分场景。
+// 用 getEnv 读取：Node（server.ts）下回退 process.env，无需等待 env 注入中间件。
 app.use("*", async (c, next) => {
   try {
-    c.set("db", createDbFromEnv(c.env));
+    const url = getEnv(c, "TURSO_URL");
+    c.set("db", url ? createDb(createClient({ url, authToken: getEnv(c, "TURSO_TOKEN") })) : undefined);
   } catch (err) {
     console.error("[db] 数据库初始化失败:", err);
     c.set("dbInitError", String((err as Error).message || "数据库连接失败"));

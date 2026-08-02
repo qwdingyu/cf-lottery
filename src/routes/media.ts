@@ -3,6 +3,7 @@ import type { AppEnv } from "../bindings";
 import { auditLogs } from "../db/schema";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { fail, getDb, ok } from "../lib/http";
+import { waitUntil } from "../lib/platform";
 import {
   MEDIA_IMAGE_CACHE_CONTROL,
   createMediaImageKey,
@@ -125,7 +126,7 @@ mediaRoute.get("/media/images/:filename", async (c) => {
 
   const response = new Response(object.body, { headers });
   if (edgeCache) {
-    c.executionCtx.waitUntil(edgeCache.put(cacheKey, response.clone()).catch((error) => {
+    waitUntil(c, edgeCache.put(cacheKey, response.clone()).catch((error) => {
       console.warn("[media-cache-put]", error instanceof Error ? error.message : String(error));
     }));
   }

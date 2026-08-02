@@ -10,6 +10,7 @@ import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger, isValidEmail } from "../lib/http";
+import { getEnv } from "../lib/platform";
 import type { DbType } from "../db/client";
 import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions, externalConversions, systemConfig } from "../db/schema";
 import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
@@ -987,8 +988,8 @@ adminLotteryRoute.post("/draws/:id/draw", async (c) => {
       return fail(c, "该活动类型不需要开奖", 400);
     }
     const result = await performDraw(db, tenantId, drawId, userId, {
-      resendApiKey: c.env.RESEND_API_KEY || "",
-      emailFrom: c.env.EMAIL_FROM || "",
+      resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+      emailFrom: getEnv(c, "EMAIL_FROM") || "",
     });
     return ok(c, result);
   } catch (err) {

@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { fail, getDb, ok } from "../lib/http";
+import { getEnv } from "../lib/platform";
 import { requireAuth, requirePlatformMember, signJwt } from "../middleware/auth";
 import { tenants, platformMembers, users, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
@@ -270,7 +271,7 @@ platformRoute.post("/tenants/:id/impersonate", requirePlatformMember(["platform_
 
   if (!member) return fail(c, "该租户没有 owner 成员，无法模拟登录", 404);
 
-  const jwtSecret = c.env.JWT_SECRET;
+  const jwtSecret = getEnv(c, "JWT_SECRET");
   if (!jwtSecret) return fail(c, "服务未配置 JWT 密钥", 500);
   const token = await signJwt({ sub: member.userId, tenantId: member.tenantId, impersonated: true }, jwtSecret, 3600);
 
