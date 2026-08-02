@@ -560,6 +560,34 @@
             </div>
           </section>
 
+          <!-- 多状态 CTA 承接：中奖/未中奖不同导流 -->
+          <section class="form-section" aria-labelledby="lottery-ctas">
+            <header class="form-section-head">
+              <h4 id="lottery-ctas" class="form-section-title">CTA 承接配置</h4>
+              <p class="form-section-desc">中奖和未中奖用户展示不同的导流卡片，精准承接不同状态</p>
+            </header>
+            <div class="form-grid two-cols">
+              <label class="field-span-2">
+                <input v-model="form.enableAfterWinCta" type="checkbox" class="checkbox-inline" />
+                <span>中奖后导流卡片</span>
+                <small>中奖用户在结果页可见</small>
+              </label>
+              <template v-if="form.enableAfterWinCta">
+                <label class="field-span-2"><span>导流链接 *</span><input v-model="form.afterWinCtaUrl" type="url" placeholder="https://..." /></label>
+                <label><span>展示标题</span><input v-model="form.afterWinCtaTitle" maxlength="60" placeholder="中奖了！看看这个" /></label>
+              </template>
+              <label class="field-span-2">
+                <input v-model="form.enableAfterLossCta" type="checkbox" class="checkbox-inline" />
+                <span>未中奖导流卡片</span>
+                <small>未中奖用户在结果页可见</small>
+              </label>
+              <template v-if="form.enableAfterLossCta">
+                <label class="field-span-2"><span>导流链接 *</span><input v-model="form.afterLossCtaUrl" type="url" placeholder="https://..." /></label>
+                <label><span>展示标题</span><input v-model="form.afterLossCtaTitle" maxlength="60" placeholder="没中奖？试试这个" /></label>
+              </template>
+            </div>
+          </section>
+
           <section
             v-if="form.activityKind === 'survey' || form.activityKind === 'vote'"
             class="form-section"
@@ -1149,7 +1177,14 @@ const buildLotteryDrawConfirmMessage = (draw: any, labels: any) => `${labels.tit
 
 /** 下载 CSV */
 function downloadCsv(filename: string, rows: string[][]) {
-  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  // 公式注入防护：Excel/Sheets 会把 = + - @ 开头的单元格当公式执行，
+  // 加 ' 前缀阻止；结构上统一引号包裹 + 引号加倍。
+  const escapeCell = (c: unknown): string => {
+    const raw = String(c ?? '')
+    const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw
+    return `"${safe.replace(/"/g, '""')}"`
+  }
+  const csv = rows.map(r => r.map(escapeCell).join(',')).join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = filename;
@@ -1341,6 +1376,13 @@ const emptyForm = () => ({
   viralExtraEntriesPerInvite: 1,
   viralMaxExtraEntries: 10,
   viralLeaderboardEnabled: true,
+  // 多状态 CTA
+  enableAfterWinCta: false,
+  afterWinCtaUrl: '',
+  afterWinCtaTitle: '',
+  enableAfterLossCta: false,
+  afterLossCtaUrl: '',
+  afterLossCtaTitle: '',
   // 玩法配置：问卷/投票共用 activity_config，避免再拆 forms/votes 重表。
   activityConfig: defaultActivityConfigForKind('lottery') as any,
 })
@@ -2415,9 +2457,9 @@ async function handleCreate() {
       productLink: form.value.enableProductLink && form.value.productLink.url
         ? form.value.productLink
         : undefined,
-      // 导流与裂变：版本化配置（PromotionConfigV1）
-      // 商品链接或裂变配置任一启用时，构建 promotionConfig
+      // 导流与裂变：版本化配置（PromotionConfigV1 + ctas 扩展）
       promotionConfig: (form.value.enableProductLink && form.value.productLink.url) || form.value.enableViral
+        || form.value.enableAfterWinCta || form.value.enableAfterLossCta
         ? {
             version: 1,
             enabled: true,
@@ -2440,6 +2482,15 @@ async function handleCreate() {
                 leaderboardEnabled: form.value.viralLeaderboardEnabled ?? true,
               },
             } : {}),
+            // 多状态 CTA：中奖/未中奖不同导流卡片
+            ctas: {
+              ...(form.value.enableAfterWinCta && form.value.afterWinCtaUrl ? {
+                after_win: { url: form.value.afterWinCtaUrl, title: form.value.afterWinCtaTitle || '' },
+              } : {}),
+              ...(form.value.enableAfterLossCta && form.value.afterLossCtaUrl ? {
+                after_loss: { url: form.value.afterLossCtaUrl, title: form.value.afterLossCtaTitle || '' },
+              } : {}),
+            },
           }
         : undefined,
     }

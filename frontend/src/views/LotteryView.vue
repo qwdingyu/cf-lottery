@@ -537,6 +537,12 @@
               <p class="result-share-hint">🎁 分享你的好运，让更多人来参与！</p>
               <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 分享活动</button>
             </div>
+            <!-- 中奖后 CTA：运营者配置的导流卡片 -->
+            <div v-if="getResultCta(myResultDraw, 'after_win')" class="result-cta-card">
+              <a :href="getResultCta(myResultDraw, 'after_win')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
+                {{ getResultCta(myResultDraw, 'after_win')!.title || '查看详情' }}
+              </a>
+            </div>
           </template>
           <template v-else-if="myResultData.consolationCoupon">
             <div class="result-line">🎁 <strong>获得安慰奖！</strong></div>
