@@ -19,14 +19,10 @@ const FILE = path.join(ROOT, "src/services/lottery-service.ts");
 
 const lines = fs.readFileSync(FILE, "utf8").split("\n");
 
-/** 行边界断言：行号（1-based）内容必须包含期望子串 */
+/** 行边界断言：行号（1-based）内容必须包含期望子串（当前阶段：第二轮） */
 const ASSERTIONS = [
-  { line: 56, expect: "export type DrawResult" },
-  { line: 190, expect: "DEFAULT_ACTIVITY_PARTICIPANT_CAP" },
-  { line: 192, expect: "const PLAN_LIMITS" },
-  { line: 374, expect: "recordActivityEvent" },
-  { line: 900, expect: "export async function randomSelect" },
-  { line: 969, expect: "查询函数" },
+  { line: 75, expect: "export async function recordActivityEvent" },
+  { line: 591, expect: "查询函数" },
 ];
 
 for (const { line, expect } of ASSERTIONS) {
@@ -38,11 +34,10 @@ for (const { line, expect } of ASSERTIONS) {
   }
 }
 
-// 1-based 闭区间 [start, end]，含端点
+// 1-based 闭区间 [start, end]，含端点（当前阶段：第二轮——集成/事件域）
+// 历史：第一轮（types 54-190 / plan 192-373 / utils 890-968）已完成并提交。
 const SECTIONS = [
-  { file: "src/services/lottery/types.ts", start: 54, end: 190, label: "类型定义+常量" },
-  { file: "src/services/lottery/plan.ts", start: 192, end: 373, label: "套餐配额" },
-  { file: "src/services/lottery/utils.ts", start: 890, end: 968, label: "纯工具（随机/密码）" },
+  { file: "src/services/lottery/integration.ts", start: 75, end: 590, label: "集成/事件域（活动事件、API key、外部转化、Webhook）" },
 ];
 
 // 收集删除行（0-based）
