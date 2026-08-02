@@ -379,6 +379,13 @@
                   </div>
                 </div>
               </div>
+              <!-- 裂变排行榜（活动开启了 leaderboard 时展示） -->
+              <ViralLeaderboard
+                v-if="getDrawViral(draw)?.leaderboardEnabled"
+                :draw-slug="draw.publicSlug || draw.id"
+                :entry-id="lastJoinResult?.drawId === draw.id ? lastJoinResult.entryId : undefined"
+                :viral-config="getDrawViral(draw)"
+              />
               <div v-else-if="!sessionEmail" class="login-prompt">
                 <button type="button" class="btn btn-primary" @click="openLogin(draw.id)">
                   {{ $t('lottery.loginFirst') }}
@@ -526,6 +533,10 @@
               <code class="result-code" @click="copyMyResult(myResultData.prizeCode)">{{ myResultData.prizeCode }}</code>
               <small class="result-hint">点击复制</small>
             </div>
+            <div class="result-share-win">
+              <p class="result-share-hint">🎁 分享你的好运，让更多人来参与！</p>
+              <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 分享活动</button>
+            </div>
           </template>
           <template v-else-if="myResultData.consolationCoupon">
             <div class="result-line">🎁 <strong>获得安慰奖！</strong></div>
@@ -563,6 +574,7 @@ import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { getGameComponent } from '@/components/games/GameRegistry'
 import GameResultModal from '@/components/games/GameResultModal.vue'
+import ViralLeaderboard from '@/components/ViralLeaderboard.vue'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
@@ -736,6 +748,32 @@ function copyMyResult(text: string) {
   writeClipboardText(text)
   showToast('已复制', 'success')
 }
+
+/** 中奖后分享活动链接（归因到当前用户的分享记录） */
+async function shareMyWin() {
+  const draw = myResultDraw.value
+  if (!draw) return
+  const slug = draw.publicSlug || draw.id
+  const origin = window.location.origin
+  if (lastJoinResult.value && lastJoinResult.value.drawId === draw.id) {
+    try {
+      const res = await fetch(`/api/public/draws/${encodeURIComponent(slug)}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entryId: lastJoinResult.value.entryId }),
+      })
+      const data = await res.json()
+      if (data.ok && data.shareUrl) {
+        await writeClipboardText(origin + data.shareUrl)
+        showToast('分享链接已复制', 'success')
+        return
+      }
+    } catch { /* 降级到基础链接 */ }
+  }
+  await writeClipboardText(`${origin}/lottery/${slug}`)
+  showToast('活动链接已复制', 'success')
+}
+
 const pendingJoinDrawId = ref<string | null>(null)
 const nowMs = ref(Date.now())
 
@@ -896,6 +934,12 @@ function joinedStatusText(draw: LotteryDraw): string {
     return '已接龙'
   }
   return `${t('lottery.joined')} · ${t('lottery.waitDraw')}`
+}
+
+/** 从活动数据中提取裂变配置 */
+function getDrawViral(draw: LotteryDraw): { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | undefined {
+  const pc = (draw as any)?.promotionConfig
+  return pc?.viral ?? undefined
 }
 
 /** 生成带 UTM 追踪参数的商品链接（使用公开 slug，不暴露内部 ID） */
@@ -1834,4 +1878,6 @@ onUnmounted(() => {
 .result-code-block { display: flex; flex-direction: column; gap: 4px; align-items: center; background: var(--tg-secondary-bg, #151b28); padding: 12px; border-radius: 8px; width: 100%; }
 .result-code-label { font-size: 12px; color: var(--tg-hint, #9aa4b2); }
 .result-code { font-size: 16px; font-weight: 700; color: var(--admin-accent, #f59e0b); cursor: pointer; word-break: break-all; }
+.result-share-win { margin-top: 12px; text-align: center; }
+.result-share-hint { font-size: 12px; color: var(--tg-hint); margin-bottom: 6px; }
 </style>

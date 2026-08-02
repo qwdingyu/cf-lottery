@@ -529,6 +529,37 @@
             </div>
           </section>
 
+          <!-- 裂变传播配置 -->
+          <section class="form-section" aria-labelledby="lottery-viral">
+            <header class="form-section-head">
+              <h4 id="lottery-viral" class="form-section-title">裂变传播</h4>
+              <p class="form-section-desc">开启后参与者分享活动可额外获得抽奖机会，并展示邀请排行榜</p>
+            </header>
+            <div class="form-grid two-cols">
+              <label class="field-span-2">
+                <input v-model="form.enableViral" type="checkbox" class="checkbox-inline" />
+                <span>开启裂变传播</span>
+              </label>
+              <template v-if="form.enableViral">
+                <label>
+                  <span>每邀请 1 人额外获得</span>
+                  <input v-model.number="form.viralExtraEntriesPerInvite" type="number" min="1" max="10" />
+                  <small>次抽奖机会（建议 1-3）</small>
+                </label>
+                <label>
+                  <span>最多额外获得</span>
+                  <input v-model.number="form.viralMaxExtraEntries" type="number" min="1" max="100" />
+                  <small>次（建议 10-20）</small>
+                </label>
+                <label class="field-span-2">
+                  <input v-model="form.viralLeaderboardEnabled" type="checkbox" class="checkbox-inline" />
+                  <span>展示邀请排行榜</span>
+                  <small>参与者可见谁邀请了最多人</small>
+                </label>
+              </template>
+            </div>
+          </section>
+
           <section
             v-if="form.activityKind === 'survey' || form.activityKind === 'vote'"
             class="form-section"
@@ -1305,6 +1336,11 @@ const emptyForm = () => ({
   // 导流配置
   enableProductLink: false,
   productLink: { url: '', title: '', imageUrl: '', price: '' },
+  // 裂变配置
+  enableViral: false,
+  viralExtraEntriesPerInvite: 1,
+  viralMaxExtraEntries: 10,
+  viralLeaderboardEnabled: true,
   // 玩法配置：问卷/投票共用 activity_config，避免再拆 forms/votes 重表。
   activityConfig: defaultActivityConfigForKind('lottery') as any,
 })
@@ -1925,6 +1961,10 @@ function handleDuplicate(draw: LotteryDraw) {
     accessPassword: draft.accessPassword,
     enableProductLink: false,
     productLink: { url: '', title: '', imageUrl: '', price: '' },
+    enableViral: false,
+    viralExtraEntriesPerInvite: 1,
+    viralMaxExtraEntries: 10,
+    viralLeaderboardEnabled: true,
   }
   isEditing.value = false
   showCreateModal.value = true
@@ -2375,20 +2415,31 @@ async function handleCreate() {
       productLink: form.value.enableProductLink && form.value.productLink.url
         ? form.value.productLink
         : undefined,
-      // 导流：版本化配置（PromotionConfigV1）
-      promotionConfig: form.value.enableProductLink && form.value.productLink.url
+      // 导流与裂变：版本化配置（PromotionConfigV1）
+      // 商品链接或裂变配置任一启用时，构建 promotionConfig
+      promotionConfig: (form.value.enableProductLink && form.value.productLink.url) || form.value.enableViral
         ? {
             version: 1,
             enabled: true,
             kind: 'destination',
             placement: 'after_join',
-            destination: {
-              url: form.value.productLink.url,
-              title: form.value.productLink.title,
-              imageUrl: form.value.productLink.imageUrl || '',
-              priceText: form.value.productLink.price || '',
-            },
-            tracking: { enabled: true },
+            ...(form.value.enableProductLink && form.value.productLink.url ? {
+              destination: {
+                url: form.value.productLink.url,
+                title: form.value.productLink.title,
+                imageUrl: form.value.productLink.imageUrl || '',
+                priceText: form.value.productLink.price || '',
+              },
+              tracking: { enabled: true },
+            } : {}),
+            ...(form.value.enableViral ? {
+              viral: {
+                enabled: true,
+                extraEntriesPerInvite: form.value.viralExtraEntriesPerInvite || 1,
+                maxExtraEntries: form.value.viralMaxExtraEntries || 10,
+                leaderboardEnabled: form.value.viralLeaderboardEnabled ?? true,
+              },
+            } : {}),
           }
         : undefined,
     }

@@ -20,7 +20,7 @@
  * - 锁码防重：条件 UPDATE WHERE status = 'available'
  */
 import { withDbTransaction, type DbType, type DbWriteScope } from "../db/client";
-import { and, eq, count, inArray, sql, asc } from "drizzle-orm";
+import { and, eq, count, inArray, sql, asc, or } from "drizzle-orm";
 import { buildLotteryWinnerTemplateData, sendEmail } from "./email-service";
 import { buildPublishCheckForDraw } from "./publish-check-service";
 import {
@@ -416,14 +416,32 @@ export async function getActivityEventSummary(db: DbType, tenantId: string, draw
   };
 }
 
+/**
+ * API Key 哈希（SHA-256）。
+ *
+ * 为什么哈希：API Key 以明文存储时，数据库泄漏即密钥全量暴露。
+ * 改为存储哈希后，即使数据库泄漏，攻击者也无法直接使用密钥。
+ * 创建时明文只返回一次（前端弹窗展示后即丢弃），库中只存哈希。
+ */
+export async function hashApiKey(key: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(`cf-lottery-apikey:${key}`));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 export async function authenticateApiKey(db: DbType, rawKey: string) {
   const key = String(rawKey || "").trim();
   if (!key) return null;
-
+  // 双重匹配兼容：新 key 存哈希，旧 key 存明文（过渡期）
+  // 新创建的 key 一律哈希存储，旧明文 key 在过渡期仍可验证
+  const keyHash = await hashApiKey(key);
   const [row] = await db
     .select({ id: apiKeys.id, tenantId: apiKeys.tenantId, name: apiKeys.name })
     .from(apiKeys)
-    .where(and(eq(apiKeys.key, key), eq(apiKeys.active, 1)))
+    .where(and(
+      eq(apiKeys.active, 1),
+      or(eq(apiKeys.key, key), eq(apiKeys.key, keyHash)),
+    ))
     .limit(1);
 
   return row || null;
@@ -1800,12 +1818,48 @@ export async function performDraw(
       ? tiers.reduce((sum, t) => sum + t.winnerCount, 0)
       : draw.winnerCount;
 
-    // Fisher-Yates 随机抽取中奖者
-    const selected = await randomSelect(entries, totalWinners);
+    // ── 裂变加权：活动开启了裂变时，按邀请人数加权候选数组 ──
+    // 每个参与者出现 1 次（基础）+ min(invitedCount, maxExtraEntries) 次（裂变加权）。
+    // 不加权时 candidates = entries（保持原有行为）。
+    let pc: Record<string, unknown> | null = null;
+    try { pc = JSON.parse(draw.promotionConfig || "{}"); } catch { /* 忽略非法 JSON */ }
+    const viral = pc?.viral as { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | undefined;
+    let weightedCandidates: typeof entries;
+    const inviteMap = new Map<string, number>();  // entryId → 邀请人数
+
+    if (viral?.enabled) {
+      const maxExtra = viral.maxExtraEntries ?? 10;
+
+      // 查询该活动所有分享者的邀请人数
+      const shareRows = await db
+        .select({ sharerEntryId: shareRecords.sharerEntryId, joinedCount: shareRecords.joinedCount })
+        .from(shareRecords)
+        .where(and(eq(shareRecords.tenantId, tenantId), eq(shareRecords.drawId, drawId)));
+
+      // 按 sharerEntryId 聚合 SUM(joinedCount)
+      for (const row of shareRows) {
+        inviteMap.set(row.sharerEntryId, (inviteMap.get(row.sharerEntryId) || 0) + row.joinedCount);
+      }
+
+      // 构建加权候选数组
+      weightedCandidates = [];
+      for (const entry of entries) {
+        const invited = Math.min(inviteMap.get(entry.id) || 0, maxExtra);
+        for (let i = 0; i < 1 + invited; i++) {
+          weightedCandidates.push(entry);
+        }
+      }
+    } else {
+      weightedCandidates = entries;
+    }
+
+    // Fisher-Yates 随机抽取中奖者（加权候选数组）
+    const selected = await randomSelect(weightedCandidates, totalWinners);
 
     // 4. 事务内写入中奖记录 + 原子锁码
     //    使用事务保证：锁码和写入中奖记录要么全部成功，要么全部回滚
     let entryIndex = 0;  // 已处理的中奖者数量（在事务外声明，用于审计日志）
+    const seenEntryIds = new Set<string>();  // 加权候选数组去重：同一人只中一次
     await withDbTransaction(db, async (tx) => {
       // 如果没有配置多奖项，创建默认奖项"中奖"
       const effectiveTiers = tiers.length > 0 ? tiers : [{
@@ -1823,6 +1877,13 @@ export async function performDraw(
         for (let i = 0; i < tier.winnerCount && entryIndex < selected.length; i++) {
           const entry = selected[entryIndex]!;
           entryIndex++;
+
+          // 加权候选数组去重：同一人可能因裂变加权被多次选中，只取第一次
+          if (seenEntryIds.has(entry.id)) {
+            i--;  // 当前名额未填满，继续尝试下一个候选
+            continue;
+          }
+          seenEntryIds.add(entry.id);
 
           // 原子锁码：如果奖项配置了奖品，从奖品码池中取一条 available 的记录
           // 【关键】先 SELECT 获取一条可用码的 ID，再按 ID 执行 UPDATE

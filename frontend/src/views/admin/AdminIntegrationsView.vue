@@ -75,7 +75,7 @@
             <td><span class="tag" :class="k.active ? 'tag-success' : 'tag-muted'">{{ k.active ? '启用' : '停用' }}</span></td>
             <td>{{ formatTime(k.createdAt) }}</td>
             <td class="col-actions">
-              <button class="btn btn-ghost btn-xs" :title="'复制完整密钥'" @click="copyKey(k.key)">复制</button>
+              <!-- 密钥以哈希存储，明文仅创建时展示一次，列表不可复制 -->
               <button class="btn btn-danger btn-xs" @click="removeApiKey(k.id)">删除</button>
             </td>
           </tr>
@@ -167,7 +167,8 @@ function truncate(text: string, len: number): string {
 }
 
 function maskKey(key: string): string {
-  return key ? key.slice(0, 8) + '…' + key.slice(-4) : '-'
+  // 密钥以哈希存储，无法显示明文；展示哈希前 8 位作为标识（稳定可识别）
+  return key ? key.slice(0, 8) + '…' : '-'
 }
 
 function formatTime(iso: string): string {
@@ -179,8 +180,6 @@ function formatTime(iso: string): string {
 function copyText(text: string) {
   if (text) { navigator.clipboard.writeText(text).catch(() => {}); showToast('已复制', 'success') }
 }
-
-function copyKey(key: string) { copyText(key) }
 
 async function loadData() {
   loading.value = true

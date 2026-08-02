@@ -1,4 +1,9 @@
-import type { Delivery, DeliveryVisibility, FulfillmentInputType, StockDisplayMode, StorefrontTemplate } from './index'
+// cf-shop 残留类型已删除，以下为兼容占位类型
+type StockDisplayMode = string;
+type DeliveryVisibility = string;
+type FulfillmentInputType = string;
+type StorefrontTemplate = string;
+type Delivery = Record<string, unknown>;
 
 export interface AdminSummary {
   products: number

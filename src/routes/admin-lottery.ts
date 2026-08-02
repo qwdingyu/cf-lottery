@@ -36,6 +36,7 @@ import {
   createPrize,
   importPrizeCodes,
   defaultResultModeForActivity,
+  hashApiKey,
 } from "../services/lottery-service";
 import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
 import { readSystemConfigMap } from "../lib/system-config-registry";
@@ -1617,8 +1618,10 @@ adminLotteryRoute.post("/api-keys", async (c) => {
   if (!name) return fail(c, "请输入密钥名称", 400);
 
   const key = "cl_" + crypto.randomUUID().replace(/-/g, "").slice(0, 32);
+  // 明文只返回一次（前端弹窗展示），库中只存哈希，防止数据库泄漏时密钥全量暴露
+  const keyHash = await hashApiKey(key);
   const apiKeyId = crypto.randomUUID();
-  await db.insert(apiKeys).values({ id: apiKeyId, tenantId, name, key });
+  await db.insert(apiKeys).values({ id: apiKeyId, tenantId, name, key: keyHash });
   await recordTenantAudit(c, "apikey.create", "api_key", apiKeyId, { name });
   return ok(c, { key });
 });
