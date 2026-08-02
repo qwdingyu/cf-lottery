@@ -162,6 +162,9 @@ import AdminModal from '@/components/AdminModal.vue'
 import AdminPagination from '@/components/AdminPagination.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { useTablePagination } from '@/composables/useTablePagination'
+import { useToast } from '@/composables/useToast'
+
+const { showToast } = useToast()
 
 const loading = ref(false)
 const loadError = ref('')

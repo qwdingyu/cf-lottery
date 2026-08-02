@@ -1,19 +1,43 @@
 <template>
-  <div class="admin-login">
-    <div class="login-card">
-      <h1 class="login-title">欢迎使用抽奖活动平台</h1>
-      <p class="login-subtitle">创建你的第一个工作空间，开始搭建活动</p>
+  <div class="onboarding-page">
+    <div class="onboarding-card">
+      <div class="onboarding-hero">
+        <div class="onboarding-icon">🎯</div>
+        <h1 class="onboarding-title">创建工作空间</h1>
+        <p class="onboarding-desc">
+          工作空间是您管理活动、奖品和团队成员的地方。<br />
+          您随时可以创建多个工作空间用于不同项目。
+        </p>
+      </div>
 
-      <form class="login-form" @submit.prevent="handleCreate">
+      <form class="onboarding-form" @submit.prevent="handleCreate">
         <label class="field-label">
           <span>工作空间名称</span>
-          <input v-model="tenantName" type="text" placeholder="例如：我的团队" :disabled="creating" autofocus />
+          <input
+            v-model="tenantName"
+            type="text"
+            placeholder="例如：我的团队、市场部、社区运营"
+            maxlength="30"
+            :disabled="creating"
+            autofocus
+          />
+          <small class="field-hint">可随时修改，建议使用团队或项目名称</small>
         </label>
-        <button class="btn btn-primary login-btn" type="submit" :disabled="creating || !tenantName.trim()">
+
+        <button
+          class="btn btn-primary onboarding-btn"
+          type="submit"
+          :disabled="creating || !tenantName.trim()"
+        >
           {{ creating ? '创建中…' : '创建工作空间' }}
         </button>
-        <p v-if="error" class="login-error">{{ error }}</p>
+
+        <p v-if="error" class="onboarding-error">{{ error }}</p>
       </form>
+
+      <div class="onboarding-footer">
+        <a href="#" class="btn btn-ghost btn-sm" @click.prevent="handleSkip">稍后再说</a>
+      </div>
     </div>
   </div>
 </template>
@@ -41,7 +65,7 @@ async function handleCreate() {
     })
     const data = await res.json()
     if (data.ok && data.token) {
-      setToken(data.token)  // 切换到新租户的 JWT
+      setToken(data.token)
       router.replace('/admin')
     } else {
       error.value = data.message || '创建失败'
@@ -52,4 +76,111 @@ async function handleCreate() {
     creating.value = false
   }
 }
+
+function handleSkip() {
+  // 无租户无法访问管理功能，提示用户必须创建
+  error.value = '需要创建工作空间后才能开始使用'
+}
 </script>
+
+<style scoped>
+.onboarding-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: var(--tg-bg, #0a0e17);
+  padding: 20px;
+}
+
+.onboarding-card {
+  width: 100%;
+  max-width: 440px;
+  background: #1a1a2e;
+  border-radius: 16px;
+  padding: 40px 32px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.onboarding-hero {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.onboarding-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.onboarding-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 8px;
+}
+
+.onboarding-desc {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.onboarding-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label span {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+}
+
+.field-label input {
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.field-label input:focus {
+  border-color: var(--admin-accent, #f59e0b);
+}
+
+.field-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.onboarding-btn {
+  height: 44px;
+  font-size: 15px;
+  border-radius: 8px;
+  width: 100%;
+}
+
+.onboarding-error {
+  font-size: 13px;
+  color: var(--tg-danger, #ef4444);
+  text-align: center;
+  margin: 0;
+}
+
+.onboarding-footer {
+  margin-top: 20px;
+  text-align: center;
+}
+</style>
