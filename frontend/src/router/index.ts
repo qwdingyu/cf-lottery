@@ -140,6 +140,16 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  // 支持从 URL 参数注入 token（平台运营者模拟登录）
+  const urlToken = to.query.token as string | undefined
+  if (urlToken && to.path.startsWith('/admin')) {
+    localStorage.setItem('admin_token', JSON.stringify({ value: urlToken, expiresAt: Date.now() + 3600000 }))
+    // 去掉 token 参数，避免泄露到浏览器历史
+    const cleanQuery = { ...to.query }
+    delete cleanQuery.token
+    return { path: to.path, query: cleanQuery, replace: true }
+  }
+
   const adminToken = readAdminToken()
 
   const requiresAuth = to.meta.requiresAuth as boolean | undefined

@@ -144,6 +144,12 @@
             <input v-model.number="adjustForm.extraParticipantQuota" type="number" min="1" step="1" placeholder="追加参与人数" :disabled="adjusting" />
           </div>
           <small class="field-hint">套餐和状态即时生效；额外额度为追加（累加）</small>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border, rgba(255,255,255,0.1))">
+            <button class="btn btn-primary btn-sm" :disabled="impersonating" @click="handleImpersonate">
+              {{ impersonating ? '登录中…' : '🔑 模拟登录（以租户身份查看）' }}
+            </button>
+            <small class="field-hint" style="display:block;margin-top:4px">生成一次性 Token，在新标签页以租户身份登录，1 小时后过期</small>
+          </div>
         </div>
       </div>
     </AdminModal>
@@ -240,6 +246,25 @@ async function handleAdjust() {
     loadError.value = err.message || '调整失败'
   } finally {
     adjusting.value = false
+  }
+}
+
+const impersonating = ref(false)
+
+async function handleImpersonate() {
+  if (!detailTenant.value) return
+  impersonating.value = true
+  try {
+    const data = await adminRequest<{ token: string }>(`/api/platform/tenants/${detailTenant.value.id}/impersonate`, {
+      method: 'POST',
+    })
+    // 在新标签页打开管理后台，URL 中附上 token（一次性的模拟登录 Token）
+    window.open(`/admin?token=${encodeURIComponent(data.token)}`, '_blank')
+    showToast('已在新标签页打开租户后台', 'success')
+  } catch (err: any) {
+    showToast(err?.message || '模拟登录失败', 'error')
+  } finally {
+    impersonating.value = false
   }
 }
 </script>

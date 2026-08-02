@@ -131,15 +131,11 @@ authRoute.post("/register", async (c) => {
     // 生成密码 hash
     const passwordHash = await hashPassword(password, getPasswordPepper(c));
 
-    // 创建用户、租户、成员关系——事务保证原子性，杜绝孤儿记录。
-    // 如果租户或成员创建失败，用户也会回滚，不会出现 user 无 tenant 的半成功状态。
+    // ★ 045 方案 C 改造：注册只建用户，不自动建租户
+    // 消除"噪音租户"——租户应通过 onboarding 显式创建，而非注册附赠。
+    // 历史存量用户有租户，无需迁移，逻辑天然兼容。
     const userId = crypto.randomUUID();
-    const tenantId = crypto.randomUUID();
-    await withDbTransaction(db, async (tx) => {
-      await tx.insert(users).values({ id: userId, username, email, passwordHash, emailVerified: 0 });
-      await tx.insert(tenants).values({ id: tenantId, name: username });
-      await tx.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
-    });
+    await db.insert(users).values({ id: userId, username, email, passwordHash, emailVerified: 0 });
 
     // 生成验证码并存入数据库（先标记旧码失效，避免 UNIQUE(email,draw_id) WHERE used=0 冲突）
     const code = generateCode();
@@ -304,6 +300,7 @@ authRoute.post("/login", async (c) => {
     ok: true,
     token,
     tenantId,
+    needsTenant: memberships.length === 0,
     tenants: memberships.map((m) => ({
       id: m.tenantId,
       name: m.tenantName,
