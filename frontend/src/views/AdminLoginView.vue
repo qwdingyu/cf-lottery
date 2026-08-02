@@ -109,11 +109,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 const { setToken, setPlatformRole } = useAdminAuth()
 const { showToast } = useToast()
 
@@ -158,7 +160,7 @@ async function fetchPlatformRole(token: string) {
 
 async function handleLogin() {
   if (!username.value || !password.value) {
-    error.value = '请输入用户名和密码'
+    error.value = t('adminLogin.missingUsernamePassword')
     return
   }
 
@@ -178,17 +180,17 @@ async function handleLogin() {
       fetchPlatformRole(data.token)
       // ★ 045 方案 C：无租户用户引导 onboarding 创建租户
       if (data.needsTenant) {
-        showToast('请先创建您的第一个工作空间')
+        showToast(t('adminLogin.createWorkspaceFirst'))
         router.replace({ name: 'Onboarding' })
         return
       }
-      showToast('登录成功', 'success')
+      showToast(t('adminLogin.loginSuccess'), 'success')
       redirectAfterLogin()
     } else {
-      error.value = data.message || '登录失败'
+      error.value = data.message || t('adminLogin.loginFailed')
     }
   } catch {
-    error.value = '网络错误，请稍后重试'
+    error.value = t('adminLogin.networkError')
   } finally {
     loading.value = false
   }
@@ -196,11 +198,11 @@ async function handleLogin() {
 
 async function handleRegister() {
   if (!regUsername.value || !regPassword.value || !regEmail.value) {
-    error.value = '请填写所有字段'
+    error.value = t('adminLogin.fillAllFields')
     return
   }
   if (!regEmail.value.includes('@')) {
-    error.value = '请输入有效的邮箱地址'
+    error.value = t('adminLogin.invalidEmail')
     return
   }
 
@@ -221,12 +223,12 @@ async function handleRegister() {
 
     if (data.ok) {
       showVerifyCode.value = true
-      showToast('验证码已发送到邮箱', 'success')
+      showToast(t('adminLogin.codeSentToast'), 'success')
     } else {
-      error.value = data.message || '注册失败'
+      error.value = data.message || t('adminLogin.registerFailed')
     }
   } catch {
-    error.value = '网络错误，请稍后重试'
+    error.value = t('adminLogin.networkError')
   } finally {
     loading.value = false
   }
@@ -234,7 +236,7 @@ async function handleRegister() {
 
 async function handleVerifyEmail() {
   if (!regCode.value || regCode.value.length !== 6) {
-    error.value = '请输入 6 位验证码'
+    error.value = t('adminLogin.enterSixDigitCode')
     return
   }
   verifying.value = true
@@ -249,13 +251,13 @@ async function handleVerifyEmail() {
     if (data.ok && data.token) {
       setToken(data.token)
       fetchPlatformRole(data.token)
-      showToast('注册成功', 'success')
+      showToast(t('adminLogin.registerSuccess'), 'success')
       redirectAfterLogin()
     } else {
-      error.value = data.message || '验证失败'
+      error.value = data.message || t('adminLogin.verifyFailed')
     }
   } catch {
-    error.value = '网络错误'
+    error.value = t('adminLogin.networkError')
   } finally {
     verifying.value = false
   }

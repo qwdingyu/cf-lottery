@@ -45,9 +45,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 
 const router = useRouter()
+const { t } = useI18n()
 const { token, setToken } = useAdminAuth()
 const tenantName = ref('')
 const creating = ref(false)
@@ -68,10 +70,10 @@ async function handleCreate() {
       setToken(data.token)
       router.replace('/admin')
     } else {
-      error.value = data.message || '创建失败'
+      error.value = data.message || t('onboarding.createFailed')
     }
   } catch {
-    error.value = '网络错误'
+    error.value = t('onboarding.networkError')
   } finally {
     creating.value = false
   }

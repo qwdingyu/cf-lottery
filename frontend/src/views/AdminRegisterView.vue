@@ -1,40 +1,40 @@
 <template>
   <div class="admin-login">
     <div class="login-card">
-      <h1 class="login-title">注册 Lucky Draw</h1>
-      <p class="login-subtitle">创建账号，开始你的第一个抽奖活动</p>
+      <h1 class="login-title">{{ $t('adminRegister.title') }}</h1>
+      <p class="login-subtitle">{{ $t('adminRegister.subtitle') }}</p>
 
       <!-- 第一步：填写信息 -->
       <form v-if="!codeSent" class="login-form" @submit.prevent="handleRegister">
         <label class="field-label">
-          <span>用户名</span>
-          <input v-model="username" type="text" placeholder="2-40 个字符，字母数字下划线" autocomplete="username" :disabled="loading" />
+          <span>{{ $t('adminRegister.username') }}</span>
+          <input v-model="username" type="text" :placeholder="$t('adminRegister.usernamePlaceholder')" autocomplete="username" :disabled="loading" />
         </label>
         <label class="field-label">
-          <span>邮箱</span>
-          <input v-model="email" type="email" placeholder="用于接收验证码和开奖通知" autocomplete="email" :disabled="loading" />
+          <span>{{ $t('adminRegister.email') }}</span>
+          <input v-model="email" type="email" :placeholder="$t('adminRegister.emailPlaceholder')" autocomplete="email" :disabled="loading" />
         </label>
         <label class="field-label">
-          <span>密码</span>
-          <input v-model="password" type="password" placeholder="至少 8 位，包含字母和数字" autocomplete="new-password" :disabled="loading" />
+          <span>{{ $t('adminRegister.password') }}</span>
+          <input v-model="password" type="password" :placeholder="$t('adminRegister.passwordPlaceholder')" autocomplete="new-password" :disabled="loading" />
         </label>
         <p v-if="error" class="form-error">{{ error }}</p>
-        <button type="submit" class="btn btn-primary btn-block" :disabled="loading">{{ loading ? '提交中…' : '发送验证码' }}</button>
+        <button type="submit" class="btn btn-primary btn-block" :disabled="loading">{{ loading ? $t('adminRegister.submitting') : $t('adminRegister.sendCode') }}</button>
       </form>
 
       <!-- 第二步：验证邮箱 -->
       <form v-else class="login-form" @submit.prevent="handleVerify">
-        <p class="verify-hint">验证码已发送到 <strong>{{ email }}</strong>，10 分钟内有效</p>
+        <p class="verify-hint">{{ $t('adminRegister.codeSentHint') }} <strong>{{ email }}</strong>{{ $t('adminRegister.codeValidMinutes') }}</p>
         <label class="field-label">
-          <span>验证码</span>
-          <input v-model="code" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数字" autofocus :disabled="verifying" />
+          <span>{{ $t('adminRegister.verifyCode') }}</span>
+          <input v-model="code" type="text" inputmode="numeric" maxlength="6" :placeholder="$t('adminRegister.codePlaceholder')" autofocus :disabled="verifying" />
         </label>
         <p v-if="error" class="form-error">{{ error }}</p>
-        <button type="submit" class="btn btn-primary btn-block" :disabled="verifying">{{ verifying ? '验证中…' : '验证并注册' }}</button>
-        <button type="button" class="btn btn-ghost btn-block" @click="codeSent = false" :disabled="verifying">修改信息</button>
+        <button type="submit" class="btn btn-primary btn-block" :disabled="verifying">{{ verifying ? $t('adminRegister.verifying') : $t('adminRegister.verifyAndRegister') }}</button>
+        <button type="button" class="btn btn-ghost btn-block" @click="codeSent = false" :disabled="verifying">{{ $t('adminRegister.editInfo') }}</button>
       </form>
 
-      <p class="login-footer">已有账号？<RouterLink to="/admin/login">登录</RouterLink></p>
+      <p class="login-footer">{{ $t('adminRegister.haveAccount') }}<RouterLink to="/admin/login">{{ $t('adminRegister.loginLink') }}</RouterLink></p>
     </div>
   </div>
 </template>
@@ -42,8 +42,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
+const { t } = useI18n()
 const username = ref('')
 const email = ref('')
 const password = ref('')
@@ -58,25 +60,25 @@ async function handleRegister() {
   const u = username.value.trim()
   const e = email.value.trim().toLowerCase()
   const p = password.value
-  if (u.length < 2 || u.length > 40) { error.value = '用户名需要 2-40 个字符'; return }
-  if (!/^[a-zA-Z0-9_]+$/.test(u)) { error.value = '用户名只能包含字母、数字和下划线'; return }
-  if (!e.includes('@')) { error.value = '请输入有效的邮箱地址'; return }
-  if (p.length < 8) { error.value = '密码至少需要 8 个字符'; return }
-  if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) { error.value = '密码需要同时包含字母和数字'; return }
+  if (u.length < 2 || u.length > 40) { error.value = t('adminRegister.usernameLengthError'); return }
+  if (!/^[a-zA-Z0-9_]+$/.test(u)) { error.value = t('adminRegister.usernameCharsError'); return }
+  if (!e.includes('@')) { error.value = t('adminRegister.invalidEmail'); return }
+  if (p.length < 8) { error.value = t('adminRegister.passwordLengthError'); return }
+  if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) { error.value = t('adminRegister.passwordComplexityError'); return }
   loading.value = true
   try {
     const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p, email: e }) })
     const data = await res.json() as any
     if (data.ok) { codeSent.value = true; error.value = '' }
-    else { error.value = data.message || '注册失败' }
-  } catch { error.value = '网络错误，请重试' }
+    else { error.value = data.message || t('adminRegister.registerFailed') }
+  } catch { error.value = t('adminRegister.networkError') }
   finally { loading.value = false }
 }
 
 async function handleVerify() {
   error.value = ''
   const c = code.value.trim()
-  if (c.length !== 6) { error.value = '请输入 6 位验证码'; return }
+  if (c.length !== 6) { error.value = t('adminRegister.enterSixDigitCode'); return }
   verifying.value = true
   try {
     const res = await fetch('/api/auth/verify-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.value.trim().toLowerCase(), code: c }) })
@@ -90,8 +92,8 @@ async function handleVerify() {
         router.push('/admin')
       }
     }
-    else { error.value = data.message || '验证失败' }
-  } catch { error.value = '网络错误，请重试' }
+    else { error.value = data.message || t('adminRegister.verifyFailed') }
+  } catch { error.value = t('adminRegister.networkError') }
   finally { verifying.value = false }
 }
 </script>
