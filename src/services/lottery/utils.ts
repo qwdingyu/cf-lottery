@@ -64,6 +64,16 @@ export async function hashAccessPassword(password: string): Promise<string> {
 }
 
 /**
+ * 计算开奖 seed 的 SHA-256 哈希（可验证性：开奖前记录 hash，开奖后公布 seed 供参与者验证）。
+ * 纯函数，无依赖。
+ */
+export async function hashDrawSeed(seed: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(seed));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
  * 验证访问密码。兼容新旧两种格式。
  */
 export async function verifyAccessPassword(inputPassword: string, storedHash: string): Promise<boolean> {
