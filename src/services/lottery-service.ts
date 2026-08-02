@@ -37,8 +37,6 @@ import {
   auditLogs,             // 审计日志表
   lotteryBlacklist,      // 参与者黑名单
   activityOutcomes,      // 接龙/预约等活动的统一结果
-  tenants,               // SaaS 租户与套餐
-  tenantMembers,         // 团队成员配额统计
   systemConfig,          // 系统配置（含动态套餐额度）
   apiKeys,               // 外部集成 API Key
   webhookConfigs,        // Webhook 配额统计
@@ -50,326 +48,29 @@ import {
   couponCodes,           // 优惠券码池（用于未中奖自动发券）
 } from "../db/schema";
 
-/* ── 类型定义 ─────────────────────────────────────────────── */
+// ── 拆分模块（docs/049 #17：类型/套餐/纯工具已迁至 services/lottery/） ──
+// 内部使用：原文件剩余业务逻辑引用的符号从子模块导入
+import {
+  ACTIVITY_EVENT_TYPES,
+  WEBHOOK_EVENT_TYPES,
+  EXTERNAL_CONVERSION_TYPES,
+  DEFAULT_ACTIVITY_PARTICIPANT_CAP,
+} from "./lottery/types";
+import type {
+  DrawResult,
+  RecordActivityEventInput,
+  WebhookEventType,
+  WebhookFetch,
+  EnqueueWebhookEventInput,
+  RecordExternalConversionInput,
+} from "./lottery/types";
+import { enforceTenantActivityQuota } from "./lottery/plan";
+import { randomSelect, hashAccessPassword, verifyAccessPassword } from "./lottery/utils";
 
-/** 开奖结果 */
-export type DrawResult = {
-  drawId: string;        // 活动 ID
-  winnerCount: number;   // 实际中奖人数
-  candidateCount: number; // 候选池总人数
-};
-
-export type ActivityOutcome = {
-  id: string;
-  drawId: string;
-  entryId: string;
-  outcomeType: string;
-  status: string;
-  sequenceNo: number;
-  assignmentNo: number | null;
-  resultKey: string;
-  resultLabel: string;
-  metadataJson: string;
-  decidedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type TenantPlanLimits = {
-  plan: string;
-  maxActivities: number | null;
-  maxParticipantsPerActivity: number;
-  maxMembers: number | null;
-  maxWebhooks: number | null;
-};
-
-export type ActivityEventType =
-  | "page_view"
-  | "participation_started"
-  | "participation_completed"
-  | "participation_cancelled"
-  | "outcome_assigned"
-  | "cta_impression"
-  | "cta_click"
-  | "share_created"
-  | "share_click"
-  | "attributed_join"
-  | "external_conversion_reported";
-
-export type RecordActivityEventInput = {
-  tenantId: string;
-  drawId: string;
-  entryId?: string;
-  eventType: ActivityEventType;
-  source?: string;
-  medium?: string;
-  campaign?: string;
-  refCode?: string;
-  metadata?: Record<string, unknown>;
-  ipHash?: string;
-  userAgent?: string;
-};
-
-export type WebhookEventType =
-  | "draw.published"
-  | "draw.completed"
-  | "entry.created"
-  | "outcome.assigned"
-  | "prize.issued"
-  | "share.created"
-  | "share.clicked"
-  | "activity.event.recorded";
-
-export type EnqueueWebhookEventInput = {
-  tenantId: string;
-  eventType: WebhookEventType;
-  data: Record<string, unknown>;
-  eventId?: string;
-};
-
-export type WebhookFetch = (url: string, init: RequestInit) => Promise<Response>;
-
-export type ExternalConversionType =
-  | "registration"
-  | "purchase"
-  | "coupon_redeemed"
-  | "lead_qualified"
-  | "offline_redeemed"
-  | "custom";
-
-export type RecordExternalConversionInput = {
-  tenantId: string;
-  drawId?: string;
-  publicSlug?: string;
-  externalEventId: string;
-  conversionType: ExternalConversionType;
-  source?: string;
-  entryId?: string;
-  identityType?: string;
-  identityValue?: string;
-  refCode?: string;
-  amountCents?: number | null;
-  currency?: string;
-  payload?: Record<string, unknown>;
-  occurredAt?: string;
-};
-
-const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
-  "page_view",
-  "participation_started",
-  "participation_completed",
-  "outcome_assigned",
-  "cta_impression",
-  "cta_click",
-  "share_created",
-  "share_click",
-  "attributed_join",
-  "external_conversion_reported",
-]);
-
-const WEBHOOK_EVENT_TYPES = new Set<WebhookEventType>([
-  "draw.published",
-  "draw.completed",
-  "entry.created",
-  "outcome.assigned",
-  "prize.issued",
-  "share.created",
-  "share.clicked",
-  "activity.event.recorded",
-]);
-
-const EXTERNAL_CONVERSION_TYPES = new Set<ExternalConversionType>([
-  "registration",
-  "purchase",
-  "coupon_redeemed",
-  "lead_qualified",
-  "offline_redeemed",
-  "custom",
-]);
-
-const DEFAULT_ACTIVITY_PARTICIPANT_CAP = 5000;
-
-const PLAN_LIMITS: Record<string, Omit<TenantPlanLimits, "plan">> = {
-  free: {
-    maxActivities: 10,
-    maxParticipantsPerActivity: 200,
-    maxMembers: 2,
-    maxWebhooks: 0,
-  },
-  pro: {
-    maxActivities: 200,
-    maxParticipantsPerActivity: 5000,
-    maxMembers: 10,
-    maxWebhooks: 3,
-  },
-  team: {
-    maxActivities: 1000,
-    maxParticipantsPerActivity: 20000,
-    maxMembers: 50,
-    maxWebhooks: 10,
-  },
-  enterprise: {
-    maxActivities: null,
-    maxParticipantsPerActivity: 100000,
-    maxMembers: null,
-    maxWebhooks: null,
-  },
-};
-
-export function getTenantPlanLimits(plan?: string | null): TenantPlanLimits {
-  const normalized = String(plan || "free").trim().toLowerCase();
-  const limits = PLAN_LIMITS[normalized] || PLAN_LIMITS.free!;
-  return { plan: PLAN_LIMITS[normalized] ? normalized : "free", ...limits };
-}
-
-/**
- * 系统配置中套餐额度相关 key 的列表。
- * 平台运营者可在 /platform/config 页面修改这些值，动态覆盖硬编码的 PLAN_LIMITS。
- */
-const PLAN_LIMITS_CONFIG_KEYS: string[] = [
-  "plan_free_max_activities",
-  "plan_free_max_participants_per_activity",
-  "plan_pro_max_activities",
-  "plan_pro_max_participants_per_activity",
-  "plan_team_max_activities",
-  "plan_team_max_participants_per_activity",
-  "plan_enterprise_max_activities",
-  "plan_enterprise_max_participants_per_activity",
-  // MVP 推广期允许平台运营者单独调整 Free 套餐的 Webhook 数量，给用户试用体验。
-  "free_plan_max_webhooks",
-] as const;
-
-/**
- * 从 system_config 表读取动态套餐额度配置，与硬编码 PLAN_LIMITS 合并。
- * 读取 system_config 是后台管理/配额校验操作，当前不在公开参与热路径。
- * max_activities 的 0 表示不限（对应 null）；单活动参与上限必须大于 0。
- * 未配置或非法的套餐项继续使用 PLAN_LIMITS 默认值。
- */
-async function loadDynamicPlanLimits(db: DbType): Promise<Record<string, Omit<TenantPlanLimits, "plan">>> {
-  const rows = await db
-    .select({ key: systemConfig.key, value: systemConfig.value })
-    .from(systemConfig)
-    .where(inArray(systemConfig.key, PLAN_LIMITS_CONFIG_KEYS));
-
-  const configMap: Record<string, string> = {};
-  for (const row of rows) {
-    configMap[row.key] = row.value;
-  }
-
-  // 深拷贝硬编码默认值
-  const merged: Record<string, Omit<TenantPlanLimits, "plan">> = {};
-  for (const [planName, planValues] of Object.entries(PLAN_LIMITS)) {
-    merged[planName] = { ...planValues };
-  }
-
-  // 用系统配置中的值覆盖（如果存在且有效）
-  for (const planName of ["free", "pro", "team", "enterprise"] as const) {
-    const maxActivitiesVal = configMap[`plan_${planName}_max_activities`];
-    const maxParticipantsVal = configMap[`plan_${planName}_max_participants_per_activity`];
-
-    if (maxActivitiesVal !== undefined && merged[planName]) {
-      const parsed = parseInt(maxActivitiesVal, 10);
-      if (!Number.isNaN(parsed) && parsed >= 0) {
-        merged[planName].maxActivities = parsed === 0 ? null : parsed;
-      }
-    }
-    if (maxParticipantsVal !== undefined && merged[planName]) {
-      const parsed = parseInt(maxParticipantsVal, 10);
-      if (!Number.isNaN(parsed) && parsed > 0) {
-        merged[planName].maxParticipantsPerActivity = parsed;
-      }
-    }
-  }
-
-  // Free 套餐的 Webhook 数量通过系统配置单独覆盖（MVP 推广期给试用体验）
-  const freeWebhooksVal = configMap["free_plan_max_webhooks"];
-  if (freeWebhooksVal !== undefined && merged["free"]) {
-    const parsed = parseInt(freeWebhooksVal, 10);
-    if (!Number.isNaN(parsed) && parsed >= 0) {
-      // Webhook 数量的 0 表示不允许创建，不等同于 maxActivities 中的“不限”。
-      // Free 层如果误把 0 当作 null，会直接绕过套餐限制并放大外部投递成本。
-      merged["free"].maxWebhooks = parsed;
-    }
-  }
-
-  return merged;
-}
-
-export async function getTenantUsage(db: DbType, tenantId: string) {
-  // 读取动态套餐额度配置（平台运营者在 /platform/config 中设置），覆盖硬编码默认值。
-  const dynamicPlanLimits = await loadDynamicPlanLimits(db);
-  // 查询租户信息，含兑换码购买的额外额度
-  const [tenant] = await db
-    .select({
-      plan: tenants.plan,
-      extraActivityQuota: tenants.extraActivityQuota,
-      extraParticipantQuota: tenants.extraParticipantQuota,
-      extraQuotaExpiresAt: tenants.extraQuotaExpiresAt,
-    })
-    .from(tenants)
-    .where(eq(tenants.id, tenantId))
-    .limit(1);
-  const rawPlan = String(tenant?.plan || "free").trim().toLowerCase();
-  const plan = PLAN_LIMITS[rawPlan] ? rawPlan : "free";
-  // 优先使用动态套餐额度（平台运营者在 /platform/config 中设置），兜底用硬编码默认值。
-  const dynamicPlan = dynamicPlanLimits[plan] || PLAN_LIMITS[plan] || PLAN_LIMITS.free!;
-  const limits: TenantPlanLimits = { plan, ...dynamicPlan };
-
-  const [{ total: activityCount }] = await db
-    .select({ total: count() })
-    .from(lotteryDraws)
-    .where(and(
-      eq(lotteryDraws.tenantId, tenantId),
-      sql`${lotteryDraws.status} <> 'cancelled'`,
-    ));
-
-  const [{ total: memberCount }] = await db
-    .select({ total: count() })
-    .from(tenantMembers)
-    .where(eq(tenantMembers.tenantId, tenantId));
-
-  const [{ total: webhookCount }] = await db
-    .select({ total: count() })
-    .from(webhookConfigs)
-    .where(and(eq(webhookConfigs.tenantId, tenantId), eq(webhookConfigs.active, 1)));
-
-  // 兑换码额外额度仅在有效期内生效
-  const extraValid = tenant?.extraQuotaExpiresAt ? new Date() < new Date(tenant.extraQuotaExpiresAt) : false;
-  const extraActivities = extraValid ? (tenant?.extraActivityQuota || 0) : 0;
-  const extraParticipants = extraValid ? (tenant?.extraParticipantQuota || 0) : 0;
-
-  // 返回有效额度 = 套餐基础额度 + 兑换码额外额度（未过期）
-  return {
-    plan: limits.plan,
-    limits: {
-      ...limits,
-      maxActivities: limits.maxActivities !== null ? limits.maxActivities + extraActivities : null,
-      maxParticipantsPerActivity: limits.maxParticipantsPerActivity + extraParticipants,
-    },
-    usage: {
-      activities: Number(activityCount || 0),
-      members: Number(memberCount || 0),
-      webhooks: Number(webhookCount || 0),
-    },
-  };
-}
-
-async function enforceTenantActivityQuota(
-  db: DbType,
-  tenantId: string,
-  requestedMaxParticipants?: number,
-) {
-  const usage = await getTenantUsage(db, tenantId);
-  if (usage.limits.maxActivities !== null && usage.usage.activities >= usage.limits.maxActivities) {
-    throw new Error(`当前套餐最多可保留 ${usage.limits.maxActivities} 个活动，请升级套餐或删除草稿活动`);
-  }
-
-  if (requestedMaxParticipants !== undefined && requestedMaxParticipants > usage.limits.maxParticipantsPerActivity) {
-    throw new Error(`当前套餐单活动最多允许 ${usage.limits.maxParticipantsPerActivity} 人参与，请降低名额或升级套餐`);
-  }
-
-  return usage.limits;
-}
+// re-export：保持既有导出 API 不变（外部 import 本文件的符号继续可用）
+export * from "./lottery/types";
+export * from "./lottery/plan";
+export * from "./lottery/utils";
 
 export async function recordActivityEvent(db: DbWriteScope, input: RecordActivityEventInput) {
   if (!ACTIVITY_EVENT_TYPES.has(input.eventType)) {
@@ -885,85 +586,6 @@ async function updateWebhookConfigDeliveryState(
     .update(webhookConfigs)
     .set({ lastSentAt: new Date().toISOString(), lastError, updatedAt: new Date().toISOString() })
     .where(and(eq(webhookConfigs.id, webhookConfigId), eq(webhookConfigs.tenantId, tenantId)));
-}
-
-/* ── 内部工具 ─────────────────────────────────────────────── */
-
-/**
- * Fisher-Yates 洗牌算法，使用 CSPRNG（crypto.getRandomValues）。
- * 从候选数组中随机抽取指定数量的元素，保证等概率。
- *
- * 为什么不使用 Math.random()：
- * Math.random() 是伪随机数生成器，可预测且不安全。
- * crypto.getRandomValues() 是密码学安全的随机数生成器，适合抽奖等公平性场景。
- */
-export async function randomSelect<T>(candidates: T[], count: number): Promise<T[]> {
-  // 实际抽取数量不超过候选池大小
-  const n = Math.min(count, candidates.length);
-  if (n <= 0) return [];
-
-  // 复制候选数组，避免修改原数组
-  const result = [...candidates];
-
-  // 部分 Fisher-Yates 洗牌（#12 优化）：
-  // 只洗尾部 n 个位置——每轮把 result[i] 与 [0, i] 中随机一个交换，
-  // 使 [length-n, length) 区间的元素成为等概率的随机子集，然后取尾部 n 个。
-  // 与全量洗牌概率等价，但 crypto.getRandomValues 调用从 O(N) 降为 O(n)：
-  // 大活动（10 万参与者）下全量洗牌需 10 万次密码学随机调用，远超免费层 CPU 预算
-  // （023 §5.1 红线：大数组排序/复杂随机）；部分洗牌仅需 n 次（n 通常 ≤ 千级）。
-  for (let i = result.length - 1; i >= result.length - n; i--) {
-    const random = new Uint32Array(1);
-    crypto.getRandomValues(random);
-    // 取模运算产生 0 到 i 之间的随机索引
-    const j = random[0]! % (i + 1);
-    // 交换 result[i] 和 result[j]
-    const tmp = result[i]!;
-    result[i] = result[j]!;
-    result[j] = tmp;
-  }
-
-  // 洗牌后取尾部 n 个作为中奖者
-  return result.slice(result.length - n);
-}
-
-/* ── 密码工具 ────────────────────────────────────────────── */
-
-/**
- * 哈希活动访问密码（带随机 salt，格式 `salt_v1:{salt_hex}:{sha256(salt+password)_hex}`）。
- * 防止数据库泄漏后彩虹表反查。
- */
-export async function hashAccessPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
-  const data = new Uint8Array(salt.length + encoder.encode(password).length);
-  data.set(salt);
-  data.set(encoder.encode(password), salt.length);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
-  return `salt_v1:${saltHex}:${hashHex}`;
-}
-
-/**
- * 验证访问密码。兼容新旧两种格式。
- */
-async function verifyAccessPassword(inputPassword: string, storedHash: string): Promise<boolean> {
-  const encoder = new TextEncoder();
-  // 新格式：salt_v1:saltHex:hashHex
-  if (storedHash.startsWith("salt_v1:")) {
-    const [, saltHex, hashHex] = storedHash.split(":");
-    if (!saltHex || !hashHex) return false;
-    const salt = new Uint8Array(saltHex.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
-    const data = new Uint8Array(salt.length + encoder.encode(inputPassword).length);
-    data.set(salt);
-    data.set(encoder.encode(inputPassword), salt.length);
-    const hash = await crypto.subtle.digest("SHA-256", data);
-    const computedHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
-    return computedHex === hashHex;
-  }
-  // 旧格式：纯 SHA-256 hex（无 salt）
-  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(inputPassword));
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("") === storedHash;
 }
 
 /* ── 查询函数 ────────────────────────────────────────────── */
@@ -2653,3 +2275,4 @@ export async function sendLoserConsolationEmails(
 
   return { sent, failed };
 }
+
