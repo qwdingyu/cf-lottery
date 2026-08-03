@@ -13,19 +13,20 @@
  */
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { signJwt } from "../middleware/auth";
+import { getEnv } from "./platform";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
 
 /** Logto JWKS 端点 URL（每个租户固定） */
 function getJwksUrl(c: Context<AppEnv>): string {
-  const endpoint = c.env?.LOGTO_ENDPOINT || "";
+  const endpoint = getEnv(c, "LOGTO_ENDPOINT");
   if (!endpoint) throw new Error("LOGTO_ENDPOINT 未配置");
   return `${endpoint.replace(/\/$/, "")}/oidc/.well-known/jwks.json`;
 }
 
 /** Logto 应用 ID（用于验证 ID Token 的 audience） */
 function getAppId(c: Context<AppEnv>): string {
-  return c.env?.LOGTO_APP_ID || "";
+  return getEnv(c, "LOGTO_APP_ID") || "";
 }
 
 /** JWKS 缓存（Workers 无状态，每次请求独立缓存） */
@@ -85,6 +86,20 @@ export async function verifyLogtoIdToken(idToken: string, c: Context<AppEnv>) {
 
 /**
  * 验证 Logto ID Token 后，签发自签 JWT
+ *
+ * 为什么需要自签 JWT：
+ * - Logto Free 方案无 API Resource，Access Token 无法绑定到特定 API
+ * - 自签 JWT 可以携带现有 tenantId/role 等字段，与现有中间件兼容
+ * - 自签 JWT 使用现有 JWT_SECRET 签名，与现有流程完全一致
+ *
+ * 自签 JWT 格式（与现有 JWT 完全兼容）：
+ * - sub: Logto 用户 ID（如 "logto|user_xxx"）
+ * - email: 用户邮箱
+ * - tenantId: 租户 ID（当前为空，后续可通过自有用户表查询补充）
+ * - tenantRole: 租户角色（同 tenantId）
+ * - platformRole: 平台角色
+ * - impersonated: 是否模拟登录
+ * - exp: 24 小时有效期
  *
  * @param logtoPayload - verifyLogtoIdToken 返回的 payload
  * @param jwtSecret - 用于签名的 JWT_SECRET
