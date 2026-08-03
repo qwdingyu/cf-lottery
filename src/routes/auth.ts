@@ -402,6 +402,12 @@ authRoute.post("/logout", async (c) => {
  */
 authRoute.post("/logto-exchange", async (c) => {
   try {
+    // Logto token 交换限流：30 次/分钟/IP（Logto token 本身短期有效，此限流防滥用）
+    const ip = getClientIp(c);
+    const db = getDb(c);
+    if (!(await checkDbRateLimit(db, `logto-exchange:${ip}`, 30, 60000))) {
+      return c.json({ ok: false, message: "请求过于频繁" }, 429);
+    }
     const body = await c.req.json<{ idToken?: string }>();
     if (!body?.idToken) {
       return c.json({ ok: false, message: "缺少 idToken 参数" }, 400);
@@ -420,9 +426,8 @@ authRoute.post("/logto-exchange", async (c) => {
       email: String(logtoPayload.email || logtoPayload.preferred_username || ""),
       sub: String(logtoPayload.sub || ""),
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Logto 认证失败";
-    return c.json({ ok: false, message }, 401);
+  } catch {
+    return c.json({ ok: false, message: "Logto 认证失败" }, 401);
   }
 });
 
