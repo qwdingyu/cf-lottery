@@ -171,6 +171,7 @@
               :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || $t('lottery.productPlaceholder'), color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
               :disabled="joiningId === draw.id || !!myJoinedById[draw.id] || draw.status !== 'open'"
               :loading="joiningId === draw.id"
+              :celebrate-key="celebrateKeyById[draw.id] || 0"
               @play="handleJoin(draw.id)"
             />
           </div>
@@ -696,6 +697,11 @@ function completeJoinSuccess(
     outcomeLabel: data.outcome?.resultLabel,
     resultMode: data.resultMode,
   })
+  // 先触发氛围（转盘/老虎机等），再出结果弹窗；动画不表示开奖结果
+  celebrateKeyById.value = {
+    ...celebrateKeyById.value,
+    [joinedDrawId]: (celebrateKeyById.value[joinedDrawId] || 0) + 1,
+  }
   showToast(
     data.outcome?.resultLabel
       ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel })
@@ -786,6 +792,11 @@ const sortedMyEntries = computed(() => {
 });
 
 const joiningId = ref('')
+/**
+ * 游戏氛围触发器：参与成功后对该 drawId 递增。
+ * Wheel/Slot/Grid 等 watch celebrateKey 再播动画，避免「未验证先转盘」。
+ */
+const celebrateKeyById = ref<Record<string, number>>({})
 const showResult = ref(false)
 /** 参与成功后暂存，供 GameResultModal：分享链接 + 结果语义分支 */
 const lastJoinResult = ref<{
@@ -1473,10 +1484,12 @@ async function handleSendCode() {
     })
     const data = await res.json() as any
     if (data.ok && data.joined) {
-      // 邮箱验证码关闭或 registered 旁路：直接参与成功（须完整收尾，含结果弹窗）
+      // 邮箱验证码关闭：直接参与成功（完整收尾 + celebrateKey 氛围）
+      joiningId.value = pendingJoinDrawId.value!
       completeJoinSuccess(pendingJoinDrawId.value!, data, { email: loginEmail.value.trim() })
       loginCode.value = ''
       codeSent.value = false
+      joiningId.value = ''
     } else if (data.ok && data.sent) {
       codeSent.value = true
       startCooldown(data.expiresInSeconds || 60)
@@ -1510,6 +1523,7 @@ async function handleVerifyCode() {
     }
   }
   verifyingCode.value = true
+  joiningId.value = pendingJoinDrawId.value
   loginError.value = ''
   try {
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/verify-join', {
@@ -1537,6 +1551,7 @@ async function handleVerifyCode() {
     loginError.value = t('lottery.networkError')
   } finally {
     verifyingCode.value = false
+    joiningId.value = ''
   }
 }
 

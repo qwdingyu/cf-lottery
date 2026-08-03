@@ -6,17 +6,26 @@
     </div>
     <!-- 转盘 -->
     <canvas ref="wheelCanvasRef" class="wheel-canvas" :width="canvasSize" :height="canvasSize" />
-    <!-- 指针按钮 -->
-    <div class="wheel-pointer-wrap" @click="handleSpin">
+    <!-- 指针按钮：点击只发 play；旋转仅在 celebrateKey 递增后（参与成功） -->
+    <div
+      class="wheel-pointer-wrap"
+      role="button"
+      :tabindex="disabled || spinning || loading ? -1 : 0"
+      :aria-disabled="disabled || spinning || loading ? 'true' : 'false'"
+      @click="handleSpin"
+      @keydown.enter.prevent="handleSpin"
+      @keydown.space.prevent="handleSpin"
+    >
       <div class="wheel-pointer" :class="{ spinning }">
         <span class="pointer-arrow">▼</span>
       </div>
-      <div class="wheel-btn" :class="{ disabled: disabled || spinning }">
+      <div class="wheel-btn" :class="{ disabled: disabled || spinning || loading }">
         <!--
-          语义诚实（docs/055a）：本组件 join 路径只提交参与，随机旋转不代表开奖结果。
-          空闲=参与抽奖；动画/请求中=提交中。禁止再写「抽奖中」暗示正在决定中奖。
+          语义诚实（docs/055a）：join 路径只提交参与；随机旋转是成功后的氛围，不是开奖。
+          空闲=参与抽奖；loading=提交中；spinning=参与成功氛围。
         -->
-        <span v-if="loading || spinning" class="wheel-btn-label">{{ $t('lottery.gameWheelSubmitting') }}</span>
+        <span v-if="loading" class="wheel-btn-label">{{ $t('lottery.gameWheelSubmitting') }}</span>
+        <span v-else-if="spinning" class="wheel-btn-label">{{ $t('lottery.gameWheelCelebrating') }}</span>
         <span v-else class="wheel-btn-label wheel-btn-label--join">{{ $t('lottery.gameWheelJoin') }}</span>
       </div>
     </div>
@@ -25,14 +34,20 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { PrizeItem } from './types'
+import type { GameProps, GameEmits } from './types'
 
-const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean; loading?: boolean }>()
-const emit = defineEmits<{ play: [] }>()
+const props = withDefaults(defineProps<GameProps>(), {
+  disabled: false,
+  loading: false,
+  celebrateKey: 0,
+})
+const emit = defineEmits<GameEmits>()
 
 const wheelCanvasRef = ref<HTMLCanvasElement>()
 const spinning = ref(false)
 const canvasSize = 320
+/** 避免 celebrateKey 初始 0 触发一次空庆祝 */
+let lastCelebrate = 0
 
 const sliceAngle = computed(() => (2 * Math.PI) / Math.max(props.prizes.length, 1))
 
@@ -50,7 +65,8 @@ function drawWheel(rotation: number) {
   const cx = cvs.width / 2, cy = cvs.height / 2, r = cx - 6
   ctx.clearRect(0, 0, cvs.width, cvs.height)
 
-  for (let i = 0; i < props.prizes.length; i++) {
+  const n = Math.max(props.prizes.length, 1)
+  for (let i = 0; i < n; i++) {
     const sa = i * sliceAngle.value + rotation, ea = sa + sliceAngle.value
     const [c1, c2] = getColors(i)
     const g = ctx.createLinearGradient(cx, cy - r, cx, cy + r)
@@ -60,7 +76,6 @@ function drawWheel(rotation: number) {
     ctx.fillStyle = g; ctx.fill()
     ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2; ctx.stroke()
 
-    // 奖品文字
     const mid = sa + sliceAngle.value / 2
     const tx = cx + Math.cos(mid) * r * 0.62
     const ty = cy + Math.sin(mid) * r * 0.62
@@ -72,7 +87,6 @@ function drawWheel(rotation: number) {
     ctx.restore()
   }
 
-  // 中心圆
   ctx.beginPath(); ctx.arc(cx, cy, 32, 0, 2 * Math.PI)
   const g2 = ctx.createRadialGradient(cx, cy, 0, cx, cy, 32)
   g2.addColorStop(0, '#fff'); g2.addColorStop(1, '#e0e0e0')
@@ -80,14 +94,20 @@ function drawWheel(rotation: number) {
   ctx.strokeStyle = '#ccc'; ctx.lineWidth = 2; ctx.stroke()
 }
 
-async function handleSpin() {
-  if (spinning.value || props.disabled) return
-  spinning.value = true
+/** 点击：只表达参与意图；不在此处开转动画（等 join 成功 celebrateKey） */
+function handleSpin() {
+  if (spinning.value || props.disabled || props.loading) return
   emit('play')
+}
 
+/** 参与成功后的氛围旋转：随机停角，不对准中奖扇区 */
+async function runCelebrateSpin() {
+  if (spinning.value) return
+  spinning.value = true
   const targetAngle = Math.PI * 2 * (5 + Math.random())
   const startRot = parseFloat(wheelCanvasRef.value?.dataset?.rot || '0')
-  const duration = 4000, start = performance.now()
+  const duration = 2800
+  const start = performance.now()
 
   await new Promise<void>(resolve => {
     const tick = (now: number) => {
@@ -97,20 +117,27 @@ async function handleSpin() {
       const rot = startRot + targetAngle * eased
       drawWheel(rot % (Math.PI * 2))
       if (wheelCanvasRef.value) wheelCanvasRef.value.dataset.rot = String(rot)
-      if (progress < 1) { requestAnimationFrame(tick) } else { resolve() }
+      if (progress < 1) requestAnimationFrame(tick)
+      else resolve()
     }
     requestAnimationFrame(tick)
   })
   spinning.value = false
 }
 
-watch(() => props.prizes, () => drawWheel(0), { immediate: true })
+watch(() => props.prizes, () => drawWheel(parseFloat(wheelCanvasRef.value?.dataset?.rot || '0') || 0), { immediate: true })
+
+watch(() => props.celebrateKey, (key) => {
+  const n = Number(key) || 0
+  if (n <= 0 || n === lastCelebrate) return
+  lastCelebrate = n
+  void runCelebrateSpin()
+})
 </script>
 
 <style scoped>
 .lucky-wheel-container {
   position: relative;
-  /* 055a P1：随屏宽缩放，避免小屏横向裁切；画布仍 320，用 scale 适配 */
   width: min(360px, 92vw);
   height: min(360px, 92vw);
   margin: 0 auto;
@@ -130,11 +157,10 @@ watch(() => props.prizes, () => drawWheel(0), { immediate: true })
 .light-dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 6px #fbbf24; }
 .light-dot.active { animation: blink 0.5s infinite alternate; }
 @keyframes blink { to { opacity: 0.3; transform: scale(0.7); } }
-.wheel-pointer-wrap { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; }
+.wheel-pointer-wrap { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; cursor: pointer; }
 .wheel-pointer { width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 22px solid #f59e0b; margin: 0 auto -2px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
 .wheel-pointer.spinning { animation: bounce 0.1s infinite alternate; }
 @keyframes bounce { to { transform: translateY(-2px); } }
-/* 主 CTA 触控目标 ≥ 44px（行业移动可用性基线） */
 .wheel-btn {
   width: 56px;
   height: 56px;
@@ -148,7 +174,6 @@ watch(() => props.prizes, () => drawWheel(0), { immediate: true })
   line-height: 1.15;
   border: 3px solid #fff;
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;

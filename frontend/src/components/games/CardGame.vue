@@ -32,11 +32,15 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import type { PrizeItem } from './types'
+import { reactive, ref, watch } from 'vue'
+import type { GameProps, GameEmits } from './types'
 
-const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean; loading?: boolean }>()
-const emit = defineEmits<{ play: [] }>()
+const props = withDefaults(defineProps<GameProps>(), {
+  disabled: false,
+  loading: false,
+  celebrateKey: 0,
+})
+const emit = defineEmits<GameEmits>()
 
 const COLORS = ['#FF6B6B','#FFD93D','#6BCB77','#4D96FF','#9B59B6','#FF8C42']
 const flipped = reactive(Array(6).fill(false))
@@ -50,10 +54,14 @@ function flip(i: number) {
 }
 
 function onPlay() {
+  // 不在 emit 前锁定 played：用户关登录弹窗后仍可再点；成功后由 disabled/已参与 禁用
   if (props.disabled || props.loading || played.value) return
-  played.value = true
   emit('play')
 }
+
+watch(() => props.disabled, (d) => {
+  if (d) played.value = true
+})
 </script>
 
 <style scoped>

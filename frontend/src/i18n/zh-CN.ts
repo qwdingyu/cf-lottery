@@ -595,13 +595,13 @@ export default {
     gamePrimaryCtaHint: "请在上方互动区完成参与（点击转盘中心 / 刮开 / 提交等）",
     gameCardHint: "翻开至少两张牌后，再提交参与",
     gameWheelSubmitting: "提交中",
+    /** 参与成功后的氛围动画文案（不是开奖） */
+    gameWheelCelebrating: "已参与",
+    gameGridPickHint: "点选一格参与（不代表中奖）",
+    gameGridJoinedHint: "已参与 · 结果以活动规则为准",
+    gameFormHint: "请先填写上方表单（如有），再点击提交参与",
     gameSubmitSubmitting: "提交中…",
     gameSubmitJoin: "立即参与",
-    gameFormHint: "请填写以下信息提交",
-    gameFormNameLabel: "姓名",
-    gameFormNamePlaceholder: "请输入姓名",
-    gameFormEmailLabel: "邮箱",
-    gameFormEmailPlaceholder: "请输入邮箱",
     // 裂变组件
     viralInviteHint: "每邀请 1 人额外获得 {n} 次抽奖机会",
     viralInvitedLabel: "已邀请",

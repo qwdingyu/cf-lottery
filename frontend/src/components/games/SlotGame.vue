@@ -7,7 +7,7 @@
             <div class="slot-reel" :ref="el => { if (el) reelRefs[idx] = el as HTMLDivElement }">
               <div v-for="(p, i) in reelPrizes" :key="idx+'-'+i" class="slot-item" :style="{ background: getGradient(i) }">
                 <span class="slot-emoji">{{ ['🎁','💎','🏆','🎯','🌟','💰','🎪','🎰'][i % 8] }}</span>
-                <span class="slot-name">{{ p.name.slice(0, 6) }}</span>
+                <span class="slot-name">{{ (p.name || '?').slice(0, 6) }}</span>
               </div>
             </div>
             <div class="slot-overlay top" />
@@ -24,8 +24,9 @@
           @click="handlePull"
         >
           <span class="slot-btn-icon">🎰</span>
-          <!-- 与转盘一致：动画是参与氛围，文案不写「抽奖中」暗示已在开奖 -->
-          <span v-if="loading || spinning">{{ $t('lottery.gameWheelSubmitting') }}</span>
+          <!-- 点击只 emit play；滚轮在 celebrateKey 后转（参与成功氛围） -->
+          <span v-if="loading">{{ $t('lottery.gameWheelSubmitting') }}</span>
+          <span v-else-if="spinning">{{ $t('lottery.gameWheelCelebrating') }}</span>
           <span v-else>{{ $t('lottery.gameWheelJoin') }}</span>
         </button>
       </div>
@@ -34,14 +35,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import type { PrizeItem } from './types'
+import { computed, ref, watch } from 'vue'
+import type { GameProps, GameEmits } from './types'
 
-const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean; loading?: boolean }>()
-const emit = defineEmits<{ play: [] }>()
+const props = withDefaults(defineProps<GameProps>(), {
+  disabled: false,
+  loading: false,
+  celebrateKey: 0,
+})
+const emit = defineEmits<GameEmits>()
 
 const reelRefs = ref<HTMLDivElement[]>([])
 const spinning = ref(false)
+let lastCelebrate = 0
 
 const GRADS = ['#FF6B6B', '#FFD93D', '#6BCB77', '#4D96FF', '#9B59B6', '#FF8C42', '#00D2FF', '#FF4DA6']
 
@@ -55,7 +61,7 @@ function getGradient(i: number) { return GRADS[i % GRADS.length]! }
 
 async function spinReel(reel: HTMLDivElement, delay: number) {
   await new Promise(r => setTimeout(r, delay))
-  const duration = 1500 + Math.random() * 500
+  const duration = 1200 + Math.random() * 400
   const target = (5 + Math.floor(Math.random() * 8)) * 80
   reel.style.transition = `transform ${duration}ms cubic-bezier(0.17, 0.67, 0.12, 0.99)`
   reel.style.transform = `translateY(-${target}px)`
@@ -64,19 +70,31 @@ async function spinReel(reel: HTMLDivElement, delay: number) {
   reel.style.transform = 'translateY(0)'
 }
 
-async function handlePull() {
-  if (spinning.value || props.disabled) return
-  spinning.value = true
+function handlePull() {
+  if (spinning.value || props.disabled || props.loading) return
   emit('play')
+}
+
+async function runCelebrateSpin() {
+  if (spinning.value) return
+  spinning.value = true
   const reels = reelRefs.value.filter(Boolean)
-  if (reels.length !== 3) { spinning.value = false; return }
-  await Promise.all([
-    spinReel(reels[0]!, 0),
-    spinReel(reels[1]!, 150),
-    spinReel(reels[2]!, 300),
-  ])
+  if (reels.length === 3) {
+    await Promise.all([
+      spinReel(reels[0]!, 0),
+      spinReel(reels[1]!, 120),
+      spinReel(reels[2]!, 240),
+    ])
+  }
   spinning.value = false
 }
+
+watch(() => props.celebrateKey, (key) => {
+  const n = Number(key) || 0
+  if (n <= 0 || n === lastCelebrate) return
+  lastCelebrate = n
+  void runCelebrateSpin()
+})
 </script>
 
 <style scoped>

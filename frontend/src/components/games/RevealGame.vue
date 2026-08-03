@@ -1,8 +1,8 @@
 <template>
   <div class="reveal-game">
     <p class="reveal-hint">{{ $t('lottery.gameRevealHint') }}</p>
-    <button class="btn btn-primary btn-lg reveal-btn" :disabled="disabled || loading" @click="emit('play')">
-      {{ loading ? $t('lottery.claiming') : $t('lottery.claim') }}
+    <button type="button" class="btn btn-primary btn-lg reveal-btn" :disabled="disabled || loading" @click="emit('play')">
+      {{ loading ? $t('lottery.gameSubmitSubmitting') : $t('lottery.gameSubmitJoin') }}
     </button>
   </div>
 </template>
