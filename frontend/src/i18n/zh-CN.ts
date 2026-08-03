@@ -958,10 +958,13 @@ export default {
     adminActionsMore: "更多",
     adminActionsLess: "收起",
     adminActionsMoreHint: "展开二维码、海报、数据、编辑与危险操作等次要入口",
-    adminAdvancedGrowthSection: "高级配置（导流 / 裂变 / CTA）",
-    adminAdvancedGrowthDesc: "默认收起，不影响发布主路径；需要增长与承接时再展开配置",
+    adminAdvancedGrowthSection: "高级配置（体验 / 导流 / 裂变 / CTA）",
+    adminAdvancedGrowthDesc: "默认收起，不影响发布主路径；模板已带默认体验，需改玩法皮肤或增长承接时再展开",
     adminAdvancedExpand: "展开",
     adminAdvancedCollapse: "收起",
+    adminExperienceSummaryLabel: "当前体验",
+    adminExperienceSummaryEdit: "更改",
+    adminExperienceAdvancedDesc: "完整体验类型列表仅在此修改；主路径用模板默认值即可发布",
 
     // ── LotteryView 用户端 i18n 补全 ──
     noActivity: "暂无活动",

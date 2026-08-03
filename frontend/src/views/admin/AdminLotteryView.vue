@@ -468,6 +468,10 @@
             </p>
           </section>
 
+          <!--
+            主路径只保留「谁可以参加」：活动类型 + 参与方式 + 门槛字段。
+            体验类型 13 项下拉属术语墙（055a 断点 C），默认放进高级配置，模板带入后可改。
+          -->
           <section class="form-section" aria-labelledby="lottery-mode">
             <header class="form-section-head">
               <h4 id="lottery-mode" class="form-section-title">{{ $t('lottery.adminParticipationMode') }}</h4>
@@ -487,25 +491,16 @@
                   <option v-for="opt in participationModeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                 </select>
               </label>
-              <label class="field-span-2">
-                <span>{{ $t('lottery.adminExperienceType') }}</span>
-                <select v-model="form.experienceType">
-                  <option value="wheel">{{ $t('lottery.adminExpWheel') }}</option>
-                  <option value="slot">{{ $t('lottery.adminExpSlot') }}</option>
-                  <option value="scratch">{{ $t('lottery.adminExpScratch') }}</option>
-                  <option value="card">{{ $t('lottery.adminExpCard') }}</option>
-                  <option value="list">{{ $t('lottery.adminExpList') }}</option>
-                  <option value="queue">{{ $t('lottery.adminExpQueue') }}</option>
-                  <option value="form">{{ $t('lottery.adminExpForm') }}</option>
-                  <option value="ballot">{{ $t('lottery.adminExpBallot') }}</option>
-                  <option value="calendar">{{ $t('lottery.adminExpCalendar') }}</option>
-                  <option value="checkin">{{ $t('lottery.adminExpCheckin') }}</option>
-                  <option value="reveal">{{ $t('lottery.adminExpReveal') }}</option>
-                  <option value="grid">{{ $t('lottery.adminExpGrid') }}</option>
-                  <option value="submit">{{ $t('lottery.adminExpSubmit') }}</option>
-                </select>
-                <small class="field-hint">{{ $t('lottery.adminExperienceHint') }}</small>
-              </label>
+              <!-- 只读摘要：模板/默认体验可见，完整 13 项在高级配置中改，避免主路径术语墙 -->
+              <p class="field-span-2 experience-summary" role="status">
+                <span class="experience-summary-label">{{ $t('lottery.adminExperienceSummaryLabel') }}</span>
+                <strong>{{ experienceTypeLabel(form.experienceType) }}</strong>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs experience-summary-edit"
+                  @click="showAdvancedGrowth = true"
+                >{{ $t('lottery.adminExperienceSummaryEdit') }}</button>
+              </p>
               <label v-if="form.activityKind === 'signup_chain'" class="field-span-2">
                 <span>{{ $t('lottery.adminAllocationPolicy') }}</span>
                 <select v-model="form.allocationPolicy">
@@ -553,6 +548,35 @@
               <p class="form-section-desc">{{ $t('lottery.adminAdvancedGrowthDesc') }}</p>
             </header>
             <div v-show="showAdvancedGrowth" id="lottery-advanced-body" class="form-advanced-body">
+              <!-- 体验类型：模板已带默认值；完整列表仅在此修改（055a 断点 C） -->
+              <section class="form-section form-section--nested" aria-labelledby="lottery-experience">
+                <header class="form-section-head">
+                  <h4 id="lottery-experience" class="form-section-title">{{ $t('lottery.adminExperienceType') }}</h4>
+                  <p class="form-section-desc">{{ $t('lottery.adminExperienceAdvancedDesc') }}</p>
+                </header>
+                <div class="form-grid two-cols">
+                  <label class="field-span-2">
+                    <span>{{ $t('lottery.adminExperienceType') }}</span>
+                    <select v-model="form.experienceType">
+                      <option value="wheel">{{ $t('lottery.adminExpWheel') }}</option>
+                      <option value="slot">{{ $t('lottery.adminExpSlot') }}</option>
+                      <option value="scratch">{{ $t('lottery.adminExpScratch') }}</option>
+                      <option value="card">{{ $t('lottery.adminExpCard') }}</option>
+                      <option value="list">{{ $t('lottery.adminExpList') }}</option>
+                      <option value="queue">{{ $t('lottery.adminExpQueue') }}</option>
+                      <option value="form">{{ $t('lottery.adminExpForm') }}</option>
+                      <option value="ballot">{{ $t('lottery.adminExpBallot') }}</option>
+                      <option value="calendar">{{ $t('lottery.adminExpCalendar') }}</option>
+                      <option value="checkin">{{ $t('lottery.adminExpCheckin') }}</option>
+                      <option value="reveal">{{ $t('lottery.adminExpReveal') }}</option>
+                      <option value="grid">{{ $t('lottery.adminExpGrid') }}</option>
+                      <option value="submit">{{ $t('lottery.adminExpSubmit') }}</option>
+                    </select>
+                    <small class="field-hint">{{ $t('lottery.adminExperienceHint') }}</small>
+                  </label>
+                </div>
+              </section>
+
               <!-- 导流配置：关联商品推广 -->
               <section class="form-section form-section--nested" aria-labelledby="lottery-traffic">
                 <header class="form-section-head">
@@ -641,6 +665,33 @@
                     <label class="field-span-2"><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterLossCtaUrl" type="url" placeholder="https://..." /></label>
                     <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterLossCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterLossCtaTitlePlaceholder')" /></label>
                   </template>
+                </div>
+              </section>
+
+              <!-- 未中奖自动发券：次要承接，默认不在主路径（仅抽奖） -->
+              <section
+                v-if="form.activityKind === 'lottery'"
+                class="form-section form-section--nested"
+                aria-labelledby="lottery-loserreward"
+              >
+                <header class="form-section-head">
+                  <h4 id="lottery-loserreward" class="form-section-title">{{ $t('lottery.adminLoserRewardSection') }}</h4>
+                  <p class="form-section-desc">{{ $t('lottery.adminLoserRewardDesc') }}</p>
+                </header>
+                <div class="form-grid two-cols">
+                  <label class="field-span-2">
+                    <span>{{ $t('lottery.adminLoserRewardLabel') }}</span>
+                    <select v-model="loserRewardEnabled" @change="syncLoserReward">
+                      <option :value="false">{{ $t('lottery.adminOff') }}</option>
+                      <option :value="true">{{ $t('lottery.adminOn') }}</option>
+                    </select>
+                    <small class="field-hint">{{ $t('lottery.adminLoserRewardHint') }}</small>
+                  </label>
+                  <label v-if="loserRewardEnabled" class="field-span-2">
+                    <span>{{ $t('lottery.adminCouponLabel') }}</span>
+                    <input v-model="loserRewardCouponLabel" maxlength="50" :placeholder="$t('lottery.adminCouponLabelPlaceholder')" @change="syncLoserReward" />
+                    <small class="field-hint">{{ $t('lottery.adminCouponLabelHint') }}</small>
+                  </label>
                 </div>
               </section>
             </div>
@@ -742,29 +793,6 @@
                 </button>
               </div>
               <button type="button" class="btn btn-ghost btn-sm" @click="addVoteOption">{{ $t('lottery.adminAddVoteOption') }}</button>
-            </div>
-          </section>
-
-          <!-- 活动后承接：未中奖自动发券（仅抽奖活动，需显式启用） -->
-          <section v-if="form.activityKind === 'lottery'" class="form-section" aria-labelledby="lottery-loserreward">
-            <header class="form-section-head">
-              <h4 id="lottery-loserreward" class="form-section-title">{{ $t('lottery.adminLoserRewardSection') }}</h4>
-              <p class="form-section-desc">{{ $t('lottery.adminLoserRewardDesc') }}</p>
-            </header>
-            <div class="form-grid two-cols">
-              <label class="field-span-2">
-                <span>{{ $t('lottery.adminLoserRewardLabel') }}</span>
-                <select v-model="loserRewardEnabled" @change="syncLoserReward">
-                  <option :value="false">{{ $t('lottery.adminOff') }}</option>
-                  <option :value="true">{{ $t('lottery.adminOn') }}</option>
-                </select>
-                <small class="field-hint">{{ $t('lottery.adminLoserRewardHint') }}</small>
-              </label>
-              <label v-if="loserRewardEnabled" class="field-span-2">
-                <span>{{ $t('lottery.adminCouponLabel') }}</span>
-                <input v-model="loserRewardCouponLabel" maxlength="50" :placeholder="$t('lottery.adminCouponLabelPlaceholder')" @change="syncLoserReward" />
-                <small class="field-hint">{{ $t('lottery.adminCouponLabelHint') }}</small>
-              </label>
             </div>
           </section>
 
@@ -3097,5 +3125,30 @@ onMounted(() => {
 
 .table-actions-more-btn {
   font-weight: 600;
+}
+
+/* 主路径体验摘要：显示模板默认值 + 一键跳到高级配置改完整列表 */
+.experience-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: var(--r-md, 8px);
+  background: var(--surface, rgba(255, 255, 255, 0.03));
+  color: var(--tg-text, #f0f2f5);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.experience-summary-label {
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 12px;
+}
+
+.experience-summary-edit {
+  margin-left: auto;
 }
 </style>

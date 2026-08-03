@@ -987,10 +987,13 @@ export default {
     adminActionsMore: "More",
     adminActionsLess: "Less",
     adminActionsMoreHint: "Show QR, poster, analytics, edit, and destructive actions",
-    adminAdvancedGrowthSection: "Advanced (traffic / viral / CTA)",
-    adminAdvancedGrowthDesc: "Collapsed by default so the publish path stays short; expand when you need growth or post-result CTAs",
+    adminAdvancedGrowthSection: "Advanced (experience / traffic / viral / CTA)",
+    adminAdvancedGrowthDesc: "Collapsed by default; templates set a default experience — expand only to change skin or growth CTAs",
     adminAdvancedExpand: "Expand",
     adminAdvancedCollapse: "Collapse",
+    adminExperienceSummaryLabel: "Experience",
+    adminExperienceSummaryEdit: "Change",
+    adminExperienceAdvancedDesc: "Full experience list lives here; the main path can publish with the template default",
 
     // LotteryView user-facing copy
     noActivity: "No activities",
