@@ -24,6 +24,10 @@ import {
   publicCfAuthMeta,
   completeCfAuthCodeExchange,
 } from "../lib/cf-auth-oauth";
+import {
+  IDP_PROVIDER_CF_AUTH,
+  provisionIdpUser,
+} from "../services/idp-user-provision";
 
 export const authRoute = new Hono<AppEnv>();
 
@@ -450,6 +454,7 @@ authRoute.post("/cf-auth/exchange", async (c) => {
       return c.json({ ok: false, message: "JWT_SECRET 未配置" }, 500);
     }
 
+    // 生产路径必须 provision：JWT.sub = 本地 users.id，create-tenant 才能工作（docs/062）
     const result = await completeCfAuthCodeExchange(
       config,
       {
@@ -458,6 +463,23 @@ authRoute.post("/cf-auth/exchange", async (c) => {
         redirectUri: body.redirectUri,
       },
       jwtSecret,
+      fetch,
+      async (profile) => {
+        const p = await provisionIdpUser(db, {
+          provider: IDP_PROVIDER_CF_AUTH,
+          idpSub: String(profile.sub || ""),
+          email: String(profile.email || profile.preferred_username || ""),
+          displayName: String(profile.name || profile.preferred_username || ""),
+          emailVerified: profile.email_verified !== false,
+        });
+        return {
+          userId: p.userId,
+          email: p.email,
+          tenantId: p.tenantId,
+          tenantRole: p.tenantRole,
+          needsTenant: p.needsTenant,
+        };
+      },
     );
     if (!result.ok) {
       const status = (result.status >= 400 && result.status < 600 ? result.status : 502) as 400 | 401 | 403 | 429 | 500 | 502 | 503;
@@ -467,7 +489,11 @@ authRoute.post("/cf-auth/exchange", async (c) => {
       ok: true,
       token: result.token,
       email: result.email,
+      /** 本地 users.id（与 JWT.sub 一致） */
       sub: result.sub,
+      idpSub: result.idpSub,
+      tenantId: result.tenantId,
+      needsTenant: result.needsTenant,
     });
   } catch (err) {
     console.error("[cf-auth/exchange]", err instanceof Error ? err.message : err);

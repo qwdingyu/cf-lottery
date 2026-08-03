@@ -141,22 +141,26 @@ describe("cf-auth OAuth RP（纯逻辑）", () => {
     }
   });
 
-  it("map + issueBusinessToken 可被 verifyJwt 验证", async () => {
-    const claims = mapCfAuthUserToJwtClaims({
-      sub: "user_cf_auth_1",
-      email: "rp@example.com",
-    });
+  it("map + issueBusinessToken 可被 verifyJwt 验证（本地 userId 为 JWT.sub）", async () => {
+    const claims = mapCfAuthUserToJwtClaims(
+      { sub: "idp-sub-1", email: "rp@example.com" },
+      { userId: "local-uuid-1", tenantId: "", email: "rp@example.com" },
+    );
     expect(claims.identityProvider).toBe("cf-auth");
-    expect(claims.sub).toBe("user_cf_auth_1");
+    expect(claims.sub).toBe("local-uuid-1");
+    expect(claims.idpSub).toBe("idp-sub-1");
     const token = await issueBusinessTokenFromCfAuth(
-      { sub: "user_cf_auth_1", email: "rp@example.com" },
+      { sub: "idp-sub-1", email: "rp@example.com" },
       JWT_SECRET_ENV,
+      3600,
+      { userId: "local-uuid-1", email: "rp@example.com" },
     );
     const payload = await verifyJwt(token, JWT_SECRET_ENV);
     expect(payload).toBeTruthy();
-    expect(payload!.sub).toBe("user_cf_auth_1");
+    expect(payload!.sub).toBe("local-uuid-1");
     expect(payload!.email).toBe("rp@example.com");
     expect(payload!.identityProvider).toBe("cf-auth");
+    expect(payload!.idpSub).toBe("idp-sub-1");
   });
 
   it("completeCfAuthCodeExchange 在 mock IdP 上跑完整 code 路径", async () => {
@@ -204,11 +208,61 @@ describe("cf-auth OAuth RP（纯逻辑）", () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    // 未注入 provision 时：降级 JWT.sub = 上游 sub（仅测 code 路径）
     expect(result.sub).toBe("sub-from-idp");
+    expect(result.idpSub).toBe("sub-from-idp");
     expect(result.email).toBe("from-idp@example.com");
     expect(result.accessToken).toBe("at-test");
     const payload = await verifyJwt(result.token, JWT_SECRET_ENV);
     expect(payload!.sub).toBe("sub-from-idp");
+  });
+
+  it("completeCfAuthCodeExchange 注入 provision 后 JWT.sub 为本地 userId", async () => {
+    const config: CfAuthClientConfig = {
+      enabled: true,
+      issuer: "http://idp.test",
+      clientId: "c",
+      clientSecret: "s",
+      redirectUri: "http://localhost:8787/auth/callback",
+      scopes: "openid email",
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "at2" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/oauth2/userinfo")) {
+        return new Response(
+          JSON.stringify({ sub: "upstream-99", email: "p@example.com" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("nf", { status: 404 });
+    };
+    const result = await completeCfAuthCodeExchange(
+      config,
+      { code: "c", codeVerifier: "v" },
+      JWT_SECRET_ENV,
+      fetcher,
+      async () => ({
+        userId: "local-from-provision",
+        email: "p@example.com",
+        tenantId: "",
+        tenantRole: "",
+        needsTenant: true,
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.sub).toBe("local-from-provision");
+    expect(result.idpSub).toBe("upstream-99");
+    expect(result.needsTenant).toBe(true);
+    const payload = await verifyJwt(result.token, JWT_SECRET_ENV);
+    expect(payload!.sub).toBe("local-from-provision");
+    expect(payload!.idpSub).toBe("upstream-99");
   });
 });
 

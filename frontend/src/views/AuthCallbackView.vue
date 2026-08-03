@@ -87,6 +87,8 @@ onMounted(async () => {
       ok?: boolean
       token?: string
       email?: string
+      needsTenant?: boolean
+      tenantId?: string
       message?: string
     }
     if (!res.ok || !data.ok || !data.token) {
@@ -96,7 +98,7 @@ onMounted(async () => {
       clearCfAuthOauthTransit(sessionStorage)
       return
     }
-    // 1) 管理端 localStorage admin_token
+    // 1) 管理端 localStorage admin_token（JWT.sub 已是本地 users.id，create-tenant 可用）
     setToken(data.token)
     // 2) 参与端 sessionStorage：registered_token + session email（公开 Bearer 路径）
     applyCfAuthSessionToLottery(sessionStorage, {
@@ -105,11 +107,15 @@ onMounted(async () => {
     })
     // 3) 清 PKCE/state/return；pendingJoin 留给 LotteryView 成功 join 后再 consume
     clearCfAuthOauthTransit(sessionStorage)
-    // 4) 管理端无租户（cf-auth 交换 JWT tenantId 为空）→ onboarding；参与页路径不动
-    const finalPath = resolveAdminPathAfterCfAuth({
-      token: data.token,
-      returnPath: returnTo.startsWith('/') ? returnTo : '/admin',
-    })
+    // 4) 回跳：优先 API needsTenant；再解析 JWT tenantId；参与页路径不改写
+    const baseReturn = returnTo.startsWith('/') ? returnTo : '/admin'
+    const finalPath =
+      data.needsTenant === true && !baseReturn.startsWith('/lottery')
+        ? '/admin/onboarding'
+        : resolveAdminPathAfterCfAuth({
+            token: data.token,
+            returnPath: baseReturn,
+          })
     status.value = 'ok'
     showToast(t('authCallback.ok'), 'success')
     await router.replace(finalPath)

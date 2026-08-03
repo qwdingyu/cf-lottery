@@ -258,10 +258,21 @@ export async function fetchCfAuthUserInfo(
 }
 
 /**
- * userinfo → lottery 自签 JWT claims。
- * tenant 字段先空，后续可绑用户表 / onboarding。
+ * userinfo + 本地建档结果 → lottery 自签 JWT claims。
+ *
+ * - sub：本地 users.id（create-tenant / requireAuth 依赖）
+ * - idpSub：上游 cf-auth sub（审计 / 排障，可选）
+ * - tenantId：已有 membership 则带上，否则空串 → 前端 onboarding
  */
-export function mapCfAuthUserToJwtClaims(profile: CfAuthUserInfo): {
+export function mapCfAuthUserToJwtClaims(
+  profile: CfAuthUserInfo,
+  local?: {
+    userId: string;
+    tenantId?: string;
+    tenantRole?: string;
+    email?: string;
+  },
+): {
   sub: string;
   email: string;
   tenantId: string;
@@ -269,42 +280,73 @@ export function mapCfAuthUserToJwtClaims(profile: CfAuthUserInfo): {
   platformRole: null;
   impersonated: false;
   identityProvider: "cf-auth";
+  idpSub: string;
 } {
-  const email = String(profile.email || profile.preferred_username || "").trim();
+  const idpSub = String(profile.sub || "").trim();
+  const email =
+    String(local?.email || profile.email || profile.preferred_username || "").trim();
+  // 未 provision 时回退 idp sub（仅测试/降级）；生产 exchange 必须先 provision
+  const sub = String(local?.userId || idpSub).trim();
   return {
-    sub: String(profile.sub),
+    sub,
     email,
-    tenantId: "",
-    tenantRole: "",
+    tenantId: String(local?.tenantId || ""),
+    tenantRole: String(local?.tenantRole || ""),
     platformRole: null,
     impersonated: false,
     identityProvider: "cf-auth",
+    idpSub,
   };
 }
 
-/** userinfo → 业务 Bearer JWT（requireAuth 可验） */
+/** userinfo → 业务 Bearer JWT（requireAuth 可验）；可注入本地 userId/tenant */
 export async function issueBusinessTokenFromCfAuth(
   profile: CfAuthUserInfo,
   jwtSecret: string,
   ttlSeconds = 24 * 3600,
+  local?: {
+    userId: string;
+    tenantId?: string;
+    tenantRole?: string;
+    email?: string;
+  },
 ): Promise<string> {
-  const claims = mapCfAuthUserToJwtClaims(profile);
+  const claims = mapCfAuthUserToJwtClaims(profile, local);
   return signJwt(claims, jwtSecret, ttlSeconds);
 }
 
+export type CompleteCfAuthExchangeOk = {
+  ok: true;
+  token: string;
+  email: string;
+  /** 本地 users.id（JWT.sub） */
+  sub: string;
+  /** 上游 IdP sub */
+  idpSub: string;
+  accessToken: string;
+  tenantId: string;
+  needsTenant: boolean;
+};
+
 /**
- * 完整 RP 交换：code → token → userinfo → 业务 JWT。
- * 单入口供路由与联调测试调用。
+ * 完整 RP 交换：code → token → userinfo →（可选）本地建档 → 业务 JWT。
+ *
+ * provisionUser 由路由注入（绑定 db）；单测可不传，此时 JWT.sub 仍为上游 sub（兼容旧测）。
+ * 生产 exchange **必须** 注入 provision，否则 create-tenant 会因无本地用户失败。
  */
 export async function completeCfAuthCodeExchange(
   config: CfAuthClientConfig,
   input: { code: string; codeVerifier: string; redirectUri?: string },
   jwtSecret: string,
   fetcher: typeof fetch = fetch,
-): Promise<
-  | { ok: true; token: string; email: string; sub: string; accessToken: string }
-  | { ok: false; status: number; message: string; detail?: string }
-> {
+  provisionUser?: (profile: CfAuthUserInfo) => Promise<{
+    userId: string;
+    email: string;
+    tenantId: string;
+    tenantRole: string;
+    needsTenant: boolean;
+  }>,
+): Promise<CompleteCfAuthExchangeOk | { ok: false; status: number; message: string; detail?: string }> {
   if (!jwtSecret) {
     return { ok: false, status: 500, message: "JWT_SECRET 未配置" };
   }
@@ -328,13 +370,67 @@ export async function completeCfAuthCodeExchange(
     return { ok: false, status: info.status, message: info.message };
   }
 
-  const token = await issueBusinessTokenFromCfAuth(info.profile, jwtSecret);
-  const claims = mapCfAuthUserToJwtClaims(info.profile);
+  let local:
+    | {
+        userId: string;
+        tenantId: string;
+        tenantRole: string;
+        email: string;
+        needsTenant: boolean;
+      }
+    | undefined;
+
+  if (provisionUser) {
+    try {
+      const p = await provisionUser(info.profile);
+      local = {
+        userId: p.userId,
+        tenantId: p.tenantId,
+        tenantRole: p.tenantRole,
+        email: p.email || String(info.profile.email || "").trim(),
+        needsTenant: p.needsTenant,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 500,
+        message: err instanceof Error ? err.message : "本地用户建档失败",
+      };
+    }
+  }
+
+  const token = await issueBusinessTokenFromCfAuth(
+    info.profile,
+    jwtSecret,
+    24 * 3600,
+    local
+      ? {
+          userId: local.userId,
+          tenantId: local.tenantId,
+          tenantRole: local.tenantRole,
+          email: local.email,
+        }
+      : undefined,
+  );
+  const claims = mapCfAuthUserToJwtClaims(
+    info.profile,
+    local
+      ? {
+          userId: local.userId,
+          tenantId: local.tenantId,
+          tenantRole: local.tenantRole,
+          email: local.email,
+        }
+      : undefined,
+  );
   return {
     ok: true,
     token,
     email: claims.email,
     sub: claims.sub,
+    idpSub: claims.idpSub,
     accessToken: tokenResult.tokens.access_token,
+    tenantId: local?.tenantId || "",
+    needsTenant: local ? local.needsTenant : true,
   };
 }

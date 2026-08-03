@@ -32,6 +32,27 @@ export const users = sqliteTable("users", {
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
+/**
+ * 外部 IdP 身份绑定（docs/062）。
+ * - provider + provider_user_id 唯一：同一 cf-auth sub 只对应一个本地用户。
+ * - JWT.sub 始终用本地 users.id，create-tenant / requireAuth 才能闭环。
+ * - 禁止仅凭未验证 email 自动合并账号（防接管）。
+ */
+export const authIdentities = sqliteTable("auth_identities", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  /** 如 cf-auth */
+  provider: text("provider").notNull(),
+  /** IdP 侧 sub */
+  providerUserId: text("provider_user_id").notNull(),
+  email: text("email").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  providerSub: uniqueIndex("idx_auth_identities_provider_sub").on(t.provider, t.providerUserId),
+  userIdx: index("idx_auth_identities_user").on(t.userId),
+}));
+
 export const tenantMembers = sqliteTable("tenant_members", {
   tenantId: text("tenant_id").notNull(),
   userId: text("user_id").notNull(),

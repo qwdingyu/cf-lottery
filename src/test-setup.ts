@@ -173,6 +173,7 @@ export async function clearTestData(client: Client) {
     "tenant_usage_snapshots",
     "platform_audit_logs",
     "platform_members",
+    "auth_identities",
     "rate_limit_log",
     "lottery_blacklist",
     "lottery_invite_codes",
