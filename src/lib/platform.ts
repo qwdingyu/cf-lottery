@@ -17,27 +17,56 @@ import type { AppEnv } from "../bindings";
 /**
  * 获取客户端真实 IP。
  *
- * Workers：Cloudflare 在 CF-Connecting-IP header 写入真实 IP。
- * Node（反代后）：只有显式配置 TRUST_PROXY_HEADERS=true 时才信任 X-Forwarded-For。
+ * Workers 边缘：Cloudflare 会覆盖写入 CF-Connecting-IP（客户端无法伪造）。
+ * Node 自托管：客户端可随意带 CF-Connecting-IP，**默认不信任**该头；
+ * 仅当 TRUST_PROXY_HEADERS / TRUST_CF_CONNECTING_IP 显式开启，或运行时判定为
+ * 非 Node（Workers）时才采用（docs/070 HIGH #2）。
  */
 export function getClientIp(c: Context<AppEnv>): string {
-  const cloudflareIp = c.req.header("CF-Connecting-IP");
-  if (cloudflareIp) return cloudflareIp;
+  const cloudflareIp = c.req.header("CF-Connecting-IP")?.trim();
+  if (cloudflareIp && isCloudflareConnectingIpTrusted(c)) {
+    return cloudflareIp;
+  }
 
-  // X-Forwarded-For 是普通请求头，自托管 Node 如果默认信任它，攻击者可伪造限流 key。
-  // 仅在可信反代已覆盖/清洗该头时，由部署环境显式开启。
+  // X-Forwarded-For / X-Real-IP：仅在可信反代已覆盖/清洗时由部署显式开启。
   if (isProxyHeaderTrusted(c)) {
-    return c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+    return (
+      c.req.header("X-Real-IP")?.trim() ||
+      c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ||
+      "unknown"
+    );
   }
 
   return "unknown";
 }
 
+/** 是否信任 CF-Connecting-IP（Workers 边缘或显式开关 / 测试）。 */
+function isCloudflareConnectingIpTrusted(c: Context<AppEnv>): boolean {
+  if (readTrustFlag(c, "TRUST_CF_CONNECTING_IP")) return true;
+  // 与 TRUST_PROXY_HEADERS 对齐：运维已声明反代可信时，亦可信边缘注入头
+  if (isProxyHeaderTrusted(c)) return true;
+  // 非 Node 运行时（Cloudflare Workers）默认信任平台注入头
+  if (!isNodeRuntime()) return true;
+  return false;
+}
+
 function isProxyHeaderTrusted(c: Context<AppEnv>): boolean {
-  const bindingValue = (c.env as Record<string, unknown> | undefined)?.TRUST_PROXY_HEADERS;
-  if (bindingValue === "true") return true;
+  return readTrustFlag(c, "TRUST_PROXY_HEADERS");
+}
+
+function readTrustFlag(c: Context<AppEnv>, key: string): boolean {
+  const bindingValue = (c.env as Record<string, unknown> | undefined)?.[key];
+  if (bindingValue === "true" || bindingValue === true) return true;
   try {
-    return (process.env as Record<string, string | undefined>)?.TRUST_PROXY_HEADERS === "true";
+    return (process.env as Record<string, string | undefined>)?.[key] === "true";
+  } catch {
+    return false;
+  }
+}
+
+function isNodeRuntime(): boolean {
+  try {
+    return typeof process !== "undefined" && Boolean(process.versions?.node);
   } catch {
     return false;
   }

@@ -23,6 +23,7 @@
         <a href="#how-it-works" class="btn btn-ghost btn-lg">{{ $t('landing.viewDemo') }}</a>
       </div>
       <p class="hero-note">{{ $t('landing.heroNote') }}</p>
+      <p class="hero-note hero-note-boundary">{{ $t('landing.freeBoundary') }}</p>
     </header>
 
     <!-- 创建流程 -->
@@ -100,32 +101,32 @@
       <h2 class="section-title">{{ $t('landing.capabilityTitle') }}</h2>
       <div class="capability-grid">
         <div class="capability-item">
-          <div class="capability-icon">1</div>
+          <div class="capability-icon" aria-hidden="true">⚡</div>
           <h3>{{ $t('landing.capQuickTitle') }}</h3>
           <p>{{ $t('landing.capQuickDesc') }}</p>
         </div>
         <div class="capability-item">
-          <div class="capability-icon">2</div>
+          <div class="capability-icon" aria-hidden="true">🛡️</div>
           <h3>{{ $t('landing.capReliableTitle') }}</h3>
           <p>{{ $t('landing.capReliableDesc') }}</p>
         </div>
         <div class="capability-item">
-          <div class="capability-icon">3</div>
+          <div class="capability-icon" aria-hidden="true">📊</div>
           <h3>{{ $t('landing.capReviewTitle') }}</h3>
           <p>{{ $t('landing.capReviewDesc') }}</p>
         </div>
         <div class="capability-item">
-          <div class="capability-icon">4</div>
+          <div class="capability-icon" aria-hidden="true">➡️</div>
           <h3>{{ $t('landing.capFollowTitle') }}</h3>
           <p>{{ $t('landing.capFollowDesc') }}</p>
         </div>
         <div class="capability-item">
-          <div class="capability-icon">5</div>
+          <div class="capability-icon" aria-hidden="true">🔗</div>
           <h3>{{ $t('landing.capIntegrateTitle') }}</h3>
           <p>{{ $t('landing.capIntegrateDesc') }}</p>
         </div>
         <div class="capability-item">
-          <div class="capability-icon">6</div>
+          <div class="capability-icon" aria-hidden="true">🏢</div>
           <h3>{{ $t('landing.capManagedTitle') }}</h3>
           <p>{{ $t('landing.capManagedDesc') }}</p>
         </div>
@@ -209,20 +210,45 @@ function handleLogout() {
 <style scoped>
 .landing-page { max-width: 960px; margin: 0 auto; padding: 0 20px; }
 /* 页内锚点：次 CTA 滚到「怎么玩」时不被顶栏挡住 */
-#how-it-works { scroll-margin-top: 24px; }
-.landing-nav { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; }
+#how-it-works { scroll-margin-top: 72px; }
+.landing-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--tg-bg, #0a0e17) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
 .nav-brand { font-size: 18px; font-weight: 700; }
 .nav-actions { display: flex; align-items: center; gap: 12px; }
-.nav-link { font-size: 14px; color: var(--tg-hint); text-decoration: none; background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
+.nav-link {
+  font-size: 14px;
+  color: var(--tg-hint);
+  text-decoration: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px 4px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  font-family: inherit;
+}
 .nav-link:hover { color: var(--tg-text); }
+.nav-link:focus-visible { outline: 2px solid var(--admin-accent, #f59e0b); outline-offset: 2px; border-radius: 6px; }
 .nav-logout { color: var(--tg-hint); }
 .landing-hero { text-align: center; padding: 80px 0 60px; }
 .hero-badge { display: inline-block; background: rgba(245,158,11,.15); color: #f59e0b; padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 20px; }
 .hero-title { font-size: 40px; font-weight: 800; line-height: 1.3; margin-bottom: 16px; }
 .hero-subtitle { font-size: 17px; color: var(--tg-hint); max-width: 500px; margin: 0 auto 28px; }
-.hero-actions { display: flex; gap: 12px; justify-content: center; margin-bottom: 16px; }
+.hero-actions { display: flex; gap: 12px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; }
 .hero-note { font-size: 13px; color: var(--tg-hint); }
-.btn-lg { padding: 14px 32px; font-size: 16px; font-weight: 600; border-radius: 10px; }
+.hero-note-boundary { margin-top: 8px; max-width: 520px; margin-left: auto; margin-right: auto; line-height: 1.5; opacity: 0.9; }
+.btn-lg { padding: 14px 32px; font-size: 16px; font-weight: 600; border-radius: 10px; min-height: 48px; display: inline-flex; align-items: center; justify-content: center; }
+.btn-lg:focus-visible { outline: 2px solid var(--admin-accent, #f59e0b); outline-offset: 3px; }
 .landing-section { padding: 80px 0; }
 .landing-section-alt { background: rgba(255,255,255,.02); border-radius: 24px; margin: 0 -20px; padding: 80px 20px; }
 .section-title { text-align: center; font-size: 28px; font-weight: 700; margin-bottom: 12px; }
@@ -239,6 +265,10 @@ function handleLogout() {
 .mode-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 40px; }
 .mode-card { background: var(--tg-surface); border-radius: 16px; overflow: hidden; transition: transform .2s; }
 .mode-card:hover { transform: translateY(-2px); }
+@media (prefers-reduced-motion: reduce) {
+  .mode-card { transition: none; }
+  .mode-card:hover { transform: none; }
+}
 .mode-preview { height: 100px; display: flex; align-items: center; justify-content: center; }
 .wheel-preview { background: linear-gradient(135deg, #fef3c7, #fde68a); }
 .scratch-preview { background: linear-gradient(135deg, #e0e7ff, #c7d2fe); }

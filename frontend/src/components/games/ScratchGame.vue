@@ -47,6 +47,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { GameProps, GameEmits } from './types'
 
 const props = withDefaults(defineProps<GameProps>(), {
@@ -55,6 +56,7 @@ const props = withDefaults(defineProps<GameProps>(), {
   celebrateKey: 0,
 })
 const emit = defineEmits<GameEmits>()
+const { t } = useI18n()
 
 const canvasRef = ref<HTMLCanvasElement>()
 const scratched = ref(false)
@@ -73,10 +75,11 @@ function initCanvas() {
   ctx.fillStyle = '#64748b'
   ctx.font = 'bold 18px sans-serif'
   ctx.textAlign = 'center'
-  ctx.fillText('刮开此处', canvas.width / 2, canvas.height / 2 + 6)
+  // i18n：避免英文界面硬编码中文（055a P2）
+  ctx.fillText(t('lottery.gameScratchCanvasTitle'), canvas.width / 2, canvas.height / 2 + 6)
   ctx.fillStyle = '#475569'
   ctx.font = '12px sans-serif'
-  ctx.fillText('(用手指滑动)', canvas.width / 2, canvas.height / 2 + 30)
+  ctx.fillText(t('lottery.gameScratchCanvasHint'), canvas.width / 2, canvas.height / 2 + 30)
 }
 
 function scratchAt(x: number, y: number) {

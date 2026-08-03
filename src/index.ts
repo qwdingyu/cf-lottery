@@ -121,6 +121,21 @@ app.use("*", cors({
   maxAge: 86400,
 }));
 
+/**
+ * 基线安全响应头（轻量、不挡嵌入）。
+ * - nosniff / Referrer-Policy：降低 MIME 嗅探与 referrer 泄漏
+ * - 不设 X-Frame-Options: DENY：活动页需可被宿主站 iframe 嵌入（产品定位）
+ * - 完整 CSP 中期再做：需拆 admin / 公开 / 嵌入三套策略，避免一次 CSP 打断现网
+ */
+app.use("*", async (c, next) => {
+  await next();
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+  c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  c.res.headers.set("X-DNS-Prefetch-Control", "off");
+  // 不开放危险浏览器能力；嵌入场景仍允许自身脚本
+  c.res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+});
+
 // ── 全局错误处理 ──
 app.onError((err, c) => {
   // 生产环境只记录 error.message，避免 err.stack 中的内部路径/凭证泄露到 Worker 日志
@@ -248,10 +263,22 @@ app.post("/api/cron/maintenance", async (c) => {
   }
 });
 
+/**
+ * 未知 /api/*：必须 JSON 404。
+ * 若落入下方 SPA fallback，客户端会把 HTML 当 JSON 解析失败，
+ * 也掩盖「路由是否存在」——排障与嵌入方集成都会踩坑。
+ * 本处理器挂在全部 API 路由之后，只承接未匹配的 API。
+ */
+app.all("/api/*", (c) => c.json({ ok: false, message: "接口不存在" }, 404));
+
 // 前端静态资源：所有非 /api 请求返回 index.html（SPA）
 // Cloudflare：ASSETS binding 托管静态资源（run_worker_first 让 API 走 Worker）；
 // Node（server.ts）：无 ASSETS binding → next() 交给 @hono/node-server 的 serveStatic。
 app.get("*", async (c, next) => {
+  // 双保险：/api 不应进入 SPA（正常已由上方 all /api/* 截获）
+  if (c.req.path.startsWith("/api/") || c.req.path === "/api") {
+    return c.json({ ok: false, message: "接口不存在" }, 404);
+  }
   const assets = c.env.ASSETS as Fetcher | undefined;
   if (!assets) return next();
   try {

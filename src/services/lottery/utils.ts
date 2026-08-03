@@ -6,6 +6,8 @@
  * verifyAccessPassword 拆分前为内部函数，现导出供参与域复用。
  */
 
+import { timingSafeEqualHex } from "../../lib/crypto-compare";
+
 /* ── 内部工具 ─────────────────────────────────────────────── */
 
 /**
@@ -88,10 +90,12 @@ export async function verifyAccessPassword(inputPassword: string, storedHash: st
     data.set(encoder.encode(inputPassword), salt.length);
     const hash = await crypto.subtle.digest("SHA-256", data);
     const computedHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
-    return computedHex === hashHex;
+    // 常量时间比较，降低哈希相等判断的计时侧信道面
+    return timingSafeEqualHex(computedHex, hashHex);
   }
   // 旧格式：纯 SHA-256 hex（无 salt）
   const hash = await crypto.subtle.digest("SHA-256", encoder.encode(inputPassword));
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("") === storedHash;
+  const computedHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return timingSafeEqualHex(computedHex, storedHash);
 }
 

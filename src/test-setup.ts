@@ -18,6 +18,14 @@ import { fileURLToPath } from "node:url";
 
 const TEST_DB_PATH = join(tmpdir(), `cf-lottery-vitest-${process.pid}.db`);
 const TEST_DB_URL = process.env.CF_LOTTERY_TEST_DB_URL || `file:${TEST_DB_PATH}`;
+
+/**
+ * 单测在 Node 内模拟多 IP 限流时依赖 CF-Connecting-IP。
+ * 生产 Node 默认不信任该头；测试显式打开（与 docs/070 HIGH #2 对齐）。
+ */
+if (!process.env.TRUST_CF_CONNECTING_IP) {
+  process.env.TRUST_CF_CONNECTING_IP = "true";
+}
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 const DEFAULT_SYSTEM_CONFIGS: Array<[string, string]> = [
   ["plan_free_max_activities", "10"],

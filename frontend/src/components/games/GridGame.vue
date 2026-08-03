@@ -76,8 +76,17 @@ watch(() => props.celebrateKey, (key) => {
 .grid-cell:hover:not(:disabled):not(.center) {
   transform: scale(1.08); border-color: var(--admin-accent, #f59e0b); background: rgba(245,158,11,0.25);
 }
+.grid-cell:focus-visible {
+  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline-offset: 2px;
+}
 .grid-cell.center { background: linear-gradient(135deg, rgba(245,158,11,0.3), rgba(251,191,36,0.15)); border-color: rgba(245,158,11,0.3); cursor: default; }
 .grid-cell.center .grid-cell-icon { animation: pulse 1.5s infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .grid-cell { transition: none; }
+  .grid-cell:hover:not(:disabled):not(.center) { transform: none; }
+  .grid-cell.center .grid-cell-icon { animation: none; }
+}
 .grid-cell.flipped { background: linear-gradient(135deg, #6366f1, #4f46e5); border-color: #818cf8; }
 .flipped-icon { animation: popIn 0.4s cubic-bezier(0.34,1.56,0.64,1); }
 .grid-hint { font-size: 13px; color: rgba(255,255,255,0.45); text-align: center; padding: 0 12px; }

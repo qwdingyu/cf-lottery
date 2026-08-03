@@ -9,7 +9,7 @@ import type { Context, Next } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb } from "../lib/http";
 import { getEnv } from "../lib/platform";
-import { tenantMembers, platformMembers } from "../db/schema";
+import { tenantMembers, platformMembers, users, tenants } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 
 export async function requireAuth(c: Context<AppEnv>, next: Next) {
@@ -29,6 +29,28 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
     const payload = await verifyJwt(token, jwtSecret);
     if (!payload || !payload.sub) {
       return c.json({ ok: false, message: "登录已过期" }, 401);
+    }
+    /**
+     * 禁用用户后已签发 JWT 不得继续调管理 API（docs/070 HIGH #3）。
+     * 每次鉴权轻量查 status；免费层可接受，优于 24h 盲信 token。
+     */
+    try {
+      const db = getDb(c);
+      const [row] = await db
+        .select({ status: users.status })
+        .from(users)
+        .where(eq(users.id, payload.sub))
+        .limit(1);
+      if (!row) {
+        return c.json({ ok: false, message: "登录已过期" }, 401);
+      }
+      if (row.status !== "active") {
+        return c.json({ ok: false, message: "账号已被禁用" }, 403);
+      }
+    } catch (err) {
+      // getDb 未注入时（极端）不放行管理写：与「无库」一致
+      console.error("[auth] requireAuth user status check failed:", err);
+      return c.json({ ok: false, message: "权限验证失败" }, 500);
     }
     c.set("userId", payload.sub);
     c.set("tenantId", payload.tenantId || "");
@@ -71,6 +93,15 @@ export function requireTenantMember(allowedRoles: string[] = ["owner", "admin", 
       // 后续每个路由都要背兼容分支，最终会把 RBAC-lite 拖成重型权限系统。
       if (!allowedRoles.includes(member.role)) {
         return c.json({ ok: false, message: "权限不足" }, 403);
+      }
+      // 租户暂停/禁用后，已持有 JWT 的成员立即不可写（docs/070 HIGH #3）
+      const [tenant] = await db
+        .select({ status: tenants.status })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .limit(1);
+      if (!tenant || tenant.status !== "active") {
+        return c.json({ ok: false, message: "租户已暂停或不可用" }, 403);
       }
       c.set("tenantRole", member.role);
     } catch (err) {

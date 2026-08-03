@@ -8,13 +8,15 @@
         :class="{ flipped: flipped[i] }"
         role="button"
         :tabindex="disabled ? -1 : 0"
-        :aria-label="flipped[i] ? '已翻开' : `翻牌 ${i + 1}`"
+        :aria-label="flipped[i] ? $t('lottery.gameCardFlippedAria') : $t('lottery.gameCardFlipAria', { n: i + 1 })"
         @click="flip(i)"
         @keydown.enter="flip(i)"
+        @keydown.space.prevent="flip(i)"
       >
         <div class="card-inner">
           <div class="card-front">?</div>
-          <div class="card-back" :style="{ background: COLORS[i] }">🎁</div>
+          <!-- 背面统一礼物：玩具感氛围，不宣称「你的中奖奖品」（docs/055a） -->
+          <div class="card-back" :style="{ background: COLORS[i] }" aria-hidden="true">🎁</div>
         </div>
       </div>
     </div>
@@ -28,6 +30,7 @@
       {{ loading ? $t('lottery.gameWheelSubmitting') : $t('lottery.gameWheelJoin') }}
     </button>
     <p v-else-if="flippedCount === 0" class="card-hint">{{ $t('lottery.gameCardHint') }}</p>
+    <p v-else-if="flippedCount === 1" class="card-hint">{{ $t('lottery.gameCardNeedMore') }}</p>
   </div>
 </template>
 
@@ -77,6 +80,11 @@ watch(() => props.disabled, (d) => {
 .card-item { perspective: 800px; cursor: pointer; min-height: 100px; }
 .card-inner { position: relative; width: 100%; height: 100%; min-height: 100px; transition: transform 0.6s; transform-style: preserve-3d; }
 .card-item.flipped .card-inner { transform: rotateY(180deg); }
+.card-item:focus-visible {
+  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline-offset: 3px;
+  border-radius: 14px;
+}
 .card-front, .card-back { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 36px; font-weight: 700; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
 .card-front { background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; }
 .card-back { transform: rotateY(180deg); color: #fff; }
@@ -98,5 +106,11 @@ watch(() => props.disabled, (d) => {
 }
 .card-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(245,158,11,0.6); }
 .card-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.card-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .card-hint { font-size: 13px; color: rgba(255,255,255,0.4); text-align: center; padding: 0 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .card-inner { transition: none; }
+  .card-btn { transition: none; }
+  .card-btn:hover:not(:disabled) { transform: none; }
+}
 </style>

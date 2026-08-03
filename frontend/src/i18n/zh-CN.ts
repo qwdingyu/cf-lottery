@@ -109,6 +109,9 @@ export default {
     colStatus: "状态",
     colParticipants: "参与人数",
     colCreatedAt: "创建时间",
+    // ADR-055a-5：空态不写绝对时长
+    emptyOnboard: "还没有活动？从模板开始，选好标题与时间就能发布。",
+    emptyOnboardCta: "选择模板创建活动",
   },
 
   // ── 登录/注册（AdminLoginView） ────────────────
@@ -197,6 +200,7 @@ export default {
     registerCta: "免费注册，马上开始",
     viewDemo: "了解怎么玩",
     heroNote: "免费套餐就可以用",
+    freeBoundary: "免费档可创建活动并完整走通分享→参与→开奖；更高额度与平台能力见后台套餐说明。",
     stepsTitle: "三步搞定一个活动",
     step1Title: "选个模板",
     step1Desc: "福利抽奖、报名接龙、资料领取、问卷调研——选一个改改就能用，不用从零开始。",
@@ -602,17 +606,24 @@ export default {
     gameScratchJoinedHint: "参与已登记，结果以活动开奖为准",
     // 涂层下中性文案：表示「可以继续提交」，不是「已经参与成功」
     gameScratchReveal: "刮开后点按钮参与",
+    gameScratchCanvasTitle: "刮开此处",
+    gameScratchCanvasHint: "（用手指滑动）",
     gameRevealHint: "点击下方按钮领取资料",
-    gameSlotSpinning: "抽奖中",
-    gameSlotPull: "拉杆",
+    // 老虎机与转盘共用诚实语义；保留旧 key 别名避免残留引用
+    gameSlotSpinning: "提交中",
+    gameSlotPull: "参与",
     gameSlotPulling: "…",
-    gameSlotAriaSpinning: "抽奖中",
-    gameSlotAriaPull: "拉动拉杆",
+    gameSlotAriaSpinning: "提交中",
+    gameSlotAriaPull: "参与活动",
     // 转盘：join 路径是「提交参与」动效，不是开奖决定结果（docs/055a 技术更正）
     gameWheelJoin: "参与\n抽奖",
     /** 有游戏壳时底部提示：主操作在游戏区，避免与底部第二颗「参与」双入口 */
     gamePrimaryCtaHint: "请在上方互动区完成参与（点击转盘中心 / 刮开 / 提交等）",
     gameCardHint: "翻开至少两张牌后，再提交参与",
+    gameCardNeedMore: "再翻一张牌，然后提交参与",
+    gameCardFlipAria: "翻开第 {n} 张牌",
+    gameCardFlippedAria: "已翻开",
+
     gameWheelSubmitting: "提交中",
     /** 参与成功后的氛围动画文案（不是开奖） */
     gameWheelCelebrating: "已参与",

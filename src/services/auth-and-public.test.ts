@@ -975,3 +975,79 @@ describe("接龙活动结果", () => {
     expect(outcomes[2]!.sequenceNo).toBe(3);
   });
 });
+
+/* ── 安全：注册 OTP 不得误用活动参与 OTP（docs/070 CRITICAL #1） ── */
+describe("verify-email 仅接受注册码 drawId=\"\"", () => {
+  it("活动 drawId 上的 OTP 不能完成注册邮箱验证", async () => {
+    const app = createAuthTestApp();
+    const email = "otp-mix@test.com";
+    await db.insert(users).values({
+      id: crypto.randomUUID(),
+      username: "otp_mix_user",
+      email,
+      passwordHash: "x",
+      emailVerified: 0,
+      status: "active",
+    });
+    // 模拟：仅有活动参与码（真实 drawId），无注册码
+    const { hashCode } = await import("../routes/public-lottery-helpers");
+    const code = "123456";
+    const codeHash = await hashCode(code);
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email,
+      drawId: "some-real-draw-id",
+      codeHash,
+      used: 0,
+      expiresAt: futureTimeISO(10),
+    });
+
+    const res = await app.request("/auth/verify-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.77" },
+      body: JSON.stringify({ email, code }),
+    }, TEST_ENV);
+    const body = await res.json() as { ok: boolean; message?: string };
+    expect(res.status).toBe(400);
+    expect(body.ok).toBe(false);
+    // 不得签发 token
+    expect((body as { token?: string }).token).toBeUndefined();
+
+    const [u] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    expect(u?.emailVerified).toBe(0);
+  });
+
+  it("drawId=\"\" 注册码仍可验证成功", async () => {
+    const app = createAuthTestApp();
+    const email = "otp-reg@test.com";
+    await db.insert(users).values({
+      id: crypto.randomUUID(),
+      username: "otp_reg_user",
+      email,
+      passwordHash: "x",
+      emailVerified: 0,
+      status: "active",
+    });
+    const { hashCode } = await import("../routes/public-lottery-helpers");
+    const code = "654321";
+    const codeHash = await hashCode(code);
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email,
+      drawId: "",
+      codeHash,
+      used: 0,
+      expiresAt: futureTimeISO(10),
+    });
+
+    const res = await app.request("/auth/verify-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.78" },
+      body: JSON.stringify({ email, code }),
+    }, TEST_ENV);
+    const body = await res.json() as { ok: boolean; token?: string };
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.token).toBeTruthy();
+  });
+});

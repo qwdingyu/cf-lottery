@@ -165,10 +165,19 @@ export async function exchangeAuthorizationCode(
   if (!input.code?.trim() || !input.codeVerifier?.trim()) {
     return { ok: false, status: 400, message: "缺少 code 或 code_verifier" };
   }
-  const redirectUri = (input.redirectUri || config.redirectUri).trim();
-  if (!redirectUri) {
+  /**
+   * redirect_uri 必须以服务端配置为准。
+   * 若调用方传入不同值 → 拒绝（防授权码兑换面扩大；docs/070 HIGH #5）。
+   */
+  const configured = config.redirectUri.trim();
+  if (!configured) {
     return { ok: false, status: 400, message: "缺少 redirect_uri" };
   }
+  const incoming = (input.redirectUri || "").trim();
+  if (incoming && incoming !== configured) {
+    return { ok: false, status: 400, message: "redirect_uri 与配置不一致" };
+  }
+  const redirectUri = configured;
 
   const tokenUrl = `${config.issuer.replace(/\/$/, "")}/api/auth/oauth2/token`;
   const basic = btoa(`${config.clientId}:${config.clientSecret}`);

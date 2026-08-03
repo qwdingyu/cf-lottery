@@ -28,6 +28,7 @@ import {
   IDP_PROVIDER_CF_AUTH,
   provisionIdpUser,
 } from "../services/idp-user-provision";
+import { timingSafeEqualHex, timingSafeEqualString } from "../lib/crypto-compare";
 
 export const authRoute = new Hono<AppEnv>();
 
@@ -200,10 +201,21 @@ authRoute.post("/verify-email", async (c) => {
   const email = String(body.email || "").trim().toLowerCase();
   const code = String(body.code || "").trim();
 
+  /**
+   * 关键：必须限定 drawId=""（注册码）。
+   * 活动参与 OTP 写入真实 drawId；若不加限制，攻击者可用活动邮件中的码完成
+   * /verify-email 账号接管（security-reviewer CRITICAL #1，docs/070）。
+   */
   const stored = await db
     .select()
     .from(emailAccessCodes)
-    .where(and(eq(emailAccessCodes.email, email), eq(emailAccessCodes.used, 0)))
+    .where(
+      and(
+        eq(emailAccessCodes.email, email),
+        eq(emailAccessCodes.drawId, ""),
+        eq(emailAccessCodes.used, 0),
+      ),
+    )
     .orderBy(sql`${emailAccessCodes.createdAt} DESC`)
     .limit(1);
   if (stored.length === 0) return c.json({ ok: false, message: "请先提交注册信息" }, 400);
@@ -214,15 +226,28 @@ authRoute.post("/verify-email", async (c) => {
   }
 
   const inputHash = await hashCode(code);
-  if (inputHash !== codeRecord.codeHash) {
+  // 验证码 hash 用常量时间比较，避免前缀短路计时面
+  if (!timingSafeEqualHex(inputHash, codeRecord.codeHash)) {
     return c.json({ ok: false, message: "验证码错误" }, 400);
   }
 
   await db.update(emailAccessCodes).set({ used: 1 }).where(eq(emailAccessCodes.id, codeRecord.id));
 
-  // 标记邮箱已验证
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  // 优先绑定「尚未验证」的同邮箱用户，避免多行竞态验证到错误账号
+  const [pendingUser] = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.email, email), eq(users.emailVerified, 0)))
+    .orderBy(sql`${users.createdAt} DESC`)
+    .limit(1);
+  const [anyUser] = pendingUser
+    ? [pendingUser]
+    : await db.select().from(users).where(eq(users.email, email)).orderBy(sql`${users.createdAt} DESC`).limit(1);
+  const user = anyUser;
   if (!user) return c.json({ ok: false, message: "用户不存在" }, 404);
+  if (user.status && user.status !== "active") {
+    return c.json({ ok: false, message: "账号已被禁用" }, 403);
+  }
 
   await db.update(users).set({ emailVerified: 1 }).where(eq(users.id, user.id));
 
@@ -449,6 +474,15 @@ authRoute.post("/cf-auth/exchange", async (c) => {
       return c.json({ ok: false, message: "缺少 code 或 codeVerifier" }, 400);
     }
 
+    /**
+     * redirect_uri 只允许服务端配置值（忽略或校验客户端传入）。
+     * 防止恶意客户端用宽松 IdP 登记面兑换任意 redirect（HIGH #5）。
+     */
+    const clientRedirect = body.redirectUri != null ? String(body.redirectUri).trim() : "";
+    if (clientRedirect && clientRedirect !== config.redirectUri) {
+      return c.json({ ok: false, message: "redirect_uri 与配置不一致" }, 400);
+    }
+
     const jwtSecret = getEnv(c, "JWT_SECRET");
     if (!jwtSecret) {
       return c.json({ ok: false, message: "JWT_SECRET 未配置" }, 500);
@@ -460,7 +494,8 @@ authRoute.post("/cf-auth/exchange", async (c) => {
       {
         code: body.code,
         codeVerifier: body.codeVerifier,
-        redirectUri: body.redirectUri,
+        // 固定为配置 redirect，不透传客户端任意 URI
+        redirectUri: config.redirectUri,
       },
       jwtSecret,
       fetch,
@@ -483,7 +518,8 @@ authRoute.post("/cf-auth/exchange", async (c) => {
     );
     if (!result.ok) {
       const status = (result.status >= 400 && result.status < 600 ? result.status : 502) as 400 | 401 | 403 | 429 | 500 | 502 | 503;
-      return c.json({ ok: false, message: result.message, detail: result.detail }, status);
+      // 不向客户端回传 IdP body 切片（detail），避免配置/内部错误侦察
+      return c.json({ ok: false, message: result.message }, status);
     }
     return c.json({
       ok: true,
@@ -515,11 +551,13 @@ async function verifyPassword(password: string, stored: string, pepper: string):
     const [, saltHex, hashHex] = stored.split(":");
     const salt = saltHex ? hexToBytes(saltHex) : null;
     if (!salt || !hashHex || !/^[a-f0-9]{64}$/i.test(hashHex)) return false;
-    return await hmacPassword(password, salt, pepper) === hashHex.toLowerCase();
+    const computed = await hmacPassword(password, salt, pepper);
+    return timingSafeEqualHex(computed, hashHex);
   }
 
   if (isLegacySha256Hash(stored)) {
-    return await legacySha256PasswordHash(password) === stored;
+    const legacy = await legacySha256PasswordHash(password);
+    return timingSafeEqualString(legacy, stored);
   }
 
   const [saltHex, hashHex] = stored.split(":");
@@ -528,7 +566,8 @@ async function verifyPassword(password: string, stored: string, pepper: string):
   if (!salt || !/^[a-f0-9]{64}$/i.test(hashHex)) return false;
 
   for (const iterations of LEGACY_PBKDF2_ITERATIONS) {
-    if (await legacyPbkdf2PasswordHash(password, salt, iterations) === hashHex.toLowerCase()) return true;
+    const computed = await legacyPbkdf2PasswordHash(password, salt, iterations);
+    if (timingSafeEqualHex(computed, hashHex)) return true;
   }
   return false;
 }

@@ -107,6 +107,9 @@ export default {
     colStatus: "Status",
     colParticipants: "Participants",
     colCreatedAt: "Created",
+    // ADR-055a-5: no absolute time promise in empty state
+    emptyOnboard: "No activities yet? Start from a template — set a title and schedule, then publish.",
+    emptyOnboardCta: "Create from template",
   },
 
   // ── Login / Register ────────────────────────
@@ -196,6 +199,7 @@ export default {
     viewDemo: "See how it works",
     // secondary CTA anchors to #how-it-works (not register)
     heroNote: "Free tier is fully functional",
+    freeBoundary: "Free tier can create activities and complete share → join → draw. Higher quotas and platform features are shown in admin plan details.",
     stepsTitle: "Three steps to launch",
     step1Title: "Pick a template",
     step1Desc: "Prize draws, signup chains, document downloads, surveys — pick one and customize, no need to start from scratch.",
@@ -633,17 +637,23 @@ export default {
     gameScratchJoined: "You're in",
     gameScratchJoinedHint: "Entry recorded — results follow the activity draw rules",
     gameScratchReveal: "Then tap to join",
+    gameScratchCanvasTitle: "Scratch here",
+    gameScratchCanvasHint: "(swipe with finger)",
     gameRevealHint: "Click below to claim",
-    gameSlotSpinning: "Spinning",
-    gameSlotPull: "Pull",
+    gameSlotSpinning: "Submitting",
+    gameSlotPull: "Join",
     gameSlotPulling: "...",
-    gameSlotAriaSpinning: "Spinning",
-    gameSlotAriaPull: "Pull lever",
+    gameSlotAriaSpinning: "Submitting",
+    gameSlotAriaPull: "Join activity",
     // Wheel: join path is submit animation, not draw resolution (docs/055a correction)
     gameWheelJoin: "Join\nDraw",
     /** When a game shell is mounted, primary CTA lives in the game; bar shows a hint only */
     gamePrimaryCtaHint: "Use the interaction above to join (center of the wheel / scratch / submit, etc.)",
     gameCardHint: "Flip at least two cards, then submit to join",
+    gameCardNeedMore: "Flip one more card, then submit to join",
+    gameCardFlipAria: "Flip card {n}",
+    gameCardFlippedAria: "Flipped",
+
     gameWheelSubmitting: "Submitting",
     /** Ambience after successful join — not a prize draw */
     gameWheelCelebrating: "Joined",
