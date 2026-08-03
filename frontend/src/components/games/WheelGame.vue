@@ -1,199 +1,125 @@
 <template>
   <div class="lucky-wheel-container">
-    <div class="wheel-wrapper">
-      <!-- 转盘 -->
-      <canvas
-        ref="wheelCanvasRef"
-        class="wheel-canvas"
-        :width="canvasSize"
-        :height="canvasSize"
-      />
-      <!-- 指针 -->
-      <div
-        class="wheel-pointer"
-        role="button"
-        :tabindex="disabled ? -1 : 0"
-        :aria-label="spinning ? '抽奖中' : '点击开始抽奖'"
-        :aria-disabled="disabled || spinning"
-        @click="handleSpin"
-        @keydown.enter="handleSpin"
-        @keydown.space.prevent="handleSpin"
-      >
-        <span class="pointer-text">{{ loading ? $t('lottery.loadingText') : spinning ? '...' : $t('lottery.join') }}</span>
+    <!-- 外圈装饰光点 -->
+    <div class="wheel-lights">
+      <span v-for="i in 12" :key="i" class="light-dot" :class="{ active: spinning }" :style="{ transform: `rotate(${i * 30}deg) translateY(-${canvasSize/2 + 8}px)` }" />
+    </div>
+    <!-- 转盘 -->
+    <canvas ref="wheelCanvasRef" class="wheel-canvas" :width="canvasSize" :height="canvasSize" />
+    <!-- 指针按钮 -->
+    <div class="wheel-pointer-wrap" @click="handleSpin">
+      <div class="wheel-pointer" :class="{ spinning }">
+        <span class="pointer-arrow">▼</span>
+      </div>
+      <div class="wheel-btn" :class="{ disabled: disabled || spinning }">
+        <span v-if="loading">加载中</span>
+        <span v-else-if="spinning">抽奖中</span>
+        <span v-else>开始<br>抽奖</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { PrizeItem } from './types'
 
-const props = defineProps<{
-  prizes: PrizeItem[]
-  disabled?: boolean
-  loading?: boolean
-}>()
-
+const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean; loading?: boolean }>()
 const emit = defineEmits<{ play: [] }>()
 
 const wheelCanvasRef = ref<HTMLCanvasElement>()
 const spinning = ref(false)
-const canvasSize = 300
+const canvasSize = 320
 
-/** 每份的角度 */
 const sliceAngle = computed(() => (2 * Math.PI) / Math.max(props.prizes.length, 1))
 
-/** 默认配色 */
-const defaultColors = ['#f43f5e', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
+const COLORS = [
+  ['#FF6B6B', '#FF8E8E'], ['#FFD93D', '#FFE570'], ['#6BCB77', '#8FD99A'],
+  ['#4D96FF', '#7AB4FF'], ['#9B59B6', '#BB8FCE'], ['#FF8C42', '#FFAB70'],
+  ['#00D2FF', '#5CE0FF'], ['#FF4DA6', '#FF80C0'],
+]
 
-/** 获取奖品颜色 */
-function getColor(index: number): string {
-  return props.prizes[index]?.color || defaultColors[index % defaultColors.length]!
-}
+function getColors(i: number) { return COLORS[i % COLORS.length]! }
 
-/** 绘制转盘 */
-function drawWheel(rotation: number = 0) {
-  const canvas = wheelCanvasRef.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
+let animFrame = 0
 
-  const cx = canvas.width / 2
-  const cy = canvas.height / 2
-  const radius = cx - 10
+function drawWheel(rotation: number) {
+  const cvs = wheelCanvasRef.value; if (!cvs) return
+  const ctx = cvs.getContext('2d'); if (!ctx) return
+  const cx = cvs.width / 2, cy = cvs.height / 2, r = cx - 6
+  ctx.clearRect(0, 0, cvs.width, cvs.height)
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-  // 绘制扇形
   for (let i = 0; i < props.prizes.length; i++) {
-    const startAngle = i * sliceAngle.value + rotation
-    const endAngle = startAngle + sliceAngle.value
+    const sa = i * sliceAngle.value + rotation, ea = sa + sliceAngle.value
+    const [c1, c2] = getColors(i)
+    const g = ctx.createLinearGradient(cx, cy - r, cx, cy + r)
+    g.addColorStop(0, c1); g.addColorStop(1, c2)
 
-    ctx.beginPath()
-    ctx.moveTo(cx, cy)
-    ctx.arc(cx, cy, radius, startAngle, endAngle)
-    ctx.closePath()
-    ctx.fillStyle = getColor(i)
-    ctx.fill()
-    ctx.strokeStyle = '#fff'
-    ctx.lineWidth = 2
-    ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, sa, ea); ctx.closePath()
+    ctx.fillStyle = g; ctx.fill()
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2; ctx.stroke()
 
-    // 文字
-    const textAngle = startAngle + sliceAngle.value / 2
-    const textRadius = radius * 0.65
-    const tx = cx + Math.cos(textAngle) * textRadius
-    const ty = cy + Math.sin(textAngle) * textRadius
-
-    ctx.save()
-    ctx.translate(tx, ty)
-    ctx.rotate(textAngle + Math.PI / 2)
-    ctx.fillStyle = '#fff'
-    ctx.font = 'bold 13px sans-serif'
-    ctx.textAlign = 'center'
-    const name = props.prizes[i]?.name || '?'
-    ctx.fillText(name.length > 6 ? name.slice(0, 5) + '…' : name, 0, 0)
+    // 奖品文字
+    const mid = sa + sliceAngle.value / 2
+    const tx = cx + Math.cos(mid) * r * 0.62
+    const ty = cy + Math.sin(mid) * r * 0.62
+    ctx.save(); ctx.translate(tx, ty); ctx.rotate(mid + Math.PI / 2)
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px system-ui'
+    ctx.textAlign = 'center'; ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 3
+    const name = props.prizes[i]?.name || '奖品'
+    ctx.fillText(name.length > 6 ? name.slice(0, 6) + '…' : name, 0, 0)
     ctx.restore()
   }
 
   // 中心圆
-  ctx.beginPath()
-  ctx.arc(cx, cy, 30, 0, 2 * Math.PI)
-  ctx.fillStyle = '#1e293b'
-  ctx.fill()
-  ctx.strokeStyle = '#fff'
-  ctx.lineWidth = 3
-  ctx.stroke()
-}
-
-/** 旋转动画 */
-async function spinAnimation(targetIndex: number) {
-  const totalRotation = 2 * Math.PI * 5 + (2 * Math.PI - targetIndex * sliceAngle.value)
-  const duration = 4000
-  const startTime = performance.now()
-
-  return new Promise<void>((resolve) => {
-    function animate(now: number) {
-      const elapsed = now - startTime
-      const progress = Math.min(elapsed / duration, 1)
-      // easeOutCubic
-      const eased = 1 - Math.pow(1 - progress, 3)
-      const rotation = totalRotation * eased
-      drawWheel(rotation)
-      if (progress < 1) {
-        requestAnimationFrame(animate)
-      } else {
-        resolve()
-      }
-    }
-    requestAnimationFrame(animate)
-  })
+  ctx.beginPath(); ctx.arc(cx, cy, 32, 0, 2 * Math.PI)
+  const g2 = ctx.createRadialGradient(cx, cy, 0, cx, cy, 32)
+  g2.addColorStop(0, '#fff'); g2.addColorStop(1, '#e0e0e0')
+  ctx.fillStyle = g2; ctx.fill()
+  ctx.strokeStyle = '#ccc'; ctx.lineWidth = 2; ctx.stroke()
 }
 
 async function handleSpin() {
   if (spinning.value || props.disabled) return
   spinning.value = true
   emit('play')
-  // 随机旋转目标（不关联奖品列表），避免用户误以为停下的位置代表中奖结果
-  const randomTarget = Math.floor(Math.random() * 360 / sliceAngle.value)
-  await spinAnimation(randomTarget)
+
+  const targetAngle = Math.PI * 2 * (5 + Math.random())
+  const startRot = parseFloat(wheelCanvasRef.value?.dataset?.rot || '0')
+  const duration = 4000, start = performance.now()
+  const totalRot = startRot + targetAngle
+
+  await new Promise<void>(resolve => {
+    const tick = (now: number) => {
+      const elapsed = now - start
+      const progress = Math.min(elapsed / duration, 1)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      const rot = startRot + targetAngle * eased
+      drawWheel(rot % (Math.PI * 2))
+      if (wheelCanvasRef.value) wheelCanvasRef.value.dataset.rot = String(rot)
+      if (progress < 1) { animFrame = requestAnimationFrame(tick) } else { resolve() }
+    }
+    animFrame = requestAnimationFrame(tick)
+  })
   spinning.value = false
 }
 
-onMounted(() => {
-  drawWheel()
-})
-
-watch(() => props.prizes, () => {
-  drawWheel()
-}, { deep: true })
+watch(() => props.prizes, () => drawWheel(0), { immediate: true })
 </script>
 
 <style scoped>
-.lucky-wheel-container {
-  display: flex;
-  justify-content: center;
-  padding: 20px 0;
-}
-
-.wheel-wrapper {
-  position: relative;
-  width: v-bind(canvasSize + 'px');
-  height: v-bind(canvasSize + 'px');
-}
-
-.wheel-canvas {
-  display: block;
-}
-
-.wheel-pointer {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #f43f5e, #e11d48);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 14px;
-  cursor: pointer;
-  box-shadow: 0 4px 16px rgba(244, 63, 94, 0.4);
-  z-index: 2;
-  transition: transform 0.2s;
-  user-select: none;
-}
-
-.wheel-pointer:hover {
-  transform: translate(-50%, -50%) scale(1.08);
-}
-
-.wheel-pointer:active {
-  transform: translate(-50%, -50%) scale(0.95);
-}
+.lucky-wheel-container { position: relative; width: 360px; height: 360px; margin: 0 auto; }
+.wheel-canvas { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border-radius: 50%; filter: drop-shadow(0 0 20px rgba(245,158,11,0.3)); }
+.wheel-lights { position: absolute; top: 50%; left: 50%; }
+.light-dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 6px #fbbf24; }
+.light-dot.active { animation: blink 0.5s infinite alternate; }
+@keyframes blink { to { opacity: 0.3; transform: scale(0.7); } }
+.wheel-pointer-wrap { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; }
+.wheel-pointer { width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 22px solid #f59e0b; margin: 0 auto -2px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
+.wheel-pointer.spinning { animation: bounce 0.1s infinite alternate; }
+@keyframes bounce { to { transform: translateY(-2px); } }
+.wheel-btn { width: 54px; height: 54px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #1a1a2e; font-size: 13px; font-weight: 800; line-height: 1.2; border: 3px solid #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.3); cursor: pointer; display: flex; align-items: center; justify-content: center; text-align: center; transition: transform 0.2s; }
+.wheel-btn:not(.disabled):hover { transform: scale(1.1); }
+.wheel-btn:not(.disabled):active { transform: scale(0.95); }
+.wheel-btn.disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
