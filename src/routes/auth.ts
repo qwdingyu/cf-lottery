@@ -19,6 +19,7 @@ import { requireAuth } from "../middleware/auth";
 import { signJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 import { checkDbRateLimit } from "../lib/rate-limit";
+import { verifyLogtoIdToken, exchangeLogtoToken } from "../lib/logto-auth";
 
 export const authRoute = new Hono<AppEnv>();
 

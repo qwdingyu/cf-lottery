@@ -390,5 +390,17 @@
     "group": "平台运营",
     "order": 26,
     "difficulty": "advanced"
+  },
+  {
+    "key": "enable_email_verification",
+    "label": "邮箱验证码",
+    "description": "是否启用邮箱验证码参与流程。关闭后参与者输入邮箱即可直接参与，不发送验证码邮件。仅建议 Resend 不可用 / 测试环境时关闭，生产环境务必开启。",
+    "effect": "关闭时 access-code 端点跳过邮件发送，直接写入参与记录。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "true",
+    "group": "安全与验证",
+    "order": 31,
+    "difficulty": "advanced"
   }
 ]

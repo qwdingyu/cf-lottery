@@ -425,6 +425,32 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     }
   }
 
+  // ── 邮箱验证码开关：L3 可关闭以跳过邮件发码（测试环境 / Resend 不可用时） ──
+  const [emailBypassCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "enable_email_verification")).limit(1);
+  const emailBypass = emailBypassCfg?.value === "false"; // 默认未配置时走正常流程
+
+  // 邮箱验证码关闭：跳过邮件发码，直接参与（测试环境专用，生产务必开启）
+  if (emailBypass) {
+    try {
+      const result = await joinDraw(db, slug, email, "email", {
+        ipHash: ip,
+        userAgent: c.req.header("User-Agent") || "",
+        submissionPayload: body.submission,
+      });
+      if (!result.joined) return fail(c, result.message || "参与失败", 400);
+      return ok(c, {
+        joined: true,
+        entryId: "entryId" in result ? result.entryId : undefined,
+        activityKind: draw.activityKind,
+        outcome: "outcome" in result ? result.outcome : undefined,
+        submissionId: "submissionId" in result ? result.submissionId : undefined,
+      });
+    } catch (err: any) {
+      if (err.message?.includes("UNIQUE constraint")) return fail(c, "您已参与此活动", 409);
+      return fail(c, "参与失败，请稍后重试", 400);
+    }
+  }
+
   // 生成验证码
   const code = generateCode();
   const codeHash = await hashCode(code);

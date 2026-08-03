@@ -950,7 +950,13 @@ async function handleSendCode() {
       body: JSON.stringify({ email: loginEmail.value.trim() }),
     })
     const data = await res.json() as any
-    if (data.ok && data.sent) {
+    if (data.ok && data.joined) {
+      // 邮箱验证码已关闭：直接参与成功
+      myJoinedById.value = { ...myJoinedById.value, [pendingJoinDrawId.value!]: true }
+      closeLogin()
+      showToast('参与成功', 'success')
+      loadMyRecords()
+    } else if (data.ok && data.sent) {
       codeSent.value = true
       startCooldown(data.expiresInSeconds || 60)
     } else {
