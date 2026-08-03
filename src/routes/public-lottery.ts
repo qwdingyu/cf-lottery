@@ -2,157 +2,39 @@
  * 公开参与路由
  *
  * 不需要登录，通过 public_slug 访问活动。
- * 支持四种参与模式：open（公开）、password（密码）、roster（名单）、invite_code（邀请码）
- * 所有参与模式均需邮箱验证码验证。
+ * 支持 open / password / roster / invite_code / registered 等参与模式。
+ * 裂变与接龙列表见 public-lottery-share.ts。
  */
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
-import type { DbType } from "../db/client";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, shareRecords, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
-import { eq, and, count, sql, asc, inArray } from "drizzle-orm";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
+import { eq, and, count, asc } from "drizzle-orm";
 import { getActivityOutcome, joinDraw, cancelSignupChainEntry, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
 import { verifyJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 import { parseActivityConfig, validateSubmissionPayload } from "../lib/activity-config";
-import { checkDbRateLimit } from "../lib/rate-limit";
+import {
+  checkPublicRateLimit,
+  checkPublicIdentityRateLimit,
+  resolveParticipantIdentity,
+  PUBLIC_EVENT_TYPES,
+  generateCode,
+  hashCode,
+  maskIdentity,
+  verifyEmailAccessCode,
+  tryParseJson,
+  escapeHtml,
+  hashEventValue,
+} from "./public-lottery-helpers";
+import { setupPublicShareRoutes } from "./public-lottery-share";
+import { defaultExperienceForParticipation } from "./admin-lottery-helpers";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
-/** 简单内存限流：同一 IP 每分钟最多 10 次参与 */
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-function checkRateLimit(ip: string, limit = 10, windowMs = 60000): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  if (entry.count >= limit) return false;
-  entry.count++;
-  return true;
-}
-
-/**
- * 公开端统一限流入口：内存 Map 只做单实例快速预过滤，DB 限流才是跨实例的最终闸门。
- * 为什么保留两层：本地 Map 能减少明显刷接口时的 DB 写入，DB 记录能覆盖多 Worker/多 Node 实例。
- */
-async function checkPublicRateLimit(db: DbType, key: string, limit = 10, windowMs = 60000): Promise<boolean> {
-  if (!checkRateLimit(key, limit, windowMs)) return false;
-  return checkDbRateLimit(db, key, limit, windowMs);
-}
-
-/**
- * 按活动 + 身份再加一层持久限流，避免攻击者绕过 IP 维度后持续猜测同一邮箱验证码。
- * 身份值只以 hash 写入 rate_limit_log，避免把邮箱明文扩大到运维日志类表。
- */
-async function checkPublicIdentityRateLimit(
-  db: DbType,
-  action: string,
-  drawId: string,
-  identityValue: string,
-  limit = 10,
-  windowMs = 60000,
-): Promise<boolean> {
-  const identityHash = await hashEventValue(`${drawId}:${identityValue.trim().toLowerCase()}`);
-  return checkDbRateLimit(db, `${action}:identity:${identityHash}`, limit, windowMs);
-}
-
-/**
- * 统一解析参与者身份（最佳实践：身份在端点层一步解析，业务层只消费）。
- *
- * - registered 模式：从 Authorization Bearer JWT 解析 userId → (user_id, userId)
- * - 其他模式：邮箱 → (email, email)
- *
- * 返回 null 表示未认证（registered 无 token / JWT 无效）。
- * 三处复用（access-code / my-result / cancel），杜绝每端点复制 JWT 解析逻辑。
- */
-async function resolveParticipantIdentity(
-  c: Context<AppEnv>,
-  participationMode: string,
-  email: string,
-): Promise<{ identityType: string; identityValue: string } | null> {
-  if (participationMode === "registered") {
-    // 只从 Authorization 头取 JWT，绝不用 URL query 传递 token：
-    // query 中的 token 会进入访问日志、浏览器历史与 Referer 头，是安全反模式。
-    const token = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
-    if (!token) return null;
-    // JWT_SECRET 未配置时显式抛错（与 requireAuth 行为一致），避免空密钥静默验签
-    const jwtSecret = getEnv(c, "JWT_SECRET");
-    if (!jwtSecret) throw new Error("JWT_SECRET 未配置");
-    try {
-      const payload = await verifyJwt(token, jwtSecret);
-      if (payload?.sub) return { identityType: "user_id", identityValue: payload.sub };
-    } catch { /* JWT 无效 */ }
-    return null;
-  }
-  return { identityType: "email", identityValue: email };
-}
-
-const PUBLIC_EVENT_TYPES = new Set<ActivityEventType>([
-  "page_view",
-  "participation_started",
-  "participation_completed",
-  "cta_impression",
-  "cta_click",
-  "share_click",
-  "external_conversion_reported",
-]);
-
-/** 生成 6 位数字验证码 */
-function generateCode(): string {
-  const bytes = new Uint8Array(4);
-  crypto.getRandomValues(bytes);
-  const num = new DataView(bytes.buffer).getUint32(0) % 1000000;
-  return String(num).padStart(6, "0");
-}
-
-/** 对验证码做 SHA-256 hash */
-async function hashCode(code: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(code));
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
-/** 脱敏展示邮箱 */
-function maskIdentity(value: string): string {
-  if (value.includes("@")) {
-    const [name, domain] = value.split("@");
-    return name.slice(0, 2) + "***@" + domain;
-  }
-  return value.slice(0, 2) + "***";
-}
-
-/**
- * 校验邮箱验证码（公共逻辑，供参与/查询结果/取消参与复用）。
- *
- * 为什么抽取：verify-join、my-result、cancel 三处此前复制了相同的验证码查询代码，
- * 任何一处调整有效期/错误消息都容易遗漏其他处。抽取后逻辑单一来源。
- *
- * @returns 有效的验证码记录（调用方决定是否标记 used），无效返回 null
- */
-async function verifyEmailAccessCode(
-  db: DbType,
-  email: string,
-  drawId: string,
-  code: string,
-): Promise<typeof emailAccessCodes.$inferSelect | null> {
-  const codeHash = await hashCode(code);
-  const now = new Date().toISOString();
-  const [validCode] = await db
-    .select()
-    .from(emailAccessCodes)
-    .where(and(
-      eq(emailAccessCodes.email, email),
-      eq(emailAccessCodes.drawId, drawId),
-      eq(emailAccessCodes.codeHash, codeHash),
-      eq(emailAccessCodes.used, 0),
-      sql`${emailAccessCodes.expiresAt} > ${now}`,
-    ))
-    .limit(1);
-  return validCode || null;
-}
+// 裂变 / 接龙 / 分享码子域
+setupPublicShareRoutes(publicLotteryRoute);
 
 // ═════════════════════════════════════════════════════════
 // 公开活动详情
@@ -285,12 +167,6 @@ publicLotteryRoute.get("/draws/:slug/og", async (c) => {
 </html>`);
 });
 
-/** HTML 转义（防 XSS） */
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[c] ?? c));
-}
 
 /** 活动事件上报：只记录平台内事实，不把点击命名为成交 */
 publicLotteryRoute.post("/draws/:slug/events", async (c) => {
@@ -934,232 +810,5 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
 
   return ok(c, result);
 });
-/** 安全解析 JSON 字符串 */
-function tryParseJson(s: string): any {
-  try { return JSON.parse(s); } catch { return undefined; }
-}
 
-function defaultExperienceForParticipation(participationMode: string): string {
-  if (participationMode === "invite_code") return "slot";
-  if (participationMode === "password") return "scratch";
-  if (participationMode === "roster") return "card";
-  return "wheel";
-}
 
-/** 接龙模式：公开参与列表（按参与时间排序） */
-publicLotteryRoute.get("/draws/:slug/signup-list", async (c) => {
-  const db = getDb(c);
-  const slug = c.req.param("slug");
-
-  const [draw] = await db
-    .select({ id: lotteryDraws.id, activityKind: lotteryDraws.activityKind })
-    .from(lotteryDraws)
-    .where(eq(lotteryDraws.publicSlug, slug))
-    .limit(1);
-  if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.activityKind !== "signup_chain") return fail(c, "该活动不是接龙模式", 400);
-
-  const entries = await db
-    .select({
-      identityValue: lotteryEntries.identityValue,
-      joinedAt: lotteryEntries.joinedAt,
-    })
-    .from(lotteryEntries)
-    .where(eq(lotteryEntries.drawId, draw.id))
-    .orderBy(lotteryEntries.joinedAt)
-    .limit(200);  // 公开 API 上限，防止数据炸弹
-
-  // 脱敏展示邮箱
-  const masked = entries.map((e, i) => ({
-    order: i + 1,
-    identity: maskIdentity(e.identityValue),
-    joinedAt: e.joinedAt,
-  }));
-
-  return ok(c, { entries: masked, total: entries.length });
-});
-
-// ═════════════════════════════════════════════════════════
-// 裂变排行榜（公开，按邀请人数降序，脱敏展示）
-// ═════════════════════════════════════════════════════════
-
-publicLotteryRoute.get("/draws/:slug/viral-leaderboard", async (c) => {
-  const db = getDb(c);
-  const slug = c.req.param("slug");
-  const entryId = c.req.query("entryId") || "";
-
-  const [draw] = await db
-    .select({ id: lotteryDraws.id, promotionConfig: lotteryDraws.promotionConfig })
-    .from(lotteryDraws)
-    .where(eq(lotteryDraws.publicSlug, slug))
-    .limit(1);
-  if (!draw) return fail(c, "活动不存在", 404);
-
-  // 解析裂变配置，判断是否开启排行榜
-  const pc = tryParseJson(draw.promotionConfig) as any;
-  const viral = pc?.viral;
-  if (!viral?.enabled || !viral?.leaderboardEnabled) {
-    return fail(c, "该活动未开启裂变排行榜", 400);
-  }
-
-  // 查询所有分享记录，按分享者聚合邀请人数
-  const shareRows = await db
-    .select({
-      sharerEntryId: shareRecords.sharerEntryId,
-      joinedCount: shareRecords.joinedCount,
-    })
-    .from(shareRecords)
-    .where(eq(shareRecords.drawId, draw.id));
-
-  // 按 sharerEntryId 聚合 SUM(joinedCount)
-  const aggMap = new Map<string, number>();
-  for (const row of shareRows) {
-    aggMap.set(row.sharerEntryId, (aggMap.get(row.sharerEntryId) || 0) + row.joinedCount);
-  }
-  if (aggMap.size === 0) {
-    return ok(c, { entries: [], myRank: null });
-  }
-
-  // 查询参与者身份信息（脱敏展示）
-  const entryIds = Array.from(aggMap.keys());
-  const entryRows = await db
-    .select({ id: lotteryEntries.id, identityValue: lotteryEntries.identityValue, displayName: lotteryEntries.displayName })
-    .from(lotteryEntries)
-    .where(inArray(lotteryEntries.id, entryIds));
-
-  const identityMap = new Map<string, string>();
-  for (const e of entryRows) {
-    identityMap.set(e.id, e.displayName || maskIdentity(e.identityValue));
-  }
-
-  // 构建排行榜（按邀请人数降序，Top 20）
-  const sorted = Array.from(aggMap.entries())
-    .filter(([, count]) => count > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20);
-
-  const leaderboard = sorted.map(([sharerEntryId, count], index) => ({
-    rank: index + 1,
-    displayName: identityMap.get(sharerEntryId) || "***",
-    invitedCount: count,
-  }));
-
-  // 查询"我"的排名
-  let myRank: { rank: number; invitedCount: number } | null = null;
-  if (entryId) {
-    const myCount = aggMap.get(entryId) || 0;
-    if (myCount > 0) {
-      const rankIndex = sorted.findIndex(([id]) => id === entryId);
-      if (rankIndex >= 0) {
-        myRank = { rank: rankIndex + 1, invitedCount: myCount };
-      } else {
-        myRank = { rank: sorted.length + 1, invitedCount: myCount };
-      }
-    }
-  }
-
-  return ok(c, { entries: leaderboard, myRank });
-});
-
-// ═════════════════════════════════════════════════════════
-// 我的裂变数据（公开，需要 entryId 查询自己的分享统计）
-// ═════════════════════════════════════════════════════════
-
-publicLotteryRoute.get("/draws/:slug/my-viral-stats", async (c) => {
-  const db = getDb(c);
-  const slug = c.req.param("slug");
-  const entryId = c.req.query("entryId") || "";
-  if (!entryId) return fail(c, "缺少参与记录 ID", 400);
-
-  const [draw] = await db
-    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, promotionConfig: lotteryDraws.promotionConfig })
-    .from(lotteryDraws)
-    .where(eq(lotteryDraws.publicSlug, slug))
-    .limit(1);
-  if (!draw) return fail(c, "活动不存在", 404);
-
-  const pc = tryParseJson(draw.promotionConfig) as any;
-  const viral = pc?.viral;
-  if (!viral?.enabled) {
-    return fail(c, "该活动未开启裂变", 400);
-  }
-
-  // 查询该参与者的分享记录
-  const myShares = await db
-    .select()
-    .from(shareRecords)
-    .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.sharerEntryId, entryId)));
-
-  // 聚合统计
-  const totalClicked = myShares.reduce((s, r) => s + r.clickedCount, 0);
-  const totalJoined = myShares.reduce((s, r) => s + r.joinedCount, 0);
-  const extraEntriesPerInvite = viral?.extraEntriesPerInvite ?? 1;
-  const maxExtraEntries = viral?.maxExtraEntries ?? 10;
-  const extraEntriesEarned = Math.min(totalJoined, maxExtraEntries);
-
-  // 取最新一条分享码作为默认链接
-  const latestShare = myShares.length > 0 ? myShares[myShares.length - 1] : null;
-  const shareCode = latestShare?.shareCode || "";
-  const shareUrl = shareCode ? `/${slug}?ref=${shareCode}` : "";
-
-  return ok(c, {
-    shareCode,
-    shareUrl,
-    clickedCount: totalClicked,
-    invitedCount: totalJoined,
-    extraEntriesEarned,
-    extraEntriesPerInvite,
-    maxExtraEntries,
-  });
-});
-
-/** 生成分享码（参与者分享活动链接） */
-publicLotteryRoute.post("/draws/:slug/share", async (c) => {
-  const db = getDb(c);
-  const slug = c.req.param("slug");
-  const body = await c.req.json<{ entryId: string }>();
-  if (!body.entryId) return fail(c, "缺少参与记录 ID", 400);
-
-  const [draw] = await db.select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId }).from(lotteryDraws).where(eq(lotteryDraws.publicSlug, slug)).limit(1);
-  if (!draw) return fail(c, "活动不存在", 404);
-
-  const shareCode = crypto.randomUUID().slice(0, 12);
-  await db.insert(shareRecords).values({
-    id: crypto.randomUUID(),
-    tenantId: draw.tenantId,
-    drawId: draw.id,
-    sharerEntryId: body.entryId,
-    shareCode,
-  });
-
-  return ok(c, { shareCode, shareUrl: `/${slug}?ref=${shareCode}` });
-});
-
-/** 通过分享链接打开活动（记录点击） */
-publicLotteryRoute.get("/draws/:slug/ref/:shareCode", async (c) => {
-  const db = getDb(c);
-  const slug = c.req.param("slug");
-  const shareCode = c.req.param("shareCode");
-
-  const [share] = await db.select().from(shareRecords).where(eq(shareRecords.shareCode, shareCode)).limit(1);
-  if (share) {
-    await db.update(shareRecords).set({ clickedCount: share.clickedCount + 1 }).where(eq(shareRecords.id, share.id));
-    await recordActivityEvent(db, {
-      tenantId: share.tenantId,
-      drawId: share.drawId,
-      eventType: "share_click",
-      refCode: shareCode,
-      ipHash: await hashEventValue(getClientIp(c) || ""),
-      userAgent: c.req.header("User-Agent") || "",
-    });
-  }
-
-  return c.redirect(`/${slug}`);
-});
-
-async function hashEventValue(value: string): Promise<string> {
-  if (!value) return "";
-  const encoder = new TextEncoder();
-  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
-}

@@ -1,0 +1,832 @@
+/**
+ * 用户端抽奖页样式（从 LotteryView 外置）
+ *
+ * 类名均 lottery- 前缀，不依赖 scoped；在 SFC 内 import 即可。
+ * 为何不 @import 进 scoped：Vue 不会给 @import 规则加 data 属性，易丢样式。
+ */
+
+/* ── 头部 ── */
+.lottery-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.lottery-title { margin:0; font-size:20px; font-weight:700; }
+.lottery-user { font-size:13px; color:rgba(255,255,255,0.6); margin-right:8px; }
+.lottery-logout { font-size:12px; color:rgba(255,255,255,0.4); background:none; border:none; cursor:pointer; }
+.lottery-login-btn { font-size:13px; background:none; border:1px solid rgba(255,255,255,0.2); color:#fff; padding:4px 12px; border-radius:6px; cursor:pointer; }
+.lottery-header-left { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.lottery-link-bar { display:flex; gap:8px; }
+.lottery-share-btn { font-size:12px; background:none; border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.5); padding:3px 10px; border-radius:4px; cursor:pointer; text-decoration:none; }
+.lottery-share-btn:hover { color:#fff; border-color:rgba(255,255,255,0.3); }
+
+/* ── 中心容器 ── */
+.lottery-center { text-align:center; padding:60px 20px; color:var(--tg-hint,#9aa4b2); }
+
+/* ── 活动卡片 ── */
+.lottery-main { max-width:720px; margin:0 auto; padding:20px; }
+.lottery-card { background:#1a1a2e; border-radius:12px; margin-bottom:16px; overflow:hidden; border:1px solid rgba(255,255,255,0.06); }
+.lottery-card-head { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; cursor:pointer; }
+.lottery-card-head:hover { background:rgba(255,255,255,0.03); }
+.lottery-card-title { margin:0 0 4px; font-size:17px; font-weight:600; }
+.lottery-card-tags { display:flex; gap:6px; flex-wrap:wrap; }
+.lottery-tag { font-size:11px; padding:2px 8px; border-radius:4px; background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.5); }
+.lottery-tag.open { background:rgba(245,158,11,0.15); color:#f59e0b; }
+.lottery-tag.drawn, .lottery-tag.muted { background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.3); }
+.lottery-tag.won { background:rgba(34,197,94,0.15); color:#22c55e; }
+.lottery-tag.joined { background:rgba(59,130,246,0.15); color:#3b82f6; }
+.lottery-tag.count { background:transparent; }
+.lottery-expand-btn { font-size:12px; color:rgba(255,255,255,0.4); background:none; border:none; cursor:pointer; white-space:nowrap; }
+
+/* ── 展开区 ──
+ * 055a：max-height 必须能容纳转盘/老虎机等（原 800px 会裁切主 CTA）。
+ * 深链沉浸卡默认展开，不再依赖折叠动画。
+ */
+.lottery-card-body {
+  border-top: 1px solid rgba(255,255,255,0.06);
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s ease, opacity 0.35s ease;
+  opacity: 0;
+}
+.lottery-draw-desc {
+  margin: 0;
+  padding: 12px 20px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.65);
+  white-space: pre-wrap;
+}
+.lottery-status-path {
+  margin: 0;
+  padding: 8px 20px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(245,158,11,0.9);
+}
+.lottery-prize-strip {
+  list-style: none;
+  margin: 10px 20px 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.lottery-prize-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+}
+.lottery-prize-chip-n { color: rgba(245,158,11,0.95); font-weight: 600; }
+.lottery-submission-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.8);
+}
+.activity-submission {
+  margin: 12px 20px 0;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.15);
+}
+.lottery-empty-hint {
+  margin: 8px auto 0;
+  max-width: 28em;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(255,255,255,0.4);
+}
+.lottery-game-area { padding:24px 20px; display:flex; justify-content:center; }
+.lottery-join-bar { display:flex; align-items:center; justify-content:center; gap:12px; padding:16px 20px; border-top:1px solid rgba(255,255,255,0.06); flex-wrap:wrap; }
+.lottery-tag.mode { background:rgba(99,102,241,0.15); color:#a5b4fc; }
+.lottery-join-btn { font-size:15px; font-weight:600; padding:10px 32px; min-height:44px; border-radius:8px; background:var(--admin-accent,#f59e0b); color:#000; border:none; cursor:pointer; }
+.lottery-join-btn:disabled { opacity:0.5; cursor:not-allowed; }
+.lottery-join-hint { font-size:13px; color:rgba(255,255,255,0.5); text-align:center; max-width:28em; line-height:1.4; }
+
+/* 055a P1：参与弹窗主按钮与验证码输入触控友好 */
+.join-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.join-modal-primary { min-height: 44px; flex: 1 1 140px; }
+.code-input {
+  min-height: 44px;
+  font-size: 18px;
+  letter-spacing: 0.2em;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+  max-width: 12em;
+  text-align: center;
+}
+.code-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.code-label { flex: 1 1 160px; display: flex; flex-direction: column; gap: 4px; }
+.lottery-result-btn { font-size:12px; background:none; border:1px solid rgba(255,255,255,0.15); color:rgba(255,255,255,0.6); padding:4px 12px; border-radius:6px; cursor:pointer; }
+
+/* ── 参与记录 ── */
+.lottery-records { max-width:720px; margin:0 auto; padding:0 20px 40px; }
+.lottery-section-title { font-size:15px; font-weight:600; margin:0 0 12px; }
+.lottery-records-list { display:flex; flex-wrap:wrap; gap:6px; }
+.lottery-record { display:flex; align-items:center; gap:8px; padding:6px 12px; background:#1a1a2e; border-radius:8px; font-size:13px; }
+.lottery-record-name { color:rgba(255,255,255,0.7); }
+
+/* ── 骨架屏（加载态） ── */
+.lottery-skeleton { max-width:720px; margin:0 auto; padding:20px; }
+.skeleton-card { background:#1a1a2e; border-radius:12px; padding:20px; margin-bottom:16px; border:1px solid rgba(255,255,255,0.06); }
+.skeleton-row { height:14px; border-radius:6px; background:linear-gradient(90deg,rgba(255,255,255,0.06) 25%,rgba(255,255,255,0.12) 50%,rgba(255,255,255,0.06) 75%); background-size:200% 100%; animation:skeleton-pulse 1.5s ease infinite; margin-bottom:10px; }
+.skeleton-title { width:60%; height:18px; }
+.skeleton-text { width:80%; }
+.skeleton-btn { width:40%; height:36px; border-radius:8px; }
+@keyframes skeleton-pulse { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+/* ── 展开态：足够高以容纳游戏壳；深链卡直接可见、无折叠动画 ── */
+.expanded .lottery-card-body {
+  max-height: min(2400px, 200vh);
+  opacity: 1;
+  overflow: visible;
+}
+.lottery-card--deep .lottery-card-body {
+  max-height: none;
+  opacity: 1;
+  overflow: visible;
+}
+.lottery-card-head--static { cursor: default; }
+.lottery-card-head--static:hover { background: transparent; }
+.lottery-main--deep { padding-top: 12px; }
+
+/* ── 空状态 ── */
+.empty-icon { font-size:48px; margin-bottom:12px; }
+
+/* ── 弹窗淡入淡出 ── */
+.modal-overlay { transition:opacity 0.2s ease; }
+
+/* ── 移动端适配 ── */
+@media (max-width: 640px) {
+  .lottery-view { padding:8px; }
+  .lottery-header { flex-direction:column; align-items:flex-start; gap:8px; }
+  .lottery-header-left { flex-direction:column; align-items:flex-start; }
+  .lottery-card-head { flex-direction:column; align-items:flex-start; gap:8px; }
+  .lottery-join-btn { width:100%; min-height:48px; }
+  .lottery-join-bar { flex-direction:column; }
+  .lottery-main { padding:12px; }
+  .lottery-game-area { padding:16px; overflow-x:auto; max-width:100%; }
+  .lottery-join-bar { flex-direction:column; gap:8px; }
+  .lottery-record { font-size:12px; }
+  .lottery-skeleton { padding:12px; }
+}
+
+/* ── 保留旧样式（兼容） ── */
+/* 暗色主题：全部使用 base.css 的 CSS 变量，不写死颜色值 */
+
+.lottery-view {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 16px;
+  color: var(--tg-text);
+}
+
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.page-header h1 {
+  font-size: 1.5rem;
+  margin: 0;
+  color: var(--tg-text);
+}
+
+.page-subtitle {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--tg-hint);
+}
+
+.deep-link-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.session-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.session-email {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--tg-hint);
+}
+
+.login-banner,
+.my-records {
+  background: var(--tg-secondary-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.login-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.login-banner p {
+  margin: 0;
+  color: var(--tg-hint);
+  font-size: 0.9rem;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.records-empty {
+  color: var(--tg-hint);
+  font-size: 0.9rem;
+  padding: 8px 0;
+}
+
+.records-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.record-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.record-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.record-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.record-name {
+  font-weight: 500;
+  color: var(--tg-text);
+}
+
+.record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--tg-hint);
+}
+
+.loading-state,
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: var(--tg-hint);
+}
+
+/* ── 活动卡片 ── */
+.draw-card {
+  background: var(--tg-secondary-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  margin-bottom: 12px;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+  overflow: hidden;
+}
+.draw-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+.draw-card.expanded {
+  border-color: var(--border-strong);
+}
+
+.draw-card-header {
+  padding: 16px 16px 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.draw-card-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.draw-name {
+  font-size: 1.1rem;
+  margin: 0;
+  color: var(--tg-text);
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--r-full);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.chip-open {
+  background: var(--admin-info-soft);
+  color: var(--admin-info);
+  border: 1px solid var(--admin-info-border);
+}
+.chip-drawn {
+  background: var(--admin-success-soft);
+  color: var(--admin-success);
+  border: 1px solid var(--admin-success-border);
+}
+.chip-drawing {
+  background: var(--admin-warning-soft);
+  color: var(--admin-warning);
+  border: 1px solid var(--admin-warning-border);
+}
+.chip-paused {
+  background: var(--surface);
+  color: var(--tg-hint);
+  border: 1px solid var(--border);
+}
+.chip-won {
+  background: var(--admin-warning-soft);
+  color: var(--admin-warning);
+  border: 1px solid var(--admin-warning-border);
+}
+.chip-joined {
+  background: var(--admin-success-soft);
+  color: var(--admin-success);
+  border: 1px solid var(--admin-success-border);
+}
+.chip-muted {
+  background: var(--surface);
+  color: var(--tg-hint);
+  border: 1px solid var(--border);
+}
+
+.draw-card-meta {
+  text-align: right;
+  font-size: 0.85rem;
+  color: var(--tg-hint);
+  flex: 0 0 auto;
+}
+.draw-prize {
+  color: var(--tg-hint);
+  font-size: 0.85rem;
+}
+
+.draw-count,
+.draw-time,
+.draw-countdown {
+  display: block;
+}
+.draw-time,
+.draw-countdown {
+  margin-top: 4px;
+}
+.draw-countdown {
+  color: var(--admin-warning);
+  font-variant-numeric: tabular-nums;
+}
+
+.draw-card-quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+
+.draw-card-body {
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.draw-desc {
+  color: var(--tg-hint);
+  margin: 12px 0;
+}
+
+.prize-showcase {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.prize-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.prize-card-img {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--tg-secondary-bg, #151b28);
+  flex: 0 0 auto;
+}
+
+.prize-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prize-value {
+  color: var(--admin-warning);
+  font-weight: 600;
+}
+
+.draw-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.detail-item .detail-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--tg-hint);
+}
+.detail-item .detail-value {
+  font-size: 0.9rem;
+  color: var(--tg-text);
+}
+
+.draw-actions {
+  margin-top: 12px;
+}
+
+/* ── 按钮 ── */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background var(--duration-fast) ease, opacity var(--duration-fast) ease;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-sm {
+  padding: 5px 12px;
+  font-size: 0.8rem;
+}
+.btn-xs {
+  padding: 3px 8px;
+  font-size: 0.75rem;
+}
+.btn-primary {
+  background: var(--tg-btn);
+  color: var(--tg-btn-text);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--tg-text);
+}
+.btn-ghost:hover {
+  background: var(--surface-hover);
+}
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── 状态标识 ── */
+.joined-badge {
+  color: var(--admin-success);
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+.activity-submission {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 10px;
+}
+.vote-option,
+.survey-field,
+.checkbox-option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.vote-option,
+.survey-field {
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--tg-secondary-bg);
+}
+.vote-option {
+  flex-direction: row;
+}
+.vote-option small,
+.survey-field em {
+  display: block;
+  color: var(--tg-hint);
+  font-style: normal;
+  font-size: 0.78rem;
+}
+.survey-field input,
+.survey-field textarea,
+.survey-field select {
+  width: 100%;
+}
+.checkbox-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.won-badge {
+  color: var(--admin-warning);
+  font-weight: 500;
+}
+.not-won {
+  color: var(--tg-hint);
+  font-size: 0.9rem;
+}
+.drawing-state {
+  color: var(--admin-warning);
+  font-size: 0.9rem;
+}
+.order-link {
+  color: var(--tg-link);
+  text-decoration: none;
+  font-weight: 500;
+}
+.order-link:hover {
+  text-decoration: underline;
+}
+
+/* ── 模态框 ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+.modal-content {
+  background: var(--tg-secondary-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-xl);
+  padding: 24px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: var(--shadow-lg);
+}
+.modal-title {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+  color: var(--tg-text);
+}
+.modal-hint {
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  color: var(--tg-hint);
+}
+
+/* ── 表单 ── */
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modal-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--tg-text);
+}
+.modal-form label span {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--tg-hint);
+}
+.modal-form input:not([type='checkbox']):not([type='radio']) {
+  box-sizing: border-box;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background-color: var(--tg-secondary-bg);
+  color: var(--tg-text);
+  -webkit-text-fill-color: var(--tg-text);
+  font-size: 13px;
+  color-scheme: dark;
+  line-height: 32px;
+}
+
+.code-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.code-label {
+  flex: 1;
+}
+.code-input {
+  letter-spacing: 2px;
+  font-family: var(--font-mono);
+}
+.code-timer {
+  min-width: 30px;
+  color: var(--tg-hint);
+  padding-bottom: 6px;
+  font-size: 13px;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.form-error {
+  color: var(--admin-danger);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+@media (max-width: 520px) {
+  .draw-card-header {
+    flex-direction: column;
+  }
+  .draw-card-meta {
+    text-align: left;
+  }
+  .draw-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 导流商品卡片 */
+.product-card {
+  margin-top: 12px;
+  background: var(--tg-secondary-bg, #151b28);
+  border-radius: var(--r-md, 8px);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  overflow: hidden;
+}
+.product-card-inner {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+}
+.product-card-img {
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--tg-bg, #0a0e17);
+}
+.product-card-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.product-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.product-card-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tg-text, #f0f2f5);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.product-card-price {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--admin-accent, #f59e0b);
+}
+
+/* 查询我的结果弹窗 */
+.game-result-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.game-result-modal { background: var(--tg-bg, #1f2937); border-radius: 16px; padding: 32px 24px; max-width: 360px; width: 90%; text-align: center; position: relative; animation: modalIn .3s ease; }
+.result-close { position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--tg-hint, #9aa4b2); }
+.result-icon { font-size: 48px; margin-bottom: 12px; }
+.result-title { font-size: 22px; font-weight: 700; margin-bottom: 16px; }
+.result-form { display: flex; flex-direction: column; gap: 10px; }
+.result-form input { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border, rgba(255,255,255,.1)); background: var(--tg-secondary-bg, #151b28); color: var(--tg-text, #f0f2f5); font-size: 14px; }
+.result-hint { font-size: 12px; color: var(--tg-hint, #9aa4b2); margin: 0; }
+.result-error { font-size: 13px; color: #ef4444; margin: 0; }
+.result-detail { display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.result-line { font-size: 16px; }
+.result-cta-card { margin-top: 8px; }
+.result-cta-card .btn { display: inline-block; }
+.result-code-block { display: flex; flex-direction: column; gap: 4px; align-items: center; background: var(--tg-secondary-bg, #151b28); padding: 12px; border-radius: 8px; width: 100%; }
+.result-code-label { font-size: 12px; color: var(--tg-hint, #9aa4b2); }
+.result-code { font-size: 16px; font-weight: 700; color: var(--admin-accent, #f59e0b); cursor: pointer; word-break: break-all; }
+.result-share-win { margin-top: 12px; text-align: center; }
+.result-share-hint { font-size: 12px; color: var(--tg-hint); margin-bottom: 6px; }
+
+/* ── 视觉增强（不改结构，仅美化） ── */
+.lottery-view { max-width: 860px; margin: 0 auto; }
+.lottery-header { background: linear-gradient(180deg, rgba(245,158,11,0.08) 0%, transparent 100%); padding: 20px 24px 16px; }
+.lottery-title { background: linear-gradient(135deg, #f59e0b, #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.lottery-card { border: 1px solid rgba(245,158,11,0.1); transition: all 0.3s ease; }
+.lottery-card:hover { border-color: rgba(245,158,11,0.3); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+.lottery-card.open { border-color: rgba(34,197,94,0.15); }
+.lottery-card.drawn { border-color: rgba(255,255,255,0.05); }
+.lottery-game-area { background: radial-gradient(ellipse at center, rgba(245,158,11,0.06) 0%, transparent 70%); min-height: 320px; align-items: center; }
+.lottery-join-btn.primary { background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #000; font-weight: 700; padding: 14px 40px; font-size: 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(245,158,11,0.3); transition: all 0.3s ease; }
+.lottery-join-btn.primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(245,158,11,0.5); }
+.lottery-prize-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-top: 12px; }
+.lottery-prize-card { background: rgba(255,255,255,0.03); border-radius: 12px; padding: 16px; text-align: center; border: 1px solid rgba(255,255,255,0.06); }
+.lottery-prize-img { width: 64px; height: 64px; margin: 0 auto 8px; border-radius: 12px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; font-size: 32px; }
+.lottery-prize-name { display: block; font-weight: 600; font-size: 14px; }
+.lottery-prize-value { display: block; font-size: 12px; color: #f59e0b; margin-top: 4px; }
+.lottery-prize-count { display: block; font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 2px; }
+.lottery-hero { text-align: center; padding: 40px 20px 24px; }
+.lottery-hero-title { font-size: 28px; font-weight: 800; margin: 12px 0 4px; }
+.lottery-hero-desc { color: rgba(255,255,255,0.5); font-size: 14px; max-width: 480px; margin: 0 auto; }
+.lottery-hero-stats { display: flex; justify-content: center; gap: 32px; margin-top: 20px; }
+.lottery-stat { text-align: center; }
+.lottery-stat-num { display: block; font-size: 24px; font-weight: 700; }
+.lottery-stat-label { display: block; font-size: 12px; color: rgba(255,255,255,0.4); }
+.lottery-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+.lottery-badge.open { background: rgba(34,197,94,0.15); color: #22c55e; }
+.lottery-badge.drawn { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.4); }

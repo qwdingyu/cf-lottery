@@ -1256,8 +1256,6 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
-import { toPng } from 'html-to-image'
-import QRCode from 'qrcode'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
@@ -1273,7 +1271,6 @@ import {
 } from '@/lib/activity-defaults'
 import type {
   ActivityConfigForm,
-  DrawAnalyticsStats,
   ExternalConversion,
   LotteryDraw,
   LotteryWinner,
@@ -1285,8 +1282,6 @@ import {
   createLotteryDraw,
   deleteLotteryDraw,
   fetchAdminLottery,
-  fetchDrawAnalyticsStats,
-  fetchDrawConversions,
   fetchLotteryDraws,
   fetchLotteryWinners,
   fetchPublishCheck,
@@ -1318,10 +1313,11 @@ import {
   formatLotteryEntryProgress,
   formatLotteryVisibilityLabel,
   formatPublishCheckItems as formatPublishCheckItemsRaw,
-  percent,
   publishFixSectionTargetId,
   statusClass,
 } from './lottery/ops-utils'
+import { usePosterQr } from './lottery/usePosterQr'
+import { useDrawAnalytics } from './lottery/useDrawAnalytics'
 
 
 const { t, locale } = useI18n()
@@ -1409,81 +1405,56 @@ const participationModeOptions = computed(() => {
   return modes.filter(m => participationModeLabels[m]).map(m => ({ value: m, label: participationModeLabels[m] }))
 })
 const showWinnersModal = ref(false)
-const showAnalyticsModal = ref(false)
-const showQrModal = ref(false)
-const qrImageUrl = ref('')
-const showPosterModal = ref(false)
-const posterGenerating = ref(false)
-const posterDomRef = ref<HTMLDivElement | null>(null)
-const posterDataUrl = ref('')
-const posterQrImageUrl = ref('')
-const posterDrawData = ref<any>(null)
-const qrDrawUrl = ref('')
-// ── 海报模板数据（computed 派生，供 HTML 模板渲染） ──
-const posterPlatformName = computed(() => t('lottery.adminPosterBrand'))
-const posterKindLabel = computed(() => {
-  const map: Record<string, string> = {
-    lottery: t('lottery.adminKindLottery'), signup_chain: t('lottery.adminKindSignupChain'), claim: t('lottery.adminKindClaim'),
-    survey: t('lottery.adminKindSurvey'), vote: t('lottery.adminKindVote'), checkin: t('lottery.adminKindCheckin'),
-    approval: t('lottery.adminKindApproval'), reservation: t('lottery.adminKindReservation'),
-  }
-  return map[posterDrawData.value?.activityKind || 'lottery'] || t('lottery.adminActivity')
-})
-const posterPrizeList = computed(() => {
-  // 从活动配置的奖项中提取奖品名（用于海报展示，增强吸引力）
-  const tiers = posterDrawData.value?.tiers
-  if (Array.isArray(tiers)) {
-    return tiers.map((t: any) => t.prizeName || t.tierName).filter(Boolean)
-  }
-  return []
-})
-const posterTimeText = computed(() => {
-  const start = posterDrawData.value?.startAt || posterDrawData.value?.startTime
-  const end = posterDrawData.value?.endAt || posterDrawData.value?.endTime
-  if (start && end) return `${formatDate(start)} ~ ${formatDate(end)}`
-  return ''
-})
-// 二维码/海报 URL 缓存：drawId -> { url, qrImageUrl }
-// 为什么缓存：二维码 URL 是确定性字符串（依赖 publicSlug），列表加载时预计算，
-// 打开弹窗直接复用，避免每次点开都重新拼接/请求，节省 Cloudflare Free 资源。
-const qrUrlMap = new Map<string, { url: string; qrImageUrl: string }>()
-// 本地生成的二维码 dataURL 缓存：url -> dataURL
-// 为什么本地生成：远程 qrserver API 有第三方依赖/跨域污染/隐私风险，
-// 且 html-to-image 截图远程图片若无 CORS 头会导致画布污染导出失败。
-// qrcode 库在浏览器本地生成（几 ms），零 Worker 资源，符合 Cloudflare Free 约束。
-const qrDataUrlCache = new Map<string, string>()
+const {
+  showQrModal,
+  qrImageUrl,
+  qrDrawUrl,
+  showPosterModal,
+  posterGenerating,
+  posterDomRef,
+  posterDataUrl,
+  posterQrImageUrl,
+  posterDrawData,
+  posterPlatformName,
+  posterKindLabel,
+  posterPrizeList,
+  posterTimeText,
+  prefetchPublicUrl,
+  handleShowQrCode,
+  handleDownloadQr,
+  handleCopyQrLink,
+  handleShowPoster,
+  handleDownloadPoster,
+} = usePosterQr()
+void posterDomRef
+void qrDrawUrl
 
-/**
- * 本地生成二维码 dataURL（惰性 + 缓存）。
- * 首次生成后缓存，同一链接再次生成直接复用，避免重复计算。
- */
-async function generateQrDataUrl(url: string): Promise<string> {
-  const cached = qrDataUrlCache.get(url)
-  if (cached) return cached
-  const dataUrl = await QRCode.toDataURL(url, {
-    width: 300,
-    margin: 1,
-    errorCorrectionLevel: 'M',  // 中等纠错：二维码美观与容错平衡
-  })
-  qrDataUrlCache.set(url, dataUrl)
-  return dataUrl
-}
-// 海报 dataURL 缓存：drawId -> dataURL
-// 首次生成后缓存，同一活动再次打开直接显示，避免重复 Canvas 绘制 + 远程图片加载。
-const posterCache = new Map<string, string>()
-// 缓存上限：防止活动很多时内存膨胀（Worker/浏览器内存有限）
-const POSTER_CACHE_LIMIT = 30
 const winners = ref<LotteryWinner[]>([])
 const winnersLoading = ref(false)
-const analyticsLoading = ref(false)
-const analyticsError = ref('')
-const analyticsDraw = ref<LotteryDraw | null>(null)
-const analyticsStats = ref<DrawAnalyticsStats | null>(null)
-const analyticsConversions = ref<ExternalConversion[]>([])
 /** 中奖弹窗对应的活动 id，便于弹窗内一键重发失败邮件 */
 const winnersModalDrawId = ref('')
 const creating = ref(false)
 const operatingId = ref('')
+const {
+  showAnalyticsModal,
+  analyticsLoading,
+  analyticsError,
+  analyticsDraw,
+  analyticsStats,
+  analyticsConversions,
+  analyticsFunnelCards,
+  conversionTypeRows,
+  completionRate,
+  ctaRate,
+  externalConversionRate,
+  conversionTypeLabel,
+  handleViewAnalytics,
+  handleExportConversions,
+} = useDrawAnalytics({ operatingId })
+
+// 模板绑定的 composable 字段：避免 vue-tsc 在部分配置下误报 TS6133
+void analyticsStats
+
 // batchOperating 必须在 useTableSelection 之前声明，确保模板访问时已初始化
 const batchOperating = ref(false)
 const pagination = useTablePagination({ initialLimit: 50 })
@@ -1515,38 +1486,6 @@ const {
 
 const winnersEmailFailureCount = computed(() => countLotteryEmailFailures(winners.value))
 const winnersEmailPendingCount = computed(() => winners.value.filter((winner) => Number(winner.emailSent) !== 1 && !winner.emailError).length)
-const analyticsFunnelCards = computed(() => {
-  const stats = analyticsStats.value
-  const events = stats?.events
-  return [
-    { key: 'page_view', label: t('lottery.adminFunnelViews'), value: events?.pageViews ?? 0 },
-    { key: 'participation_started', label: t('lottery.adminFunnelStarted'), value: events?.totals.participation_started ?? 0 },
-    { key: 'participation_completed', label: t('lottery.adminFunnelCompleted'), value: events?.participationCompleted ?? 0 },
-    { key: 'cta_click', label: t('lottery.adminFunnelCta'), value: events?.ctaClicks ?? 0 },
-    { key: 'share_click', label: t('lottery.adminFunnelShares'), value: events?.shareClicks ?? 0 },
-    { key: 'attributed_join', label: t('lottery.adminFunnelJoins'), value: events?.attributedJoins ?? 0 },
-    { key: 'external_conversion_reported', label: t('lottery.adminFunnelConversions'), value: events?.externalConversionsReported ?? 0 },
-  ]
-})
-const conversionTypeRows = computed(() => {
-  const totals = analyticsStats.value?.externalConversions?.totals || {}
-  return Object.entries(totals)
-    .map(([type, row]) => ({ type, count: Number(row.count || 0), amountCents: Number(row.amountCents || 0) }))
-    .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type))
-})
-const completionRate = computed(() => percent(
-  analyticsStats.value?.events.participationCompleted || 0,
-  analyticsStats.value?.events.pageViews || 0,
-))
-const ctaRate = computed(() => percent(
-  analyticsStats.value?.events.ctaClicks || 0,
-  analyticsStats.value?.events.participationCompleted || 0,
-))
-const externalConversionRate = computed(() => percent(
-  analyticsStats.value?.externalConversions.totalCount || 0,
-  analyticsStats.value?.events.ctaClicks || 0,
-))
-
 const emptyForm = () => emptyLotteryEditorForm(t)
 
 const form = ref(emptyForm())
@@ -1864,19 +1803,6 @@ function emailStatusLabel(w: LotteryWinner): string {
   return t('lottery.adminEmailPending')
 }
 
-function conversionTypeLabel(type: string): string {
-  const map: Record<string, string> = {
-    registration: t('lottery.adminConvReg'),
-    purchase: t('lottery.adminConvPurchase'),
-    coupon_redeemed: t('lottery.adminConvCouponRedeemed'),
-    lead_qualified: t('lottery.adminConvLead'),
-    offline_redeemed: t('lottery.adminConvOffline'),
-    custom: t('lottery.adminConvCustom'),
-  }
-  return map[type] || type || '-'
-}
-
-/** 按门禁 section 滚到创建表单对应分区（编辑打开后调用） */
 function scrollToPublishFixSection(errors: PublishCheckItem[]) {
   const targetId = publishFixSectionTargetId(errors)
   if (!targetId) return
@@ -1885,55 +1811,6 @@ function scrollToPublishFixSection(errors: PublishCheckItem[]) {
   requestAnimationFrame(() => {
     setTimeout(() => scrollEditorSection(targetId), 80)
   })
-}
-
-async function handleViewAnalytics(draw: LotteryDraw) {
-  analyticsDraw.value = draw
-  showAnalyticsModal.value = true
-  analyticsLoading.value = true
-  analyticsError.value = ''
-  analyticsStats.value = null
-  analyticsConversions.value = []
-  operatingId.value = draw.id
-  try {
-    const [stats, conversionData] = await Promise.all([
-      fetchDrawAnalyticsStats(draw.id),
-      fetchDrawConversions(draw.id),
-    ])
-    analyticsStats.value = {
-      ...stats,
-      externalConversions: conversionData.summary || stats.externalConversions,
-    }
-    analyticsConversions.value = conversionData.conversions || []
-  } catch (e: any) {
-    analyticsError.value = e?.message || t('lottery.adminAnalyticsLoadFailed')
-    showToast(analyticsError.value, 'error')
-  } finally {
-    analyticsLoading.value = false
-    operatingId.value = ''
-  }
-}
-
-function handleExportConversions() {
-  if (analyticsConversions.value.length === 0) return
-  const rows = [
-    [t('lottery.adminConvType'), t('lottery.adminConvSource'), t('lottery.adminConvEvent'), t('lottery.adminCsvIdentityType'), t('lottery.adminCsvIdentityValue'), 'ref', t('lottery.adminCsvAmountCents'), t('lottery.adminCsvCurrency'), t('lottery.adminConvOccurredAt'), t('lottery.adminCsvReportedAt')],
-    ...analyticsConversions.value.map((item) => [
-      conversionTypeLabel(item.conversionType),
-      item.source || '',
-      item.externalEventId,
-      item.identityType || '',
-      item.identityValue || '',
-      item.refCode || '',
-      item.amountCents === null || item.amountCents === undefined ? '' : String(item.amountCents),
-      item.currency || '',
-      item.occurredAt || '',
-      item.createdAt || '',
-    ]),
-  ]
-  const idPart = (analyticsDraw.value?.id || 'conversions').slice(0, 40)
-  downloadCsv(`activity-conversions-${idPart}-${new Date().toISOString().slice(0, 10)}.csv`, rows)
-  showToast(t('lottery.adminConversionsExported'), 'success')
 }
 
 function stopWinnersStatusPolling() {
@@ -2018,116 +1895,6 @@ function handleOpenPublic(draw: LotteryDraw) {
     window.open(path, '_blank', 'noopener,noreferrer')
   }
 }
-
-/** 生成二维码 */
-async function handleShowQrCode(draw: LotteryDraw) {
-  // 复用预计算缓存（loadData 时生成链接），二维码图本地生成（零第三方依赖）
-  const cached = qrUrlMap.get(draw.id) || {
-    url: `${window.location.origin}/lottery/${draw.publicSlug}`,
-    qrImageUrl: '',
-  }
-  if (!cached.url) {
-    cached.url = `${window.location.origin}/lottery/${draw.publicSlug}`
-    qrUrlMap.set(draw.id, cached)
-  }
-  qrDrawUrl.value = cached.url
-  // 本地生成二维码 dataURL（带缓存），避免远程 API 依赖/跨域污染/隐私问题
-  qrImageUrl.value = await generateQrDataUrl(cached.url)
-  showQrModal.value = true
-}
-
-function handleDownloadQr() {
-  const a = document.createElement('a')
-  a.href = qrImageUrl.value
-  a.download = 'qrcode.png'
-  a.click()
-}
-
-function handleCopyQrLink() {
-  writeClipboardText(qrDrawUrl.value)
-  showToast(t('lottery.adminQrLinkCopied'), 'success')
-}
-
-/* ── 海报生成 ──────────────────────────────────────────── */
-
-/** 生成活动海报
- *
- * 性能优化：海报 dataURL 缓存在内存 Map 中（posterCache），
- * 同一活动再次打开直接显示缓存，避免重复 Canvas 绘制 + 远程二维码图片加载，
- * 节省 Cloudflare Free 资源（CPU/请求）。
- * 缓存超过 POSTER_CACHE_LIMIT 时清空最旧的，防止内存膨胀。
- */
-async function handleShowPoster(draw: LotteryDraw) {
-  posterDrawData.value = draw
-  // 复用预计算二维码链接（loadData 时生成），二维码图本地生成
-  const cachedQr = qrUrlMap.get(draw.id) || {
-    url: `${window.location.origin}/lottery/${draw.publicSlug}`,
-    qrImageUrl: '',
-  }
-  if (!cachedQr.url) {
-    cachedQr.url = `${window.location.origin}/lottery/${draw.publicSlug}`
-    qrUrlMap.set(draw.id, cachedQr)
-  }
-  qrDrawUrl.value = cachedQr.url
-  // 本地生成二维码（dataURL 带缓存），海报模板 <img> 直接引用，html-to-image 可截图
-  posterQrImageUrl.value = await generateQrDataUrl(cachedQr.url)
-
-  showPosterModal.value = true
-  // 命中缓存：直接显示，无需重新生成
-  const cached = posterCache.get(draw.id)
-  if (cached) {
-    posterDataUrl.value = cached
-    return
-  }
-  posterGenerating.value = true
-  // 等待 DOM 渲染后截图海报
-  await nextTick()
-  await generatePosterFromDom()
-  // 生成成功则缓存（防止内存膨胀，超出上限清最旧）
-  if (posterDataUrl.value) {
-    if (posterCache.size >= POSTER_CACHE_LIMIT) {
-      const oldestKey = posterCache.keys().next().value
-      if (oldestKey !== undefined) posterCache.delete(oldestKey)
-    }
-    posterCache.set(draw.id, posterDataUrl.value)
-  }
-  posterGenerating.value = false
-}
-
-/**
- * 从海报模板 DOM 生成 PNG 海报（替代 Canvas 绘制）。
- *
- * 为什么改用 HTML 模板：Canvas 绘制排版能力有限（简单文字堆叠），
- * 且无法直接嵌入远程二维码图片（跨域污染画布导致无法导出）。
- * HTML/CSS 模板可做出精美排版（渐变/圆角/卡片/奖品展示），
- * 二维码用 <img> 标签直接显示，html-to-image 截图时保留。
- */
-async function generatePosterFromDom() {
-  const node = posterDomRef.value
-  if (!node) return
-  try {
-    posterDataUrl.value = await toPng(node, {
-      pixelRatio: 2,  // 2x 输出保证清晰度（手机屏幕/印刷可用）
-      cacheBust: true,
-    })
-  } catch (err) {
-    console.warn('[poster] html-to-image failed:', err)
-    posterDataUrl.value = ''
-  }
-}
-
-async function handleDownloadPoster() {
-  if (!posterDataUrl.value) {
-    showToast(t('lottery.adminPosterNotReady'), 'error')
-    return
-  }
-  const a = document.createElement('a')
-  a.href = posterDataUrl.value
-  a.download = 'poster.png'
-  a.click()
-  showToast(t('lottery.adminPosterDownloaded'), 'success')
-}
-
 function handleExportWinners() {
   if (winners.value.length === 0) {
     showToast(t('lottery.adminExportWinnersEmpty'), 'error')
@@ -2363,15 +2130,9 @@ async function loadData() {
     })
     if (sequence !== loadSequence) return
     draws.value = data.draws || []
-    // 预计算每个活动的二维码链接（纯字符串拼接，零成本），打开弹窗再本地生成二维码图
-    const origin = window.location.origin
+    // 预填公开链接缓存，打开二维码/海报弹窗时再本地生成图
     for (const d of draws.value) {
-      if (!qrUrlMap.has(d.id)) {
-        qrUrlMap.set(d.id, {
-          url: `${origin}/lottery/${d.publicSlug}`,
-          qrImageUrl: '',  // 二维码图本地生成（异步），打开时惰性生成
-        })
-      }
+      prefetchPublicUrl(d)
     }
     pagination.setTotal(data.total || 0)
   } catch (e: any) {
