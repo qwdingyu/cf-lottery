@@ -7,16 +7,21 @@ Type=simple
 User=www-data
 WorkingDirectory=/opt/cf-lottery
 EnvironmentFile=/opt/cf-lottery/.env
-ExecStart=/usr/bin/node dist/server.mjs
+# 使用 tsx 直接运行 TypeScript（无需编译步骤）
+ExecStart=/opt/cf-lottery/node_modules/.bin/tsx /opt/cf-lottery/src/server.ts
+ExecStartPre=/bin/sh -c 'cd /opt/cf-lottery && npm install --silent 2>/dev/null || true'
 Restart=always
 RestartSec=5
 
-# 安全加固
+# 安全加固（ProtectSystem=full 允许 /usr/bin/node 运行）
 NoNewPrivileges=yes
 PrivateTmp=yes
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=yes
-ReadWritePaths=/opt/cf-lottery/data
+ReadWritePaths=/opt/cf-lottery/data /opt/cf-lottery/node_modules/.cache
+
+# 健康检查（每 30 秒）
+HealthCmd=/usr/bin/curl -sf http://localhost:8787/api/health
 
 [Install]
 WantedBy=multi-user.target

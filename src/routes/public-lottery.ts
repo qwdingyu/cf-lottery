@@ -16,6 +16,7 @@ import { getActivityOutcome, joinDraw, cancelSignupChainEntry, recordActivityEve
 import { verifyJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 import { parseActivityConfig, validateSubmissionPayload } from "../lib/activity-config";
+import { checkDbRateLimit } from "../lib/rate-limit";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
@@ -31,6 +32,31 @@ function checkRateLimit(ip: string, limit = 10, windowMs = 60000): boolean {
   if (entry.count >= limit) return false;
   entry.count++;
   return true;
+}
+
+/**
+ * 公开端统一限流入口：内存 Map 只做单实例快速预过滤，DB 限流才是跨实例的最终闸门。
+ * 为什么保留两层：本地 Map 能减少明显刷接口时的 DB 写入，DB 记录能覆盖多 Worker/多 Node 实例。
+ */
+async function checkPublicRateLimit(db: DbType, key: string, limit = 10, windowMs = 60000): Promise<boolean> {
+  if (!checkRateLimit(key, limit, windowMs)) return false;
+  return checkDbRateLimit(db, key, limit, windowMs);
+}
+
+/**
+ * 按活动 + 身份再加一层持久限流，避免攻击者绕过 IP 维度后持续猜测同一邮箱验证码。
+ * 身份值只以 hash 写入 rate_limit_log，避免把邮箱明文扩大到运维日志类表。
+ */
+async function checkPublicIdentityRateLimit(
+  db: DbType,
+  action: string,
+  drawId: string,
+  identityValue: string,
+  limit = 10,
+  windowMs = 60000,
+): Promise<boolean> {
+  const identityHash = await hashEventValue(`${drawId}:${identityValue.trim().toLowerCase()}`);
+  return checkDbRateLimit(db, `${action}:identity:${identityHash}`, limit, windowMs);
 }
 
 /**
@@ -295,7 +321,7 @@ publicLotteryRoute.post("/draws/:slug/events", async (c) => {
 
   // ── 限流：同一 IP 每分钟最多 30 次事件上报 ──
   const ip = getClientIp(c);
-  if (!checkRateLimit(`events:${ip}`, 30, 60000)) {
+  if (!(await checkPublicRateLimit(db, `events:${ip}`, 30, 60000))) {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
 
@@ -310,7 +336,7 @@ publicLotteryRoute.post("/draws/:slug/events", async (c) => {
     external_conversion_reported: 5,
   };
   const typeLimit = eventTypeLimits[body.eventType] ?? 10;
-  if (!checkRateLimit(`events:${ip}:${body.eventType}`, typeLimit, 60000)) {
+  if (!(await checkPublicRateLimit(db, `events:${ip}:${body.eventType}`, typeLimit, 60000))) {
     return fail(c, "该事件类型上报过于频繁", 429);
   }
 
@@ -358,7 +384,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   // 读取系统配置的验证码限流值（闭环：L3 配置 → 公开参与限流生效）
   const [rlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_access_code")).limit(1);
   const accessCodeLimit = Math.min(Math.max(parseInt(rlCfg?.value || "", 10) || 3, 1), 100);
-  if (!checkRateLimit(`access-code:${ip}`, accessCodeLimit, 60000)) {
+  if (!(await checkPublicRateLimit(db, `access-code:${ip}`, accessCodeLimit, 60000))) {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
   const slug = c.req.param("slug");
@@ -381,6 +407,9 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   if (!identity) return fail(c, "此活动需要登录后才能参与", 401);
   if (identity.identityType === "email" && !isValidEmail(email)) {
     return fail(c, "请输入有效的邮箱地址", 400);
+  }
+  if (identity.identityType === "email" && !(await checkPublicIdentityRateLimit(db, "access-code", draw.id, email, accessCodeLimit, 60000))) {
+    return fail(c, "请求过于频繁，请稍后再试", 429);
   }
 
   // 检查是否已参与（按统一身份键判重）
@@ -493,7 +522,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
   const db = getDb(c);
   const [joinRlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
   const joinLimit = Math.min(Math.max(parseInt(joinRlCfg?.value || "", 10) || 10, 1), 100);
-  if (!checkRateLimit(`join:${ip}`, joinLimit, 60000)) {
+  if (!(await checkPublicRateLimit(db, `join:${ip}`, joinLimit, 60000))) {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
   const slug = c.req.param("slug");
@@ -539,6 +568,9 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
 
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "open") return fail(c, "活动已结束", 400);
+  if (!(await checkPublicIdentityRateLimit(db, "join", draw.id, email, joinLimit, 60000))) {
+    return fail(c, "参与过于频繁，请稍后再试", 429);
+  }
 
   // ── registered 模式：Logto 用户用自签 JWT 参与；否则返回 401 ──
   // registered 活动的验证码在 access-code 端点永不生成（该端点 JWT 直通），
@@ -609,6 +641,10 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
 
 publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   const db = getDb(c);
+  const ip = getClientIp(c);
+  if (!(await checkPublicRateLimit(db, `my-result:${ip}`, 10, 60000))) {
+    return fail(c, "查询过于频繁，请稍后再试", 429);
+  }
   const slug = c.req.param("slug");
   const body = await c.req.json<{ email: string; code: string }>();
   const email = String(body.email || "").trim().toLowerCase();
@@ -629,6 +665,9 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
 
   // 邮箱+验证码必填：仅邮箱身份要求（JWT 身份无需验证码）
   if (identity.identityType === "email" && (!email || !code)) return fail(c, "请输入邮箱和验证码", 400);
+  if (identity.identityType === "email" && !(await checkPublicIdentityRateLimit(db, "my-result", draw.id, email, 10, 60000))) {
+    return fail(c, "查询过于频繁，请稍后再试", 429);
+  }
 
   // 验证码校验：仅邮箱身份需要（查询类操作不消耗验证码，仅校验身份防枚举）
   if (identity.identityType === "email") {
@@ -700,6 +739,10 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
 
 publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
   const db = getDb(c);
+  const ip = getClientIp(c);
+  if (!(await checkPublicRateLimit(db, `cancel:${ip}`, 10, 60000))) {
+    return fail(c, "取消操作过于频繁，请稍后再试", 429);
+  }
   const slug = c.req.param("slug");
   const body = await c.req.json<{ email: string; code: string }>();
   const email = String(body.email || "").trim().toLowerCase();
@@ -722,6 +765,9 @@ publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
 
   // 邮箱+验证码必填：仅邮箱身份要求（JWT 身份无需验证码）
   if (identity.identityType === "email" && (!email || !code)) return fail(c, "请输入邮箱和验证码", 400);
+  if (identity.identityType === "email" && !(await checkPublicIdentityRateLimit(db, "cancel", draw.id, email, 10, 60000))) {
+    return fail(c, "取消操作过于频繁，请稍后再试", 429);
+  }
 
   // 验证码校验（公共逻辑；取消操作不消耗验证码，防止他人冒用邮箱取消）：
   // 仅邮箱身份需要，JWT 即身份证明
@@ -754,7 +800,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
   const db = getDb(c);
   const [joinRlCfg2] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
   const joinLimit2 = Math.min(Math.max(parseInt(joinRlCfg2?.value || "", 10) || 10, 1), 100);
-  if (!checkRateLimit(`join:${ip}`, joinLimit2, 60000)) {
+  if (!(await checkPublicRateLimit(db, `join:${ip}`, joinLimit2, 60000))) {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
   const body = await c.req.json<{ email: string; refCode?: string; submission?: Record<string, unknown> }>();
@@ -766,11 +812,14 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
 
   try {
     const [draw] = await db
-      .select({ activityKind: lotteryDraws.activityKind, activityConfig: lotteryDraws.activityConfig })
+      .select({ id: lotteryDraws.id, activityKind: lotteryDraws.activityKind, activityConfig: lotteryDraws.activityConfig })
       .from(lotteryDraws)
       .where(eq(lotteryDraws.publicSlug, c.req.param("slug")))
       .limit(1);
     if (!draw) return fail(c, "活动不存在", 404);
+    if (!(await checkPublicIdentityRateLimit(db, "join", draw.id, email, joinLimit2, 60000))) {
+      return fail(c, "参与过于频繁，请稍后再试", 429);
+    }
 
     const submission = validateSubmissionPayload(draw.activityKind, draw.activityConfig, body.submission);
     if (!submission.ok) return fail(c, submission.message || "提交内容无效", 400);
@@ -804,12 +853,12 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/result", async (c) => {
+  const db = getDb(c);
   const ip = getClientIp(c);
   // ★ P0 安全：对齐 my-result，必须提供验证码防邮箱枚举
-  if (!checkRateLimit(`result:${ip}`, 10, 60000)) {
+  if (!(await checkPublicRateLimit(db, `result:${ip}`, 10, 60000))) {
     return fail(c, "查询过于频繁，请稍后再试", 429);
   }
-  const db = getDb(c);
   const slug = c.req.param("slug");
   const body = await c.req.json<{ email: string; code: string }>();
   const email = String(body.email || "").trim().toLowerCase();
@@ -824,6 +873,9 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
+  if (!(await checkPublicIdentityRateLimit(db, "result", draw.id, email, 10, 60000))) {
+    return fail(c, "查询过于频繁，请稍后再试", 429);
+  }
 
   // 验证码校验（仅验证身份，不消耗验证码）
   const validCode = await verifyEmailAccessCode(db, email, draw.id, code);

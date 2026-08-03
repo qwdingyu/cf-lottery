@@ -67,6 +67,8 @@ npm install --omit=dev 2>/dev/null || npm install
 echo ""
 echo "[3/6] 构建前端..."
 cd frontend && npm install && npm run build && cd ..
+# Vite 默认输出到 frontend/dist/，创建 symlink 供 server.ts 使用
+ln -sf frontend/dist public
 echo "  ✅ 前端构建完成"
 
 # ── 4. 准备本地数据库 ──
