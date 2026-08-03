@@ -105,10 +105,24 @@
     <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLogin">
       <div class="modal-content" role="dialog" aria-modal="true" :aria-label="$t('lottery.emailVerify')">
         <h3 class="modal-title">{{ isRegisteredJoin ? $t('lottery.loginAndJoin') : $t('lottery.emailVerify') }}</h3>
-        <p class="modal-hint">{{ isRegisteredJoin ? $t('lottery.registeredRequired') : $t('lottery.emailVerifyHint') }}</p>
+        <p class="modal-hint">{{ isRegisteredJoin ? $t('lottery.registeredRequired') : isLoginOnly ? '登录后查看你的参与记录和中奖信息' : $t('lottery.emailVerifyHint') }}</p>
+
+        <!-- 仅登录（无具体活动，不需要验证码） -->
+        <div v-if="isLoginOnly" class="modal-form">
+          <label>
+            <span>邮箱地址</span>
+            <input v-model="loginEmail" type="email" autocomplete="email" @keyup.enter="handleQuickLogin" />
+          </label>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost btn-sm" @click="closeLogin">取消</button>
+            <button type="button" class="btn btn-primary" :disabled="!loginEmail.includes('@')" @click="handleQuickLogin">
+              登录
+            </button>
+          </div>
+        </div>
 
         <!-- registered 模式：用户名密码登录 -->
-        <div v-if="isRegisteredJoin" class="modal-form">
+        <div v-else-if="isRegisteredJoin" class="modal-form">
           <label>
             <span>{{ $t('adminLogin.username') }}</span>
             <input v-model="regLoginUsername" type="text" autocomplete="username" @keyup.enter="handleRegisteredLogin" />
@@ -403,6 +417,8 @@ const isRegisteredJoin = computed(() => {
   const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
   return draw?.participationMode === 'registered'
 })
+/** 仅登录查看记录（无具体活动，不需要验证码） */
+const isLoginOnly = computed(() => !pendingJoinDrawId.value)
 /** 结果查询弹窗对应的活动是否是 registered 模式（决定是否用 JWT 查询） */
 const isRegMyResult = computed(() => myResultDraw.value?.participationMode === 'registered')
 
@@ -729,6 +745,14 @@ function closeLogin() {
   showLoginModal.value = false
   pendingJoinDrawId.value = null
   loginError.value = ''
+}
+
+/** 仅登录（无需验证码）：存入邮箱后关闭弹窗，加载参与记录 */
+function handleQuickLogin() {
+  if (!loginEmail.value.includes('@')) return
+  sessionEmail.value = loginEmail.value.trim()
+  closeLogin()
+  loadMyRecords()
 }
 
 function handleLogout() {

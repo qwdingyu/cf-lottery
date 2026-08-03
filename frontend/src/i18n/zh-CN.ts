@@ -179,7 +179,7 @@ export default {
     heroSubtitle: "不用写代码、不用求技术。选个模板发出去，谁参与了、谁中奖了、效果怎么样，后台一清二楚。",
     registerCta: "免费注册，马上开始",
     viewDemo: "看看别人怎么玩的",
-    heroNote: "免费套餐就可以用，不用绑信用卡",
+    heroNote: "免费套餐就可以用",
     stepsTitle: "三步搞定一个活动",
     step1Title: "选个模板",
     step1Desc: "福利抽奖、报名接龙、资料领取、问卷调研——选一个改改就能用，不用从零开始。",
