@@ -329,6 +329,21 @@ describe("租户隔离", () => {
 });
 
 describe("SaaS 套餐配额", () => {
+  it("创建活动：显式传入非正或非整数参与上限会被拒绝", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const base = {
+      title: "非法名额活动",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      winnerCount: 1,
+    };
+
+    await expect(createDraw(db, TENANT, { ...base, maxParticipants: 0 })).rejects.toThrow("参与人数上限必须为正整数");
+    await expect(createDraw(db, TENANT, { ...base, maxParticipants: -1 })).rejects.toThrow("参与人数上限必须为正整数");
+    await expect(createDraw(db, TENANT, { ...base, maxParticipants: 1.5 })).rejects.toThrow("参与人数上限必须为正整数");
+  });
+
   it("free：单活动参与上限不能超过套餐限制", async () => {
     const now = new Date();
     const future = new Date(now.getTime() + 3600000);

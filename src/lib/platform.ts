@@ -18,14 +18,29 @@ import type { AppEnv } from "../bindings";
  * 获取客户端真实 IP。
  *
  * Workers：Cloudflare 在 CF-Connecting-IP header 写入真实 IP。
- * Node（反代后）：Nginx/CDN 在 X-Forwarded-For header 写入原始 IP。
+ * Node（反代后）：只有显式配置 TRUST_PROXY_HEADERS=true 时才信任 X-Forwarded-For。
  */
 export function getClientIp(c: Context<AppEnv>): string {
-  return (
-    c.req.header("CF-Connecting-IP") ||
-    c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
+  const cloudflareIp = c.req.header("CF-Connecting-IP");
+  if (cloudflareIp) return cloudflareIp;
+
+  // X-Forwarded-For 是普通请求头，自托管 Node 如果默认信任它，攻击者可伪造限流 key。
+  // 仅在可信反代已覆盖/清洗该头时，由部署环境显式开启。
+  if (isProxyHeaderTrusted(c)) {
+    return c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+  }
+
+  return "unknown";
+}
+
+function isProxyHeaderTrusted(c: Context<AppEnv>): boolean {
+  const bindingValue = (c.env as Record<string, unknown> | undefined)?.TRUST_PROXY_HEADERS;
+  if (bindingValue === "true") return true;
+  try {
+    return (process.env as Record<string, string | undefined>)?.TRUST_PROXY_HEADERS === "true";
+  } catch {
+    return false;
+  }
 }
 
 /**

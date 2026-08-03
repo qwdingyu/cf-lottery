@@ -47,7 +47,7 @@ import { useAdminAuth } from '@/composables/useAdminAuth'
 
 const router = useRouter()
 const { t } = useI18n()
-const { setPlatformRole } = useAdminAuth()
+const { setToken, setPlatformRole } = useAdminAuth()
 const username = ref('')
 const email = ref('')
 const password = ref('')
@@ -86,7 +86,7 @@ async function handleVerify() {
     const res = await fetch('/api/auth/verify-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.value.trim().toLowerCase(), code: c }) })
     const data = await res.json() as any
     if (data.ok) {
-      localStorage.setItem('admin_token', data.token)
+      setToken(data.token)
       // 注册成功后获取平台角色缓存
       fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${data.token}` } })
         .then(r => r.json())

@@ -92,7 +92,7 @@ export async function createDraw(
     activityConfig?: string;       // 活动玩法配置，JSON 字符串
   },
 ) {
-  const requestedMaxParticipants = data.maxParticipants ? Number(data.maxParticipants) : undefined;
+  const requestedMaxParticipants = normalizeRequestedMaxParticipants(data.maxParticipants);
   const title = String(data.title || "").trim();
   const activityKind = data.activityKind || "lottery";
   const drawTrigger = data.drawTrigger || "manual";
@@ -160,7 +160,7 @@ export async function createDraw(
         endAt: data.endAt,
         drawAt: data.drawAt || null,
         accessPassword: accessPasswordHash,
-        maxParticipants: requestedMaxParticipants || Math.min(DEFAULT_ACTIVITY_PARTICIPANT_CAP, planLimits.maxParticipantsPerActivity),
+        maxParticipants: requestedMaxParticipants ?? Math.min(DEFAULT_ACTIVITY_PARTICIPANT_CAP, planLimits.maxParticipantsPerActivity),
         winnerCount,
         showParticipantCount: data.showParticipantCount ?? 1,
         showWinnerCount: data.showWinnerCount ?? 1,
@@ -181,6 +181,15 @@ export async function createDraw(
   if (!inserted) throw new Error("创建活动失败，请重试");
 
   return { id, publicSlug };
+}
+
+function normalizeRequestedMaxParticipants(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized < 1) {
+    throw new Error("参与人数上限必须为正整数");
+  }
+  return normalized;
 }
 
 function defaultExperienceForParticipation(participationMode: string): string {
@@ -331,4 +340,3 @@ export async function cancelDraw(db: DbType, tenantId: string, drawId: string): 
 
   return (result.rowsAffected ?? 0) > 0;
 }
-

@@ -13,9 +13,11 @@ import { useRouter } from 'vue-router'
 import { useHandleSignInCallback, useLogto } from '@logto/vue'
 import ToastContainer from '@/components/ToastContainer.vue'
 import { useToast } from '@/composables/useToast'
+import { useAdminAuth } from '@/composables/useAdminAuth'
 
 const router = useRouter()
 const { showToast } = useToast()
+const { setToken } = useAdminAuth()
 
 // Logto 登录回调处理：useHandleSignInCallback 必须在 setup 顶层调用，
 // 它自动检测 URL 中的 code/state 参数并完成 OIDC 回调流程。
@@ -42,7 +44,7 @@ watch(isAuthenticated, async (val) => {
       showToast(data.message || 'Logto 登录失败', 'error')
       return
     }
-    localStorage.setItem('admin_token', data.token)
+    setToken(data.token)
     // 区分页面：管理后台登录页 → 跳转 /admin；活动页 → 通知 LotteryView 自动参与
     if (window.location.pathname.includes('/lottery/')) {
       sessionStorage.setItem('logto_email', data.email)

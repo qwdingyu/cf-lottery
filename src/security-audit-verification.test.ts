@@ -16,11 +16,12 @@
  */
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq, and, count, like } from "drizzle-orm";
 import type { AppEnv } from "./bindings";
 import { clearTestData, getTestDb } from "./test-setup";
 import { checkDbRateLimit } from "./lib/rate-limit";
 import { enforceRequestBodyLimit } from "./lib/body-limit";
+import { getClientIp } from "./lib/platform";
 import { authRoute } from "./routes/auth";
 import { publicLotteryRoute } from "./routes/public-lottery";
 import {
@@ -36,6 +37,7 @@ import {
   lotteryEntries,
   lotteryPrizeTiers,
   lotteryWinners,
+  rateLimitLog,
   tenantMembers,
   tenants,
   users,
@@ -374,5 +376,107 @@ describe("/result 端点防邮箱枚举", () => {
     expect(okRes.status).toBe(200);
     const data = await okRes.json() as { joined: boolean };
     expect(data.joined).toBe(true);
+  });
+});
+
+describe("公开端敏感操作持久限流", () => {
+  it("my-result 错误验证码按 IP + 身份写入 DB 限流，超过阈值返回 429", async () => {
+    await seedOwner();
+    const { publicSlug } = await setupOneWinnerDraw();
+    const app = createPublicTestApp();
+    const email = "victim-my-result@test.com";
+
+    const post = () =>
+      app.request(`/public/draws/${publicSlug}/my-result`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "198.51.100.11" },
+        body: JSON.stringify({ email, code: "000000" }),
+      });
+
+    for (let i = 0; i < 10; i++) {
+      const res = await post();
+      expect(res.status).toBe(400);
+    }
+    const limited = await post();
+    expect(limited.status).toBe(429);
+
+    const [{ ipLogs }] = await db
+      .select({ ipLogs: count() })
+      .from(rateLimitLog)
+      .where(eq(rateLimitLog.key, "my-result:198.51.100.11"));
+    expect(Number(ipLogs)).toBe(10);
+
+    const [{ identityLogs }] = await db
+      .select({ identityLogs: count() })
+      .from(rateLimitLog)
+      .where(like(rateLimitLog.key, "my-result:identity:%"));
+    expect(Number(identityLogs)).toBe(10);
+
+    const plainEmailKeys = await db
+      .select({ key: rateLimitLog.key })
+      .from(rateLimitLog)
+      .where(like(rateLimitLog.key, `%${email}%`));
+    expect(plainEmailKeys).toHaveLength(0);
+  });
+
+  it("cancel 错误验证码同样有 DB 持久限流保护", async () => {
+    await seedOwner();
+    const now = new Date();
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "取消限流接龙",
+      startAt: now.toISOString(),
+      endAt: new Date(now.getTime() + 3600000).toISOString(),
+      activityKind: "signup_chain",
+      participationMode: "open",
+      experienceType: "list",
+      resultMode: "ordered_assignment",
+      allocationPolicy: "capacity",
+      maxParticipants: 10,
+      winnerCount: 1,
+    });
+    await publishDraw(db, TENANT, id);
+
+    const app = createPublicTestApp();
+    const post = () =>
+      app.request(`/public/draws/${publicSlug}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "198.51.100.12" },
+        body: JSON.stringify({ email: "cancel-target@test.com", code: "000000" }),
+      });
+
+    for (let i = 0; i < 10; i++) {
+      const res = await post();
+      expect(res.status).toBe(400);
+    }
+    const limited = await post();
+    expect(limited.status).toBe(429);
+
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(rateLimitLog)
+      .where(eq(rateLimitLog.key, "cancel:198.51.100.12"));
+    expect(Number(total)).toBe(10);
+  });
+});
+
+describe("客户端 IP 解析", () => {
+  it("默认不信任 X-Forwarded-For，显式 TRUST_PROXY_HEADERS=true 后才读取", async () => {
+    const app = new Hono<AppEnv>();
+    app.get("/ip", (c) => c.text(getClientIp(c)));
+
+    const untrusted = await app.request("/ip", {
+      headers: { "X-Forwarded-For": "203.0.113.1, 10.0.0.1" },
+    });
+    expect(await untrusted.text()).toBe("unknown");
+
+    const trusted = await app.request("/ip", {
+      headers: { "X-Forwarded-For": "203.0.113.1, 10.0.0.1" },
+    }, { TRUST_PROXY_HEADERS: "true" } as any);
+    expect(await trusted.text()).toBe("203.0.113.1");
+
+    const cf = await app.request("/ip", {
+      headers: { "CF-Connecting-IP": "198.51.100.20", "X-Forwarded-For": "203.0.113.1" },
+    });
+    expect(await cf.text()).toBe("198.51.100.20");
   });
 });

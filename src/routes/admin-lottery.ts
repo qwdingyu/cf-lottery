@@ -555,6 +555,7 @@ adminLotteryRoute.post("/draws", async (c) => {
     // 运营者可通过系统配置控制活动创建的默认参数（闭环：L3 配置 → L2 生效）
     const defaultWinnerCount = parseInt(config["draw_default_winner_count"], 10) || 1;
     const systemMaxParticipants = parseInt(config["draw_max_participants"], 10) || undefined;
+    const requestedMaxParticipants = normalizeOptionalPositiveInteger(body.maxParticipants, "参与人数上限");
     // 活动最长持续时间校验：防止运营者设置超长活动占用资源
     const maxDurationDays = parseInt(config["draw_max_duration_days"], 10) || 90;
     const startAt = String(body.startAt || "");
@@ -586,7 +587,7 @@ adminLotteryRoute.post("/draws", async (c) => {
       endAt: String(body.endAt || ""),
       drawAt: body.drawAt || undefined,
       accessPassword: String(body.accessPassword || ""),
-      maxParticipants: body.maxParticipants !== undefined ? Number(body.maxParticipants) : systemMaxParticipants,
+      maxParticipants: requestedMaxParticipants ?? systemMaxParticipants,
       winnerCount: body.winnerCount !== undefined ? Number(body.winnerCount) : defaultWinnerCount,
       productLink: body.productLink ? JSON.stringify(body.productLink) : "{}",
       promotionConfig: body.promotionConfig && typeof body.promotionConfig === "object" ? JSON.stringify(body.promotionConfig) : "{}",
@@ -634,10 +635,20 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     if (err) return fail(c, err, 400);
   }
 
-  if (body.maxParticipants !== undefined && body.maxParticipants !== null) {
-    const maxParticipants = Number(body.maxParticipants);
+  let maxParticipantsUpdate: number | null | undefined;
+  if (body.maxParticipants !== undefined) {
+    try {
+      maxParticipantsUpdate = body.maxParticipants === null || body.maxParticipants === ""
+        ? null
+        : normalizeOptionalPositiveInteger(body.maxParticipants, "参与人数上限");
+    } catch (err) {
+      return fail(c, err instanceof Error ? err.message : "参与人数上限无效", 400);
+    }
+  }
+
+  if (maxParticipantsUpdate !== undefined && maxParticipantsUpdate !== null) {
     const quota = await getTenantUsage(db, tenantId);
-    if (maxParticipants > quota.limits.maxParticipantsPerActivity) {
+    if (maxParticipantsUpdate > quota.limits.maxParticipantsPerActivity) {
       return fail(c, `当前套餐单活动最多允许 ${quota.limits.maxParticipantsPerActivity} 人参与，请降低名额或升级套餐`, 403);
     }
   }
@@ -657,7 +668,7 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       ...(body.endAt !== undefined ? { endAt: body.endAt } : {}),
       ...(body.drawAt !== undefined ? { drawAt: body.drawAt } : {}),
       ...(body.winnerCount !== undefined ? { winnerCount: Number(body.winnerCount) } : {}),
-      ...(body.maxParticipants !== undefined ? { maxParticipants: body.maxParticipants ? Number(body.maxParticipants) : null } : {}),
+      ...(maxParticipantsUpdate !== undefined ? { maxParticipants: maxParticipantsUpdate } : {}),
       ...(body.accessPassword !== undefined ? { accessPassword: body.accessPassword ? await hashAccessPassword(String(body.accessPassword)) : "" } : {}),
       ...(body.showParticipantCount !== undefined ? { showParticipantCount: body.showParticipantCount ? 1 : 0 } : {}),
       ...(body.showWinnerCount !== undefined ? { showWinnerCount: body.showWinnerCount ? 1 : 0 } : {}),
@@ -1430,6 +1441,15 @@ function coerceEnum(value: unknown, allowed: Set<string>, fallback: string): str
   return allowed.has(normalized) ? normalized : fallback;
 }
 
+function normalizeOptionalPositiveInteger(value: unknown, fieldName: string): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized < 1) {
+    throw new Error(`${fieldName}必须为正整数`);
+  }
+  return normalized;
+}
+
 function defaultExperienceForParticipation(participationMode: string): string {
   if (participationMode === "invite_code") return "slot";
   if (participationMode === "password") return "scratch";
@@ -2093,4 +2113,3 @@ class RedeemError extends Error {
     super(message);
   }
 }
-
