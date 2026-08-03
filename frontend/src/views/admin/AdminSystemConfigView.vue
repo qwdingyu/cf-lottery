@@ -191,6 +191,7 @@ function groupNameKey(name: string): string {
     '基础信息': 'basic',
     '支付配置': 'payment',
     '安全与验证': 'security_verification',
+    '安全设置': 'security_settings',
     '邮箱策略': 'email_policy',
     '订单与限流': 'order_rate_limit',
     '后台与安全': 'admin_security',

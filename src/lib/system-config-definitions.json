@@ -399,7 +399,7 @@
     "scope": "admin",
     "type": "boolean",
     "defaultValue": "true",
-    "group": "安全与验证",
+    "group": "安全设置",
     "order": 31,
     "difficulty": "advanced"
   }
