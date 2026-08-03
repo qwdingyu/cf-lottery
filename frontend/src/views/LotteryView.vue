@@ -152,6 +152,13 @@
               @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
             />
           </label>
+          <!-- Logto 登录：减少验证码消耗（docs/051 方案） -->
+          <div v-if="logtoEnabled && !codeSent" class="logto-section" style="margin-top:8px">
+            <div class="logto-divider" style="margin:8px 0"><span class="divider-text" style="font-size:12px;color:var(--tg-hint)">{{ $t('adminLogin.or') }}</span></div>
+            <button type="button" class="btn btn-ghost btn-sm" style="width:100%" :disabled="logtoLoading" @click="handleLogtoJoin">
+              <span class="logto-icon">L</span> 使用 Logto 登录
+            </button>
+          </div>
           <div v-if="codeSent" class="verified-email-row">
             <span>{{ $t('lottery.emailVerified', { email: loginEmail }) }}</span>
             <button type="button" class="btn btn-primary btn-sm" :disabled="verifyingCode" @click="handleVerifyCode">
@@ -323,11 +330,69 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
+import { useLogto } from '@logto/vue'
 import { getGameComponent } from '@/components/games/GameRegistry'
 import GameResultModal from '@/components/games/GameResultModal.vue'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
+
+// Logto 身份认证（docs/051 方案）：减少验证码消耗
+const logtoEnabled = !!(import.meta.env.VITE_LOGTO_ENDPOINT && import.meta.env.VITE_LOGTO_APP_ID)
+const logto = logtoEnabled ? useLogto() : null
+const logtoLoading = ref(false)
+
+/** Logto 登录后自动参与活动（无需验证码） */
+async function handleLogtoJoin() {
+  if (!logto || !pendingJoinDrawId.value) return
+  logtoLoading.value = true
+  try {
+    // 跳转到 Logto 登录页，登录成功后回调到当前活动页
+    const redirectUri = window.location.origin + '/lottery/' + (draws.value.find(d => d.id === pendingJoinDrawId.value)?.publicSlug || pendingJoinDrawId.value)
+    await logto.signIn(redirectUri)
+  } catch (err) {
+    console.error('[logto] signIn error:', err)
+    showToast('Logto 登录失败', 'error')
+    logtoLoading.value = false
+  }
+}
+
+/** 处理 Logto 登录成功后的回调：用自签 JWT 直接参与活动（跳过验证码） */
+async function handleLogtoJoinSuccess(email: string, token: string) {
+  if (!pendingJoinDrawId.value) return
+  // 设置 sessionEmail（供后续查询参与记录使用）
+  sessionEmail.value = email
+  // 用自签 JWT 调 verify-join（不传验证码，后端验证 Authorization header）
+  try {
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/verify-join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ email, code: '' }),
+    })
+    const data = await res.json() as any
+    if (data.ok && data.joined) {
+      const joinedDrawId = pendingJoinDrawId.value
+      myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
+      if (data.outcome) {
+        myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
+      }
+      showLoginModal.value = false
+      pendingJoinDrawId.value = null
+      showToast(t('lottery.joinSuccess'))
+      // 暂存参与结果，供 GameResultModal 生成归因分享链接
+      if (data.entryId) {
+        lastJoinResult.value = { drawId: joinedDrawId, entryId: data.entryId }
+      }
+      showResult.value = true
+    } else {
+      showToast(data.message || t('lottery.joinFailed'), 'error')
+    }
+  } catch {
+    showToast(t('lottery.networkError'), 'error')
+  } finally {
+    logtoLoading.value = false
+  }
+}
 
 const props = defineProps<{ id?: string }>()
 const router = useRouter()
@@ -1038,6 +1103,13 @@ onMounted(async () => {
     fetchDraws()
   }, 30000)
   await fetchDraws()
+  // 监听 Logto 登录成功事件（docs/051 方案）
+  window.addEventListener('logto-login-success', async (e: Event) => {
+    const detail = (e as CustomEvent).detail
+    if (detail?.email && detail?.token) {
+      await handleLogtoJoinSuccess(detail.email, detail.token)
+    }
+  })
 })
 
 onUnmounted(() => {

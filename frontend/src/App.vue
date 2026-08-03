@@ -31,8 +31,6 @@ async function handleLogtoCallback() {
   try {
     const { isAuthenticated } = await useHandleSignInCallback()
     if (isAuthenticated) {
-      // 获取 ID Token（logto SDK 的 getIdTokenClaims 返回 decoded claims，
-      // 但后端需要原始 JWT 字符串。这里用 getAccessToken 获取 Access Token）
       const logto = useLogto()
       const accessToken = await logto.getAccessToken()
       if (accessToken) {
@@ -44,8 +42,14 @@ async function handleLogtoCallback() {
         const data = await res.json()
         if (data.ok && data.token) {
           localStorage.setItem('admin_token', data.token)
-          showToast('Logto 登录成功')
-          router.push('/admin')
+          // 区分页面：管理后台登录页 → 跳转 /admin；活动页 → 通知 LotteryView 自动参与
+          if (window.location.pathname.includes('/lottery/')) {
+            sessionStorage.setItem('logto_email', data.email)
+            window.dispatchEvent(new CustomEvent('logto-login-success', { detail: { email: data.email, token: data.token } }))
+          } else {
+            showToast('Logto 登录成功')
+            router.push('/admin')
+          }
           return
         }
       }

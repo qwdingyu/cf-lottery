@@ -504,7 +504,29 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
   if (!email || !isValidEmail(email)) {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
-  if (!code || code.length !== 6) {
+
+  // ── Logto 用户跳过验证码（docs/051 方案） ──
+  // 如果请求头包含有效的自签 JWT（由 /auth/logto-exchange 签发），且 JWT 中的 email
+  // 与请求的 email 一致，则跳过 6 位验证码验证。Logto 用户已通过社交登录/邮箱密码
+  // 完成了身份认证，不再需要二次验证码，从而减少邮件服务（Resend）的免费额度消耗。
+  let logtoVerified = false;
+  if (!code) {
+    const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    if (bearerToken) {
+      const jwtSecret = getEnv(c, "JWT_SECRET");
+      if (jwtSecret) {
+        try {
+          const payload = await verifyJwt(bearerToken, jwtSecret);
+          if (payload?.email === email) {
+            logtoVerified = true;
+          }
+        } catch { /* token 无效，继续走验证码流程 */ }
+      }
+    }
+  }
+
+  // 非 Logto 用户：必须提供 6 位验证码
+  if (!logtoVerified && (!code || code.length !== 6)) {
     return fail(c, "请输入 6 位验证码", 400);
   }
 
@@ -527,9 +549,12 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     return fail(c, "此活动需要登录后参与", 401);
   }
 
-  // 验证验证码（公共校验逻辑）——仅 SELECT，不 UPDATE
-  const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
-  if (!validCode) return fail(c, "验证码无效或已过期", 400);
+  // 验证验证码（Logto 用户跳过验证码检查，docs/051 方案）
+  let validCode = null;
+  if (!logtoVerified) {
+    validCode = await verifyEmailAccessCode(db, email, draw.id, code);
+    if (!validCode) return fail(c, "验证码无效或已过期", 400);
+  }
 
   try {
     const submission = validateSubmissionPayload(draw.activityKind, draw.activityConfig, body.submission);
@@ -541,8 +566,8 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       refCode: body.refCode,
       userAgent: c.req.header("User-Agent") || "",
       submissionPayload: submission.payload,
-      /** 验证码 ID：joinDraw 事务内标记为已使用，省一次 DB 往返 */
-      codeIdToConsume: validCode.id,
+      /** 验证码 ID：joinDraw 事务内标记为已使用，省一次 DB 往返；Logto 用户不传则跳过 */
+      codeIdToConsume: validCode?.id,
     });
     if (!result.joined) return fail(c, result.message || "参与失败", 400);
     return ok(c, {
