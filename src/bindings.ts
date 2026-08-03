@@ -28,7 +28,7 @@ export type Bindings = {
   CRON_SECRET?: string;
   // 敏感配置加密密钥（64 位 hex 字符串），用于加密存储敏感配置项
   CREDENTIALS_ENCRYPTION_KEY?: string;
-  // cf-auth OAuth RP（docs/059；授权码+PKCE，不共享 cookie；已替代 Logto）
+  // cf-auth OAuth RP（授权码+PKCE，不共享 cookie）
   CF_AUTH_ENABLED?: string;
   CF_AUTH_ISSUER?: string;
   CF_AUTH_CLIENT_ID?: string;

@@ -55,7 +55,7 @@ fi
 
 # ── 步骤 1：构建前端 ──
 info "步骤 1/4：构建前端..."
-# 统一认证走 cf-auth OAuth（服务端 env），前端无需 VITE_LOGTO_*
+# 统一认证走 cf-auth OAuth（服务端 env），前端无需额外构建变量
 npm run frontend:build
 info "前端构建完成"
 
@@ -104,7 +104,7 @@ append_secret() {
 }
 
 # 写入 wrangler 需要的 secrets
-# CF_AUTH_*：统一认证 OAuth RP（docs/059）；无 LOGTO_*
+# CF_AUTH_*：统一认证 OAuth RP（docs/059）
 for name in TURSO_URL TURSO_TOKEN JWT_SECRET PASSWORD_PEPPER RESEND_API_KEY EMAIL_FROM CRON_SECRET CREDENTIALS_ENCRYPTION_KEY CF_AUTH_ENABLED CF_AUTH_ISSUER CF_AUTH_CLIENT_ID CF_AUTH_CLIENT_SECRET CF_AUTH_REDIRECT_URI CF_AUTH_SCOPES; do
   append_secret "$name"
 done
