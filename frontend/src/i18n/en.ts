@@ -177,7 +177,7 @@ export default {
     heroSubtitle: "No coding, no developers. Pick a template, share it, and track who joined, who won, and how it performed.",
     registerCta: "Register free, start now",
     viewDemo: "See how it works",
-    heroNote: "Free tier is fully functional — no credit card needed",
+    heroNote: "Free tier is fully functional",
     stepsTitle: "Three steps to launch",
     step1Title: "Pick a template",
     step1Desc: "Prize draws, signup chains, document downloads, surveys — pick one and customize, no need to start from scratch.",
