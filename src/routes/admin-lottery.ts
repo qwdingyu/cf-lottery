@@ -12,7 +12,7 @@ import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger, isValidEmail } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import type { DbType } from "../db/client";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions, externalConversions, systemConfig } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryRosterMembers, lotteryInviteCodes, lotteryWinners, lotteryEntries, lotteryBlacklist, apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords, auditLogs, tenantMembers, users, tenants, activityOutcomes, platformMembers, activitySubmissions, externalConversions, systemConfig, emailAccessCodes, activityEvents } from "../db/schema";
 import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import {
   createDraw,
@@ -1053,11 +1053,22 @@ adminLotteryRoute.delete("/draws/:id", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.status !== "draft") return fail(c, "仅草稿状态的活动可删除", 400);
+  if (draw.status === "open" || draw.status === "drawing") return fail(c, "进行中的活动不可删除，请先暂停或取消", 400);
 
-  await db
-    .delete(lotteryDraws)
-    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+  // ★ 级联删除子记录：先删子表，再删主表（FK 约束）
+  await withDbTransaction(db, async (tx) => {
+    await tx.delete(lotteryPrizeTiers).where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)));
+    await tx.delete(lotteryRosterMembers).where(and(eq(lotteryRosterMembers.drawId, drawId), eq(lotteryRosterMembers.tenantId, tenantId)));
+    await tx.delete(lotteryInviteCodes).where(and(eq(lotteryInviteCodes.drawId, drawId), eq(lotteryInviteCodes.tenantId, tenantId)));
+    await tx.delete(lotteryWinners).where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
+    await tx.delete(lotteryEntries).where(and(eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)));
+    await tx.delete(activitySubmissions).where(and(eq(activitySubmissions.drawId, drawId), eq(activitySubmissions.tenantId, tenantId)));
+    await tx.delete(activityEvents).where(and(eq(activityEvents.drawId, drawId), eq(activityEvents.tenantId, tenantId)));
+    await tx.delete(activityOutcomes).where(and(eq(activityOutcomes.drawId, drawId), eq(activityOutcomes.tenantId, tenantId)));
+    await tx.delete(shareRecords).where(and(eq(shareRecords.drawId, drawId), eq(shareRecords.tenantId, tenantId)));
+    await tx.delete(emailAccessCodes).where(eq(emailAccessCodes.drawId, drawId));
+    await tx.delete(lotteryDraws).where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+  });
 
   await recordTenantAudit(c, "draw.delete", "lottery_draw", drawId);
   return ok(c, { deleted: true });
