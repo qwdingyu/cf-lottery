@@ -3,7 +3,7 @@
     <div class="slot-machine">
       <div class="slot-frame">
         <div class="slot-window">
-          <div class="slot-reel-wrap" v-for="(reel, idx) in 3" :key="'r'+idx">
+          <div class="slot-reel-wrap" v-for="idx in 3" :key="'r'+idx">
             <div class="slot-reel" :ref="el => { if (el) reelRefs[idx] = el as HTMLDivElement }">
               <div v-for="(p, i) in reelPrizes" :key="idx+'-'+i" class="slot-item" :style="{ background: getGradient(i) }">
                 <span class="slot-emoji">{{ ['🎁','💎','🏆','🎯','🌟','💰','🎪','🎰'][i % 8] }}</span>

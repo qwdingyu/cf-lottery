@@ -41,8 +41,6 @@ const COLORS = [
 
 function getColors(i: number) { return COLORS[i % COLORS.length]! }
 
-let animFrame = 0
-
 function drawWheel(rotation: number) {
   const cvs = wheelCanvasRef.value; if (!cvs) return
   const ctx = cvs.getContext('2d'); if (!ctx) return
@@ -87,7 +85,6 @@ async function handleSpin() {
   const targetAngle = Math.PI * 2 * (5 + Math.random())
   const startRot = parseFloat(wheelCanvasRef.value?.dataset?.rot || '0')
   const duration = 4000, start = performance.now()
-  const totalRot = startRot + targetAngle
 
   await new Promise<void>(resolve => {
     const tick = (now: number) => {
@@ -97,9 +94,9 @@ async function handleSpin() {
       const rot = startRot + targetAngle * eased
       drawWheel(rot % (Math.PI * 2))
       if (wheelCanvasRef.value) wheelCanvasRef.value.dataset.rot = String(rot)
-      if (progress < 1) { animFrame = requestAnimationFrame(tick) } else { resolve() }
+      if (progress < 1) { requestAnimationFrame(tick) } else { resolve() }
     }
-    animFrame = requestAnimationFrame(tick)
+    requestAnimationFrame(tick)
   })
   spinning.value = false
 }

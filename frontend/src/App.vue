@@ -20,7 +20,7 @@ const { showToast } = useToast()
 // Logto 登录回调处理：useHandleSignInCallback 必须在 setup 顶层调用，
 // 它自动检测 URL 中的 code/state 参数并完成 OIDC 回调流程。
 // 不能在 onMounted 中调用（hooks 不支持 composable 嵌套调用）。
-const { isLoading, isAuthenticated } = useHandleSignInCallback()
+const { isAuthenticated } = useHandleSignInCallback()
 
 // 监听认证状态变化：当 Logto 回调处理完成后，isAuthenticated 变为 true
 watch(isAuthenticated, async (val) => {
