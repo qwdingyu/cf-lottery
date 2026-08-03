@@ -39,7 +39,7 @@
 import { computed, ref } from 'vue'
 import type { PrizeItem } from './types'
 
-const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean }>()
+const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean; loading?: boolean }>()
 const emit = defineEmits<{ play: [] }>()
 
 const reel1Ref = ref<HTMLDivElement>()

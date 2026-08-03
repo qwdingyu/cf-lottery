@@ -64,6 +64,7 @@
               :key="draw.id"
               :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || $t('lottery.productPlaceholder'), color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
               :disabled="joiningId === draw.id || !!myJoinedById[draw.id]"
+              :loading="joiningId === draw.id"
               @play="handleJoin(draw.id)"
             />
           </div>
@@ -102,8 +103,8 @@
       </div>
     </section>
 
-    <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLogin">
-      <div class="modal-content" role="dialog" aria-modal="true" :aria-label="$t('lottery.emailVerify')">
+    <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLogin" @keydown.escape="closeLogin">
+      <div class="modal-content" role="dialog" aria-modal="true" tabindex="-1" ref="loginModalRef" :aria-label="$t('lottery.emailVerify')">
         <h3 class="modal-title">{{ isRegisteredJoin ? $t('lottery.loginAndJoin') : $t('lottery.emailVerify') }}</h3>
         <p class="modal-hint">{{ isRegisteredJoin ? $t('lottery.registeredRequired') : isLoginOnly ? $t('lottery.loginToViewRecords') : $t('lottery.emailVerifyHint') }}</p>
 

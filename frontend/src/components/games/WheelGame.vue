@@ -32,6 +32,7 @@ import type { PrizeItem } from './types'
 const props = defineProps<{
   prizes: PrizeItem[]
   disabled?: boolean
+  loading?: boolean
 }>()
 
 const emit = defineEmits<{ play: [] }>()

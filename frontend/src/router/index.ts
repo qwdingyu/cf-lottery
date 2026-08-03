@@ -54,7 +54,7 @@ const router = createRouter({
       path: '/lottery/:slug(.*)?',
       name: 'Lottery',
       component: () => import('@/views/LotteryView.vue'),
-      props: true,
+      props: (route) => ({ id: route.params.slug || undefined }),
     },
     {
       path: '/admin/login',

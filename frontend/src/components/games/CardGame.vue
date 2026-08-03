@@ -39,7 +39,7 @@
 import { ref } from 'vue'
 import type { PrizeItem } from './types'
 
-const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean }>()
+const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean; loading?: boolean }>()
 const emit = defineEmits<{ play: [] }>()
 
 const defaultColors = ['#f43f5e', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899']

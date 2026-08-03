@@ -43,7 +43,7 @@
 import { onMounted, ref } from 'vue'
 import type { PrizeItem } from './types'
 
-const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean }>()
+const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean; loading?: boolean }>()
 const emit = defineEmits<{ play: [] }>()
 
 const canvasRef = ref<HTMLCanvasElement>()
