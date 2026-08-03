@@ -51,6 +51,17 @@ let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 const TENANT = "sec-audit-tenant";
 const USER = "sec-audit-owner";
 
+/**
+ * 与 auth-and-public.test.ts 一致：Hono app.request 第三参注入 Bindings。
+ * 不注入时 getEnv 读不到 JWT_SECRET → register 在 hash 密码阶段 500，
+ * 会被误判为「限流未生效」或生产回归（本文件曾因此 flaky/红）。
+ */
+const TEST_ENV = {
+  TURSO_URL: "",
+  ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+  JWT_SECRET: "test-sec-audit-jwt-secret-0123456789",
+};
+
 beforeAll(async () => {
   ({ client, db } = await getTestDb());
 });
@@ -226,27 +237,38 @@ describe("verify-email 验证码猜测", () => {
     });
     app.route("/auth", authRoute);
 
+    // 注册与 verify 分 IP：避免 register 内存/DB 计数污染 verify-email 窗口断言
+    const regIp = "198.51.100.50";
+    const verifyIp = "198.51.100.51";
+
     // 注册触发验证码落库（验证码 6 位数字，10 分钟有效，无盐 SHA-256 存储）
-    const reg = await app.request("/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "secuser", password: "Passw0rd123", email: "sec-user@test.com" }),
-    });
+    const reg = await app.request(
+      "/auth/register",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": regIp },
+        body: JSON.stringify({ username: "secuser", password: "Passw0rd123", email: "sec-user@test.com" }),
+      },
+      TEST_ENV,
+    );
     expect(reg.status).toBe(200);
 
-    // 对照组：register 内存限流 3 次/分钟/IP（测试环境 IP 统一为 unknown），
-    // 限流检查在用户名/邮箱校验之前，连续请求必然触发 429。
+    // 对照组：register 内存 + DB 限流 3 次/分钟/IP；限流在业务校验前，连续请求必出 429。
     let register429 = 0;
     for (let i = 0; i < 5; i++) {
-      const r = await app.request("/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: `secuserctrl${i}`,
-          password: "Passw0rd123",
-          email: `sec-user-ctrl-${i}@test.com`,
-        }),
-      });
+      const r = await app.request(
+        "/auth/register",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "CF-Connecting-IP": regIp },
+          body: JSON.stringify({
+            username: `secuserctrl${i}`,
+            password: "Passw0rd123",
+            email: `sec-user-ctrl-${i}@test.com`,
+          }),
+        },
+        TEST_ENV,
+      );
       if (r.status === 429) register429++;
     }
     expect(register429).toBeGreaterThan(0);
@@ -256,14 +278,18 @@ describe("verify-email 验证码猜测", () => {
     let verify400 = 0;
     let verify429 = 0;
     for (let i = 0; i < 12; i++) {
-      const r = await app.request("/auth/verify-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: "sec-user@test.com",
-          code: String((100000 + i) % 1000000).padStart(6, "0"),
-        }),
-      });
+      const r = await app.request(
+        "/auth/verify-email",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "CF-Connecting-IP": verifyIp },
+          body: JSON.stringify({
+            email: "sec-user@test.com",
+            code: String((100000 + i) % 1000000).padStart(6, "0"),
+          }),
+        },
+        TEST_ENV,
+      );
       if (r.status === 400) verify400++;
       if (r.status === 429) verify429++;
     }
