@@ -1267,102 +1267,62 @@ import AdminPagination from '@/components/AdminPagination.vue'
 import { useTablePagination } from '@/composables/useTablePagination'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
+import {
+  defaultExperienceForActivity,
+  defaultResultModeForActivity,
+} from '@/lib/activity-defaults'
+import type {
+  ActivityConfigForm,
+  DrawAnalyticsStats,
+  ExternalConversion,
+  LotteryDraw,
+  LotteryWinner,
+  PublishCheckItem,
+  SurveyFieldForm,
+} from './lottery/types'
+import {
+  cancelLotteryDraw,
+  createLotteryDraw,
+  deleteLotteryDraw,
+  fetchAdminLottery,
+  fetchDrawAnalyticsStats,
+  fetchDrawConversions,
+  fetchLotteryDraws,
+  fetchLotteryWinners,
+  fetchPublishCheck,
+  openLotteryDraw,
+  performLotteryDraw,
+  recoverLotteryDraw,
+  retryAdminLotteryEmail,
+  updateLotteryDraw,
+} from './lottery/api'
+import {
+  defaultActivityConfigForKind,
+  isChoiceSurveyField,
+  makeStableId,
+  normalizeActivityConfig as normalizeActivityConfigRaw,
+  normalizeSurveyFieldOptions as normalizeSurveyFieldOptionsRaw,
+} from './lottery/activity-config'
+import { emptyLotteryEditorForm } from './lottery/form-defaults'
+import {
+  buildLotteryDrawConfirmMessage,
+  buildLotteryDuplicateDraft as buildLotteryDuplicateDraftRaw,
+  buildLotteryWinnersCsvRows,
+  canDeleteDraw as canDeleteDrawByStatus,
+  canGuidePublishFixInEditor as canGuidePublishFixInEditorRaw,
+  conversionAmount as conversionAmountRaw,
+  conversionIdentity,
+  countLotteryEmailFailures,
+  downloadCsv,
+  emailStatusClass,
+  formatLotteryEntryProgress,
+  formatLotteryVisibilityLabel,
+  formatPublishCheckItems as formatPublishCheckItemsRaw,
+  percent,
+  publishFixSectionTargetId,
+  statusClass,
+} from './lottery/ops-utils'
 
-
-type LotteryDraw = {
-  id: string; tenantId: string; publicSlug: string; title: string; name?: string; description: string;
-  status: string; activityKind: string; participationMode: string; experienceType: string; drawTrigger: string; resultMode: string; allocationPolicy?: string; policyVersion: number;
-  startAt: string; startTime?: string; endAt: string; endTime?: string; drawAt: string | null; drawTime?: string | null;
-  winnerCount: number; maxParticipants: number | null;
-  maxWinners?: number; expectedParticipants?: number; entryCount?: number; visible?: number;
-  showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
-  drawnAt: string | null; failureReason: string;
-  activityConfig?: ActivityConfigForm;
-  createdAt: string; updatedAt: string;
-};
-
-type SurveyFieldType = 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'radio' | 'checkbox'
-type SurveyFieldForm = {
-  id: string;
-  label: string;
-  type: SurveyFieldType;
-  required: boolean;
-  maxLength: number;
-  options: Array<{ id: string; label: string }>;
-}
-type ActivityConfigForm =
-  | { version: 1; kind: 'survey'; fields: SurveyFieldForm[] }
-  | { version: 1; kind: 'vote'; selection: 'single'; options: Array<{ id: string; label: string; description: string; imageUrl: string }> }
-  | {
-      version?: 1;
-      kind?: string;
-      fields?: SurveyFieldForm[];
-      options?: Array<{ id: string; label: string; description?: string; imageUrl?: string }>;
-      /** 未中奖自动发券（安慰奖）：仅 lottery 活动生效，enabled 默认 false */
-      loserReward?: { enabled: boolean; couponLabel: string };
-    };
-
-type LotteryWinner = {
-  id: string; drawId: string; tierId: string; entryId: string;
-  identityType: string; identityValue: string; prizeCodeId: string;
-  drawnAt: string; notificationStatus: string; notificationError: string;
-  email?: string; orderNo?: string; cardAccountLabel?: string; cardDeliverySecret?: string;
-  emailSent?: number; emailError?: string;
-  /** 后端 decorateIdentityDisplay 注入：registered 身份解析为用户名(邮箱)；email 身份不注入 */
-  identityDisplay?: string;
-};
-
-type ActivityEventSummary = {
-  totals: Record<string, number>;
-  pageViews: number;
-  participationCompleted: number;
-  ctaClicks: number;
-  shareClicks: number;
-  attributedJoins: number;
-  externalConversionsReported: number;
-};
-
-type ExternalConversionSummary = {
-  totalCount: number;
-  totalAmountCents: number;
-  totals: Record<string, { count: number; amountCents: number }>;
-};
-
-type DrawAnalyticsStats = {
-  entryCount: number;
-  events: ActivityEventSummary;
-  externalConversions: ExternalConversionSummary;
-};
-
-type PublishCheckItem = {
-  code: string;
-  message: string;
-  section: string;
-};
-
-type PublishCheckResult = {
-  canPublish: boolean;
-  errors: PublishCheckItem[];
-  warnings: PublishCheckItem[];
-  infos: PublishCheckItem[];
-};
-
-type ExternalConversion = {
-  id: string;
-  drawId: string;
-  entryId: string;
-  externalEventId: string;
-  conversionType: string;
-  source: string;
-  refCode: string;
-  amountCents: number | null;
-  currency: string;
-  identityType: string;
-  identityValue: string;
-  payloadJson: string;
-  occurredAt: string;
-  createdAt: string;
-};
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -1371,76 +1331,25 @@ const { showToast } = useToast()
 useAdminAuth()
 const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 
-// ── 兼容旧 API 调用（适配到新后端） ──
-
-const fetchLotteryDraws = async (params: { limit: number; offset: number; status?: string; query?: string; activityKind?: string; createdFrom?: string; createdTo?: string }) => {
-  const search = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) })
-  if (params.status) search.set('status', params.status)
-  if (params.query) search.set('query', params.query)
-  if (params.activityKind) search.set('activityKind', params.activityKind)
-  if (params.createdFrom) search.set('createdFrom', params.createdFrom)
-  if (params.createdTo) search.set('createdTo', params.createdTo)
-  return adminRequest<{ draws: LotteryDraw[]; total: number }>(`/api/admin/draws?${search}`)
+// ── 从 lottery/* 抽出的纯逻辑：此处只保留需要 t / form 的薄包装 ──
+function normalizeActivityConfig(kind: string, config: any): ActivityConfigForm {
+  return normalizeActivityConfigRaw(kind, config, t)
 }
-const createLotteryDraw = async (body: any) => adminRequest<{ id: string; publicSlug: string }>('/api/admin/draws', { method: 'POST', body: JSON.stringify(body) });
-const updateLotteryDraw = async (id: string, body: any) => adminRequest(`/api/admin/draws/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
-const fetchPublishCheck = async (id: string) => adminRequest<PublishCheckResult>(`/api/admin/draws/${id}/publish-check`);
-const openLotteryDraw = async (id: string) => adminRequest(`/api/admin/draws/${id}/publish`, { method: 'POST' });
-const performLotteryDraw = async (id: string) => adminRequest(`/api/admin/draws/${id}/draw`, { method: 'POST' });
-const cancelLotteryDraw = async (id: string) => adminRequest(`/api/admin/draws/${id}/cancel`, { method: 'POST' });
-const deleteLotteryDraw = async (id: string) => adminRequest(`/api/admin/draws/${id}`, { method: 'DELETE' });
-const fetchLotteryWinners = async (id: string) => adminRequest<{ winners: LotteryWinner[] }>(`/api/admin/draws/${id}/winners`);
-const fetchDrawAnalyticsStats = async (id: string) => adminRequest<DrawAnalyticsStats>(`/api/admin/draws/${id}/stats`);
-const fetchDrawConversions = async (id: string) => adminRequest<{ conversions: ExternalConversion[]; summary: ExternalConversionSummary }>(`/api/admin/draws/${id}/conversions?limit=50`);
-const fetchAdminLottery = async (path: string, method: string) => adminRequest(path, { method });
-const retryAdminLotteryEmail = async (id: string) => adminRequest<{ sent: number; failed: number }>(`/api/admin/draws/${id}/retry-email`, { method: 'POST' });
-const recoverLotteryDraw = async (id: string) => adminRequest<{ healed: 'drawn' | 'open' }>(`/api/admin/draws/${id}/recover`, { method: 'POST' });
-
-// ── 内联 lottery-ops 函数 ──
-const countLotteryEmailFailures = (winners: LotteryWinner[]) => winners.filter(w => w.notificationStatus === 'failed').length;
-const formatLotteryEntryProgress = (count?: number | null, max?: number | null) => max ? `${count ?? 0} / ${max}` : `${count ?? 0}`;
-const formatLotteryVisibilityLabel = (visible: number | undefined | null, labels: { public: string; hidden: string }) => visible ? labels.public : labels.hidden;
-const buildLotteryWinnersCsvRows = (winners: LotteryWinner[], labels: any) => {
-  const header = [labels.email, labels.emailStatus];
-  // 与中奖名单展示一致：优先 identityDisplay（registered 用户为用户名(邮箱)）
-  const rows = winners.map((w: any) => [w.identityDisplay || w.identityValue, w.notificationStatus === 'sent' ? labels.sent : w.notificationStatus === 'failed' ? labels.failed : labels.pending]);
-  return [header, ...rows];
-};
-const buildLotteryDuplicateDraft = (draw: any, opts: { nameSuffix: string; defaultName: string }) => ({
-  name: draw.title ? `${draw.title}${opts.nameSuffix}` : opts.defaultName,
-  description: draw.description || '',
-  prizeName: '',
-  startTime: draw.startAt ? toDateTimeLocalValue(draw.startAt) : '',
-  endTime: draw.endAt ? toDateTimeLocalValue(draw.endAt) : '',
-  drawTime: draw.drawAt ? toDateTimeLocalValue(draw.drawAt) : '',
-  winnerCount: draw.winnerCount || 1,
-  maxParticipants: draw.maxParticipants || null,
-  participationMode: draw.participationMode || 'open',
-  activityKind: draw.activityKind || 'lottery',
-  allocationPolicy: draw.allocationPolicy || 'capacity',
-  experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'),
-  resultMode: draw.resultMode || defaultResultModeForActivity(draw.activityKind || 'lottery'),
-  activityConfig: normalizeActivityConfig(draw.activityKind || 'lottery', draw.activityConfig),
-  accessPassword: '',
-});
-const buildLotteryDrawConfirmMessage = (draw: any, labels: any) => `${labels.title}\n${labels.name}${draw.title}\n${labels.pool}${draw.entryCount || 0}\n${labels.willDraw}${Math.min(Number(draw.entryCount)||0, draw.winnerCount)}`;
-
-/** 下载 CSV */
-function downloadCsv(filename: string, rows: string[][]) {
-  // 公式注入防护：Excel/Sheets 会把 = + - @ 开头的单元格当公式执行，
-  // 加 ' 前缀阻止；结构上统一引号包裹 + 引号加倍。
-  // 注意：后端 admin-lottery.ts 的 csvEscape 有相同逻辑（服务端导出），
-  // 修改此处时必须同步修改后端版本，保持一致（跨运行环境不强行共享）。
-  const escapeCell = (c: unknown): string => {
-    const raw = String(c ?? '')
-    const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw
-    return `"${safe.replace(/"/g, '""')}"`
-  }
-  const csv = rows.map(r => r.map(escapeCell).join(',')).join('\n');
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = filename;
-  a.click(); URL.revokeObjectURL(url);
+function normalizeSurveyFieldOptions(field: SurveyFieldForm) {
+  normalizeSurveyFieldOptionsRaw(field, t)
+}
+function buildLotteryDuplicateDraft(draw: any, opts: { nameSuffix: string; defaultName: string }) {
+  return buildLotteryDuplicateDraftRaw(draw, opts, t)
+}
+function conversionAmount(item: ExternalConversion): string {
+  return conversionAmountRaw(item, (amount) => t('lottery.adminCentsAmount', { amount }))
+}
+function formatPublishCheckItems(items: PublishCheckItem[], prefix: string): string {
+  const more = items.length > 3 ? t('lottery.adminMoreCheckItems', { count: items.length - 3 }) : ''
+  return formatPublishCheckItemsRaw(items, prefix, more)
+}
+function canGuidePublishFixInEditor(draw: LotteryDraw, errors: PublishCheckItem[]): boolean {
+  return canGuidePublishFixInEditorRaw(draw.status, errors)
 }
 
 const draws = ref<LotteryDraw[]>([])
@@ -1638,109 +1547,7 @@ const externalConversionRate = computed(() => percent(
   analyticsStats.value?.events.ctaClicks || 0,
 ))
 
-function makeStableId(prefix: string) {
-  return `${prefix}_${crypto.randomUUID().slice(0, 8)}`
-}
-
-function defaultActivityConfigForKind(kind: string): ActivityConfigForm {
-  if (kind === 'survey') {
-    return {
-      version: 1,
-      kind: 'survey',
-      fields: [
-        { id: 'contact_email', label: t('lottery.adminDefaultContactEmail'), type: 'email', required: true, maxLength: 120, options: [] },
-        { id: 'feedback', label: t('lottery.adminDefaultFeedback'), type: 'textarea', required: true, maxLength: 1000, options: [] },
-      ],
-    }
-  }
-  if (kind === 'vote') {
-    return {
-      version: 1,
-      kind: 'vote',
-      selection: 'single',
-      options: [
-        { id: 'option_a', label: t('lottery.adminOptionNumber', { n: 'A' }), description: '', imageUrl: '' },
-        { id: 'option_b', label: t('lottery.adminOptionNumber', { n: 'B' }), description: '', imageUrl: '' },
-      ],
-    }
-  }
-  // lottery 默认配置：未中奖自动发券默认关闭，需运营者显式启用
-  return { version: 1, kind, loserReward: { enabled: false, couponLabel: '' } }
-}
-
-function normalizeActivityConfig(kind: string, config: any): ActivityConfigForm {
-  if (!config || typeof config !== 'object' || config.kind !== kind) return defaultActivityConfigForKind(kind)
-  if (kind === 'survey') {
-    const fields = Array.isArray(config.fields) && config.fields.length > 0
-      ? config.fields.map((field: any) => ({
-          id: String(field.id || makeStableId('field')),
-          label: String(field.label || t('lottery.adminUnnamedField')),
-          type: (['text', 'email', 'phone', 'textarea', 'select', 'radio', 'checkbox'].includes(field.type) ? field.type : 'text') as SurveyFieldType,
-          required: Boolean(field.required),
-          maxLength: Number(field.maxLength || 120),
-          options: Array.isArray(field.options)
-            ? field.options.map((option: any) => ({ id: String(option.id || makeStableId('opt')), label: String(option.label || t('lottery.adminOption')) }))
-            : [],
-        }))
-      : (defaultActivityConfigForKind('survey') as any).fields
-    return { version: 1, kind: 'survey', fields }
-  }
-  if (kind === 'vote') {
-    const options = Array.isArray(config.options) && config.options.length >= 2
-      ? config.options.map((option: any) => ({
-          id: String(option.id || makeStableId('opt')),
-          label: String(option.label || t('lottery.adminOption')),
-          description: String(option.description || ''),
-          imageUrl: String(option.imageUrl || ''),
-        }))
-      : (defaultActivityConfigForKind('vote') as any).options
-    return { version: 1, kind: 'vote', selection: 'single', options }
-  }
-  return defaultActivityConfigForKind(kind)
-}
-
-const emptyForm = () => ({
-  id: '',
-  name: '',
-  description: '',
-  prizeName: '',
-  productName: '',
-  startTime: '',
-  endTime: '',
-  drawTime: '',
-  winnerCount: 1,
-  maxWinners: 1,
-  maxParticipants: null as number | null,
-  expectedParticipants: 0,
-  activityKind: 'lottery',
-  participationMode: 'open',
-  experienceType: 'wheel',
-  resultMode: 'manual',
-  allocationPolicy: 'capacity',
-  accessPassword: '',
-  showWinners: false,
-  /** 是否公开参与人数（0/1）；模板 defaults 可覆盖，创建时透传后端 */
-  showParticipantCount: 1 as 0 | 1,
-  // 奖项配置（抽奖活动专用）：选择奖品库中的奖品，设置中奖名额
-  tiers: [] as Array<{ prizeId: string; tierName: string; winnerCount: number }>,
-  // 导流配置
-  enableProductLink: false,
-  productLink: { url: '', title: '', imageUrl: '', price: '' },
-  // 裂变配置
-  enableViral: false,
-  viralExtraEntriesPerInvite: 1,
-  viralMaxExtraEntries: 10,
-  viralLeaderboardEnabled: true,
-  // 多状态 CTA
-  enableAfterWinCta: false,
-  afterWinCtaUrl: '',
-  afterWinCtaTitle: '',
-  enableAfterLossCta: false,
-  afterLossCtaUrl: '',
-  afterLossCtaTitle: '',
-  // 玩法配置：问卷/投票共用 activity_config，避免再拆 forms/votes 重表。
-  activityConfig: defaultActivityConfigForKind('lottery') as any,
-})
+const emptyForm = () => emptyLotteryEditorForm(t)
 
 const form = ref(emptyForm())
 const isEditing = ref(false)
@@ -1942,47 +1749,6 @@ function statusLabel(status: string): string {
   return t(map[status] || 'lottery.adminUnknown')
 }
 
-/** 与卡密/优惠券一致：共享 .tag*，禁止自造状态 chip */
-function statusClass(status: string): string {
-  if (status === 'open') return 'tag-success'
-  if (status === 'paused') return 'tag-muted'
-  if (status === 'drawing') return 'tag-warning'
-  if (status === 'drawn') return 'tag-info'
-  if (status === 'cancelled') return 'tag-danger'
-  return 'tag-muted'
-}
-
-function defaultExperienceForParticipation(participationMode: string): string {
-  if (participationMode === 'invite_code') return 'slot'
-  if (participationMode === 'password') return 'scratch'
-  if (participationMode === 'roster') return 'card'
-  return 'wheel'
-}
-
-function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
-  if (activityKind === 'signup_chain') return 'list'
-  if (activityKind === 'reservation') return 'calendar'
-  if (activityKind === 'vote') return 'ballot'
-  if (activityKind === 'survey') return 'form'
-  if (activityKind === 'checkin') return 'checkin'
-  if (activityKind === 'waitlist') return 'queue'
-  if (activityKind === 'approval') return 'form'
-  if (activityKind === 'claim') return 'reveal'
-  return defaultExperienceForParticipation(participationMode)
-}
-
-function defaultResultModeForActivity(activityKind: string): string {
-  if (activityKind === 'signup_chain') return 'ordered_assignment'
-  if (activityKind === 'reservation') return 'capacity_assignment'
-  if (activityKind === 'vote') return 'vote_tally'
-  if (activityKind === 'survey') return 'no_result'
-  if (activityKind === 'checkin') return 'no_result'
-  if (activityKind === 'waitlist') return 'ordered_assignment'
-  if (activityKind === 'approval') return 'review_decision'
-  if (activityKind === 'claim') return 'instant'
-  return 'manual'
-}
-
 function handleActivityKindChange() {
   const kind = form.value.activityKind || 'lottery'
   form.value.experienceType = defaultExperienceForActivity(kind, form.value.participationMode || 'open')
@@ -1994,21 +1760,6 @@ function handleActivityKindChange() {
 
 function handleParticipationModeChange() {
   form.value.experienceType = defaultExperienceForActivity(form.value.activityKind || 'lottery', form.value.participationMode || 'open')
-}
-
-function isChoiceSurveyField(field: SurveyFieldForm) {
-  return ['select', 'radio', 'checkbox'].includes(field.type)
-}
-
-function normalizeSurveyFieldOptions(field: SurveyFieldForm) {
-  if (isChoiceSurveyField(field) && field.options.length === 0) {
-    field.options = [
-      { id: makeStableId('opt'), label: t('lottery.adminOptionNumber', { n: 1 }) },
-      { id: makeStableId('opt'), label: t('lottery.adminOptionNumber', { n: 2 }) },
-    ]
-  }
-  if (!isChoiceSurveyField(field)) field.options = []
-  field.maxLength = field.type === 'textarea' ? Math.max(Number(field.maxLength) || 1000, 200) : Math.min(Number(field.maxLength) || 120, 500)
 }
 
 function addSurveyField() {
@@ -2104,24 +1855,13 @@ function resultModeLabel(mode: string): string {
 }
 
 function canDeleteDraw(draw: LotteryDraw): boolean {
-  return draw.status === 'draft' || draw.status === 'paused' || draw.status === 'drawn' || draw.status === 'cancelled'
+  return canDeleteDrawByStatus(draw.status)
 }
 
 function emailStatusLabel(w: LotteryWinner): string {
   if (Number(w.emailSent) === 1) return t('lottery.adminEmailSent')
   if (w.emailError) return t('lottery.adminEmailFailed')
   return t('lottery.adminEmailPending')
-}
-
-function emailStatusClass(w: LotteryWinner): string {
-  if (Number(w.emailSent) === 1) return 'tag-success'
-  if (w.emailError) return 'tag-danger'
-  return 'tag-warning'
-}
-
-function percent(numerator: number, denominator: number): string {
-  if (!denominator || denominator <= 0) return '-'
-  return `${((numerator / denominator) * 100).toFixed(1)}%`
 }
 
 function conversionTypeLabel(type: string): string {
@@ -2136,47 +1876,9 @@ function conversionTypeLabel(type: string): string {
   return map[type] || type || '-'
 }
 
-function conversionIdentity(item: ExternalConversion): string {
-  if (!item.identityValue) return '-'
-  return item.identityType ? `${item.identityType}:${item.identityValue}` : item.identityValue
-}
-
-function conversionAmount(item: ExternalConversion): string {
-  if (item.amountCents === null || item.amountCents === undefined) return '-'
-  const currency = item.currency ? `${item.currency} ` : ''
-  return `${currency}${t('lottery.adminCentsAmount', { amount: item.amountCents })}`
-}
-
-function formatPublishCheckItems(items: PublishCheckItem[], prefix: string): string {
-  const topItems = items.slice(0, 3).map((item) => item.message).join('\n')
-  const rest = items.length > 3 ? t('lottery.adminMoreCheckItems', { count: items.length - 3 }) : ''
-  return `${prefix}\n${topItems}${rest}`
-}
-
-/**
- * 055a P1：发布门禁失败后，判断是否适合「一键进编辑」补齐。
- * - 仅 draft 可编辑（与后端 PATCH 一致）
- * - prizes / participation / basic / activity_config 可在创建表单修
- * - promotion / webhook 多半不在本表单主路径，不自动跳编辑以免空跑
- */
-function canGuidePublishFixInEditor(draw: LotteryDraw, errors: PublishCheckItem[]): boolean {
-  if (draw.status !== 'draft' || errors.length === 0) return false
-  const editableSections = new Set(['basic', 'participation', 'prizes', 'activity_config'])
-  return errors.some((item) => editableSections.has(item.section))
-}
-
 /** 按门禁 section 滚到创建表单对应分区（编辑打开后调用） */
 function scrollToPublishFixSection(errors: PublishCheckItem[]) {
-  const priority = ['prizes', 'basic', 'participation', 'activity_config', 'promotion', 'webhook']
-  const section = priority.find((s) => errors.some((e) => e.section === s)) || errors[0]?.section
-  const idMap: Record<string, string> = {
-    prizes: 'lottery-prizes', // 055a：奖项已独立为步骤 4 分区
-    basic: 'lottery-basic',
-    participation: 'lottery-mode',
-    activity_config: 'activity-config',
-    promotion: 'lottery-advanced',
-  }
-  const targetId = section ? idMap[section] : undefined
+  const targetId = publishFixSectionTargetId(errors)
   if (!targetId) return
   // 高级区需要先展开再滚
   if (targetId === 'lottery-advanced') showAdvancedGrowth.value = true
@@ -2601,7 +2303,7 @@ function applyTemplate(tpl: any) {
     // 模板 defaults 含展示开关时带入（后端 create 支持 show* 字段）
     showWinners: Number(tpl.defaults?.showWinnerList ?? tpl.defaults?.showWinnerCount ?? 0) === 1,
     showParticipantCount: (Number(tpl.defaults?.showParticipantCount ?? 1) === 1 ? 1 : 0) as 0 | 1,
-    activityConfig: defaultActivityConfigForKind(kind) as any,
+    activityConfig: defaultActivityConfigForKind(kind, t) as any,
     // 抽奖：先占一行奖项，引导「选奖品 / 快速创建」；无 prizeId 时创建仍可存草稿，开启会被门禁拦住
     tiers: kind === 'lottery'
       ? [{ prizeId: '', tierName: t('lottery.adminTierName', { n: 1 }), winnerCount: Math.max(1, winnerCount || 1) }]
@@ -3181,443 +2883,7 @@ onMounted(() => {
   }
 })
 </script>
-
 <style>
 @import '@/assets/admin.css';
-</style>
-
-<style>
-/* 仅本页编辑器结构；颜色/分区 token 仍来自 admin.css，禁止 scoped 以免合约失败 */
-.lottery-editor-form {
-  gap: 0;
-  min-height: 0;
-  flex: 1 1 auto;
-  max-height: min(78dvh, 720px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.lottery-editor-scroll {
-  display: flex;
-  flex-direction: column;
-  gap: var(--admin-card-gap, 12px);
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 2px;
-  padding-bottom: 4px;
-}
-
-.lottery-editor-footer.modal-actions {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 0;
-  padding-top: 12px;
-  border-top: 0.5px solid var(--border, rgba(255, 255, 255, 0.12));
-  background: var(--tg-bg, #0f172a);
-  padding-right: 2px;
-}
-
-.lottery-editor-footer .btn {
-  min-width: 88px;
-  max-width: 100%;
-}
-
-/* 二维码弹窗 */
-.qr-modal-body { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; }
-.qr-image { width: 240px; height: 240px; border-radius: 8px; background: #fff; padding: 8px; }
-.qr-hint { font-size: 13px; color: var(--tg-hint, #9aa4b2); }
-.qr-actions { display: flex; gap: 8px; }
-
-/* 海报弹窗 */
-.poster-modal-body { display: flex; flex-direction: column; align-items: center; gap: 16px; }
-.poster-preview-wrap { border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.3); width: 100%; max-width: 360px; }
-.poster-preview { display: block; width: 100%; height: auto; }
-.poster-loading { display: flex; align-items: center; justify-content: center; height: 400px; color: var(--tg-hint, #9aa4b2); font-size: 14px; }
-.poster-actions { display: flex; gap: 8px; }
-
-/* 海报模板（html-to-image 截图目标） */
-.poster-template {
-  position: fixed; left: -10000px; top: 0; /* 移出视口避免闪现，v-show 控制显示 */
-  width: 400px; height: 560px;
-  overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  background: linear-gradient(160deg, #0f0c29 0%, #302b63 55%, #24243e 100%);
-  color: #fff;
-}
-.poster-template-bg { position: absolute; inset: 0; overflow: hidden; }
-.poster-template-orb {
-  position: absolute; border-radius: 50%; filter: blur(40px); opacity: 0.45;
-}
-.poster-template-orb-1 { width: 220px; height: 220px; background: #f59e0b; top: -60px; right: -60px; }
-.poster-template-orb-2 { width: 160px; height: 160px; background: #ef4444; bottom: 80px; left: -50px; }
-.poster-template-orb-3 { width: 120px; height: 120px; background: #3b82f6; bottom: -30px; right: 40px; }
-.poster-template-content {
-  position: relative; z-index: 1; height: 100%;
-  display: flex; flex-direction: column; align-items: center;
-  padding: 32px 24px 20px; box-sizing: border-box; text-align: center;
-}
-.poster-brand { font-size: 15px; font-weight: 700; color: #f59e0b; letter-spacing: 2px; margin-bottom: 6px; }
-.poster-kind {
-  font-size: 11px; color: #fbbf24; background: rgba(245,158,11,0.15);
-  border: 1px solid rgba(245,158,11,0.4); border-radius: 20px;
-  padding: 3px 14px; margin-bottom: 16px;
-}
-.poster-title {
-  font-size: 26px; font-weight: 800; line-height: 1.3; margin: 0 0 18px;
-  word-break: break-all;
-}
-.poster-prizes {
-  display: flex; flex-direction: column; gap: 8px; width: 100%;
-  background: rgba(255,255,255,0.07); border-radius: 12px;
-  padding: 14px; margin-bottom: 16px; box-sizing: border-box;
-}
-.poster-prize-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.poster-prize-medal { font-size: 18px; }
-.poster-prize-name { font-weight: 600; }
-.poster-prizes-empty { font-size: 15px; color: #fbbf24; margin-bottom: 16px; font-weight: 600; }
-.poster-time { font-size: 12px; color: rgba(255,255,255,0.7); margin-bottom: 18px; }
-.poster-qr-wrap {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-  width: 100%;
-}
-.poster-qr {
-  width: 170px; height: 170px; border-radius: 12px;
-  background: #fff; padding: 8px; box-sizing: border-box;
-}
-.poster-qr-hint { font-size: 12px; color: rgba(255,255,255,0.8); line-height: 1.5; }
-.poster-footer { font-size: 10px; color: rgba(255,255,255,0.4); margin-top: 8px; }
-
-.analytics-modal-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
-}
-
-.analytics-modal-head,
-.analytics-section-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.analytics-modal-head h3,
-.analytics-section h4 {
-  margin: 0;
-  font-size: 15px;
-  line-height: 1.3;
-}
-
-.analytics-modal-head p {
-  margin: 4px 0 0;
-  color: var(--tg-hint, #9aa4b2);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.analytics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-  gap: 8px;
-}
-
-.analytics-card {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
-  border-radius: var(--r-md, 8px);
-  background: var(--tg-secondary-bg, #151b28);
-  min-width: 0;
-}
-
-.analytics-value {
-  color: var(--admin-accent, #f59e0b);
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1.1;
-}
-
-.analytics-label {
-  color: var(--tg-hint, #9aa4b2);
-  font-size: 12px;
-}
-
-.analytics-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.analytics-rates,
-.analytics-type-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
-}
-
-.analytics-rates > div,
-.analytics-type-list > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 9px 10px;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
-  border-radius: var(--r-md, 8px);
-  background: var(--surface, rgba(255, 255, 255, 0.04));
-  min-width: 0;
-}
-
-.analytics-rates span,
-.analytics-type-list strong {
-  color: var(--tg-text, #f0f2f5);
-  font-weight: 700;
-}
-
-.analytics-rates small,
-.analytics-type-list small {
-  color: var(--tg-hint, #9aa4b2);
-  font-size: 12px;
-}
-
-.analytics-table-wrap {
-  flex: 0 1 auto;
-  max-height: 280px;
-}
-
-/* 模板选择网格 */
-.template-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
-  padding: 8px 0;
-}
-.template-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 20px 12px;
-  background: var(--tg-secondary-bg, #151b28);
-  border: 1px solid var(--border, rgba(255,255,255,0.1));
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  text-align: center;
-}
-.template-card:hover {
-  border-color: var(--admin-accent, #f59e0b);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-}
-.template-card--blank {
-  border-style: dashed;
-  opacity: 0.7;
-}
-.template-card--blank:hover {
-  opacity: 1;
-}
-.template-icon {
-  font-size: 32px;
-  line-height: 1;
-}
-.template-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--tg-text, #f3f4f6);
-}
-.template-desc {
-  font-size: 11px;
-  color: var(--tg-hint, #9aa4b2);
-  line-height: 1.4;
-}
-.template-category {
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-/* 奖项配置 */
-.tier-list { display: flex; flex-direction: column; gap: 8px; }
-.tier-row { display: flex; gap: 8px; align-items: center; }
-.tier-prize { flex: 2; min-width: 0; }
-.tier-name { flex: 1.5; min-width: 0; }
-.tier-count { flex: 0.5; min-width: 70px; }
-.tier-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
-
-/* 055a：行操作允许换行；更多展开为分组面板，不横向撑爆 */
-.col-actions .table-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  white-space: normal;
-  max-width: 280px;
-  row-gap: 4px;
-  position: relative;
-}
-
-.col-actions .table-actions.is-expanded {
-  max-width: 360px;
-}
-
-.table-actions-more-btn {
-  font-weight: 600;
-}
-
-.table-actions-more-panel {
-  flex: 1 1 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 4px;
-  padding: 8px 10px;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
-  border-radius: 8px;
-  background: var(--surface, rgba(0, 0, 0, 0.25));
-}
-
-.table-actions-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-}
-
-.table-actions-group-label {
-  flex: 1 1 100%;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--tg-hint, #9aa4b2);
-  text-transform: none;
-}
-
-.table-actions-group--danger {
-  padding-top: 4px;
-  border-top: 1px dashed var(--border, rgba(255, 255, 255, 0.08));
-}
-
-.field-label-text {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 12px;
-  color: var(--tg-hint, #9aa4b2);
-}
-
-/* 主路径体验摘要：显示模板默认值 + 一键跳到高级配置改完整列表 */
-.experience-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px dashed var(--border, rgba(255, 255, 255, 0.12));
-  border-radius: var(--r-md, 8px);
-  background: var(--surface, rgba(255, 255, 255, 0.03));
-  color: var(--tg-text, #f0f2f5);
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.experience-summary-label {
-  color: var(--tg-hint, #9aa4b2);
-  font-size: 12px;
-}
-
-.experience-summary-edit {
-  margin-left: auto;
-}
-
-/* 055a P1：创建路径步骤条（轻量，非 Wizard 框架） */
-.create-path-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 2px 8px;
-  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-  margin-bottom: 8px;
-}
-
-.create-path-step {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  padding: 5px 10px;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-radius: 999px;
-  background: var(--surface, rgba(255, 255, 255, 0.03));
-  color: var(--tg-hint, #9aa4b2);
-  font-size: 12px;
-  line-height: 1.2;
-  cursor: pointer;
-}
-
-.create-path-step:hover,
-.create-path-step:focus-visible {
-  color: var(--tg-text, #f0f2f5);
-  border-color: var(--admin-accent, #f59e0b);
-}
-
-.create-path-step.current {
-  color: var(--tg-text, #f0f2f5);
-  border-color: var(--admin-accent, #f59e0b);
-  background: rgba(245, 158, 11, 0.1);
-}
-
-.create-path-step.done {
-  color: var(--tg-text, #f0f2f5);
-  border-color: rgba(34, 197, 94, 0.45);
-}
-
-.create-path-step.done .create-path-num {
-  background: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
-}
-
-.create-path-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: rgba(245, 158, 11, 0.15);
-  color: var(--admin-accent, #f59e0b);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.create-path-hint {
-  margin: 0 0 8px;
-  padding: 0 2px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--tg-hint, #9aa4b2);
-}
-
-.create-readiness {
-  margin: 0;
-  max-width: 52%;
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--tg-hint, #9aa4b2);
-}
-
-.lottery-editor-footer.modal-actions {
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
+@import './lottery/admin-lottery-page.css';
 </style>

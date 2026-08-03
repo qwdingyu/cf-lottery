@@ -500,13 +500,21 @@
  * - 个人状态用普通对象（非 Map.set 原地修改）保证 Vue 响应式
  */
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { useLogto } from '@logto/vue'
 import { getGameComponent } from '@/components/games/GameRegistry'
 import GameResultModal from '@/components/games/GameResultModal.vue'
+import {
+  defaultExperienceForParticipation,
+  ambienceMsForExperience,
+  requiresActivitySubmission,
+  normalizePublicDraw,
+  getResultCta,
+} from './lottery/public-helpers'
+import type { ActivityEventType, ActivityOutcome, LotteryDraw, MyEntry } from './lottery/types'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
@@ -564,68 +572,12 @@ async function handleLogtoJoinSuccess(email: string, token: string) {
 }
 
 const props = defineProps<{ id?: string }>()
-const router = useRouter()
 const route = useRoute()
 
 /** 深链 /lottery/:id 时只展示单活动 */
 const isDeepLinked = computed(() => Boolean(props.id && String(props.id).trim()))
 
 const API_BASE = '/api'
-
-type LotteryDraw = {
-  id: string; publicSlug?: string; title: string; name?: string; description?: string; status: string;
-  activityKind?: string; participationMode: string; experienceType?: string; resultMode?: string; allocationPolicy?: string;
-  startAt: string; startTime?: string; endAt: string; endTime?: string; drawAt: string | null; drawTime?: string | null;
-  winnerCount: number; maxParticipants?: number | null;
-  showParticipantCount: number; showWinnerCount: number; showWinnerList: number;
-  showWinners?: boolean; maxWinners?: number;
-  participantCount?: number; entryCount?: number; winners?: Array<{ identity: string }>;
-  prizes?: Array<{ name?: string; tierName?: string; description?: string; imageUrl?: string; valueText?: string; winnerCount?: number }>;
-  productId?: string; productTitle?: string;
-  productLink?: { url: string; title: string; imageUrl?: string; price?: string };
-  activityConfig?: ActivityConfig;
-};
-
-type ActivityConfig =
-  | {
-      version: 1;
-      kind: 'survey';
-      fields: Array<{
-        id: string;
-        label: string;
-        type: 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'radio' | 'checkbox';
-        required: boolean;
-        maxLength: number;
-        options: Array<{ id: string; label: string }>;
-      }>;
-    }
-  | {
-      version: 1;
-      kind: 'vote';
-      selection: 'single';
-      options: Array<{ id: string; label: string; description: string; imageUrl: string }>;
-    };
-
-
-type ActivityOutcome = {
-  id?: string;
-  outcomeType?: string;
-  status: string;
-  sequenceNo?: number;
-  assignmentNo?: number | null;
-  resultLabel?: string;
-  decidedAt?: string | null;
-};
-
-type MyEntry = {
-  drawId: string; joinedAt?: string; drawName?: string; drawStatus?: string; drawTime?: string;
-};
-
-type ActivityEventType =
-  | 'page_view'
-  | 'participation_started'
-  | 'participation_completed'
-  | 'cta_click'
 
 const loading = ref(true)
 const fetchError = ref('')
@@ -677,13 +629,7 @@ function persistSessionEmail(email: string) {
  */
 function ambienceMsForDraw(drawId: string): number {
   const draw = draws.value.find((d) => d.id === drawId)
-  const exp = String(
-    draw?.experienceType || defaultExperienceForParticipation(draw?.participationMode || 'open'),
-  ).toLowerCase()
-  if (exp === 'wheel') return 3000
-  if (exp === 'slot') return 2000
-  if (exp === 'grid' || exp === 'card' || exp === 'scratch') return 700
-  return 0
+  return ambienceMsForExperience(draw?.experienceType, draw?.participationMode)
 }
 
 /** 清除待展示的结果弹窗定时器（新成功 / 卸载） */
@@ -1082,31 +1028,7 @@ function toggleSurveyCheckbox(drawId: string, fieldId: string, optionId: string,
     ...submissionDrafts.value,
     [drawId]: { ...prev, fields: { ...prev.fields, [fieldId]: next } },
   }
-}
-
-function requiresActivitySubmission(draw: LotteryDraw) {
-  return draw.activityConfig?.kind === 'survey' || draw.activityConfig?.kind === 'vote'
-}
-
-/** 规范化公开活动 payload：后端 id=publicSlug；title→name；showWinnerList→showWinners */
-function normalizePublicDraw(raw: any, routeSlug?: string): LotteryDraw {
-  const publicSlug = String(raw.publicSlug || routeSlug || raw.id || '').trim()
-  const title = String(raw.title || raw.name || '').trim()
-  return {
-    ...raw,
-    id: publicSlug || String(raw.id || ''),
-    publicSlug: publicSlug || undefined,
-    title,
-    name: title || raw.name,
-    // 公开 API 用 showWinnerList 数值；UI 用 showWinners 布尔
-    showWinners: raw.showWinners != null
-      ? Boolean(raw.showWinners)
-      : Number(raw.showWinnerList) === 1,
-    entryCount: raw.entryCount != null ? raw.entryCount : raw.participantCount,
-  } as LotteryDraw
-}
-
-function buildSubmissionPayload(draw: LotteryDraw): Record<string, unknown> | undefined {
+}function buildSubmissionPayload(draw: LotteryDraw): Record<string, unknown> | undefined {
   if (!requiresActivitySubmission(draw)) return undefined
   ensureSubmissionDraft(draw)
   const draft = submissionDrafts.value[draw.id]
@@ -1132,14 +1054,6 @@ function validateSubmissionDraft(draw: LotteryDraw): string {
   }
   return ''
 }
-
-function defaultExperienceForParticipation(participationMode: string): string {
-  if (participationMode === 'invite_code') return 'slot'
-  if (participationMode === 'password') return 'scratch'
-  if (participationMode === 'roster') return 'card'
-  return 'wheel'
-}
-
 /** 是否已挂载可交互游戏壳（与 GameRegistry 对齐）；有则游戏区即主 CTA，底部不再放第二颗参与按钮 */
 function hasInteractiveGame(draw: { experienceType?: string; participationMode?: string }): boolean {
   const exp = draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open')
@@ -1156,29 +1070,6 @@ function formatTime(iso: string): string {
     return d.toLocaleString()
   }
 }
-
-/**
- * 从活动 promotionConfig 中提取指定状态的 CTA 配置。
- *
- * 安全：只返回 http/https 协议的外部链接。
- * 纵深防御：后端发布校验（publish-check）已拦截危险协议，这里再兜底一次，
- * 防止历史数据或配置被绕过时 `<a href>` 渲染 javascript: 等危险协议。
- */
-function getResultCta(draw: LotteryDraw | null, key: 'after_win' | 'after_loss'): { url: string; title: string } | null {
-  if (!draw) return null
-  const pc = (draw as any)?.promotionConfig
-  const cta = pc?.ctas?.[key]
-  if (!cta?.url) return null
-  // 协议白名单：仅 http/https，防止 javascript:/data: 等危险协议
-  try {
-    const parsed = new URL(cta.url)
-    if (!['http:', 'https:'].includes(parsed.protocol)) return null
-  } catch {
-    return null // 非法 URL 不渲染，避免坏链接和注入
-  }
-  return { url: cta.url, title: cta.title || '' }
-}
-
 
 function clearSession() {
   myEntryList.value = []
@@ -2452,13 +2343,3 @@ onUnmounted(() => {
 .lottery-badge.open { background: rgba(34,197,94,0.15); color: #22c55e; }
 .lottery-badge.drawn { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.4); }
 </style>
-
-
-
-
-
-
-
-
-
-
