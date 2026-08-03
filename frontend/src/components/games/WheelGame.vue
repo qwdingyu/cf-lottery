@@ -134,9 +134,9 @@ async function handleSpin() {
   if (spinning.value || props.disabled) return
   spinning.value = true
   emit('play')
-  // 随机选择一个目标
-  const targetIndex = Math.floor(Math.random() * props.prizes.length)
-  await spinAnimation(targetIndex)
+  // 随机旋转目标（不关联奖品列表），避免用户误以为停下的位置代表中奖结果
+  const randomTarget = Math.floor(Math.random() * 360 / sliceAngle.value)
+  await spinAnimation(randomTarget)
   spinning.value = false
 }
 

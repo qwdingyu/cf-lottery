@@ -741,13 +741,6 @@ function closeLogin() {
 }
 
 /** 仅登录（无需验证码）：存入邮箱后关闭弹窗，加载参与记录 */
-function handleQuickLogin() {
-  if (!loginEmail.value.includes('@')) return
-  sessionEmail.value = loginEmail.value.trim()
-  closeLogin()
-  loadMyRecords()
-}
-
 function handleLogout() {
   clearSession()
   showToast(t('lottery.loggedOut'))
