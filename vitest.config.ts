@@ -9,9 +9,15 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    testTimeout: 15_000,
+    testTimeout: 30_000,
     fileParallelism: false,
     include: ["src/**/*.test.ts", "shared/**/*.test.ts"],
+    // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
+    server: {
+      deps: {
+        inline: ["better-auth", "@better-auth/oauth-provider"],
+      },
+    },
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],

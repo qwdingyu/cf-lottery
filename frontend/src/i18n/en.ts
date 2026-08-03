@@ -4,6 +4,16 @@
  * This is a manually maintained translation file. Keep it in sync with zh-CN.ts.
  */
 export default {
+  authCallback: {
+    title: 'Finishing sign-in…',
+    working: 'Exchanging credentials with the identity service',
+    ok: 'Signed in',
+    failed: 'Sign-in failed',
+    back: 'Back to home',
+    missingCode: 'Missing authorization code or local verifier; please try again',
+    stateMismatch: 'Login state mismatch; please try again',
+    network: 'Network error; please retry',
+  },
   app: {
     title: "Lottery Platform",
     footer: "Powered by cf-lottery",
@@ -99,6 +109,7 @@ export default {
 
   // ── Login / Register ────────────────────────
   adminLogin: {
+    cfAuthLogin: 'Sign in with unified auth',
     title: "Admin",
     subtitle: "Log in to manage lottery activities",
     username: "Username",

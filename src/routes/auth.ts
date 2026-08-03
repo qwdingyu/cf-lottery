@@ -20,6 +20,11 @@ import { signJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 import { checkDbRateLimit } from "../lib/rate-limit";
 import { verifyLogtoIdToken, exchangeLogtoToken } from "../lib/logto-auth";
+import {
+  resolveCfAuthConfig,
+  publicCfAuthMeta,
+  completeCfAuthCodeExchange,
+} from "../lib/cf-auth-oauth";
 
 export const authRoute = new Hono<AppEnv>();
 
@@ -430,6 +435,88 @@ authRoute.post("/logto-exchange", async (c) => {
     return c.json({ ok: false, message: "Logto 认证失败" }, 401);
   }
 });
+
+/**
+ * cf-auth OAuth 元数据（无 secret）。
+ * 前端据此决定是否展示「用 cf-auth 登录」并构造 authorize URL / PKCE。
+ */
+authRoute.get("/cf-auth/meta", async (c) => {
+  const config = resolveCfAuthConfig({
+    CF_AUTH_ENABLED: getEnv(c, "CF_AUTH_ENABLED"),
+    CF_AUTH_ISSUER: getEnv(c, "CF_AUTH_ISSUER"),
+    CF_AUTH_CLIENT_ID: getEnv(c, "CF_AUTH_CLIENT_ID"),
+    CF_AUTH_CLIENT_SECRET: getEnv(c, "CF_AUTH_CLIENT_SECRET"),
+    CF_AUTH_REDIRECT_URI: getEnv(c, "CF_AUTH_REDIRECT_URI"),
+    CF_AUTH_SCOPES: getEnv(c, "CF_AUTH_SCOPES"),
+  });
+  return c.json({ ok: true, ...publicCfAuthMeta(config) });
+});
+
+/**
+ * cf-auth 授权码交换 → 业务自签 JWT（docs/059）。
+ *
+ * 浏览器只拿 code + code_verifier；client_secret 留在服务端。
+ * 成功后 JWT 与 requireAuth / Logto 交换格式兼容。
+ */
+authRoute.post("/cf-auth/exchange", async (c) => {
+  try {
+    const ip = getClientIp(c);
+    const db = getDb(c);
+    if (!(await checkDbRateLimit(db, `cf-auth-exchange:${ip}`, 30, 60000))) {
+      return c.json({ ok: false, message: "请求过于频繁" }, 429);
+    }
+
+    const config = resolveCfAuthConfig({
+      CF_AUTH_ENABLED: getEnv(c, "CF_AUTH_ENABLED"),
+      CF_AUTH_ISSUER: getEnv(c, "CF_AUTH_ISSUER"),
+      CF_AUTH_CLIENT_ID: getEnv(c, "CF_AUTH_CLIENT_ID"),
+      CF_AUTH_CLIENT_SECRET: getEnv(c, "CF_AUTH_CLIENT_SECRET"),
+      CF_AUTH_REDIRECT_URI: getEnv(c, "CF_AUTH_REDIRECT_URI"),
+      CF_AUTH_SCOPES: getEnv(c, "CF_AUTH_SCOPES"),
+    });
+    if (!config.enabled) {
+      return c.json({ ok: false, message: "cf-auth 未启用或配置不完整" }, 503);
+    }
+
+    const body = await c.req.json<{
+      code?: string;
+      codeVerifier?: string;
+      redirectUri?: string;
+    }>();
+    if (!body?.code || !body?.codeVerifier) {
+      return c.json({ ok: false, message: "缺少 code 或 codeVerifier" }, 400);
+    }
+
+    const jwtSecret = getEnv(c, "JWT_SECRET");
+    if (!jwtSecret) {
+      return c.json({ ok: false, message: "JWT_SECRET 未配置" }, 500);
+    }
+
+    const result = await completeCfAuthCodeExchange(
+      config,
+      {
+        code: body.code,
+        codeVerifier: body.codeVerifier,
+        redirectUri: body.redirectUri,
+      },
+      jwtSecret,
+    );
+    if (!result.ok) {
+      const status = (result.status >= 400 && result.status < 600 ? result.status : 502) as 400 | 401 | 403 | 429 | 500 | 502 | 503;
+      return c.json({ ok: false, message: result.message, detail: result.detail }, status);
+    }
+    return c.json({
+      ok: true,
+      token: result.token,
+      email: result.email,
+      sub: result.sub,
+    });
+  } catch (err) {
+    console.error("[cf-auth/exchange]", err instanceof Error ? err.message : err);
+    return c.json({ ok: false, message: "cf-auth 认证失败" }, 401);
+  }
+});
+
 
 /** 密码 hash：带服务端 pepper 的 HMAC-SHA256，避免免费 Worker 内做高 CPU KDF。 */
 async function hashPassword(password: string, pepper: string): Promise<string> {

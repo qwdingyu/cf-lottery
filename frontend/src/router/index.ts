@@ -63,6 +63,12 @@ const router = createRouter({
       meta: { requiresGuest: true },
     },
     {
+      // cf-auth OAuth 回调（docs/059）；须与 CF_AUTH_REDIRECT_URI 路径一致
+      path: '/auth/callback',
+      name: 'AuthCallback',
+      component: () => import('@/views/AuthCallbackView.vue'),
+    },
+    {
       path: '/admin/register',
       name: 'AdminRegister',
       component: AdminRegisterView,

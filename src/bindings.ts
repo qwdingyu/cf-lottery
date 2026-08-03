@@ -31,6 +31,13 @@ export type Bindings = {
   // Logto 身份认证配置（docs/051 方案）
   LOGTO_ENDPOINT?: string;
   LOGTO_APP_ID?: string;
+  // cf-auth OAuth RP（docs/059；授权码+PKCE，不共享 cookie）
+  CF_AUTH_ENABLED?: string;
+  CF_AUTH_ISSUER?: string;
+  CF_AUTH_CLIENT_ID?: string;
+  CF_AUTH_CLIENT_SECRET?: string;
+  CF_AUTH_REDIRECT_URI?: string;
+  CF_AUTH_SCOPES?: string;
 };
 
 export type AppEnv = {

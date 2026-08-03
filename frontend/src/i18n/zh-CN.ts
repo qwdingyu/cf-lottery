@@ -4,6 +4,16 @@
  * 所有硬编码中文集中在此，组件中通过 $t('key') 引用。
  */
 export default {
+  authCallback: {
+    title: '正在完成登录…',
+    working: '正在与认证服务交换凭证',
+    ok: '登录成功',
+    failed: '登录失败',
+    back: '返回首页',
+    missingCode: '缺少授权码或本地校验参数，请重新登录',
+    stateMismatch: '登录状态校验失败，请重新登录',
+    network: '网络错误，请重试',
+  },
   // ── 应用级别 ─────────────────────────────────────────
   app: {
     title: "抽奖活动平台",
@@ -101,6 +111,7 @@ export default {
 
   // ── 登录/注册（AdminLoginView） ────────────────
   adminLogin: {
+    cfAuthLogin: '使用统一认证登录',
     title: "管理后台",
     subtitle: "请登录以管理抽奖活动",
     username: "用户名",

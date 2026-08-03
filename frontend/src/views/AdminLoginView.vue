@@ -43,6 +43,16 @@
         </button>
       </div>
 
+      <div v-if="cfAuthEnabled" class="logto-section">
+        <div class="logto-divider"><span class="divider-text">{{ $t('adminLogin.or') }}</span></div>
+        <button
+          type="button"
+          class="btn btn-ghost login-btn"
+          :disabled="cfAuthLoading"
+          @click="handleCfAuthLogin"
+        >{{ $t('adminLogin.cfAuthLogin') }}</button>
+      </div>
+
       <div class="login-footer">
         <span>{{ $t('adminLogin.noAccount') }}</span>
         <button class="btn btn-ghost btn-sm" type="button" @click="showRegister = !showRegister">
@@ -115,12 +125,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 import { useLogto } from '@logto/vue'
+import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
 
 const route = useRoute()
 const router = useRouter()
@@ -132,6 +143,19 @@ const { showToast } = useToast()
 const logtoEnabled = !!(import.meta.env.VITE_LOGTO_ENDPOINT && import.meta.env.VITE_LOGTO_APP_ID)
 const logto = logtoEnabled ? useLogto() : null
 const logtoLoading = ref(false)
+
+const cfAuth = useCfAuthLogin()
+const cfAuthEnabled = cfAuth.enabled
+const cfAuthLoading = cfAuth.loading
+onMounted(() => { void cfAuth.refresh() })
+
+async function handleCfAuthLogin() {
+  try {
+    await cfAuth.login('/admin')
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : 'cf-auth 登录失败', 'error')
+  }
+}
 
 async function handleLogtoLogin() {
   if (!logto) return
