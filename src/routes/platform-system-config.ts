@@ -97,3 +97,33 @@ platformSystemConfigRoute.delete("/:key", async (c) => {
     return fail(c, message, 500);
   }
 });
+
+/**
+ * 发送测试邮件（验证 Resend 配置）
+ */
+platformSystemConfigRoute.post("/email-test", async (c) => {
+  const body = await c.req.json<{ to: string }>();
+  const to = String(body.to || "").trim();
+  if (!to || !to.includes("@")) return fail(c, "请输入有效的邮箱地址", 400);
+
+  const apiKey = c.env.RESEND_API_KEY;
+  if (!apiKey) return fail(c, "RESEND_API_KEY 未配置", 500);
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${c.env.EMAIL_FROM_NAME || "抽奖平台"} <${c.env.EMAIL_FROM || "noreply@resend.dev"}>`,
+        to,
+        subject: "cf-lottery 邮件配置测试",
+        html: "<p>✅ 邮件配置成功！</p>",
+      }),
+    });
+    const data = await res.json() as any;
+    if (!res.ok) return fail(c, (data as any)?.message || "发送失败", 500);
+    return ok(c, { sent: true, resendId: data.id });
+  } catch (err) {
+    return fail(c, "发送异常: " + ((err as Error).message || "未知"), 500);
+  }
+});

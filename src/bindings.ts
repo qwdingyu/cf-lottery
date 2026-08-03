@@ -21,6 +21,7 @@ export type Bindings = {
   RESEND_API_KEY?: string;
   // Resend 已验证的发件域名
   EMAIL_FROM?: string;
+  EMAIL_FROM_NAME?: string;
   // 生成公开活动链接时使用的正式站点域名
   APP_ORIGIN?: string;
   // Cron 调用的认证密钥，防止未授权触发定时开奖
