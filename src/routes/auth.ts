@@ -126,13 +126,12 @@ authRoute.post("/register", async (c) => {
       return c.json({ ok: false, message: "请输入有效的邮箱地址" }, 400);
     }
 
-    // 检查用户名是否已存在
-    const [existingUser] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
-    if (existingUser) {
-      return c.json({ ok: false, message: "用户名已存在" }, 409);
-    }
-    // 检查邮箱是否已被注册
-    const [existingEmail] = await db.select({ id: users.id }).from(users).where(and(eq(users.email, email), eq(users.emailVerified, 1))).limit(1);
+    // ★ 并行查询：用户名 + 邮箱 独立查询一次并发完成
+    const [[existingUser], [existingEmail]] = await Promise.all([
+      db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1),
+      db.select({ id: users.id }).from(users).where(and(eq(users.email, email), eq(users.emailVerified, 1))).limit(1),
+    ]);
+    if (existingUser) { return c.json({ ok: false, message: "用户名已存在" }, 409); }
     if (existingEmail) {
       return c.json({ ok: false, message: "该邮箱已被注册" }, 409);
     }
