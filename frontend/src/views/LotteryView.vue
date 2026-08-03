@@ -17,9 +17,16 @@
       </div>
     </header>
 <!-- 加载 / 空态 -->
-    <div v-if="loading" class="lottery-center">{{ $t('lottery.loadingText') }}</div>
+    <div v-if="loading" class="lottery-skeleton">
+      <div v-for="i in 3" :key="i" class="skeleton-card">
+        <div class="skeleton-row skeleton-title" />
+        <div class="skeleton-row skeleton-text" />
+        <div class="skeleton-row skeleton-btn" />
+      </div>
+    </div>
     <div v-else-if="draws.length === 0" class="lottery-center">
-      <p style="color:var(--tg-hint)">{{ $t('lottery.noActivity') }}</p>
+      <div class="empty-icon">🎪</div>
+      <p>{{ $t('lottery.noActivity') }}</p>
     </div>
 
     <!-- 活动卡片 -->
@@ -1047,7 +1054,7 @@ onUnmounted(() => {
 .lottery-expand-btn { font-size:12px; color:rgba(255,255,255,0.4); background:none; border:none; cursor:pointer; white-space:nowrap; }
 
 /* ── 展开区 ── */
-.lottery-card-body { border-top:1px solid rgba(255,255,255,0.06); }
+.lottery-card-body { border-top:1px solid rgba(255,255,255,0.06); max-height:0; overflow:hidden; transition:max-height 0.35s ease,opacity 0.35s ease; opacity:0; }
 .lottery-game-area { padding:24px 20px; display:flex; justify-content:center; }
 .lottery-join-bar { display:flex; align-items:center; justify-content:center; gap:12px; padding:16px 20px; border-top:1px solid rgba(255,255,255,0.06); }
 .lottery-join-btn { font-size:15px; font-weight:600; padding:10px 32px; border-radius:8px; background:var(--admin-accent,#f59e0b); color:#000; border:none; cursor:pointer; }
@@ -1061,6 +1068,38 @@ onUnmounted(() => {
 .lottery-records-list { display:flex; flex-wrap:wrap; gap:6px; }
 .lottery-record { display:flex; align-items:center; gap:8px; padding:6px 12px; background:#1a1a2e; border-radius:8px; font-size:13px; }
 .lottery-record-name { color:rgba(255,255,255,0.7); }
+
+/* ── 骨架屏（加载态） ── */
+.lottery-skeleton { max-width:720px; margin:0 auto; padding:20px; }
+.skeleton-card { background:#1a1a2e; border-radius:12px; padding:20px; margin-bottom:16px; border:1px solid rgba(255,255,255,0.06); }
+.skeleton-row { height:14px; border-radius:6px; background:linear-gradient(90deg,rgba(255,255,255,0.06) 25%,rgba(255,255,255,0.12) 50%,rgba(255,255,255,0.06) 75%); background-size:200% 100%; animation:skeleton-pulse 1.5s ease infinite; margin-bottom:10px; }
+.skeleton-title { width:60%; height:18px; }
+.skeleton-text { width:80%; }
+.skeleton-btn { width:40%; height:36px; border-radius:8px; }
+@keyframes skeleton-pulse { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+/* ── 展开态 ── */
+.expanded .lottery-card-body { max-height:800px; opacity:1; }
+
+/* ── 空状态 ── */
+.empty-icon { font-size:48px; margin-bottom:12px; }
+
+/* ── 弹窗淡入淡出 ── */
+.modal-overlay { transition:opacity 0.2s ease; }
+
+/* ── 移动端适配 ── */
+@media (max-width: 640px) {
+  .lottery-view { padding:8px; }
+  .lottery-header { flex-direction:column; align-items:flex-start; gap:8px; }
+  .lottery-header-left { flex-direction:column; align-items:flex-start; }
+  .lottery-card-head { flex-direction:column; align-items:flex-start; gap:8px; }
+  .lottery-join-btn { width:100%; }
+  .lottery-main { padding:12px; }
+  .lottery-game-area { padding:16px; }
+  .lottery-join-bar { flex-direction:column; gap:8px; }
+  .lottery-record { font-size:12px; }
+  .lottery-skeleton { padding:12px; }
+}
 
 /* ── 保留旧样式（兼容） ── */
 /* 暗色主题：全部使用 base.css 的 CSS 变量，不写死颜色值 */
