@@ -454,11 +454,7 @@
               <label class="field-span-2">
                 <span>{{ $t('lottery.adminParticipationMode') }}</span>
                 <select v-model="form.participationMode" @change="handleParticipationModeChange">
-                  <option value="open">{{ $t('lottery.adminModeOpen') }}</option>
-                  <option value="registered">{{ $t('lottery.adminModeRegistered') }}</option>
-                  <option value="roster">{{ $t('lottery.adminModeRoster') }}</option>
-                  <option value="password">{{ $t('lottery.adminModePassword') }}</option>
-                  <option value="invite_code">{{ $t('lottery.adminModeInviteCode') }}</option>
+                  <option v-for="opt in participationModeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                 </select>
               </label>
               <label class="field-span-2">
@@ -1254,6 +1250,7 @@ const showTemplateModal = ref(false)
 const templates = ref<any[]>([])
 // 启用的活动类型列表（从系统配置 enabled_activity_kinds 获取，由 L3 平台运营者配置）
 const enabledKinds = ref<string[]>([])
+const enabledParticipationModes = ref<string[]>([])
 
 // 活动类型显示名称映射（与系统配置 enabled_activity_kinds 联动）
 const activityKindLabels: Record<string, string> = {
@@ -1272,6 +1269,19 @@ const activityKindLabels: Record<string, string> = {
 const activityKindOptions = computed(() => {
   const kinds = enabledKinds.value.length > 0 ? enabledKinds.value : Object.keys(activityKindLabels)
   return kinds.filter(k => activityKindLabels[k]).map(k => ({ value: k, label: activityKindLabels[k] }))
+})
+
+// 参与模式显示名称映射（与系统配置 enabled_participation_modes 联动）
+const participationModeLabels: Record<string, string> = {
+  open: t('lottery.adminModeOpen'),
+  registered: t('lottery.adminModeRegistered'),
+  roster: t('lottery.adminModeRoster'),
+  password: t('lottery.adminModePassword'),
+  invite_code: t('lottery.adminModeInviteCode'),
+}
+const participationModeOptions = computed(() => {
+  const modes = enabledParticipationModes.value.length > 0 ? enabledParticipationModes.value : Object.keys(participationModeLabels)
+  return modes.filter(m => participationModeLabels[m]).map(m => ({ value: m, label: participationModeLabels[m] }))
 })
 const showWinnersModal = ref(false)
 const showAnalyticsModal = ref(false)
@@ -2194,10 +2204,12 @@ async function fetchTemplates() {
     const data = await adminRequest<any>('/api/admin/templates')
     templates.value = data.templates || []
     enabledKinds.value = data.enabledKinds || []
+    enabledParticipationModes.value = data.enabledParticipationModes || []
   } catch {
     // 加载失败时允许用户直接创建空白活动
     templates.value = []
     enabledKinds.value = []
+    enabledParticipationModes.value = []
   }
 }
 

@@ -276,6 +276,18 @@
     "difficulty": "basic"
   },
   {
+    "key": "enabled_participation_modes",
+    "label": "启用的参与模式",
+    "description": "可选择的参与模式列表，逗号分隔。不在列表中的模式不会出现在创建界面。",
+    "effect": "创建活动时校验，不在列表中的模式拒绝创建。已有活动不受影响。",
+    "scope": "admin",
+    "type": "string",
+    "defaultValue": "open,registered,roster,password,invite_code",
+    "group": "平台运营",
+    "order": 21,
+    "difficulty": "basic"
+  },
+  {
     "key": "enable_registration",
     "label": "开放注册",
     "description": "是否允许新用户自助注册。关闭后仅平台运营者可通过后台创建租户。",

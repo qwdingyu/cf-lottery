@@ -438,10 +438,11 @@ adminLotteryRoute.get("/draws/:id", async (c) => {
  */
 adminLotteryRoute.get("/templates", async (c) => {
   const db = getDb(c);
-  const config = await readSystemConfigMap(db, ["enabled_activity_kinds"]);
+  const config = await readSystemConfigMap(db, ["enabled_activity_kinds", "enabled_participation_modes"]);
   const enabledKinds = (config["enabled_activity_kinds"] || "lottery,signup_chain,claim,survey").split(",").map(s => s.trim());
+  const enabledParticipationModes = (config["enabled_participation_modes"] || "open,registered,roster,password,invite_code").split(",").map(s => s.trim());
   const filtered = ACTIVITY_TEMPLATES.filter(t => enabledKinds.includes(t.defaults.activityKind));
-  return ok(c, { templates: filtered, enabledKinds });
+  return ok(c, { templates: filtered, enabledKinds, enabledParticipationModes });
 });
 
 /** 复制活动（复制配置，不包括参与数据）
@@ -534,6 +535,7 @@ adminLotteryRoute.post("/draws", async (c) => {
     // 校验活动类型是否在平台启用列表中，同时读取运营侧配置的默认参数
     const config = await readSystemConfigMap(db, [
       "enabled_activity_kinds",
+      "enabled_participation_modes",
       "draw_default_winner_count",
       "draw_max_participants",
       "draw_max_duration_days",
@@ -543,6 +545,11 @@ adminLotteryRoute.post("/draws", async (c) => {
       return fail(c, `活动类型 "${activityKind}" 当前未启用，请联系平台运营`, 400);
     }
     const participationMode = coerceEnum(body.participationMode, PARTICIPATION_MODES, "open");
+    // 校验参与模式是否在平台启用列表中（L3 平台运营者配置）
+    const enabledModes = (config["enabled_participation_modes"] || "open,registered,roster,password,invite_code").split(",").map(s => s.trim());
+    if (!enabledModes.includes(participationMode)) {
+      return fail(c, `参与模式 "${participationMode}" 当前未启用，请联系平台运营`, 400);
+    }
     const drawTrigger = coerceEnum(body.drawTrigger, DRAW_TRIGGERS, "manual");
 
     // 运营者可通过系统配置控制活动创建的默认参数（闭环：L3 配置 → L2 生效）
