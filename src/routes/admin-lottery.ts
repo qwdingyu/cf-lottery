@@ -397,8 +397,11 @@ adminLotteryRoute.get("/draws", async (c) => {
     .from(lotteryDraws)
     .where(and(...conditions));
 
-  return ok(c, { draws: rows, total: Number(totalRow?.total ?? 0) });
-});
+  // 并行查询每行的参与人数
+  const countEntries = await Promise.all(rows.map(async (d) => getDrawEntriesCount(db, d.id, tenantId)));
+  const draws = rows.map((d, i) => ({ ...d, entryCount: countEntries[i] }));
+
+  return ok(c, { draws, total: Number(totalRow?.total ?? 0) });
 
 /** 活动详情 */
 adminLotteryRoute.get("/draws/:id", async (c) => {
