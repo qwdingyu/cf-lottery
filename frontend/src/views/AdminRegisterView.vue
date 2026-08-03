@@ -43,9 +43,11 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useAdminAuth } from '@/composables/useAdminAuth'
 
 const router = useRouter()
 const { t } = useI18n()
+const { setPlatformRole } = useAdminAuth()
 const username = ref('')
 const email = ref('')
 const password = ref('')
@@ -85,6 +87,11 @@ async function handleVerify() {
     const data = await res.json() as any
     if (data.ok) {
       localStorage.setItem('admin_token', data.token)
+      // 注册成功后获取平台角色缓存
+      fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${data.token}` } })
+        .then(r => r.json())
+        .then(d => { if (d.ok) setPlatformRole(d.platformRole ?? null, data.token) })
+        .catch(() => {})
       // ★ 045 方案 C：新注册用户无租户（needsTenant=true），引导 onboarding 创建租户
       if (data.needsTenant) {
         router.replace({ name: 'Onboarding' })

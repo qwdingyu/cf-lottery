@@ -313,7 +313,7 @@
  * - 订单链接使用 history 模式 /order?token=（禁止 hash 路由伪链接）
  * - 个人状态用普通对象（非 Map.set 原地修改）保证 Vue 响应式
  */
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -587,6 +587,7 @@ const codeCooldown = ref(0)
 const loginError = ref('')
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setInterval> | null = null
 const trackedPageViews = new Set<string>()
 
 function ensureSubmissionDraft(draw: LotteryDraw) {
@@ -728,11 +729,14 @@ function trackPageView(draw: LotteryDraw) {
   })
 }
 
+const loginModalRef = ref<HTMLElement | null>(null)
+
 function openLogin(drawId?: string) {
   pendingJoinDrawId.value = drawId || null
   if (drawId) void recordActivityEvent(drawId, 'participation_started')
   loginError.value = ''
   showLoginModal.value = true
+  nextTick(() => loginModalRef.value?.focus())
 }
 
 function closeLogin() {
@@ -1016,6 +1020,10 @@ onMounted(async () => {
   countdownTimer = setInterval(() => {
     nowMs.value = Date.now()
   }, 1000)
+  // 每 30 秒轮询活动状态，自动反映开奖/状态变更（P1-4）
+  pollTimer = setInterval(() => {
+    fetchDraws()
+  }, 30000)
   await fetchDraws()
 })
 
@@ -1027,6 +1035,10 @@ onUnmounted(() => {
   if (countdownTimer) {
     clearInterval(countdownTimer)
     countdownTimer = null
+  }
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
   }
 })
 </script>
