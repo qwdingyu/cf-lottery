@@ -483,6 +483,7 @@ export default {
     minError: "Cannot be less than {min}",
     maxError: "Cannot be more than {max}",
     unlimited: "Unlimited",
+    enumEmptyHint: "Keep at least one option; clearing all blocks creating those activities",
   },
 
   // ── Lottery ───────────────────────────────────────

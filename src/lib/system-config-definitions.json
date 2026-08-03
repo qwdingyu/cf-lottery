@@ -266,8 +266,8 @@
   {
     "key": "enabled_activity_kinds",
     "label": "启用的活动类型",
-    "description": "选择可在平台创建的活动类型。",
-    "effect": "创建活动时校验，未勾选的类型拒接创建。已有活动不受影响。",
+    "description": "选择可在平台创建的活动类型（至少一项）。",
+    "effect": "创建活动时校验，未勾选的类型拒绝创建。已有活动不受影响。",
     "scope": "admin",
     "type": "string",
     "defaultValue": "lottery,signup_chain,claim,survey,vote,checkin,approval,reservation",
@@ -280,7 +280,7 @@
   {
     "key": "enabled_participation_modes",
     "label": "启用的参与模式",
-    "description": "选择可在创建活动时使用的参与模式。",
+    "description": "选择可在创建活动时使用的参与模式（至少一项）。",
     "effect": "创建活动时校验，未勾选的模式拒绝创建。已有活动不受影响。",
     "scope": "admin",
     "type": "string",

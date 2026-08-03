@@ -9,22 +9,24 @@
         :disabled="status === 'saving'"
         @change="emitChange(($event.target as HTMLInputElement).checked ? 'true' : 'false')"
       />
-      <!-- 多选枚举（如 enabled_activity_kinds）：复选框替代逗号分隔文本 -->
-      <div v-else-if="item.enum" class="config-enum-grid">
-        <label
-          v-for="opt in item.enum"
-          :key="opt"
-          class="config-enum-item"
-          :class="{ checked: enumValues.includes(opt) }"
-        >
-          <input
-            type="checkbox"
-            :checked="enumValues.includes(opt)"
-            :disabled="status === 'saving'"
-            @change="toggleEnum(opt)"
-          />
-          <span>{{ enumLabel(opt) }}</span>
-        </label>
+      <!-- 多选枚举（enabled_activity_kinds / enabled_participation_modes）：复选框替代逗号文本 -->
+      <div v-else-if="item.enum?.length" class="config-enum-wrap">
+        <div class="config-enum-grid" role="group" :aria-label="localizedLabel">
+          <label
+            v-for="opt in item.enum"
+            :key="opt"
+            class="config-enum-item"
+            :class="{ checked: enumValues.includes(opt) }"
+          >
+            <input
+              type="checkbox"
+              :checked="enumValues.includes(opt)"
+              :disabled="status === 'saving'"
+              @change="toggleEnum(opt)"
+            />
+            <span>{{ enumLabel(opt) }}</span>
+          </label>
+        </div>
       </div>
       <!-- 金额类 integer（unit=cents）：界面按「元」编辑，提交仍为分整数字符串 -->
       <input
@@ -102,23 +104,38 @@ const { t, te } = useI18n()
 
 const localError = ref('')
 
-/** 多选枚举：将逗号分隔值解析为数组 */
+/** 多选枚举：逗号分隔 → 集合；展示勾选态 */
 const enumValues = computed(() => {
-  if (!props.item.enum) return []
-  return (props.value || '').split(',').map(s => s.trim()).filter(Boolean)
+  if (!props.item.enum) return [] as string[]
+  return (props.value || '')
+    .split(/[,;\s\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
 })
 
+/**
+ * 切换选项：按 definition.enum 顺序拼回逗号串，与后端 normalize 一致。
+ * 禁止取消最后一项（与服务端「至少一项」对齐），避免一键空选触发失败保存。
+ */
 function toggleEnum(opt: string) {
-  const current = [...enumValues.value]
-  const idx = current.indexOf(opt)
-  if (idx >= 0) current.splice(idx, 1)
-  else current.push(opt)
-  emit('change', props.item.key, current.join(','))
+  if (!props.item.enum?.length) return
+  const selected = new Set(enumValues.value)
+  if (selected.has(opt)) {
+    if (selected.size <= 1) {
+      localError.value = t('adminConfigField.enumEmptyHint')
+      return
+    }
+    selected.delete(opt)
+  } else {
+    selected.add(opt)
+  }
+  localError.value = ''
+  const ordered = props.item.enum.filter((item) => selected.has(item))
+  emitChange(ordered.join(','))
 }
 
 function enumLabel(opt: string): string {
-  const labels = (props.item as any).enumLabels as Record<string, string> | undefined
-  return labels?.[opt] || opt
+  return props.item.enumLabels?.[opt] || opt
 }
 
 /**
@@ -317,7 +334,13 @@ const statusText = computed(() => {
   color: #fca5a5;
 }
 
-/* ── 多选枚举网格 ── */
+/* ── 多选枚举网格（平台运营配置：活动类型 / 参与模式） ── */
+.config-enum-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
 .config-enum-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -335,10 +358,12 @@ const statusText = computed(() => {
   cursor: pointer;
   font-size: 13px;
   transition: all 0.2s;
+  user-select: none;
 }
 .config-enum-item.checked {
   background: rgba(245,158,11,0.12);
   border-color: rgba(245,158,11,0.3);
 }
 .config-enum-item:hover { border-color: rgba(255,255,255,0.2); }
+.config-enum-item input { flex-shrink: 0; }
 </style>

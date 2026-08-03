@@ -442,6 +442,7 @@ export default {
     minError: "不能小于 {min}",
     maxError: "不能大于 {max}",
     unlimited: "不限",
+    enumEmptyHint: "至少保留一项；全关会导致无法创建对应活动",
   },
 
   // ── 抽奖活动（LotteryView） ─────────────────────────

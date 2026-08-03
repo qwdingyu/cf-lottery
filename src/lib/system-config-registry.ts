@@ -29,6 +29,14 @@ export type SystemConfigDefinition = {
   order?: number;
   /** difficulty 控制 UI 展示层级：basic=基础参数（默认展示），advanced=高级参数（折叠隐藏） */
   difficulty?: "basic" | "advanced";
+  /**
+   * 多选枚举（type=string）：合法 token 白名单。
+   * 存储仍为逗号分隔字符串；Admin ConfigField 渲染为复选框网格。
+   * 有 enum 时 normalize 会去重、拒非法值、拒空选（至少一项）。
+   */
+  enum?: string[];
+  /** 枚举选项展示标签（中文等）；仅 UI，不影响存储值 */
+  enumLabels?: Record<string, string>;
 };
 
 export const SYSTEM_CONFIG_DEFINITIONS = definitions as readonly SystemConfigDefinition[];
@@ -116,6 +124,28 @@ export function normalizeSystemConfigValue(key: string, value: string): { ok: tr
   if (definition.format === "email" && trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
     return { ok: false, message: `${definition.label} 必须是有效邮箱地址` };
   }
+  // 多选枚举：逗号分隔 → 白名单校验 → 按 definition.enum 顺序稳定落库（与 ConfigField 勾选顺序无关）
+  if (definition.enum && definition.enum.length > 0) {
+    const allowed = new Set(definition.enum);
+    const rawParts = trimmed
+      .split(/[,;\s\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const unique = [...new Set(rawParts)];
+    const invalid = unique.filter((part) => !allowed.has(part));
+    if (invalid.length > 0) {
+      return {
+        ok: false,
+        message: `${definition.label} 含有不支持的选项：${invalid.join(", ")}`,
+      };
+    }
+    // 按定义顺序输出，保证「全选/半选」比较与 diff 稳定
+    const ordered = definition.enum.filter((opt) => unique.includes(opt));
+    if (ordered.length === 0) {
+      return { ok: false, message: `${definition.label} 至少选择一项` };
+    }
+    return { ok: true, value: ordered.join(",") };
+  }
   // 邮箱域名白名单：保存时规范化 + 合法性校验（与运行时 parse 共用规则）。
   if (key === "email_domain_whitelist") {
     // 简化的域名白名单处理：按逗号/空格/换行分割，去空去重
@@ -156,7 +186,3 @@ export async function readSystemConfigMap(db: DbType, keys = SYSTEM_CONFIG_KEYS)
 export function adminSystemConfigDefinitions(): SystemConfigDefinition[] {
   return [...SYSTEM_CONFIG_DEFINITIONS];
 }
-
-;
-
-;
