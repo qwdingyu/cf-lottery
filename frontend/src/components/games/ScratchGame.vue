@@ -4,7 +4,7 @@
       <!-- 底层：奖品内容 -->
       <div class="scratch-prize">
         <span class="prize-icon">🎁</span>
-        <span class="prize-text">$t('lottery.joined') ✓</span>
+        <span class="prize-text">{{ $t('lottery.joined') }} ✓</span>
       </div>
       <!-- 上层：涂层（Canvas 刮开） -->
       <canvas

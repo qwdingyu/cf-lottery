@@ -1,50 +1,55 @@
 <template>
   <Teleport to="body">
-    <div v-if="show" class="game-result-overlay" @click.self="emit('close')">
-      <div class="game-result-modal">
+    <div
+      v-if="show"
+      class="game-result-overlay"
+      @click.self="emit('close')"
+      @keydown.escape="emit('close')"
+    >
+      <div class="game-result-modal" ref="modalRef" tabindex="-1">
         <button class="result-close" @click="emit('close')">✕</button>
 
         <div class="result-icon">✅</div>
-        <h2 class="result-title">$t('lottery.joinSuccess')</h2>
-        <p class="result-hint">$t('lottery.pageHint')</p>
+        <h2 class="result-title">{{ $t('lottery.joinSuccess') }}</h2>
+        <p class="result-hint">{{ $t('lottery.pageHint') }}</p>
 
-        <!-- 裂变引导卡片：仅在 viralConfig.enabled 且已加载分享链接时展示 -->
+        <!-- 分享错误提示 -->
+        <p v-if="shareError" class="result-error">{{ shareError }}</p>
+
+        <!-- 裂变引导卡片 -->
         <div v-if="viralEnabled && shareLoaded" class="viral-card">
-          <div class="viral-headline">🎁 邀请好友参与，额外获得抽奖机会！</div>
+          <div class="viral-headline">{{ $t('lottery.viralHeadline') }}</div>
 
           <div class="viral-stats">
             <div class="viral-stat">
               <span class="viral-stat-value">{{ shareData?.joinedCount ?? 0 }}</span>
-              <span class="viral-stat-label">$t('lottery.viralInvitedLabel')</span>
+              <span class="viral-stat-label">{{ $t('lottery.viralInvitedLabel') }}</span>
             </div>
             <div class="viral-stat">
               <span class="viral-stat-value">{{ maxExtraEntries }}</span>
-              <span class="viral-stat-label">$t('lottery.viralMaxLabel')</span>
+              <span class="viral-stat-label">{{ $t('lottery.viralMaxLabel') }}</span>
             </div>
           </div>
 
           <div class="viral-progress">
-            <div
-              class="viral-progress-fill"
-              :style="{ width: extraProgressPercent + '%' }"
-            />
+            <div class="viral-progress-fill" :style="{ width: extraProgressPercent + '%' }" />
           </div>
 
           <div class="viral-link-row">
             <code class="viral-link-text">{{ shareUrl }}</code>
             <button class="btn btn-sm btn-primary" @click="copyAttributedLink">
-              📋 复制专属链接
+              {{ $t('lottery.copyShareLink') }}
             </button>
           </div>
         </div>
 
-        <!-- 无裂变配置时：保持简洁，但使用归因链接 -->
+        <!-- 无裂变配置时 -->
         <div v-else-if="shareLoaded" class="viral-link-row">
-          <button class="btn btn-ghost" @click="copyAttributedLink">📤 分享活动</button>
+          <button class="btn btn-ghost" @click="copyAttributedLink">{{ $t('lottery.shareActivityBtn') }}</button>
         </div>
 
-        <!-- 分享链接加载中 -->
-        <div v-else-if="entryId" class="result-hint" style="margin-top:12px">$t('lottery.viralLoadShareLink')</div>
+        <!-- 分享链接加载中（非裂变模式） -->
+        <div v-else-if="entryId" class="result-hint" style="margin-top:12px">{{ $t('lottery.viralLoadShareLink') }}</div>
 
         <div class="result-actions">
           <button class="btn btn-primary" @click="emit('close')">{{ $t('lottery.gotIt') }}</button>
@@ -55,20 +60,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { writeClipboardText } from '@/composables/useClipboard'
+import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{
   show: boolean
-  /** 活动 publicSlug，用于调用 /share API 生成归因链接 */
   drawSlug?: string
-  /** 参与记录 ID，用于调用 /share API */
   entryId?: string
-  /** 裂变配置（promotion_config.viral），控制是否展示裂变引导 */
   viralConfig?: { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | null
 }>()
 
 const emit = defineEmits<{ close: [] }>()
+
+const { t } = useI18n()
+const { showToast } = useToast()
+const modalRef = ref<HTMLElement | null>(null)
 
 const shareData = ref<{ shareCode: string; shareUrl: string; clickedCount?: number; joinedCount?: number } | null>(null)
 const shareLoading = ref(false)
@@ -84,7 +92,6 @@ const extraProgressPercent = computed(() => {
 const shareLoaded = computed(() => shareData.value !== null)
 const shareUrl = computed(() => shareData.value?.shareUrl ?? '')
 
-/** 调用后端 /share API 生成带归因码的分享链接 */
 async function loadShareLink() {
   if (!props.entryId || !props.drawSlug) return
   shareLoading.value = true
@@ -108,25 +115,25 @@ async function loadShareLink() {
   }
 }
 
-/** 复制带归因码的分享链接 */
 async function copyAttributedLink() {
   const url = shareData.value?.shareUrl
   if (!url) {
-    // fallback：如果 API 还没返回，复制当前页面 URL
     await writeClipboardText(window.location.href)
   } else {
-    // 构造完整 URL（shareUrl 是相对路径如 /slug?ref=abc123）
     const origin = window.location.origin
     await writeClipboardText(origin + url)
   }
+  showToast(t('lottery.shareLinkCopied'))
 }
 
-// 弹窗打开时自动加载分享链接
-watch(() => props.show, (newVal) => {
+watch(() => props.show, async (newVal) => {
   if (newVal && props.entryId) {
     shareData.value = null
     shareError.value = ''
     void loadShareLink()
+    // 弹窗打开后聚焦到弹窗（焦点陷阱）
+    await nextTick()
+    modalRef.value?.focus()
   }
 })
 </script>

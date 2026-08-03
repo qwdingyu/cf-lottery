@@ -1,6 +1,6 @@
 <template>
   <div class="form-game">
-    <p class="form-hint">$t('lottery.gameFormHint')</p>
+    <p class="form-hint">{{ $t('lottery.gameFormHint') }}</p>
     <div class="form-fields">
       <label class="form-field">
         <span>{{ $t('lottery.gameFormNameLabel') }}</span>
@@ -12,7 +12,7 @@
       </label>
     </div>
     <button class="btn btn-primary btn-lg form-btn" :disabled="disabled || loading || !name || !email" @click="submit">
-      {{ loading ? '提交中…' : '提交' }}
+      {{ loading ? $t('lottery.submitting') : $t('lottery.submit') }}
     </button>
   </div>
 </template>
