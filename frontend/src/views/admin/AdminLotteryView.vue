@@ -447,14 +447,7 @@
               <label class="field-span-2">
                 <span>{{ $t('lottery.adminActivityKind') }}</span>
                 <select v-model="form.activityKind" @change="handleActivityKindChange">
-                  <option value="lottery">{{ $t('lottery.adminKindLottery') }}</option>
-                  <option value="signup_chain">{{ $t('lottery.adminKindSignupChain') }}</option>
-                  <option value="claim">{{ $t('lottery.adminKindClaim') }}</option>
-                  <option value="survey">{{ $t('lottery.adminKindSurvey') }}</option>
-                  <option value="vote">{{ $t('lottery.adminKindVote') }}</option>
-                  <option value="checkin">{{ $t('lottery.adminKindCheckin') }}</option>
-                  <option value="reservation">{{ $t('lottery.adminKindReservation') }}</option>
-                  <option value="approval">{{ $t('lottery.adminKindApproval') }}</option>
+                  <option v-for="opt in activityKindOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                 </select>
                 <small class="field-hint">{{ $t('lottery.adminActivityKindHint') }}</small>
               </label>
@@ -1259,6 +1252,27 @@ const loadError = ref('')
 const showCreateModal = ref(false)
 const showTemplateModal = ref(false)
 const templates = ref<any[]>([])
+// 启用的活动类型列表（从系统配置 enabled_activity_kinds 获取，由 L3 平台运营者配置）
+const enabledKinds = ref<string[]>([])
+
+// 活动类型显示名称映射（与系统配置 enabled_activity_kinds 联动）
+const activityKindLabels: Record<string, string> = {
+  lottery: t('lottery.adminKindLottery'),
+  signup_chain: t('lottery.adminKindSignupChain'),
+  claim: t('lottery.adminKindClaim'),
+  survey: t('lottery.adminKindSurvey'),
+  vote: t('lottery.adminKindVote'),
+  checkin: t('lottery.adminKindCheckin'),
+  reservation: t('lottery.adminKindReservation'),
+  approval: t('lottery.adminKindApproval'),
+  waitlist: t('lottery.adminKindWaitlist'),
+}
+
+// 根据 enabledKinds 过滤可创建的活动类型；未加载时显示全部（降级）
+const activityKindOptions = computed(() => {
+  const kinds = enabledKinds.value.length > 0 ? enabledKinds.value : Object.keys(activityKindLabels)
+  return kinds.filter(k => activityKindLabels[k]).map(k => ({ value: k, label: activityKindLabels[k] }))
+})
 const showWinnersModal = ref(false)
 const showAnalyticsModal = ref(false)
 const showQrModal = ref(false)
@@ -2179,9 +2193,11 @@ async function fetchTemplates() {
   try {
     const data = await adminRequest<any>('/api/admin/templates')
     templates.value = data.templates || []
+    enabledKinds.value = data.enabledKinds || []
   } catch {
     // 加载失败时允许用户直接创建空白活动
     templates.value = []
+    enabledKinds.value = []
   }
 }
 

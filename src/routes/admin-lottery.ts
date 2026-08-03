@@ -441,7 +441,7 @@ adminLotteryRoute.get("/templates", async (c) => {
   const config = await readSystemConfigMap(db, ["enabled_activity_kinds"]);
   const enabledKinds = (config["enabled_activity_kinds"] || "lottery,signup_chain,claim,survey").split(",").map(s => s.trim());
   const filtered = ACTIVITY_TEMPLATES.filter(t => enabledKinds.includes(t.defaults.activityKind));
-  return ok(c, { templates: filtered });
+  return ok(c, { templates: filtered, enabledKinds });
 });
 
 /** 复制活动（复制配置，不包括参与数据）
