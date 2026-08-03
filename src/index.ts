@@ -21,6 +21,7 @@ import { platformRedemptionCodesRoute } from "./routes/platform-redemption-codes
 import { platformRoute } from "./routes/platform";
 import { adminMediaRoute, mediaRoute } from "./routes/media";
 import { enforceRequestBodyLimit } from "./lib/body-limit";
+import { timingSafeEqualString } from "./lib/crypto-compare";
 import { cleanExpiredRateLimits } from "./lib/rate-limit";
 import { refreshAllTenantSnapshots } from "./services/admin/usage-snapshots";
 import {
@@ -221,7 +222,8 @@ app.get("/api/cron/draw", async (c) => {
   if (!cronSecret) return c.json({ ok: false, message: "未配置 CRON_SECRET" }, 503);
   const authHeader = c.req.header("Authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-  if (!token || token !== cronSecret) {
+  // 常量时间比较：降低 Bearer secret 前缀计时面（与密码/OTP hash 比较同策略）
+  if (!token || !timingSafeEqualString(token, cronSecret)) {
     return c.json({ ok: false, message: "未授权" }, 403);
   }
 
@@ -251,7 +253,7 @@ app.post("/api/cron/maintenance", async (c) => {
   if (!cronSecret) return c.json({ ok: false, message: "未配置 CRON_SECRET" }, 503);
   const authHeader = c.req.header("Authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-  if (token !== cronSecret) {
+  if (!token || !timingSafeEqualString(token, cronSecret)) {
     return c.json({ ok: false, message: "未授权" }, 403);
   }
 

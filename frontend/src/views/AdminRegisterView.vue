@@ -27,7 +27,20 @@
         <p class="verify-hint">{{ $t('adminRegister.codeSentHint') }} <strong>{{ email }}</strong>{{ $t('adminRegister.codeValidMinutes') }}</p>
         <label class="field-label">
           <span>{{ $t('adminRegister.verifyCode') }}</span>
-          <input v-model="code" type="text" inputmode="numeric" maxlength="6" :placeholder="$t('adminRegister.codePlaceholder')" autofocus :disabled="verifying" />
+          <!-- 055a P1 / docs/073：与参与页 OTP 对齐 — 数字规范化 + one-time-code + 满 6 位自动提交 -->
+          <input
+            ref="codeInputRef"
+            v-model="code"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="6"
+            name="one-time-code"
+            autocomplete="one-time-code"
+            :placeholder="$t('adminRegister.codePlaceholder')"
+            autofocus
+            :disabled="verifying"
+          />
         </label>
         <p v-if="error" class="form-error">{{ error }}</p>
         <button type="submit" class="btn btn-primary btn-block" :disabled="verifying">{{ verifying ? $t('adminRegister.verifying') : $t('adminRegister.verifyAndRegister') }}</button>
@@ -40,10 +53,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
+import { isOtpComplete, normalizeOtpDigits } from '@/composables/otp-input'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -52,10 +66,34 @@ const username = ref('')
 const email = ref('')
 const password = ref('')
 const code = ref('')
+const codeInputRef = ref<HTMLInputElement | null>(null)
 const loading = ref(false)
 const verifying = ref(false)
 const codeSent = ref(false)
 const error = ref('')
+/** 防止自动填充触发重复 verify */
+let otpAutoSubmitLock = false
+
+// 只保留数字；满 6 位自动提交（与 LotteryView 参与 OTP 同策略）
+watch(code, (raw) => {
+  const digits = normalizeOtpDigits(raw)
+  if (digits !== raw) {
+    code.value = digits
+    return
+  }
+  if (codeSent.value && isOtpComplete(digits) && !verifying.value && !otpAutoSubmitLock) {
+    otpAutoSubmitLock = true
+    void handleVerify().finally(() => {
+      otpAutoSubmitLock = false
+    })
+  }
+})
+
+watch(codeSent, async (sent) => {
+  if (!sent) return
+  await nextTick()
+  codeInputRef.value?.focus({ preventScroll: true })
+})
 
 async function handleRegister() {
   error.value = ''
@@ -79,8 +117,8 @@ async function handleRegister() {
 
 async function handleVerify() {
   error.value = ''
-  const c = code.value.trim()
-  if (c.length !== 6) { error.value = t('adminRegister.enterSixDigitCode'); return }
+  const c = normalizeOtpDigits(code.value)
+  if (!isOtpComplete(c)) { error.value = t('adminRegister.enterSixDigitCode'); return }
   verifying.value = true
   try {
     const res = await fetch('/api/auth/verify-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.value.trim().toLowerCase(), code: c }) })

@@ -527,6 +527,7 @@ import {
   shouldResumeCfAuthJoin,
 } from '@/composables/cf-auth-session'
 import { clearLotteryBrowserSessionOnly } from '@/composables/business-session'
+import { isOtpComplete, normalizeOtpDigits } from '@/composables/otp-input'
 import {
   defaultExperienceForParticipation,
   ambienceMsForExperience,
@@ -986,16 +987,16 @@ let countdownTimer: ReturnType<typeof setInterval> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 const trackedPageViews = new Set<string>()
 
-// 055a P1：只保留数字；满 6 位自动提交（短信/邮件 OTP 自动填充常见路径）
+// 055a P1：只保留数字；满 6 位自动提交（短信/邮件 OTP 自动填充常见路径；规范化见 otp-input）
 watch(loginCode, (raw) => {
-  const digits = String(raw || '').replace(/\D/g, '').slice(0, 6)
+  const digits = normalizeOtpDigits(String(raw || ''))
   if (digits !== raw) {
     loginCode.value = digits
     return
   }
   if (
     codeSent.value
-    && digits.length === 6
+    && isOtpComplete(digits)
     && !verifyingCode.value
     && !otpAutoSubmitLock
     && showLoginModal.value

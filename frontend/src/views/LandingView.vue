@@ -33,6 +33,41 @@
       </div>
       <p class="hero-note">{{ $t('landing.heroNote') }}</p>
       <p class="hero-note hero-note-boundary">{{ $t('landing.freeBoundary') }}</p>
+      <!--
+        055a P1 视觉余量 / docs/073：诚实产品示意（纯 CSS 线框，非假截图、非录屏）。
+        有真实活动截图 asset 后再替换；禁止用营销图冒充真实后台。
+      -->
+      <figure class="hero-product-mock" :aria-label="$t('landing.heroMockAria')">
+        <div class="hero-mock-chrome" aria-hidden="true">
+          <span class="hero-mock-dot"></span>
+          <span class="hero-mock-dot"></span>
+          <span class="hero-mock-dot"></span>
+          <span class="hero-mock-url">{{ $t('landing.heroMockUrl') }}</span>
+        </div>
+        <div class="hero-mock-body" aria-hidden="true">
+          <div class="hero-mock-sidebar">
+            <div class="hero-mock-nav-line"></div>
+            <div class="hero-mock-nav-line short"></div>
+            <div class="hero-mock-nav-line"></div>
+          </div>
+          <div class="hero-mock-main">
+            <div class="hero-mock-title-bar"></div>
+            <div class="hero-mock-cards">
+              <div class="hero-mock-card">
+                <div class="hero-mock-wheel"></div>
+                <div class="hero-mock-line"></div>
+              </div>
+              <div class="hero-mock-card muted">
+                <div class="hero-mock-line wide"></div>
+                <div class="hero-mock-line"></div>
+                <div class="hero-mock-line short"></div>
+              </div>
+            </div>
+            <div class="hero-mock-cta"></div>
+          </div>
+        </div>
+        <figcaption class="hero-mock-caption">{{ $t('landing.heroMockCaption') }}</figcaption>
+      </figure>
     </header>
 
     <!-- 创建流程 -->
@@ -285,6 +320,118 @@ function handleLogout() {
 .hero-actions { display: flex; gap: 12px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; }
 .hero-note { font-size: 13px; color: var(--tg-hint); }
 .hero-note-boundary { margin-top: 8px; max-width: 520px; margin-left: auto; margin-right: auto; line-height: 1.5; opacity: 0.9; }
+/* 产品示意线框：低成本信任感，不冒充真实截图 */
+.hero-product-mock {
+  margin: 36px auto 0;
+  max-width: 520px;
+  text-align: left;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--tg-border, #334155) 80%, transparent);
+  background: color-mix(in srgb, var(--tg-surface, #111827) 88%, #0a0e17);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.hero-mock-chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.hero-mock-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #475569;
+}
+.hero-mock-dot:nth-child(1) { background: #f87171; }
+.hero-mock-dot:nth-child(2) { background: #fbbf24; }
+.hero-mock-dot:nth-child(3) { background: #34d399; }
+.hero-mock-url {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--tg-hint);
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hero-mock-body {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  min-height: 168px;
+}
+.hero-mock-sidebar {
+  padding: 14px 10px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hero-mock-nav-line {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.35);
+}
+.hero-mock-nav-line.short { width: 60%; }
+.hero-mock-main { padding: 14px 14px 16px; }
+.hero-mock-title-bar {
+  height: 12px;
+  width: 42%;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.45);
+  margin-bottom: 12px;
+}
+.hero-mock-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.hero-mock-card {
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 12px;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.hero-mock-card.muted { align-items: stretch; }
+.hero-mock-wheel {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid #f59e0b;
+  background: conic-gradient(#f43f5e 0 25%, #f59e0b 25% 50%, #10b981 50% 75%, #3b82f6 75% 100%);
+}
+.hero-mock-line {
+  height: 6px;
+  width: 70%;
+  border-radius: 3px;
+  background: rgba(148, 163, 184, 0.3);
+}
+.hero-mock-line.wide { width: 100%; }
+.hero-mock-line.short { width: 45%; }
+.hero-mock-cta {
+  height: 22px;
+  width: 36%;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  margin-left: auto;
+}
+.hero-mock-caption {
+  margin: 0;
+  padding: 8px 12px 10px;
+  font-size: 12px;
+  color: var(--tg-hint);
+  text-align: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.12);
+}
 .btn-lg { padding: 14px 32px; font-size: 16px; font-weight: 600; border-radius: 10px; min-height: 48px; display: inline-flex; align-items: center; justify-content: center; }
 .btn-lg:focus-visible { outline: 2px solid var(--admin-accent, #f59e0b); outline-offset: 3px; }
 .landing-section { padding: 80px 0; }

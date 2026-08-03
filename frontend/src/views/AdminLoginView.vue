@@ -95,12 +95,17 @@
         <p class="field-hint">{{ $t('adminLogin.codeSent') }} <strong>{{ regEmail }}</strong></p>
         <label class="field-label">
           <span>{{ $t('adminLogin.verifyCode') }}</span>
+          <!-- 055a P1 / docs/073：数字规范化 + one-time-code + 满 6 位自动提交 -->
           <input
+            ref="regCodeInputRef"
             v-model="regCode"
             type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
             maxlength="6"
+            name="one-time-code"
             :placeholder="$t('adminLogin.verifyCodePlaceholder')"
-            autocomplete="off"
+            autocomplete="one-time-code"
             :disabled="verifying"
           />
         </label>
@@ -118,12 +123,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
+import { isOtpComplete, normalizeOtpDigits } from '@/composables/otp-input'
 
 const route = useRoute()
 const router = useRouter()
@@ -150,11 +156,41 @@ const regUsername = ref('')
 const regPassword = ref('')
 const regEmail = ref('')
 const regCode = ref('')
+const regCodeInputRef = ref<HTMLInputElement | null>(null)
 const showVerifyCode = ref(false)
 const verifying = ref(false)
 const loading = ref(false)
 const error = ref('')
 const showRegister = ref(false)
+/** 防止自动填充触发重复 verify */
+let regOtpAutoSubmitLock = false
+
+// 注册 OTP：数字规范化 + 满 6 位自动提交（与参与页 / AdminRegister 对齐）
+watch(regCode, (raw) => {
+  const digits = normalizeOtpDigits(raw)
+  if (digits !== raw) {
+    regCode.value = digits
+    return
+  }
+  if (
+    showRegister.value
+    && showVerifyCode.value
+    && isOtpComplete(digits)
+    && !verifying.value
+    && !regOtpAutoSubmitLock
+  ) {
+    regOtpAutoSubmitLock = true
+    void handleVerifyEmail().finally(() => {
+      regOtpAutoSubmitLock = false
+    })
+  }
+})
+
+watch(showVerifyCode, async (shown) => {
+  if (!shown) return
+  await nextTick()
+  regCodeInputRef.value?.focus({ preventScroll: true })
+})
 
 function redirectAfterLogin() {
   const redirect = (route.query.redirect as string) || '/admin'
@@ -260,7 +296,7 @@ async function handleRegister() {
 }
 
 async function handleVerifyEmail() {
-  if (!regCode.value || regCode.value.length !== 6) {
+  if (!regCode.value || !isOtpComplete(normalizeOtpDigits(regCode.value))) {
     error.value = t('adminLogin.enterSixDigitCode')
     return
   }

@@ -200,6 +200,10 @@ export default {
     // secondary CTA anchors to #how-it-works (not register)
     heroNote: "Free tier is fully functional",
     freeBoundary: "Free tier can create activities and complete share → join → draw. Higher quotas and platform features are shown in admin plan details.",
+    // Wireframe only — not a real screenshot (055a honest marketing)
+    heroMockAria: "Product UI wireframe illustration",
+    heroMockUrl: "Admin · activity list (illustration)",
+    heroMockCaption: "Illustration: template → share link → join & results (not a real screenshot)",
     stepsTitle: "Three steps to launch",
     step1Title: "Pick a template",
     step1Desc: "Prize draws, signup chains, document downloads, surveys — pick one and customize, no need to start from scratch.",

@@ -201,6 +201,10 @@ export default {
     viewDemo: "了解怎么玩",
     heroNote: "免费套餐就可以用",
     freeBoundary: "免费档可创建活动并完整走通分享→参与→开奖；更高额度与平台能力见后台套餐说明。",
+    // 线框示意说明（非真实截图，避免 055a「假 Demo」信任事故）
+    heroMockAria: "产品界面示意线框",
+    heroMockUrl: "后台 · 活动列表示意",
+    heroMockCaption: "示意：模板创建 → 分享链接 → 参与与结果（非真实截图）",
     stepsTitle: "三步搞定一个活动",
     step1Title: "选个模板",
     step1Desc: "福利抽奖、报名接龙、资料领取、问卷调研——选一个改改就能用，不用从零开始。",

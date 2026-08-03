@@ -53,6 +53,20 @@ describe("未知 API 不回落 SPA HTML", () => {
     expect(res.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
   });
 
+  /**
+   * Cron 运维入口：Bearer 与 CRON_SECRET 用常量时间比较（docs/073）。
+   * 此处只测比较语义与分支，不拉起完整 processDueDraws。
+   */
+  it("CRON_SECRET 比较：空 token 拒绝；匹配通过语义与 timingSafeEqualString 一致", async () => {
+    const { timingSafeEqualString } = await import("./lib/crypto-compare");
+    const secret = "cron-test-secret-0123456789abcdef";
+    expect(timingSafeEqualString("", secret)).toBe(false);
+    expect(timingSafeEqualString("wrong", secret)).toBe(false);
+    expect(timingSafeEqualString(secret, secret)).toBe(true);
+    // 前缀相同但整体不同 → false（避免依赖 === 短路语义）
+    expect(timingSafeEqualString(secret.slice(0, 8), secret)).toBe(false);
+  });
+
   it("非 API 路径仍可走 SPA HTML", async () => {
     const app = createAppWithSpaFallback();
     const res = await app.request("/admin/login");
