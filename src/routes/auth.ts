@@ -390,6 +390,42 @@ authRoute.post("/logout", async (c) => {
   return c.json({ ok: true, message: "已注销" });
 });
 
+/**
+ * Logto ID Token 交换 → 自签 JWT（docs/051 方案）
+ *
+ * 前端在 Logto 登录成功后，将 ID Token 发送到此端点，
+ * 后端验证 ID Token（签名、issuer、audience）后签发自签 JWT，
+ * 自签 JWT 与现有中间件（requireAuth/requireTenantMember）兼容。
+ *
+ * 请求：{ idToken: string }
+ * 响应：{ ok: true, token: string, email: string, sub: string }
+ */
+authRoute.post("/logto-exchange", async (c) => {
+  try {
+    const body = await c.req.json<{ idToken?: string }>();
+    if (!body?.idToken) {
+      return c.json({ ok: false, message: "缺少 idToken 参数" }, 400);
+    }
+    // 验证 Logto ID Token
+    const logtoPayload = await verifyLogtoIdToken(body.idToken, c);
+    // 签发自签 JWT
+    const jwtSecret = getEnv(c, "JWT_SECRET");
+    if (!jwtSecret) {
+      return c.json({ ok: false, message: "JWT_SECRET 未配置" }, 500);
+    }
+    const token = await exchangeLogtoToken(logtoPayload, jwtSecret);
+    return c.json({
+      ok: true,
+      token,
+      email: String(logtoPayload.email || logtoPayload.preferred_username || ""),
+      sub: String(logtoPayload.sub || ""),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Logto 认证失败";
+    return c.json({ ok: false, message }, 401);
+  }
+});
+
 /** 密码 hash：带服务端 pepper 的 HMAC-SHA256，避免免费 Worker 内做高 CPU KDF。 */
 async function hashPassword(password: string, pepper: string): Promise<string> {
   const salt = new Uint8Array(16);

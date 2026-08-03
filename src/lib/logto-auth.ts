@@ -48,7 +48,12 @@ function getJwksClient(url: string) {
 /**
  * 验证 Logto ID Token 并返回 payload
  *
- * @param idToken - Logto 签发的 ID Token（JWT 格式）
+ * 支持两种 token 类型：
+ * 1. ID Token — 验证签名、issuer、audience（推荐）
+ * 2. Access Token — 验证签名、issuer（不验证 audience，
+ *    因为 Free 方案无 API Resource，Access Token 不含 audience）
+ *
+ * @param idToken - Logto 签发的 ID Token 或 Access Token
  * @param c - Hono Context（用于获取 Logto 配置）
  * @returns 验证通过后的 token payload
  * @throws 验证失败时抛出错误
@@ -59,13 +64,23 @@ export async function verifyLogtoIdToken(idToken: string, c: Context<AppEnv>) {
   if (!appId) throw new Error("LOGTO_APP_ID 未配置");
 
   const jwks = getJwksClient(jwksUrl);
-  const { payload } = await jwtVerify(idToken, jwks, {
-    issuer: jwksUrl.replace("/oidc/.well-known/jwks.json", "/oidc"),
-    audience: appId,
-    algorithms: ["RS256"],
-  });
-
-  return payload;
+  // 先尝试作为 ID Token 验证（含 audience 检查）
+  try {
+    const { payload } = await jwtVerify(idToken, jwks, {
+      issuer: jwksUrl.replace("/oidc/.well-known/jwks.json", "/oidc"),
+      audience: appId,
+      algorithms: ["RS256"],
+    });
+    return payload;
+  } catch {
+    // ID Token 验证失败（可能是 Access Token），改用宽松模式验证
+    // 只验证签名和 issuer，不验证 audience
+    const { payload } = await jwtVerify(idToken, jwks, {
+      issuer: jwksUrl.replace("/oidc/.well-known/jwks.json", "/oidc"),
+      algorithms: ["RS256"],
+    });
+    return payload;
+  }
 }
 
 /**

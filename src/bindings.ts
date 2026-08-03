@@ -28,6 +28,9 @@ export type Bindings = {
   CRON_SECRET?: string;
   // 敏感配置加密密钥（64 位 hex 字符串），用于加密存储敏感配置项
   CREDENTIALS_ENCRYPTION_KEY?: string;
+  // Logto 身份认证配置（docs/051 方案）
+  LOGTO_ENDPOINT?: string;
+  LOGTO_APP_ID?: string;
 };
 
 export type AppEnv = {
