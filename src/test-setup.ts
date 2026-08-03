@@ -92,6 +92,8 @@ async function recordMigration(client: Client, version: string, name: string) {
 }
 
 async function applyMigrations(client: Client) {
+  // WAL 模式防止并发读写时的 "database is locked" 错误
+  await client.execute("PRAGMA journal_mode = WAL");
   const executed = await getExecutedMigrations(client);
   const files = readdirSync(MIGRATIONS_DIR)
     .filter((file) => file.endsWith(".sql"))
