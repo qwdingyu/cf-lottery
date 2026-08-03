@@ -218,6 +218,29 @@ export function resolveAdminPathAfterCfAuth(input: {
 }
 
 /**
+ * AuthCallback 最终落地路径（与 AuthCallbackView 同源，便于 vitest）。
+ *
+ * 优先级：
+ * 1. API `needsTenant===true` 且回跳非参与页 → `/admin/onboarding`
+ * 2. 否则 `resolveAdminPathAfterCfAuth`（JWT tenantId 粗读兜底）
+ */
+export function resolveCfAuthCallbackLanding(input: {
+  token: string
+  returnPath: string
+  needsTenant?: boolean
+}): string {
+  const baseReturn = String(input.returnPath || '').trim()
+  const path = baseReturn.startsWith('/') ? baseReturn : '/admin'
+  if (input.needsTenant === true && !path.startsWith('/lottery')) {
+    return '/admin/onboarding'
+  }
+  return resolveAdminPathAfterCfAuth({
+    token: input.token,
+    returnPath: path,
+  })
+}
+
+/**
  * password / invite 模式跳转 IdP 前的凭证完整性（纯函数，供 vitest）。
  * participationMode 未知时不拦（由 UI 层再校验）。
  */

@@ -15,6 +15,7 @@ import {
   readCfAuthPendingJoin,
   readTenantIdFromBusinessJwt,
   resolveAdminPathAfterCfAuth,
+  resolveCfAuthCallbackLanding,
   resolveCfAuthReturnPath,
   saveCfAuthPendingJoin,
   shouldResumeCfAuthJoin,
@@ -171,5 +172,44 @@ describe("cf-auth-session（参与闭环）", () => {
         returnPath: "/lottery/act-1",
       }),
     ).toBe("/lottery/act-1");
+  });
+
+  it("resolveCfAuthCallbackLanding：API needsTenant 优先；参与页不改写", () => {
+    const emptyTenant = fakeJwt({ sub: "local-u", tenantId: "" });
+    const withTenant = fakeJwt({ sub: "local-u", tenantId: "t1" });
+
+    expect(
+      resolveCfAuthCallbackLanding({
+        token: emptyTenant,
+        returnPath: "/admin",
+        needsTenant: true,
+      }),
+    ).toBe("/admin/onboarding");
+
+    // 已有租户但仍 needsTenant=false → 进管理端
+    expect(
+      resolveCfAuthCallbackLanding({
+        token: withTenant,
+        returnPath: "/admin",
+        needsTenant: false,
+      }),
+    ).toBe("/admin");
+
+    // 参与闭环：needsTenant 也不能抢走 /lottery
+    expect(
+      resolveCfAuthCallbackLanding({
+        token: emptyTenant,
+        returnPath: "/lottery/slug-x",
+        needsTenant: true,
+      }),
+    ).toBe("/lottery/slug-x");
+
+    // API 未给 needsTenant 时，靠 JWT 空 tenant 兜底
+    expect(
+      resolveCfAuthCallbackLanding({
+        token: emptyTenant,
+        returnPath: "/admin/draws",
+      }),
+    ).toBe("/admin/onboarding");
   });
 });

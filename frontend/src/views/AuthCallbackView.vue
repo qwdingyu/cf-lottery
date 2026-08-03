@@ -33,7 +33,7 @@ import {
   clearCfAuthOauthTransit,
   clearAllCfAuthBrowserState,
   readCfAuthPendingJoin,
-  resolveAdminPathAfterCfAuth,
+  resolveCfAuthCallbackLanding,
   resolveCfAuthReturnPath,
 } from '@/composables/cf-auth-session'
 
@@ -107,15 +107,12 @@ onMounted(async () => {
     })
     // 3) 清 PKCE/state/return；pendingJoin 留给 LotteryView 成功 join 后再 consume
     clearCfAuthOauthTransit(sessionStorage)
-    // 4) 回跳：优先 API needsTenant；再解析 JWT tenantId；参与页路径不改写
-    const baseReturn = returnTo.startsWith('/') ? returnTo : '/admin'
-    const finalPath =
-      data.needsTenant === true && !baseReturn.startsWith('/lottery')
-        ? '/admin/onboarding'
-        : resolveAdminPathAfterCfAuth({
-            token: data.token,
-            returnPath: baseReturn,
-          })
+    // 4) 回跳：优先 API needsTenant；再 JWT tenantId；参与页不改写（见 resolveCfAuthCallbackLanding）
+    const finalPath = resolveCfAuthCallbackLanding({
+      token: data.token,
+      returnPath: returnTo,
+      needsTenant: data.needsTenant,
+    })
     status.value = 'ok'
     showToast(t('authCallback.ok'), 'success')
     await router.replace(finalPath)

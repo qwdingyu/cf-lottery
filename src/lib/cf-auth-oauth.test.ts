@@ -5,14 +5,21 @@
  * 1. resolve / meta / PKCE / authorize URL
  * 2. 缺配置与错误 token 响应
  * 3. map + issueBusinessToken → verifyJwt
- * 4. 对同源 cf-auth createTestApp 的 code→token→userinfo→业务 JWT 闭环
+ * 4. 对同源 cf-auth createTestApp 的 code→token→userinfo→**provision**→业务 JWT 闭环
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { eq } from "drizzle-orm";
 import { verifyJwt } from "../middleware/auth";
+import { clearTestData, getTestDb } from "../test-setup";
+import { authIdentities, users } from "../db/schema";
+import {
+  IDP_PROVIDER_CF_AUTH,
+  provisionIdpUser,
+} from "../services/idp-user-provision";
 import {
   buildAuthorizeUrl,
   completeCfAuthCodeExchange,
@@ -268,15 +275,22 @@ describe("cf-auth OAuth RP（纯逻辑）", () => {
 
 describe("cf-auth OAuth RP × 真实 cf-auth createTestApp 闭环", () => {
   let cleanup: (() => Promise<void>) | null = null;
+  let lotteryDb: Awaited<ReturnType<typeof getTestDb>>["db"];
+  let lotteryClient: Awaited<ReturnType<typeof getTestDb>>["client"];
+
+  beforeAll(async () => {
+    ({ db: lotteryDb, client: lotteryClient } = await getTestDb());
+  });
 
   afterEach(async () => {
     if (cleanup) {
       await cleanup();
       cleanup = null;
     }
+    await clearTestData(lotteryClient);
   });
 
-  it("authorize→code→lottery completeCfAuthCodeExchange→业务 JWT", async () => {
+  it("authorize→code→provision→业务 JWT（sub=本地 users.id）", async () => {
     // 动态加载兄弟仓库 cf-auth 测试工厂（同机 monorepo 模板布局）
     // 动态加载兄弟仓库；类型用 any，避免 lottery tsconfig 解析 cf-auth 源码路径
     let helpers: {
@@ -388,11 +402,28 @@ describe("cf-auth OAuth RP × 真实 cf-auth createTestApp 闭环", () => {
       });
     };
 
+    // 生产路径：必须 provision（与 authRoute exchange 一致）
     const result = await completeCfAuthCodeExchange(
       config,
       { code: code!, codeVerifier: pkce.verifier, redirectUri },
       JWT_SECRET_ENV,
       idpFetch,
+      async (profile) => {
+        const p = await provisionIdpUser(lotteryDb, {
+          provider: IDP_PROVIDER_CF_AUTH,
+          idpSub: String(profile.sub || ""),
+          email: String(profile.email || ""),
+          displayName: String(profile.name || profile.preferred_username || ""),
+          emailVerified: profile.email_verified !== false,
+        });
+        return {
+          userId: p.userId,
+          email: p.email,
+          tenantId: p.tenantId,
+          tenantRole: p.tenantRole,
+          needsTenant: p.needsTenant,
+        };
+      },
     );
 
     expect(result.ok).toBe(true);
@@ -402,16 +433,39 @@ describe("cf-auth OAuth RP × 真实 cf-auth createTestApp 闭环", () => {
     expect(result.email).toBe(email);
     expect(result.sub).toBeTruthy();
     expect(result.token).toBeTruthy();
+    expect(result.needsTenant).toBe(true);
+    expect(result.idpSub).toBeTruthy();
+    // 062：业务 sub 必须是本地 UUID，不能是裸 IdP sub
+    expect(result.sub).not.toBe(result.idpSub);
+    expect(result.sub).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
 
     const payload = await verifyJwt(result.token, JWT_SECRET_ENV);
     expect(payload).toBeTruthy();
     expect(payload!.sub).toBe(result.sub);
+    expect(payload!.idpSub).toBe(result.idpSub);
     expect(payload!.email).toBe(email);
     expect(payload!.identityProvider).toBe("cf-auth");
+
+    const [localUser] = await lotteryDb
+      .select()
+      .from(users)
+      .where(eq(users.id, result.sub))
+      .limit(1);
+    expect(localUser?.email).toBe(email);
+
+    const ids = await lotteryDb.select().from(authIdentities);
+    expect(ids.some((r) => r.userId === result.sub && r.providerUserId === result.idpSub)).toBe(
+      true,
+    );
 
     // userinfo 也可单独验证
     const info = await fetchCfAuthUserInfo({ issuer: baseURL }, result.accessToken, idpFetch);
     expect(info.ok).toBe(true);
-    if (info.ok) expect(info.profile.email).toBe(email);
+    if (info.ok) {
+      expect(info.profile.email).toBe(email);
+      expect(info.profile.sub).toBe(result.idpSub);
+    }
   }, 30_000);
 });
