@@ -4,6 +4,7 @@ import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [vue()],
+  envDir: '../',  // 读取根目录 .env 文件（含 VITE_LOGTO_* 变量），避免重复定义 frontend/.env
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

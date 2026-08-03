@@ -35,6 +35,14 @@
         <p v-if="error" class="login-error">{{ error }}</p>
       </form>
 
+      <!-- Logto 身份认证登录（docs/051 方案） -->
+      <div v-if="logtoEnabled" class="logto-section">
+        <div class="logto-divider"><span class="divider-text">{{ $t('adminLogin.or') }}</span></div>
+        <button type="button" class="btn btn-ghost login-btn logto-btn" :disabled="logtoLoading" @click="handleLogtoLogin">
+          <span class="logto-icon">L</span> 使用 Logto 登录
+        </button>
+      </div>
+
       <div class="login-footer">
         <span>{{ $t('adminLogin.noAccount') }}</span>
         <button class="btn btn-ghost btn-sm" type="button" @click="showRegister = !showRegister">
@@ -112,12 +120,32 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
+import { useLogto } from '@logto/vue'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const { setToken, setPlatformRole } = useAdminAuth()
 const { showToast } = useToast()
+
+// Logto 身份认证（docs/051 方案）：环境变量未配置时隐藏 Logto 登录按钮
+const logtoEnabled = !!(import.meta.env.VITE_LOGTO_ENDPOINT && import.meta.env.VITE_LOGTO_APP_ID)
+const logto = logtoEnabled ? useLogto() : null
+const logtoLoading = ref(false)
+
+async function handleLogtoLogin() {
+  if (!logto) return
+  logtoLoading.value = true
+  try {
+    // 跳转到 Logto 登录页，登录成功后回调到当前页面
+    const redirectUri = window.location.origin + '/admin/login'
+    await logto.signIn(redirectUri)
+  } catch (err) {
+    console.error('[logto] signIn error:', err)
+    showToast('Logto 登录失败', 'error')
+    logtoLoading.value = false
+  }
+}
 
 const username = ref('')
 const password = ref('')
