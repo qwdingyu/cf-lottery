@@ -2451,6 +2451,14 @@ async function handleEdit(draw: LotteryDraw) {
     showToast(t('lottery.adminEditNonDraft'), 'error')
     return
   }
+  // 调详情 API 获取完整活动数据（含奖项配置 tiers）
+  let tiers: Array<{ prizeId: string; tierName: string; winnerCount: number }> = []
+  try {
+    const detail = await adminRequest<{ draw: any; tiers: Array<{ prizeId: string; tierName: string; winnerCount: number }> }>(`/api/admin/draws/${draw.id}`)
+    if (detail.tiers) {
+      tiers = detail.tiers.map(t => ({ prizeId: t.prizeId || '', tierName: t.tierName || '', winnerCount: t.winnerCount || 1 }))
+    }
+  } catch { /* 详情加载失败时使用空奖项 */ }
   form.value = {
     ...emptyForm(),
     id: draw.id,
@@ -2467,6 +2475,7 @@ async function handleEdit(draw: LotteryDraw) {
     experienceType: draw.experienceType || defaultExperienceForActivity(draw.activityKind || 'lottery', draw.participationMode || 'open'),
     resultMode: draw.resultMode || defaultResultModeForActivity(draw.activityKind || 'lottery'),
     activityConfig: normalizeActivityConfig(draw.activityKind || 'lottery', draw.activityConfig) as any,
+    tiers,  // 回填奖项配置（修复编辑时奖项带不出来的 bug）
   }
   isEditing.value = true
   // 回填未中奖自动发券开关状态

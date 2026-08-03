@@ -412,7 +412,22 @@ adminLotteryRoute.get("/draws/:id", async (c) => {
   const tenantId = c.get("tenantId") as string;
   const draw = await getDraw(db, c.req.param("id"), tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
-  return ok(c, { draw });
+  // 同时查询奖项配置（供编辑回填）
+  const tiers = await db
+    .select({
+      id: lotteryPrizeTiers.id,
+      prizeId: lotteryPrizeTiers.prizeId,
+      tierName: lotteryPrizeTiers.tierName,
+      winnerCount: lotteryPrizeTiers.winnerCount,
+      sortOrder: lotteryPrizeTiers.sortOrder,
+      prizeName: prizes.name,
+      prizeType: prizes.prizeType,
+    })
+    .from(lotteryPrizeTiers)
+    .leftJoin(prizes, and(eq(prizes.id, lotteryPrizeTiers.prizeId), eq(prizes.tenantId, tenantId)))
+    .where(and(eq(lotteryPrizeTiers.drawId, draw.id), eq(lotteryPrizeTiers.tenantId, tenantId)))
+    .orderBy(lotteryPrizeTiers.sortOrder);
+  return ok(c, { draw, tiers });
 });
 
 /** 获取活动模板列表
