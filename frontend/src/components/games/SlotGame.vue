@@ -1,35 +1,26 @@
 <template>
   <div class="slot-game">
     <div class="slot-machine">
-      <div class="slot-window">
-        <div class="slot-reel" ref="reel1Ref">
-          <div v-for="(p, i) in shuffledPrizes" :key="'r1-'+i" class="slot-item" :style="{ background: getColor(i) }">
-            {{ p.name }}
-          </div>
-        </div>
-        <div class="slot-reel" ref="reel2Ref">
-          <div v-for="(p, i) in shuffledPrizes" :key="'r2-'+i" class="slot-item" :style="{ background: getColor(i) }">
-            {{ p.name }}
-          </div>
-        </div>
-        <div class="slot-reel" ref="reel3Ref">
-          <div v-for="(p, i) in shuffledPrizes" :key="'r3-'+i" class="slot-item" :style="{ background: getColor(i) }">
-            {{ p.name }}
+      <div class="slot-frame">
+        <div class="slot-window">
+          <div class="slot-reel-wrap" v-for="(reel, idx) in 3" :key="'r'+idx">
+            <div class="slot-reel" :ref="el => { if (el) reelRefs[idx] = el as HTMLDivElement }">
+              <div v-for="(p, i) in reelPrizes" :key="idx+'-'+i" class="slot-item" :style="{ background: getGradient(i) }">
+                <span class="slot-emoji">{{ ['🎁','💎','🏆','🎯','🌟','💰','🎪','🎰'][i % 8] }}</span>
+                <span class="slot-name">{{ p.name.slice(0, 6) }}</span>
+              </div>
+            </div>
+            <div class="slot-overlay top" />
+            <div class="slot-overlay bottom" />
           </div>
         </div>
       </div>
-      <div
-        class="slot-lever"
-        role="button"
-        :tabindex="disabled ? -1 : 0"
-        :aria-label="spinning ? '抽奖中' : '拉动拉杆'"
-        :aria-disabled="disabled || spinning"
-        @click="handlePull"
-        @keydown.enter="handlePull"
-        @keydown.space.prevent="handlePull"
-        :class="{ pulling: spinning }"
-      >
-        <span class="lever-text">{{ spinning ? $t('lottery.gameSlotPulling') : $t('lottery.gameSlotPull') }}</span>
+      <div class="slot-controls">
+        <button class="slot-btn" :class="{ spinning }" :disabled="disabled || spinning" @click="handlePull">
+          <span class="slot-btn-icon">🎰</span>
+          <span v-if="spinning">转动中...</span>
+          <span v-else>开始抽奖</span>
+        </button>
       </div>
     </div>
   </div>
@@ -42,44 +33,40 @@ import type { PrizeItem } from './types'
 const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean; loading?: boolean }>()
 const emit = defineEmits<{ play: [] }>()
 
-const reel1Ref = ref<HTMLDivElement>()
-const reel2Ref = ref<HTMLDivElement>()
-const reel3Ref = ref<HTMLDivElement>()
+const reelRefs = ref<HTMLDivElement[]>([])
 const spinning = ref(false)
 
-const defaultColors = ['#f43f5e', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
+const GRADS = ['#FF6B6B', '#FFD93D', '#6BCB77', '#4D96FF', '#9B59B6', '#FF8C42', '#00D2FF', '#FF4DA6']
 
-/** 打乱奖品顺序用于展示 */
-const shuffledPrizes = computed(() => {
-  const arr = [...props.prizes, ...props.prizes, ...props.prizes]
-  return arr.length > 0 ? arr : [{ name: '?' }]
+const reelPrizes = computed(() => {
+  const arr = [...props.prizes, ...props.prizes.slice(0, 4)]
+  while (arr.length < 8) arr.push({ name: '?' } as any)
+  return arr.slice(0, 8)
 })
 
-function getColor(i: number) { return defaultColors[i % defaultColors.length]! }
+function getGradient(i: number) { return GRADS[i % GRADS.length]! }
 
-async function spinReel(reel: HTMLDivElement, delay: number, duration: number) {
-  return new Promise<void>((resolve) => {
-    setTimeout(() => {
-      reel.style.transition = `transform ${duration}ms cubic-bezier(0.25, 0.1, 0.25, 1)`
-      reel.style.transform = `translateY(-${(Math.floor(Math.random() * 3) + 2) * 60}px)`
-      setTimeout(() => {
-        reel.style.transition = 'none'
-        reel.style.transform = 'translateY(0)'
-        resolve()
-      }, duration)
-    }, delay)
-  })
+async function spinReel(reel: HTMLDivElement, delay: number) {
+  await new Promise(r => setTimeout(r, delay))
+  const duration = 1500 + Math.random() * 500
+  const target = (5 + Math.floor(Math.random() * 8)) * 80
+  reel.style.transition = `transform ${duration}ms cubic-bezier(0.17, 0.67, 0.12, 0.99)`
+  reel.style.transform = `translateY(-${target}px)`
+  await new Promise(r => setTimeout(r, duration + 200))
+  reel.style.transition = 'none'
+  reel.style.transform = 'translateY(0)'
 }
 
 async function handlePull() {
   if (spinning.value || props.disabled) return
-  if (!reel1Ref.value || !reel2Ref.value || !reel3Ref.value) return
   spinning.value = true
   emit('play')
+  const reels = reelRefs.value.filter(Boolean)
+  if (reels.length !== 3) { spinning.value = false; return }
   await Promise.all([
-    spinReel(reel1Ref.value, 0, 1200),
-    spinReel(reel2Ref.value, 300, 1000),
-    spinReel(reel3Ref.value, 600, 800),
+    spinReel(reels[0]!, 0),
+    spinReel(reels[1]!, 150),
+    spinReel(reels[2]!, 300),
   ])
   spinning.value = false
 }
@@ -87,12 +74,19 @@ async function handlePull() {
 
 <style scoped>
 .slot-game { display: flex; justify-content: center; padding: 20px 0; }
-.slot-machine { display: flex; flex-direction: column; align-items: center; gap: 16px; }
-.slot-window { display: flex; gap: 8px; background: #1e293b; padding: 12px; border-radius: 12px; }
-.slot-reel { width: 80px; height: 180px; overflow: hidden; background: #0f172a; border-radius: 8px; }
-.slot-item { height: 60px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 13px; }
-.slot-lever { width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #d97706); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.slot-lever:hover { transform: scale(1.08); }
-.slot-lever:active { transform: scale(0.95); }
-.lever-text { color: #fff; font-weight: 700; font-size: 13px; }
+.slot-machine { width: 320px; }
+.slot-frame { background: linear-gradient(180deg, #1e1b4b, #312e81); border-radius: 20px; padding: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 2px 0 rgba(255,255,255,0.1); }
+.slot-window { display: flex; gap: 8px; background: #0f0d23; border-radius: 12px; padding: 12px; }
+.slot-reel-wrap { flex: 1; height: 200px; overflow: hidden; position: relative; border-radius: 8px; }
+.slot-reel { display: flex; flex-direction: column; }
+.slot-item { height: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-bottom: 2px solid rgba(255,255,255,0.1); }
+.slot-emoji { font-size: 24px; }
+.slot-name { font-size: 11px; color: rgba(255,255,255,0.9); font-weight: 600; }
+.slot-overlay { position: absolute; left: 0; right: 0; height: 32px; pointer-events: none; z-index: 1; }
+.slot-overlay.top { top: 0; background: linear-gradient(180deg, #0f0d23, transparent); }
+.slot-overlay.bottom { bottom: 0; background: linear-gradient(0deg, #0f0d23, transparent); }
+.slot-controls { margin-top: 16px; text-align: center; }
+.slot-btn { padding: 12px 40px; border-radius: 12px; background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #1a1a2e; font-size: 15px; font-weight: 700; border: none; cursor: pointer; box-shadow: 0 4px 16px rgba(245,158,11,0.4); transition: all 0.3s; }
+.slot-btn:hover:not(:disabled) { transform: translateY(-2px) scale(1.05); box-shadow: 0 6px 24px rgba(245,158,11,0.6); }
+.slot-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
