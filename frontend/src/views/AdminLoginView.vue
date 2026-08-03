@@ -177,8 +177,8 @@ async function handleLogin() {
 
     if (data.ok && data.token) {
       setToken(data.token)
-      fetchPlatformRole(data.token)
-      // ★ 045 方案 C：无租户用户引导 onboarding 创建租户
+      // ★ 必须先等平台角色查询完成再跳转，否则 AdminLayout 读取时 localStorage 尚未写入
+      await fetchPlatformRole(data.token)
       if (data.needsTenant) {
         showToast(t('adminLogin.createWorkspaceFirst'))
         router.replace({ name: 'Onboarding' })
@@ -250,7 +250,7 @@ async function handleVerifyEmail() {
     const data = await res.json()
     if (data.ok && data.token) {
       setToken(data.token)
-      fetchPlatformRole(data.token)
+      await fetchPlatformRole(data.token)
       showToast(t('adminLogin.registerSuccess'), 'success')
       redirectAfterLogin()
     } else {
