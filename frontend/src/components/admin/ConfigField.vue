@@ -9,6 +9,23 @@
         :disabled="status === 'saving'"
         @change="emitChange(($event.target as HTMLInputElement).checked ? 'true' : 'false')"
       />
+      <!-- 多选枚举（如 enabled_activity_kinds）：复选框替代逗号分隔文本 -->
+      <div v-else-if="item.enum" class="config-enum-grid">
+        <label
+          v-for="opt in item.enum"
+          :key="opt"
+          class="config-enum-item"
+          :class="{ checked: enumValues.includes(opt) }"
+        >
+          <input
+            type="checkbox"
+            :checked="enumValues.includes(opt)"
+            :disabled="status === 'saving'"
+            @change="toggleEnum(opt)"
+          />
+          <span>{{ enumLabel(opt) }}</span>
+        </label>
+      </div>
       <!-- 金额类 integer（unit=cents）：界面按「元」编辑，提交仍为分整数字符串 -->
       <input
         v-else-if="isCentsMoney"
@@ -84,6 +101,25 @@ const emit = defineEmits<{
 const { t, te } = useI18n()
 
 const localError = ref('')
+
+/** 多选枚举：将逗号分隔值解析为数组 */
+const enumValues = computed(() => {
+  if (!props.item.enum) return []
+  return (props.value || '').split(',').map(s => s.trim()).filter(Boolean)
+})
+
+function toggleEnum(opt: string) {
+  const current = [...enumValues.value]
+  const idx = current.indexOf(opt)
+  if (idx >= 0) current.splice(idx, 1)
+  else current.push(opt)
+  emit('change', props.item.key, current.join(','))
+}
+
+function enumLabel(opt: string): string {
+  const labels = (props.item as any).enumLabels as Record<string, string> | undefined
+  return labels?.[opt] || opt
+}
 
 /**
  * 系统配置定义来自后端，label/description/effect 可能包含邮箱、URL、Webhook 示例等普通文本。
@@ -280,4 +316,29 @@ const statusText = computed(() => {
 .config-status-error {
   color: #fca5a5;
 }
+
+/* ── 多选枚举网格 ── */
+.config-enum-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+.config-enum-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+.config-enum-item.checked {
+  background: rgba(245,158,11,0.12);
+  border-color: rgba(245,158,11,0.3);
+}
+.config-enum-item:hover { border-color: rgba(255,255,255,0.2); }
 </style>

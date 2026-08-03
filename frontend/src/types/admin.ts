@@ -624,6 +624,10 @@ export interface AdminSystemConfigDefinition {
   order?: number
   scope?: 'public' | 'admin'
   difficulty?: 'basic' | 'advanced'
+  /** 枚举选项列表（type=string 时的多选展示，值仍以逗号分隔存储） */
+  enum?: string[]
+  /** 枚举选项的中文标签映射 */
+  enumLabels?: Record<string, string>
 }
 
 export interface AdminSystemConfigResult {

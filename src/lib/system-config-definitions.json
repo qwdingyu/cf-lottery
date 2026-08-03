@@ -266,14 +266,16 @@
   {
     "key": "enabled_activity_kinds",
     "label": "启用的活动类型",
-    "description": "可创建的活动类型列表，逗号分隔。不在列表中的类型不会出现在创建界面。",
-    "effect": "创建活动时校验，不在列表中的类型拒绝创建。已有活动不受影响。",
+    "description": "选择可在平台创建的活动类型。",
+    "effect": "创建活动时校验，未勾选的类型拒接创建。已有活动不受影响。",
     "scope": "admin",
     "type": "string",
     "defaultValue": "lottery,signup_chain,claim,survey,vote,checkin,approval,reservation",
     "group": "平台运营",
     "order": 20,
-    "difficulty": "basic"
+    "difficulty": "basic",
+    "enum": ["lottery","signup_chain","claim","survey","vote","checkin","approval","reservation"],
+    "enumLabels": {"lottery":"抽奖","signup_chain":"接龙/报名","claim":"资料领取","survey":"问卷调研","vote":"投票评选","checkin":"签到打卡","approval":"审核申请","reservation":"预约确认"}
   },
   {
     "key": "enabled_participation_modes",
