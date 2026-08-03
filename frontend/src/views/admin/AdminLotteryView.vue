@@ -49,6 +49,10 @@
       </div>
     </div>
 
+    <div class="notice-bar" role="note">
+      <span>💡 提示：创建一个活动需要设置时间、选择参与模式、配置奖项后才能发布上线。</span>
+    </div>
+
     <div v-if="selectedCount > 0" class="table-command-actions">
       <span class="selection-summary">
         {{ t('lottery.adminSelectedCount', { count: selectedCount }) }}
@@ -66,11 +70,6 @@
       <button class="btn btn-ghost btn-xs" type="button" :disabled="loading" @click="loadData">
         {{ $t('lottery.adminReload') }}
       </button>
-    </div>
-
-    <div class="notice-card" role="note">
-      <strong>{{ $t('lottery.adminNoticeTitle') }}</strong>
-      <span>{{ $t('lottery.adminNoticeBody') }}</span>
     </div>
 
     <div class="table-wrap" role="region" :aria-label="$t('adminLayout.menuLottery')" tabindex="0" :aria-busy="loading">
