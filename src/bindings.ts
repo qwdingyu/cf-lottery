@@ -17,19 +17,12 @@ export type Bindings = {
   JWT_SECRET?: string;
   // 密码 pepper（推荐独立于 JWT_SECRET 配置），用于降低数据库单独泄漏后的离线撞库风险。
   PASSWORD_PEPPER?: string;
-  /**
-   * 可选：抽奖 JWT 签名材料。未配置时回退 JWT_SECRET 派生。
-   * 配置后抽奖会话与 Admin 密钥隔离。
-   */
-  LOTTERY_JWT_SECRET?: string;
   // Resend API Key，用于中奖邮件通知。通过 wrangler secret put 配置。
   RESEND_API_KEY?: string;
   // Resend 已验证的发件域名
   EMAIL_FROM?: string;
   // 生成公开活动链接时使用的正式站点域名
   APP_ORIGIN?: string;
-  // 用于把真实 IP 哈希化后写入 audit_logs，避免日志里保存明文 IP
-  RATE_LIMIT_SALT?: string;
   // Cron 调用的认证密钥，防止未授权触发定时开奖
   CRON_SECRET?: string;
   // 敏感配置加密密钥（64 位 hex 字符串），用于加密存储敏感配置项
