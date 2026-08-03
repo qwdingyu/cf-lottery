@@ -172,7 +172,8 @@ export default {
   landing: {
     navBrand: "Activity Engine",
     login: "Log in",
-    heroTitle1: "Launch an activity in 3 minutes",
+    // 055a ADR-055a-5: no absolute "3 minutes" claim until TTV path is validated
+    heroTitle1: "Start from a template",
     heroTitle2: "Lottery, signup, survey — and see the results",
     heroSubtitle: "No coding, no developers. Pick a template, share it, and track who joined, who won, and how it performed.",
     registerCta: "Register free, start now",
@@ -1017,10 +1018,23 @@ export default {
     adminCreateMissingHint: "Before saving, consider: {items}",
     adminTemplateApplied: "Template “{name}” applied; schedule prefilled",
     adminCreatedNeedPrizeHint: "Draft created and link copied — edit to add prize tiers before publishing",
+    adminCreateDoneWithPreview: "Activity created; link copied. Open public page to preview?",
+    adminCreateNeedPrizeWithPreview: "Draft created; link copied. Add prizes before publishing — open public page to preview?",
     adminPublishFixGoEdit: "Open the editor and jump to the related section? Fix issues, then tap Open again.",
 
     // LotteryView user-facing copy
     noActivity: "No activities",
+    needActivityLink: "Open with an activity link",
+    needActivityLinkHint: "This page is not an activity plaza. Ask the host for the share link or scan the activity QR code.",
+    resultModeInstantTag: "Instant result",
+    resultModeScheduledTag: "Scheduled draw",
+    resultModeManualTag: "Manual draw",
+    statusHintDraft: "This activity is not open yet. Please check back later.",
+    statusHintPaused: "This activity is paused. Joining is temporarily unavailable.",
+    statusHintDrawing: "Drawing in progress. Check results shortly.",
+    statusHintDrawn: "This activity has ended. If you joined, you can check whether you won.",
+    statusHintCancelled: "This activity was cancelled.",
+    statusHintJoinedPending: "You have joined. Check results here after the draw.",
     wonTag: "Won",
     notWonTag: "Not won",
     loginToViewRecords: "Login to view records",

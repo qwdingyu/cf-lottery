@@ -2982,16 +2982,25 @@ async function handleCreate() {
           await writeClipboardText(publicShareUrl(created.publicSlug || created.id))
         } catch { /* 剪贴板写入失败不阻断 */ }
         // 055a P1：创建成功即关闭并回列表，不再强制再开编辑 Modal（打断「创建→开启」节奏）。
-        // 抽奖若仍缺奖项，用明确 toast 引导「更多 → 编辑」或列表开启时的发布门禁，不静默二次弹窗。
+        // 可选「预览公开页」：用现有 handleOpenPublic，不新路由、不强制弹编辑。
         const lotteryMissingTier = form.value.activityKind === 'lottery'
           && !form.value.tiers.some((tier) => Boolean(tier.prizeId))
+        const previewSlug = created.publicSlug || created.id
         closeEditor()
         form.value = emptyForm()
         await loadData()
         if (lotteryMissingTier) {
           showToast(t('lottery.adminCreatedNeedPrizeHint'), 'success')
+          const openPreview = await askConfirm(t('lottery.adminCreateNeedPrizeWithPreview'))
+          if (openPreview && previewSlug) {
+            handleOpenPublic({ publicSlug: previewSlug } as LotteryDraw)
+          }
         } else {
           showToast(t('lottery.adminCreateDoneWithLink'), 'success')
+          const openPreview = await askConfirm(t('lottery.adminCreateDoneWithPreview'))
+          if (openPreview && previewSlug) {
+            handleOpenPublic({ publicSlug: previewSlug } as LotteryDraw)
+          }
         }
       } else {
         showToast(t('lottery.adminCreated'), 'success')

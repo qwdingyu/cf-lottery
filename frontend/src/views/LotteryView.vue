@@ -31,44 +31,62 @@
     </div>
     <div v-else-if="draws.length === 0" class="lottery-center">
       <div class="empty-icon">🎪</div>
-      <p>{{ $t('lottery.noActivity') }}</p>
+      <!-- 055a：无 slug 不是「广场空列表」，而是请用活动链接；深链加载失败则诚实说明 -->
+      <p>{{ isDeepLinked ? $t('lottery.noActivity') : $t('lottery.needActivityLink') }}</p>
+      <p v-if="!isDeepLinked" class="lottery-empty-hint">{{ $t('lottery.needActivityLinkHint') }}</p>
     </div>
 
     <!-- 活动卡片 -->
-    <div v-else class="lottery-main">
+    <div v-else class="lottery-main" :class="{ 'lottery-main--deep': isDeepLinked }">
       <div
         v-for="draw in draws"
         :key="draw.id"
         class="lottery-card"
-        :class="{ expanded: expandedId === draw.id }"
+        :class="{
+          expanded: isCardExpanded(draw.id),
+          'lottery-card--deep': isDeepLinked,
+        }"
       >
-        <div class="lottery-card-head" @click="toggleExpand(draw.id)">
+        <div
+          class="lottery-card-head"
+          :class="{ 'lottery-card-head--static': isDeepLinked }"
+          @click="!isDeepLinked && toggleExpand(draw.id)"
+        >
           <div class="lottery-card-left">
-            <h3 class="lottery-card-title">{{ draw.name }}</h3>
+            <h3 class="lottery-card-title">{{ draw.name || draw.title }}</h3>
             <div class="lottery-card-tags">
               <span class="lottery-tag" :class="draw.status">{{ statusText(draw.status) }}</span>
+              <span v-if="resultModeLabel(draw)" class="lottery-tag mode">{{ resultModeLabel(draw) }}</span>
               <span v-if="myWonById[draw.id]" class="lottery-tag won">🎉 {{ $t('lottery.wonTag') }}</span>
               <span v-else-if="myJoinedById[draw.id]" class="lottery-tag joined">{{ $t('lottery.joined') }}</span>
               <span v-if="draw.entryCount != null" class="lottery-tag count">{{ $t('lottery.drawCount', { count: draw.entryCount }) }}</span>
             </div>
           </div>
-          <button class="lottery-expand-btn">{{ expandedId === draw.id ? '▲ ' + $t('lottery.collapse') : '▼ ' + $t('lottery.expand') }}</button>
+          <!-- 深链单活动：始终展开，不提供收起（避免多一步才能看到主 CTA） -->
+          <button
+            v-if="!isDeepLinked"
+            type="button"
+            class="lottery-expand-btn"
+          >{{ expandedId === draw.id ? '▲ ' + $t('lottery.collapse') : '▼ ' + $t('lottery.expand') }}</button>
         </div>
-        <!-- 折叠态快捷操作 -->
-        <div v-if="expandedId !== draw.id && draw.status === 'drawn' && !sessionEmail" class="lottery-quick-bar">
+        <!-- 折叠态快捷操作（仅非深链列表心智；深链始终展开） -->
+        <div v-if="!isDeepLinked && expandedId !== draw.id && draw.status === 'drawn' && !sessionEmail" class="lottery-quick-bar">
           <button class="lottery-share-btn" @click="openLogin(draw.id)">{{ $t('lottery.loginToCheck') }}</button>
         </div>
-        <div v-if="expandedId !== draw.id && draw.status === 'drawn' && sessionEmail" class="lottery-quick-bar">
+        <div v-if="!isDeepLinked && expandedId !== draw.id && draw.status === 'drawn' && sessionEmail" class="lottery-quick-bar">
           <button class="lottery-share-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
         </div>
 
-        <div v-if="expandedId === draw.id" class="lottery-card-body">
+        <div v-if="isCardExpanded(draw.id)" class="lottery-card-body">
+          <!-- 活动说明：深链沉浸首屏可见，减少「只有动画不知道规则」 -->
+          <p v-if="drawDescription(draw)" class="lottery-draw-desc">{{ drawDescription(draw) }}</p>
+          <p v-if="statusPathHint(draw)" class="lottery-status-path">{{ statusPathHint(draw) }}</p>
           <div class="lottery-game-area">
             <component
               :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
               :key="draw.id"
               :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || $t('lottery.productPlaceholder'), color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
-              :disabled="joiningId === draw.id || !!myJoinedById[draw.id]"
+              :disabled="joiningId === draw.id || !!myJoinedById[draw.id] || draw.status !== 'open'"
               :loading="joiningId === draw.id"
               @play="handleJoin(draw.id)"
             />
@@ -79,20 +97,26 @@
           -->
           <div class="lottery-join-bar">
             <template v-if="draw.status !== 'open'">
-              <span class="lottery-join-hint">{{ statusText(draw.status) }}</span>
+              <span class="lottery-join-hint">{{ statusPathHint(draw) || statusText(draw.status) }}</span>
+              <button
+                v-if="draw.status === 'drawn' || myJoinedById[draw.id]"
+                type="button"
+                class="lottery-result-btn"
+                @click="openMyResult(draw)"
+              >{{ $t('lottery.queryResult') }}</button>
             </template>
             <template v-else-if="myJoinedById[draw.id]">
               <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
-              <button v-if="draw.showWinners" class="lottery-result-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
+              <button v-if="draw.showWinners" type="button" class="lottery-result-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
             </template>
             <template v-else-if="hasInteractiveGame(draw)">
               <span class="lottery-join-hint">{{ $t('lottery.gamePrimaryCtaHint') }}</span>
             </template>
             <template v-else-if="!sessionEmail && !registeredUsername">
-              <button class="lottery-join-btn primary" @click="openLogin(draw.id)">{{ $t('lottery.join') }}</button>
+              <button type="button" class="lottery-join-btn primary" @click="openLogin(draw.id)">{{ $t('lottery.join') }}</button>
             </template>
             <template v-else>
-              <button class="lottery-join-btn primary" :disabled="joiningId === draw.id" @click="handleJoin(draw.id)">
+              <button type="button" class="lottery-join-btn primary" :disabled="joiningId === draw.id" @click="handleJoin(draw.id)">
                 {{ joiningId === draw.id ? $t('lottery.loadingText') : $t('lottery.join') }}
               </button>
             </template>
@@ -529,11 +553,56 @@ const isRegMyResult = computed(() => myResultDraw.value?.participationMode === '
 /** 头部标题：单活动模式用活动名，多活动模式用默认标题 */
 const drawTitle = computed(() => {
   const d = draws.value[0]
-  return d && draws.value.length === 1 ? d.name : t('lottery.title')
+  if (d && (draws.value.length === 1 || isDeepLinked.value)) {
+    return d.name || d.title || t('lottery.title')
+  }
+  return t('lottery.title')
 })
 /** 状态精简文案 */
 const statusText = (s: string) =>
   ({ draft: t('lottery.adminDrawDraft'), open: t('lottery.statusOpen'), paused: t('lottery.statusPaused'), drawing: t('lottery.statusDrawing'), drawn: t('lottery.ended'), cancelled: t('lottery.adminDrawCancelled') } as Record<string,string>)[s] || s
+
+/** 深链始终展开；非深链按 expandedId */
+function isCardExpanded(drawId: string) {
+  if (isDeepLinked.value) return true
+  return expandedId.value === drawId
+}
+
+/** 活动说明（公开接口可能给 description） */
+function drawDescription(draw: LotteryDraw) {
+  return String(draw.description || '').trim()
+}
+
+/**
+ * 结果模式短标签：让用户知道「参与后是否马上出结果」。
+ * 不推导 experience / participation，只展示 result_mode 诚实语义。
+ */
+function resultModeLabel(draw: LotteryDraw) {
+  const mode = String(draw.resultMode || '').toLowerCase()
+  if (mode === 'instant') return t('lottery.resultModeInstantTag')
+  if (mode === 'scheduled') return t('lottery.resultModeScheduledTag')
+  if (mode === 'manual') return t('lottery.resultModeManualTag')
+  return ''
+}
+
+/**
+ * 状态路径提示：主 CTA 旁用完整句子，避免只显示「已结束」等单词。
+ */
+function statusPathHint(draw: LotteryDraw) {
+  if (myJoinedById.value[draw.id] && draw.status === 'open') {
+    return t('lottery.statusHintJoinedPending')
+  }
+  const key = ({
+    draft: 'lottery.statusHintDraft',
+    open: '',
+    paused: 'lottery.statusHintPaused',
+    drawing: 'lottery.statusHintDrawing',
+    drawn: 'lottery.statusHintDrawn',
+    cancelled: 'lottery.statusHintCancelled',
+  } as Record<string, string>)[draw.status]
+  return key ? t(key) : ''
+}
+
 /** 参与时间 */
 const joinedTimeText = (draw: any): string => {
   const e = sortedMyEntries.value.find((r: any) => r.drawId === draw.id)
@@ -931,8 +1000,16 @@ function handleLogout() {
 }
 
 function toggleExpand(id: string) {
+  // 深链单活动：禁止收起，保持沉浸主路径（docs/055a）
+  if (isDeepLinked.value) {
+    expandedId.value = id
+    const draw = draws.value.find((item) => item.id === id)
+    if (draw) ensureSubmissionDraft(draw)
+    void fetchDrawDetail(id)
+    return
+  }
   expandedId.value = expandedId.value === id ? null : id
-  // 展开详情时调用 GET /lottery/draws/:id 触发懒开奖
+  // 展开详情时调用 GET 触发懒开奖 / 补全字段
   if (expandedId.value === id) {
     const draw = draws.value.find((item) => item.id === id)
     if (draw) ensureSubmissionDraft(draw)
@@ -971,23 +1048,28 @@ async function fetchDrawDetail(id: string) {
 
 async function fetchDraws() {
   loading.value = true
+  fetchError.value = ''
   try {
-    // 公开活动列表：通过 /api/public/draws/:slug 逐个查询
-    // MVP 暂时只支持深链访问，不支持列表页
-    if (props.id) {
-      const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(props.id))
-      const data = await res.json() as any
-      if (data.ok) {
-        draws.value = [{ ...data, id: props.id } as LotteryDraw]
-        ensureSubmissionDraft(draws.value[0]!)
-        expandedId.value = props.id
-        trackPageView(draws.value[0]!)
-        const title = String(data.title || '').trim()
-        if (title) document.title = title + ' - ' + t('lottery.title')
-        void fetchDrawDetail(props.id)
-      } else {
-        draws.value = []
-      }
+    // 公开页：只支持深链 /lottery/:slug（011 Option C）；无 slug 不做活动广场
+    if (!props.id) {
+      draws.value = []
+      return
+    }
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(props.id))
+    const data = await res.json() as any
+    if (data.ok) {
+      // 优先用服务端 id；slug 路由下仍保证 expanded 与 key 一致
+      const drawId = String(data.id || props.id)
+      draws.value = [{ ...data, id: drawId, publicSlug: data.publicSlug || props.id } as LotteryDraw]
+      ensureSubmissionDraft(draws.value[0]!)
+      expandedId.value = drawId
+      trackPageView(draws.value[0]!)
+      const title = String(data.title || data.name || '').trim()
+      if (title) document.title = title + ' - ' + t('lottery.title')
+      void fetchDrawDetail(drawId)
+    } else {
+      draws.value = []
+      fetchError.value = data.message || t('lottery.noActivity')
     }
   } catch (e) {
     console.error('[lottery] fetch draws failed:', e)
@@ -1269,10 +1351,42 @@ onUnmounted(() => {
 .lottery-tag.count { background:transparent; }
 .lottery-expand-btn { font-size:12px; color:rgba(255,255,255,0.4); background:none; border:none; cursor:pointer; white-space:nowrap; }
 
-/* ── 展开区 ── */
-.lottery-card-body { border-top:1px solid rgba(255,255,255,0.06); max-height:0; overflow:hidden; transition:max-height 0.35s ease,opacity 0.35s ease; opacity:0; }
+/* ── 展开区 ──
+ * 055a：max-height 必须能容纳转盘/老虎机等（原 800px 会裁切主 CTA）。
+ * 深链沉浸卡默认展开，不再依赖折叠动画。
+ */
+.lottery-card-body {
+  border-top: 1px solid rgba(255,255,255,0.06);
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s ease, opacity 0.35s ease;
+  opacity: 0;
+}
+.lottery-draw-desc {
+  margin: 0;
+  padding: 12px 20px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.65);
+  white-space: pre-wrap;
+}
+.lottery-status-path {
+  margin: 0;
+  padding: 8px 20px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(245,158,11,0.9);
+}
+.lottery-empty-hint {
+  margin: 8px auto 0;
+  max-width: 28em;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(255,255,255,0.4);
+}
 .lottery-game-area { padding:24px 20px; display:flex; justify-content:center; }
-.lottery-join-bar { display:flex; align-items:center; justify-content:center; gap:12px; padding:16px 20px; border-top:1px solid rgba(255,255,255,0.06); }
+.lottery-join-bar { display:flex; align-items:center; justify-content:center; gap:12px; padding:16px 20px; border-top:1px solid rgba(255,255,255,0.06); flex-wrap:wrap; }
+.lottery-tag.mode { background:rgba(99,102,241,0.15); color:#a5b4fc; }
 .lottery-join-btn { font-size:15px; font-weight:600; padding:10px 32px; min-height:44px; border-radius:8px; background:var(--admin-accent,#f59e0b); color:#000; border:none; cursor:pointer; }
 .lottery-join-btn:disabled { opacity:0.5; cursor:not-allowed; }
 .lottery-join-hint { font-size:13px; color:rgba(255,255,255,0.5); text-align:center; max-width:28em; line-height:1.4; }
@@ -1309,8 +1423,20 @@ onUnmounted(() => {
 .skeleton-btn { width:40%; height:36px; border-radius:8px; }
 @keyframes skeleton-pulse { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
 
-/* ── 展开态 ── */
-.expanded .lottery-card-body { max-height:800px; opacity:1; }
+/* ── 展开态：足够高以容纳游戏壳；深链卡直接可见、无折叠动画 ── */
+.expanded .lottery-card-body {
+  max-height: min(2400px, 200vh);
+  opacity: 1;
+  overflow: visible;
+}
+.lottery-card--deep .lottery-card-body {
+  max-height: none;
+  opacity: 1;
+  overflow: visible;
+}
+.lottery-card-head--static { cursor: default; }
+.lottery-card-head--static:hover { background: transparent; }
+.lottery-main--deep { padding-top: 12px; }
 
 /* ── 空状态 ── */
 .empty-icon { font-size:48px; margin-bottom:12px; }
