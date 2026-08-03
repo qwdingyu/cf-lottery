@@ -280,14 +280,16 @@
   {
     "key": "enabled_participation_modes",
     "label": "启用的参与模式",
-    "description": "可选择的参与模式列表，逗号分隔。不在列表中的模式不会出现在创建界面。",
-    "effect": "创建活动时校验，不在列表中的模式拒绝创建。已有活动不受影响。",
+    "description": "选择可在创建活动时使用的参与模式。",
+    "effect": "创建活动时校验，未勾选的模式拒绝创建。已有活动不受影响。",
     "scope": "admin",
     "type": "string",
     "defaultValue": "open,registered,roster,password,invite_code",
     "group": "平台运营",
     "order": 21,
-    "difficulty": "basic"
+    "difficulty": "basic",
+    "enum": ["open","registered","roster","password","invite_code"],
+    "enumLabels": {"open":"公开参与","registered":"需注册登录","roster":"限定名单","password":"访问密码","invite_code":"邀请码"}
   },
   {
     "key": "enable_registration",
