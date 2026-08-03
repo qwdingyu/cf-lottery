@@ -49,7 +49,7 @@
       </div>
     </div>
 
-    <div class="notice-bar" role="note">
+    <div class="notice-card" role="note" style="margin-bottom:12px">
       <span>💡 提示：创建一个活动需要设置时间、选择参与模式、配置奖项后才能发布上线。</span>
     </div>
 
