@@ -1,0 +1,22 @@
+[Unit]
+Description=cf-lottery Hono Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/cf-lottery
+EnvironmentFile=/opt/cf-lottery/.env
+ExecStart=/usr/bin/node dist/server.mjs
+Restart=always
+RestartSec=5
+
+# 安全加固
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/cf-lottery/data
+
+[Install]
+WantedBy=multi-user.target
