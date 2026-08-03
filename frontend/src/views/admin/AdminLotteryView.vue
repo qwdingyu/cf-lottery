@@ -2713,6 +2713,9 @@ async function handleEdit(draw: LotteryDraw) {
     experienceType: draw.experienceType || defaultExperienceForActivity(draw.activityKind || 'lottery', draw.participationMode || 'open'),
     resultMode: draw.resultMode || defaultResultModeForActivity(draw.activityKind || 'lottery'),
     activityConfig: normalizeActivityConfig(draw.activityKind || 'lottery', draw.activityConfig) as any,
+    // 编辑回填展示开关，避免保存时把服务端已有 show* 误写成 0
+    showWinners: Number(draw.showWinnerList ?? draw.showWinnerCount ?? 0) === 1,
+    showParticipantCount: (Number(draw.showParticipantCount ?? 1) === 1 ? 1 : 0) as 0 | 1,
     tiers,  // 回填奖项配置（修复编辑时奖项带不出来的 bug）
   }
   isEditing.value = true
