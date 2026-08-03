@@ -6,7 +6,24 @@ import { describe, expect, it } from "vitest";
 import {
   getSystemConfigDefinition,
   normalizeSystemConfigValue,
+  PUBLIC_SYSTEM_CONFIG_KEYS,
 } from "./system-config-registry";
+
+describe("公开系统配置白名单", () => {
+  it("包含 demo_public_slug（落地页诚实次 CTA）", () => {
+    expect(PUBLIC_SYSTEM_CONFIG_KEYS).toContain("demo_public_slug");
+    const def = getSystemConfigDefinition("demo_public_slug");
+    expect(def?.scope).toBe("public");
+    expect(def?.defaultValue).toBe("");
+  });
+
+  it("公开键不包含敏感类配置（抽样子集）", () => {
+    // 回归：公开列表不得误入 admin-only 键
+    expect(PUBLIC_SYSTEM_CONFIG_KEYS).not.toContain("email_from_name");
+    expect(PUBLIC_SYSTEM_CONFIG_KEYS).toContain("platform_name");
+    expect(PUBLIC_SYSTEM_CONFIG_KEYS).toContain("support_email");
+  });
+});
 
 describe("system-config 多选枚举定义", () => {
   it("enabled_activity_kinds 带 enum 与标签", () => {

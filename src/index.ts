@@ -199,11 +199,12 @@ app.route("/api/platform/system-config", platformSystemConfigRoute);
 app.route("/api/platform/redemption-codes", platformRedemptionCodesRoute);
 app.route("/api/platform", platformRoute);
 
-// 健康检查
+// 健康检查：只暴露布尔连通性，不回传内部错误字符串（防侦察，docs/070 LOW #12）
 app.get("/api/health", (c) => c.json({
   ok: true,
   db: !!c.get("db"),
-  dbError: c.get("dbInitError") || null,
+  /** 有初始化错误时仅 true，细节只写 Worker 日志 */
+  dbError: Boolean(c.get("dbInitError")),
 }));
 
 // Cron 手动入口：处理到期活动。线上自动任务使用 Worker scheduled() handler。

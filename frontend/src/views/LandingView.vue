@@ -19,8 +19,17 @@
       <p class="hero-subtitle">{{ $t('landing.heroSubtitle') }}</p>
       <div class="hero-actions">
         <RouterLink to="/admin/register" class="btn btn-primary btn-lg">{{ $t('landing.registerCta') }}</RouterLink>
-        <!-- 次 CTA 必须诚实：不指向注册（docs/055a P0）；无 Demo slug 时锚到「怎么玩」说明 -->
-        <a href="#how-it-works" class="btn btn-ghost btn-lg">{{ $t('landing.viewDemo') }}</a>
+        <!--
+          次 CTA 必须诚实（docs/055a P0）：
+          - 配置了 demo_public_slug → 真实活动深链
+          - 否则锚到 #how-it-works，禁止链到注册
+        -->
+        <RouterLink
+          v-if="demoLotteryPath"
+          :to="demoLotteryPath"
+          class="btn btn-ghost btn-lg"
+        >{{ $t('landing.viewDemo') }}</RouterLink>
+        <a v-else href="#how-it-works" class="btn btn-ghost btn-lg">{{ $t('landing.viewDemo') }}</a>
       </div>
       <p class="hero-note">{{ $t('landing.heroNote') }}</p>
       <p class="hero-note hero-note-boundary">{{ $t('landing.freeBoundary') }}</p>
@@ -188,6 +197,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
@@ -197,6 +207,34 @@ const router = useRouter()
 const { t } = useI18n()
 const { isLoggedIn, clearToken } = useAdminAuth()
 const { showToast } = useToast()
+
+/**
+ * 公开配置中的 Demo 活动 public_slug（可选）。
+ * 仅接受安全字符，避免把配置值直接拼进路由造成异常路径。
+ */
+const demoPublicSlug = ref('')
+
+const demoLotteryPath = computed(() => {
+  const slug = demoPublicSlug.value.trim()
+  if (!slug) return ''
+  // public_slug 通常为短横线/字母数字；拒绝 / ? # 等
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(slug)) return ''
+  return `/lottery/${encodeURIComponent(slug)}`
+})
+
+onMounted(async () => {
+  try {
+    const res = await fetch('/api/system-config/system-config', { credentials: 'same-origin' })
+    if (!res.ok) return
+    const body = await res.json() as { ok?: boolean; config?: Record<string, string> }
+    const slug = body?.config?.demo_public_slug
+    if (typeof slug === 'string' && slug.trim()) {
+      demoPublicSlug.value = slug.trim()
+    }
+  } catch {
+    // 公开配置失败不影响首页主路径
+  }
+})
 
 /** 首页退出：完整业务会话（admin + 参与 + cf-auth 临时键） */
 function handleLogout() {

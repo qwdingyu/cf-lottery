@@ -27,6 +27,19 @@
     "difficulty": "basic"
   },
   {
+    "key": "demo_public_slug",
+    "label": "落地页 Demo 活动 slug",
+    "description": "公开活动 public_slug。有值时落地页次 CTA 链到真实活动页；空则锚到「怎么玩」说明（docs/055a 诚实次 CTA）。",
+    "effect": "GET /api/system-config 返回；Landing 次按钮优先 /lottery/{slug}。禁止填内部 draw id。",
+    "scope": "public",
+    "type": "string",
+    "defaultValue": "",
+    "maxLength": 80,
+    "group": "基础信息",
+    "order": 2,
+    "difficulty": "advanced"
+  },
+  {
     "key": "email_from_name",
     "label": "发件人名称",
     "description": "邮件通知中显示的发件人名称。",

@@ -912,7 +912,7 @@
                     <button type="button" class="btn btn-ghost btn-xs" :disabled="form.tiers.length >= 10" @click="addTier">
                       {{ $t('lottery.adminAddTier') }}
                     </button>
-                    <!-- 始终提供快速创建：无奖品库时是主 CTA；有奖品时仍可一键加新奖 -->
+                    <!-- 始终提供快速创建：无奖品库时是主 CTA（手动履约，可过发布门禁）；有奖品时仍可一键加新奖 -->
                     <button
                       type="button"
                       class="btn btn-xs"
@@ -925,7 +925,9 @@
                     <button v-if="prizeOptions.length > 0" type="button" class="btn btn-ghost btn-xs" @click="goToPrizes">
                       {{ $t('lottery.adminManagePrizes') }}
                     </button>
-                    <small class="field-hint">{{ $t('lottery.adminTierLimitHint') }}</small>
+                    <small class="field-hint">
+                      {{ prizeOptions.length === 0 ? $t('lottery.adminEmptyPrizeHint') : $t('lottery.adminTierLimitHint') }}
+                    </small>
                   </div>
                 </div>
               </div>
@@ -1538,37 +1540,46 @@ function goToPrizes() {
 
 const quickPrizeLoading = ref(false)
 
-/** 在活动表单内一键创建默认奖品 + 自动生成码，消除跳转到奖品管理页面的流程断裂 */
+/**
+ * 在活动表单内一键创建默认奖品，消除跳奖品页的流程断裂（055a P1 TTV）。
+ *
+ * 默认 prizeType=manual_fulfillment：无需码池即可过 publish-check（非 code 类型不校验库存）。
+ * 适合「选模板 → 快速奖 → 发布试跑」；若需卡密，运营者仍可去奖品页改类型并导入码。
+ */
 async function quickCreatePrize() {
   quickPrizeLoading.value = true
   try {
-    // 1. 创建默认奖品
     const prizeName = t('lottery.adminQuickPrizeName', { name: form.value.name || t('lottery.adminLotteryActivity') })
+    const slots = Math.max(1, Number(form.value.winnerCount) || 1)
     const prizeData = await adminRequest<{ id: string }>('/api/admin/prizes', {
       method: 'POST',
-      body: JSON.stringify({ name: prizeName, prizeType: 'code', valueText: '' }),
+      body: JSON.stringify({
+        name: prizeName,
+        // 手动履约：空库也能一次过发布门禁；不自动造 10 个码（避免脏码 + 假「已备货」感）
+        prizeType: 'manual_fulfillment',
+        valueText: t('lottery.adminQuickPrizeValueHint'),
+      }),
     })
-    // 2. 自动生成 10 个码（覆盖常见 1 名额试跑；发布门禁仍以可用码 ≥ 名额为准）
-    await adminRequest(`/api/admin/prizes/${prizeData.id}/codes/generate`, {
-      method: 'POST',
-      body: JSON.stringify({ count: 10, codeLength: 8 }),
-    })
-    // 3. 刷新奖品下拉
     await loadPrizeOptions()
-    // 4. 无奖项则补一行；有空奖项则挂上新奖品——避免「有码无奖项」仍过不了发布门禁
+    // 无奖项则补一行；有空奖项则挂上新奖品——避免「有奖无奖项」仍过不了发布门禁
     if (form.value.tiers.length === 0) {
       form.value.tiers = [{
         prizeId: prizeData.id,
         tierName: t('lottery.adminTierName', { n: 1 }),
-        winnerCount: Math.max(1, Number(form.value.winnerCount) || 1),
+        winnerCount: slots,
       }]
     } else if (!form.value.tiers[0]!.prizeId) {
       form.value.tiers[0]!.prizeId = prizeData.id
       if (!form.value.tiers[0]!.winnerCount) {
-        form.value.tiers[0]!.winnerCount = Math.max(1, Number(form.value.winnerCount) || 1)
+        form.value.tiers[0]!.winnerCount = slots
       }
     }
-    showToast(t('lottery.adminPrizeCreatedWithCodes', { name: prizeName }), 'success')
+    // 活动中奖人数与第一奖项对齐，减少 publish-check winner_count.mismatch 警告
+    if (form.value.activityKind === 'lottery') {
+      const tierTotal = form.value.tiers.reduce((sum, tier) => sum + Math.max(0, Number(tier.winnerCount) || 0), 0)
+      if (tierTotal > 0) form.value.winnerCount = tierTotal
+    }
+    showToast(t('lottery.adminPrizeCreatedManual', { name: prizeName }), 'success')
   } catch (err: any) {
     showToast(err?.message || t('lottery.adminQuickPrizeFailed'), 'error')
   } finally {
@@ -2110,6 +2121,10 @@ function applyTemplate(tpl: any) {
   createStepFocus.value = kind === 'lottery' ? 4 : 1
   showCreateModal.value = true
   showToast(t('lottery.adminTemplateApplied', { name: activeTemplateName.value || activeTemplateId.value }), 'success')
+  // 空奖品库 + 抽奖：额外提示用「快速创建」过门禁，不自动写库（避免误点模板就落脏奖品）
+  if (kind === 'lottery' && prizeOptions.value.length === 0) {
+    showToast(t('lottery.adminEmptyPrizeHint'), 'info')
+  }
   // 打开后滚到焦点步骤，避免用户仍停在标题区
   nextTick(() => focusCreateStep(createStepFocus.value))
 }

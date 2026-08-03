@@ -33,16 +33,44 @@ export function setupIntegrationRoutes(adminLotteryRoute: Hono<AppEnv>) {
 // API 密钥管理
 // ═════════════════════════════════════════════════════════
 
+/**
+ * 列表展示用：从明文或哈希派生短前缀，永不回传完整 key/hash（docs/070 LOW #13）。
+ * 明文形如 cl_xxx… 时取前 10 字符；哈希则固定「已保存」占位。
+ */
+function apiKeyListPrefix(stored: string): string {
+  const s = String(stored || "").trim();
+  if (!s) return "••••";
+  // 历史若误存过明文 cl_…（极少数），仍只露前缀
+  if (s.startsWith("cl_") && s.length > 12) return `${s.slice(0, 10)}…`;
+  // 库内为哈希：不回传任何可离线试的材料
+  return "cl_••••••••";
+}
+
 /** API 密钥列表 */
 adminLotteryRoute.get("/api-keys", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const rows = await db
-    .select({ id: apiKeys.id, name: apiKeys.name, key: apiKeys.key, active: apiKeys.active, createdAt: apiKeys.createdAt })
+    .select({
+      id: apiKeys.id,
+      name: apiKeys.name,
+      active: apiKeys.active,
+      createdAt: apiKeys.createdAt,
+      key: apiKeys.key,
+    })
     .from(apiKeys)
     .where(eq(apiKeys.tenantId, tenantId))
     .orderBy(desc(apiKeys.createdAt));
-  return ok(c, { keys: rows });
+  // 对外字段：prefix 仅展示；不包含 key 哈希
+  return ok(c, {
+    keys: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      active: r.active,
+      createdAt: r.createdAt,
+      prefix: apiKeyListPrefix(r.key),
+    })),
+  });
 });
 
 /** 创建 API 密钥 */
@@ -59,7 +87,7 @@ adminLotteryRoute.post("/api-keys", async (c) => {
   const apiKeyId = crypto.randomUUID();
   await db.insert(apiKeys).values({ id: apiKeyId, tenantId, name, key: keyHash });
   await recordTenantAudit(c, "apikey.create", "api_key", apiKeyId, { name });
-  return ok(c, { key });
+  return ok(c, { key, prefix: apiKeyListPrefix(key) });
 });
 
 /** 删除 API 密钥 */

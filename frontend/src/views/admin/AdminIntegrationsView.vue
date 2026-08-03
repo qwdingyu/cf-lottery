@@ -71,7 +71,7 @@
         <tbody v-else>
           <tr v-for="k in apiKeys" :key="k.id">
             <td>{{ k.name }}</td>
-            <td><code class="code-text">{{ maskKey(k.key) }}</code></td>
+            <td><code class="code-text">{{ k.prefix || maskKey(k.key) }}</code></td>
             <td><span class="tag" :class="k.active ? 'tag-success' : 'tag-muted'">{{ k.active ? '启用' : '停用' }}</span></td>
             <td>{{ formatTime(k.createdAt) }}</td>
             <td class="col-actions">
@@ -166,9 +166,11 @@ function truncate(text: string, len: number): string {
   return text.length > len ? text.slice(0, len) + '…' : text
 }
 
+/** 列表仅展示服务端 prefix；兼容旧字段时兜底（不应再收到完整 hash） */
 function maskKey(key: string): string {
-  // 密钥以哈希存储，无法显示明文；展示哈希前 8 位作为标识（稳定可识别）
-  return key ? key.slice(0, 8) + '…' : '-'
+  if (!key) return '-'
+  if (key.startsWith('cl_')) return key.length > 12 ? `${key.slice(0, 10)}…` : key
+  return 'cl_••••••••'
 }
 
 function formatTime(iso: string): string {
