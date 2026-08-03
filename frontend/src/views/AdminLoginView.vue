@@ -35,16 +35,9 @@
         <p v-if="error" class="login-error">{{ error }}</p>
       </form>
 
-      <!-- Logto 身份认证登录（docs/051 方案） -->
-      <div v-if="logtoEnabled" class="logto-section">
-        <div class="logto-divider"><span class="divider-text">{{ $t('adminLogin.or') }}</span></div>
-        <button type="button" class="btn btn-ghost login-btn logto-btn" :disabled="logtoLoading" @click="handleLogtoLogin">
-          <span class="logto-icon">L</span> 使用 Logto 登录
-        </button>
-      </div>
-
-      <div v-if="cfAuthEnabled" class="logto-section">
-        <div class="logto-divider"><span class="divider-text">{{ $t('adminLogin.or') }}</span></div>
+      <!-- cf-auth 统一认证（docs/059；OAuth 授权码+PKCE） -->
+      <div v-if="cfAuthEnabled" class="oauth-section">
+        <div class="oauth-divider"><span class="divider-text">{{ $t('adminLogin.or') }}</span></div>
         <button
           type="button"
           class="btn btn-ghost login-btn"
@@ -130,7 +123,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
-import { useLogto } from '@logto/vue'
 import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
 
 const route = useRoute()
@@ -138,11 +130,6 @@ const router = useRouter()
 const { t } = useI18n()
 const { setToken, setPlatformRole } = useAdminAuth()
 const { showToast } = useToast()
-
-// Logto 身份认证（docs/051 方案）：环境变量未配置时隐藏 Logto 登录按钮
-const logtoEnabled = !!(import.meta.env.VITE_LOGTO_ENDPOINT && import.meta.env.VITE_LOGTO_APP_ID)
-const logto = logtoEnabled ? useLogto() : null
-const logtoLoading = ref(false)
 
 const cfAuth = useCfAuthLogin()
 const cfAuthEnabled = cfAuth.enabled
@@ -154,20 +141,6 @@ async function handleCfAuthLogin() {
     await cfAuth.login('/admin')
   } catch (err) {
     showToast(err instanceof Error ? err.message : 'cf-auth 登录失败', 'error')
-  }
-}
-
-async function handleLogtoLogin() {
-  if (!logto) return
-  logtoLoading.value = true
-  try {
-    // 跳转到 Logto 登录页，登录成功后回调到当前页面
-    const redirectUri = window.location.origin + '/admin/login'
-    await logto.signIn(redirectUri)
-  } catch (err) {
-    console.error('[logto] signIn error:', err)
-    showToast('Logto 登录失败', 'error')
-    logtoLoading.value = false
   }
 }
 
@@ -397,6 +370,27 @@ async function handleVerifyEmail() {
   gap: 8px;
   margin-top: 16px;
   font-size: 13px;
+  color: var(--tg-hint, #9aa4b2);
+}
+
+.oauth-section {
+  margin-top: 16px;
+}
+.oauth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.oauth-divider::before,
+.oauth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border, rgba(255, 255, 255, 0.1));
+}
+.divider-text {
+  font-size: 12px;
   color: var(--tg-hint, #9aa4b2);
 }
 </style>

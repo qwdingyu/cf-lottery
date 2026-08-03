@@ -101,9 +101,12 @@ EMAIL_FROM_NAME=抽奖平台
 # 服务端口
 PORT=8787
 
-# Logto SSO（可选）
-LOGTO_ENDPOINT=
-LOGTO_APP_ID=
+# cf-auth OAuth RP（可选；生产 IdP 如 https://auth.eforge.xyz）
+CF_AUTH_ENABLED=false
+CF_AUTH_ISSUER=
+CF_AUTH_CLIENT_ID=
+CF_AUTH_CLIENT_SECRET=
+CF_AUTH_REDIRECT_URI=
 
 # Cron 密钥
 CRON_SECRET=

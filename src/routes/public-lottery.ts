@@ -424,11 +424,10 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
 
-  // ── Logto 用户跳过验证码（docs/051 方案） ──
-  // 如果请求头包含有效的自签 JWT（由 /auth/logto-exchange 签发），且 JWT 中的 email
-  // 与请求的 email 一致，则跳过 6 位验证码验证。Logto 用户已通过社交登录/邮箱密码
-  // 完成了身份认证，不再需要二次验证码，从而减少邮件服务（Resend）的免费额度消耗。
-  let logtoVerified = false;
+  // ── 业务 JWT 跳过验证码（cf-auth OAuth 交换后的自签 JWT，docs/059） ──
+  // Authorization Bearer 有效且 payload.email 与请求 email 一致时，
+  // 用户已在 IdP 完成身份认证，跳过 6 位邮箱 OTP（减少 Resend 额度）。
+  let bearerIdentityVerified = false;
   if (!code) {
     const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
     if (bearerToken) {
@@ -437,15 +436,15 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
         try {
           const payload = await verifyJwt(bearerToken, jwtSecret);
           if (payload?.email === email) {
-            logtoVerified = true;
+            bearerIdentityVerified = true;
           }
         } catch { /* token 无效，继续走验证码流程 */ }
       }
     }
   }
 
-  // 非 Logto 用户：必须提供 6 位验证码
-  if (!logtoVerified && (!code || code.length !== 6)) {
+  // 无有效业务 JWT 时：必须提供 6 位验证码
+  if (!bearerIdentityVerified && (!code || code.length !== 6)) {
     return fail(c, "请输入 6 位验证码", 400);
   }
 
@@ -462,12 +461,11 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
 
-  // ── registered 模式：Logto 用户用自签 JWT 参与；否则返回 401 ──
+  // ── registered 模式：必须用业务自签 JWT 的 sub 作为 user_id；否则 401 ──
   // registered 活动的验证码在 access-code 端点永不生成（该端点 JWT 直通），
   // 但活动从 open 改为 registered 时可能残留未过期的旧验证码。
   // 若不拦截，攻击者可用旧验证码经 verify-join 以 email 身份参与，绕过登录门槛。
-  // Logto 用户（docs/051 方案）：通过自签 JWT 中的 sub（Logto 用户 ID）以 user_id 身份参与，
-  // 与 registered 模式的预期行为一致（user_id 身份，非 email 身份）。
+  // cf-auth / 用户名密码登录签发的 JWT：sub 作为 user_id 身份参与。
   let identityType = "email" as string;
   let identityValue = email as string;
   if (draw.participationMode === "registered") {
@@ -485,15 +483,15 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
         return fail(c, "登录已过期，请重新登录", 401);
       }
       identityValue = payload.sub;
-      logtoVerified = true; // registered 模式 Logto 用户跳过验证码
+      bearerIdentityVerified = true; // registered + 有效 JWT：跳过邮箱 OTP
     } catch {
       return fail(c, "登录已过期，请重新登录", 401);
     }
   }
 
-  // 验证验证码（Logto 用户跳过验证码检查，docs/051 方案）
+  // 验证验证码（持有匹配 email 的业务 JWT 时跳过）
   let validCode = null;
-  if (!logtoVerified) {
+  if (!bearerIdentityVerified) {
     validCode = await verifyEmailAccessCode(db, email, draw.id, code);
     if (!validCode) return fail(c, "验证码无效或已过期", 400);
   }
@@ -508,7 +506,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       refCode: body.refCode,
       userAgent: c.req.header("User-Agent") || "",
       submissionPayload: submission.payload,
-      /** 验证码 ID：joinDraw 事务内标记为已使用，省一次 DB 往返；Logto 用户不传则跳过 */
+      /** 验证码 ID：joinDraw 事务内标记已用；Bearer 身份跳过 OTP 时不传 */
       codeIdToConsume: validCode?.id,
     });
     if (!result.joined) return fail(c, result.message || "参与失败", 400);

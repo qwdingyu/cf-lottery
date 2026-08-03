@@ -19,7 +19,6 @@ import { requireAuth } from "../middleware/auth";
 import { signJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 import { checkDbRateLimit } from "../lib/rate-limit";
-import { verifyLogtoIdToken, exchangeLogtoToken } from "../lib/logto-auth";
 import {
   resolveCfAuthConfig,
   publicCfAuthMeta,
@@ -396,47 +395,6 @@ authRoute.post("/logout", async (c) => {
 });
 
 /**
- * Logto ID Token 交换 → 自签 JWT（docs/051 方案）
- *
- * 前端在 Logto 登录成功后，将 ID Token 发送到此端点，
- * 后端验证 ID Token（签名、issuer、audience）后签发自签 JWT，
- * 自签 JWT 与现有中间件（requireAuth/requireTenantMember）兼容。
- *
- * 请求：{ idToken: string }
- * 响应：{ ok: true, token: string, email: string, sub: string }
- */
-authRoute.post("/logto-exchange", async (c) => {
-  try {
-    // Logto token 交换限流：30 次/分钟/IP（Logto token 本身短期有效，此限流防滥用）
-    const ip = getClientIp(c);
-    const db = getDb(c);
-    if (!(await checkDbRateLimit(db, `logto-exchange:${ip}`, 30, 60000))) {
-      return c.json({ ok: false, message: "请求过于频繁" }, 429);
-    }
-    const body = await c.req.json<{ idToken?: string }>();
-    if (!body?.idToken) {
-      return c.json({ ok: false, message: "缺少 idToken 参数" }, 400);
-    }
-    // 验证 Logto ID Token
-    const logtoPayload = await verifyLogtoIdToken(body.idToken, c);
-    // 签发自签 JWT
-    const jwtSecret = getEnv(c, "JWT_SECRET");
-    if (!jwtSecret) {
-      return c.json({ ok: false, message: "JWT_SECRET 未配置" }, 500);
-    }
-    const token = await exchangeLogtoToken(logtoPayload, jwtSecret);
-    return c.json({
-      ok: true,
-      token,
-      email: String(logtoPayload.email || logtoPayload.preferred_username || ""),
-      sub: String(logtoPayload.sub || ""),
-    });
-  } catch {
-    return c.json({ ok: false, message: "Logto 认证失败" }, 401);
-  }
-});
-
-/**
  * cf-auth OAuth 元数据（无 secret）。
  * 前端据此决定是否展示「用 cf-auth 登录」并构造 authorize URL / PKCE。
  */
@@ -456,7 +414,7 @@ authRoute.get("/cf-auth/meta", async (c) => {
  * cf-auth 授权码交换 → 业务自签 JWT（docs/059）。
  *
  * 浏览器只拿 code + code_verifier；client_secret 留在服务端。
- * 成功后 JWT 与 requireAuth / Logto 交换格式兼容。
+ * 成功后 JWT 与 requireAuth 格式兼容（HS256 业务自签）。
  */
 authRoute.post("/cf-auth/exchange", async (c) => {
   try {

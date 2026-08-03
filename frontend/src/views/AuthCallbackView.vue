@@ -105,7 +105,7 @@ onMounted(async () => {
     })
     // 3) 清 PKCE/state/return；pendingJoin 留给 LotteryView 成功 join 后再 consume
     clearCfAuthOauthTransit(sessionStorage)
-    // 4) 管理端无租户（cf-auth/Logto 交换 JWT tenantId 为空）→ onboarding；参与页路径不动
+    // 4) 管理端无租户（cf-auth 交换 JWT tenantId 为空）→ onboarding；参与页路径不动
     const finalPath = resolveAdminPathAfterCfAuth({
       token: data.token,
       returnPath: returnTo.startsWith('/') ? returnTo : '/admin',

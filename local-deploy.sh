@@ -55,15 +55,7 @@ fi
 
 # ── 步骤 1：构建前端 ──
 info "步骤 1/4：构建前端..."
-# 传递 VITE_LOGTO_* 变量给 Vite 构建（docs/051 方案）
-LOGTO_ENDPOINT="$(cred_load LOGTO_ENDPOINT 2>/dev/null || true)"
-LOGTO_APP_ID="$(cred_load LOGTO_APP_ID 2>/dev/null || true)"
-if [ -n "$LOGTO_ENDPOINT" ]; then
-  export VITE_LOGTO_ENDPOINT="$LOGTO_ENDPOINT"
-fi
-if [ -n "$LOGTO_APP_ID" ]; then
-  export VITE_LOGTO_APP_ID="$LOGTO_APP_ID"
-fi
+# 统一认证走 cf-auth OAuth（服务端 env），前端无需 VITE_LOGTO_*
 npm run frontend:build
 info "前端构建完成"
 
@@ -112,7 +104,8 @@ append_secret() {
 }
 
 # 写入 wrangler 需要的 secrets
-for name in TURSO_URL TURSO_TOKEN JWT_SECRET PASSWORD_PEPPER RESEND_API_KEY EMAIL_FROM CRON_SECRET CREDENTIALS_ENCRYPTION_KEY LOGTO_ENDPOINT LOGTO_APP_ID; do
+# CF_AUTH_*：统一认证 OAuth RP（docs/059）；无 LOGTO_*
+for name in TURSO_URL TURSO_TOKEN JWT_SECRET PASSWORD_PEPPER RESEND_API_KEY EMAIL_FROM CRON_SECRET CREDENTIALS_ENCRYPTION_KEY CF_AUTH_ENABLED CF_AUTH_ISSUER CF_AUTH_CLIENT_ID CF_AUTH_CLIENT_SECRET CF_AUTH_REDIRECT_URI CF_AUTH_SCOPES; do
   append_secret "$name"
 done
 

@@ -4,7 +4,6 @@ import router from './router'
 import './assets/base.css'
 import './assets/admin.css'
 import i18n from './i18n'
-import { createLogto, type LogtoConfig } from '@logto/vue'
 
 // Telegram Mini App 主题适配
 const tg = (window as any).Telegram?.WebApp
@@ -34,17 +33,7 @@ if (tg) {
   })
 }
 
-// Logto 身份认证初始化（docs/051 方案）
-// VITE_LOGTO_ENDPOINT 和 VITE_LOGTO_APP_ID 在 frontend/.env 中配置
-const logtoConfig: LogtoConfig = {
-  endpoint: import.meta.env.VITE_LOGTO_ENDPOINT || '',
-  appId: import.meta.env.VITE_LOGTO_APP_ID || '',
-}
-
 const app = createApp(App)
 app.use(router)
 app.use(i18n)
-if (logtoConfig.endpoint && logtoConfig.appId) {
-  app.use(createLogto, logtoConfig)
-}
 app.mount('#app')

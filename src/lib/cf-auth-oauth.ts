@@ -5,7 +5,7 @@
  * - 多项目边界是标准 OAuth，不是共享 Better Auth cookie（cf-auth docs/001）。
  * - vitest 可直接驱动 buildAuthorizeUrl / exchangeAuthorizationCode / map 函数，
  *   不必先起完整 Worker。
- * - 交换成功后仍签发 lottery 自签 JWT，与 requireAuth / Logto 交换路径兼容。
+ * - 交换成功后仍签发 lottery 自签 JWT，与 requireAuth 路径兼容。
  */
 import { signJwt } from "../middleware/auth";
 
@@ -259,7 +259,7 @@ export async function fetchCfAuthUserInfo(
 
 /**
  * userinfo → lottery 自签 JWT claims。
- * 与 Logto 交换对齐：tenant 字段先空，后续可绑用户表。
+ * tenant 字段先空，后续可绑用户表 / onboarding。
  */
 export function mapCfAuthUserToJwtClaims(profile: CfAuthUserInfo): {
   sub: string;
