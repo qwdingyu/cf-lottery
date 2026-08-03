@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke:lottery": "node scripts/04-smoke-lottery.mjs",
+    "smoke:better-auth": "vitest run src/better-auth-smoke.test.ts",
     "frontend:build": "npm --workspace frontend run build",
     "db:generate": "npx drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs",
@@ -27,6 +28,7 @@
   "dependencies": {
     "@hono/node-server": "^2.0.12",
     "@libsql/client": "^0.14.0",
+    "better-auth": "^1.6.25",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.2",
     "hono": "^4.12.22",
@@ -36,7 +38,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260726.1",
     "@vitest/coverage-v8": "4.1.7",
-    "drizzle-kit": "^0.30.0",
+    "drizzle-kit": "^0.31.10",
     "typescript": "5.7.3",
     "vite": "6.4.3",
     "vitest": "4.1.7",
