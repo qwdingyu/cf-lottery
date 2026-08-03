@@ -966,6 +966,26 @@ export default {
     adminExperienceSummaryEdit: "更改",
     adminExperienceAdvancedDesc: "完整体验类型列表仅在此修改；主路径用模板默认值即可发布",
 
+    // 055a P1：模板 → 可发布草稿 + 创建路径步骤
+    adminCreateDraft: "保存草稿",
+    adminCreateStepBasic: "基本信息",
+    adminCreateStepTime: "时间",
+    adminCreateStepJoin: "谁可参加",
+    adminCreateStepPrizes: "奖品",
+    adminCreateStepQuota: "名额",
+    adminCreatePathFromTemplate: "已应用模板「{name}」：核对标题与时间，抽奖请确认奖项后保存草稿",
+    adminCreatePathBlank: "按步骤填写即可；高级增长配置默认折叠，不影响保存草稿",
+    adminCreateNeedName: "标题",
+    adminCreateNeedTime: "时间",
+    adminCreateNeedTimeOrder: "时间顺序",
+    adminCreateNeedPrize: "奖项",
+    adminCreateNeedPassword: "访问密码",
+    adminCreateNeedRoster: "名单",
+    adminCreateReadyHint: "主路径已齐，可保存草稿；发布前仍会跑服务端预检",
+    adminCreateMissingHint: "保存前建议补齐：{items}",
+    adminTemplateApplied: "已套用模板「{name}」，时间已预填",
+    adminCreatedNeedPrizeHint: "草稿已创建并复制链接；发布前请编辑补齐奖项（或使用快速创建奖品）",
+
     // ── LotteryView 用户端 i18n 补全 ──
     noActivity: "暂无活动",
     wonTag: "已中奖",

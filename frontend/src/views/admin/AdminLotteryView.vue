@@ -346,6 +346,29 @@
       hide-actions
     >
       <form class="modal-form lottery-editor-form" @submit.prevent="handleCreate">
+        <!--
+          055a P1：创建路径 3～4 步指示（不新路由、不 Wizard 框架）。
+          仅导航与就绪提示，不改提交语义。
+        -->
+        <nav class="create-path-steps" aria-label="create path steps">
+          <button type="button" class="create-path-step" @click="scrollEditorSection('lottery-basic')">
+            <span class="create-path-num">1</span>
+            <span>{{ $t('lottery.adminCreateStepBasic') }}</span>
+          </button>
+          <button type="button" class="create-path-step" @click="scrollEditorSection('lottery-time')">
+            <span class="create-path-num">2</span>
+            <span>{{ $t('lottery.adminCreateStepTime') }}</span>
+          </button>
+          <button type="button" class="create-path-step" @click="scrollEditorSection('lottery-mode')">
+            <span class="create-path-num">3</span>
+            <span>{{ $t('lottery.adminCreateStepJoin') }}</span>
+          </button>
+          <button type="button" class="create-path-step" @click="scrollEditorSection(form.activityKind === 'lottery' ? 'lottery-basic' : 'lottery-prizes')">
+            <span class="create-path-num">4</span>
+            <span>{{ form.activityKind === 'lottery' ? $t('lottery.adminCreateStepPrizes') : $t('lottery.adminCreateStepQuota') }}</span>
+          </button>
+        </nav>
+        <p v-if="createPathHint" class="create-path-hint" role="status">{{ createPathHint }}</p>
         <div class="lottery-editor-scroll">
           <section class="form-section" aria-labelledby="lottery-basic">
             <header class="form-section-head">
@@ -796,9 +819,9 @@
             </div>
           </section>
 
-          <section class="form-section" aria-labelledby="lottery-prizes">
+          <section id="lottery-prizes" class="form-section" aria-labelledby="lottery-prizes-title">
             <header class="form-section-head">
-              <h4 id="lottery-prizes" class="form-section-title">{{ $t('lottery.adminSectionPrizes') }}</h4>
+              <h4 id="lottery-prizes-title" class="form-section-title">{{ $t('lottery.adminSectionPrizes') }}</h4>
               <p class="form-section-desc">{{ $t('lottery.adminSectionPrizesDesc') }}</p>
             </header>
             <div class="form-grid two-cols">
@@ -845,6 +868,7 @@
         </div>
 
         <div class="lottery-editor-footer modal-actions">
+          <p v-if="!isEditing && createReadinessLabel" class="create-readiness" role="status">{{ createReadinessLabel }}</p>
           <span style="flex:1" />
           <button
             type="button"
@@ -855,7 +879,7 @@
             {{ $t('lottery.adminCancel') }}
           </button>
           <button type="submit" class="btn btn-primary btn-sm" :disabled="creating || Boolean(timeOrderError)">
-            {{ creating ? $t('lottery.adminCreating') : (isEditing ? $t('lottery.adminDrawEdit') : $t('lottery.adminDrawCreate')) }}
+            {{ creating ? $t('lottery.adminCreating') : (isEditing ? $t('lottery.adminDrawEdit') : $t('lottery.adminCreateDraft')) }}
           </button>
         </div>
       </form>
@@ -1331,6 +1355,9 @@ const showCreateModal = ref(false)
 const showAdvancedGrowth = ref(false)
 /** 055a：列表行「更多」展开的活动 id；同时只展开一行，避免操作墙 */
 const expandedActionId = ref<string | null>(null)
+/** 055a P1：当前创建来自哪个模板（仅提示用，不参与提交） */
+const activeTemplateId = ref('')
+const activeTemplateName = ref('')
 const showTemplateModal = ref(false)
 const templates = ref<any[]>([])
 // 启用的活动类型列表（从系统配置 enabled_activity_kinds 获取，由 L3 平台运营者配置）
@@ -1588,6 +1615,8 @@ const emptyForm = () => ({
   allocationPolicy: 'capacity',
   accessPassword: '',
   showWinners: false,
+  /** 是否公开参与人数（0/1）；模板 defaults 可覆盖，创建时透传后端 */
+  showParticipantCount: 1 as 0 | 1,
   // 奖项配置（抽奖活动专用）：选择奖品库中的奖品，设置中奖名额
   tiers: [] as Array<{ prizeId: string; tierName: string; winnerCount: number }>,
   // 导流配置
@@ -1669,16 +1698,25 @@ async function quickCreatePrize() {
       method: 'POST',
       body: JSON.stringify({ name: prizeName, prizeType: 'code', valueText: '' }),
     })
-    // 2. 自动生成 10 个码
+    // 2. 自动生成 10 个码（覆盖常见 1 名额试跑；发布门禁仍以可用码 ≥ 名额为准）
     await adminRequest(`/api/admin/prizes/${prizeData.id}/codes/generate`, {
       method: 'POST',
       body: JSON.stringify({ count: 10, codeLength: 8 }),
     })
     // 3. 刷新奖品下拉
     await loadPrizeOptions()
-    // 4. 自动选中新奖品到第一个奖项
-    if (form.value.tiers.length > 0 && !form.value.tiers[0]!.prizeId) {
+    // 4. 无奖项则补一行；有空奖项则挂上新奖品——避免「有码无奖项」仍过不了发布门禁
+    if (form.value.tiers.length === 0) {
+      form.value.tiers = [{
+        prizeId: prizeData.id,
+        tierName: t('lottery.adminTierName', { n: 1 }),
+        winnerCount: Math.max(1, Number(form.value.winnerCount) || 1),
+      }]
+    } else if (!form.value.tiers[0]!.prizeId) {
       form.value.tiers[0]!.prizeId = prizeData.id
+      if (!form.value.tiers[0]!.winnerCount) {
+        form.value.tiers[0]!.winnerCount = Math.max(1, Number(form.value.winnerCount) || 1)
+      }
     }
     showToast(t('lottery.adminPrizeCreatedWithCodes', { name: prizeName }), 'success')
   } catch (err: any) {
@@ -1686,6 +1724,48 @@ async function quickCreatePrize() {
   } finally {
     quickPrizeLoading.value = false
   }
+}
+
+/**
+ * 055a P1：创建路径就绪提示（客户端预检，不替代服务端 publish-check）。
+ * 只提示「保存草稿前还缺什么」，降低「创建成功却开不了」的落差。
+ */
+const createPathHint = computed(() => {
+  if (isEditing.value) return ''
+  if (activeTemplateId.value) {
+    const name = activeTemplateName.value || activeTemplateId.value
+    return t('lottery.adminCreatePathFromTemplate', { name })
+  }
+  return t('lottery.adminCreatePathBlank')
+})
+
+const createReadinessLabel = computed(() => {
+  if (isEditing.value) return ''
+  const missing: string[] = []
+  if (!String(form.value.name || '').trim()) missing.push(t('lottery.adminCreateNeedName'))
+  if (!form.value.startTime || !form.value.endTime || !form.value.drawTime) {
+    missing.push(t('lottery.adminCreateNeedTime'))
+  } else if (timeOrderError.value) {
+    missing.push(t('lottery.adminCreateNeedTimeOrder'))
+  }
+  if (form.value.activityKind === 'lottery') {
+    const hasTier = form.value.tiers.some((tier) => Boolean(tier.prizeId))
+    if (!hasTier) missing.push(t('lottery.adminCreateNeedPrize'))
+  }
+  if (form.value.participationMode === 'password' && !String(form.value.accessPassword || '').trim()) {
+    missing.push(t('lottery.adminCreateNeedPassword'))
+  }
+  if (form.value.participationMode === 'roster' && !rosterInput.value.trim()) {
+    missing.push(t('lottery.adminCreateNeedRoster'))
+  }
+  if (missing.length === 0) return t('lottery.adminCreateReadyHint')
+  return t('lottery.adminCreateMissingHint', { items: missing.join(' · ') })
+})
+
+/** 步骤条：滚到对应分区（编辑器内部滚动容器） */
+function scrollEditorSection(sectionId: string) {
+  const el = document.getElementById(sectionId)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 /** 后端约束：drawTime > endTime > startTime */
@@ -2218,6 +2298,8 @@ function handleDuplicate(draw: LotteryDraw) {
   }
   isEditing.value = false
   showAdvancedGrowth.value = false
+  activeTemplateId.value = ''
+  activeTemplateName.value = ''
   showCreateModal.value = true
   showToast(t('lottery.adminDuplicatedToast'), 'success')
 }
@@ -2274,6 +2356,8 @@ function closeEditor() {
   showCreateModal.value = false
   isEditing.value = false
   showAdvancedGrowth.value = false
+  activeTemplateId.value = ''
+  activeTemplateName.value = ''
   rosterInput.value = ''
   inviteCodeCount.value = 10
 }
@@ -2310,29 +2394,49 @@ function categoryLabel(cat: string): string {
   return map[cat] || cat
 }
 
+/**
+ * 055a P1：模板 → 接近可发布草稿。
+ * - 带入 kind / experience / mode / resultMode / 展示开关
+ * - 自动时间预设（抽奖 1 天 + 开奖缓冲；短互动类可用 1h，仍可改）
+ * - 抽奖：预置空奖项行 + winnerCount，配合「快速创建奖品」闭环
+ * 不改 API、不伪造奖品；发布门禁仍以服务端 publish-check 为准。
+ */
 function applyTemplate(tpl: any) {
   showTemplateModal.value = false
   const base = emptyForm()
+  const kind = tpl.defaults?.activityKind || 'lottery'
+  const winnerCount = Number(tpl.defaults?.winnerCount) || (kind === 'lottery' ? 1 : 0)
   // 应用模板默认值
   form.value = {
     ...base,
     id: '',
-    name: '',
-    description: '',
-    activityKind: tpl.defaults.activityKind,
+    // 预填可改标题，避免「空名 + 时间已填」却仍无法保存的落差；运营者一改即可
+    name: String(tpl.name || '').trim(),
+    description: String(tpl.description || '').trim().slice(0, 500),
+    activityKind: kind,
     experienceType: tpl.defaults.experienceType,
-    resultMode: tpl.defaults.resultMode || defaultResultModeForActivity(tpl.defaults.activityKind),
-    participationMode: tpl.defaults.participationMode,
-    allocationPolicy: tpl.defaults.allocationPolicy,
-    winnerCount: tpl.defaults.winnerCount,
+    resultMode: tpl.defaults.resultMode || defaultResultModeForActivity(kind),
+    participationMode: tpl.defaults.participationMode || 'open',
+    allocationPolicy: tpl.defaults.allocationPolicy || 'capacity',
+    winnerCount: kind === 'lottery' ? Math.max(1, winnerCount) : 0,
     maxParticipants: null,
     expectedParticipants: 0,
-    activityConfig: defaultActivityConfigForKind(tpl.defaults.activityKind) as any,
+    // 模板 defaults 含展示开关时带入（后端 create 支持 show* 字段）
+    showWinners: Number(tpl.defaults?.showWinnerList ?? tpl.defaults?.showWinnerCount ?? 0) === 1,
+    showParticipantCount: (Number(tpl.defaults?.showParticipantCount ?? 1) === 1 ? 1 : 0) as 0 | 1,
+    activityConfig: defaultActivityConfigForKind(kind) as any,
+    // 抽奖：先占一行奖项，引导「选奖品 / 快速创建」；无 prizeId 时创建仍可存草稿，开启会被门禁拦住
+    tiers: kind === 'lottery'
+      ? [{ prizeId: '', tierName: t('lottery.adminTierName', { n: 1 }), winnerCount: Math.max(1, winnerCount || 1) }]
+      : [],
   }
   // 模板智能增强：不同类型预设更合理的默认值，减少重复配置
-  if (tpl.id === 'signup-chain') {
+  if (tpl.id === 'signup-chain' || kind === 'signup_chain') {
     form.value.maxParticipants = 30   // 预设容量，运营者可调整
     form.value.allocationPolicy = 'waitlist'  // 候补默认开启
+  }
+  if (tpl.id === 'checkin-daily' || kind === 'checkin') {
+    form.value.maxParticipants = null
   }
   if (tpl.id === 'survey-feedback') {
     // defaultActivityConfigForKind 已预设「联系邮箱」和「反馈内容」2 个字段
@@ -2340,10 +2444,24 @@ function applyTemplate(tpl: any) {
   if (tpl.id === 'vote-pick') {
     // defaultActivityConfigForKind 已预设「选项 A」和「选项 B」2 个选项
   }
+  // 若奖品库已有可用奖品，自动挂到第一奖项，减少一次点击（不创建新奖品，避免脏数据）
+  if (kind === 'lottery' && prizeOptions.value.length > 0 && form.value.tiers[0] && !form.value.tiers[0].prizeId) {
+    const first = prizeOptions.value[0]
+    if (first?.id) {
+      form.value.tiers[0].prizeId = first.id
+      if (!form.value.tiers[0].tierName) {
+        form.value.tiers[0].tierName = first.name || t('lottery.adminTierName', { n: 1 })
+      }
+    }
+  }
   isEditing.value = false
   showAdvancedGrowth.value = false
+  activeTemplateId.value = String(tpl.id || '')
+  activeTemplateName.value = String(tpl.name || '')
+  // 时间：抽奖/接龙偏「一天活动」；短互动（签到试跑）仍 1d 可改，统一 1d 降低认知分支
   applyTimePreset('1d')
   showCreateModal.value = true
+  showToast(t('lottery.adminTemplateApplied', { name: activeTemplateName.value || activeTemplateId.value }), 'success')
 }
 
 async function loadData() {
@@ -2602,6 +2720,8 @@ async function handleEdit(draw: LotteryDraw) {
   initLoserRewardFromConfig()
   // 编辑时默认仍折叠高级项；已启用的增长配置不自动展开，避免打断「改核心字段」路径
   showAdvancedGrowth.value = false
+  activeTemplateId.value = ''
+  activeTemplateName.value = ''
   showCreateModal.value = true
 }
 
@@ -2695,6 +2815,10 @@ async function handleCreate() {
       // 模板和活动类型默认值必须原样传给后端，否则问卷/签到/资料领取会被误建成 manual 抽奖语义。
       resultMode: form.value.resultMode || defaultResultModeForActivity(form.value.activityKind || 'lottery'),
       allocationPolicy: form.value.allocationPolicy || 'capacity',
+      // 表单「展示中奖名单」对应后端 showWinnerList；模板 defaults 也可经此写入
+      showWinnerList: form.value.showWinners ? 1 : 0,
+      showWinnerCount: form.value.showWinners ? 1 : 0,
+      showParticipantCount: form.value.showParticipantCount ? 1 : 0,
       activityConfig: (() => {
         // survey/vote 发送完整内容配置；lottery 发送活动后承接（未中奖自动发券）配置
         if (['survey', 'vote'].includes(form.value.activityKind || '')) {
@@ -2810,14 +2934,17 @@ async function handleCreate() {
         try {
           await writeClipboardText(publicShareUrl(created.publicSlug || created.id))
         } catch { /* 剪贴板写入失败不阻断 */ }
-        showToast(t('lottery.adminCreateDoneWithLink'), 'success')
+        // 055a P1：创建成功即关闭并回列表，不再强制再开编辑 Modal（打断「创建→开启」节奏）。
+        // 抽奖若仍缺奖项，用明确 toast 引导「更多 → 编辑」或列表开启时的发布门禁，不静默二次弹窗。
+        const lotteryMissingTier = form.value.activityKind === 'lottery'
+          && !form.value.tiers.some((tier) => Boolean(tier.prizeId))
         closeEditor()
         form.value = emptyForm()
         await loadData()
-        // 创建成功后自动打开编辑模式，让用户立即配置奖品和发布
-        if (created.id) {
-          const newDraw = draws.value.find((d: any) => d.id === created.id)
-          if (newDraw) handleEdit(newDraw)
+        if (lotteryMissingTier) {
+          showToast(t('lottery.adminCreatedNeedPrizeHint'), 'success')
+        } else {
+          showToast(t('lottery.adminCreateDoneWithLink'), 'success')
         }
       } else {
         showToast(t('lottery.adminCreated'), 'success')
@@ -3150,5 +3277,71 @@ onMounted(() => {
 
 .experience-summary-edit {
   margin-left: auto;
+}
+
+/* 055a P1：创建路径步骤条（轻量，非 Wizard 框架） */
+.create-path-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  margin-bottom: 8px;
+}
+
+.create-path-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 999px;
+  background: var(--surface, rgba(255, 255, 255, 0.03));
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.create-path-step:hover,
+.create-path-step:focus-visible {
+  color: var(--tg-text, #f0f2f5);
+  border-color: var(--admin-accent, #f59e0b);
+}
+
+.create-path-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--admin-accent, #f59e0b);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.create-path-hint {
+  margin: 0 0 8px;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tg-hint, #9aa4b2);
+}
+
+.create-readiness {
+  margin: 0;
+  max-width: 52%;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--tg-hint, #9aa4b2);
+}
+
+.lottery-editor-footer.modal-actions {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 </style>

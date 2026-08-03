@@ -589,6 +589,10 @@ adminLotteryRoute.post("/draws", async (c) => {
       accessPassword: String(body.accessPassword || ""),
       maxParticipants: requestedMaxParticipants ?? systemMaxParticipants,
       winnerCount: body.winnerCount !== undefined ? Number(body.winnerCount) : defaultWinnerCount,
+      // 055a P1：模板 defaults 的展示开关可在创建时写入（createDraw 本就支持；此前路由未透传）
+      ...(body.showParticipantCount !== undefined ? { showParticipantCount: body.showParticipantCount ? 1 : 0 } : {}),
+      ...(body.showWinnerCount !== undefined ? { showWinnerCount: body.showWinnerCount ? 1 : 0 } : {}),
+      ...(body.showWinnerList !== undefined ? { showWinnerList: body.showWinnerList ? 1 : 0 } : {}),
       productLink: body.productLink ? JSON.stringify(body.productLink) : "{}",
       promotionConfig: body.promotionConfig && typeof body.promotionConfig === "object" ? JSON.stringify(body.promotionConfig) : "{}",
       activityConfig: body.activityConfig !== undefined

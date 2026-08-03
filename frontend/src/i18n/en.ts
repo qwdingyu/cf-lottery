@@ -995,6 +995,26 @@ export default {
     adminExperienceSummaryEdit: "Change",
     adminExperienceAdvancedDesc: "Full experience list lives here; the main path can publish with the template default",
 
+    // 055a P1: template → near-publishable draft + create path steps
+    adminCreateDraft: "Save draft",
+    adminCreateStepBasic: "Basics",
+    adminCreateStepTime: "Schedule",
+    adminCreateStepJoin: "Who can join",
+    adminCreateStepPrizes: "Prizes",
+    adminCreateStepQuota: "Capacity",
+    adminCreatePathFromTemplate: "Template “{name}” applied — review title & schedule; for lottery, confirm prizes before saving",
+    adminCreatePathBlank: "Follow the steps; advanced growth settings stay collapsed and do not block saving a draft",
+    adminCreateNeedName: "title",
+    adminCreateNeedTime: "schedule",
+    adminCreateNeedTimeOrder: "time order",
+    adminCreateNeedPrize: "prize tier",
+    adminCreateNeedPassword: "access password",
+    adminCreateNeedRoster: "roster",
+    adminCreateReadyHint: "Main path looks ready — save draft; server publish-check still runs before open",
+    adminCreateMissingHint: "Before saving, consider: {items}",
+    adminTemplateApplied: "Template “{name}” applied; schedule prefilled",
+    adminCreatedNeedPrizeHint: "Draft created and link copied — edit to add prize tiers before publishing",
+
     // LotteryView user-facing copy
     noActivity: "No activities",
     wonTag: "Won",
