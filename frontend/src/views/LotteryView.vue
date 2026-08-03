@@ -526,6 +526,7 @@ import {
   missingJoinCredentialForMode,
   shouldResumeCfAuthJoin,
 } from '@/composables/cf-auth-session'
+import { clearLotteryBrowserSessionOnly } from '@/composables/business-session'
 import {
   defaultExperienceForParticipation,
   ambienceMsForExperience,
@@ -1101,12 +1102,12 @@ function formatTime(iso: string): string {
 }
 
 function clearSession() {
+  // 仅清参与会话 + OAuth 临时键；保留 admin_token（运营预览活动页退出不应踢后台）
   myEntryList.value = []
   persistSessionEmail('')
   registeredToken.value = ''
   registeredUsername.value = ''
-  sessionStorage.removeItem(LOTTERY_REGISTERED_TOKEN_KEY)
-  sessionStorage.removeItem(LOTTERY_REGISTERED_USERNAME_KEY)
+  clearLotteryBrowserSessionOnly(sessionStorage)
   myJoinedById.value = {}
   myWonById.value = {}
   myOutcomeById.value = {}

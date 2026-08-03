@@ -56,6 +56,8 @@ export default {
     creating: "Creating…",
     createButton: "Create workspace",
     skip: "Later",
+    logout: "Log out",
+    loggedOut: "Logged out",
     createFailed: "Failed to create workspace",
     networkError: "Network error",
   },
@@ -183,6 +185,9 @@ export default {
   landing: {
     navBrand: "Activity Engine",
     login: "Log in",
+    enterAdmin: "Go to admin",
+    logout: "Log out",
+    loggedOut: "Logged out",
     // 055a ADR-055a-5: no absolute "3 minutes" claim until TTV path is validated
     heroTitle1: "Start from a template",
     heroTitle2: "Lottery, signup, survey — and see the results",

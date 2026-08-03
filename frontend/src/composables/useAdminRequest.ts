@@ -6,6 +6,7 @@
  * 统一处理 401：token 过期/失效时清除登录态并跳转登录页。
  */
 import { readAdminToken } from './useAdminAuth'
+import { clearFullBusinessBrowserSession } from './business-session'
 
 function buildAdminHeaders(options?: RequestInit): Headers {
   const headers = new Headers(options?.headers)
@@ -36,10 +37,11 @@ export async function adminRequest<T = any>(path: string, options?: RequestInit)
   const res = await fetch(path, { ...options, headers: buildAdminHeaders(options) })
   const data = await res.json().catch(() => ({}))
 
-  // 401：登录态已失效（token 过期/被吊销），统一清除并跳转登录
+  // 401：登录态已失效（token 过期/被吊销），完整清业务会话后跳转登录
   if (res.status === 401) {
-    try { localStorage.removeItem('admin_token') } catch { /* 忽略 */ }
-    try { localStorage.removeItem('platform_role') } catch { /* 忽略 */ }
+    try {
+      clearFullBusinessBrowserSession({ localStorage, sessionStorage })
+    } catch { /* 隐私模式等：忽略 */ }
     const redirect = encodeURIComponent(window.location.pathname + window.location.search)
     if (!window.location.pathname.startsWith('/admin/login')) {
       window.location.href = `/admin/login?redirect=${redirect}`

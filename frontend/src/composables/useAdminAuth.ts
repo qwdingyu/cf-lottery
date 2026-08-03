@@ -1,11 +1,16 @@
 import { ref, computed } from 'vue'
+import {
+  ADMIN_TOKEN_KEY,
+  IMPERSONATION_TOKEN_KEY,
+  PLATFORM_ROLE_KEY,
+  clearFullBusinessBrowserSession,
+} from './business-session'
 
-const TOKEN_KEY = 'admin_token'
+const TOKEN_KEY = ADMIN_TOKEN_KEY
 // 模拟登录会话独立 key（L3→L2 路径）：
 // 平台运营者模拟租户身份时写入独立 key，不覆盖运营者自己的 admin_token，
 // 保证运营者能随时清除模拟态返回平台（详情见 docs/049 §10 L3→L2 路径闭环）。
-const IMPERSONATION_KEY = 'impersonated_token'
-const PLATFORM_ROLE_KEY = 'platform_role'
+const IMPERSONATION_KEY = IMPERSONATION_TOKEN_KEY
 /** session token 有效期 8 小时，与后端 verify-jwt 颁发的 session JWT 一致 */
 const TOKEN_TTL_MS = 8 * 60 * 60 * 1000
 
@@ -109,12 +114,27 @@ export function useAdminAuth() {
     localStorage.setItem(PLATFORM_ROLE_KEY, JSON.stringify({ value: role, tokenRef }))
   }
 
+  /**
+   * 完整业务登出（管理端 UI / 401 共用）。
+   * 同时清参与 session 与 cf-auth 临时键，避免 cf-auth 双写后「退出后台仍像活动已登录」。
+   * 不调用 IdP 全局登出（无共享 BA cookie）。
+   */
   function clearToken() {
     token.value = ''
     platformRole.value = undefined
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(IMPERSONATION_KEY)
-    localStorage.removeItem(PLATFORM_ROLE_KEY)
+    try {
+      clearFullBusinessBrowserSession({
+        localStorage,
+        sessionStorage,
+      })
+    } catch {
+      // 隐私模式等极端情况：至少尝试清管理端键
+      try {
+        localStorage.removeItem(TOKEN_KEY)
+        localStorage.removeItem(IMPERSONATION_KEY)
+        localStorage.removeItem(PLATFORM_ROLE_KEY)
+      } catch { /* ignore */ }
+    }
   }
 
   return {

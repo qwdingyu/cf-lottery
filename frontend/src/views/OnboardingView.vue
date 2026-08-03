@@ -37,6 +37,8 @@
 
       <div class="onboarding-footer">
         <a href="#" class="btn btn-ghost btn-sm" @click.prevent="handleSkip">{{ $t('onboarding.skip') }}</a>
+        <!-- 已登录强制页：必须能退出换号，否则 skip 回首页后 token 仍在且首页旧版无退出入口 -->
+        <button type="button" class="btn btn-ghost btn-sm" @click="handleLogout">{{ $t('onboarding.logout') }}</button>
       </div>
     </div>
   </div>
@@ -47,10 +49,12 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
+import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
 const { t } = useI18n()
-const { token, setToken } = useAdminAuth()
+const { token, setToken, clearToken } = useAdminAuth()
+const { showToast } = useToast()
 const tenantName = ref('')
 const creating = ref(false)
 const error = ref('')
@@ -82,7 +86,15 @@ async function handleCreate() {
 function handleSkip() {
   // 允许暂不创建租户离开（如 registered 参与者只参与活动、无需管理后台）。
   // 后续访问 /admin 时路由守卫会再次引导 onboarding。
+  // 注意：skip 保留登录态；要换账号请用「退出登录」。
   router.replace('/')
+}
+
+/** 退出登录：完整清业务会话，避免卡在「有 token 无租户」无法换号 */
+function handleLogout() {
+  clearToken()
+  showToast(t('onboarding.loggedOut'), 'success')
+  router.replace('/admin/login')
 }
 </script>
 
@@ -184,6 +196,10 @@ function handleSkip() {
 
 .onboarding-footer {
   margin-top: 20px;
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 </style>

@@ -3,7 +3,14 @@
     <!-- 顶部导航 -->
     <nav class="landing-nav">
       <span class="nav-brand">{{ $t('landing.navBrand') }}</span>
-      <RouterLink to="/admin/login" class="nav-link">{{ $t('landing.login') }}</RouterLink>
+      <!-- 已登录：进后台 + 退出；未登录：仅登录。避免 token 残留时永远只能点「登录」再被 guest 守卫踢回后台。 -->
+      <div class="nav-actions">
+        <template v-if="isLoggedIn">
+          <RouterLink to="/admin" class="nav-link">{{ $t('landing.enterAdmin') }}</RouterLink>
+          <button type="button" class="nav-link nav-logout" @click="handleLogout">{{ $t('landing.logout') }}</button>
+        </template>
+        <RouterLink v-else to="/admin/login" class="nav-link">{{ $t('landing.login') }}</RouterLink>
+      </div>
     </nav>
 
     <!-- Hero -->
@@ -180,7 +187,23 @@
 </template>
 
 <script setup lang="ts">
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { useAdminAuth } from '@/composables/useAdminAuth'
+import { useToast } from '@/composables/useToast'
+
+const router = useRouter()
+const { t } = useI18n()
+const { isLoggedIn, clearToken } = useAdminAuth()
+const { showToast } = useToast()
+
+/** 首页退出：完整业务会话（admin + 参与 + cf-auth 临时键） */
+function handleLogout() {
+  clearToken()
+  showToast(t('landing.loggedOut'), 'success')
+  // 已在本页，仅刷新导航态；replace 保证历史不堆栈
+  void router.replace('/')
+}
 </script>
 
 <style scoped>
@@ -189,8 +212,10 @@ import { RouterLink } from 'vue-router'
 #how-it-works { scroll-margin-top: 24px; }
 .landing-nav { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; }
 .nav-brand { font-size: 18px; font-weight: 700; }
-.nav-link { font-size: 14px; color: var(--tg-hint); text-decoration: none; }
+.nav-actions { display: flex; align-items: center; gap: 12px; }
+.nav-link { font-size: 14px; color: var(--tg-hint); text-decoration: none; background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
 .nav-link:hover { color: var(--tg-text); }
+.nav-logout { color: var(--tg-hint); }
 .landing-hero { text-align: center; padding: 80px 0 60px; }
 .hero-badge { display: inline-block; background: rgba(245,158,11,.15); color: #f59e0b; padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 20px; }
 .hero-title { font-size: 40px; font-weight: 800; line-height: 1.3; margin-bottom: 16px; }

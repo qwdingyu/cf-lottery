@@ -58,6 +58,8 @@ export default {
     creating: "创建中…",
     createButton: "创建工作空间",
     skip: "稍后再说",
+    logout: "退出登录",
+    loggedOut: "已退出登录",
     createFailed: "创建失败",
     networkError: "网络错误",
   },
@@ -185,6 +187,9 @@ export default {
   landing: {
     navBrand: "运营活动引擎",
     login: "登录",
+    enterAdmin: "进入后台",
+    logout: "退出",
+    loggedOut: "已退出登录",
     // 055a ADR-055a-5：P1 路径验收达标前，对外不用绝对「3 分钟」承诺
     heroTitle1: "选模板即可开始搭活动",
     heroTitle2: "抽奖、接龙、问卷，做完还能看效果",
