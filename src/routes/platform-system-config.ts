@@ -114,7 +114,7 @@ platformSystemConfigRoute.post("/email-test", async (c) => {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: `${c.env.EMAIL_FROM_NAME || "抽奖平台"} <${c.env.EMAIL_FROM || "noreply@resend.dev"}>`,
+        from: "onboarding@resend.dev",
         to,
         subject: "cf-lottery 邮件配置测试",
         html: "<p>✅ 邮件配置成功！</p>",

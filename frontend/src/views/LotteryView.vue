@@ -24,6 +24,11 @@
         <div class="skeleton-row skeleton-btn" />
       </div>
     </div>
+    <div v-else-if="fetchError" class="lottery-center">
+      <div class="empty-icon">⚠️</div>
+      <p>{{ fetchError }}</p>
+      <button class="btn btn-ghost btn-sm" style="margin-top:12px" @click="fetchDraws">{{ $t('adminPrizes.retry') }}</button>
+    </div>
     <div v-else-if="draws.length === 0" class="lottery-center">
       <div class="empty-icon">🎪</div>
       <p>{{ $t('lottery.noActivity') }}</p>
@@ -389,6 +394,7 @@ type ActivityEventType =
   | 'cta_click'
 
 const loading = ref(true)
+const fetchError = ref('')
 const recordsLoading = ref(false)
 const draws = ref<LotteryDraw[]>([])
 const expandedId = ref<string | null>(null)
@@ -812,6 +818,7 @@ async function fetchDraws() {
     }
   } catch (e) {
     console.error('[lottery] fetch draws failed:', e)
+    fetchError.value = t('lottery.networkError')
     draws.value = []
   } finally {
     loading.value = false
