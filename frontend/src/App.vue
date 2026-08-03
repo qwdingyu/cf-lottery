@@ -45,12 +45,30 @@ watch(isAuthenticated, async (val) => {
       return
     }
     setToken(data.token)
+    // 与 cf-auth 对齐：参与页也写 lottery_registered_token（公开 Bearer 路径）
+    if (data.token) {
+      sessionStorage.setItem('lottery_registered_token', data.token)
+      if (data.email) {
+        sessionStorage.setItem('lottery_session_email', data.email)
+        sessionStorage.setItem('logto_email', data.email)
+      }
+    }
     // 区分页面：管理后台登录页 → 跳转 /admin；活动页 → 通知 LotteryView 自动参与
     if (window.location.pathname.includes('/lottery/')) {
-      sessionStorage.setItem('logto_email', data.email)
       window.dispatchEvent(new CustomEvent('logto-login-success', { detail: { email: data.email, token: data.token } }))
     } else {
+      // Logto 交换 JWT 通常无 tenantId；与路由守卫一致，空租户进 onboarding
       showToast('Logto 登录成功')
+      try {
+        const parts = String(data.token).split('.')
+        const b64 = (parts[1] || '').replace(/-/g, '+').replace(/_/g, '/')
+        const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4))
+        const payload = JSON.parse(atob(b64 + pad)) as { tenantId?: string }
+        if (!String(payload.tenantId || '').trim()) {
+          router.push('/admin/onboarding')
+          return
+        }
+      } catch { /* 解析失败仍走 /admin，守卫会再拦 */ }
       router.push('/admin')
     }
   } catch (err) {

@@ -162,3 +162,72 @@ export function buildCfAuthVerifyJoinBody(input: {
   if (input.submission !== undefined) body.submission = input.submission
   return body
 }
+
+/**
+ * 是否应在活动页自动 resume join。
+ * 条件：有 pending.drawId 且有业务 JWT（session 或传入）。
+ * 故意不 consume：失败时保留 pending，便于补密码/重试。
+ */
+export function shouldResumeCfAuthJoin(input: {
+  pending: CfAuthPendingJoin | null
+  token: string
+}): boolean {
+  const drawId = String(input.pending?.drawId || '').trim()
+  const token = String(input.token || '').trim()
+  return Boolean(drawId && token)
+}
+
+/**
+ * 从业务 JWT payload 粗读 tenantId（不验签；仅前端路由分流）。
+ * 无租户 → 管理端应进 onboarding（与 router jwtTenantId 对齐）。
+ */
+export function readTenantIdFromBusinessJwt(token: string): string {
+  const raw = String(token || '').trim()
+  if (!raw) return ''
+  try {
+    const parts = raw.split('.')
+    if (parts.length < 2 || !parts[1]) return ''
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4))
+    const json = atob(b64 + pad)
+    const payload = JSON.parse(json) as { tenantId?: unknown }
+    return typeof payload.tenantId === 'string' ? payload.tenantId.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 管理端回跳：无 tenant 且目标是后台时强制 onboarding。
+ * 参与页路径（/lottery…）原样返回，不打断 join 闭环。
+ */
+export function resolveAdminPathAfterCfAuth(input: {
+  token: string
+  returnPath: string
+}): string {
+  const ret = String(input.returnPath || '').trim()
+  const path = ret.startsWith('/') ? ret : '/admin'
+  // 参与闭环优先：带 pending 回活动页时不改写
+  if (path.startsWith('/lottery') || path.startsWith('/auth/')) {
+    return path
+  }
+  if (!readTenantIdFromBusinessJwt(input.token)) {
+    return '/admin/onboarding'
+  }
+  return path
+}
+
+/**
+ * password / invite 模式跳转 IdP 前的凭证完整性（纯函数，供 vitest）。
+ * participationMode 未知时不拦（由 UI 层再校验）。
+ */
+export function missingJoinCredentialForMode(input: {
+  participationMode?: string | null
+  accessPassword?: string
+  inviteCode?: string
+}): 'password' | 'invite' | null {
+  const mode = String(input.participationMode || '').trim()
+  if (mode === 'password' && !String(input.accessPassword || '').trim()) return 'password'
+  if (mode === 'invite_code' && !String(input.inviteCode || '').trim()) return 'invite'
+  return null
+}

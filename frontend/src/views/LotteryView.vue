@@ -540,10 +540,14 @@ import GameResultModal from '@/components/games/GameResultModal.vue'
 import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
 import {
   consumeCfAuthPendingJoin,
+  readCfAuthPendingJoin,
+  saveCfAuthPendingJoin,
   LOTTERY_REGISTERED_TOKEN_KEY,
   LOTTERY_REGISTERED_USERNAME_KEY,
   LOTTERY_SESSION_EMAIL_KEY,
   buildCfAuthVerifyJoinBody,
+  missingJoinCredentialForMode,
+  shouldResumeCfAuthJoin,
 } from '@/composables/cf-auth-session'
 import {
   defaultExperienceForParticipation,
@@ -569,11 +573,31 @@ const cfAuthLoading = cfAuth.loading
 /**
  * 跳转 cf-auth 前持久化 pendingJoin（OAuth 卸掉 Vue 状态）。
  * 回调页写入 lottery_registered_token 后回到本页，onMounted 自动 verify-join。
+ * 跳转前校验 password/invite：空凭证跨 OAuth 回来仍会 400，浪费往返。
  */
 async function handleCfAuthJoin() {
   try {
     const ret = window.location.pathname + window.location.search
     const drawId = pendingJoinDrawId.value || props.id || ''
+    const draw =
+      draws.value.find((d) => d.id === drawId || d.publicSlug === drawId) || null
+    const missing = missingJoinCredentialForMode({
+      participationMode: draw?.participationMode,
+      accessPassword: joinAccessPassword.value,
+      inviteCode: joinInviteCode.value,
+    })
+    if (missing === 'password') {
+      const msg = t('lottery.accessPasswordRequired')
+      loginError.value = msg
+      showToast(msg, 'error')
+      return
+    }
+    if (missing === 'invite') {
+      const msg = t('lottery.inviteCodeRequired')
+      loginError.value = msg
+      showToast(msg, 'error')
+      return
+    }
     await cfAuth.login({
       returnTo: ret || '/lottery',
       pendingJoin: drawId
@@ -652,15 +676,27 @@ const recordsLoading = ref(false)
 const draws = ref<LotteryDraw[]>([])
 const expandedId = ref<string | null>(null)
 /** 参与会话邮箱：刷新后仍可查结果（sessionStorage，非 localStorage，避免长期污染） */
-const sessionEmail = ref(typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('lottery_session_email') || '') : '')
+const sessionEmail = ref(
+  typeof sessionStorage !== 'undefined'
+    ? sessionStorage.getItem(LOTTERY_SESSION_EMAIL_KEY) || ''
+    : '',
+)
 /**
  * registered 模式：已登录用户的 JWT token。
  * 存 sessionStorage（会话级）：刷新页面不丢、关闭标签页自动清除；
  * 与后台 admin_token（localStorage）隔离，避免参与登录态污染管理后台入口。
  */
-const registeredToken = ref(sessionStorage.getItem('lottery_registered_token') || '')
+const registeredToken = ref(
+  typeof sessionStorage !== 'undefined'
+    ? sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || ''
+    : '',
+)
 /** registered 模式：已登录用户名（展示用，随 token 一起会话级持久化） */
-const registeredUsername = ref(sessionStorage.getItem('lottery_registered_username') || '')
+const registeredUsername = ref(
+  typeof sessionStorage !== 'undefined'
+    ? sessionStorage.getItem(LOTTERY_REGISTERED_USERNAME_KEY) || ''
+    : '',
+)
 /** registered 模式登录表单 */
 const regLoginUsername = ref('')
 const regLoginPassword = ref('')
@@ -686,8 +722,8 @@ const isLoginOnly = computed(() => !pendingJoinDrawId.value)
 
 function persistSessionEmail(email: string) {
   sessionEmail.value = email
-  if (email) sessionStorage.setItem('lottery_session_email', email)
-  else sessionStorage.removeItem('lottery_session_email')
+  if (email) sessionStorage.setItem(LOTTERY_SESSION_EMAIL_KEY, email)
+  else sessionStorage.removeItem(LOTTERY_SESSION_EMAIL_KEY)
 }
 
 /**
@@ -1143,8 +1179,8 @@ function clearSession() {
   persistSessionEmail('')
   registeredToken.value = ''
   registeredUsername.value = ''
-  sessionStorage.removeItem('lottery_registered_token')
-  sessionStorage.removeItem('lottery_registered_username')
+  sessionStorage.removeItem(LOTTERY_REGISTERED_TOKEN_KEY)
+  sessionStorage.removeItem(LOTTERY_REGISTERED_USERNAME_KEY)
   myJoinedById.value = {}
   myWonById.value = {}
   myOutcomeById.value = {}
@@ -1332,8 +1368,8 @@ async function handleRegisteredLogin() {
     registeredToken.value = token
     registeredUsername.value = regLoginUsername.value
     // 会话级持久化：刷新页面免重复登录；关闭标签页自动清除，不残留敏感信息
-    sessionStorage.setItem('lottery_registered_token', token)
-    sessionStorage.setItem('lottery_registered_username', regLoginUsername.value)
+    sessionStorage.setItem(LOTTERY_REGISTERED_TOKEN_KEY, token)
+    sessionStorage.setItem(LOTTERY_REGISTERED_USERNAME_KEY, regLoginUsername.value)
 
     // 2. 带 JWT 调 access-code（registered 模式后端以 JWT 中的 userId 为身份）
     await joinWithRegisteredToken(pendingJoinDrawId.value, token)
@@ -1383,15 +1419,14 @@ async function joinWithRegisteredToken(drawId: string, token: string) {
 
 /**
  * OAuth 回调后自动参与（与 handleLogtoJoinSuccess 等价，docs/059）。
- * pendingJoin 与 lottery_registered_token 均在 sessionStorage，跨往返可读。
+ * 只 read pending，join **成功后** 才 consume——失败可补密码/再试，避免一次失败丢意图。
  */
 async function resumeCfAuthJoinAfterCallback() {
-  const pending = consumeCfAuthPendingJoin(sessionStorage)
-  if (!pending?.drawId) return
-
+  const pending = readCfAuthPendingJoin(sessionStorage)
   const token =
     sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || registeredToken.value || ''
-  if (!token) return
+  if (!shouldResumeCfAuthJoin({ pending, token })) return
+  if (!pending?.drawId) return
 
   registeredToken.value = token
   const email =
@@ -1408,14 +1443,62 @@ async function resumeCfAuthJoinAfterCallback() {
     draws.value.find((d) => d.id === pending.drawId || d.publicSlug === pending.drawId) || null
   const joinKey = draw?.id || pending.drawId
 
+  /** join 成功后清除 pending，防止刷新重复提交 */
+  const finishPendingOk = () => {
+    consumeCfAuthPendingJoin(sessionStorage)
+  }
+
   // registered：access-code + Bearer（与用户名密码登录同路径）
   if (draw?.participationMode === 'registered') {
     closeLogin()
-    await joinWithRegisteredToken(joinKey, token)
+    joiningId.value = joinKey
+    try {
+      const res = await fetch(
+        API_BASE + '/public/draws/' + encodeURIComponent(joinKey) + '/access-code',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + token,
+          },
+          body: JSON.stringify({
+            submission: draw ? buildSubmissionPayload(draw) : undefined,
+          }),
+        },
+      )
+      const data = (await res.json()) as any
+      if (data.ok && data.joined) {
+        finishPendingOk()
+        completeJoinSuccess(joinKey, data)
+      } else {
+        // 保留 pending；打开登录便于用户改凭证或看错误
+        const msg = data.message || t('lottery.joinFailed')
+        loginError.value = msg
+        showToast(msg, 'error')
+        openLogin(joinKey)
+      }
+    } catch {
+      showToast(t('lottery.networkError'), 'error')
+    } finally {
+      joiningId.value = ''
+    }
     return
   }
 
   // open / password / invite / roster：verify-join + Bearer 跳过验证码
+  // 若 password/invite 仍缺字段：不发请求，打开弹窗让用户补全（pending 仍在）
+  const missing = missingJoinCredentialForMode({
+    participationMode: draw?.participationMode,
+    accessPassword: pending.accessPassword || joinAccessPassword.value,
+    inviteCode: pending.inviteCode || joinInviteCode.value,
+  })
+  if (missing) {
+    openLogin(joinKey)
+    loginError.value =
+      missing === 'password' ? t('lottery.accessPasswordRequired') : t('lottery.inviteCodeRequired')
+    return
+  }
+
   if (!email) {
     showToast(t('lottery.joinFailed'), 'error')
     openLogin(joinKey)
@@ -1433,7 +1516,12 @@ async function resumeCfAuthJoinAfterCallback() {
         body: JSON.stringify(
           buildCfAuthVerifyJoinBody({
             email,
-            pending: { ...pending, drawId: joinKey },
+            pending: {
+              ...pending,
+              drawId: joinKey,
+              accessPassword: pending.accessPassword || joinAccessPassword.value || undefined,
+              inviteCode: pending.inviteCode || joinInviteCode.value || undefined,
+            },
             submission: draw ? buildSubmissionPayload(draw) : undefined,
           }),
         ),
@@ -1441,8 +1529,15 @@ async function resumeCfAuthJoinAfterCallback() {
     )
     const data = (await res.json()) as any
     if (data.ok && data.joined) {
+      finishPendingOk()
       completeJoinSuccess(joinKey, data, { email })
     } else {
+      // 失败不 consume；若用户刚在弹窗改了密码，写回 pending 供下次自动/手动
+      saveCfAuthPendingJoin(sessionStorage, {
+        ...pending,
+        accessPassword: joinAccessPassword.value || pending.accessPassword,
+        inviteCode: joinInviteCode.value || pending.inviteCode,
+      })
       showToast(data.message || t('lottery.joinFailed'), 'error')
       openLogin(joinKey)
     }

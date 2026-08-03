@@ -33,6 +33,7 @@ import {
   clearCfAuthOauthTransit,
   clearAllCfAuthBrowserState,
   readCfAuthPendingJoin,
+  resolveAdminPathAfterCfAuth,
   resolveCfAuthReturnPath,
 } from '@/composables/cf-auth-session'
 
@@ -102,12 +103,16 @@ onMounted(async () => {
       token: data.token,
       email: data.email,
     })
-    // 3) 清 PKCE/state/return；pendingJoin 留给 LotteryView 自动参与后 consume
+    // 3) 清 PKCE/state/return；pendingJoin 留给 LotteryView 成功 join 后再 consume
     clearCfAuthOauthTransit(sessionStorage)
-    // return key 已被 clear；用已解析的 returnTo
+    // 4) 管理端无租户（cf-auth/Logto 交换 JWT tenantId 为空）→ onboarding；参与页路径不动
+    const finalPath = resolveAdminPathAfterCfAuth({
+      token: data.token,
+      returnPath: returnTo.startsWith('/') ? returnTo : '/admin',
+    })
     status.value = 'ok'
     showToast(t('authCallback.ok'), 'success')
-    await router.replace(returnTo.startsWith('/') ? returnTo : '/admin')
+    await router.replace(finalPath)
   } catch {
     status.value = 'error'
     error.value = t('authCallback.network')
