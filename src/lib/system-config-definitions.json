@@ -410,8 +410,8 @@
   {
     "key": "enable_email_verification",
     "label": "邮箱验证码",
-    "description": "是否启用邮箱验证码参与流程。关闭后参与者输入邮箱即可直接参与，不发送验证码邮件。仅建议 Resend 不可用 / 测试环境时关闭，生产环境务必开启。",
-    "effect": "关闭时 access-code 端点跳过邮件发送，直接写入参与记录。",
+    "description": "是否启用邮箱验证码参与流程。关闭后 open/roster/password/invite 参与者输入邮箱即可直接参与，不发送验证码邮件（弱身份校验）。与 cf-auth 无关：关闭时不依赖统一登录；开启时默认走邮箱 OTP，cf-auth 仅作可选跳过 OTP 的加速。仅建议 Resend 不可用 / 测试环境时关闭，生产环境务必开启。",
+    "effect": "关闭时 access-code 跳过邮件发送并直接 join；开启时发码，verify-join 校验 OTP（或有效业务 JWT+邮箱一致时跳过）。",
     "scope": "admin",
     "type": "boolean",
     "defaultValue": "true",

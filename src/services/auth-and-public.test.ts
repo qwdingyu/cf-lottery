@@ -515,6 +515,142 @@ describe("公开参与流程", () => {
     expect(rows.filter((row) => row.used === 1)).toHaveLength(1);
   });
 
+  /**
+   * 驳回错误审查：「email 验证关闭时公开参与依赖 cf-auth，需在 access-code 检测 IdP 再回退发码」。
+   * 事实：enable_email_verification=false 时 access-code 对 open 系直接 joinDraw，
+   * 不读 CF_AUTH_*，也不需要 Bearer。cf-auth 只是可选加速/registered 身份源。
+   */
+  it("enable_email_verification=false：open 模式无 cf-auth 也可 access-code 直参", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "email-bypass-open",
+      title: "免码直参",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-60),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    // 覆盖默认 true：关闭邮箱 OTP（测试/Resend 不可用场景）
+    await db
+      .insert(systemConfig)
+      .values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({
+        target: systemConfig.key,
+        set: { value: "false" },
+      });
+
+    // 故意不配 CF_AUTH_*、不带 Authorization
+    const res = await app.request(
+      "/public/draws/email-bypass-open/access-code",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "10.0.0.88",
+        },
+        body: JSON.stringify({ email: "bypass@example.com" }),
+      },
+      {
+        ...TEST_ENV,
+        // 显式证明与 IdP 无关
+        CF_AUTH_ENABLED: "false",
+      },
+    );
+    const body = (await res.json()) as {
+      ok?: boolean;
+      joined?: boolean;
+      entryId?: string;
+      sent?: boolean;
+      message?: string;
+    };
+    expect(res.status, body.message).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.joined).toBe(true);
+    expect(body.entryId).toBeTruthy();
+    expect(body.sent).toBeUndefined();
+
+    const codes = await db
+      .select()
+      .from(emailAccessCodes)
+      .where(eq(emailAccessCodes.drawId, drawId));
+    expect(codes).toHaveLength(0);
+
+    const [entry] = await db
+      .select()
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.drawId, drawId))
+      .limit(1);
+    expect(entry?.identityType).toBe("email");
+    expect(entry?.identityValue).toBe("bypass@example.com");
+  });
+
+  it("enable_email_verification=true（默认）：access-code 发码路径不依赖 CF_AUTH", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "email-otp-default",
+      title: "默认发码",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-60),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    // 确保为 true（clearTestData 后可能无此键 → 代码默认走发码）
+    await db
+      .insert(systemConfig)
+      .values({ key: "enable_email_verification", value: "true" })
+      .onConflictDoUpdate({
+        target: systemConfig.key,
+        set: { value: "true" },
+      });
+
+    const res = await app.request(
+      "/public/draws/email-otp-default/access-code",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "10.0.0.89",
+        },
+        body: JSON.stringify({ email: "otp@example.com" }),
+      },
+      { ...TEST_ENV, CF_AUTH_ENABLED: "false" },
+    );
+    const body = (await res.json()) as {
+      ok?: boolean;
+      sent?: boolean;
+      joined?: boolean;
+      message?: string;
+    };
+    expect(res.status, body.message).toBe(200);
+    expect(body.ok).toBe(true);
+    // 发码成功与否取决于 RESEND；至少不应 joined 直参，且不因无 cf-auth 失败
+    expect(body.joined).not.toBe(true);
+    expect(body.sent === true || body.sent === false).toBe(true);
+
+    const codes = await db
+      .select()
+      .from(emailAccessCodes)
+      .where(
+        and(
+          eq(emailAccessCodes.email, "otp@example.com"),
+          eq(emailAccessCodes.drawId, drawId),
+        ),
+      );
+    expect(codes.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("roster 模式：名单外不能参与", async () => {
     const drawId = crypto.randomUUID();
     await db.insert(lotteryDraws).values({

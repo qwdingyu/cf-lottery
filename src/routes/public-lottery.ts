@@ -341,6 +341,9 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   }
 
   // ── 邮箱验证码开关：L3 可关闭以跳过邮件发码（测试环境 / Resend 不可用时） ──
+  // 与 cf-auth **无关**：关闭时 open 系仅凭邮箱字符串 join（弱身份，生产务必 true）。
+  // 错误审查「无 cf-auth 则无法参与 / 应探测 IdP 再回退发码」不成立——本分支从不读 CF_AUTH_*。
+  // cf-auth 仅是可选：verify-join 带业务 JWT 可跳过 OTP；registered 模式才强制登录态。
   const [emailBypassCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "enable_email_verification")).limit(1);
   const emailBypass = emailBypassCfg?.value === "false"; // 默认未配置时走正常流程
 
