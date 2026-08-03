@@ -722,11 +722,12 @@
 
           <section
             v-if="form.activityKind === 'survey' || form.activityKind === 'vote'"
+            id="activity-config"
             class="form-section"
-            aria-labelledby="activity-config"
+            aria-labelledby="activity-config-title"
           >
             <header class="form-section-head">
-              <h4 id="activity-config" class="form-section-title">{{ $t('lottery.adminActivityConfigSection') }}</h4>
+              <h4 id="activity-config-title" class="form-section-title">{{ $t('lottery.adminActivityConfigSection') }}</h4>
               <p class="form-section-desc">{{ $t('lottery.adminActivityConfigDesc') }}</p>
             </header>
 
@@ -2009,6 +2010,38 @@ function formatPublishCheckItems(items: PublishCheckItem[], prefix: string): str
   return `${prefix}\n${topItems}${rest}`
 }
 
+/**
+ * 055a P1：发布门禁失败后，判断是否适合「一键进编辑」补齐。
+ * - 仅 draft 可编辑（与后端 PATCH 一致）
+ * - prizes / participation / basic / activity_config 可在创建表单修
+ * - promotion / webhook 多半不在本表单主路径，不自动跳编辑以免空跑
+ */
+function canGuidePublishFixInEditor(draw: LotteryDraw, errors: PublishCheckItem[]): boolean {
+  if (draw.status !== 'draft' || errors.length === 0) return false
+  const editableSections = new Set(['basic', 'participation', 'prizes', 'activity_config'])
+  return errors.some((item) => editableSections.has(item.section))
+}
+
+/** 按门禁 section 滚到创建表单对应分区（编辑打开后调用） */
+function scrollToPublishFixSection(errors: PublishCheckItem[]) {
+  const priority = ['prizes', 'basic', 'participation', 'activity_config', 'promotion', 'webhook']
+  const section = priority.find((s) => errors.some((e) => e.section === s)) || errors[0]?.section
+  const idMap: Record<string, string> = {
+    prizes: 'lottery-basic', // 奖项配置在基本信息区
+    basic: 'lottery-basic',
+    participation: 'lottery-mode',
+    activity_config: 'activity-config',
+    promotion: 'lottery-advanced',
+  }
+  const targetId = section ? idMap[section] : undefined
+  if (!targetId) return
+  // 高级区需要先展开再滚
+  if (targetId === 'lottery-advanced') showAdvancedGrowth.value = true
+  requestAnimationFrame(() => {
+    setTimeout(() => scrollEditorSection(targetId), 80)
+  })
+}
+
 async function handleViewAnalytics(draw: LotteryDraw) {
   analyticsDraw.value = draw
   showAnalyticsModal.value = true
@@ -2507,7 +2540,18 @@ async function handleOpen(draw: LotteryDraw) {
     // 发布前先展示同一套服务端门禁结果：运营者需要知道缺奖项、码池、CTA、Webhook 等具体阻断点。
     const check = await fetchPublishCheck(draw.id)
     if (!check.canPublish) {
-      showToast(formatPublishCheckItems(check.errors, t('lottery.adminPublishErrorsPrefix')), 'error')
+      const summary = formatPublishCheckItems(check.errors, t('lottery.adminPublishErrorsPrefix'))
+      // 可编辑补齐：确认后进编辑并滚到相关分区；否则仅 toast（如 webhook 类）
+      if (canGuidePublishFixInEditor(draw, check.errors)) {
+        const goEdit = await askConfirm(`${summary}\n\n${t('lottery.adminPublishFixGoEdit')}`)
+        if (goEdit) {
+          operatingId.value = ''
+          await handleEdit(draw)
+          scrollToPublishFixSection(check.errors)
+          return
+        }
+      }
+      showToast(summary, 'error')
       return
     }
     if (check.warnings.length > 0) {

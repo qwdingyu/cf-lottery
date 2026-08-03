@@ -582,6 +582,8 @@ export default {
     gameSlotAriaPull: "拉动拉杆",
     // 转盘：join 路径是「提交参与」动效，不是开奖决定结果（docs/055a 技术更正）
     gameWheelJoin: "参与\n抽奖",
+    /** 有游戏壳时底部提示：主操作在游戏区，避免与底部第二颗「参与」双入口 */
+    gamePrimaryCtaHint: "请在上方互动区完成参与（点击转盘中心 / 刮开 / 提交等）",
     gameWheelSubmitting: "提交中",
     gameSubmitSubmitting: "提交中…",
     gameSubmitJoin: "立即参与",
@@ -985,6 +987,7 @@ export default {
     adminCreateMissingHint: "保存前建议补齐：{items}",
     adminTemplateApplied: "已套用模板「{name}」，时间已预填",
     adminCreatedNeedPrizeHint: "草稿已创建并复制链接；发布前请编辑补齐奖项（或使用快速创建奖品）",
+    adminPublishFixGoEdit: "是否打开编辑并跳到相关配置？补齐后可再次点「开启活动」。",
 
     // ── LotteryView 用户端 i18n 补全 ──
     noActivity: "暂无活动",

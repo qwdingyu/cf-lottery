@@ -73,6 +73,10 @@
               @play="handleJoin(draw.id)"
             />
           </div>
+          <!--
+            055a P1：有游戏壳时，游戏区即主 CTA（@play → handleJoin），底部不再放第二颗「参与」避免双入口。
+            无游戏组件（list/queue 等）时仍用底部按钮。已参与/非 open 仍用底部状态条。
+          -->
           <div class="lottery-join-bar">
             <template v-if="draw.status !== 'open'">
               <span class="lottery-join-hint">{{ statusText(draw.status) }}</span>
@@ -81,11 +85,14 @@
               <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
               <button v-if="draw.showWinners" class="lottery-result-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
             </template>
+            <template v-else-if="hasInteractiveGame(draw)">
+              <span class="lottery-join-hint">{{ $t('lottery.gamePrimaryCtaHint') }}</span>
+            </template>
             <template v-else-if="!sessionEmail && !registeredUsername">
-              <button class="lottery-join-btn" @click="openLogin(draw.id)">{{ $t('lottery.join') }}</button>
+              <button class="lottery-join-btn primary" @click="openLogin(draw.id)">{{ $t('lottery.join') }}</button>
             </template>
             <template v-else>
-              <button class="lottery-join-btn" :disabled="joiningId === draw.id" @click="handleJoin(draw.id)">
+              <button class="lottery-join-btn primary" :disabled="joiningId === draw.id" @click="handleJoin(draw.id)">
                 {{ joiningId === draw.id ? $t('lottery.loadingText') : $t('lottery.join') }}
               </button>
             </template>
@@ -755,6 +762,12 @@ function defaultExperienceForParticipation(participationMode: string): string {
   return 'wheel'
 }
 
+/** 是否已挂载可交互游戏壳（与 GameRegistry 对齐）；有则游戏区即主 CTA，底部不再放第二颗参与按钮 */
+function hasInteractiveGame(draw: { experienceType?: string; participationMode?: string }): boolean {
+  const exp = draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open')
+  return getGameComponent(exp) != null
+}
+
 function formatTime(iso: string): string {
   if (!iso) return ''
   const d = new Date(iso)
@@ -1206,9 +1219,9 @@ onUnmounted(() => {
 .lottery-card-body { border-top:1px solid rgba(255,255,255,0.06); max-height:0; overflow:hidden; transition:max-height 0.35s ease,opacity 0.35s ease; opacity:0; }
 .lottery-game-area { padding:24px 20px; display:flex; justify-content:center; }
 .lottery-join-bar { display:flex; align-items:center; justify-content:center; gap:12px; padding:16px 20px; border-top:1px solid rgba(255,255,255,0.06); }
-.lottery-join-btn { font-size:15px; font-weight:600; padding:10px 32px; border-radius:8px; background:var(--admin-accent,#f59e0b); color:#000; border:none; cursor:pointer; }
+.lottery-join-btn { font-size:15px; font-weight:600; padding:10px 32px; min-height:44px; border-radius:8px; background:var(--admin-accent,#f59e0b); color:#000; border:none; cursor:pointer; }
 .lottery-join-btn:disabled { opacity:0.5; cursor:not-allowed; }
-.lottery-join-hint { font-size:13px; color:rgba(255,255,255,0.5); }
+.lottery-join-hint { font-size:13px; color:rgba(255,255,255,0.5); text-align:center; max-width:28em; line-height:1.4; }
 .lottery-result-btn { font-size:12px; background:none; border:1px solid rgba(255,255,255,0.15); color:rgba(255,255,255,0.6); padding:4px 12px; border-radius:6px; cursor:pointer; }
 
 /* ── 参与记录 ── */
@@ -1242,9 +1255,10 @@ onUnmounted(() => {
   .lottery-header { flex-direction:column; align-items:flex-start; gap:8px; }
   .lottery-header-left { flex-direction:column; align-items:flex-start; }
   .lottery-card-head { flex-direction:column; align-items:flex-start; gap:8px; }
-  .lottery-join-btn { width:100%; }
+  .lottery-join-btn { width:100%; min-height:48px; }
+  .lottery-join-bar { flex-direction:column; }
   .lottery-main { padding:12px; }
-  .lottery-game-area { padding:16px; }
+  .lottery-game-area { padding:16px; overflow-x:auto; max-width:100%; }
   .lottery-join-bar { flex-direction:column; gap:8px; }
   .lottery-record { font-size:12px; }
   .lottery-skeleton { padding:12px; }

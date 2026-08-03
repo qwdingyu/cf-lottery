@@ -108,8 +108,24 @@ watch(() => props.prizes, () => drawWheel(0), { immediate: true })
 </script>
 
 <style scoped>
-.lucky-wheel-container { position: relative; width: 360px; height: 360px; margin: 0 auto; }
-.wheel-canvas { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border-radius: 50%; filter: drop-shadow(0 0 20px rgba(245,158,11,0.3)); }
+.lucky-wheel-container {
+  position: relative;
+  /* 055a P1：随屏宽缩放，避免小屏横向裁切；画布仍 320，用 scale 适配 */
+  width: min(360px, 92vw);
+  height: min(360px, 92vw);
+  margin: 0 auto;
+  max-width: 100%;
+}
+.wheel-canvas {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(320px, 82vw);
+  height: min(320px, 82vw);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  filter: drop-shadow(0 0 20px rgba(245,158,11,0.3));
+}
 .wheel-lights { position: absolute; top: 50%; left: 50%; }
 .light-dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 6px #fbbf24; }
 .light-dot.active { animation: blink 0.5s infinite alternate; }
@@ -118,10 +134,37 @@ watch(() => props.prizes, () => drawWheel(0), { immediate: true })
 .wheel-pointer { width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 22px solid #f59e0b; margin: 0 auto -2px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
 .wheel-pointer.spinning { animation: bounce 0.1s infinite alternate; }
 @keyframes bounce { to { transform: translateY(-2px); } }
-.wheel-btn { width: 54px; height: 54px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #1a1a2e; font-size: 12px; font-weight: 800; line-height: 1.15; border: 3px solid #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.3); cursor: pointer; display: flex; align-items: center; justify-content: center; text-align: center; transition: transform 0.2s; }
+/* 主 CTA 触控目标 ≥ 44px（行业移动可用性基线） */
+.wheel-btn {
+  width: 56px;
+  height: 56px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f59e0b, #fbbf24);
+  color: #1a1a2e;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.15;
+  border: 3px solid #fff;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  transition: transform 0.2s;
+}
 .wheel-btn-label { white-space: pre-line; display: block; max-width: 44px; }
 .wheel-btn-label--join { font-size: 11px; }
 .wheel-btn:not(.disabled):hover { transform: scale(1.1); }
 .wheel-btn:not(.disabled):active { transform: scale(0.95); }
 .wheel-btn.disabled { opacity: 0.5; cursor: not-allowed; }
+
+@media (max-width: 640px) {
+  .wheel-btn {
+    width: 60px;
+    height: 60px;
+  }
+}
 </style>

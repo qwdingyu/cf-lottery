@@ -613,6 +613,8 @@ export default {
     gameSlotAriaPull: "Pull lever",
     // Wheel: join path is submit animation, not draw resolution (docs/055a correction)
     gameWheelJoin: "Join\nDraw",
+    /** When a game shell is mounted, primary CTA lives in the game; bar shows a hint only */
+    gamePrimaryCtaHint: "Use the interaction above to join (center of the wheel / scratch / submit, etc.)",
     gameWheelSubmitting: "Submitting",
     gameSubmitSubmitting: "Submitting…",
     gameSubmitJoin: "Enter Now",
@@ -1014,6 +1016,7 @@ export default {
     adminCreateMissingHint: "Before saving, consider: {items}",
     adminTemplateApplied: "Template “{name}” applied; schedule prefilled",
     adminCreatedNeedPrizeHint: "Draft created and link copied — edit to add prize tiers before publishing",
+    adminPublishFixGoEdit: "Open the editor and jump to the related section? Fix issues, then tap Open again.",
 
     // LotteryView user-facing copy
     noActivity: "No activities",
