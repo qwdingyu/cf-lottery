@@ -567,8 +567,16 @@ export default {
     signupStatus: "已接龙",
     signupWaitlisted: "候补中",
     signupAssigned: "已占位",
-    // 投票
+    // 投票 / 问卷
     voteRequired: "请选择一个投票选项",
+    votePickTitle: "请选择一项",
+    surveyFillTitle: "请填写以下信息",
+    accessPasswordLabel: "活动访问密码",
+    accessPasswordPlaceholder: "主办方提供的活动密码",
+    accessPasswordRequired: "请填写活动访问密码",
+    inviteCodeLabel: "邀请码",
+    inviteCodePlaceholder: "请输入邀请码",
+    inviteCodeRequired: "请填写邀请码",
     // 奖品 fallback
     productPlaceholder: "奖品",
     // 游戏组件文本

@@ -191,6 +191,8 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     drawAt: draw.drawAt,
     showParticipantCount: draw.showParticipantCount,
     showWinnerCount: draw.showWinnerCount,
+    // 公开端可据此决定是否展示「中奖名单」区块；个人查结果不依赖此字段
+    showWinnerList: draw.showWinnerList,
     participantCount: draw.showParticipantCount ? Number(total) : undefined,
     winnerCount: draw.showWinnerCount ? draw.winnerCount : undefined,
     maxParticipants: draw.maxParticipants,
@@ -388,7 +390,14 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
   const slug = c.req.param("slug");
-  const body = await c.req.json<{ email?: string; submission?: Record<string, unknown> }>();
+  // accessPassword / inviteCode：邮箱验证关闭（bypass）直参时也要带上，否则 password/invite 模式永远失败
+  const body = await c.req.json<{
+    email?: string;
+    submission?: Record<string, unknown>;
+    accessPassword?: string;
+    inviteCode?: string;
+    refCode?: string;
+  }>();
   const email = String(body.email || "").trim().toLowerCase();
 
   // 查询活动
@@ -439,12 +448,13 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
         submissionPayload: body.submission,
       });
       if (!result.joined) return fail(c, result.message || "参与失败", 400);
-      // 返回 entryId/outcome（与 verify-join 对齐）：前端依赖它们弹出结果弹窗、
+      // 返回 entryId/outcome/resultMode（与 verify-join 对齐）：前端依赖它们弹出结果弹窗、
       // 生成归因分享链接（GameResultModal 的 :entry-id 与 share API 均需要）。
       return ok(c, {
         joined: true,
         entryId: "entryId" in result ? result.entryId : undefined,
         activityKind: draw.activityKind,
+        resultMode: draw.resultMode || draw.drawTrigger,
         outcome: "outcome" in result ? result.outcome : undefined,
         submissionId: "submissionId" in result ? result.submissionId : undefined,
       });
@@ -462,6 +472,9 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   if (emailBypass) {
     try {
       const result = await joinDraw(db, slug, email, "email", {
+        accessPassword: body.accessPassword,
+        inviteCode: body.inviteCode,
+        refCode: body.refCode,
         ipHash: ip,
         userAgent: c.req.header("User-Agent") || "",
         submissionPayload: body.submission,
@@ -471,6 +484,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
         joined: true,
         entryId: "entryId" in result ? result.entryId : undefined,
         activityKind: draw.activityKind,
+        resultMode: draw.resultMode || draw.drawTrigger,
         outcome: "outcome" in result ? result.outcome : undefined,
         submissionId: "submissionId" in result ? result.submissionId : undefined,
       });
@@ -626,6 +640,8 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       joined: true,
       entryId: "entryId" in result ? result.entryId : undefined,
       activityKind: draw.activityKind || "lottery",
+      // 前端结果弹窗按 result_mode 分支文案（instant / scheduled / manual）
+      resultMode: draw.resultMode || draw.drawTrigger,
       outcome: "outcome" in result ? result.outcome : undefined,
       submissionId: "submissionId" in result ? result.submissionId : undefined,
     });

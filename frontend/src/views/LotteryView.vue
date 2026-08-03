@@ -81,6 +81,89 @@
           <!-- 活动说明：深链沉浸首屏可见，减少「只有动画不知道规则」 -->
           <p v-if="drawDescription(draw)" class="lottery-draw-desc">{{ drawDescription(draw) }}</p>
           <p v-if="statusPathHint(draw)" class="lottery-status-path">{{ statusPathHint(draw) }}</p>
+          <!-- 奖池陈列：诚实展示可赢什么，不宣称「你已中」 -->
+          <ul v-if="(draw.prizes || []).length" class="lottery-prize-strip" aria-label="prizes">
+            <li v-for="(p, pi) in draw.prizes" :key="pi" class="lottery-prize-chip">
+              <span class="lottery-prize-chip-name">{{ p.name || p.tierName || $t('lottery.productPlaceholder') }}</span>
+              <span v-if="p.winnerCount" class="lottery-prize-chip-n">×{{ p.winnerCount }}</span>
+            </li>
+          </ul>
+          <!--
+            问卷/投票：提交字段必须在参与前可见可填（此前仅有 draft 逻辑与 CSS，模板未挂载 → 永远校验失败）。
+            与 experience 游戏壳解耦：先填内容，再点游戏/底部 CTA 触发 handleJoin。
+          -->
+          <div
+            v-if="requiresActivitySubmission(draw) && draw.status === 'open' && !myJoinedById[draw.id]"
+            class="activity-submission"
+          >
+            <template v-if="draw.activityConfig?.kind === 'vote'">
+              <p class="lottery-submission-title">{{ $t('lottery.votePickTitle') }}</p>
+              <label
+                v-for="opt in (draw.activityConfig.options || [])"
+                :key="opt.id"
+                class="vote-option"
+              >
+                <input
+                  type="radio"
+                  :name="'vote-' + draw.id"
+                  :value="opt.id"
+                  :checked="submissionDrafts[draw.id]?.optionId === opt.id"
+                  :disabled="joiningId === draw.id"
+                  @change="setVoteOption(draw.id, opt.id)"
+                />
+                <span>
+                  <strong>{{ opt.label }}</strong>
+                  <small v-if="opt.description">{{ opt.description }}</small>
+                </span>
+              </label>
+            </template>
+            <template v-else-if="draw.activityConfig?.kind === 'survey'">
+              <p class="lottery-submission-title">{{ $t('lottery.surveyFillTitle') }}</p>
+              <label
+                v-for="field in (draw.activityConfig.fields || [])"
+                :key="field.id"
+                class="survey-field"
+              >
+                <span>{{ field.label }}<em v-if="field.required"> *</em></span>
+                <textarea
+                  v-if="field.type === 'textarea'"
+                  :value="submissionDrafts[draw.id]?.fields?.[field.id] || ''"
+                  :maxlength="field.maxLength || 500"
+                  :disabled="joiningId === draw.id"
+                  rows="3"
+                  @input="setSurveyField(draw.id, field.id, ($event.target as HTMLTextAreaElement).value)"
+                />
+                <select
+                  v-else-if="field.type === 'select' || field.type === 'radio'"
+                  :value="submissionDrafts[draw.id]?.fields?.[field.id] || ''"
+                  :disabled="joiningId === draw.id"
+                  @change="setSurveyField(draw.id, field.id, ($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="">{{ $t('lottery.pleaseSelect') }}</option>
+                  <option v-for="o in (field.options || [])" :key="o.id" :value="o.id">{{ o.label }}</option>
+                </select>
+                <div v-else-if="field.type === 'checkbox'" class="checkbox-stack">
+                  <label v-for="o in (field.options || [])" :key="o.id" class="checkbox-option">
+                    <input
+                      type="checkbox"
+                      :checked="Array.isArray(submissionDrafts[draw.id]?.fields?.[field.id]) && submissionDrafts[draw.id].fields[field.id].includes(o.id)"
+                      :disabled="joiningId === draw.id"
+                      @change="toggleSurveyCheckbox(draw.id, field.id, o.id, ($event.target as HTMLInputElement).checked)"
+                    />
+                    <span>{{ o.label }}</span>
+                  </label>
+                </div>
+                <input
+                  v-else
+                  :type="field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : 'text'"
+                  :value="submissionDrafts[draw.id]?.fields?.[field.id] || ''"
+                  :maxlength="field.maxLength || 200"
+                  :disabled="joiningId === draw.id"
+                  @input="setSurveyField(draw.id, field.id, ($event.target as HTMLInputElement).value)"
+                />
+              </label>
+            </template>
+          </div>
           <div class="lottery-game-area">
             <component
               :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
@@ -107,7 +190,8 @@
             </template>
             <template v-else-if="myJoinedById[draw.id]">
               <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
-              <button v-if="draw.showWinners" type="button" class="lottery-result-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
+              <!-- 查自己的结果始终可点；showWinnerList 只控制公开中奖名单，不挡个人查询 -->
+              <button type="button" class="lottery-result-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
             </template>
             <template v-else-if="hasInteractiveGame(draw)">
               <span class="lottery-join-hint">{{ $t('lottery.gamePrimaryCtaHint') }}</span>
@@ -178,7 +262,7 @@
           </div>
         </div>
 
-        <!-- open 模式：邮箱验证码（保留原逻辑） -->
+        <!-- open / roster / password / invite_code：邮箱验证码 + 模式附加凭证 -->
         <div v-else class="modal-form">
           <label>
             <span>{{ $t('lottery.emailPlaceholder') }}</span>
@@ -187,6 +271,32 @@
               type="email"
               autocomplete="email"
               inputmode="email"
+              @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
+            />
+          </label>
+          <!--
+            密码 / 邀请码：后端 joinDraw 强制校验；此前前端从未采集 → 模式活动 100% 参与失败。
+            与邮箱码分离：活动访问凭证 ≠ 邮箱 OTP。
+          -->
+          <label v-if="pendingJoinNeedsPassword">
+            <span>{{ $t('lottery.accessPasswordLabel') }}</span>
+            <input
+              v-model="joinAccessPassword"
+              type="password"
+              autocomplete="current-password"
+              maxlength="64"
+              :placeholder="$t('lottery.accessPasswordPlaceholder')"
+              @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
+            />
+          </label>
+          <label v-if="pendingJoinNeedsInvite">
+            <span>{{ $t('lottery.inviteCodeLabel') }}</span>
+            <input
+              v-model="joinInviteCode"
+              type="text"
+              autocomplete="one-time-code"
+              maxlength="64"
+              :placeholder="$t('lottery.inviteCodePlaceholder')"
               @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
             />
           </label>
@@ -423,30 +533,25 @@ async function handleLogtoJoin() {
 /** 处理 Logto 登录成功后的回调：用自签 JWT 直接参与活动（跳过验证码） */
 async function handleLogtoJoinSuccess(email: string, token: string) {
   if (!pendingJoinDrawId.value) return
-  // 设置 sessionEmail（供后续查询参与记录使用）
-  sessionEmail.value = email
+  persistSessionEmail(email)
+  const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
   // 用自签 JWT 调 verify-join（不传验证码，后端验证 Authorization header）
   try {
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/verify-join', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ email, code: '' }),
+      body: JSON.stringify({
+        email,
+        code: '',
+        accessPassword: joinAccessPassword.value || undefined,
+        inviteCode: joinInviteCode.value || undefined,
+        refCode: routeParam('ref'),
+        submission: draw ? buildSubmissionPayload(draw) : undefined,
+      }),
     })
     const data = await res.json() as any
     if (data.ok && data.joined) {
-      const joinedDrawId = pendingJoinDrawId.value
-      myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
-      if (data.outcome) {
-        myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
-      }
-      showLoginModal.value = false
-      pendingJoinDrawId.value = null
-      showToast(t('lottery.joinSuccess'))
-      rememberJoinSuccess(joinedDrawId, data.entryId, {
-        outcomeLabel: data.outcome?.resultLabel,
-        resultMode: data.resultMode,
-      })
-      showResult.value = true
+      completeJoinSuccess(pendingJoinDrawId.value, data, { email })
     } else {
       showToast(data.message || t('lottery.joinFailed'), 'error')
     }
@@ -526,7 +631,8 @@ const fetchError = ref('')
 const recordsLoading = ref(false)
 const draws = ref<LotteryDraw[]>([])
 const expandedId = ref<string | null>(null)
-const sessionEmail = ref('')
+/** 参与会话邮箱：刷新后仍可查结果（sessionStorage，非 localStorage，避免长期污染） */
+const sessionEmail = ref(typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('lottery_session_email') || '') : '')
 /**
  * registered 模式：已登录用户的 JWT token。
  * 存 sessionStorage（会话级）：刷新页面不丢、关闭标签页自动清除；
@@ -539,14 +645,67 @@ const registeredUsername = ref(sessionStorage.getItem('lottery_registered_userna
 const regLoginUsername = ref('')
 const regLoginPassword = ref('')
 const regLoginLoading = ref(false)
+/** 密码模式：活动访问密码（与登录密码无关） */
+const joinAccessPassword = ref('')
+/** 邀请码模式：活动邀请码 */
+const joinInviteCode = ref('')
 /** 当前登录弹窗对应的活动是否是 registered 模式 */
 const isRegisteredJoin = computed(() => {
   if (!pendingJoinDrawId.value) return false
   const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
   return draw?.participationMode === 'registered'
 })
+const pendingJoinDraw = computed(() => {
+  if (!pendingJoinDrawId.value) return null
+  return draws.value.find(d => d.id === pendingJoinDrawId.value) || null
+})
+const pendingJoinNeedsPassword = computed(() => pendingJoinDraw.value?.participationMode === 'password')
+const pendingJoinNeedsInvite = computed(() => pendingJoinDraw.value?.participationMode === 'invite_code')
 /** 仅登录查看记录（无具体活动，不需要验证码） */
 const isLoginOnly = computed(() => !pendingJoinDrawId.value)
+
+function persistSessionEmail(email: string) {
+  sessionEmail.value = email
+  if (email) sessionStorage.setItem('lottery_session_email', email)
+  else sessionStorage.removeItem('lottery_session_email')
+}
+
+/**
+ * 统一参与成功收尾：写已参与态、结果弹窗、事件；避免 access-code 直通 / verify-join / registered 三处行为不一致。
+ */
+function completeJoinSuccess(
+  joinedDrawId: string,
+  data: {
+    entryId?: string
+    outcome?: ActivityOutcome
+    activityKind?: string
+    resultMode?: string
+  },
+  opts?: { email?: string },
+) {
+  if (opts?.email) persistSessionEmail(opts.email)
+  myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
+  if (data.outcome) {
+    myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
+  }
+  void recordActivityEvent(joinedDrawId, 'participation_completed', {
+    activityKind: data.activityKind || '',
+    outcomeStatus: data.outcome?.status || '',
+  })
+  rememberJoinSuccess(joinedDrawId, data.entryId, {
+    outcomeLabel: data.outcome?.resultLabel,
+    resultMode: data.resultMode,
+  })
+  showToast(
+    data.outcome?.resultLabel
+      ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel })
+      : t('lottery.joinSuccess'),
+  )
+  showResult.value = true
+  closeLogin()
+  joinAccessPassword.value = ''
+  joinInviteCode.value = ''
+}
 /** 结果查询弹窗对应的活动是否是 registered 模式（决定是否用 JWT 查询） */
 const isRegMyResult = computed(() => myResultDraw.value?.participationMode === 'registered')
 
@@ -847,8 +1006,58 @@ function ensureSubmissionDraft(draw: LotteryDraw) {
   }
 }
 
+function setVoteOption(drawId: string, optionId: string) {
+  const draw = draws.value.find(d => d.id === drawId)
+  if (draw) ensureSubmissionDraft(draw)
+  const prev = submissionDrafts.value[drawId] || { optionId: '', fields: {} }
+  submissionDrafts.value = {
+    ...submissionDrafts.value,
+    [drawId]: { ...prev, optionId },
+  }
+}
+
+function setSurveyField(drawId: string, fieldId: string, value: string) {
+  const draw = draws.value.find(d => d.id === drawId)
+  if (draw) ensureSubmissionDraft(draw)
+  const prev = submissionDrafts.value[drawId] || { optionId: '', fields: {} }
+  submissionDrafts.value = {
+    ...submissionDrafts.value,
+    [drawId]: { ...prev, fields: { ...prev.fields, [fieldId]: value } },
+  }
+}
+
+function toggleSurveyCheckbox(drawId: string, fieldId: string, optionId: string, checked: boolean) {
+  const draw = draws.value.find(d => d.id === drawId)
+  if (draw) ensureSubmissionDraft(draw)
+  const prev = submissionDrafts.value[drawId] || { optionId: '', fields: {} }
+  const cur = Array.isArray(prev.fields[fieldId]) ? [...prev.fields[fieldId]] : []
+  const next = checked ? (cur.includes(optionId) ? cur : [...cur, optionId]) : cur.filter((id: string) => id !== optionId)
+  submissionDrafts.value = {
+    ...submissionDrafts.value,
+    [drawId]: { ...prev, fields: { ...prev.fields, [fieldId]: next } },
+  }
+}
+
 function requiresActivitySubmission(draw: LotteryDraw) {
   return draw.activityConfig?.kind === 'survey' || draw.activityConfig?.kind === 'vote'
+}
+
+/** 规范化公开活动 payload：后端 id=publicSlug；title→name；showWinnerList→showWinners */
+function normalizePublicDraw(raw: any, routeSlug?: string): LotteryDraw {
+  const publicSlug = String(raw.publicSlug || routeSlug || raw.id || '').trim()
+  const title = String(raw.title || raw.name || '').trim()
+  return {
+    ...raw,
+    id: publicSlug || String(raw.id || ''),
+    publicSlug: publicSlug || undefined,
+    title,
+    name: title || raw.name,
+    // 公开 API 用 showWinnerList 数值；UI 用 showWinners 布尔
+    showWinners: raw.showWinners != null
+      ? Boolean(raw.showWinners)
+      : Number(raw.showWinnerList) === 1,
+    entryCount: raw.entryCount != null ? raw.entryCount : raw.participantCount,
+  } as LotteryDraw
 }
 
 function buildSubmissionPayload(draw: LotteryDraw): Record<string, unknown> | undefined {
@@ -927,6 +1136,14 @@ function getResultCta(draw: LotteryDraw | null, key: 'after_win' | 'after_loss')
 
 function clearSession() {
   myEntryList.value = []
+  persistSessionEmail('')
+  registeredToken.value = ''
+  registeredUsername.value = ''
+  sessionStorage.removeItem('lottery_registered_token')
+  sessionStorage.removeItem('lottery_registered_username')
+  myJoinedById.value = {}
+  myWonById.value = {}
+  myOutcomeById.value = {}
 }
 
 function drawSlug(drawId: string): string {
@@ -983,6 +1200,10 @@ function openLogin(drawId?: string) {
   pendingJoinDrawId.value = drawId || null
   if (drawId) void recordActivityEvent(drawId, 'participation_started')
   loginError.value = ''
+  codeSent.value = false
+  loginCode.value = ''
+  // 预填会话邮箱，减少二次参与摩擦
+  if (sessionEmail.value && !loginEmail.value) loginEmail.value = sessionEmail.value
   showLoginModal.value = true
   nextTick(() => loginModalRef.value?.focus())
 }
@@ -991,6 +1212,7 @@ function closeLogin() {
   showLoginModal.value = false
   pendingJoinDrawId.value = null
   loginError.value = ''
+  // 保留 loginEmail / 访问凭证不在关闭时强制清空，避免用户误关后重填；成功路径会清凭证
 }
 
 /** 仅登录（无需验证码）：存入邮箱后关闭弹窗，加载参与记录 */
@@ -1035,9 +1257,10 @@ async function fetchDrawDetail(id: string) {
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(id))
     const data = await res.json() as any
     if (data.ok) {
-      const idx = draws.value.findIndex((d) => d.id === id)
+      const normalized = normalizePublicDraw(data, id)
+      const idx = draws.value.findIndex((d) => d.id === id || d.publicSlug === id || d.id === normalized.id)
       if (idx !== -1) {
-        draws.value[idx] = { ...draws.value[idx], ...data } as LotteryDraw
+        draws.value[idx] = { ...draws.value[idx], ...normalized, id: draws.value[idx]!.id || normalized.id }
         ensureSubmissionDraft(draws.value[idx]!)
       }
     }
@@ -1058,15 +1281,16 @@ async function fetchDraws() {
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(props.id))
     const data = await res.json() as any
     if (data.ok) {
-      // 优先用服务端 id；slug 路由下仍保证 expanded 与 key 一致
-      const drawId = String(data.id || props.id)
-      draws.value = [{ ...data, id: drawId, publicSlug: data.publicSlug || props.id } as LotteryDraw]
-      ensureSubmissionDraft(draws.value[0]!)
-      expandedId.value = drawId
-      trackPageView(draws.value[0]!)
-      const title = String(data.title || data.name || '').trim()
-      if (title) document.title = title + ' - ' + t('lottery.title')
-      void fetchDrawDetail(drawId)
+      const draw = normalizePublicDraw(data, props.id)
+      draws.value = [draw]
+      ensureSubmissionDraft(draw)
+      expandedId.value = draw.id
+      trackPageView(draw)
+      if (draw.title || draw.name) {
+        document.title = (draw.name || draw.title) + ' - ' + t('lottery.title')
+      }
+      // 详情与列表同源；再拉一次以触发懒开奖等服务端副作用
+      void fetchDrawDetail(draw.publicSlug || draw.id)
     } else {
       draws.value = []
       fetchError.value = data.message || t('lottery.noActivity')
@@ -1103,42 +1327,13 @@ async function handleRegisteredLogin() {
     const token = loginData.token
     registeredToken.value = token
     registeredUsername.value = regLoginUsername.value
-    sessionEmail.value = regLoginUsername.value
     // 会话级持久化：刷新页面免重复登录；关闭标签页自动清除，不残留敏感信息
     sessionStorage.setItem('lottery_registered_token', token)
     sessionStorage.setItem('lottery_registered_username', regLoginUsername.value)
 
-    // 2. 带 JWT 调 access-code（registered 模式后端以 JWT 中的 userId 为身份，
-    // 无需也不应传邮箱——身份由 JWT 决定，杜绝"用户名当邮箱"的兼容 hack）
-    const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
-    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/access-code', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body: JSON.stringify({ submission: draw ? buildSubmissionPayload(draw) : undefined }),
-    })
-    const data = await res.json()
-    if (data.ok && data.joined) {
-      const joinedDrawId = pendingJoinDrawId.value
-      myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
-      // 结果/outcome 处理与 verify-join 对齐：registered 参与后同样展示结果弹窗
-      if (data.outcome) {
-        myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
-      }
-      void recordActivityEvent(joinedDrawId, 'participation_completed', {
-        activityKind: data.activityKind || '',
-        outcomeStatus: data.outcome?.status || '',
-      })
-      rememberJoinSuccess(joinedDrawId, data.entryId, {
-        outcomeLabel: data.outcome?.resultLabel,
-        resultMode: data.resultMode,
-      })
-      closeLogin()
-      regLoginPassword.value = ''
-      showToast(data.outcome?.resultLabel ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel }) : t('lottery.joinSuccess'))
-      showResult.value = true
-    } else {
-      loginError.value = data.message || t('lottery.joinFailed')
-    }
+    // 2. 带 JWT 调 access-code（registered 模式后端以 JWT 中的 userId 为身份）
+    await joinWithRegisteredToken(pendingJoinDrawId.value, token)
+    regLoginPassword.value = ''
   } catch {
     loginError.value = t('lottery.networkError')
   } finally {
@@ -1146,21 +1341,71 @@ async function handleRegisteredLogin() {
   }
 }
 
-async function handleJoin(drawId: string) {
-  const draw = draws.value.find((item) => item.id === drawId)
+/**
+ * registered 已持有 JWT：直接 access-code 参与，避免游戏壳二次弹登录。
+ */
+async function joinWithRegisteredToken(drawId: string, token: string) {
+  const draw = draws.value.find(d => d.id === drawId)
   if (draw) {
-    ensureSubmissionDraft(draw)
     const message = validateSubmissionDraft(draw)
     if (message) {
+      loginError.value = message
       showToast(message, 'error')
-      expandedId.value = drawId
       return
     }
   }
-  // 打开登录弹窗，验证码验证后参与
-  pendingJoinDrawId.value = drawId
+  joiningId.value = drawId
+  try {
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(drawId) + '/access-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ submission: draw ? buildSubmissionPayload(draw) : undefined }),
+    })
+    const data = await res.json()
+    if (data.ok && data.joined) {
+      completeJoinSuccess(drawId, data)
+    } else {
+      const msg = data.message || t('lottery.joinFailed')
+      loginError.value = msg
+      showToast(msg, 'error')
+    }
+  } catch {
+    loginError.value = t('lottery.networkError')
+    showToast(t('lottery.networkError'), 'error')
+  } finally {
+    joiningId.value = ''
+  }
+}
+
+async function handleJoin(drawId: string) {
+  const draw = draws.value.find((item) => item.id === drawId)
+  if (!draw) return
+  if (draw.status !== 'open') {
+    showToast(statusPathHint(draw) || statusText(draw.status), 'error')
+    return
+  }
+  if (myJoinedById.value[drawId]) {
+    showToast(t('lottery.joined'), 'success')
+    return
+  }
+  ensureSubmissionDraft(draw)
+  const message = validateSubmissionDraft(draw)
+  if (message) {
+    showToast(message, 'error')
+    expandedId.value = drawId
+    return
+  }
   void recordActivityEvent(drawId, 'participation_started')
-  showLoginModal.value = true
+
+  // registered 且已登录：跳过弹窗，直参与（核心 UX：游戏点一次就提交）
+  if (draw.participationMode === 'registered' && registeredToken.value) {
+    pendingJoinDrawId.value = drawId
+    await joinWithRegisteredToken(drawId, registeredToken.value)
+    return
+  }
+
+  // 打开登录/验证弹窗
+  openLogin(drawId)
 }
 
 function startCooldown(seconds: number) {
@@ -1179,6 +1424,16 @@ function startCooldown(seconds: number) {
   }, 1000)
 }
 
+function validateJoinCredentials(): string {
+  if (pendingJoinNeedsPassword.value && !String(joinAccessPassword.value || '').trim()) {
+    return t('lottery.accessPasswordRequired')
+  }
+  if (pendingJoinNeedsInvite.value && !String(joinInviteCode.value || '').trim()) {
+    return t('lottery.inviteCodeRequired')
+  }
+  return ''
+}
+
 async function handleSendCode() {
   if (!loginEmail.value.includes('@')) {
     loginError.value = t('lottery.invalidEmail')
@@ -1186,6 +1441,11 @@ async function handleSendCode() {
   }
   if (!pendingJoinDrawId.value) {
     loginError.value = t('lottery.drawNotLoaded')
+    return
+  }
+  const credErr = validateJoinCredentials()
+  if (credErr) {
+    loginError.value = credErr
     return
   }
   const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
@@ -1202,15 +1462,21 @@ async function handleSendCode() {
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/access-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: loginEmail.value.trim() }),
+      body: JSON.stringify({
+        email: loginEmail.value.trim(),
+        // 免码直参时后端 joinDraw 需要凭证；发码路径忽略多余字段
+        accessPassword: joinAccessPassword.value.trim() || undefined,
+        inviteCode: joinInviteCode.value.trim() || undefined,
+        refCode: routeParam('ref'),
+        submission: draw ? buildSubmissionPayload(draw) : undefined,
+      }),
     })
     const data = await res.json() as any
     if (data.ok && data.joined) {
-      // 邮箱验证码已关闭：直接参与成功
-      myJoinedById.value = { ...myJoinedById.value, [pendingJoinDrawId.value!]: true }
-      closeLogin()
-      showToast('参与成功', 'success')
-      // 参与后 myJoinedById 已更新，自动刷新
+      // 邮箱验证码关闭或 registered 旁路：直接参与成功（须完整收尾，含结果弹窗）
+      completeJoinSuccess(pendingJoinDrawId.value!, data, { email: loginEmail.value.trim() })
+      loginCode.value = ''
+      codeSent.value = false
     } else if (data.ok && data.sent) {
       codeSent.value = true
       startCooldown(data.expiresInSeconds || 60)
@@ -1230,6 +1496,11 @@ async function handleVerifyCode() {
     return
   }
   if (!pendingJoinDrawId.value) return
+  const credErr = validateJoinCredentials()
+  if (credErr) {
+    loginError.value = credErr
+    return
+  }
   const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
   if (draw) {
     const message = validateSubmissionDraft(draw)
@@ -1247,6 +1518,8 @@ async function handleVerifyCode() {
       body: JSON.stringify({
         email: loginEmail.value.trim(),
         code: loginCode.value.trim(),
+        accessPassword: joinAccessPassword.value.trim() || undefined,
+        inviteCode: joinInviteCode.value.trim() || undefined,
         refCode: routeParam('ref'),
         submission: draw ? buildSubmissionPayload(draw) : undefined,
       }),
@@ -1254,26 +1527,9 @@ async function handleVerifyCode() {
     const data = await res.json() as any
     if (data.ok && data.joined) {
       const joinedDrawId = pendingJoinDrawId.value
-      sessionEmail.value = loginEmail.value
-      myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
-      if (data.outcome) {
-        myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
-      }
-      void recordActivityEvent(joinedDrawId, 'participation_completed', {
-        activityKind: data.activityKind || '',
-        outcomeStatus: data.outcome?.status || '',
-      })
-      showLoginModal.value = false
-      pendingJoinDrawId.value = null
-      loginEmail.value = ''
+      completeJoinSuccess(joinedDrawId, data, { email: loginEmail.value.trim() })
       loginCode.value = ''
       codeSent.value = false
-      showToast(data.outcome?.resultLabel ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel }) : t('lottery.joinSuccess'))
-      rememberJoinSuccess(joinedDrawId, data.entryId, {
-        outcomeLabel: data.outcome?.resultLabel,
-        resultMode: data.resultMode,
-      })
-      showResult.value = true
     } else {
       loginError.value = data.message || t('lottery.verifyFailed')
     }
@@ -1376,6 +1632,39 @@ onUnmounted(() => {
   font-size: 13px;
   line-height: 1.45;
   color: rgba(245,158,11,0.9);
+}
+.lottery-prize-strip {
+  list-style: none;
+  margin: 10px 20px 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.lottery-prize-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+}
+.lottery-prize-chip-n { color: rgba(245,158,11,0.95); font-weight: 600; }
+.lottery-submission-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.8);
+}
+.activity-submission {
+  margin: 12px 20px 0;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.15);
 }
 .lottery-empty-hint {
   margin: 8px auto 0;
