@@ -18,6 +18,12 @@ const emit = defineEmits<GameEmits>()
 </script>
 
 <style scoped>
-.submit-game { display: flex; justify-content: center; padding: 20px 0; }
-.submit-btn { min-width: 200px; font-size: 16px; padding: 12px 32px; }
+.submit-game { display: flex; justify-content: center; padding: 20px 0; width: 100%; }
+.submit-btn {
+  min-width: min(200px, 80vw);
+  min-height: 48px;
+  font-size: 16px;
+  padding: 12px 32px;
+  width: min(280px, 90vw);
+}
 </style>

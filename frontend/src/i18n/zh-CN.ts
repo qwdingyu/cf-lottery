@@ -584,6 +584,7 @@ export default {
     gameWheelJoin: "参与\n抽奖",
     /** 有游戏壳时底部提示：主操作在游戏区，避免与底部第二颗「参与」双入口 */
     gamePrimaryCtaHint: "请在上方互动区完成参与（点击转盘中心 / 刮开 / 提交等）",
+    gameCardHint: "翻开至少两张牌后，再提交参与",
     gameWheelSubmitting: "提交中",
     gameSubmitSubmitting: "提交中…",
     gameSubmitJoin: "立即参与",

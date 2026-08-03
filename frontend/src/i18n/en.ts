@@ -615,6 +615,7 @@ export default {
     gameWheelJoin: "Join\nDraw",
     /** When a game shell is mounted, primary CTA lives in the game; bar shows a hint only */
     gamePrimaryCtaHint: "Use the interaction above to join (center of the wheel / scratch / submit, etc.)",
+    gameCardHint: "Flip at least two cards, then submit to join",
     gameWheelSubmitting: "Submitting",
     gameSubmitSubmitting: "Submitting…",
     gameSubmitJoin: "Enter Now",

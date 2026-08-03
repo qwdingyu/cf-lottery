@@ -16,10 +16,17 @@
         </div>
       </div>
       <div class="slot-controls">
-        <button class="slot-btn" :class="{ spinning }" :disabled="disabled || spinning" @click="handlePull">
+        <button
+          type="button"
+          class="slot-btn"
+          :class="{ spinning }"
+          :disabled="disabled || spinning || loading"
+          @click="handlePull"
+        >
           <span class="slot-btn-icon">🎰</span>
-          <span v-if="spinning">转动中...</span>
-          <span v-else>开始抽奖</span>
+          <!-- 与转盘一致：动画是参与氛围，文案不写「抽奖中」暗示已在开奖 -->
+          <span v-if="loading || spinning">{{ $t('lottery.gameWheelSubmitting') }}</span>
+          <span v-else>{{ $t('lottery.gameWheelJoin') }}</span>
         </button>
       </div>
     </div>
@@ -73,8 +80,8 @@ async function handlePull() {
 </script>
 
 <style scoped>
-.slot-game { display: flex; justify-content: center; padding: 20px 0; }
-.slot-machine { width: 320px; }
+.slot-game { display: flex; justify-content: center; padding: 20px 0; width: 100%; max-width: 100%; }
+.slot-machine { width: min(320px, 94vw); max-width: 100%; }
 .slot-frame { background: linear-gradient(180deg, #1e1b4b, #312e81); border-radius: 20px; padding: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 2px 0 rgba(255,255,255,0.1); }
 .slot-window { display: flex; gap: 8px; background: #0f0d23; border-radius: 12px; padding: 12px; }
 .slot-reel-wrap { flex: 1; height: 200px; overflow: hidden; position: relative; border-radius: 8px; }
@@ -86,7 +93,22 @@ async function handlePull() {
 .slot-overlay.top { top: 0; background: linear-gradient(180deg, #0f0d23, transparent); }
 .slot-overlay.bottom { bottom: 0; background: linear-gradient(0deg, #0f0d23, transparent); }
 .slot-controls { margin-top: 16px; text-align: center; }
-.slot-btn { padding: 12px 40px; border-radius: 12px; background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #1a1a2e; font-size: 15px; font-weight: 700; border: none; cursor: pointer; box-shadow: 0 4px 16px rgba(245,158,11,0.4); transition: all 0.3s; }
+.slot-btn {
+  min-height: 48px;
+  min-width: min(220px, 80vw);
+  padding: 12px 28px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f59e0b, #fbbf24);
+  color: #1a1a2e;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: pre-line;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(245,158,11,0.4);
+  transition: all 0.3s;
+}
 .slot-btn:hover:not(:disabled) { transform: translateY(-2px) scale(1.05); box-shadow: 0 6px 24px rgba(245,158,11,0.6); }
 .slot-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

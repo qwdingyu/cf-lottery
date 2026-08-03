@@ -81,28 +81,55 @@ function scratchAt(x: number, y: number) {
   checkScratched()
 }
 
-function getTouchPos(e: TouchEvent) {
+/**
+ * 把指针/触点映射到 canvas 内部像素坐标。
+ * 055a：CSS 缩放后 offsetX/client 与 bitmap 不一致会导致「刮不开」；统一用比例换算。
+ */
+function pointerToCanvas(clientX: number, clientY: number) {
   const canvas = canvasRef.value
   if (!canvas) return { x: 0, y: 0 }
   const rect = canvas.getBoundingClientRect()
-  return { x: e.touches[0]!.clientX - rect.left, y: e.touches[0]!.clientY - rect.top }
+  const rw = rect.width || 1
+  const rh = rect.height || 1
+  return {
+    x: ((clientX - rect.left) / rw) * canvas.width,
+    y: ((clientY - rect.top) / rh) * canvas.height,
+  }
 }
 
-function startScratch(e: MouseEvent) { isDrawing.value = true; scratchAt(e.offsetX, e.offsetY) }
-function scratch(e: MouseEvent) { if (isDrawing.value) scratchAt(e.offsetX, e.offsetY) }
+function startScratch(e: MouseEvent) {
+  isDrawing.value = true
+  const p = pointerToCanvas(e.clientX, e.clientY)
+  scratchAt(p.x, p.y)
+}
+function scratch(e: MouseEvent) {
+  if (!isDrawing.value) return
+  const p = pointerToCanvas(e.clientX, e.clientY)
+  scratchAt(p.x, p.y)
+}
 function endScratch() { isDrawing.value = false; checkScratched() }
-function startTouchScratch(e: TouchEvent) { isDrawing.value = true; scratchAt(getTouchPos(e).x, getTouchPos(e).y) }
+function startTouchScratch(e: TouchEvent) {
+  isDrawing.value = true
+  const t = e.touches[0]
+  if (!t) return
+  const p = pointerToCanvas(t.clientX, t.clientY)
+  scratchAt(p.x, p.y)
+}
 function touchScratch(e: TouchEvent) {
-  if (isDrawing.value) { const p = getTouchPos(e); scratchAt(p.x, p.y) }
+  if (!isDrawing.value) return
+  const t = e.touches[0]
+  if (!t) return
+  const p = pointerToCanvas(t.clientX, t.clientY)
+  scratchAt(p.x, p.y)
 }
 function quickScratch() {
-  if (scratched.value || isDrawing.value) return
+  if (scratched.value || isDrawing.value || props.disabled) return
   // 键盘/无障碍快捷刮开
   const canvas = canvasRef.value
   if (!canvas) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
-  ctx.clearRect(0, 0, 300, 200)
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
   scratched.value = true
   // 不自动 emit('play')——用户需手动点击按钮确认参与，防误操作
 }
@@ -112,12 +139,14 @@ function checkScratched() {
   if (!canvas) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
-  const imageData = ctx.getImageData(0, 0, 300, 200)
+  const w = canvas.width
+  const h = canvas.height
+  const imageData = ctx.getImageData(0, 0, w, h)
   let transparent = 0
   for (let i = 3; i < imageData.data.length; i += 4) {
     if (imageData.data[i]! < 128) transparent++
   }
-  if (transparent / (300 * 200) > 0.5) {
+  if (transparent / (w * h) > 0.5) {
     scratched.value = true
     // 不自动 emit('play')——用户需手动点击按钮确认参与，防误操作
   }
@@ -127,12 +156,28 @@ onMounted(initCanvas)
 </script>
 
 <style scoped>
-.scratch-game { display: flex; flex-direction: column; align-items: center; padding: 20px 0; gap: 12px; }
-.scratch-card { position: relative; width: 300px; height: 200px; border-radius: 12px; overflow: hidden; }
+.scratch-game { display: flex; flex-direction: column; align-items: center; padding: 20px 0; gap: 12px; width: 100%; max-width: 100%; }
+/* 055a：卡片随屏宽，canvas 用 CSS 铺满 + pointerToCanvas 对齐 bitmap */
+.scratch-card {
+  position: relative;
+  width: min(300px, 92vw);
+  height: min(200px, calc(92vw * 2 / 3));
+  border-radius: 12px;
+  overflow: hidden;
+  touch-action: none;
+  max-width: 100%;
+}
 .scratch-prize { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #fef3c7, #fde68a); }
 .prize-icon { font-size: 40px; }
-.prize-text { font-size: 18px; font-weight: 700; color: #92400e; margin-top: 8px; }
-.scratch-canvas { position: absolute; inset: 0; cursor: pointer; }
-.scratch-hint { color: var(--tg-hint); font-size: 13px; }
-.scratch-join-btn { margin-top: 4px; }
+.prize-text { font-size: 18px; font-weight: 700; color: #92400e; margin-top: 8px; text-align: center; padding: 0 8px; }
+.scratch-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; touch-action: none; }
+.scratch-hint { color: var(--tg-hint); font-size: 13px; text-align: center; padding: 0 12px; }
+.scratch-join-btn {
+  margin-top: 4px;
+  min-height: 44px;
+  min-width: min(200px, 80vw);
+  padding: 12px 24px;
+  font-size: 15px;
+  font-weight: 600;
+}
 </style>

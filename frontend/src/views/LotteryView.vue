@@ -185,23 +185,35 @@
           <div v-if="codeSent" class="code-row">
             <label class="code-label">
               <span>{{ $t('lottery.codePlaceholder') }}</span>
+              <!--
+                055a P1：SMS/邮件 OTP 自动填充协议。
+                autocomplete=one-time-code + numeric + 仅数字规范化；满 6 位自动校验（见 watch）。
+              -->
               <input
+                ref="loginCodeInputRef"
                 v-model="loginCode"
                 type="text"
+                name="one-time-code"
                 inputmode="numeric"
+                pattern="[0-9]*"
                 maxlength="6"
                 class="code-input"
                 autocomplete="one-time-code"
+                enterkeyhint="done"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                :aria-label="$t('lottery.codePlaceholder')"
                 @keyup.enter="handleVerifyCode"
               />
             </label>
             <span class="code-timer">{{ codeCooldown > 0 ? codeCooldown + 's' : '' }}</span>
           </div>
-          <div class="modal-actions">
+          <div class="modal-actions join-modal-actions">
             <button
               v-if="!codeSent"
               type="button"
-              class="btn btn-primary"
+              class="btn btn-primary join-modal-primary"
               :disabled="sendingCode"
               @click="handleSendCode"
             >
@@ -210,7 +222,7 @@
             <template v-else>
               <button
                 type="button"
-                class="btn btn-primary"
+                class="btn btn-primary join-modal-primary"
                 :disabled="verifyingCode"
                 @click="handleVerifyCode"
               >
@@ -267,6 +279,9 @@
             <input
               v-model="myResultEmail"
               type="email"
+              autocomplete="email"
+              inputmode="email"
+              enterkeyhint="next"
               :placeholder="$t('lottery.resultEmailPlaceholder')"
               maxlength="120"
               :disabled="myResultLoading"
@@ -274,13 +289,21 @@
             <input
               v-model="myResultCode"
               type="text"
+              name="one-time-code"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="one-time-code"
+              enterkeyhint="done"
+              autocapitalize="off"
+              spellcheck="false"
               :placeholder="$t('lottery.resultCodePlaceholder')"
               maxlength="10"
               :disabled="myResultLoading"
+              @keyup.enter="queryMyResult"
             />
             <p class="result-hint">{{ $t('lottery.codeHint') }}</p>
             <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
-            <button class="btn btn-primary" :disabled="myResultLoading" @click="queryMyResult">
+            <button class="btn btn-primary join-modal-primary" :disabled="myResultLoading" @click="queryMyResult">
               {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.queryText') }}
             </button>
           </template>
@@ -699,15 +722,46 @@ if (tg?.BackButton) {
 const showLoginModal = ref(false)
 const loginEmail = ref('')
 const loginCode = ref('')
+/** 验证码输入 DOM：发码成功后聚焦，便于 iOS/Android OTP 自动填充落点 */
+const loginCodeInputRef = ref<HTMLInputElement | null>(null)
 const codeSent = ref(false)
 const sendingCode = ref(false)
 const verifyingCode = ref(false)
 const codeCooldown = ref(0)
 const loginError = ref('')
+/** 防止 OTP 自动填充触发重复 verify */
+let otpAutoSubmitLock = false
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 const trackedPageViews = new Set<string>()
+
+// 055a P1：只保留数字；满 6 位自动提交（短信/邮件 OTP 自动填充常见路径）
+watch(loginCode, (raw) => {
+  const digits = String(raw || '').replace(/\D/g, '').slice(0, 6)
+  if (digits !== raw) {
+    loginCode.value = digits
+    return
+  }
+  if (
+    codeSent.value
+    && digits.length === 6
+    && !verifyingCode.value
+    && !otpAutoSubmitLock
+    && showLoginModal.value
+  ) {
+    otpAutoSubmitLock = true
+    void handleVerifyCode().finally(() => {
+      otpAutoSubmitLock = false
+    })
+  }
+})
+
+watch(codeSent, async (sent) => {
+  if (!sent) return
+  await nextTick()
+  loginCodeInputRef.value?.focus({ preventScroll: true })
+})
 
 function ensureSubmissionDraft(draw: LotteryDraw) {
   if (!requiresActivitySubmission(draw) || submissionDrafts.value[draw.id]) return
@@ -1222,6 +1276,21 @@ onUnmounted(() => {
 .lottery-join-btn { font-size:15px; font-weight:600; padding:10px 32px; min-height:44px; border-radius:8px; background:var(--admin-accent,#f59e0b); color:#000; border:none; cursor:pointer; }
 .lottery-join-btn:disabled { opacity:0.5; cursor:not-allowed; }
 .lottery-join-hint { font-size:13px; color:rgba(255,255,255,0.5); text-align:center; max-width:28em; line-height:1.4; }
+
+/* 055a P1：参与弹窗主按钮与验证码输入触控友好 */
+.join-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.join-modal-primary { min-height: 44px; flex: 1 1 140px; }
+.code-input {
+  min-height: 44px;
+  font-size: 18px;
+  letter-spacing: 0.2em;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+  max-width: 12em;
+  text-align: center;
+}
+.code-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.code-label { flex: 1 1 160px; display: flex; flex-direction: column; gap: 4px; }
 .lottery-result-btn { font-size:12px; background:none; border:1px solid rgba(255,255,255,0.15); color:rgba(255,255,255,0.6); padding:4px 12px; border-radius:6px; cursor:pointer; }
 
 /* ── 参与记录 ── */
