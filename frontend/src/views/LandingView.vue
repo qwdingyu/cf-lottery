@@ -13,8 +13,8 @@
       <div class="hero-actions">
         <RouterLink to="/admin/register" class="btn btn-primary btn-lg">{{ $t('landing.registerCta') }}</RouterLink>
         <RouterLink to="/lottery/demo" class="btn btn-ghost btn-lg">{{ $t('landing.viewDemo') }}</RouterLink>
-        <p class="hero-note">{{ $t('landing.heroNote') }}</p>
       </div>
+      <p class="hero-note">{{ $t('landing.heroNote') }}</p>
     </header>
 
     <!-- 创建流程 -->
