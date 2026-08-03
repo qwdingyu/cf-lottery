@@ -154,7 +154,16 @@ app.use("*", async (c, next) => {
 app.use("*", async (c, next) => {
   try {
     const url = getEnv(c, "TURSO_URL");
-    c.set("db", url ? createDb(createClient({ url, authToken: getEnv(c, "TURSO_TOKEN") })) : undefined);
+    if (url) {
+      const db = createDb(createClient({ url, authToken: getEnv(c, "TURSO_TOKEN") }));
+      c.set("db", db);
+      // 本地 SQLite 启用 WAL 模式防 database locked
+      if (url.startsWith("file:")) {
+        db.run(sql`PRAGMA journal_mode = WAL`).catch(() => {});
+      }
+    } else {
+      c.set("db", undefined);
+    }
   } catch (err) {
     console.error("[db] 数据库初始化失败:", err);
     c.set("dbInitError", String((err as Error).message || "数据库连接失败"));
