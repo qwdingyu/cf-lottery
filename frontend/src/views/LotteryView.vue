@@ -955,7 +955,7 @@ async function handleSendCode() {
       myJoinedById.value = { ...myJoinedById.value, [pendingJoinDrawId.value!]: true }
       closeLogin()
       showToast('参与成功', 'success')
-      loadMyRecords()
+      // 参与后 myJoinedById 已更新，自动刷新
     } else if (data.ok && data.sent) {
       codeSent.value = true
       startCooldown(data.expiresInSeconds || 60)
