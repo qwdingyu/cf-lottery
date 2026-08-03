@@ -3,7 +3,8 @@
 > 日期：2026-08-03  
 > 前提：`https://auth.eforge.xyz` 已部署可用（OIDC discovery / `/api/auth/ok` 实测通过）  
 > 代码侧：docs/059–064（OAuth RP + 本地 users 建档 + 不依赖 cf-auth 的公开 OTP）  
-> 差距与完整方案（协议是否满足、阶段 0–6）：**docs/066**
+> 差距与完整方案（协议是否满足、阶段 0–6）：**docs/066**  
+> 生产实施记录（2026-08-03 已 deploy）：**docs/067**
 
 ---
 

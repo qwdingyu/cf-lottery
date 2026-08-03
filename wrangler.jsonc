@@ -44,12 +44,17 @@
     }
   ],
 
-  // 非敏感环境变量
+  // 非敏感环境变量（CF_AUTH 开关与 URL；CLIENT_ID/SECRET 走 secrets）
   "vars": {
-    "APP_ORIGIN": "https://lucky.eforge.xyz"
-  },
+    "APP_ORIGIN": "https://lucky.eforge.xyz",
+    "CF_AUTH_ENABLED": "true",
+    "CF_AUTH_ISSUER": "https://auth.eforge.xyz",
+    "CF_AUTH_REDIRECT_URI": "https://lucky.eforge.xyz/auth/callback",
+    "CF_AUTH_SCOPES": "openid profile email"
+  }
 
-  // ═══════════════════════════════════════════════════════════════
-  // 必需 secrets（由 wrangler secret put 设置）
-  // ═══════════════════════════════════════════════════════════════
+  // secrets（wrangler secret put，勿写入本文件）：
+  // TURSO_URL / TURSO_TOKEN / JWT_SECRET / RESEND_* / CRON_SECRET
+  // CF_AUTH_CLIENT_ID / CF_AUTH_CLIENT_SECRET
+  // 可选清理遗留：LOGTO_APP_ID / LOGTO_ENDPOINT
 }
