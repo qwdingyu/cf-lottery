@@ -138,6 +138,13 @@
             {{ $t('adminLogin.noAccount') }}
             <a href="/admin/register" target="_blank" class="btn btn-ghost btn-xs">{{ $t('adminLogin.switchToRegister') }}</a>
           </p>
+          <!-- Logto 登录：registered 模式用户可通过 Logto 登录参与（docs/051 方案） -->
+          <div v-if="logtoEnabled" class="logto-section" style="margin-top:8px">
+            <div class="logto-divider" style="margin:8px 0"><span class="divider-text" style="font-size:12px;color:var(--tg-hint)">{{ $t('adminLogin.or') }}</span></div>
+            <button type="button" class="btn btn-ghost btn-sm" style="width:100%" :disabled="logtoLoading" @click="handleLogtoJoin">
+              <span class="logto-icon">L</span> 使用 Logto 登录
+            </button>
+          </div>
         </div>
 
         <!-- open 模式：邮箱验证码（保留原逻辑） -->

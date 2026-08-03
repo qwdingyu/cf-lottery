@@ -540,13 +540,33 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "open") return fail(c, "活动已结束", 400);
 
-  // ── registered 模式拦截 ──
+  // ── registered 模式：Logto 用户用自签 JWT 参与；否则返回 401 ──
   // registered 活动的验证码在 access-code 端点永不生成（该端点 JWT 直通），
   // 但活动从 open 改为 registered 时可能残留未过期的旧验证码。
-  // 若不拦截，攻击者可用旧验证码经 verify-join 以 email 身份参与，绕过登录门槛
-  // （entry 身份会被记为 email 而非 user_id，还会造成同一人两条 entry）。
+  // 若不拦截，攻击者可用旧验证码经 verify-join 以 email 身份参与，绕过登录门槛。
+  // Logto 用户（docs/051 方案）：通过自签 JWT 中的 sub（Logto 用户 ID）以 user_id 身份参与，
+  // 与 registered 模式的预期行为一致（user_id 身份，非 email 身份）。
+  let identityType = "email" as string;
+  let identityValue = email as string;
   if (draw.participationMode === "registered") {
-    return fail(c, "此活动需要登录后参与", 401);
+    identityType = "user_id";
+    // 从 Authorization 头解析自签 JWT
+    const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    if (!bearerToken) {
+      return fail(c, "此活动需要登录后参与", 401);
+    }
+    const jwtSecret = getEnv(c, "JWT_SECRET");
+    if (!jwtSecret) throw new Error("JWT_SECRET 未配置");
+    try {
+      const payload = await verifyJwt(bearerToken, jwtSecret);
+      if (!payload?.sub) {
+        return fail(c, "登录已过期，请重新登录", 401);
+      }
+      identityValue = payload.sub;
+      logtoVerified = true; // registered 模式 Logto 用户跳过验证码
+    } catch {
+      return fail(c, "登录已过期，请重新登录", 401);
+    }
   }
 
   // 验证验证码（Logto 用户跳过验证码检查，docs/051 方案）
@@ -559,7 +579,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
   try {
     const submission = validateSubmissionPayload(draw.activityKind, draw.activityConfig, body.submission);
     if (!submission.ok) return fail(c, submission.message || "提交内容无效", 400);
-    const result = await joinDraw(db, slug, email, "email", {
+    const result = await joinDraw(db, slug, identityValue, identityType, {
       accessPassword: body.accessPassword,
       inviteCode: body.inviteCode,
       ipHash: ip,
