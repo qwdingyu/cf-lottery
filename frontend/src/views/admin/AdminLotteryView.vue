@@ -2680,7 +2680,9 @@ async function handleCreate() {
                 method: 'POST',
                 body: JSON.stringify({ tiers: validTiers }),
               })
-            } catch { /* 奖项保存失败不阻断主流程，用户可在编辑时重试 */ }
+            } catch {
+              showToast(t('lottery.adminFailed'), 'error')
+            }
           }
         }
         try {
