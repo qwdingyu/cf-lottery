@@ -1,7 +1,7 @@
 <template>
   <div class="admin-layout">
     <aside class="admin-sidebar sidebar-open">
-      <div class="sidebar-brand">{{ $t('app.title') }} - {{ $t('platformLayout.title') }}</div>
+      <div class="sidebar-brand">{{ $t('platformLayout.title') }}</div>
       <nav class="sidebar-nav">
         <a v-for="item in menuItems" :key="item.to" class="nav-item" :class="{ active: currentName === item.name }" :href="item.to" @click.prevent="onNavClick(item.to)">
           <span class="nav-icon">{{ item.icon }}</span>

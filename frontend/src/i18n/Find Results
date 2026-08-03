@@ -1,0 +1,52 @@
+Searching 289 files for "抽奖活动平台"
+
+~/0-X/github_workflow/templates/cf-lottery/frontend/index.html:
+    8      />
+    9      <meta name="format-detection" content="telephone=no" />
+   10:     <meta name="description" content="抽奖活动平台 — 创建公平透明的抽奖活动" />
+   11:     <title>抽奖活动平台</title>
+   12      <!-- Open Graph / 社交分享卡片 -->
+   13:     <meta property="og:title" content="抽奖活动平台" />
+   14      <meta property="og:description" content="创建公平透明的抽奖活动，支持大转盘、刮刮卡、报名接龙、资料领取等多种玩法" />
+   15      <meta property="og:type" content="website" />
+   ..
+   17      <!-- Twitter Card -->
+   18      <meta name="twitter:card" content="summary" />
+   19:     <meta name="twitter:title" content="抽奖活动平台" />
+   20      <meta name="twitter:description" content="创建公平透明的抽奖活动，支持大转盘、刮刮卡、报名接龙、资料领取等多种玩法" />
+   21    </head>
+
+~/0-X/github_workflow/templates/cf-lottery/frontend/src/i18n/zh-CN.ts:
+    7    // ── 应用级别 ─────────────────────────────────────────
+    8    app: {
+    9:     title: "抽奖活动平台",
+   10      footer: "Powered by cf-lottery",
+   11    },
+
+5 matches across 2 files
+
+
+Searching 289 files for "app.title"
+
+~/0-X/github_workflow/templates/cf-lottery/frontend/src/views/AdminLayout.vue:
+    6      <!-- 侧边栏：小屏时默认隐藏，通过 hamburger 切换 -->
+    7      <aside class="admin-sidebar" :class="{ 'sidebar-open': sidebarOpen }">
+    8:       <div class="sidebar-brand">{{ $t('app.title') }}</div>
+    9        <nav class="sidebar-nav" @click="isMobile && (sidebarOpen = false)">
+   10          <a
+
+~/0-X/github_workflow/templates/cf-lottery/frontend/src/views/AdminLoginView.vue:
+    2    <div class="admin-login">
+    3      <div class="login-card">
+    4:       <h1 class="login-title">{{ $t('app.title') }} {{ $t('adminLogin.title') }}</h1>
+    5        <p class="login-subtitle">{{ $t('adminLogin.subtitle') }}</p>
+    6  
+
+~/0-X/github_workflow/templates/cf-lottery/frontend/src/views/PlatformLayout.vue:
+    2    <div class="admin-layout">
+    3      <aside class="admin-sidebar sidebar-open">
+    4:       <div class="sidebar-brand">{{ $t('platformLayout.title') }}</div>
+    5        <nav class="sidebar-nav">
+    6          <a v-for="item in menuItems" :key="item.to" class="nav-item" :class="{ active: currentName === item.name }" :href="item.to" @click.prevent="onNavClick(item.to)">
+
+3 matches across 3 files
