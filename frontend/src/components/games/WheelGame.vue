@@ -19,7 +19,7 @@
         @keydown.enter="handleSpin"
         @keydown.space.prevent="handleSpin"
       >
-        <span class="pointer-text">{{ spinning ? '...' : '抽奖' }}</span>
+        <span class="pointer-text">{{ loading ? $t('lottery.loadingText') : spinning ? '...' : $t('lottery.join') }}</span>
       </div>
     </div>
   </div>
