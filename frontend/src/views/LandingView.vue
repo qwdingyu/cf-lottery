@@ -12,7 +12,7 @@
       <p class="hero-subtitle">{{ $t('landing.heroSubtitle') }}</p>
       <div class="hero-actions">
         <RouterLink to="/admin/register" class="btn btn-primary btn-lg">{{ $t('landing.registerCta') }}</RouterLink>
-        <RouterLink to="/lottery/demo" class="btn btn-ghost btn-lg">{{ $t('landing.viewDemo') }}</RouterLink>
+        <RouterLink to="/lottery/demo" class="btn btn-ghost btn-lg">查看示例活动 →</RouterLink>
       </div>
       <p class="hero-note">{{ $t('landing.heroNote') }}</p>
     </header>

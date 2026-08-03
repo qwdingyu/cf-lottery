@@ -105,20 +105,13 @@
     <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLogin">
       <div class="modal-content" role="dialog" aria-modal="true" :aria-label="$t('lottery.emailVerify')">
         <h3 class="modal-title">{{ isRegisteredJoin ? $t('lottery.loginAndJoin') : $t('lottery.emailVerify') }}</h3>
-        <p class="modal-hint">{{ isRegisteredJoin ? $t('lottery.registeredRequired') : isLoginOnly ? '登录后查看你的参与记录和中奖信息' : $t('lottery.emailVerifyHint') }}</p>
+        <p class="modal-hint">{{ isRegisteredJoin ? $t('lottery.registeredRequired') : isLoginOnly ? $t('lottery.loginToViewRecords') : $t('lottery.emailVerifyHint') }}</p>
 
-        <!-- 仅登录（无具体活动，不需要验证码） -->
+        <!-- 仅登录（无具体活动）：跳转到完整登录页，确保邮箱验证码验证 -->
         <div v-if="isLoginOnly" class="modal-form">
-          <label>
-            <span>邮箱地址</span>
-            <input v-model="loginEmail" type="email" autocomplete="email" @keyup.enter="handleQuickLogin" />
-          </label>
-          <div class="modal-actions">
-            <button type="button" class="btn btn-ghost btn-sm" @click="closeLogin">取消</button>
-            <button type="button" class="btn btn-primary" :disabled="!loginEmail.includes('@')" @click="handleQuickLogin">
-              登录
-            </button>
-          </div>
+          <p class="field-hint" style="text-align:center;margin-bottom:12px">{{ $t('lottery.loginToViewRecords') }}</p>
+          <a href="/admin/login" class="btn btn-primary" style="width:100%;text-align:center;text-decoration:none">{{ $t('landing.login') }}</a>
+          <button type="button" class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" @click="closeLogin">{{ $t('confirm.cancel') }}</button>
         </div>
 
         <!-- registered 模式：用户名密码登录 -->

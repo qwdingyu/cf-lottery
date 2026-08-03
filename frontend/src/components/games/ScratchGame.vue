@@ -101,7 +101,7 @@ function quickScratch() {
   if (!ctx) return
   ctx.clearRect(0, 0, 300, 200)
   scratched.value = true
-  emit('play')
+  // 不自动 emit('play')——用户需手动点击按钮确认参与，防误操作
 }
 function checkScratched() {
   if (scratched.value) return
@@ -116,7 +116,7 @@ function checkScratched() {
   }
   if (transparent / (300 * 200) > 0.5) {
     scratched.value = true
-    emit('play')
+    // 不自动 emit('play')——用户需手动点击按钮确认参与，防误操作
   }
 }
 
