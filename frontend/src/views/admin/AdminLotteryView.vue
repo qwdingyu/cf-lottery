@@ -167,6 +167,11 @@
               </div>
             </td>
             <td class="col-actions">
+              <!--
+                055a P0：行内主操作外置 +「更多」内联展开。
+                主路径只保留「分享闭环 + 当前状态最关键动作」；二维码/海报/数据/危险操作等进更多。
+                不删 handler、不改 API，仅收敛展示。
+              -->
               <div class="table-actions">
                 <button
                   type="button"
@@ -182,109 +187,134 @@
                   :title="$t('lottery.adminOpenPublicHint')"
                   @click="handleOpenPublic(draw)"
                 >{{ $t('lottery.adminOpenPublic') }}</button>
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-xs"
-                  :title="$t('lottery.adminGenerateQr')"
-                  @click="handleShowQrCode(draw)"
-                >{{ $t('lottery.adminQrCode') }}</button>
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-xs"
-                  :title="$t('lottery.adminGeneratePoster')"
-                  @click="handleShowPoster(draw)"
-                >{{ $t('lottery.adminPoster') }}</button>
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-xs"
-                  :disabled="operatingId === draw.id"
-                  :title="$t('lottery.adminViewAnalytics')"
-                  @click="handleViewAnalytics(draw)"
-                >{{ $t('lottery.adminAnalytics') }}</button>
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-xs"
-                  :disabled="operatingId === draw.id"
-                  :title="$t('lottery.adminDuplicateHint')"
-                  @click="handleDuplicate(draw)"
-                >{{ $t('lottery.adminDuplicate') }}</button>
+                <!-- 状态主操作：创建→发布→开奖闭环上最关键的一步 -->
                 <button
                   v-if="draw.status === 'draft'"
                   type="button"
-                  class="btn btn-ghost btn-xs"
-                  :disabled="operatingId === draw.id"
-                  @click="handleEdit(draw)"
-                >{{ $t('lottery.adminEdit') }}</button>
-                <button
-                  v-if="draw.status === 'draft'"
-                  type="button"
-                  class="btn btn-ghost btn-xs"
+                  class="btn btn-primary btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleOpen(draw)"
                 >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminDrawOpen') }}</button>
                 <button
-                  v-if="draw.status === 'open' && draw.activityKind === 'lottery'"
+                  v-else-if="draw.status === 'open' && draw.activityKind === 'lottery'"
                   type="button"
                   class="btn btn-primary btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleDraw(draw)"
                 >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminDrawNow') }}</button>
                 <button
-                  v-if="draw.status === 'open'"
+                  v-else-if="draw.status === 'open'"
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handlePause(draw.id)"
                 >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminPause') }}</button>
                 <button
-                  v-if="draw.status === 'paused'"
+                  v-else-if="draw.status === 'paused'"
                   type="button"
-                  class="btn btn-ghost btn-xs"
+                  class="btn btn-primary btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleResume(draw.id)"
                 >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminResume') }}</button>
                 <button
-                  v-if="draw.status === 'drawn'"
-                  type="button"
-                  class="btn btn-ghost btn-xs"
-                  :disabled="operatingId === draw.id"
-                  @click="handleToggleVisibility(draw.id, draw.visible)"
-                >{{ draw.visible ? $t('lottery.adminHide') : $t('lottery.adminShow') }}</button>
-                <button
-                  v-if="draw.activityKind === 'lottery' && (draw.status === 'drawn' || draw.status === 'drawing')"
-                  type="button"
-                  class="btn btn-ghost btn-xs"
-                  :disabled="operatingId === draw.id || winnersLoading"
-                  @click="viewWinners(draw.id)"
-                >{{ $t('lottery.checkResult') }}</button>
-                <button
-                  v-if="draw.status === 'drawing'"
+                  v-else-if="draw.status === 'drawing'"
                   type="button"
                   class="btn btn-ghost btn-xs"
                   :disabled="operatingId === draw.id"
                   @click="handleRecover(draw.id)"
                 >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminRecoverDrawing') }}</button>
                 <button
-                  v-if="draw.status === 'drawn'"
+                  v-else-if="draw.activityKind === 'lottery' && draw.status === 'drawn'"
                   type="button"
                   class="btn btn-ghost btn-xs"
-                  :disabled="operatingId === draw.id"
-                  @click="handleRetryEmail(draw.id)"
-                >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
+                  :disabled="operatingId === draw.id || winnersLoading"
+                  @click="viewWinners(draw.id)"
+                >{{ $t('lottery.checkResult') }}</button>
                 <button
-                  v-if="draw.status === 'draft' || draw.status === 'open' || draw.status === 'paused'"
                   type="button"
-                  class="btn btn-danger btn-xs"
-                  :disabled="operatingId === draw.id"
-                  @click="handleCancel(draw.id)"
-                >{{ $t('lottery.adminDrawCancel') }}</button>
-                <button
-                  v-if="canDeleteDraw(draw)"
-                  type="button"
-                  class="btn btn-danger btn-xs"
-                  :disabled="batchOperating"
-                  @click="handleDelete(draw.id)"
-                >{{ $t('lottery.adminDrawDelete') }}</button>
+                  class="btn btn-ghost btn-xs table-actions-more-btn"
+                  :aria-expanded="expandedActionId === draw.id"
+                  :title="$t('lottery.adminActionsMoreHint')"
+                  @click="toggleRowActions(draw.id)"
+                >{{ expandedActionId === draw.id ? $t('lottery.adminActionsLess') : $t('lottery.adminActionsMore') }}</button>
+                <template v-if="expandedActionId === draw.id">
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :title="$t('lottery.adminGenerateQr')"
+                    @click="handleShowQrCode(draw)"
+                  >{{ $t('lottery.adminQrCode') }}</button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :title="$t('lottery.adminGeneratePoster')"
+                    @click="handleShowPoster(draw)"
+                  >{{ $t('lottery.adminPoster') }}</button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    :title="$t('lottery.adminViewAnalytics')"
+                    @click="handleViewAnalytics(draw)"
+                  >{{ $t('lottery.adminAnalytics') }}</button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    :title="$t('lottery.adminDuplicateHint')"
+                    @click="handleDuplicate(draw)"
+                  >{{ $t('lottery.adminDuplicate') }}</button>
+                  <button
+                    v-if="draw.status === 'draft'"
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    @click="handleEdit(draw)"
+                  >{{ $t('lottery.adminEdit') }}</button>
+                  <!-- open 非抽奖：暂停已在主操作；抽奖 open 时暂停放在更多，避免与「立即开奖」抢主 CTA -->
+                  <button
+                    v-if="draw.status === 'open' && draw.activityKind === 'lottery'"
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    @click="handlePause(draw.id)"
+                  >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminPause') }}</button>
+                  <button
+                    v-if="draw.status === 'drawn'"
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    @click="handleToggleVisibility(draw.id, draw.visible)"
+                  >{{ draw.visible ? $t('lottery.adminHide') : $t('lottery.adminShow') }}</button>
+                  <button
+                    v-if="draw.activityKind === 'lottery' && draw.status === 'drawing'"
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id || winnersLoading"
+                    @click="viewWinners(draw.id)"
+                  >{{ $t('lottery.checkResult') }}</button>
+                  <button
+                    v-if="draw.status === 'drawn'"
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    @click="handleRetryEmail(draw.id)"
+                  >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
+                  <button
+                    v-if="draw.status === 'draft' || draw.status === 'open' || draw.status === 'paused'"
+                    type="button"
+                    class="btn btn-danger btn-xs"
+                    :disabled="operatingId === draw.id"
+                    @click="handleCancel(draw.id)"
+                  >{{ $t('lottery.adminDrawCancel') }}</button>
+                  <button
+                    v-if="canDeleteDraw(draw)"
+                    type="button"
+                    class="btn btn-danger btn-xs"
+                    :disabled="batchOperating"
+                    @click="handleDelete(draw.id)"
+                  >{{ $t('lottery.adminDrawDelete') }}</button>
+                </template>
               </div>
             </td>
           </tr>
@@ -502,94 +532,117 @@
             </div>
           </section>
 
-          <!-- 导流配置：关联商品推广 -->
-          <section class="form-section" aria-labelledby="lottery-traffic">
-            <header class="form-section-head">
-              <h4 id="lottery-traffic" class="form-section-title">{{ $t('lottery.adminTrafficSection') }}</h4>
-              <p class="form-section-desc">{{ $t('lottery.adminTrafficSectionDesc') }}</p>
+          <!--
+            055a P0 / ADR-055a-3：导流 / 裂变 / CTA 默认折叠为「高级配置」。
+            能力保留、handler 与提交 payload 不变；只减少主路径同屏决策。
+          -->
+          <section class="form-section form-section--advanced" aria-labelledby="lottery-advanced">
+            <header class="form-section-head form-section-head--toggle">
+              <button
+                type="button"
+                class="form-advanced-toggle"
+                :aria-expanded="showAdvancedGrowth"
+                aria-controls="lottery-advanced-body"
+                @click="showAdvancedGrowth = !showAdvancedGrowth"
+              >
+                <span class="form-section-title" id="lottery-advanced">{{ $t('lottery.adminAdvancedGrowthSection') }}</span>
+                <span class="form-advanced-toggle-meta">
+                  {{ showAdvancedGrowth ? $t('lottery.adminAdvancedCollapse') : $t('lottery.adminAdvancedExpand') }}
+                </span>
+              </button>
+              <p class="form-section-desc">{{ $t('lottery.adminAdvancedGrowthDesc') }}</p>
             </header>
-            <div class="form-grid two-cols">
-              <label class="field-span-2">
-                <input v-model="form.enableProductLink" type="checkbox" class="checkbox-inline" />
-                <span>{{ $t('lottery.adminEnableProductLink') }}</span>
-              </label>
-              <template v-if="form.enableProductLink">
-                <label class="field-span-2">
-                  <span>{{ $t('lottery.adminProductLink') }}</span>
-                  <input v-model="form.productLink.url" type="url" placeholder="https://shop.example.com/product/123" />
-                </label>
-                <label>
-                  <span>{{ $t('lottery.adminProductTitle') }}</span>
-                  <input v-model="form.productLink.title" maxlength="100" :placeholder="$t('lottery.adminProductTitlePlaceholder')" />
-                </label>
-                <label>
-                  <span>{{ $t('lottery.adminProductPrice') }}</span>
-                  <input v-model="form.productLink.price" placeholder="¥299" />
-                </label>
-                <label class="field-span-2">
-                  <span>{{ $t('lottery.adminProductImageUrl') }}</span>
-                  <input v-model="form.productLink.imageUrl" type="url" placeholder="https://img.example.com/xxx.jpg" />
-                </label>
-              </template>
-            </div>
-          </section>
+            <div v-show="showAdvancedGrowth" id="lottery-advanced-body" class="form-advanced-body">
+              <!-- 导流配置：关联商品推广 -->
+              <section class="form-section form-section--nested" aria-labelledby="lottery-traffic">
+                <header class="form-section-head">
+                  <h4 id="lottery-traffic" class="form-section-title">{{ $t('lottery.adminTrafficSection') }}</h4>
+                  <p class="form-section-desc">{{ $t('lottery.adminTrafficSectionDesc') }}</p>
+                </header>
+                <div class="form-grid two-cols">
+                  <label class="field-span-2">
+                    <input v-model="form.enableProductLink" type="checkbox" class="checkbox-inline" />
+                    <span>{{ $t('lottery.adminEnableProductLink') }}</span>
+                  </label>
+                  <template v-if="form.enableProductLink">
+                    <label class="field-span-2">
+                      <span>{{ $t('lottery.adminProductLink') }}</span>
+                      <input v-model="form.productLink.url" type="url" placeholder="https://shop.example.com/product/123" />
+                    </label>
+                    <label>
+                      <span>{{ $t('lottery.adminProductTitle') }}</span>
+                      <input v-model="form.productLink.title" maxlength="100" :placeholder="$t('lottery.adminProductTitlePlaceholder')" />
+                    </label>
+                    <label>
+                      <span>{{ $t('lottery.adminProductPrice') }}</span>
+                      <input v-model="form.productLink.price" placeholder="¥299" />
+                    </label>
+                    <label class="field-span-2">
+                      <span>{{ $t('lottery.adminProductImageUrl') }}</span>
+                      <input v-model="form.productLink.imageUrl" type="url" placeholder="https://img.example.com/xxx.jpg" />
+                    </label>
+                  </template>
+                </div>
+              </section>
 
-          <!-- 裂变传播配置 -->
-          <section class="form-section" aria-labelledby="lottery-viral">
-            <header class="form-section-head">
-              <h4 id="lottery-viral" class="form-section-title">{{ $t('lottery.adminViralSection') }}</h4>
-              <p class="form-section-desc">{{ $t('lottery.adminViralSectionDesc') }}</p>
-            </header>
-            <div class="form-grid two-cols">
-              <label class="field-span-2">
-                <input v-model="form.enableViral" type="checkbox" class="checkbox-inline" />
-                <span>{{ $t('lottery.adminEnableViral') }}</span>
-              </label>
-              <template v-if="form.enableViral">
-                <label>
-                  <span>{{ $t('lottery.adminViralPerInviteLabel') }}</span>
-                  <input v-model.number="form.viralExtraEntriesPerInvite" type="number" min="1" max="10" />
-                  <small>{{ $t('lottery.adminViralPerInviteSuffix') }}</small>
-                </label>
-                <label>
-                  <span>{{ $t('lottery.adminViralMaxLabel') }}</span>
-                  <input v-model.number="form.viralMaxExtraEntries" type="number" min="1" max="100" />
-                  <small>{{ $t('lottery.adminViralMaxSuffix') }}</small>
-                </label>
-                <label class="field-span-2">
-                  <input v-model="form.viralLeaderboardEnabled" type="checkbox" class="checkbox-inline" />
-                  <span>{{ $t('lottery.adminViralLeaderboard') }}</span>
-                  <small>{{ $t('lottery.adminViralLeaderboardHint') }}</small>
-                </label>
-              </template>
-            </div>
-          </section>
+              <!-- 裂变传播配置 -->
+              <section class="form-section form-section--nested" aria-labelledby="lottery-viral">
+                <header class="form-section-head">
+                  <h4 id="lottery-viral" class="form-section-title">{{ $t('lottery.adminViralSection') }}</h4>
+                  <p class="form-section-desc">{{ $t('lottery.adminViralSectionDesc') }}</p>
+                </header>
+                <div class="form-grid two-cols">
+                  <label class="field-span-2">
+                    <input v-model="form.enableViral" type="checkbox" class="checkbox-inline" />
+                    <span>{{ $t('lottery.adminEnableViral') }}</span>
+                  </label>
+                  <template v-if="form.enableViral">
+                    <label>
+                      <span>{{ $t('lottery.adminViralPerInviteLabel') }}</span>
+                      <input v-model.number="form.viralExtraEntriesPerInvite" type="number" min="1" max="10" />
+                      <small>{{ $t('lottery.adminViralPerInviteSuffix') }}</small>
+                    </label>
+                    <label>
+                      <span>{{ $t('lottery.adminViralMaxLabel') }}</span>
+                      <input v-model.number="form.viralMaxExtraEntries" type="number" min="1" max="100" />
+                      <small>{{ $t('lottery.adminViralMaxSuffix') }}</small>
+                    </label>
+                    <label class="field-span-2">
+                      <input v-model="form.viralLeaderboardEnabled" type="checkbox" class="checkbox-inline" />
+                      <span>{{ $t('lottery.adminViralLeaderboard') }}</span>
+                      <small>{{ $t('lottery.adminViralLeaderboardHint') }}</small>
+                    </label>
+                  </template>
+                </div>
+              </section>
 
-          <!-- 多状态 CTA 承接：中奖/未中奖不同导流 -->
-          <section class="form-section" aria-labelledby="lottery-ctas">
-            <header class="form-section-head">
-              <h4 id="lottery-ctas" class="form-section-title">{{ $t('lottery.adminCtaSection') }}</h4>
-              <p class="form-section-desc">{{ $t('lottery.adminCtaSectionDesc') }}</p>
-            </header>
-            <div class="form-grid two-cols">
-              <label class="field-span-2">
-                <input v-model="form.enableAfterWinCta" type="checkbox" class="checkbox-inline" />
-                <span>{{ $t('lottery.adminAfterWinCta') }}</span>
-                <small>{{ $t('lottery.adminAfterWinCtaHint') }}</small>
-              </label>
-              <template v-if="form.enableAfterWinCta">
-                <label class="field-span-2"><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterWinCtaUrl" type="url" placeholder="https://..." /></label>
-                <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterWinCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterWinCtaTitlePlaceholder')" /></label>
-              </template>
-              <label class="field-span-2">
-                <input v-model="form.enableAfterLossCta" type="checkbox" class="checkbox-inline" />
-                <span>{{ $t('lottery.adminAfterLossCta') }}</span>
-                <small>{{ $t('lottery.adminAfterLossCtaHint') }}</small>
-              </label>
-              <template v-if="form.enableAfterLossCta">
-                <label class="field-span-2"><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterLossCtaUrl" type="url" placeholder="https://..." /></label>
-                <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterLossCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterLossCtaTitlePlaceholder')" /></label>
-              </template>
+              <!-- 多状态 CTA 承接：中奖/未中奖不同导流 -->
+              <section class="form-section form-section--nested" aria-labelledby="lottery-ctas">
+                <header class="form-section-head">
+                  <h4 id="lottery-ctas" class="form-section-title">{{ $t('lottery.adminCtaSection') }}</h4>
+                  <p class="form-section-desc">{{ $t('lottery.adminCtaSectionDesc') }}</p>
+                </header>
+                <div class="form-grid two-cols">
+                  <label class="field-span-2">
+                    <input v-model="form.enableAfterWinCta" type="checkbox" class="checkbox-inline" />
+                    <span>{{ $t('lottery.adminAfterWinCta') }}</span>
+                    <small>{{ $t('lottery.adminAfterWinCtaHint') }}</small>
+                  </label>
+                  <template v-if="form.enableAfterWinCta">
+                    <label class="field-span-2"><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterWinCtaUrl" type="url" placeholder="https://..." /></label>
+                    <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterWinCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterWinCtaTitlePlaceholder')" /></label>
+                  </template>
+                  <label class="field-span-2">
+                    <input v-model="form.enableAfterLossCta" type="checkbox" class="checkbox-inline" />
+                    <span>{{ $t('lottery.adminAfterLossCta') }}</span>
+                    <small>{{ $t('lottery.adminAfterLossCtaHint') }}</small>
+                  </label>
+                  <template v-if="form.enableAfterLossCta">
+                    <label class="field-span-2"><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterLossCtaUrl" type="url" placeholder="https://..." /></label>
+                    <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterLossCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterLossCtaTitlePlaceholder')" /></label>
+                  </template>
+                </div>
+              </section>
             </div>
           </section>
 
@@ -1246,6 +1299,10 @@ const createdToFilter = ref('')
 const loading = ref(false)
 const loadError = ref('')
 const showCreateModal = ref(false)
+/** 055a：创建表单「高级配置（导流/裂变/CTA）」默认收起，减少主路径压迫 */
+const showAdvancedGrowth = ref(false)
+/** 055a：列表行「更多」展开的活动 id；同时只展开一行，避免操作墙 */
+const expandedActionId = ref<string | null>(null)
 const showTemplateModal = ref(false)
 const templates = ref<any[]>([])
 // 启用的活动类型列表（从系统配置 enabled_activity_kinds 获取，由 L3 平台运营者配置）
@@ -2132,6 +2189,7 @@ function handleDuplicate(draw: LotteryDraw) {
     viralLeaderboardEnabled: true,
   }
   isEditing.value = false
+  showAdvancedGrowth.value = false
   showCreateModal.value = true
   showToast(t('lottery.adminDuplicatedToast'), 'success')
 }
@@ -2187,8 +2245,14 @@ function applyTimePreset(kind: '5m' | '10m' | '20m' | '30m' | '1h' | '1d' | '3d'
 function closeEditor() {
   showCreateModal.value = false
   isEditing.value = false
+  showAdvancedGrowth.value = false
   rosterInput.value = ''
   inviteCodeCount.value = 10
+}
+
+/** 列表行「更多」：点同一行收起，点另一行只展开该行 */
+function toggleRowActions(drawId: string) {
+  expandedActionId.value = expandedActionId.value === drawId ? null : drawId
 }
 
 function openTemplatePicker() {
@@ -2249,6 +2313,7 @@ function applyTemplate(tpl: any) {
     // defaultActivityConfigForKind 已预设「选项 A」和「选项 B」2 个选项
   }
   isEditing.value = false
+  showAdvancedGrowth.value = false
   applyTimePreset('1d')
   showCreateModal.value = true
 }
@@ -2507,6 +2572,8 @@ async function handleEdit(draw: LotteryDraw) {
   isEditing.value = true
   // 回填未中奖自动发券开关状态
   initLoserRewardFromConfig()
+  // 编辑时默认仍折叠高级项；已启用的增长配置不自动展开，避免打断「改核心字段」路径
+  showAdvancedGrowth.value = false
   showCreateModal.value = true
 }
 
@@ -3019,4 +3086,16 @@ onMounted(() => {
 .tier-name { flex: 1.5; min-width: 0; }
 .tier-count { flex: 0.5; min-width: 70px; }
 .tier-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+
+/* 055a：行操作允许换行，避免「更多」展开后横向撑爆表格 */
+.col-actions .table-actions {
+  flex-wrap: wrap;
+  white-space: normal;
+  max-width: 320px;
+  row-gap: 4px;
+}
+
+.table-actions-more-btn {
+  font-weight: 600;
+}
 </style>

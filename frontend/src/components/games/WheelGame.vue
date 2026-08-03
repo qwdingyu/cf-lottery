@@ -12,9 +12,12 @@
         <span class="pointer-arrow">▼</span>
       </div>
       <div class="wheel-btn" :class="{ disabled: disabled || spinning }">
-        <span v-if="loading">加载中</span>
-        <span v-else-if="spinning">抽奖中</span>
-        <span v-else>开始<br>抽奖</span>
+        <!--
+          语义诚实（docs/055a）：本组件 join 路径只提交参与，随机旋转不代表开奖结果。
+          空闲=参与抽奖；动画/请求中=提交中。禁止再写「抽奖中」暗示正在决定中奖。
+        -->
+        <span v-if="loading || spinning" class="wheel-btn-label">{{ $t('lottery.gameWheelSubmitting') }}</span>
+        <span v-else class="wheel-btn-label wheel-btn-label--join">{{ $t('lottery.gameWheelJoin') }}</span>
       </div>
     </div>
   </div>
@@ -115,7 +118,9 @@ watch(() => props.prizes, () => drawWheel(0), { immediate: true })
 .wheel-pointer { width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 22px solid #f59e0b; margin: 0 auto -2px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
 .wheel-pointer.spinning { animation: bounce 0.1s infinite alternate; }
 @keyframes bounce { to { transform: translateY(-2px); } }
-.wheel-btn { width: 54px; height: 54px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #1a1a2e; font-size: 13px; font-weight: 800; line-height: 1.2; border: 3px solid #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.3); cursor: pointer; display: flex; align-items: center; justify-content: center; text-align: center; transition: transform 0.2s; }
+.wheel-btn { width: 54px; height: 54px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #1a1a2e; font-size: 12px; font-weight: 800; line-height: 1.15; border: 3px solid #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.3); cursor: pointer; display: flex; align-items: center; justify-content: center; text-align: center; transition: transform 0.2s; }
+.wheel-btn-label { white-space: pre-line; display: block; max-width: 44px; }
+.wheel-btn-label--join { font-size: 11px; }
 .wheel-btn:not(.disabled):hover { transform: scale(1.1); }
 .wheel-btn:not(.disabled):active { transform: scale(0.95); }
 .wheel-btn.disabled { opacity: 0.5; cursor: not-allowed; }

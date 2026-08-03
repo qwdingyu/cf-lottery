@@ -177,6 +177,7 @@ export default {
     heroSubtitle: "No coding, no developers. Pick a template, share it, and track who joined, who won, and how it performed.",
     registerCta: "Register free, start now",
     viewDemo: "See how it works",
+    // secondary CTA anchors to #how-it-works (not register)
     heroNote: "Free tier is fully functional",
     stepsTitle: "Three steps to launch",
     step1Title: "Pick a template",
@@ -535,6 +536,11 @@ export default {
     statusDrawing: "Drawing",
     full: "Full",
     joinSuccess: "Successfully joined",
+    joinResultHintPending: "You're registered. After the draw, check this page for results; winners are also notified.",
+    joinResultHintScheduled: "You're registered. The draw runs at the scheduled time—then check results here.",
+    joinResultHintManual: "You're registered. After the host draws, check this page for your result.",
+    joinResultHintInstant: "Submitted. If this draw is instant, your result will show next or on this page.",
+    joinResultHintInstantDone: "Result is ready. Keep this page or share to invite friends.",
     joinFailed: "Failed to join",
     loginExpired: "Session expired, please login again",
     checkOrder: "View Order",
@@ -598,12 +604,16 @@ export default {
     voteRequired: "Please select an option",
     productPlaceholder: "Prize",
     gameScratchHint: "Scratch to enter",
+    gameScratchReveal: "Then tap to join",
     gameRevealHint: "Click below to claim",
     gameSlotSpinning: "Spinning",
     gameSlotPull: "Pull",
     gameSlotPulling: "...",
     gameSlotAriaSpinning: "Spinning",
     gameSlotAriaPull: "Pull lever",
+    // Wheel: join path is submit animation, not draw resolution (docs/055a correction)
+    gameWheelJoin: "Join\nDraw",
+    gameWheelSubmitting: "Submitting",
     gameSubmitSubmitting: "Submitting…",
     gameSubmitJoin: "Enter Now",
     gameFormHint: "Fill in to submit",
@@ -972,6 +982,15 @@ export default {
     adminCreateDoneWithLink: "Activity created; link copied",
     adminCreated: "Activity created",
     adminCreateFailed: "Create failed",
+
+    // 055a P0: list action density + create-form progressive disclosure
+    adminActionsMore: "More",
+    adminActionsLess: "Less",
+    adminActionsMoreHint: "Show QR, poster, analytics, edit, and destructive actions",
+    adminAdvancedGrowthSection: "Advanced (traffic / viral / CTA)",
+    adminAdvancedGrowthDesc: "Collapsed by default so the publish path stays short; expand when you need growth or post-result CTAs",
+    adminAdvancedExpand: "Expand",
+    adminAdvancedCollapse: "Collapse",
 
     // LotteryView user-facing copy
     noActivity: "No activities",

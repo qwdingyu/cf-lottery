@@ -178,7 +178,7 @@ export default {
     heroTitle2: "抽奖、接龙、问卷，做完还能看效果",
     heroSubtitle: "不用写代码、不用求技术。选个模板发出去，谁参与了、谁中奖了、效果怎么样，后台一清二楚。",
     registerCta: "免费注册，马上开始",
-    viewDemo: "看看别人怎么玩的",
+    viewDemo: "先看怎么玩",
     heroNote: "免费套餐就可以用",
     stepsTitle: "三步搞定一个活动",
     step1Title: "选个模板",
@@ -495,6 +495,12 @@ export default {
     statusDrawing: "开奖中",
     full: "已满员",
     joinSuccess: "参与成功",
+    // 参与成功弹窗说明（按 result_mode；勿复用 pageHint）
+    joinResultHintPending: "你已成功登记。开奖后可在本页查询是否中奖；中奖将另行通知。",
+    joinResultHintScheduled: "你已成功登记。活动将按设定时间自动开奖，届时可在本页查询结果。",
+    joinResultHintManual: "你已成功登记。主办方开奖后，可在本页查询是否中奖。",
+    joinResultHintInstant: "你已成功提交。若本场为即时开奖，结果将随后展示或可在本页查询。",
+    joinResultHintInstantDone: "结果已生成。可保存本页记录，或使用分享邀请好友。",
     joinFailed: "参与失败",
     loginExpired: "登录已过期，请重新验证",
     checkOrder: "查看订单",
@@ -566,12 +572,17 @@ export default {
     productPlaceholder: "奖品",
     // 游戏组件文本
     gameScratchHint: "刮开涂层参与抽奖",
+    // 涂层下中性文案：表示「可以继续提交」，不是「已经参与成功」
+    gameScratchReveal: "刮开后点按钮参与",
     gameRevealHint: "点击下方按钮领取资料",
     gameSlotSpinning: "抽奖中",
     gameSlotPull: "拉杆",
     gameSlotPulling: "…",
     gameSlotAriaSpinning: "抽奖中",
     gameSlotAriaPull: "拉动拉杆",
+    // 转盘：join 路径是「提交参与」动效，不是开奖决定结果（docs/055a 技术更正）
+    gameWheelJoin: "参与\n抽奖",
+    gameWheelSubmitting: "提交中",
     gameSubmitSubmitting: "提交中…",
     gameSubmitJoin: "立即参与",
     gameFormHint: "请填写以下信息提交",
@@ -942,6 +953,15 @@ export default {
     adminCreateDoneWithLink: "活动已创建，链接已复制",
     adminCreated: "活动已创建",
     adminCreateFailed: "创建失败",
+
+    // 055a P0：列表操作收敛 + 创建表单高级折叠
+    adminActionsMore: "更多",
+    adminActionsLess: "收起",
+    adminActionsMoreHint: "展开二维码、海报、数据、编辑与危险操作等次要入口",
+    adminAdvancedGrowthSection: "高级配置（导流 / 裂变 / CTA）",
+    adminAdvancedGrowthDesc: "默认收起，不影响发布主路径；需要增长与承接时再展开配置",
+    adminAdvancedExpand: "展开",
+    adminAdvancedCollapse: "收起",
 
     // ── LotteryView 用户端 i18n 补全 ──
     noActivity: "暂无活动",

@@ -1873,6 +1873,62 @@
   color: var(--tg-hint, #9ca3af);
 }
 
+/* 055a：创建表单「高级配置」折叠头（可点整行展开，不引入第三方折叠组件） */
+.form-section-head--toggle {
+  border-bottom: none;
+  padding-bottom: 0;
+  gap: 6px;
+}
+
+.form-advanced-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.form-advanced-toggle:hover .form-section-title,
+.form-advanced-toggle:focus-visible .form-section-title {
+  color: var(--admin-accent, #f59e0b);
+}
+
+.form-advanced-toggle:focus-visible {
+  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.form-advanced-toggle-meta {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tg-hint, #9ca3af);
+}
+
+.form-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--admin-card-gap, 10px);
+  padding-top: 4px;
+}
+
+.form-section--nested {
+  background: var(--surface, rgba(255, 255, 255, 0.03));
+  border-style: dashed;
+}
+
+.form-section--advanced > .form-section-head--toggle + .form-section-desc {
+  margin-top: 0;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr;

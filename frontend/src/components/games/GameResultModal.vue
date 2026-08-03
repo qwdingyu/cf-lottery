@@ -6,12 +6,24 @@
       @click.self="emit('close')"
       @keydown.escape="emit('close')"
     >
-      <div class="game-result-modal" ref="modalRef" tabindex="-1">
-        <button class="result-close" @click="emit('close')">✕</button>
+      <div
+        class="game-result-modal"
+        ref="modalRef"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="titleId"
+        tabindex="-1"
+      >
+        <button type="button" class="result-close" :aria-label="$t('lottery.gotIt')" @click="emit('close')">✕</button>
 
-        <div class="result-icon">✅</div>
-        <h2 class="result-title">{{ $t('lottery.joinSuccess') }}</h2>
-        <p class="result-hint">{{ $t('lottery.pageHint') }}</p>
+        <!--
+          语义分支（docs/055a）：本弹窗表示「参与已提交」的状态，不是默认「已开奖中奖」。
+          - instant + 有 outcome：展示结果标签
+          - scheduled / manual / 默认：参与成功 + 等待开奖说明
+        -->
+        <div class="result-icon" aria-hidden="true">{{ statusIcon }}</div>
+        <h2 :id="titleId" class="result-title">{{ statusTitle }}</h2>
+        <p class="result-hint">{{ statusHint }}</p>
 
         <!-- 分享错误提示 -->
         <p v-if="shareError" class="result-error">{{ shareError }}</p>
@@ -37,7 +49,7 @@
 
           <div class="viral-link-row">
             <code class="viral-link-text">{{ shareUrl }}</code>
-            <button class="btn btn-sm btn-primary" @click="copyAttributedLink">
+            <button type="button" class="btn btn-sm btn-primary" @click="copyAttributedLink">
               {{ $t('lottery.copyShareLink') }}
             </button>
           </div>
@@ -45,14 +57,14 @@
 
         <!-- 无裂变配置时 -->
         <div v-else-if="shareLoaded" class="viral-link-row">
-          <button class="btn btn-ghost" @click="copyAttributedLink">{{ $t('lottery.shareActivityBtn') }}</button>
+          <button type="button" class="btn btn-ghost" @click="copyAttributedLink">{{ $t('lottery.shareActivityBtn') }}</button>
         </div>
 
         <!-- 分享链接加载中（非裂变模式） -->
         <div v-else-if="entryId" class="result-hint" style="margin-top:12px">{{ $t('lottery.viralLoadShareLink') }}</div>
 
         <div class="result-actions">
-          <button class="btn btn-primary" @click="emit('close')">{{ $t('lottery.gotIt') }}</button>
+          <button type="button" class="btn btn-primary" @click="emit('close')">{{ $t('lottery.gotIt') }}</button>
         </div>
       </div>
     </div>
@@ -60,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, useId } from 'vue'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -69,6 +81,10 @@ const props = defineProps<{
   show: boolean
   drawSlug?: string
   entryId?: string
+  /** 结果何时产生：instant | scheduled | manual 等；缺省按「待开奖参与成功」 */
+  resultMode?: string | null
+  /** 即时结果标签（若有）；不表示转盘停扇结果 */
+  outcomeLabel?: string | null
   viralConfig?: { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | null
 }>()
 
@@ -77,10 +93,50 @@ const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 const { showToast } = useToast()
 const modalRef = ref<HTMLElement | null>(null)
+const titleId = `game-result-title-${useId()}`
 
 const shareData = ref<{ shareCode: string; shareUrl: string; clickedCount?: number; joinedCount?: number } | null>(null)
 const shareLoading = ref(false)
 const shareError = ref('')
+
+const isInstant = computed(() => (props.resultMode || '').toLowerCase() === 'instant')
+const hasOutcome = computed(() => Boolean(props.outcomeLabel && String(props.outcomeLabel).trim()))
+
+/** 标题：有即时 outcome 用带结果文案；否则统一「参与成功」 */
+const statusTitle = computed(() => {
+  if (hasOutcome.value) {
+    return t('lottery.joinSuccessWithOutcome', { outcome: String(props.outcomeLabel).trim() })
+  }
+  return t('lottery.joinSuccess')
+})
+
+/**
+ * 说明文案：按 result_mode 诚实表达下一步。
+ * 不用 pageHint（那是页顶「如何参与」说明，放在成功弹窗会错位）。
+ */
+const statusHint = computed(() => {
+  if (hasOutcome.value && isInstant.value) {
+    return t('lottery.joinResultHintInstantDone')
+  }
+  if (isInstant.value) {
+    return t('lottery.joinResultHintInstant')
+  }
+  const mode = (props.resultMode || '').toLowerCase()
+  if (mode === 'scheduled') {
+    return t('lottery.joinResultHintScheduled')
+  }
+  if (mode === 'manual') {
+    return t('lottery.joinResultHintManual')
+  }
+  // 未知或未传：保守为「已登记，等待开奖」
+  return t('lottery.joinResultHintPending')
+})
+
+const statusIcon = computed(() => {
+  if (hasOutcome.value) return '🎉'
+  if (isInstant.value) return '✨'
+  return '✅'
+})
 
 const viralEnabled = computed(() => props.viralConfig?.enabled === true && !!props.entryId)
 const maxExtraEntries = computed(() => props.viralConfig?.maxExtraEntries ?? 10)

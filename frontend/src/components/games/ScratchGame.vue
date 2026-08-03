@@ -1,10 +1,13 @@
 <template>
   <div class="scratch-game">
     <div class="scratch-card">
-      <!-- 底层：奖品内容 -->
+      <!--
+        底层：中性提示，不是「已参与/中奖结果」。
+        刮开后仍需点按钮 emit('play') 才真正提交（docs/055a）。
+      -->
       <div class="scratch-prize">
         <span class="prize-icon">🎁</span>
-        <span class="prize-text">{{ $t('lottery.joined') }} ✓</span>
+        <span class="prize-text">{{ $t('lottery.gameScratchReveal') }}</span>
       </div>
       <!-- 上层：涂层（Canvas 刮开） -->
       <canvas
@@ -13,7 +16,7 @@
         :width="300"
         :height="200"
         role="img"
-        :aria-label="scratched ? $t('lottery.joined') : $t('lottery.gameScratchHint')"
+        :aria-label="scratched ? $t('lottery.gameScratchReveal') : $t('lottery.gameScratchHint')"
         :tabindex="disabled ? -1 : 0"
         @mousedown="startScratch"
         @mousemove="scratch"
@@ -26,15 +29,15 @@
         @keydown.space.prevent="quickScratch"
       />
     </div>
-    <p v-if="!scratched" class="scratch-hint">刮开涂层参与抽奖</p>
+    <p v-if="!scratched" class="scratch-hint">{{ $t('lottery.gameScratchHint') }}</p>
     <button
       v-if="scratched"
       type="button"
       class="btn btn-primary btn-sm scratch-join-btn"
-      :disabled="disabled"
+      :disabled="disabled || loading"
       @click="emit('play')"
     >
-      参与抽奖
+      {{ loading ? $t('lottery.gameSubmitSubmitting') : $t('lottery.join') }}
     </button>
   </div>
 </template>

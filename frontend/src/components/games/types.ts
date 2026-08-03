@@ -4,13 +4,15 @@
  * 所有游戏组件必须遵循此接口约定。
  * 新增游戏只需创建组件 + 在 GameRegistry 注册一行映射。
  *
- * ## 游戏生命周期
+ * ## 游戏生命周期（join 主路径）
  * ```
- * 初始态 ──→ 用户操作 ──→ play 事件 ──→ 后端 API ──→ 结果弹窗
+ * 初始态 ──→ 用户操作 ──→ play 事件 ──→ 后端 join API ──→ 结果弹窗（参与/待开奖等）
  *   ↑                        ↑
- * 展示 prizes             emit('play')
- * disabled=false          disabled=true（防止重复提交）
+ * 展示奖池 prizes         emit('play')
+ * disabled=false          disabled/loading=true（防止重复提交）
  * ```
+ * 说明：动画可以表达「提交中」，**不得**在无服务端结果时把停点/揭晓宣称为个人中奖结果。
+ * 转盘随机旋转 = 参与氛围动效，不是开奖（见 docs/055a）。
  *
  * ## 新增游戏步骤
  * 1. 创建 src/components/games/NewGame.vue

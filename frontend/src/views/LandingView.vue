@@ -12,13 +12,14 @@
       <p class="hero-subtitle">{{ $t('landing.heroSubtitle') }}</p>
       <div class="hero-actions">
         <RouterLink to="/admin/register" class="btn btn-primary btn-lg">{{ $t('landing.registerCta') }}</RouterLink>
-        <RouterLink to="/admin/register" class="btn btn-ghost btn-lg">{{ $t('landing.viewDemo') }}</RouterLink>
+        <!-- 次 CTA 必须诚实：不指向注册（docs/055a P0）；无 Demo slug 时锚到「怎么玩」说明 -->
+        <a href="#how-it-works" class="btn btn-ghost btn-lg">{{ $t('landing.viewDemo') }}</a>
       </div>
       <p class="hero-note">{{ $t('landing.heroNote') }}</p>
     </header>
 
     <!-- 创建流程 -->
-    <section class="landing-section">
+    <section id="how-it-works" class="landing-section">
       <h2 class="section-title">{{ $t('landing.stepsTitle') }}</h2>
       <div class="steps-grid">
         <div class="step-card">
@@ -184,6 +185,8 @@ import { RouterLink } from 'vue-router'
 
 <style scoped>
 .landing-page { max-width: 960px; margin: 0 auto; padding: 0 20px; }
+/* 页内锚点：次 CTA 滚到「怎么玩」时不被顶栏挡住 */
+#how-it-works { scroll-margin-top: 24px; }
 .landing-nav { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; }
 .nav-brand { font-size: 18px; font-weight: 700; }
 .nav-link { font-size: 14px; color: var(--tg-hint); text-decoration: none; }

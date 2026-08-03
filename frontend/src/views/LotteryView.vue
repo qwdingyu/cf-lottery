@@ -3,9 +3,9 @@
     <header class="lottery-header">
       <div class="lottery-header-left">
         <h1 class="lottery-title">{{ drawTitle }}</h1>
+        <!-- 深链单活动：只保留分享，不提供「回全部/广场」（docs/055a ADR-055a-1） -->
         <div v-if="isDeepLinked && draws[0]" class="lottery-link-bar">
-          <button class="lottery-share-btn" @click="handleCopyPublicLink(draws[0].id)">📋 {{ $t('lottery.copyShareLink') }}</button>
-          <RouterLink to="/lottery" class="lottery-share-btn">← {{ $t('lottery.backToAllDraws') }}</RouterLink>
+          <button type="button" class="lottery-share-btn" @click="handleCopyPublicLink(draws[0].id)">📋 {{ $t('lottery.copyShareLink') }}</button>
         </div>
       </div>
       <div class="lottery-header-actions">
@@ -232,6 +232,8 @@
     :show="showResult"
     :draw-slug="lastJoinDrawSlug"
     :entry-id="lastJoinResult?.entryId"
+    :result-mode="lastJoinResultMode"
+    :outcome-label="lastJoinOutcomeLabel"
     :viral-config="lastJoinViralConfig"
     @close="showResult = false"
   />
@@ -386,10 +388,10 @@ async function handleLogtoJoinSuccess(email: string, token: string) {
       showLoginModal.value = false
       pendingJoinDrawId.value = null
       showToast(t('lottery.joinSuccess'))
-      // 暂存参与结果，供 GameResultModal 生成归因分享链接
-      if (data.entryId) {
-        lastJoinResult.value = { drawId: joinedDrawId, entryId: data.entryId }
-      }
+      rememberJoinSuccess(joinedDrawId, data.entryId, {
+        outcomeLabel: data.outcome?.resultLabel,
+        resultMode: data.resultMode,
+      })
       showResult.value = true
     } else {
       showToast(data.message || t('lottery.joinFailed'), 'error')
@@ -527,8 +529,13 @@ const sortedMyEntries = computed(() => {
 
 const joiningId = ref('')
 const showResult = ref(false)
-/** 参与成功后暂存 drawId + entryId，传递给 GameResultModal 生成归因分享链接 */
-const lastJoinResult = ref<{ drawId: string; entryId: string } | null>(null)
+/** 参与成功后暂存，供 GameResultModal：分享链接 + 结果语义分支 */
+const lastJoinResult = ref<{
+  drawId: string
+  entryId: string
+  resultMode?: string
+  outcomeLabel?: string
+} | null>(null)
 
 // ── 查询我的结果（中奖卡密/安慰奖券） ──
 const showMyResultModal = ref(false)
@@ -553,6 +560,32 @@ const lastJoinViralConfig = computed(() => {
   const pc = (draw as any)?.promotionConfig
   return pc?.viral ?? undefined
 })
+
+/** 结果模式：优先用参与时快照，否则读当前活动（弹窗语义用） */
+const lastJoinResultMode = computed(() => {
+  if (!lastJoinResult.value) return undefined
+  if (lastJoinResult.value.resultMode) return lastJoinResult.value.resultMode
+  const draw = draws.value.find(d => d.id === lastJoinResult.value!.drawId)
+  return draw?.resultMode
+})
+
+const lastJoinOutcomeLabel = computed(() => lastJoinResult.value?.outcomeLabel)
+
+/** 参与成功后写入弹窗所需快照（语义字段可选，缺省由 computed 回退到 draw） */
+function rememberJoinSuccess(
+  drawId: string,
+  entryId: string | undefined,
+  extra?: { outcomeLabel?: string; resultMode?: string },
+) {
+  if (!entryId) return
+  const draw = draws.value.find(d => d.id === drawId)
+  lastJoinResult.value = {
+    drawId,
+    entryId,
+    resultMode: extra?.resultMode || draw?.resultMode,
+    outcomeLabel: extra?.outcomeLabel || undefined,
+  }
+}
 
 function openMyResult(draw: LotteryDraw) {
   myResultDraw.value = draw
@@ -637,7 +670,8 @@ const nowMs = ref(Date.now())
 const tg = typeof window !== 'undefined' ? (window as any).Telegram?.WebApp : undefined
 function handleTelegramBackButton() {
   if (showResult.value) { showResult.value = false; return }
-  if (isDeepLinked.value) { void router.push('/lottery'); return }
+  // 深链单活动：不退回 /lottery 广场（与 ADR-055a-1 一致）；交给 TG 关闭或停留
+  if (isDeepLinked.value) return
   if (expandedId.value) { expandedId.value = null }
 }
 if (tg?.BackButton) {
@@ -945,10 +979,10 @@ async function handleRegisteredLogin() {
         activityKind: data.activityKind || '',
         outcomeStatus: data.outcome?.status || '',
       })
-      // 暂存参与结果，供 GameResultModal 生成归因分享链接
-      if (data.entryId) {
-        lastJoinResult.value = { drawId: joinedDrawId, entryId: data.entryId }
-      }
+      rememberJoinSuccess(joinedDrawId, data.entryId, {
+        outcomeLabel: data.outcome?.resultLabel,
+        resultMode: data.resultMode,
+      })
       closeLogin()
       regLoginPassword.value = ''
       showToast(data.outcome?.resultLabel ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel }) : t('lottery.joinSuccess'))
@@ -1086,10 +1120,10 @@ async function handleVerifyCode() {
       loginCode.value = ''
       codeSent.value = false
       showToast(data.outcome?.resultLabel ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel }) : t('lottery.joinSuccess'))
-      // 暂存参与结果，供 GameResultModal 生成归因分享链接
-      if (data.entryId) {
-        lastJoinResult.value = { drawId: joinedDrawId, entryId: data.entryId }
-      }
+      rememberJoinSuccess(joinedDrawId, data.entryId, {
+        outcomeLabel: data.outcome?.resultLabel,
+        resultMode: data.resultMode,
+      })
       showResult.value = true
     } else {
       loginError.value = data.message || t('lottery.verifyFailed')
