@@ -672,6 +672,29 @@ function persistSessionEmail(email: string) {
 }
 
 /**
+ * 参与成功后氛围动画时长（ms）：先让用户看见游戏反馈，再出结果弹窗，避免遮罩盖住转盘/滚轮。
+ * 时长与组件内 celebrate 动画大致对齐；无长动画的体验立即弹窗。动画仍不表示开奖结果。
+ */
+function ambienceMsForDraw(drawId: string): number {
+  const draw = draws.value.find((d) => d.id === drawId)
+  const exp = String(
+    draw?.experienceType || defaultExperienceForParticipation(draw?.participationMode || 'open'),
+  ).toLowerCase()
+  if (exp === 'wheel') return 3000
+  if (exp === 'slot') return 2000
+  if (exp === 'grid' || exp === 'card' || exp === 'scratch') return 700
+  return 0
+}
+
+/** 清除待展示的结果弹窗定时器（新成功 / 卸载） */
+function clearResultModalTimer() {
+  if (resultModalTimer != null) {
+    clearTimeout(resultModalTimer)
+    resultModalTimer = null
+  }
+}
+
+/**
  * 统一参与成功收尾：写已参与态、结果弹窗、事件；避免 access-code 直通 / verify-join / registered 三处行为不一致。
  */
 function completeJoinSuccess(
@@ -697,7 +720,7 @@ function completeJoinSuccess(
     outcomeLabel: data.outcome?.resultLabel,
     resultMode: data.resultMode,
   })
-  // 先触发氛围（转盘/老虎机等），再出结果弹窗；动画不表示开奖结果
+  // 先触发氛围（转盘/老虎机等），再延迟结果弹窗；动画不表示开奖结果
   celebrateKeyById.value = {
     ...celebrateKeyById.value,
     [joinedDrawId]: (celebrateKeyById.value[joinedDrawId] || 0) + 1,
@@ -707,10 +730,20 @@ function completeJoinSuccess(
       ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel })
       : t('lottery.joinSuccess'),
   )
-  showResult.value = true
   closeLogin()
   joinAccessPassword.value = ''
   joinInviteCode.value = ''
+  // 延迟出弹窗：让 celebrate 动效可见；短路径（submit/form）仍立即展示
+  clearResultModalTimer()
+  const delayMs = ambienceMsForDraw(joinedDrawId)
+  if (delayMs <= 0) {
+    showResult.value = true
+  } else {
+    resultModalTimer = setTimeout(() => {
+      resultModalTimer = null
+      showResult.value = true
+    }, delayMs)
+  }
 }
 /** 结果查询弹窗对应的活动是否是 registered 模式（决定是否用 JWT 查询） */
 const isRegMyResult = computed(() => myResultDraw.value?.participationMode === 'registered')
@@ -797,6 +830,8 @@ const joiningId = ref('')
  * Wheel/Slot/Grid 等 watch celebrateKey 再播动画，避免「未验证先转盘」。
  */
 const celebrateKeyById = ref<Record<string, number>>({})
+/** 结果弹窗延迟展示定时器（先氛围后遮罩） */
+let resultModalTimer: ReturnType<typeof setTimeout> | null = null
 const showResult = ref(false)
 /** 参与成功后暂存，供 GameResultModal：分享链接 + 结果语义分支 */
 const lastJoinResult = ref<{
@@ -1586,6 +1621,7 @@ onUnmounted(() => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  clearResultModalTimer()
 })
 </script>
 

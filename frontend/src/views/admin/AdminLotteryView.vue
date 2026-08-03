@@ -2560,9 +2560,12 @@ async function handleOpen(draw: LotteryDraw) {
     }
     await openLotteryDraw(draw.id)
     // 发布后复制公开 slug 链接，避免把内部活动 id 发给参与者导致公开页 404。
+    // 055a：复制成功后可选打开用户页，把「开启 → 分享 → 自检」收成一次操作闭环。
     try {
       await writeClipboardText(publicShareUrl(draw.publicSlug))
       showToast(t('lottery.adminOpenedWithLink'), 'success')
+      const openPreview = await askConfirm(t('lottery.adminOpenedWithPreview'))
+      if (openPreview) handleOpenPublic(draw)
     } catch {
       showToast(t('lottery.adminDrawOpened'), 'success')
     }

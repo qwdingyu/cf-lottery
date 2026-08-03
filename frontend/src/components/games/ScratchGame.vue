@@ -1,18 +1,20 @@
 <template>
   <div class="scratch-game">
-    <div class="scratch-card">
+    <div class="scratch-card" :class="{ joined: joinedPulse }">
       <!--
         底层：中性提示，不是「已参与/中奖结果」。
         刮开后仍需点按钮 emit('play') 才真正提交（docs/055a）。
+        参与成功后 celebrateKey 触发轻量反馈，仍不宣称具体奖品。
       -->
       <div class="scratch-prize">
-        <span class="prize-icon">🎁</span>
-        <span class="prize-text">{{ $t('lottery.gameScratchReveal') }}</span>
+        <span class="prize-icon">{{ joinedPulse ? '✨' : '🎁' }}</span>
+        <span class="prize-text">{{ joinedPulse ? $t('lottery.gameScratchJoined') : $t('lottery.gameScratchReveal') }}</span>
       </div>
       <!-- 上层：涂层（Canvas 刮开） -->
       <canvas
         ref="canvasRef"
         class="scratch-canvas"
+        :class="{ hidden: joinedPulse }"
         :width="300"
         :height="200"
         role="img"
@@ -29,9 +31,10 @@
         @keydown.space.prevent="quickScratch"
       />
     </div>
-    <p v-if="!scratched" class="scratch-hint">{{ $t('lottery.gameScratchHint') }}</p>
+    <p v-if="!scratched && !joinedPulse" class="scratch-hint">{{ $t('lottery.gameScratchHint') }}</p>
+    <p v-else-if="joinedPulse" class="scratch-hint joined-hint">{{ $t('lottery.gameScratchJoinedHint') }}</p>
     <button
-      v-if="scratched"
+      v-if="scratched && !joinedPulse"
       type="button"
       class="btn btn-primary btn-sm scratch-join-btn"
       :disabled="disabled || loading"
@@ -43,15 +46,22 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import type { PrizeItem } from './types'
+import { onMounted, ref, watch } from 'vue'
+import type { GameProps, GameEmits } from './types'
 
-const props = defineProps<{ prizes: PrizeItem[]; disabled?: boolean; loading?: boolean }>()
-const emit = defineEmits<{ play: [] }>()
+const props = withDefaults(defineProps<GameProps>(), {
+  disabled: false,
+  loading: false,
+  celebrateKey: 0,
+})
+const emit = defineEmits<GameEmits>()
 
 const canvasRef = ref<HTMLCanvasElement>()
 const scratched = ref(false)
 const isDrawing = ref(false)
+/** 参与成功氛围：轻量脉冲，不展示假中奖 */
+const joinedPulse = ref(false)
+let lastCelebrate = 0
 
 function initCanvas() {
   const canvas = canvasRef.value
@@ -152,6 +162,14 @@ function checkScratched() {
   }
 }
 
+watch(() => props.celebrateKey, (key) => {
+  const n = Number(key) || 0
+  if (n <= 0 || n === lastCelebrate) return
+  lastCelebrate = n
+  joinedPulse.value = true
+  scratched.value = true
+})
+
 onMounted(initCanvas)
 </script>
 
@@ -166,12 +184,19 @@ onMounted(initCanvas)
   overflow: hidden;
   touch-action: none;
   max-width: 100%;
+  transition: box-shadow 0.35s ease, transform 0.35s ease;
+}
+.scratch-card.joined {
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.55), 0 8px 28px rgba(245, 158, 11, 0.25);
+  transform: scale(1.02);
 }
 .scratch-prize { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #fef3c7, #fde68a); }
 .prize-icon { font-size: 40px; }
 .prize-text { font-size: 18px; font-weight: 700; color: #92400e; margin-top: 8px; text-align: center; padding: 0 8px; }
 .scratch-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; touch-action: none; }
+.scratch-canvas.hidden { opacity: 0; pointer-events: none; }
 .scratch-hint { color: var(--tg-hint); font-size: 13px; text-align: center; padding: 0 12px; }
+.scratch-hint.joined-hint { color: #fbbf24; font-weight: 600; }
 .scratch-join-btn {
   margin-top: 4px;
   min-height: 44px;

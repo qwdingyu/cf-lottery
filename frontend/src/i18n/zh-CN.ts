@@ -581,6 +581,8 @@ export default {
     productPlaceholder: "奖品",
     // 游戏组件文本
     gameScratchHint: "刮开涂层参与抽奖",
+    gameScratchJoined: "已成功参与",
+    gameScratchJoinedHint: "参与已登记，结果以活动开奖为准",
     // 涂层下中性文案：表示「可以继续提交」，不是「已经参与成功」
     gameScratchReveal: "刮开后点按钮参与",
     gameRevealHint: "点击下方按钮领取资料",
@@ -724,6 +726,7 @@ export default {
     adminSearchPlaceholder: "搜索名称 / 奖品 / ID",
     adminSearchAria: "搜索抽奖活动",
     adminOpenedWithLink: "已开启，分享链接已复制",
+    adminOpenedWithPreview: "活动已开启，分享链接已复制。是否打开用户页预览？",
     adminExportWinners: "导出 CSV",
     adminExportWinnersDone: "中奖名单已导出",
     adminExportWinnersEmpty: "暂无中奖记录可导出",
