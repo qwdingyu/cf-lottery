@@ -313,6 +313,63 @@
   font-size: 13px;
 }
 
+/* 运营台 / 活动列表：空态引导（docs/074） */
+.empty-onboard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 20px;
+  text-align: center;
+  background: var(--tg-secondary-bg, #151b28);
+  border: 1px dashed rgba(245, 158, 11, 0.28);
+  border-radius: var(--r-lg, 12px);
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 14px;
+  line-height: 1.55;
+  max-width: 420px;
+  margin: 8px auto 0;
+}
+.empty-onboard .btn {
+  min-height: 44px;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+.empty-onboard-steps {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(245, 158, 11, 0.9);
+  letter-spacing: 0.01em;
+}
+.list-empty-block {
+  padding: 12px 8px;
+}
+.list-empty-onboard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 360px;
+  margin: 8px auto;
+}
+.list-empty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tg-text, #f0f2f5);
+}
+.list-empty-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--tg-hint, #9aa4b2);
+}
+.list-empty-onboard .btn {
+  min-height: 40px;
+  margin-top: 4px;
+}
+
 .table-error {
   display: flex;
   align-items: center;

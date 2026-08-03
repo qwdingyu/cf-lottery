@@ -189,27 +189,31 @@
                     @click="handleEdit(draw)"
                   >{{ $t('lottery.adminEdit') }}</button>
                 </template>
-                <!-- open 抽奖：立即开奖 + 分享 -->
+                <!--
+                  open 抽奖：分享优先（运营主路径是「发链接」）；
+                  立即开奖仅在有参与时作主按钮，避免空池误点开奖（docs/074）。
+                -->
                 <template v-else-if="draw.status === 'open' && draw.activityKind === 'lottery'">
                   <button
                     type="button"
                     class="btn btn-primary btn-xs"
                     :disabled="operatingId === draw.id"
-                    @click="handleDraw(draw)"
-                  >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminDrawNow') }}</button>
-                  <button
-                    type="button"
-                    class="btn btn-ghost btn-xs"
-                    :disabled="operatingId === draw.id"
                     :title="$t('lottery.adminCopyLinkHint')"
                     @click="handleCopyShareLink(draw)"
                   >{{ $t('lottery.adminCopyLink') }}</button>
-                </template>
-                <!-- open 非抽奖：分享 + 暂停 -->
-                <template v-else-if="draw.status === 'open'">
                   <button
                     type="button"
                     class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id || !canEnableDrawNow(draw.entryCount)"
+                    :title="canEnableDrawNow(draw.entryCount) ? $t('lottery.adminDrawNow') : $t('lottery.adminDrawNowNeedEntries')"
+                    @click="handleDraw(draw)"
+                  >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminDrawNow') }}</button>
+                </template>
+                <!-- open 非抽奖：分享（主）+ 暂停 -->
+                <template v-else-if="draw.status === 'open'">
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-xs"
                     :disabled="operatingId === draw.id"
                     :title="$t('lottery.adminCopyLinkHint')"
                     @click="handleCopyShareLink(draw)"
@@ -385,7 +389,22 @@
             </td>
           </tr>
           <tr v-if="filteredDraws.length === 0">
-            <td colspan="9" class="empty-text">{{ hasListFilter ? $t('lottery.adminNoMatch') : $t('lottery.adminNoData') }}</td>
+            <td colspan="9" class="empty-text">
+              <div v-if="hasListFilter" class="list-empty-block">
+                <p>{{ $t('lottery.adminNoMatch') }}</p>
+              </div>
+              <!-- 上线 UX：零活动不是「暂无数据」，而是明确下一步（与 Dashboard 空态同级） -->
+              <div v-else class="list-empty-block list-empty-onboard">
+                <p class="list-empty-title">{{ $t('lottery.adminListEmptyTitle') }}</p>
+                <p class="list-empty-desc">{{ $t('lottery.adminListEmptyDesc') }}</p>
+                <button
+                  class="btn btn-primary btn-sm"
+                  type="button"
+                  :disabled="loading || creating"
+                  @click="openTemplatePicker"
+                >{{ $t('lottery.adminDrawCreate') }}</button>
+              </div>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -1262,6 +1281,7 @@ import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
 import { writeClipboardText } from '@/composables/useClipboard'
+import { canEnableDrawNow } from '@/composables/admin-list-ux'
 import AdminModal from '@/components/AdminModal.vue'
 import AdminPagination from '@/components/AdminPagination.vue'
 import { useTablePagination } from '@/composables/useTablePagination'

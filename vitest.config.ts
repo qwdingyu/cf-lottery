@@ -20,6 +20,8 @@ export default defineConfig({
       "frontend/src/composables/business-session.test.ts",
       // 管理端/参与端 OTP 输入规范化
       "frontend/src/composables/otp-input.test.ts",
+      // 上线前列表/Onboarding UX 启发式
+      "frontend/src/composables/admin-list-ux.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

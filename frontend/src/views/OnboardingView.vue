@@ -31,8 +31,9 @@
         >
           {{ creating ? $t('onboarding.creating') : $t('onboarding.createButton') }}
         </button>
+        <p class="onboarding-next-hint">{{ $t('onboarding.nextHint') }}</p>
 
-        <p v-if="error" class="onboarding-error">{{ error }}</p>
+        <p v-if="error" class="onboarding-error" role="alert">{{ error }}</p>
       </form>
 
       <div class="onboarding-footer">
@@ -50,6 +51,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
+import { onboardingSuccessPath } from '@/composables/admin-list-ux'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -72,7 +74,10 @@ async function handleCreate() {
     const data = await res.json()
     if (data.ok && data.token) {
       setToken(data.token)
-      router.replace('/admin')
+      // 上线前 UX：建完工作空间直接进「选模板创建活动」，少一次「运营台空态再点一次」。
+      // ?new=true 由 AdminLotteryView onMounted 打开模板选择（docs/074）。
+      showToast(t('onboarding.createSuccess'), 'success')
+      router.replace(onboardingSuccessPath())
     } else {
       error.value = data.message || t('onboarding.createFailed')
     }
@@ -160,19 +165,24 @@ function handleLogout() {
 }
 
 .field-label input {
-  height: 42px;
+  min-height: 48px;
+  height: 48px;
   padding: 0 14px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
   color: #fff;
-  font-size: 14px;
+  font-size: 16px;
   outline: none;
   transition: border-color 0.2s;
 }
 
 .field-label input:focus {
   border-color: var(--admin-accent, #f59e0b);
+}
+.field-label input:focus-visible {
+  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline-offset: 2px;
 }
 
 .field-hint {
@@ -181,10 +191,22 @@ function handleLogout() {
 }
 
 .onboarding-btn {
-  height: 44px;
+  min-height: 48px;
+  height: 48px;
   font-size: 15px;
   border-radius: 8px;
   width: 100%;
+}
+.onboarding-btn:focus-visible {
+  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline-offset: 2px;
+}
+.onboarding-next-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: center;
 }
 
 .onboarding-error {

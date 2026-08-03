@@ -88,9 +88,10 @@
     </div>
 
     <div v-if="recentDraws.length === 0" class="section">
-      <div class="empty-onboard">
+      <div class="empty-onboard" role="status">
         <!-- ADR-055a-5：不用绝对「3 分钟」承诺，与 Landing 口径一致 -->
         <p>{{ $t('adminDashboard.emptyOnboard') }}</p>
+        <p class="empty-onboard-steps">{{ $t('adminDashboard.emptyOnboardSteps') }}</p>
         <button class="btn btn-primary" type="button" @click="router.push('/admin/draws?new=true')">
           {{ $t('adminDashboard.emptyOnboardCta') }}
         </button>
