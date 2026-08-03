@@ -1,13 +1,31 @@
 /**
  * cf-auth 登录启动（浏览器侧，docs/059）。
  * PKCE verifier / state 仅放 sessionStorage；client_secret 不在前端。
+ * 参与闭环：跳转前可写入 pendingJoin，回调后 LotteryView 自动 verify-join。
  */
 import { ref } from 'vue'
+import {
+  CF_AUTH_PKCE_KEY,
+  CF_AUTH_RETURN_KEY,
+  CF_AUTH_STATE_KEY,
+  clearAllCfAuthBrowserState,
+  saveCfAuthPendingJoin,
+  type CfAuthPendingJoin,
+} from './cf-auth-session'
 
-/** 与 AuthCallbackView 共享的 session key */
-export const CF_AUTH_PKCE_KEY = 'cf_auth_pkce_verifier'
-export const CF_AUTH_STATE_KEY = 'cf_auth_oauth_state'
-export const CF_AUTH_RETURN_KEY = 'cf_auth_return_to'
+export {
+  CF_AUTH_PKCE_KEY,
+  CF_AUTH_STATE_KEY,
+  CF_AUTH_RETURN_KEY,
+  CF_AUTH_PENDING_JOIN_KEY,
+  LOTTERY_REGISTERED_TOKEN_KEY,
+  LOTTERY_SESSION_EMAIL_KEY,
+  applyCfAuthSessionToLottery,
+  consumeCfAuthPendingJoin,
+  readCfAuthPendingJoin,
+  saveCfAuthPendingJoin,
+  type CfAuthPendingJoin,
+} from './cf-auth-session'
 
 export type CfAuthMeta = {
   enabled: boolean
@@ -41,9 +59,7 @@ function browserState(): string {
 }
 
 export function clearCfAuthPending() {
-  sessionStorage.removeItem(CF_AUTH_PKCE_KEY)
-  sessionStorage.removeItem(CF_AUTH_STATE_KEY)
-  sessionStorage.removeItem(CF_AUTH_RETURN_KEY)
+  clearAllCfAuthBrowserState(sessionStorage)
 }
 
 /** 拉取 meta；未启用返回 null */
@@ -59,11 +75,21 @@ export async function fetchCfAuthMeta(): Promise<CfAuthMeta | null> {
   }
 }
 
+export type StartCfAuthLoginOpts = {
+  returnTo?: string
+  /** 参与页跳转前写入，OAuth 回来后自动 join */
+  pendingJoin?: CfAuthPendingJoin
+}
+
 /**
  * 跳转 cf-auth authorize（PKCE）。
- * @param returnTo 回调成功后前端路由
+ * @param returnToOrOpts 回调成功后前端路由，或含 pendingJoin 的选项
  */
-export async function startCfAuthLogin(returnTo = '/admin'): Promise<void> {
+export async function startCfAuthLogin(returnToOrOpts: string | StartCfAuthLoginOpts = '/admin'): Promise<void> {
+  const opts: StartCfAuthLoginOpts =
+    typeof returnToOrOpts === 'string' ? { returnTo: returnToOrOpts } : returnToOrOpts || {}
+  const returnTo = opts.returnTo || '/admin'
+
   const meta = await fetchCfAuthMeta()
   if (!meta) {
     throw new Error('cf-auth 未启用')
@@ -73,6 +99,12 @@ export async function startCfAuthLogin(returnTo = '/admin'): Promise<void> {
   sessionStorage.setItem(CF_AUTH_PKCE_KEY, verifier)
   sessionStorage.setItem(CF_AUTH_STATE_KEY, state)
   sessionStorage.setItem(CF_AUTH_RETURN_KEY, returnTo)
+  if (opts.pendingJoin?.drawId) {
+    saveCfAuthPendingJoin(sessionStorage, {
+      ...opts.pendingJoin,
+      returnPath: opts.pendingJoin.returnPath || returnTo,
+    })
+  }
 
   const params = new URLSearchParams({
     response_type: 'code',
@@ -99,14 +131,24 @@ export function useCfAuthLogin() {
     checked.value = true
   }
 
-  async function login(returnTo?: string) {
+  async function login(returnToOrOpts?: string | StartCfAuthLoginOpts) {
     loading.value = true
     try {
-      const target =
-        returnTo ||
-        `${window.location.pathname}${window.location.search}` ||
-        '/admin'
-      await startCfAuthLogin(target)
+      if (typeof returnToOrOpts === 'object' && returnToOrOpts) {
+        await startCfAuthLogin({
+          ...returnToOrOpts,
+          returnTo:
+            returnToOrOpts.returnTo ||
+            `${window.location.pathname}${window.location.search}` ||
+            '/admin',
+        })
+      } else {
+        const target =
+          (typeof returnToOrOpts === 'string' && returnToOrOpts) ||
+          `${window.location.pathname}${window.location.search}` ||
+          '/admin'
+        await startCfAuthLogin(target)
+      }
     } finally {
       loading.value = false
     }

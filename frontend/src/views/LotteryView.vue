@@ -254,10 +254,17 @@
             {{ $t('adminLogin.noAccount') }}
             <a href="/admin/register" target="_blank" class="btn btn-ghost btn-xs">{{ $t('adminLogin.switchToRegister') }}</a>
           </p>
-          <!-- Logto 登录：registered 模式用户可通过 Logto 登录参与（docs/051 方案） -->
-          <div v-if="logtoEnabled" class="logto-section" style="margin-top:8px">
+          <!-- 统一认证 / Logto：与 logtoEnabled 解耦，仅 CF_AUTH 也可显示（docs/059） -->
+          <div v-if="logtoEnabled || cfAuthEnabled" class="logto-section" style="margin-top:8px">
             <div class="logto-divider" style="margin:8px 0"><span class="divider-text" style="font-size:12px;color:var(--tg-hint)">{{ $t('adminLogin.or') }}</span></div>
-            <button type="button" class="btn btn-ghost btn-sm" style="width:100%" :disabled="logtoLoading" @click="handleLogtoJoin">
+            <button
+              v-if="logtoEnabled"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              style="width:100%"
+              :disabled="logtoLoading"
+              @click="handleLogtoJoin"
+            >
               <span class="logto-icon">L</span> 使用 Logto 登录
             </button>
             <button
@@ -309,10 +316,17 @@
               @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
             />
           </label>
-          <!-- Logto 登录：减少验证码消耗（docs/051 方案） -->
-          <div v-if="logtoEnabled && !codeSent" class="logto-section" style="margin-top:8px">
+          <!-- 统一认证 / Logto：不嵌套在 logtoEnabled 内，CF_AUTH 单独可开（docs/059） -->
+          <div v-if="(logtoEnabled || cfAuthEnabled) && !codeSent" class="logto-section" style="margin-top:8px">
             <div class="logto-divider" style="margin:8px 0"><span class="divider-text" style="font-size:12px;color:var(--tg-hint)">{{ $t('adminLogin.or') }}</span></div>
-            <button type="button" class="btn btn-ghost btn-sm" style="width:100%" :disabled="logtoLoading" @click="handleLogtoJoin">
+            <button
+              v-if="logtoEnabled"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              style="width:100%"
+              :disabled="logtoLoading"
+              @click="handleLogtoJoin"
+            >
               <span class="logto-icon">L</span> 使用 Logto 登录
             </button>
             <button
@@ -525,6 +539,13 @@ import { getGameComponent } from '@/components/games/GameRegistry'
 import GameResultModal from '@/components/games/GameResultModal.vue'
 import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
 import {
+  consumeCfAuthPendingJoin,
+  LOTTERY_REGISTERED_TOKEN_KEY,
+  LOTTERY_REGISTERED_USERNAME_KEY,
+  LOTTERY_SESSION_EMAIL_KEY,
+  buildCfAuthVerifyJoinBody,
+} from '@/composables/cf-auth-session'
+import {
   defaultExperienceForParticipation,
   ambienceMsForExperience,
   requiresActivitySubmission,
@@ -544,10 +565,27 @@ const logtoLoading = ref(false)
 const cfAuth = useCfAuthLogin()
 const cfAuthEnabled = cfAuth.enabled
 const cfAuthLoading = cfAuth.loading
+
+/**
+ * 跳转 cf-auth 前持久化 pendingJoin（OAuth 卸掉 Vue 状态）。
+ * 回调页写入 lottery_registered_token 后回到本页，onMounted 自动 verify-join。
+ */
 async function handleCfAuthJoin() {
   try {
     const ret = window.location.pathname + window.location.search
-    await cfAuth.login(ret || '/lottery')
+    const drawId = pendingJoinDrawId.value || props.id || ''
+    await cfAuth.login({
+      returnTo: ret || '/lottery',
+      pendingJoin: drawId
+        ? {
+            drawId,
+            accessPassword: joinAccessPassword.value || undefined,
+            inviteCode: joinInviteCode.value || undefined,
+            refCode: routeParam('ref') || undefined,
+            returnPath: ret || undefined,
+          }
+        : undefined,
+    })
   } catch (err) {
     showToast(err instanceof Error ? err.message : t('lottery.joinFailed'), 'error')
   }
@@ -1343,6 +1381,76 @@ async function joinWithRegisteredToken(drawId: string, token: string) {
   }
 }
 
+/**
+ * OAuth 回调后自动参与（与 handleLogtoJoinSuccess 等价，docs/059）。
+ * pendingJoin 与 lottery_registered_token 均在 sessionStorage，跨往返可读。
+ */
+async function resumeCfAuthJoinAfterCallback() {
+  const pending = consumeCfAuthPendingJoin(sessionStorage)
+  if (!pending?.drawId) return
+
+  const token =
+    sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || registeredToken.value || ''
+  if (!token) return
+
+  registeredToken.value = token
+  const email =
+    sessionStorage.getItem(LOTTERY_SESSION_EMAIL_KEY) || sessionEmail.value || ''
+  if (email) persistSessionEmail(email)
+  const uname = sessionStorage.getItem(LOTTERY_REGISTERED_USERNAME_KEY) || ''
+  if (uname) registeredUsername.value = uname
+
+  if (pending.accessPassword) joinAccessPassword.value = pending.accessPassword
+  if (pending.inviteCode) joinInviteCode.value = pending.inviteCode
+
+  pendingJoinDrawId.value = pending.drawId
+  const draw =
+    draws.value.find((d) => d.id === pending.drawId || d.publicSlug === pending.drawId) || null
+  const joinKey = draw?.id || pending.drawId
+
+  // registered：access-code + Bearer（与用户名密码登录同路径）
+  if (draw?.participationMode === 'registered') {
+    closeLogin()
+    await joinWithRegisteredToken(joinKey, token)
+    return
+  }
+
+  // open / password / invite / roster：verify-join + Bearer 跳过验证码
+  if (!email) {
+    showToast(t('lottery.joinFailed'), 'error')
+    openLogin(joinKey)
+    return
+  }
+  try {
+    const res = await fetch(
+      API_BASE + '/public/draws/' + encodeURIComponent(joinKey) + '/verify-join',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(
+          buildCfAuthVerifyJoinBody({
+            email,
+            pending: { ...pending, drawId: joinKey },
+            submission: draw ? buildSubmissionPayload(draw) : undefined,
+          }),
+        ),
+      },
+    )
+    const data = (await res.json()) as any
+    if (data.ok && data.joined) {
+      completeJoinSuccess(joinKey, data, { email })
+    } else {
+      showToast(data.message || t('lottery.joinFailed'), 'error')
+      openLogin(joinKey)
+    }
+  } catch {
+    showToast(t('lottery.networkError'), 'error')
+  }
+}
+
 async function handleJoin(drawId: string) {
   const draw = draws.value.find((item) => item.id === drawId)
   if (!draw) return
@@ -1512,6 +1620,14 @@ async function handleVerifyCode() {
 
 onMounted(async () => {
   void cfAuth.refresh()
+  // 回调页可能刚写入 registered_token：同步到 ref（深链首屏）
+  const storedTok = sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY)
+  if (storedTok && !registeredToken.value) registeredToken.value = storedTok
+  const storedUser = sessionStorage.getItem(LOTTERY_REGISTERED_USERNAME_KEY)
+  if (storedUser && !registeredUsername.value) registeredUsername.value = storedUser
+  const storedEmail = sessionStorage.getItem(LOTTERY_SESSION_EMAIL_KEY)
+  if (storedEmail && !sessionEmail.value) persistSessionEmail(storedEmail)
+
   countdownTimer = setInterval(() => {
     nowMs.value = Date.now()
   }, 1000)
@@ -1520,6 +1636,8 @@ onMounted(async () => {
     fetchDraws()
   }, 30000)
   await fetchDraws()
+  // cf-auth OAuth 往返后：有 pendingJoin + 业务 JWT 则自动参与（docs/059）
+  await resumeCfAuthJoinAfterCallback()
   // 监听 Logto 登录成功事件（docs/051 方案）
   window.addEventListener('logto-login-success', async (e: Event) => {
     const detail = (e as CustomEvent).detail

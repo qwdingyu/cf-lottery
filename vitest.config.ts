@@ -11,7 +11,12 @@ export default defineConfig({
     environment: "node",
     testTimeout: 30_000,
     fileParallelism: false,
-    include: ["src/**/*.test.ts", "shared/**/*.test.ts"],
+    // 含前端 cf-auth 会话纯模块（参与闭环，不依赖 Vue 运行时）
+    include: [
+      "src/**/*.test.ts",
+      "shared/**/*.test.ts",
+      "frontend/src/composables/cf-auth-session.test.ts",
+    ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {
       deps: {
