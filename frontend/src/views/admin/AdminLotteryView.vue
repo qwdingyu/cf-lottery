@@ -1929,6 +1929,40 @@ async function saveDrawTiers(drawId: string) {
   }
 }
 
+/**
+ * 保存活动的名单（创建 + 编辑共用）。
+ * 仅 roster 模式且用户填了名单时执行。
+ */
+async function saveDrawRoster(drawId: string) {
+  if (form.value.participationMode !== 'roster' || !rosterInput.value.trim()) return
+  const emails = rosterInput.value
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(email => ({ email }))
+  if (emails.length === 0) return
+  try {
+    await adminRequest(`/api/admin/draws/${drawId}/roster`, {
+      method: 'POST',
+      body: JSON.stringify({ members: emails }),
+    })
+  } catch { /* 导入失败不阻断主流程 */ }
+}
+
+/**
+ * 生成邀请码（创建 + 编辑共用）。
+ * 仅 invite_code 模式且设置了数量时执行。
+ */
+async function saveDrawInviteCodes(drawId: string) {
+  if (form.value.participationMode !== 'invite_code' || inviteCodeCount.value <= 0) return
+  try {
+    await adminRequest(`/api/admin/draws/${drawId}/invite-codes`, {
+      method: 'POST',
+      body: JSON.stringify({ count: inviteCodeCount.value, maxUses: 1 }),
+    })
+  } catch { /* 生成失败不阻断主流程 */ }
+}
+
 /** 添加一个奖项（最多 10 个） */
 function addTier() {
   if (form.value.tiers.length >= 10) return
@@ -3183,41 +3217,20 @@ async function handleCreate() {
         return
       }
       await updateLotteryDraw(form.value.id, payload)
-      showToast(t('lottery.adminDrawUpdated'), 'success')
-      // ★ 编辑活动同样需要保存奖项配置（修复：编辑后奖项丢失的 bug）
+      // ★ 创建与编辑共用：名单导入 / 邀请码生成 / 奖项配置（防止编辑分支遗漏）
+      await saveDrawRoster(form.value.id)
+      await saveDrawInviteCodes(form.value.id)
       await saveDrawTiers(form.value.id)
+      showToast(t('lottery.adminDrawUpdated'), 'success')
     } else {
       const created = await createLotteryDraw(payload)
       if (created?.id) {
         // 如果是 roster 模式，导入名单
-        if (form.value.participationMode === 'roster' && rosterInput.value.trim()) {
-          const emails = rosterInput.value
-            .split('\n')
-            .map(l => l.trim())
-            .filter(Boolean)
-            .map(email => ({ email }))
-          if (emails.length > 0) {
-            try {
-              await adminRequest(`/api/admin/draws/${created.id}/roster`, {
-                method: 'POST',
-                body: JSON.stringify({ members: emails }),
-              })
-            } catch { /* 导入失败不阻断主流程 */ }
-          }
-        }
+        await saveDrawRoster(created.id)
         // 如果是 invite_code 模式，生成邀请码
-        if (form.value.participationMode === 'invite_code' && inviteCodeCount.value > 0) {
-          try {
-            await adminRequest(`/api/admin/draws/${created.id}/invite-codes`, {
-              method: 'POST',
-              body: JSON.stringify({ count: inviteCodeCount.value, maxUses: 1 }),
-            })
-          } catch { /* 生成失败不阻断主流程 */ }
-        }
+        await saveDrawInviteCodes(created.id)
         // 抽奖活动：创建成功后保存奖项配置（选择奖品库中的奖品 + 中奖名额）
-        if (form.value.activityKind === 'lottery' && form.value.tiers.some(t => t.prizeId)) {
-          await saveDrawTiers(created.id)
-        }
+        await saveDrawTiers(created.id)
         try {
           await writeClipboardText(publicShareUrl(created.publicSlug || created.id))
         } catch { /* 剪贴板写入失败不阻断 */ }
