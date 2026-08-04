@@ -44,6 +44,14 @@ export const fetchPublishCheck = async (id: string) =>
 export const openLotteryDraw = async (id: string) =>
   adminRequest(`/api/admin/draws/${id}/publish`, { method: 'POST' })
 
+/** open → paused */
+export const pauseLotteryDraw = async (id: string) =>
+  adminRequest(`/api/admin/draws/${id}/pause`, { method: 'POST' })
+
+/** paused → open */
+export const resumeLotteryDraw = async (id: string) =>
+  adminRequest(`/api/admin/draws/${id}/resume`, { method: 'POST' })
+
 export const performLotteryDraw = async (id: string) =>
   adminRequest(`/api/admin/draws/${id}/draw`, { method: 'POST' })
 

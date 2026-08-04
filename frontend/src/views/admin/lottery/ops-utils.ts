@@ -216,9 +216,52 @@ export function canBatchHideDraw(status: string, visible?: number | null): boole
   return isLotteryUserVisible(visible)
 }
 
-/** 多选可选：可删或可隐藏（与 bulk 条动作对齐） */
+/** open → paused（对齐 pauseDraw） */
+export function canPauseDraw(status: string): boolean {
+  return status === 'open'
+}
+
+/** paused → open（对齐 resumeDraw） */
+export function canResumeDraw(status: string): boolean {
+  return status === 'paused'
+}
+
+/**
+ * 多选可选：可删 / 可隐藏 / 可暂停 / 可恢复（与 bulk 条动作对齐）。
+ * open 本身不可删，但必须能勾选才能批量暂停。
+ */
 export function canSelectDrawForBulk(status: string, visible?: number | null): boolean {
-  return canDeleteDraw(status) || canBatchHideDraw(status, visible)
+  return canDeleteDraw(status)
+    || canBatchHideDraw(status, visible)
+    || canPauseDraw(status)
+    || canResumeDraw(status)
+}
+
+/** 已选活动元数据 CSV 行（含表头；测试排障/交接用，不含敏感参与者数据） */
+export function buildSelectedDrawsCsvRows(
+  draws: Array<{
+    id?: string
+    publicSlug?: string
+    title?: string
+    name?: string
+    status?: string
+    activityKind?: string
+    visible?: number | null
+    createdAt?: string
+  }>,
+): string[][] {
+  return [
+    ['id', 'publicSlug', 'title', 'status', 'activityKind', 'visible', 'createdAt'],
+    ...draws.map((d) => [
+      String(d.id || ''),
+      String(d.publicSlug || ''),
+      drawDisplayName(d),
+      String(d.status || ''),
+      String(d.activityKind || ''),
+      isLotteryUserVisible(d.visible) ? '1' : '0',
+      String(d.createdAt || ''),
+    ]),
+  ]
 }
 
 /** 列表状态筛：是否算「非默认」从而走筛选空态文案（默认 active 不算） */

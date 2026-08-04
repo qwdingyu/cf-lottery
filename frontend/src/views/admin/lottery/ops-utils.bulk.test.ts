@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildSelectedDrawsCsvRows,
   canBatchHideDraw,
   canDeleteDraw,
   canDeletePrizeCode,
   canDisableRedemptionCode,
   canOperatePlatformMember,
+  canPauseDraw,
   canRemoveMember,
+  canResumeDraw,
   canRetryWebhookDelivery,
   canSelectDrawForBulk,
   drawDisplayName,
@@ -43,12 +46,25 @@ describe('bulk select / hide helpers', () => {
     expect(canBatchHideDraw('draft', 1)).toBe(false)
   })
 
-  it('canSelectDrawForBulk unions delete + hide', () => {
-    expect(canSelectDrawForBulk('open', 1)).toBe(false)
+  it('canSelectDrawForBulk unions delete + hide + pause + resume', () => {
+    // open 不可删但可暂停 → 可选
+    expect(canSelectDrawForBulk('open', 1)).toBe(true)
+    expect(canPauseDraw('open')).toBe(true)
+    expect(canResumeDraw('paused')).toBe(true)
+    expect(canPauseDraw('paused')).toBe(false)
+    expect(canResumeDraw('open')).toBe(false)
     expect(canSelectDrawForBulk('draft', 1)).toBe(true)
     expect(canSelectDrawForBulk('drawn', 1)).toBe(true)
     expect(canSelectDrawForBulk('drawn', 0)).toBe(true) // still deletable
     expect(canDeleteDraw('drawn')).toBe(true)
+  })
+
+  it('buildSelectedDrawsCsvRows includes header and safe metadata only', () => {
+    const rows = buildSelectedDrawsCsvRows([
+      { id: 'd1', publicSlug: 'abc', title: 'T1', status: 'open', activityKind: 'lottery', visible: 1, createdAt: '2026-01-01' },
+    ])
+    expect(rows[0]).toEqual(['id', 'publicSlug', 'title', 'status', 'activityKind', 'visible', 'createdAt'])
+    expect(rows[1]).toEqual(['d1', 'abc', 'T1', 'open', 'lottery', '1', '2026-01-01'])
   })
 })
 

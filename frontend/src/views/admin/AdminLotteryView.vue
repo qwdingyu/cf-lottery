@@ -66,6 +66,12 @@
     <div v-if="selectedCount > 0" class="table-command-actions bulk-bar" :aria-busy="batchOperating">
       <span class="selection-summary">
         {{ t('lottery.adminSelectedCount', { count: selectedCount }) }}
+        <template v-if="selectedPausableCount > 0">
+          · {{ t('lottery.adminSelectedPausable', { count: selectedPausableCount }) }}
+        </template>
+        <template v-if="selectedResumableCount > 0">
+          · {{ t('lottery.adminSelectedResumable', { count: selectedResumableCount }) }}
+        </template>
         <template v-if="selectedHideableCount > 0">
           · {{ t('lottery.adminSelectedHideable', { count: selectedHideableCount }) }}
         </template>
@@ -78,6 +84,31 @@
       </span>
       <button class="btn btn-ghost btn-sm" :disabled="loading || batchOperating" @click="clearSelection">
         {{ t('lottery.adminClearSelection') }}
+      </button>
+      <button
+        class="btn btn-ghost btn-sm"
+        type="button"
+        :disabled="loading || batchOperating || selectedCount === 0"
+        @click="exportSelectedDraws"
+      >
+        {{ t('lottery.adminExportSelected', { count: selectedCount }) }}
+      </button>
+      <!-- open → paused：测试期停收参与比删更安全 -->
+      <button
+        class="btn btn-ghost btn-sm"
+        type="button"
+        :disabled="loading || batchOperating || selectedPausableCount === 0"
+        @click="batchPauseDraws"
+      >
+        {{ t('lottery.adminBatchPause', { count: selectedPausableCount }) }}
+      </button>
+      <button
+        class="btn btn-ghost btn-sm"
+        type="button"
+        :disabled="loading || batchOperating || selectedResumableCount === 0"
+        @click="batchResumeDraws"
+      >
+        {{ t('lottery.adminBatchResume', { count: selectedResumableCount }) }}
       </button>
       <!-- docs/083：批量隐藏已开奖比批量删更安全，适合清用户视野 -->
       <button
@@ -1410,13 +1441,14 @@ import {
   cancelLotteryDraw,
   createLotteryDraw,
   deleteLotteryDraw,
-  fetchAdminLottery,
   fetchLotteryDraws,
   fetchLotteryWinners,
   fetchPublishCheck,
   openLotteryDraw,
+  pauseLotteryDraw,
   performLotteryDraw,
   recoverLotteryDraw,
+  resumeLotteryDraw,
   retryAdminLotteryEmail,
   updateLotteryDraw,
 } from './lottery/api'
@@ -1432,9 +1464,12 @@ import {
   buildLotteryDrawConfirmMessage,
   buildLotteryDuplicateDraft as buildLotteryDuplicateDraftRaw,
   buildLotteryWinnersCsvRows,
+  buildSelectedDrawsCsvRows,
   canBatchHideDraw as canBatchHideDrawByFields,
   canDeleteDraw as canDeleteDrawByStatus,
   canGuidePublishFixInEditor as canGuidePublishFixInEditorRaw,
+  canPauseDraw as canPauseDrawByStatus,
+  canResumeDraw as canResumeDrawByStatus,
   canSelectDrawForBulk,
   conversionAmount as conversionAmountRaw,
   conversionIdentity,
@@ -1772,11 +1807,19 @@ function canBatchHideDraw(draw: LotteryDraw): boolean {
   return canBatchHideDrawByFields(draw.status, draw.visible)
 }
 
+function canPauseDraw(draw: LotteryDraw): boolean {
+  return canPauseDrawByStatus(draw.status)
+}
+
+function canResumeDraw(draw: LotteryDraw): boolean {
+  return canResumeDrawByStatus(draw.status)
+}
+
 function isDrawUserVisible(draw: LotteryDraw): boolean {
   return isLotteryUserVisible(draw.visible)
 }
 
-// 多选：可删 + 可隐藏 drawn；Shift 连选由 setSelected 第三参（click）处理
+// 多选：可删 / 隐藏 drawn / 暂停 open / 恢复 paused；Shift 连选由 setSelected 第三参（click）处理
 const visibleItems = computed(() => filteredDraws.value)
 const {
   selectedIds,
@@ -1796,6 +1839,12 @@ const selectedDeletableCount = computed(
 )
 const selectedHideableCount = computed(
   () => draws.value.filter((d) => selectedIds.value.includes(d.id) && canBatchHideDraw(d)).length,
+)
+const selectedPausableCount = computed(
+  () => draws.value.filter((d) => selectedIds.value.includes(d.id) && canPauseDraw(d)).length,
+)
+const selectedResumableCount = computed(
+  () => draws.value.filter((d) => selectedIds.value.includes(d.id) && canResumeDraw(d)).length,
 )
 
 const winnersEmailFailureCount = computed(() => countLotteryEmailFailures(winners.value))
@@ -2741,22 +2790,76 @@ async function batchHideDrawn() {
     await updateLotteryDraw(id, { visible: 0 })
   })
   if (!result) return
-  if (result.success === 0 && result.failed === 0) {
-    showToast(t('lottery.adminBatchNothingDone'), 'info')
-  } else if (result.failed > 0) {
-    showToast(t('lottery.adminBatchHideResult', { success: result.success, failed: result.failed }), 'error')
-  } else {
-    showToast(t('lottery.adminBatchHideSuccess', { count: result.success }), 'success')
-  }
+  toastBatchLifecycle(result, 'hide')
   clearSelection()
   await loadData()
+}
+
+/** 导出已选元数据（id/slug/状态），测试排障与交接，不含参与者 PII */
+function exportSelectedDraws() {
+  const selected = draws.value.filter((d) => selectedIds.value.includes(d.id))
+  if (selected.length === 0) return
+  downloadCsv(
+    `selected-draws-${new Date().toISOString().slice(0, 10)}.csv`,
+    buildSelectedDrawsCsvRows(selected),
+  )
+  showToast(t('lottery.adminExportSelectedSuccess', { count: selected.length }), 'success')
+}
+
+/** open → paused 顺序暂停 */
+async function batchPauseDraws() {
+  const targets = draws.value.filter((d) => selectedIds.value.includes(d.id) && canPauseDraw(d))
+  if (targets.length === 0 || loading.value || batchOperating.value) return
+  if (!(await askConfirm(t('lottery.adminConfirmBatchPause', { count: targets.length })))) return
+  const result = await runBatchSequential(targets.map((d) => d.id), async (id) => {
+    await pauseLotteryDraw(id)
+  })
+  if (!result) return
+  toastBatchLifecycle(result, 'pause')
+  clearSelection()
+  await loadData()
+}
+
+/** paused → open 顺序恢复 */
+async function batchResumeDraws() {
+  const targets = draws.value.filter((d) => selectedIds.value.includes(d.id) && canResumeDraw(d))
+  if (targets.length === 0 || loading.value || batchOperating.value) return
+  if (!(await askConfirm(t('lottery.adminConfirmBatchResume', { count: targets.length })))) return
+  const result = await runBatchSequential(targets.map((d) => d.id), async (id) => {
+    await resumeLotteryDraw(id)
+  })
+  if (!result) return
+  toastBatchLifecycle(result, 'resume')
+  clearSelection()
+  await loadData()
+}
+
+function toastBatchLifecycle(
+  result: { success: number; failed: number },
+  kind: 'hide' | 'pause' | 'resume',
+) {
+  if (result.success === 0 && result.failed === 0) {
+    showToast(t('lottery.adminBatchNothingDone'), 'info')
+    return
+  }
+  const map = {
+    hide: { ok: 'lottery.adminBatchHideSuccess', fail: 'lottery.adminBatchHideResult' },
+    pause: { ok: 'lottery.adminBatchPauseSuccess', fail: 'lottery.adminBatchPauseResult' },
+    resume: { ok: 'lottery.adminBatchResumeSuccess', fail: 'lottery.adminBatchResumeResult' },
+  } as const
+  const keys = map[kind]
+  if (result.failed > 0) {
+    showToast(t(keys.fail, { success: result.success, failed: result.failed }), 'error')
+  } else {
+    showToast(t(keys.ok, { count: result.success }), 'success')
+  }
 }
 
 async function handlePause(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmPause')))) return
   operatingId.value = id
   try {
-    await fetchAdminLottery(`/api/admin/draws/${id}/pause`, 'POST')
+    await pauseLotteryDraw(id)
     showToast(t('lottery.adminPaused'), 'success')
     await loadData()
   } catch (e: any) {
@@ -2770,7 +2873,7 @@ async function handlePause(id: string) {
 async function handleResume(id: string) {
   operatingId.value = id
   try {
-    await fetchAdminLottery(`/api/admin/draws/${id}/resume`, 'POST')
+    await resumeLotteryDraw(id)
     showToast(t('lottery.adminResumed'), 'success')
     await loadData()
   } catch (e: any) {
