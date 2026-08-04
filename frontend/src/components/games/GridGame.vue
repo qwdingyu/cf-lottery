@@ -6,7 +6,11 @@
         :key="idx"
         type="button"
         class="grid-cell"
-        :class="{ center: idx === 5, flipped: flippedIdx === idx }"
+        :class="{
+          center: idx === 5,
+          flipped: flippedIdx === idx,
+          loading: loading && pendingIdx === idx,
+        }"
         :style="{ '--idx': idx }"
         :disabled="disabled || loading || (flippedIdx > 0 && flippedIdx !== idx)"
         @click="handleClick(idx)"
@@ -88,9 +92,22 @@ watch(() => props.celebrateKey, (key) => {
   .grid-cell.center .grid-cell-icon { animation: none; }
 }
 .grid-cell.flipped { background: linear-gradient(135deg, #6366f1, #4f46e5); border-color: #818cf8; }
+/* 提交中：高亮用户刚点的格，避免「点了没反应」 */
+.grid-cell.loading {
+  border-color: var(--admin-accent, #f59e0b);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.45);
+  animation: gridCellPulse 1s ease-in-out infinite;
+}
 .flipped-icon { animation: popIn 0.4s cubic-bezier(0.34,1.56,0.64,1); }
 .grid-hint { font-size: 13px; color: rgba(255,255,255,0.45); text-align: center; padding: 0 12px; }
 .grid-cell-icon { font-size: 32px; }
 @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.15); } }
 @keyframes popIn { 0% { transform: scale(0); } 100% { transform: scale(1); } }
+@keyframes gridCellPulse {
+  0%, 100% { background: linear-gradient(135deg, rgba(245,158,11,0.28), rgba(251,191,36,0.12)); }
+  50% { background: linear-gradient(135deg, rgba(245,158,11,0.45), rgba(251,191,36,0.22)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .grid-cell.loading { animation: none; }
+}
 </style>

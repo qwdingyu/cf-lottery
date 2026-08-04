@@ -94,7 +94,11 @@
             <p class="lottery-status-path">{{ statusPathHint(draw) }}</p>
           </div>
           <!-- 奖池陈列：诚实展示可赢什么，不宣称「你已中」 -->
-          <ul v-if="(draw.prizes || []).length" class="lottery-prize-strip" aria-label="prizes">
+          <ul
+            v-if="(draw.prizes || []).length"
+            class="lottery-prize-strip"
+            :aria-label="$t('lottery.prizeStripAria')"
+          >
             <li v-for="(p, pi) in draw.prizes" :key="pi" class="lottery-prize-chip">
               <span class="lottery-prize-chip-name">{{ p.name || p.tierName || $t('lottery.productPlaceholder') }}</span>
               <span v-if="p.winnerCount" class="lottery-prize-chip-n">×{{ p.winnerCount }}</span>
@@ -228,7 +232,9 @@
               <button type="button" class="lottery-result-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
             </template>
             <template v-else-if="hasInteractiveGame(draw)">
-              <span class="lottery-join-hint">{{ $t('lottery.gamePrimaryCtaHint') }}</span>
+              <span class="lottery-join-hint">{{
+                $t('lottery.' + gamePrimaryCtaHintKey(draw.experienceType, draw.participationMode))
+              }}</span>
             </template>
             <template v-else-if="!sessionEmail && !registeredUsername">
               <button type="button" class="lottery-join-btn primary" @click="openLogin(draw.id)">{{ $t('lottery.join') }}</button>
@@ -627,6 +633,7 @@ import {
 import {
   defaultExperienceForParticipation,
   ambienceMsForExperience,
+  gamePrimaryCtaHintKey,
   requiresActivitySubmission,
   normalizePublicDraw,
   getResultCta,
@@ -1875,10 +1882,13 @@ function validateJoinCredentials(): string {
 }
 
 async function handleSendCode() {
-  if (!loginEmail.value.includes('@')) {
+  // 与后端 body.email toLowerCase 对齐，避免大小写漂移
+  const email = loginEmail.value.trim().toLowerCase()
+  if (!email.includes('@')) {
     loginError.value = t('lottery.invalidEmail')
     return
   }
+  loginEmail.value = email
   if (!pendingJoinDrawId.value) {
     loginError.value = t('lottery.drawNotLoaded')
     return
@@ -1903,7 +1913,7 @@ async function handleSendCode() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: loginEmail.value.trim(),
+        email,
         // 免码直参时后端 joinDraw 需要凭证；发码路径忽略多余字段
         accessPassword: joinAccessPassword.value.trim() || undefined,
         inviteCode: joinInviteCode.value.trim() || undefined,
@@ -1915,7 +1925,7 @@ async function handleSendCode() {
     if (data.ok && data.joined) {
       // 邮箱验证码关闭：直接参与成功（完整收尾 + celebrateKey 氛围）
       joiningId.value = pendingJoinDrawId.value!
-      completeJoinSuccess(pendingJoinDrawId.value!, data, { email: loginEmail.value.trim() })
+      completeJoinSuccess(pendingJoinDrawId.value!, data, { email })
       loginCode.value = ''
       codeSent.value = false
       joiningId.value = ''
@@ -1938,6 +1948,12 @@ async function handleVerifyCode() {
     return
   }
   if (!pendingJoinDrawId.value) return
+  const email = loginEmail.value.trim().toLowerCase()
+  if (!email.includes('@')) {
+    loginError.value = t('lottery.invalidEmail')
+    return
+  }
+  loginEmail.value = email
   const credErr = validateJoinCredentials()
   if (credErr) {
     loginError.value = credErr
@@ -1959,7 +1975,7 @@ async function handleVerifyCode() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: loginEmail.value.trim(),
+        email,
         code: loginCode.value.trim(),
         accessPassword: joinAccessPassword.value.trim() || undefined,
         inviteCode: joinInviteCode.value.trim() || undefined,
@@ -1970,7 +1986,7 @@ async function handleVerifyCode() {
     const data = await res.json() as any
     if (data.ok && data.joined) {
       const joinedDrawId = pendingJoinDrawId.value
-      completeJoinSuccess(joinedDrawId, data, { email: loginEmail.value.trim() })
+      completeJoinSuccess(joinedDrawId, data, { email })
       loginCode.value = ''
       codeSent.value = false
     } else {

@@ -37,6 +37,7 @@
       v-if="scratched && !joinedPulse"
       type="button"
       class="btn btn-primary btn-sm scratch-join-btn"
+      :class="{ loading }"
       :disabled="disabled || loading"
       @click="emit('play')"
     >
@@ -207,5 +208,16 @@ onMounted(initCanvas)
   padding: 12px 24px;
   font-size: 15px;
   font-weight: 600;
+}
+.scratch-join-btn.loading {
+  cursor: wait;
+  animation: scratchBtnPulse 1s ease-in-out infinite;
+}
+@keyframes scratchBtnPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scratch-join-btn.loading { animation: none; }
 }
 </style>

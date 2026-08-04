@@ -24,6 +24,7 @@
       v-if="flippedCount >= 2 && !played"
       type="button"
       class="card-btn"
+      :class="{ loading }"
       :disabled="disabled || loading"
       @click="onPlay"
     >
@@ -106,11 +107,21 @@ watch(() => props.disabled, (d) => {
 }
 .card-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(245,158,11,0.6); }
 .card-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.card-btn.loading {
+  opacity: 1;
+  cursor: wait;
+  animation: cardBtnPulse 1s ease-in-out infinite;
+}
 .card-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .card-hint { font-size: 13px; color: rgba(255,255,255,0.4); text-align: center; padding: 0 12px; }
+@keyframes cardBtnPulse {
+  0%, 100% { box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4); }
+  50% { box-shadow: 0 4px 28px rgba(245, 158, 11, 0.7); }
+}
 @media (prefers-reduced-motion: reduce) {
   .card-inner { transition: none; }
   .card-btn { transition: none; }
+  .card-btn.loading { animation: none; }
   .card-btn:hover:not(:disabled) { transform: none; }
 }
 </style>

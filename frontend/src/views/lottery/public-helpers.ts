@@ -26,6 +26,40 @@ export function ambienceMsForExperience(
   return 0
 }
 
+/**
+ * 解析有效体验类型（未配置时与 GameRegistry / 默认体验一致）。
+ */
+export function resolveExperienceType(
+  experienceType: string | undefined,
+  participationMode: string | undefined,
+): string {
+  return String(
+    experienceType || defaultExperienceForParticipation(participationMode || 'open'),
+  )
+    .trim()
+    .toLowerCase()
+}
+
+/**
+ * 有游戏壳时底部提示文案的 i18n key（按体验细分，避免「点转盘」套在老虎机上）。
+ * 返回 lottery.* 下的 key 名（不含 lottery. 前缀由调用方拼）。
+ */
+export function gamePrimaryCtaHintKey(
+  experienceType: string | undefined,
+  participationMode: string | undefined,
+): string {
+  const exp = resolveExperienceType(experienceType, participationMode)
+  if (exp === 'wheel') return 'gamePrimaryCtaHintWheel'
+  if (exp === 'slot') return 'gamePrimaryCtaHintSlot'
+  if (exp === 'scratch') return 'gamePrimaryCtaHintScratch'
+  if (exp === 'card') return 'gamePrimaryCtaHintCard'
+  if (exp === 'grid') return 'gamePrimaryCtaHintGrid'
+  if (exp === 'form') return 'gamePrimaryCtaHintForm'
+  if (exp === 'reveal') return 'gamePrimaryCtaHintReveal'
+  if (exp === 'submit') return 'gamePrimaryCtaHintSubmit'
+  return 'gamePrimaryCtaHint'
+}
+
 export function requiresActivitySubmission(draw: LotteryDraw): boolean {
   return draw.activityConfig?.kind === 'survey' || draw.activityConfig?.kind === 'vote'
 }

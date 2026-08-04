@@ -114,8 +114,18 @@ function stopIdleSpin() {
  * 而不是等 OTP/网络才 celebrate（docs/093 时机问题）。
  * 不表示开奖结果；成功后由 runCelebrateSpin 接棒加速减速。
  */
+function prefersReducedMotion(): boolean {
+  try {
+    return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
 function startIdleSpin() {
   stopIdleSpin()
+  // 无障碍：减少动态时仅靠按钮脉冲/文案，不持续转盘
+  if (prefersReducedMotion()) return
   const tick = () => {
     if (!props.loading || spinning.value) {
       idleRaf = 0
@@ -246,5 +256,11 @@ onUnmounted(() => {
     width: 60px;
     height: 60px;
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wheel-btn.loading { animation: none; }
+  .light-dot.active { animation: none; }
+  .wheel-pointer.spinning { animation: none; }
+  .wheel-btn:not(.disabled):hover { transform: none; }
 }
 </style>
