@@ -266,38 +266,90 @@
 .tier-count { flex: 0.5; min-width: 70px; }
 .tier-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
 
-/* 055a：行操作允许换行；更多展开为分组面板，不横向撑爆 */
+/*
+ * docs/079：操作列保持单行紧凑；「更多」用 body 浮层，不再行内展开撑高。
+ * max-width 略放宽以容纳「主 CTA + 次按钮 + 更多」三枚。
+ */
 .col-actions .table-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: inline-flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
-  white-space: normal;
-  max-width: 280px;
-  row-gap: 4px;
+  white-space: nowrap;
+  max-width: none;
   position: relative;
-}
-
-.col-actions .table-actions.is-expanded {
-  max-width: 360px;
 }
 
 .table-actions-more-btn {
   font-weight: 600;
+  flex-shrink: 0;
 }
 
-.table-actions-more-panel {
-  flex: 1 1 100%;
+/* 半透明点击遮罩：点空白关菜单；不挡滚动手感（pointer 仅拦截点击） */
+.table-actions-more-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: transparent;
+}
+
+/* Teleport 浮层菜单：fixed，不受 table-wrap overflow 裁切 */
+.table-actions-more-menu {
+  position: fixed;
+  z-index: 50;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 4px;
-  padding: 8px 10px;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
-  border-radius: 8px;
-  background: var(--surface, rgba(0, 0, 0, 0.25));
+  gap: 6px;
+  max-height: min(70vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  background: var(--tg-secondary-bg, #151b28);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.2),
+    0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
+.table-actions-more-menu .table-actions-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.table-actions-more-menu .table-actions-group-label {
+  flex: none;
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--tg-hint, #9aa4b2);
+  text-transform: none;
+}
+
+.table-actions-more-menu .table-actions-group--danger {
+  padding-top: 4px;
+  margin-top: 2px;
+  border-top: 1px dashed var(--border, rgba(255, 255, 255, 0.1));
+}
+
+/* 菜单项全宽左对齐，便于扫描；危险按钮仍用 btn-danger 色 */
+.table-actions-more-menu .table-actions-menu-item {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  text-align: left;
+  border-radius: 6px;
+}
+
+.table-actions-more-menu .table-actions-menu-item:hover:not(:disabled) {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+}
+
+/* 兼容旧 class（若其它页仍引用 group 布局） */
 .table-actions-group {
   display: flex;
   flex-wrap: wrap;

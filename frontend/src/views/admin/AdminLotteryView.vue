@@ -1039,6 +1039,124 @@
       @update:option="setConfirmOption"
     />
 
+    <!--
+      docs/079：行「更多」浮层（Teleport 到 body）。
+      不放在 td 内：table-wrap overflow:auto 会裁切 absolute；行内展开会把行高拉爆。
+    -->
+    <Teleport to="body">
+      <div
+        v-if="expandedActionDraw"
+        class="table-actions-more-backdrop"
+        aria-hidden="true"
+        @click="closeRowActions"
+      />
+      <div
+        v-if="expandedActionDraw"
+        ref="moreMenuEl"
+        class="table-actions-more-menu"
+        role="menu"
+        :aria-label="$t('lottery.adminActionsMore')"
+        :style="moreMenuStyle"
+        @keydown.esc.prevent="closeRowActions"
+      >
+        <div class="table-actions-group" role="group">
+          <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupShare') }}</span>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            :title="$t('lottery.adminCopyLinkHint')"
+            @click="runMoreAction(() => handleCopyShareLink(expandedActionDraw!))"
+          >{{ $t('lottery.adminCopyLink') }}</button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            :title="$t('lottery.adminOpenPublicHint')"
+            @click="runMoreAction(() => handleOpenPublic(expandedActionDraw!))"
+          >{{ $t('lottery.adminOpenPublic') }}</button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :title="$t('lottery.adminGenerateQr')"
+            @click="runMoreAction(() => handleShowQrCode(expandedActionDraw!))"
+          >{{ $t('lottery.adminQrCode') }}</button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :title="$t('lottery.adminGeneratePoster')"
+            @click="runMoreAction(() => handleShowPoster(expandedActionDraw!))"
+          >{{ $t('lottery.adminPoster') }}</button>
+        </div>
+        <div class="table-actions-group" role="group">
+          <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupOps') }}</span>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            :title="$t('lottery.adminViewAnalytics')"
+            @click="runMoreAction(() => handleViewAnalytics(expandedActionDraw!))"
+          >{{ $t('lottery.adminAnalytics') }}</button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            :title="$t('lottery.adminDuplicateHint')"
+            @click="runMoreAction(() => handleDuplicate(expandedActionDraw!))"
+          >{{ $t('lottery.adminDuplicate') }}</button>
+          <button
+            v-if="expandedActionDraw.status === 'open' && expandedActionDraw.activityKind === 'lottery'"
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            @click="runMoreAction(() => handlePause(expandedActionDraw!.id))"
+          >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminPause') }}</button>
+          <button
+            v-if="expandedActionDraw.status === 'drawn'"
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            @click="runMoreAction(() => handleToggleVisibility(expandedActionDraw!.id, expandedActionDraw!.visible))"
+          >{{ expandedActionDraw.visible ? $t('lottery.adminHide') : $t('lottery.adminShow') }}</button>
+          <button
+            v-if="expandedActionDraw.status === 'drawn'"
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            @click="runMoreAction(() => handleRetryEmail(expandedActionDraw!.id))"
+          >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
+        </div>
+        <div class="table-actions-group table-actions-group--danger" role="group">
+          <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupDanger') }}</span>
+          <button
+            v-if="expandedActionDraw.status === 'draft' || expandedActionDraw.status === 'open' || expandedActionDraw.status === 'paused'"
+            type="button"
+            class="btn btn-danger btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            @click="runMoreAction(() => handleCancel(expandedActionDraw!.id))"
+          >{{ $t('lottery.adminDrawCancel') }}</button>
+          <button
+            v-if="canDeleteDraw(expandedActionDraw)"
+            type="button"
+            class="btn btn-danger btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="batchOperating"
+            @click="runMoreAction(() => handleDelete(expandedActionDraw!.id))"
+          >{{ $t('lottery.adminDrawDelete') }}</button>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- 活动数据：平台内漏斗 + 外部系统显式回传 -->
     <AdminModal v-model="showAnalyticsModal" :title="$t('lottery.adminAnalyticsTitle')" max-width="860px">
       <div class="analytics-modal-body">
@@ -1405,8 +1523,74 @@ const loadError = ref('')
 const showCreateModal = ref(false)
 /** 055a：创建表单「高级配置（导流/裂变/CTA）」默认收起，减少主路径压迫 */
 const showAdvancedGrowth = ref(false)
-/** 055a：列表行「更多」展开的活动 id；同时只展开一行，避免操作墙 */
+/** docs/079：列表行「更多」浮层 — 同时只开一行；菜单 Teleport 到 body，不撑行高 */
 const expandedActionId = ref<string | null>(null)
+const moreMenuPos = ref({ top: 0, left: 0, width: 200 })
+const moreBtnRefs = new Map<string, HTMLElement>()
+const moreMenuEl = ref<HTMLElement | null>(null)
+
+const expandedActionDraw = computed(() => {
+  const id = expandedActionId.value
+  if (!id) return null
+  return draws.value.find((d) => d.id === id) || null
+})
+
+const moreMenuStyle = computed(() => ({
+  top: `${moreMenuPos.value.top}px`,
+  left: `${moreMenuPos.value.left}px`,
+  minWidth: `${moreMenuPos.value.width}px`,
+}))
+
+function setMoreBtnRef(drawId: string, el: unknown) {
+  if (el && el instanceof HTMLElement) moreBtnRefs.set(drawId, el)
+  else moreBtnRefs.delete(drawId)
+}
+
+function closeRowActions() {
+  expandedActionId.value = null
+}
+
+function positionMoreMenu(anchor: HTMLElement) {
+  const rect = anchor.getBoundingClientRect()
+  const menuWidth = 220
+  const gap = 4
+  // 优先右对齐按钮；视口不够则贴右缘
+  let left = rect.right - menuWidth
+  if (left < 8) left = 8
+  if (left + menuWidth > window.innerWidth - 8) {
+    left = Math.max(8, window.innerWidth - menuWidth - 8)
+  }
+  // 先放按钮下方；空间不足再翻到上方（用估算高度，下一帧再精修）
+  let top = rect.bottom + gap
+  const estHeight = 280
+  if (top + estHeight > window.innerHeight - 8 && rect.top > estHeight) {
+    top = Math.max(8, rect.top - estHeight - gap)
+  }
+  moreMenuPos.value = { top, left, width: menuWidth }
+}
+
+function refineMoreMenuPosition(anchor: HTMLElement) {
+  const menu = moreMenuEl.value
+  if (!menu) return
+  const rect = anchor.getBoundingClientRect()
+  const menuRect = menu.getBoundingClientRect()
+  const gap = 4
+  let top = rect.bottom + gap
+  if (top + menuRect.height > window.innerHeight - 8) {
+    top = Math.max(8, rect.top - menuRect.height - gap)
+  }
+  let left = moreMenuPos.value.left
+  if (left + menuRect.width > window.innerWidth - 8) {
+    left = Math.max(8, window.innerWidth - menuRect.width - 8)
+  }
+  moreMenuPos.value = { top, left, width: moreMenuPos.value.width }
+}
+
+/** 点菜单项：先关浮层再执行（避免 confirm/modal 叠层） */
+function runMoreAction(action: () => void | Promise<void>) {
+  closeRowActions()
+  void action()
+}
 /** 055a P1：当前创建来自哪个模板（仅提示用，不参与提交） */
 const activeTemplateId = ref('')
 const activeTemplateName = ref('')
@@ -2087,9 +2271,44 @@ function closeEditor() {
   createStepFocus.value = 1
 }
 
-/** 列表行「更多」：点同一行收起，点另一行只展开该行 */
-function toggleRowActions(drawId: string) {
-  expandedActionId.value = expandedActionId.value === drawId ? null : drawId
+/** 列表行「更多」：同 thr 收起；另 thr 只开一行；锚定按钮定位浮层 */
+function toggleRowActions(drawId: string, event?: MouseEvent) {
+  if (expandedActionId.value === drawId) {
+    closeRowActions()
+    return
+  }
+  const anchor =
+    (event?.currentTarget instanceof HTMLElement ? event.currentTarget : null)
+    || moreBtnRefs.get(drawId)
+    || null
+  expandedActionId.value = drawId
+  if (anchor) {
+    positionMoreMenu(anchor)
+    nextTick(() => refineMoreMenuPosition(anchor))
+  }
+}
+
+/**
+ * 表格/窗口滚动时关闭浮层（行业常见：避免锚点滚走后菜单悬空）。
+ * 菜单自身 overflow 滚动不关——否则长菜单无法扫到底。
+ */
+function onMoreMenuScroll(e: Event) {
+  if (!expandedActionId.value) return
+  const t = e.target
+  if (t instanceof Node && moreMenuEl.value?.contains(t)) return
+  closeRowActions()
+}
+
+function onMoreMenuResize() {
+  if (!expandedActionId.value) return
+  closeRowActions()
+}
+
+function onMoreMenuKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && expandedActionId.value) {
+    e.preventDefault()
+    closeRowActions()
+  }
 }
 
 function openTemplatePicker() {
@@ -2345,9 +2564,7 @@ watch(showWinnersModal, (visible) => {
   if (!visible) stopWinnersStatusPolling()
 })
 
-onBeforeUnmount(() => {
-  stopWinnersStatusPolling()
-})
+
 
 async function handleCancel(id: string) {
   if (!(await askConfirm(t('lottery.adminConfirmCancel')))) return
@@ -2747,6 +2964,18 @@ onMounted(() => {
   if (route.query.new === 'true') {
     openTemplatePicker()
   }
+  // 浮层菜单：表体滚动/窗口缩放时关闭，避免锚点滚走后菜单悬空
+  window.addEventListener('scroll', onMoreMenuScroll, true)
+  window.addEventListener('resize', onMoreMenuResize)
+  window.addEventListener('keydown', onMoreMenuKeydown)
+})
+
+onBeforeUnmount(() => {
+  stopWinnersStatusPolling()
+  window.removeEventListener('scroll', onMoreMenuScroll, true)
+  window.removeEventListener('resize', onMoreMenuResize)
+  window.removeEventListener('keydown', onMoreMenuKeydown)
+  moreBtnRefs.clear()
 })
 </script>
 <style>
