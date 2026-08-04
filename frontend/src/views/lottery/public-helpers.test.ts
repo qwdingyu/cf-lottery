@@ -6,6 +6,7 @@ import {
   ambienceMsForExperience,
   gamePrimaryCtaHintKey,
   resolveExperienceType,
+  shouldShowInviteShareCta,
 } from "./public-helpers";
 
 describe("public-helpers experience UX", () => {
@@ -41,5 +42,17 @@ describe("public-helpers experience UX", () => {
     expect(gamePrimaryCtaHintKey("checkin", "open")).toBe("gamePrimaryCtaHintSubmit");
     // 未知体验回退通用 hint
     expect(gamePrimaryCtaHintKey("unknown_xyz", "open")).toBe("gamePrimaryCtaHint");
+  });
+
+  it("shouldShowInviteShareCta：已开奖/取消不推邀请，进行中可分享", () => {
+    expect(shouldShowInviteShareCta("drawn")).toBe(false);
+    expect(shouldShowInviteShareCta("cancelled")).toBe(false);
+    expect(shouldShowInviteShareCta("closed")).toBe(false);
+    expect(shouldShowInviteShareCta("DRAWN")).toBe(false);
+    expect(shouldShowInviteShareCta("open")).toBe(true);
+    expect(shouldShowInviteShareCta("drawing")).toBe(true);
+    expect(shouldShowInviteShareCta("paused")).toBe(true);
+    expect(shouldShowInviteShareCta("")).toBe(true);
+    expect(shouldShowInviteShareCta(undefined)).toBe(true);
   });
 });

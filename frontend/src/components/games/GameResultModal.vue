@@ -28,44 +28,44 @@
         <!-- 分享错误提示 -->
         <p v-if="shareError" class="result-error">{{ shareError }}</p>
 
-        <!-- 裂变引导卡片 -->
-        <div v-if="viralEnabled && shareLoaded" class="viral-card">
-          <div class="viral-headline">{{ $t('lottery.viralHeadline') }}</div>
+        <!-- 裂变/邀请：仅活动未终态；已开奖再推邀请无意义（docs/103） -->
+        <template v-if="inviteShareAllowed">
+          <div v-if="viralEnabled && shareLoaded" class="viral-card">
+            <div class="viral-headline">{{ $t('lottery.viralHeadline') }}</div>
 
-          <div class="viral-stats">
-            <div class="viral-stat">
-              <span class="viral-stat-value">{{ shareData?.joinedCount ?? 0 }}</span>
-              <span class="viral-stat-label">{{ $t('lottery.viralInvitedLabel') }}</span>
+            <div class="viral-stats">
+              <div class="viral-stat">
+                <span class="viral-stat-value">{{ shareData?.joinedCount ?? 0 }}</span>
+                <span class="viral-stat-label">{{ $t('lottery.viralInvitedLabel') }}</span>
+              </div>
+              <div class="viral-stat">
+                <span class="viral-stat-value">{{ maxExtraEntries }}</span>
+                <span class="viral-stat-label">{{ $t('lottery.viralMaxLabel') }}</span>
+              </div>
             </div>
-            <div class="viral-stat">
-              <span class="viral-stat-value">{{ maxExtraEntries }}</span>
-              <span class="viral-stat-label">{{ $t('lottery.viralMaxLabel') }}</span>
+
+            <div class="viral-progress">
+              <div class="viral-progress-fill" :style="{ width: extraProgressPercent + '%' }" />
+            </div>
+
+            <div class="viral-link-row">
+              <code class="viral-link-text">{{ shareUrl }}</code>
+              <button type="button" class="btn btn-sm btn-primary" @click="copyAttributedLink">
+                {{ $t('lottery.copyShareLink') }}
+              </button>
             </div>
           </div>
 
-          <div class="viral-progress">
-            <div class="viral-progress-fill" :style="{ width: extraProgressPercent + '%' }" />
+          <div v-else-if="shareLoaded" class="viral-link-row">
+            <button type="button" class="btn btn-ghost" @click="copyAttributedLink">{{ $t('lottery.shareActivityBtn') }}</button>
           </div>
 
-          <div class="viral-link-row">
-            <code class="viral-link-text">{{ shareUrl }}</code>
-            <button type="button" class="btn btn-sm btn-primary" @click="copyAttributedLink">
-              {{ $t('lottery.copyShareLink') }}
-            </button>
-          </div>
-        </div>
-
-        <!-- 无裂变配置时 -->
-        <div v-else-if="shareLoaded" class="viral-link-row">
-          <button type="button" class="btn btn-ghost" @click="copyAttributedLink">{{ $t('lottery.shareActivityBtn') }}</button>
-        </div>
-
-        <!-- 分享链接加载中（非裂变模式） -->
-        <div v-else-if="entryId" class="result-hint" style="margin-top:12px">{{ $t('lottery.viralLoadShareLink') }}</div>
+          <div v-else-if="entryId" class="result-hint" style="margin-top:12px">{{ $t('lottery.viralLoadShareLink') }}</div>
+        </template>
 
         <!--
           闭环 CTA（docs/096）：「知道了」只关弹窗不够；
-          非即时或尚无 outcome 时提供「查我的结果」；有分享链接时一键复制。
+          非即时或尚无 outcome 时提供「查我的结果」；分享仅未终态活动。
         -->
         <div class="result-actions">
           <button
@@ -75,7 +75,7 @@
             @click="emit('query-result')"
           >{{ $t('lottery.queryResult') }}</button>
           <button
-            v-if="shareLoaded && shareUrl"
+            v-if="inviteShareAllowed && shareLoaded && shareUrl"
             type="button"
             class="btn btn-ghost"
             @click="copyAttributedLink"
@@ -97,6 +97,7 @@ import { ref, computed, watch, nextTick, useId } from 'vue'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { shouldShowInviteShareCta } from '@/views/lottery/public-helpers'
 
 const props = defineProps<{
   show: boolean
@@ -106,6 +107,8 @@ const props = defineProps<{
   resultMode?: string | null
   /** 即时结果标签（若有）；不表示转盘停扇结果 */
   outcomeLabel?: string | null
+  /** 活动 status：drawn/cancelled 时不展示邀请分享（docs/103） */
+  drawStatus?: string | null
   viralConfig?: { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | null
 }>()
 
@@ -176,7 +179,11 @@ const statusIcon = computed(() => {
   return '✅'
 })
 
-const viralEnabled = computed(() => props.viralConfig?.enabled === true && !!props.entryId)
+/** 已开奖/取消：不拉分享、不展示邀请（docs/103） */
+const inviteShareAllowed = computed(() => shouldShowInviteShareCta(props.drawStatus))
+const viralEnabled = computed(
+  () => inviteShareAllowed.value && props.viralConfig?.enabled === true && !!props.entryId,
+)
 const maxExtraEntries = computed(() => props.viralConfig?.maxExtraEntries ?? 10)
 const extraProgressPercent = computed(() => {
   const joined = shareData.value?.joinedCount ?? 0
@@ -187,6 +194,7 @@ const shareLoaded = computed(() => shareData.value !== null)
 const shareUrl = computed(() => shareData.value?.shareUrl ?? '')
 
 async function loadShareLink() {
+  if (!inviteShareAllowed.value) return
   if (!props.entryId || !props.drawSlug) return
   shareLoading.value = true
   shareError.value = ''
@@ -210,6 +218,7 @@ async function loadShareLink() {
 }
 
 async function copyAttributedLink() {
+  if (!inviteShareAllowed.value) return
   const url = shareData.value?.shareUrl
   if (!url) {
     await writeClipboardText(window.location.href)
@@ -224,7 +233,7 @@ watch(() => props.show, async (newVal) => {
   if (newVal && props.entryId) {
     shareData.value = null
     shareError.value = ''
-    void loadShareLink()
+    if (inviteShareAllowed.value) void loadShareLink()
     // 弹窗打开后聚焦到弹窗（焦点陷阱）
     await nextTick()
     modalRef.value?.focus()

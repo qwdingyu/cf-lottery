@@ -498,6 +498,7 @@
     :entry-id="lastJoinResult?.entryId"
     :result-mode="lastJoinResultMode"
     :outcome-label="lastJoinOutcomeLabel"
+    :draw-status="lastJoinDrawStatus"
     :viral-config="lastJoinViralConfig"
     @close="showResult = false"
     @query-result="onResultModalQuery"
@@ -687,7 +688,8 @@
             <template v-else-if="!myResultData.prizeCode">
               <p class="result-hint">{{ $t('lottery.wonNoCodeHint') }}</p>
             </template>
-            <div class="result-share-win">
+            <!-- 仅活动未终态时推邀请；已开奖再「让更多人参与」无意义（docs/103） -->
+            <div v-if="showMyResultInviteShare" class="result-share-win">
               <p class="result-share-hint">🎁 {{ $t('lottery.shareYourLuck') }}</p>
               <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 {{ $t('lottery.shareActivityBtn') }}</button>
             </div>
@@ -773,6 +775,7 @@ import {
   requiresActivitySubmission,
   normalizePublicDraw,
   getResultCta,
+  shouldShowInviteShareCta,
 } from './lottery/public-helpers'
 import {
   isAlreadyJoinedResponse,
@@ -1171,6 +1174,8 @@ const lastJoinResult = ref<{
   entryId: string
   resultMode?: string
   outcomeLabel?: string
+  /** 参与时活动 status，用于开奖后隐藏邀请（docs/103） */
+  drawStatus?: string
 } | null>(null)
 
 // ── 查询我的结果（中奖卡密/安慰奖券） ──
@@ -1235,6 +1240,12 @@ const isMyResultDrawFinal = computed(() => {
   return st === 'drawn' || st === 'cancelled'
 })
 
+/** 中奖结果里的「分享邀请」：开奖后隐藏（docs/103） */
+const showMyResultInviteShare = computed(() => {
+  const st = String(myResultData.value?.drawStatus || myResultDraw.value?.status || '')
+  return shouldShowInviteShareCta(st)
+})
+
 function isManualFulfillmentPrize(prizeType: string | null | undefined): boolean {
   const t = String(prizeType || '').trim().toLowerCase()
   return t === 'manual_fulfillment' || t === 'manual'
@@ -1266,6 +1277,14 @@ const lastJoinResultMode = computed(() => {
 
 const lastJoinOutcomeLabel = computed(() => lastJoinResult.value?.outcomeLabel)
 
+/** 参与时活动状态：供参与成功弹窗决定是否展示邀请（docs/103） */
+const lastJoinDrawStatus = computed(() => {
+  if (!lastJoinResult.value) return undefined
+  if (lastJoinResult.value.drawStatus) return lastJoinResult.value.drawStatus
+  const draw = draws.value.find(d => d.id === lastJoinResult.value!.drawId)
+  return draw?.status
+})
+
 /** 参与成功后写入弹窗所需快照（语义字段可选，缺省由 computed 回退到 draw） */
 function rememberJoinSuccess(
   drawId: string,
@@ -1279,6 +1298,7 @@ function rememberJoinSuccess(
     entryId,
     resultMode: extra?.resultMode || draw?.resultMode,
     outcomeLabel: extra?.outcomeLabel || undefined,
+    drawStatus: draw?.status,
   }
 }
 
@@ -1452,8 +1472,9 @@ function copyMyResult(text: string) {
   showToast(t('lottery.copied'), 'success')
 }
 
-/** 中奖后分享活动链接（归因到当前用户的分享记录） */
+/** 中奖后分享活动链接（仅未终态；归因到当前用户的分享记录） */
 async function shareMyWin() {
+  if (!showMyResultInviteShare.value) return
   const draw = myResultDraw.value
   if (!draw) return
   const slug = draw.publicSlug || draw.id

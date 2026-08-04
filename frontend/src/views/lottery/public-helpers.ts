@@ -97,6 +97,22 @@ export function normalizePublicDraw(raw: any, routeSlug?: string): LotteryDraw {
  * 纵深防御：后端发布校验（publish-check）已拦截危险协议，这里再兜底一次，
  * 防止历史数据或配置被绕过时 `<a href>` 渲染 javascript: 等危险协议。
  */
+/**
+ * 「邀请更多人参与 / 分享好运」是否应展示。
+ *
+ * 裂变与邀请只在活动仍可参与（或未终态）时有意义；
+ * 已开奖 / 已取消后再推邀请链接是错误产品语义（docs/103）。
+ *
+ * @param drawStatus 活动 status：open / drawn / cancelled …
+ * @returns false 表示必须隐藏邀请分享 CTA
+ */
+export function shouldShowInviteShareCta(drawStatus: string | null | undefined): boolean {
+  const st = String(drawStatus || '').trim().toLowerCase()
+  if (st === 'drawn' || st === 'cancelled' || st === 'closed') return false
+  // 未知状态：偏参与成功路径（常不带 status），允许分享
+  return true
+}
+
 export function getResultCta(
   draw: LotteryDraw | null,
   key: 'after_win' | 'after_loss',
