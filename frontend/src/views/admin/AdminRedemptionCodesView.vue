@@ -10,11 +10,11 @@
           <option value="expired">{{ $t('adminRedemption.statusExpired') }}</option>
           <option value="disabled">{{ $t('adminRedemption.statusDisabled') }}</option>
         </select>
-        <button class="btn btn-primary btn-sm" :disabled="loading" @click="loadData">{{ $t('adminRedemption.search') }}</button>
+        <button class="btn btn-primary btn-sm" :disabled="loading || batchOperating" @click="loadData">{{ $t('adminRedemption.search') }}</button>
       </div>
       <div class="toolbar-actions">
-        <button class="btn btn-primary btn-sm" @click="showBatch = true">{{ $t('adminRedemption.batchGenerate') }}</button>
-        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">{{ $t('adminRedemption.refresh') }}</button>
+        <button class="btn btn-primary btn-sm" :disabled="batchOperating" @click="showBatch = true">{{ $t('adminRedemption.batchGenerate') }}</button>
+        <button class="btn btn-ghost btn-sm" :disabled="loading || batchOperating" @click="loadData">{{ $t('adminRedemption.refresh') }}</button>
       </div>
     </div>
 
@@ -38,10 +38,35 @@
       <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">{{ $t('adminRedemption.retry') }}</button>
     </div>
 
+    <div v-if="selectedCount > 0" class="table-command-actions bulk-bar" :aria-busy="batchOperating">
+      <span class="selection-summary">
+        {{ $t('adminRedemption.selectedCount', { count: selectedCount }) }}
+        <template v-if="batchOperating">
+          · {{ $t('adminRedemption.batchProgress', { done: batchCompleted, total: batchTotal }) }}
+        </template>
+      </span>
+      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || batchOperating" @click="clearSelection">
+        {{ $t('adminRedemption.clearSelection') }}
+      </button>
+      <button class="btn btn-danger btn-sm" type="button" :disabled="loading || batchOperating || disableableSelectedCount === 0" @click="batchDisable">
+        {{ $t('adminRedemption.batchDisable', { count: disableableSelectedCount }) }}
+      </button>
+    </div>
+
     <div class="table-wrap">
       <table class="admin-table">
         <thead>
           <tr>
+            <th class="select-cell">
+              <input
+                type="checkbox"
+                :checked="allVisibleSelected"
+                :indeterminate.prop="partiallySelected"
+                :disabled="loading || batchOperating || selectableCount === 0"
+                :aria-label="$t('adminRedemption.selectAll')"
+                @change="toggleAllVisible(($event.target as HTMLInputElement).checked)"
+              />
+            </th>
             <th>{{ $t('adminRedemption.colCode') }}</th>
             <th>{{ $t('adminRedemption.colActivityQuota') }}</th>
             <th>{{ $t('adminRedemption.colParticipantQuota') }}</th>
@@ -50,15 +75,25 @@
             <th>{{ $t('adminRedemption.colUses') }}</th>
             <th>{{ $t('adminRedemption.colNote') }}</th>
             <th>{{ $t('adminRedemption.colCreatedAt') }}</th>
+            <th class="col-actions">{{ $t('adminRedemption.colActions') }}</th>
           </tr>
         </thead>
         <tbody v-if="loading">
           <tr v-for="i in 5" :key="'sk' + i" class="skeleton-row">
-            <td :colspan="8"><div class="skeleton-cell" /></td>
+            <td :colspan="10"><div class="skeleton-cell" /></td>
           </tr>
         </tbody>
         <tbody v-else>
-          <tr v-for="code in codes" :key="code.id">
+          <tr v-for="code in codes" :key="code.id" :class="{ 'is-selected': isSelected(code.id) }">
+            <td class="select-cell">
+              <input
+                type="checkbox"
+                :checked="isSelected(code.id)"
+                :disabled="loading || batchOperating || !canDisableRedemptionCode(String(code.status || ''))"
+                :aria-label="$t('adminRedemption.selectRow')"
+                @click="setSelected(code.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
+              />
+            </td>
             <td><code class="code-text">{{ code.code }}</code></td>
             <td>{{ code.activityQuota }}</td>
             <td>{{ code.participantQuota }}</td>
@@ -67,9 +102,19 @@
             <td>{{ code.usedCount }}/{{ code.maxUses }}</td>
             <td>{{ code.note || '-' }}</td>
             <td>{{ formatDate(code.createdAt) }}</td>
+            <td class="col-actions">
+              <button
+                v-if="canDisableRedemptionCode(String(code.status || ''))"
+                class="btn btn-ghost btn-xs"
+                type="button"
+                :disabled="operatingId === code.id || batchOperating"
+                @click="handleDisable(code.id)"
+              >{{ operatingId === code.id ? $t('adminRedemption.disabling') : $t('adminRedemption.disable') }}</button>
+              <span v-else class="tag tag-muted">—</span>
+            </td>
           </tr>
           <tr v-if="codes.length === 0">
-            <td colspan="8" class="empty-text">{{ $t('adminRedemption.empty') }}</td>
+            <td colspan="10" class="empty-text">{{ $t('adminRedemption.empty') }}</td>
           </tr>
         </tbody>
       </table>
@@ -81,7 +126,7 @@
       :total="pagination.total.value"
       :total-pages="pagination.totalPages.value"
       :limit="pagination.limit.value"
-      :disabled="loading"
+      :disabled="loading || batchOperating"
       @prev="pagination.prevPage(); loadData()"
       @next="pagination.nextPage(); loadData()"
       @jump="pagination.setPage($event); loadData()"
@@ -135,26 +180,35 @@
         <button type="button" class="btn btn-ghost btn-sm" @click="showResult = false; showBatch = false; loadData()">{{ $t('adminRedemption.close') }}</button>
       </div>
     </AdminModal>
+
+    <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" danger @confirm="onConfirm" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
+import { useTableSelection } from '@/composables/useTableSelection'
+import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
 import { formatDate } from '@/composables/useFormat'
 import { writeClipboardText } from '@/composables/useClipboard'
 import AdminModal from '@/components/AdminModal.vue'
 import AdminPagination from '@/components/AdminPagination.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useTablePagination } from '@/composables/useTablePagination'
 import { adminRequest } from '@/composables/useAdminRequest'
+import { canDisableRedemptionCode } from './lottery/ops-utils'
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 const codes = ref<any[]>([])
 const loading = ref(false)
 const loadError = ref('')
 const submitting = ref(false)
+const operatingId = ref('')
 const statusFilter = ref('')
 const searchQuery = ref('')
 const showBatch = ref(false)
@@ -171,6 +225,31 @@ const form = ref({
   durationDays: 30,
   note: '',
 })
+
+const codesRef = computed(() => codes.value)
+const {
+  operating: batchOperating,
+  completed: batchCompleted,
+  total: batchTotal,
+  runSequential,
+} = useAdminBatchOperation()
+const {
+  selectedIds,
+  selectedCount,
+  selectableCount,
+  isSelected,
+  setSelected,
+  toggleAllVisible,
+  clearSelection,
+  allVisibleSelected,
+  partiallySelected,
+} = useTableSelection(codesRef, (row) => row.id, {
+  isSelectable: (row) => canDisableRedemptionCode(String(row.status || '')),
+})
+
+const disableableSelectedCount = computed(() =>
+  codes.value.filter((c) => selectedIds.value.includes(c.id) && canDisableRedemptionCode(String(c.status || ''))).length,
+)
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
@@ -236,6 +315,47 @@ async function copyCodes() {
   } catch {
     showToast(t('adminRedemption.copyFailed'), 'error')
   }
+}
+
+async function handleDisable(id: string) {
+  if (operatingId.value || batchOperating.value) return
+  if (!(await askConfirm(t('adminRedemption.disableConfirm')))) return
+  operatingId.value = id
+  try {
+    await adminRequest(`${PLATFORM_REDEMPTION_CODES_API}/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'disabled' }),
+    })
+    showToast(t('adminRedemption.disabledOk'), 'success')
+    await loadData()
+  } catch (err: any) {
+    showToast(err.message || t('adminRedemption.disableFailed'), 'error')
+  } finally {
+    operatingId.value = ''
+  }
+}
+
+/** 测试清场：仅 active 码顺序禁用，保留审计不物理删 */
+async function batchDisable() {
+  const targets = codes.value.filter(
+    (c) => selectedIds.value.includes(c.id) && canDisableRedemptionCode(String(c.status || '')),
+  )
+  if (targets.length === 0 || loading.value || batchOperating.value) return
+  if (!(await askConfirm(t('adminRedemption.batchDisableConfirm', { count: targets.length })))) return
+  const result = await runSequential(targets, async (row) => {
+    await adminRequest(`${PLATFORM_REDEMPTION_CODES_API}/${row.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'disabled' }),
+    })
+  })
+  if (!result) return
+  if (result.failed > 0) {
+    showToast(t('adminRedemption.batchDisableResult', { success: result.success, failed: result.failed }), 'error')
+  } else {
+    showToast(t('adminRedemption.batchDisableSuccess', { count: result.success }), 'success')
+  }
+  clearSelection()
+  await loadData()
 }
 
 onMounted(loadData)

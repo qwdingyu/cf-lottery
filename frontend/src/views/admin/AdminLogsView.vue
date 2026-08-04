@@ -8,13 +8,15 @@
         <button class="btn btn-primary btn-sm" @click="searchData">{{ $t('adminLogs.searchBtn') }}</button>
       </div>
       <div class="toolbar-actions">
+        <!-- 后端未开放租户侧清空日志；引导用平台数据清理，避免点了必失败 -->
         <button
-          class="btn btn-danger btn-sm"
+          class="btn btn-ghost btn-sm"
           type="button"
-          :disabled="loading || logsMutating"
-          @click="clearAllLogs"
+          :disabled="loading"
+          :title="$t('adminLogs.clearAllUnavailable')"
+          @click="showToast($t('adminLogs.clearAllUnavailable'), 'info')"
         >
-          {{ clearingAll ? $t('adminLogs.clearing') : $t('adminLogs.clearAll') }}
+          {{ $t('adminLogs.clearAll') }}
         </button>
       </div>
     </div>
@@ -57,8 +59,15 @@
         <button class="btn btn-ghost btn-sm" :disabled="loading || logsMutating" @click="clearSelection">{{ $t('adminLogs.clearSelection') }}</button>
         <button class="btn btn-ghost btn-sm" :disabled="loading || logsMutating" @click="copySelectedLogs">{{ $t('adminLogs.copySelected') }}</button>
         <button class="btn btn-primary btn-sm" :disabled="loading || logsMutating" @click="exportSelectedLogs">{{ $t('adminLogs.exportSelectedCsv') }}</button>
-        <button class="btn btn-danger btn-sm" :disabled="loading || logsMutating || selectedDeletableLogs.length === 0" @click="batchRemoveLogs">
-          {{ batchDeleting ? $t('adminLogs.deleting') : $t('adminLogs.batchDelete', { count: selectedDeletableLogs.length }) }}
+        <!-- 批量删除 API 未开放：保留提示按钮，不走假删除路径 -->
+        <button
+          class="btn btn-ghost btn-sm"
+          type="button"
+          :disabled="loading"
+          :title="$t('adminLogs.batchDeleteUnavailable')"
+          @click="showToast($t('adminLogs.batchDeleteUnavailable'), 'info')"
+        >
+          {{ $t('adminLogs.batchDelete', { count: selectedCount }) }}
         </button>
       </div>
     </div>
@@ -149,7 +158,6 @@
       </div>
     </AdminModal>
 
-    <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" danger @confirm="onConfirm" />
   </div>
 </template>
 
@@ -159,12 +167,10 @@ import i18n from '@/i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 import { useTableSelection } from '@/composables/useTableSelection'
-import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { formatDate } from '@/composables/useFormat'
 import AdminPagination from '@/components/AdminPagination.vue'
 import AdminModal from '@/components/AdminModal.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import type { AdminAuditLog, AdminAuditLogFilter, AdminAuditLogListResult } from '@/types/admin'
 import { adminRequest } from '@/composables/useAdminRequest'
 
@@ -182,9 +188,8 @@ const { token } = useAdminAuth()
 const { showToast } = useToast()
 const items = ref<AdminAuditLog[]>([])
 const loading = ref(false)
-const batchDeleting = ref(false)
-const clearingAll = ref(false)
-const logsMutating = computed(() => batchDeleting.value || clearingAll.value)
+// 批量删/清空日志 API 未开放，不再走 mutating 路径；保留多选复制导出
+const logsMutating = computed(() => false)
 const snapshotAt = ref('')
 const page = ref(1)
 const limit = ref(20)
@@ -204,10 +209,6 @@ const {
   toggleAllVisible,
   clearSelection,
 } = useTableSelection(items, logKey)
-const selectedDeletableLogs = computed(() => selectedLogs()
-  .filter((item): item is AdminAuditLog & { type: 'request' | 'admin'; id: string } =>
-    (item.type === 'request' || item.type === 'admin') && Boolean(item.id),
-  ))
 const filter = reactive<AdminAuditLogFilter>({
   action: '',
   targetType: '',
@@ -224,7 +225,6 @@ const presets = [
 const metadataVisible = ref(false)
 const currentLog = ref<AdminAuditLog | null>(null)
 const error = ref('')
-const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 let loadSequence = 0
 
 async function fetchAdminLogs(_token: string, filter: AdminAuditLogFilter): Promise<AdminAuditLogListResult> {
@@ -241,14 +241,6 @@ async function fetchAdminLogs(_token: string, filter: AdminAuditLogFilter): Prom
     nextCursor: '',
     hasMore: false,
   }
-}
-
-async function batchDeleteAdminLogs(_token: string, _logs: Array<{ type: 'request' | 'admin'; id: string }>): Promise<{ deleted: number }> {
-  throw new Error('当前后端暂未开放批量删除日志接口')
-}
-
-async function clearAllAdminLogs(_token: string): Promise<{ deleted: number }> {
-  throw new Error('当前后端暂未开放清空日志接口')
 }
 
 function formatIpFingerprint(value?: string): string {
@@ -393,47 +385,6 @@ function exportSelectedLogs() {
     ...logRows(logs),
   ])
   showToast(i18n.global.t('adminLogs.exportSelectedSuccess', { count: logs.length }), 'success')
-}
-
-async function batchRemoveLogs() {
-  const logs = selectedDeletableLogs.value.map((item) => ({ type: item.type, id: item.id }))
-  if (logs.length === 0 || loading.value || batchDeleting.value) return
-  if (!(await askConfirm(i18n.global.t('adminLogs.batchDeleteConfirm', { count: logs.length })))) return
-  batchDeleting.value = true
-  try {
-    const res = await batchDeleteAdminLogs(token.value, logs)
-    showToast(i18n.global.t('adminLogs.batchDeleteSuccess', { count: res.deleted }), 'success')
-    clearSelection()
-    resetPagination()
-    loadData()
-  } catch (err: any) {
-    showToast(err.message || i18n.global.t('adminLogs.batchDeleteFailed'), 'error')
-  } finally {
-    batchDeleting.value = false
-  }
-}
-
-async function clearAllLogs() {
-  if (loading.value || logsMutating.value) return
-  const confirmed = await askConfirm(
-    i18n.global.t('adminLogs.confirmClearAll'),
-  )
-  if (!confirmed) return
-
-  clearingAll.value = true
-  try {
-    const res = await clearAllAdminLogs(token.value)
-    showToast(`已清除 ${res.deleted} 条日志，并保留清理审计记录`, 'success')
-    filter.action = ''
-    filter.targetType = ''
-    filter.targetId = ''
-    resetPagination()
-    await loadData()
-  } catch (err: any) {
-    showToast(err.message || '清除全部日志失败', 'error')
-  } finally {
-    clearingAll.value = false
-  }
 }
 
 onMounted(loadData)

@@ -3,15 +3,15 @@
     <div class="toolbar">
       <div class="filters">
         <div class="integration-tabs">
-          <button class="btn btn-ghost btn-sm" :class="{ 'is-active': activeTab === 'webhooks' }" @click="activeTab = 'webhooks'">{{ $t('adminIntegrations.tabWebhooks') }}</button>
-          <button class="btn btn-ghost btn-sm" :class="{ 'is-active': activeTab === 'apikeys' }" @click="activeTab = 'apikeys'">{{ $t('adminIntegrations.tabApiKeys') }}</button>
+          <button class="btn btn-ghost btn-sm" :class="{ 'is-active': activeTab === 'webhooks' }" :disabled="batchOperating" @click="switchTab('webhooks')">{{ $t('adminIntegrations.tabWebhooks') }}</button>
+          <button class="btn btn-ghost btn-sm" :class="{ 'is-active': activeTab === 'apikeys' }" :disabled="batchOperating" @click="switchTab('apikeys')">{{ $t('adminIntegrations.tabApiKeys') }}</button>
         </div>
       </div>
       <div class="toolbar-actions">
-        <button class="btn btn-primary btn-sm" :disabled="loading" @click="openCreate">
+        <button class="btn btn-primary btn-sm" :disabled="loading || batchOperating" @click="openCreate">
           {{ activeTab === 'webhooks' ? $t('adminIntegrations.addWebhook') : $t('adminIntegrations.createKey') }}
         </button>
-        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">{{ $t('adminIntegrations.refresh') }}</button>
+        <button class="btn btn-ghost btn-sm" :disabled="loading || batchOperating" @click="loadData">{{ $t('adminIntegrations.refresh') }}</button>
       </div>
     </div>
 
@@ -20,10 +20,35 @@
       <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">{{ $t('adminIntegrations.retry') }}</button>
     </div>
 
+    <div v-if="activeSelectedCount > 0" class="table-command-actions bulk-bar" :aria-busy="batchOperating">
+      <span class="selection-summary">
+        {{ $t('adminIntegrations.selectedCount', { count: activeSelectedCount }) }}
+        <template v-if="batchOperating">
+          · {{ $t('adminIntegrations.batchProgress', { done: batchCompleted, total: batchTotal }) }}
+        </template>
+      </span>
+      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || batchOperating" @click="clearActiveSelection">
+        {{ $t('adminIntegrations.clearSelection') }}
+      </button>
+      <button class="btn btn-danger btn-sm" type="button" :disabled="loading || batchOperating || activeSelectedCount === 0" @click="batchDeleteActive">
+        {{ $t('adminIntegrations.batchDelete', { count: activeSelectedCount }) }}
+      </button>
+    </div>
+
     <div v-if="activeTab === 'webhooks'" class="table-wrap" :aria-busy="loading">
       <table class="admin-table">
         <thead>
           <tr>
+            <th class="select-cell">
+              <input
+                type="checkbox"
+                :checked="webhookAllVisibleSelected"
+                :indeterminate.prop="webhookPartiallySelected"
+                :disabled="loading || batchOperating || webhooks.length === 0"
+                :aria-label="$t('adminIntegrations.selectAll')"
+                @change="webhookToggleAll(($event.target as HTMLInputElement).checked)"
+              />
+            </th>
             <th>{{ $t('adminIntegrations.colUrl') }}</th>
             <th>{{ $t('adminIntegrations.colEvents') }}</th>
             <th>{{ $t('adminIntegrations.colStatus') }}</th>
@@ -32,10 +57,19 @@
           </tr>
         </thead>
         <tbody v-if="loading">
-          <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row"><td :colspan="5"><div class="skeleton-cell" /></td></tr>
+          <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row"><td :colspan="6"><div class="skeleton-cell" /></td></tr>
         </tbody>
         <tbody v-else>
-          <tr v-for="w in webhooks" :key="w.id">
+          <tr v-for="w in webhooks" :key="w.id" :class="{ 'is-selected': webhookIsSelected(w.id) }">
+            <td class="select-cell">
+              <input
+                type="checkbox"
+                :checked="webhookIsSelected(w.id)"
+                :disabled="loading || batchOperating"
+                :aria-label="$t('adminIntegrations.selectRow')"
+                @click="webhookSetSelected(w.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
+              />
+            </td>
             <td class="url-cell" :title="w.url">{{ truncate(w.url, 40) }}</td>
             <td><span v-for="e in parseEvents(w.events)" :key="e" class="tag tag-info">{{ e }}</span></td>
             <td>
@@ -44,10 +78,10 @@
             </td>
             <td>{{ w.lastSentAt ? formatTime(w.lastSentAt) : '-' }}</td>
             <td class="col-actions">
-              <button class="btn btn-ghost btn-xs" @click="removeWebhook(w.id)">{{ $t('adminIntegrations.delete') }}</button>
+              <button class="btn btn-ghost btn-xs" type="button" :disabled="batchOperating" @click="removeWebhook(w.id)">{{ $t('adminIntegrations.delete') }}</button>
             </td>
           </tr>
-          <tr v-if="webhooks.length === 0"><td colspan="5" class="empty-text">{{ $t('adminIntegrations.emptyWebhooks') }}</td></tr>
+          <tr v-if="webhooks.length === 0"><td colspan="6" class="empty-text">{{ $t('adminIntegrations.emptyWebhooks') }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -56,6 +90,16 @@
       <table class="admin-table">
         <thead>
           <tr>
+            <th class="select-cell">
+              <input
+                type="checkbox"
+                :checked="keyAllVisibleSelected"
+                :indeterminate.prop="keyPartiallySelected"
+                :disabled="loading || batchOperating || apiKeys.length === 0"
+                :aria-label="$t('adminIntegrations.selectAll')"
+                @change="keyToggleAll(($event.target as HTMLInputElement).checked)"
+              />
+            </th>
             <th>{{ $t('adminIntegrations.colName') }}</th>
             <th>{{ $t('adminIntegrations.colKey') }}</th>
             <th>{{ $t('adminIntegrations.colStatus') }}</th>
@@ -64,19 +108,28 @@
           </tr>
         </thead>
         <tbody v-if="loading">
-          <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row"><td :colspan="5"><div class="skeleton-cell" /></td></tr>
+          <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row"><td :colspan="6"><div class="skeleton-cell" /></td></tr>
         </tbody>
         <tbody v-else>
-          <tr v-for="k in apiKeys" :key="k.id">
+          <tr v-for="k in apiKeys" :key="k.id" :class="{ 'is-selected': keyIsSelected(k.id) }">
+            <td class="select-cell">
+              <input
+                type="checkbox"
+                :checked="keyIsSelected(k.id)"
+                :disabled="loading || batchOperating"
+                :aria-label="$t('adminIntegrations.selectRow')"
+                @click="keySetSelected(k.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
+              />
+            </td>
             <td>{{ k.name }}</td>
             <td><code class="code-text">{{ k.prefix || maskKey(k.key) }}</code></td>
             <td><span class="tag" :class="k.active ? 'tag-success' : 'tag-muted'">{{ k.active ? $t('adminIntegrations.enabled') : $t('adminIntegrations.disabled') }}</span></td>
             <td>{{ formatTime(k.createdAt) }}</td>
             <td class="col-actions">
-              <button class="btn btn-danger btn-xs" @click="removeApiKey(k.id)">{{ $t('adminIntegrations.delete') }}</button>
+              <button class="btn btn-danger btn-xs" type="button" :disabled="batchOperating" @click="removeApiKey(k.id)">{{ $t('adminIntegrations.delete') }}</button>
             </td>
           </tr>
-          <tr v-if="apiKeys.length === 0"><td colspan="5" class="empty-text">{{ $t('adminIntegrations.emptyKeys') }}</td></tr>
+          <tr v-if="apiKeys.length === 0"><td colspan="6" class="empty-text">{{ $t('adminIntegrations.emptyKeys') }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -124,18 +177,25 @@
         <button class="btn btn-primary btn-sm" @click="copyText(newKey); showNewKey = false">{{ $t('adminIntegrations.keyCopiedClose') }}</button>
       </div>
     </AdminModal>
+
+    <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" danger @confirm="onConfirm" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminModal from '@/components/AdminModal.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useToast } from '@/composables/useToast'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
+import { useTableSelection } from '@/composables/useTableSelection'
+import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
 import { adminRequest } from '@/composables/useAdminRequest'
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 const activeTab = ref<'webhooks' | 'apikeys'>('webhooks')
 const loading = ref(false)
 const loadError = ref('')
@@ -148,6 +208,51 @@ const webhooks = ref<any[]>([])
 const apiKeys = ref<any[]>([])
 const webhookForm = ref({ url: '', events: [] as string[] })
 const apiKeyForm = ref({ name: '' })
+
+const webhooksRef = computed(() => webhooks.value)
+const apiKeysRef = computed(() => apiKeys.value)
+const {
+  operating: batchOperating,
+  completed: batchCompleted,
+  total: batchTotal,
+  runSequential,
+} = useAdminBatchOperation()
+
+const {
+  selectedIds: webhookSelectedIds,
+  selectedCount: webhookSelectedCount,
+  isSelected: webhookIsSelected,
+  setSelected: webhookSetSelected,
+  toggleAllVisible: webhookToggleAll,
+  clearSelection: webhookClearSelection,
+  allVisibleSelected: webhookAllVisibleSelected,
+  partiallySelected: webhookPartiallySelected,
+} = useTableSelection(webhooksRef, (row) => row.id)
+
+const {
+  selectedIds: keySelectedIds,
+  selectedCount: keySelectedCount,
+  isSelected: keyIsSelected,
+  setSelected: keySetSelected,
+  toggleAllVisible: keyToggleAll,
+  clearSelection: keyClearSelection,
+  allVisibleSelected: keyAllVisibleSelected,
+  partiallySelected: keyPartiallySelected,
+} = useTableSelection(apiKeysRef, (row) => row.id)
+
+const activeSelectedCount = computed(() =>
+  activeTab.value === 'webhooks' ? webhookSelectedCount.value : keySelectedCount.value,
+)
+
+function clearActiveSelection() {
+  if (activeTab.value === 'webhooks') webhookClearSelection()
+  else keyClearSelection()
+}
+
+function switchTab(tab: 'webhooks' | 'apikeys') {
+  if (batchOperating.value || tab === activeTab.value) return
+  activeTab.value = tab
+}
 
 const webhookEvents = computed(() => [
   { value: 'draw.completed', label: t('adminIntegrations.eventDrawCompleted') },
@@ -197,6 +302,8 @@ async function loadData() {
   }
 }
 
+watch(activeTab, () => { loadData() })
+
 function openCreate() { showCreate.value = true }
 
 async function handleCreate() {
@@ -230,7 +337,8 @@ async function handleCreate() {
 }
 
 async function removeWebhook(id: string) {
-  if (!window.confirm(t('adminIntegrations.confirmDeleteWebhook'))) return
+  if (batchOperating.value) return
+  if (!(await askConfirm(t('adminIntegrations.confirmDeleteWebhook')))) return
   try {
     await adminRequest(`/api/admin/webhooks/${id}`, { method: 'DELETE' })
     showToast(t('adminIntegrations.deleted'), 'success')
@@ -239,12 +347,47 @@ async function removeWebhook(id: string) {
 }
 
 async function removeApiKey(id: string) {
-  if (!window.confirm(t('adminIntegrations.confirmDeleteKey'))) return
+  if (batchOperating.value) return
+  if (!(await askConfirm(t('adminIntegrations.confirmDeleteKey')))) return
   try {
     await adminRequest(`/api/admin/api-keys/${id}`, { method: 'DELETE' })
     showToast(t('adminIntegrations.deleted'), 'success')
     await loadData()
   } catch (err: any) { showToast(err.message || t('adminIntegrations.deleteFailed'), 'error') }
+}
+
+async function batchDeleteActive() {
+  if (loading.value || batchOperating.value) return
+  if (activeTab.value === 'webhooks') {
+    const ids = webhookSelectedIds.value.slice()
+    if (ids.length === 0) return
+    if (!(await askConfirm(t('adminIntegrations.batchDeleteWebhooksConfirm', { count: ids.length })))) return
+    const result = await runSequential(ids, async (id) => {
+      await adminRequest(`/api/admin/webhooks/${id}`, { method: 'DELETE' })
+    })
+    if (!result) return
+    toastBatchResult(result)
+    webhookClearSelection()
+  } else {
+    const ids = keySelectedIds.value.slice()
+    if (ids.length === 0) return
+    if (!(await askConfirm(t('adminIntegrations.batchDeleteKeysConfirm', { count: ids.length })))) return
+    const result = await runSequential(ids, async (id) => {
+      await adminRequest(`/api/admin/api-keys/${id}`, { method: 'DELETE' })
+    })
+    if (!result) return
+    toastBatchResult(result)
+    keyClearSelection()
+  }
+  await loadData()
+}
+
+function toastBatchResult(result: { success: number; failed: number }) {
+  if (result.failed > 0) {
+    showToast(t('adminIntegrations.batchDeleteResult', { success: result.success, failed: result.failed }), 'error')
+  } else {
+    showToast(t('adminIntegrations.batchDeleteSuccess', { count: result.success }), 'success')
+  }
 }
 
 onMounted(loadData)

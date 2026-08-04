@@ -263,6 +263,22 @@ export function canDeletePrizeCode(status: string): boolean {
   return status === 'available'
 }
 
+/**
+ * 租户成员可否移除。
+ * owner 是租户安全锚点，前端不可选、后端也会拦自我删除；批量清场只针对 admin/viewer。
+ */
+export function canRemoveMember(role: string): boolean {
+  return role !== 'owner'
+}
+
+/**
+ * 平台兑换码可否禁用。
+ * 仅 active 可禁；used/expired/disabled 已是终态或已禁，再 PATCH 无业务意义且易误操作。
+ */
+export function canDisableRedemptionCode(status: string): boolean {
+  return status === 'active'
+}
+
 /** 奖品是否启用（缺省 active 视为启用，与常见 DEFAULT 1 一致） */
 export function isPrizeActive(active?: number | null): boolean {
   if (active === undefined || active === null) return true

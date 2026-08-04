@@ -3,6 +3,8 @@ import {
   canBatchHideDraw,
   canDeleteDraw,
   canDeletePrizeCode,
+  canDisableRedemptionCode,
+  canRemoveMember,
   canSelectDrawForBulk,
   drawDisplayName,
   formatLotteryVisibilityLabel,
@@ -93,5 +95,15 @@ describe('drawDisplayName / prizeCodePoolLeft', () => {
     expect(isPrizeActive(undefined)).toBe(true)
     expect(isPrizeActive(0)).toBe(false)
     expect(isPrizeActive(1)).toBe(true)
+  })
+
+  it('owner cannot be bulk-removed; only active redemption codes disable', () => {
+    expect(canRemoveMember('owner')).toBe(false)
+    expect(canRemoveMember('admin')).toBe(true)
+    expect(canRemoveMember('viewer')).toBe(true)
+    expect(canDisableRedemptionCode('active')).toBe(true)
+    expect(canDisableRedemptionCode('used')).toBe(false)
+    expect(canDisableRedemptionCode('disabled')).toBe(false)
+    expect(canDisableRedemptionCode('expired')).toBe(false)
   })
 })

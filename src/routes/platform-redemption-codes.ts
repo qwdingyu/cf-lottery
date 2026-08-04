@@ -184,3 +184,48 @@ platformRedemptionCodesRoute.get("/stats", async (c) => {
     active: Number(active?.total ?? 0),
   });
 });
+
+/**
+ * 禁用单条兑换码（仅 active → disabled）。
+ *
+ * 为什么不做物理删除：码与 redemption_records / 平台审计需可追溯；
+ * 测试清场用「禁用」即可阻断兑换，与 used/expired 终态语义一致。
+ */
+platformRedemptionCodesRoute.patch("/:id", async (c) => {
+  const db = getDb(c);
+  const userId = c.get("userId") as string;
+  const id = c.req.param("id");
+  const body = await safeJsonBody<{ status?: string }>(c);
+  if (!body || body.status !== "disabled") {
+    return fail(c, "仅支持将兑换码状态设为 disabled", 400);
+  }
+
+  const [row] = await db
+    .select({ id: redemptionCodes.id, status: redemptionCodes.status, code: redemptionCodes.code })
+    .from(redemptionCodes)
+    .where(eq(redemptionCodes.id, id))
+    .limit(1);
+  if (!row) return fail(c, "兑换码不存在", 404);
+  if (row.status !== "active") {
+    return fail(c, `仅有效(active)兑换码可禁用，当前状态为 ${row.status}`, 409);
+  }
+
+  const now = new Date().toISOString();
+  await withDbTransaction(db, async (tx) => {
+    await tx
+      .update(redemptionCodes)
+      .set({ status: "disabled", updatedAt: now })
+      .where(eq(redemptionCodes.id, id));
+
+    await writePlatformAudit(tx, {
+      actorUserId: userId,
+      actorRole: c.get("platformRole") as string,
+      action: "platform.redemption_codes.disable",
+      targetType: "redemption_code",
+      targetId: id,
+      metadata: { codeSuffix: row.code.slice(-4), fromStatus: row.status },
+    });
+  });
+
+  return ok(c, { disabled: true, id });
+});

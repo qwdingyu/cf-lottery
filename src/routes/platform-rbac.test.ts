@@ -289,6 +289,64 @@ describe("RBAC-lite 路由分层", () => {
     expect(audit?.targetType).toBe("redemption_code_batch");
   });
 
+  it("平台可禁用 active 兑换码，非 active 返回 409，并写平台审计", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_operator" });
+    const app = createTestApp();
+    const now = new Date().toISOString();
+    const activeId = "rc-disable-active";
+    const usedId = "rc-disable-used";
+    await db.insert(redemptionCodes).values([
+      {
+        id: activeId,
+        code: "LUCKY-TEST-AAAA-0001",
+        plan: "custom",
+        activityQuota: 1,
+        participantQuota: 10,
+        durationDays: 30,
+        status: "active",
+        createdBy: PLATFORM_ID,
+        createdAt: now,
+        expiresAt: now,
+        updatedAt: now,
+      },
+      {
+        id: usedId,
+        code: "LUCKY-TEST-BBBB-0002",
+        plan: "custom",
+        activityQuota: 1,
+        participantQuota: 10,
+        durationDays: 30,
+        status: "used",
+        usedCount: 1,
+        createdBy: PLATFORM_ID,
+        createdAt: now,
+        expiresAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    const okRes = await app.request(`/api/platform/redemption-codes/${activeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ status: "disabled" }),
+    }, TEST_ENV);
+    expect(okRes.status).toBe(200);
+
+    const [activeRow] = await db.select().from(redemptionCodes).where(eq(redemptionCodes.id, activeId)).limit(1);
+    expect(activeRow?.status).toBe("disabled");
+
+    const conflict = await app.request(`/api/platform/redemption-codes/${usedId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ status: "disabled" }),
+    }, TEST_ENV);
+    expect(conflict.status).toBe(409);
+
+    const audits = await db.select().from(platformAuditLogs).where(eq(platformAuditLogs.action, "platform.redemption_codes.disable"));
+    expect(audits.some((a) => a.targetId === activeId)).toBe(true);
+  });
+
   it("平台成员更新会拒绝非法角色字段，避免静默忽略错误权限参数", async () => {
     await seedUsers();
     await db.insert(platformMembers).values([
