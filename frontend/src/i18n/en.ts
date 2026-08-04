@@ -549,7 +549,8 @@ export default {
   // ── Lottery ───────────────────────────────────────
   lottery: {
     title: "Lottery",
-    pageHint: "Verify your email to join. Winners get an email and an order lookup link.",
+    /** Page intro: no e-commerce “order lookup” (docs/102/104) */
+    pageHint: "Verify your email to join. Check results on this page; winners are also notified.",
     drawCount: "{count} participants",
     join: "Join Now",
     joined: "Joined",
@@ -572,7 +573,7 @@ export default {
     loginAndJoin: "Login & Join",
     loginSuccess: "Verified",
     loginFirst: "Verify email",
-    loginBanner: "Verify your email to join draws and see wins on this page.",
+    loginBanner: "Verify your email to join and check your results on this page.",
     loginToCheck: "Verify to check results",
     logout: "Sign out",
     loggedOut: "Signed out of lottery session",
@@ -581,7 +582,8 @@ export default {
     drawResult: "Results",
     won: "Congratulations!",
     notWon: "Better luck next time",
-    orderLink: "View Order",
+    /** Legacy: no e-commerce orders — do not re-hook as primary CTA */
+    orderLink: "View result",
     joinedAt: "Joined",
     viewDraw: "View draw",
     expand: "Details",
@@ -602,14 +604,15 @@ export default {
     joinResultHintScheduled: "You're registered. The draw runs at the scheduled time—then check results here.",
     joinResultHintManual: "You're registered. After the host draws, check this page for your result.",
     joinResultHintInstant: "Submitted. If this draw is instant, your result will show next or on this page.",
-    joinResultHintInstantDone: "Result is ready. Keep this page or share to invite friends.",
+    /** Instant + outcome: never push invite in hint (share CTA gated separately, docs/103/104) */
+    joinResultHintInstantDone: "Result is ready. Keep this page or use “Check result” anytime.",
     /** Non-lottery result_mode: do not say "waiting for draw" */
     joinResultHintNoResult: "Submitted. This activity has no prize draw; the host will follow up if needed.",
     joinResultHintVoteTally: "Your vote is in. Check back here or with the host after tallying.",
     joinResultHintOrdered: "You're registered. Spots are assigned in order — check status on this page.",
     joinFailed: "Failed to join",
     loginExpired: "Session expired, please login again",
-    checkOrder: "View Order",
+    checkOrder: "View result",
     invalidEmail: "Please enter a valid email",
     sendFailed: "Failed to send code",
     invalidCode: "Please enter a 6-digit code",
@@ -735,9 +738,10 @@ export default {
     inviteCodePlaceholder: "Enter invite code",
     inviteCodeRequired: "Please enter an invite code",
     productPlaceholder: "Prize",
-    gameScratchHint: "Scratch to enter",
+    /** Scratch shell: neutral — not hard-coded “lottery/draw” (docs/104) */
+    gameScratchHint: "Scratch to join",
     gameScratchJoined: "You're in",
-    gameScratchJoinedHint: "Entry recorded — results follow the activity draw rules",
+    gameScratchJoinedHint: "Entry recorded — results follow the activity rules",
     gameScratchReveal: "Then tap to join",
     gameScratchCanvasTitle: "Scratch here",
     gameScratchCanvasHint: "(swipe with finger)",
@@ -1220,6 +1224,8 @@ export default {
     statusHintPaused: "The host paused this activity; new joins are off. Refresh status or copy the link for later.",
     statusHintDrawing: "Drawing in progress. Refresh or check results shortly.",
     statusHintDrawn: "This activity has ended. If you joined, you can check whether you won.",
+    /** Non-lottery ended: no “whether you won” (docs/104) */
+    statusHintDrawnGeneric: "This activity has ended. If you joined, check your result on this page.",
     statusHintCancelled: "This activity was cancelled.",
     statusHintJoinedPending: "You have joined. Check results here after the draw.",
     /** Joined + open: honest by result_mode (docs/098) */

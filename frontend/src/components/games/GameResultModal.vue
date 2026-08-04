@@ -146,6 +146,7 @@ const statusTitle = computed(() => {
  * 不用 pageHint（那是页顶「如何参与」说明，放在成功弹窗会错位）。
  */
 const statusHint = computed(() => {
+  // 即时有 outcome：只说「结果已就绪」，不在 hint 里推邀请（邀请 CTA 另有门禁，docs/104）
   if (hasOutcome.value && isInstant.value) {
     return t('lottery.joinResultHintInstantDone')
   }

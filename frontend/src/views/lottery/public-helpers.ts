@@ -113,6 +113,55 @@ export function shouldShowInviteShareCta(drawStatus: string | null | undefined):
   return true
 }
 
+/**
+ * 是否「抽奖结果族」活动（lottery / claim）。
+ * 用于列表「未中奖」标签、已结束横幅等——禁止接龙/问卷仅因 status=drawn 套中奖语义（docs/104）。
+ */
+export function isLotteryResultFamilyKind(activityKind: string | null | undefined): boolean {
+  const kind = String(activityKind || '')
+    .trim()
+    .toLowerCase()
+  return kind === 'lottery' || kind === 'claim'
+}
+
+/**
+ * 「我的记录」行是否展示「未中奖」。
+ * 仅：未标记中奖 + status=drawn + 玩法为 lottery/claim。
+ * activityKind 缺失时不标「未中奖」（保守，避免非抽奖误伤）。
+ */
+export function shouldShowNotWonRecordTag(input: {
+  drawStatus?: string | null
+  activityKind?: string | null
+  won?: boolean
+}): boolean {
+  if (input.won) return false
+  const st = String(input.drawStatus || '')
+    .trim()
+    .toLowerCase()
+  if (st !== 'drawn') return false
+  return isLotteryResultFamilyKind(input.activityKind)
+}
+
+/**
+ * 活动已 ended/drawn 时横幅 i18n key（lottery.*）。
+ * 抽奖族可说「是否中奖」；其它玩法只说「查询结果」（docs/104）。
+ */
+export function statusHintDrawnI18nKey(activityKind?: string | null): string {
+  if (isLotteryResultFamilyKind(activityKind) || !String(activityKind || '').trim()) {
+    // 缺 kind 时公开页多为抽奖深链；仍用抽奖文案。记录列表另走 shouldShowNotWonRecordTag 保守策略。
+    return 'statusHintDrawn'
+  }
+  return 'statusHintDrawnGeneric'
+}
+
+/**
+ * 即时出结果后的说明文案 key。
+ * 邀请 CTA 由 shouldShowInviteShareCta 单独门禁；此处 hint **永不**鼓动「邀请好友」（docs/103/104）。
+ */
+export function joinResultHintInstantDoneI18nKey(): string {
+  return 'joinResultHintInstantDone'
+}
+
 export function getResultCta(
   draw: LotteryDraw | null,
   key: 'after_win' | 'after_loss',

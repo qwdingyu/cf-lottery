@@ -162,6 +162,29 @@ export function tryParseJson(s: string): any {
   }
 }
 
+/**
+ * Open Graph 缺 description 时的兜底文案（docs/104）。
+ * 终态活动禁止「快来参与」——别人点开也无法同等参与，与结果页隐藏邀请同一原则。
+ */
+export function ogDescriptionFallback(status: string | null | undefined): string {
+  const st = String(status || "")
+    .trim()
+    .toLowerCase();
+  if (st === "drawn" || st === "closed") {
+    return "活动已结束，可打开链接查看结果。";
+  }
+  if (st === "cancelled") {
+    return "活动已取消。";
+  }
+  if (st === "paused" || st === "draft") {
+    return "活动暂未开放参与。";
+  }
+  if (st === "drawing") {
+    return "活动正在出结果，可打开链接查看。";
+  }
+  return "快来参与活动吧！";
+}
+
 /** HTML 转义（OG / 防 XSS） */
 export function escapeHtml(s: string): string {
   return s

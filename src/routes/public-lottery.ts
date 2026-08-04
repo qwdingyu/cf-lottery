@@ -27,6 +27,7 @@ import {
   tryParseJson,
   escapeHtml,
   hashEventValue,
+  ogDescriptionFallback,
 } from "./public-lottery-helpers";
 import { setupPublicShareRoutes } from "./public-lottery-share";
 import { defaultExperienceForParticipation } from "./admin-lottery-helpers";
@@ -138,14 +139,21 @@ publicLotteryRoute.get("/draws/:slug/og", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
   const [draw] = await db
-    .select({ title: lotteryDraws.title, description: lotteryDraws.description })
+    .select({
+      title: lotteryDraws.title,
+      description: lotteryDraws.description,
+      status: lotteryDraws.status,
+    })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
     .limit(1);
   if (!draw) return c.html("<!DOCTYPE html><html><body><h1>活动不存在</h1></body></html>", 404);
 
   const title = escapeHtml(draw.title);
-  const desc = escapeHtml(draw.description || "快来参与活动吧！");
+  // 有主办方描述用描述；否则按 status 兜底，终态不写「快来参与」（docs/104）
+  const rawDesc =
+    String(draw.description || "").trim() || ogDescriptionFallback(draw.status);
+  const desc = escapeHtml(rawDesc);
   const origin = getEnv(c, "APP_ORIGIN") || "https://lucky.eforge.xyz";
   const pageUrl = `${origin}/lottery/${slug}`;
 

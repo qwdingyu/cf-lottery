@@ -19,6 +19,8 @@ export type JoinedHint = {
   joinedAt?: string
   drawName?: string
   drawStatus?: string
+  /** 玩法：回填「未中奖」标签时用，缺省不标未中奖（docs/104） */
+  activityKind?: string
   won?: boolean
 }
 
@@ -50,6 +52,7 @@ export function readJoinedHints(store: SessionStore): JoinedHintsMap {
         joinedAt: row.joinedAt ? String(row.joinedAt) : undefined,
         drawName: row.drawName ? String(row.drawName) : undefined,
         drawStatus: row.drawStatus ? String(row.drawStatus) : undefined,
+        activityKind: row.activityKind ? String(row.activityKind) : undefined,
         won: Boolean(row.won),
       }
     }
@@ -108,6 +111,7 @@ export function upsertJoinedHint(
     joinedAt: hint.joinedAt || new Date().toISOString(),
     drawName: hint.drawName,
     drawStatus: hint.drawStatus,
+    activityKind: hint.activityKind,
     won: hint.won,
   }
   if (!row.drawId) return map
@@ -122,6 +126,7 @@ export function upsertJoinedHint(
       ...prev,
       ...row,
       entryId: row.entryId || prev?.entryId,
+      activityKind: row.activityKind || prev?.activityKind,
       won: row.won || prev?.won,
     }
   }

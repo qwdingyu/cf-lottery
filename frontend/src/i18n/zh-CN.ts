@@ -508,7 +508,8 @@ export default {
   // ── 抽奖活动（LotteryView） ─────────────────────────
   lottery: {
     title: "抽奖活动",
-    pageHint: "验证邮箱后即可参与；中奖后将发邮件并生成查单链接。",
+    /** 页顶说明：不提「查单/订单」（本系统无电商订单，docs/102/104） */
+    pageHint: "验证邮箱后即可参与；结果与奖品说明可在本页查询，中奖将另行通知。",
     drawCount: "已参与 {count} 人",
     join: "立即参与",
     joined: "已参与",
@@ -531,7 +532,7 @@ export default {
     loginAndJoin: "登录并参与",
     loginSuccess: "验证成功",
     loginFirst: "验证邮箱",
-    loginBanner: "验证邮箱后可参与抽奖，并在本页查看是否中奖与查单。",
+    loginBanner: "验证邮箱后可参与活动，并在本页查看参与结果。",
     loginToCheck: "验证后查看结果",
     logout: "退出",
     loggedOut: "已退出抽奖登录",
@@ -540,7 +541,8 @@ export default {
     drawResult: "开奖结果",
     won: "恭喜中奖！",
     notWon: "谢谢参与",
-    orderLink: "查看订单",
+    /** 遗留键：本系统不生成电商订单，勿再挂「查看订单」主路径 */
+    orderLink: "查看结果",
     joinedAt: "参与时间",
     viewDraw: "查看活动",
     expand: "详情",
@@ -562,14 +564,15 @@ export default {
     joinResultHintScheduled: "你已成功登记。活动将按设定时间自动开奖，届时可在本页查询结果。",
     joinResultHintManual: "你已成功登记。主办方开奖后，可在本页查询是否中奖。",
     joinResultHintInstant: "你已成功提交。若本场为即时开奖，结果将随后展示或可在本页查询。",
-    joinResultHintInstantDone: "结果已生成。可保存本页记录，或使用分享邀请好友。",
+    /** 即时有 outcome：不写「邀请好友」——邀请 CTA 另有门禁（docs/103/104） */
+    joinResultHintInstantDone: "结果已生成。可保存本页或点「查询结果」随时回看。",
     /** 非抽奖 result_mode：勿套「等开奖」 */
     joinResultHintNoResult: "你已成功提交。本活动不产生中奖结果，主办方如有后续将另行通知。",
     joinResultHintVoteTally: "你已成功投票。计票完成后可在本页或主办方渠道查看。",
     joinResultHintOrdered: "你已成功登记。名额按顺序分配，可在本页查询排队/分配状态。",
     joinFailed: "参与失败",
     loginExpired: "登录已过期，请重新验证",
-    checkOrder: "查看订单",
+    checkOrder: "查看结果",
     invalidEmail: "请填写有效邮箱",
     sendFailed: "发送失败",
     invalidCode: "请填写6位验证码",
@@ -705,9 +708,10 @@ export default {
     // 奖品 fallback
     productPlaceholder: "奖品",
     // 游戏组件文本
-    gameScratchHint: "刮开涂层参与抽奖",
+    /** 刮刮壳中性：不写死「抽奖/开奖」，结果以活动规则为准（docs/104） */
+    gameScratchHint: "刮开涂层后参与",
     gameScratchJoined: "已成功参与",
-    gameScratchJoinedHint: "参与已登记，结果以活动开奖为准",
+    gameScratchJoinedHint: "参与已登记，结果以活动规则为准",
     // 涂层下中性文案：表示「可以继续提交」，不是「已经参与成功」
     gameScratchReveal: "刮开后点按钮参与",
     gameScratchCanvasTitle: "刮开此处",
@@ -1194,6 +1198,8 @@ export default {
     statusHintPaused: "主办方已暂停本活动，暂不可新参与。可刷新状态或复制链接稍后再进。",
     statusHintDrawing: "正在开奖，请稍后点刷新或查询结果。",
     statusHintDrawn: "活动已结束。若已参与，可查询是否中奖。",
+    /** 非抽奖玩法 status=drawn/结束：勿写「是否中奖」（docs/104） */
+    statusHintDrawnGeneric: "活动已结束。若已参与，可在本页查询你的结果。",
     statusHintCancelled: "活动已取消。",
     statusHintJoinedPending: "你已参与。开奖后可在本页查询结果。",
     /** 已参与 + open：按 result_mode 诚实分支（docs/098） */

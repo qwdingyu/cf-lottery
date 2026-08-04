@@ -264,7 +264,11 @@
         >
           <span class="lottery-record-name">{{ row.drawName || row.drawId }}</span>
           <span v-if="myWonById[row.drawId]" class="lottery-tag won">🎉 {{ $t('lottery.wonTag') }}</span>
-          <span v-else-if="row.drawStatus === 'drawn'" class="lottery-tag muted">{{ $t('lottery.notWonTag') }}</span>
+          <!-- 仅抽奖族 + drawn 才标「未中奖」；接龙等勿因 status 误伤（docs/104） -->
+          <span
+            v-else-if="shouldShowNotWonRecordTag({ drawStatus: row.drawStatus, activityKind: row.activityKind, won: false })"
+            class="lottery-tag muted"
+          >{{ $t('lottery.notWonTag') }}</span>
           <span v-else class="lottery-tag joined">{{ $t('lottery.joined') }}</span>
           <span class="lottery-record-cta">{{ $t('lottery.queryResult') }}</span>
         </button>
@@ -776,6 +780,8 @@ import {
   normalizePublicDraw,
   getResultCta,
   shouldShowInviteShareCta,
+  shouldShowNotWonRecordTag,
+  statusHintDrawnI18nKey,
 } from './lottery/public-helpers'
 import {
   isAlreadyJoinedResponse,
@@ -951,6 +957,7 @@ function markDrawJoined(
     drawStatus?: string
     entryId?: string
     won?: boolean
+    activityKind?: string
   },
 ) {
   const draw =
@@ -960,11 +967,14 @@ function markDrawJoined(
   const joinedMap: Record<string, true> = { ...myJoinedById.value, [joinedDrawId]: true, [key]: true }
   if (draw?.publicSlug) joinedMap[draw.publicSlug] = true
   myJoinedById.value = joinedMap
+  const activityKind =
+    extra?.activityKind || draw?.activityKind || undefined
   const row: MyEntry = {
     drawId: key,
     joinedAt: extra?.joinedAt || new Date().toISOString(),
     drawName: extra?.drawName || draw?.name || draw?.title || key,
     drawStatus: extra?.drawStatus || draw?.status,
+    activityKind,
   }
   const rest = myEntryList.value.filter((r) => r.drawId !== key && r.drawId !== joinedDrawId)
   myEntryList.value = [row, ...rest]
@@ -978,6 +988,7 @@ function markDrawJoined(
       joinedAt: row.joinedAt,
       drawName: row.drawName,
       drawStatus: row.drawStatus,
+      activityKind: row.activityKind,
       won: extra?.won,
     },
   )
@@ -1018,6 +1029,8 @@ function completeJoinSuccess(
   if (opts?.email) persistSessionEmail(opts.email)
   markDrawJoined(joinedDrawId, {
     entryId: data.entryId,
+    activityKind: data.activityKind,
+    // 抽奖中奖靠 my-result.won；outcome.status 多为 assigned/waitlisted，勿当「已中奖」
     won: data.outcome?.status === 'won',
   })
   if (data.outcome) {
@@ -1109,12 +1122,15 @@ function statusPathHint(draw: LotteryDraw) {
   if (isDrawJoined(draw) && draw.status === 'open') {
     return t(`lottery.${joinedOpenStatusHintKey(draw.resultMode)}`)
   }
+  // drawn：抽奖族可说「是否中奖」；其它玩法用中性「查询结果」（docs/104）
+  if (draw.status === 'drawn') {
+    return t(`lottery.${statusHintDrawnI18nKey(draw.activityKind)}`)
+  }
   const key = ({
     draft: 'lottery.statusHintDraft',
     open: '',
     paused: 'lottery.statusHintPaused',
     drawing: 'lottery.statusHintDrawing',
-    drawn: 'lottery.statusHintDrawn',
     cancelled: 'lottery.statusHintCancelled',
   } as Record<string, string>)[draw.status]
   return key ? t(key) : ''
@@ -1920,6 +1936,7 @@ async function hydrateJoinedStateFromSession() {
       drawName: h.drawName,
       drawStatus: h.drawStatus || draw.status,
       entryId: h.entryId,
+      activityKind: h.activityKind || draw.activityKind,
       won: h.won,
     })
     if (h.won) {
@@ -1950,6 +1967,7 @@ async function hydrateJoinedStateFromSession() {
       markDrawJoined(draw.id, {
         drawStatus: draw.status,
         entryId: data.entryId ? String(data.entryId) : undefined,
+        activityKind: data.activityKind || draw.activityKind,
         won: Boolean(data.won),
       })
       if (data.won) {

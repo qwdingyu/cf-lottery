@@ -5,8 +5,11 @@ import { describe, expect, it } from "vitest";
 import {
   ambienceMsForExperience,
   gamePrimaryCtaHintKey,
+  isLotteryResultFamilyKind,
   resolveExperienceType,
   shouldShowInviteShareCta,
+  shouldShowNotWonRecordTag,
+  statusHintDrawnI18nKey,
 } from "./public-helpers";
 
 describe("public-helpers experience UX", () => {
@@ -54,5 +57,40 @@ describe("public-helpers experience UX", () => {
     expect(shouldShowInviteShareCta("paused")).toBe(true);
     expect(shouldShowInviteShareCta("")).toBe(true);
     expect(shouldShowInviteShareCta(undefined)).toBe(true);
+  });
+
+  it("isLotteryResultFamilyKind / shouldShowNotWonRecordTag：非抽奖不标未中奖", () => {
+    expect(isLotteryResultFamilyKind("lottery")).toBe(true);
+    expect(isLotteryResultFamilyKind("claim")).toBe(true);
+    expect(isLotteryResultFamilyKind("signup_chain")).toBe(false);
+    expect(isLotteryResultFamilyKind("survey")).toBe(false);
+    expect(isLotteryResultFamilyKind("")).toBe(false);
+
+    expect(
+      shouldShowNotWonRecordTag({ drawStatus: "drawn", activityKind: "lottery", won: false }),
+    ).toBe(true);
+    expect(
+      shouldShowNotWonRecordTag({ drawStatus: "drawn", activityKind: "lottery", won: true }),
+    ).toBe(false);
+    expect(
+      shouldShowNotWonRecordTag({ drawStatus: "open", activityKind: "lottery", won: false }),
+    ).toBe(false);
+    expect(
+      shouldShowNotWonRecordTag({ drawStatus: "drawn", activityKind: "signup_chain", won: false }),
+    ).toBe(false);
+    // 缺 kind：保守不标未中奖
+    expect(shouldShowNotWonRecordTag({ drawStatus: "drawn", activityKind: undefined, won: false })).toBe(
+      false,
+    );
+  });
+
+  it("statusHintDrawnI18nKey：抽奖说中奖，其它玩法中性", () => {
+    expect(statusHintDrawnI18nKey("lottery")).toBe("statusHintDrawn");
+    expect(statusHintDrawnI18nKey("claim")).toBe("statusHintDrawn");
+    expect(statusHintDrawnI18nKey("signup_chain")).toBe("statusHintDrawnGeneric");
+    expect(statusHintDrawnI18nKey("survey")).toBe("statusHintDrawnGeneric");
+    // 缺 kind：公开页多为抽奖深链，仍用抽奖文案
+    expect(statusHintDrawnI18nKey(undefined)).toBe("statusHintDrawn");
+    expect(statusHintDrawnI18nKey("")).toBe("statusHintDrawn");
   });
 });

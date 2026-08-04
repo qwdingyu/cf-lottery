@@ -90,6 +90,8 @@ export type MyEntry = {
   drawName?: string
   drawStatus?: string
   drawTime?: string
+  /** 玩法类型：记录行「未中奖」标签仅 lottery/claim 使用（docs/104） */
+  activityKind?: string
 }
 
 export type ActivityEventType =
