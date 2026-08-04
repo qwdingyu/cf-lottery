@@ -229,8 +229,15 @@
             </template>
             <template v-else-if="isDrawJoined(draw)">
               <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
-              <!-- 查自己的结果始终可点；showWinnerList 只控制公开中奖名单，不挡个人查询 -->
-              <button type="button" class="lottery-result-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
+              <!--
+                已参与主路径：查结果必须是主按钮（docs/115）。
+                showWinnerList 只控制公开名单，不挡个人查询；样式与 non-open 主 CTA 对齐。
+              -->
+              <button
+                type="button"
+                class="lottery-result-btn lottery-result-btn--primary"
+                @click="openMyResult(draw)"
+              >{{ $t('lottery.queryResult') }}</button>
             </template>
             <template v-else-if="hasInteractiveGame(draw)">
               <span class="lottery-join-hint">{{

@@ -5,11 +5,13 @@ import {
   isAlreadyJoinedResponse,
   isSilentFetchOption,
   joinResultHintI18nKey,
+  joinSuccessModalHintI18nKey,
   joinedOpenStatusHintKey,
   joinedHintKey,
   readJoinedHints,
   removeJoinedHintsForKeys,
   resolvePublicDrawPathKey,
+  shouldShowJoinResultQueryCta,
   upsertJoinedHint,
 } from "./joined-session";
 
@@ -75,8 +77,26 @@ describe("joined-session", () => {
     expect(joinResultHintI18nKey("review_decision")).toBe("joinResultHintReview");
     expect(joinedOpenStatusHintKey("no_result")).toBe("statusHintJoinedNoResult");
     expect(joinedOpenStatusHintKey("instant")).toBe("statusHintJoinedInstant");
-    expect(joinedOpenStatusHintKey("manual")).toBe("statusHintJoinedPending");
+    // manual / scheduled 分键（docs/115），禁止都落 pending
+    expect(joinedOpenStatusHintKey("manual")).toBe("statusHintJoinedManual");
+    expect(joinedOpenStatusHintKey("scheduled")).toBe("statusHintJoinedScheduled");
     expect(joinedOpenStatusHintKey("review_decision")).toBe("statusHintJoinedReview");
+    expect(joinedOpenStatusHintKey(undefined)).toBe("statusHintJoinedPending");
+  });
+
+  it("joinSuccessModalHint / 查结果 CTA：与 GameResultModal 契约一致", () => {
+    expect(joinSuccessModalHintI18nKey("manual")).toBe("joinResultHintManual");
+    expect(joinSuccessModalHintI18nKey("scheduled")).toBe("joinResultHintScheduled");
+    expect(joinSuccessModalHintI18nKey("instant", null)).toBe("joinResultHintInstant");
+    expect(joinSuccessModalHintI18nKey("instant", "第 1 位")).toBe("joinResultHintInstantDone");
+    expect(joinSuccessModalHintI18nKey("no_result")).toBe("joinResultHintNoResult");
+    // lottery+manual：必须展示查结果
+    expect(shouldShowJoinResultQueryCta("manual", null)).toBe(true);
+    expect(shouldShowJoinResultQueryCta("scheduled", "")).toBe(true);
+    expect(shouldShowJoinResultQueryCta("instant", null)).toBe(true);
+    // 仅 instant + 有 outcome 才隐藏
+    expect(shouldShowJoinResultQueryCta("instant", "已领取")).toBe(false);
+    expect(shouldShowJoinResultQueryCta("manual", "假标签也不应隐藏")).toBe(true);
   });
 
   it("isSilentFetchOption 忽略 DOM Event 形状", () => {

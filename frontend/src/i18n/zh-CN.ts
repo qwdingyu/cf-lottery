@@ -760,25 +760,25 @@ export default {
     gameSubmitJoin: "立即参与",
     /** Submit/Form/Reveal 已参与（disabled 且非 loading） */
     gameSubmitJoined: "已成功参与",
-    // 裂变组件
-    viralInviteHint: "每邀请 1 人额外获得 {n} 次参与机会",
+    // 裂变：额外的是开奖加权票，不是「再参与一次」（docs/108 / 115）
+    viralInviteHint: "每成功邀请 1 人，开奖时额外 +{n} 票（有上限）",
     viralInvitedLabel: "已邀请",
-    viralMaxLabel: "最多额外次数",
+    viralMaxLabel: "额外票上限",
     /** 已赚取的额外加权票（不含基础 1，docs/108） */
-    viralExtraEarnedLabel: "已获额外",
+    viralExtraEarnedLabel: "已获额外票",
     /** 开奖袋总票数 = 1 + 额外（同场加权，docs/108） */
     viralDrawWeightLabel: "开奖权重",
     /** 解释权重含义，避免「权重」黑话（docs/109） */
-    viralWeightExplain: "开奖时相当于 {weight} 张票（含基础 1 张）",
+    viralWeightExplain: "开奖时相当于 {weight} 张票（含基础 1 张）；邀请只加权重，不另开一场",
     viralLoadShareLink: "加载分享链接…",
     /** 分享失败后重试（与加载态互斥，docs/105） */
     viralRetryShare: "重新获取分享链接",
     viralMe: "我",
     viralEmptyHint: "还没有人邀请好友，快来成为第一个！",
-    /** 中性：额外参与机会，不绑定「抽奖次数」话术（docs/105） */
-    viralHeadline: "邀请好友，赚额外参与机会",
+    /** 诚实：加权票，禁止「再抽一次 / 再参与」误读（docs/115） */
+    viralHeadline: "邀请好友，提高开奖权重",
     viralMyInvite: "🎁 我的邀请",
-    viralExtraProgress: "{earned} / {max} 次额外机会",
+    viralExtraProgress: "{earned} / {max} 额外票",
     viralGenerateHint: "点击下方按钮生成专属链接",
     viralCopy: "📋 复制链接",
     viralGenerateLink: "🔗 生成专属链接",
@@ -1028,8 +1028,8 @@ export default {
     adminViralSection: "裂变传播",
     adminViralSectionDesc: "开启后参与者分享活动可额外获得抽奖机会，并展示邀请排行榜",
     adminEnableViral: "开启裂变传播",
-    adminViralPerInviteLabel: "每邀请 1 人额外获得",
-    adminViralPerInviteSuffix: "次抽奖机会（建议 1-3）",
+    adminViralPerInviteLabel: "每成功邀请 1 人，开奖额外",
+    adminViralPerInviteSuffix: "票（建议 1-3；有上限，非再参与一次）",
     adminViralMaxLabel: "最多额外获得",
     adminViralMaxSuffix: "次（建议 10-20）",
     adminViralLeaderboard: "展示邀请排行榜",
@@ -1231,7 +1231,11 @@ export default {
     /** 非抽奖玩法 status=drawn/结束：勿写「是否中奖」（docs/104） */
     statusHintDrawnGeneric: "活动已结束。若已参与，可在本页查询你的结果。",
     statusHintCancelled: "活动已取消。",
-    statusHintJoinedPending: "你已参与。开奖后可在本页查询结果。",
+    statusHintJoinedPending: "你已参与。结果公布后可在本页查询；可点下方「查询结果」。",
+    /** 已参与 + open + manual：主办方开奖（docs/115） */
+    statusHintJoinedManual: "你已参与。主办方开奖后，可点下方「查询结果」查看是否中奖。",
+    /** 已参与 + open + scheduled：到点自动开奖，勿与 manual 混成一句（docs/115） */
+    statusHintJoinedScheduled: "你已参与。活动将按设定时间自动开奖，届时可点「查询结果」。",
     /** 已参与 + open：按 result_mode 诚实分支（docs/098 / docs/105） */
     statusHintJoinedNoResult: "你已提交。本活动不产生中奖结果，主办方如有后续将另行通知。",
     statusHintJoinedVote: "你已投票。计票完成后可在本页或主办方渠道查看。",

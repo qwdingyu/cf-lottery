@@ -189,6 +189,39 @@ export function joinResultHintI18nKey(resultMode: string | null | undefined): st
 }
 
 /**
+ * 参与成功弹窗 hint key（docs/115 UX）：
+ * - instant + 已有 outcome 标签 → 结果已就绪（不推邀请）
+ * - 其余与 joinResultHintI18nKey 同一套，避免 GameResultModal 内复制分支漂移
+ */
+export function joinSuccessModalHintI18nKey(
+  resultMode: string | null | undefined,
+  outcomeLabel?: string | null,
+): string {
+  const isInstant = String(resultMode || '')
+    .trim()
+    .toLowerCase() === 'instant'
+  const hasOutcome = Boolean(outcomeLabel && String(outcomeLabel).trim())
+  if (hasOutcome && isInstant) return 'joinResultHintInstantDone'
+  return joinResultHintI18nKey(resultMode)
+}
+
+/**
+ * 成功弹窗是否展示「查我的结果」主 CTA。
+ * 仅 instant 且已有 outcome 时弹窗本身即结果，不必再查；
+ * lottery+manual 等一律展示，闭环不中断（docs/096 / 115）。
+ */
+export function shouldShowJoinResultQueryCta(
+  resultMode: string | null | undefined,
+  outcomeLabel?: string | null,
+): boolean {
+  const isInstant = String(resultMode || '')
+    .trim()
+    .toLowerCase() === 'instant'
+  const hasOutcome = Boolean(outcomeLabel && String(outcomeLabel).trim())
+  return !(isInstant && hasOutcome)
+}
+
+/**
  * 已参与且仍 open 时底部/横幅提示 key。
  */
 export function joinedOpenStatusHintKey(resultMode: string | null | undefined): string {
@@ -202,6 +235,9 @@ export function joinedOpenStatusHintKey(resultMode: string | null | undefined): 
   }
   if (mode === 'instant') return 'statusHintJoinedInstant'
   if (mode === 'review_decision') return 'statusHintJoinedReview'
+  // scheduled 与 manual 分键：定时开奖不要落成笼统「开奖后」（docs/115）
+  if (mode === 'scheduled') return 'statusHintJoinedScheduled'
+  if (mode === 'manual') return 'statusHintJoinedManual'
   return 'statusHintJoinedPending'
 }
 

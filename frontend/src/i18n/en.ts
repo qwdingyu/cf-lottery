@@ -788,24 +788,25 @@ export default {
     gameSubmitJoin: "Enter Now",
     /** Submit/Form/Reveal when already joined (disabled, not loading) */
     gameSubmitJoined: "You're in",
-    viralInviteHint: "+{n} extra entries per invite",
+    /** Extra draw weight — not another join (docs/108 / 115) */
+    viralInviteHint: "+{n} draw tickets per successful invite (capped)",
     viralInvitedLabel: "Invited",
-    viralMaxLabel: "Max extra",
+    viralMaxLabel: "Max extra tickets",
     /** Extra tickets earned (excludes base 1, docs/108) */
-    viralExtraEarnedLabel: "Extra earned",
+    viralExtraEarnedLabel: "Extra tickets",
     /** Draw bag weight = 1 + extra (same-draw weighting, docs/108) */
     viralDrawWeightLabel: "Draw weight",
-    /** Plain-language weight (docs/109) */
-    viralWeightExplain: "Counts as {weight} tickets in the draw (includes your base 1)",
+    /** Plain-language weight (docs/109 / 115) */
+    viralWeightExplain: "Counts as {weight} tickets in the draw (base 1 included); invites boost weight only",
     viralLoadShareLink: "Loading share link…",
     /** Retry after share failure (mutually exclusive with loading, docs/105) */
     viralRetryShare: "Retry share link",
     viralMe: "Me",
     viralEmptyHint: "No invites yet. Be the first!",
-    /** Neutral extra entries — not lottery-only wording (docs/105) */
-    viralHeadline: "Invite friends for extra entries",
+    /** Honest: weight boost, not “spin again” (docs/115) */
+    viralHeadline: "Invite friends to boost draw weight",
     viralMyInvite: "🎁 My invites",
-    viralExtraProgress: "{earned} / {max} extra entries",
+    viralExtraProgress: "{earned} / {max} extra tickets",
     viralGenerateHint: "Tap below for your invite link",
     viralCopy: "📋 Copy link",
     viralGenerateLink: "🔗 Get invite link",
@@ -1054,8 +1055,8 @@ export default {
     adminViralSection: "Viral sharing",
     adminViralSectionDesc: "Participants earn extra entries by sharing and an invite leaderboard is shown",
     adminEnableViral: "Enable viral sharing",
-    adminViralPerInviteLabel: "Extra entries per invite",
-    adminViralPerInviteSuffix: "draw entries (recommended 1-3)",
+    adminViralPerInviteLabel: "Per successful invite, extra draw",
+    adminViralPerInviteSuffix: "tickets (recommended 1-3; capped; not another join)",
     adminViralMaxLabel: "Max extra entries",
     adminViralMaxSuffix: "entries (recommended 10-20)",
     adminViralLeaderboard: "Show invite leaderboard",
@@ -1257,7 +1258,9 @@ export default {
     /** Non-lottery ended: no “whether you won” (docs/104) */
     statusHintDrawnGeneric: "This activity has ended. If you joined, check your result on this page.",
     statusHintCancelled: "This activity was cancelled.",
-    statusHintJoinedPending: "You have joined. Check results here after the draw.",
+    statusHintJoinedPending: "You're in. When results are published, tap “Check result” below.",
+    statusHintJoinedManual: "You're in. After the host runs the draw, tap “Check result” to see if you won.",
+    statusHintJoinedScheduled: "You're in. The draw runs at the scheduled time — then tap “Check result”.",
     /** Joined + open: honest by result_mode (docs/098 / docs/105) */
     statusHintJoinedNoResult: "Submitted. This activity has no prize draw; the host will follow up if needed.",
     statusHintJoinedVote: "Your vote is in. Check back here or with the host after tallying.",

@@ -113,6 +113,10 @@ import { writeClipboardText } from '@/composables/useClipboard'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { shouldShowInviteShareCta } from '@/views/lottery/public-helpers'
+import {
+  joinSuccessModalHintI18nKey,
+  shouldShowJoinResultQueryCta,
+} from '@/views/lottery/joined-session'
 
 const props = defineProps<{
   show: boolean
@@ -149,11 +153,12 @@ const isInstant = computed(() => (props.resultMode || '').toLowerCase() === 'ins
 const hasOutcome = computed(() => Boolean(props.outcomeLabel && String(props.outcomeLabel).trim()))
 
 /**
- * 何时展示「查我的结果」：
- * - 已有即时 outcome → 弹窗本身已是结果，不必再查
- * - 否则（scheduled/manual/instant 尚无标签）→ 引导查卡密/状态，闭环不中断
+ * 「查我的结果」CTA：纯函数 shouldShowJoinResultQueryCta（docs/115），
+ * 禁止在 SFC 内复制 instant+outcome 分支以免与横幅/单测漂移。
  */
-const showQueryResultCta = computed(() => !(isInstant.value && hasOutcome.value))
+const showQueryResultCta = computed(() =>
+  shouldShowJoinResultQueryCta(props.resultMode, props.outcomeLabel),
+)
 
 /** 标题：有即时 outcome 用带结果文案；否则统一「参与成功」 */
 const statusTitle = computed(() => {
@@ -164,40 +169,12 @@ const statusTitle = computed(() => {
 })
 
 /**
- * 说明文案：按 result_mode 诚实表达下一步。
- * 不用 pageHint（那是页顶「如何参与」说明，放在成功弹窗会错位）。
+ * 说明文案：joinSuccessModalHintI18nKey 单一真相（与 joined-session 单测锁死）。
+ * 不用 pageHint（页顶「如何参与」放在成功弹窗会错位）。
  */
-const statusHint = computed(() => {
-  // 即时有 outcome：只说「结果已就绪」，不在 hint 里推邀请（邀请 CTA 另有门禁，docs/104）
-  if (hasOutcome.value && isInstant.value) {
-    return t('lottery.joinResultHintInstantDone')
-  }
-  if (isInstant.value) {
-    return t('lottery.joinResultHintInstant')
-  }
-  const mode = (props.resultMode || '').toLowerCase()
-  if (mode === 'scheduled') {
-    return t('lottery.joinResultHintScheduled')
-  }
-  if (mode === 'manual') {
-    return t('lottery.joinResultHintManual')
-  }
-  // 非抽奖：诚实语义，勿套「等开奖」（docs/097 / docs/105）
-  if (mode === 'no_result') {
-    return t('lottery.joinResultHintNoResult')
-  }
-  if (mode === 'vote_tally') {
-    return t('lottery.joinResultHintVoteTally')
-  }
-  if (mode === 'ordered_assignment' || mode === 'capacity_assignment') {
-    return t('lottery.joinResultHintOrdered')
-  }
-  if (mode === 'review_decision') {
-    return t('lottery.joinResultHintReview')
-  }
-  // 未知或未传：保守「已登记，待结果」（joinResultHintPending 已中性化，docs/107）
-  return t('lottery.joinResultHintPending')
-})
+const statusHint = computed(() =>
+  t(`lottery.${joinSuccessModalHintI18nKey(props.resultMode, props.outcomeLabel)}`),
+)
 
 const statusIcon = computed(() => {
   if (hasOutcome.value) return '🎉'

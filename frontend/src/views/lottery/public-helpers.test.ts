@@ -17,12 +17,13 @@ import {
 
 describe("public-helpers experience UX", () => {
   it("ambienceMsForExperience 与游戏 celebrate 时长大致对齐", () => {
-    expect(ambienceMsForExperience("wheel", "open")).toBe(3000);
+    // wheel celebrate = 2800ms；弹窗略晚，避免盖住尾帧（docs/115）
+    expect(ambienceMsForExperience("wheel", "open")).toBe(2900);
     expect(ambienceMsForExperience("slot", "open")).toBe(2000);
     expect(ambienceMsForExperience("grid", "open")).toBe(700);
     expect(ambienceMsForExperience("submit", "open")).toBe(0);
     // 未配置 experience：open 默认 wheel
-    expect(ambienceMsForExperience(undefined, "open")).toBe(3000);
+    expect(ambienceMsForExperience(undefined, "open")).toBe(2900);
   });
 
   it("resolveExperienceType 归一化大小写与默认", () => {

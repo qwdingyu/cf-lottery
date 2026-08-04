@@ -11,7 +11,8 @@ export { defaultExperienceForParticipation }
 
 /**
  * 参与成功后氛围动画时长（ms）：先让用户看见游戏反馈，再出结果弹窗。
- * 时长与组件内 celebrate 动画大致对齐；无长动画的体验立即弹窗。动画仍不表示开奖结果。
+ * 与组件内 celebrate 对齐并略长于动画（wheel 2800→2900），避免弹窗盖住尾帧；
+ * 无长动画的体验立即弹窗。动画仍不表示开奖结果（docs/115）。
  */
 export function ambienceMsForExperience(
   experienceType: string | undefined,
@@ -20,7 +21,8 @@ export function ambienceMsForExperience(
   const exp = String(
     experienceType || defaultExperienceForParticipation(participationMode || 'open'),
   ).toLowerCase()
-  if (exp === 'wheel') return 3000
+  // WheelGame.runCelebrateSpin duration = 2800；弹窗略晚于停转
+  if (exp === 'wheel') return 2900
   if (exp === 'slot') return 2000
   if (exp === 'grid' || exp === 'card' || exp === 'scratch') return 700
   return 0
