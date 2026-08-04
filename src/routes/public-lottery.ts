@@ -574,6 +574,7 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
       participationMode: lotteryDraws.participationMode,
       status: lotteryDraws.status,
       resultMode: lotteryDraws.resultMode,
+      activityKind: lotteryDraws.activityKind,
     })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
@@ -632,9 +633,25 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   }
 
   const identityValue = identity.identityType === "email" ? email : identity.identityValue;
+  const activityKind = draw.activityKind || "lottery";
+  /**
+   * 结果族：决定前端文案，禁止所有活动共用「未抽中奖品」。
+   * - lottery：lottery_winners + 可选卡密
+   * - assignment：接龙/候补等 activity_outcomes（占位/候补）
+   * - review：审批类 outcome
+   * - participation：问卷/投票/签到等「参与即完成」，无中奖语义
+   */
+  const resultFamily =
+    activityKind === "lottery" || activityKind === "claim"
+      ? "lottery"
+      : activityKind === "signup_chain" || activityKind === "waitlist" || activityKind === "reservation"
+        ? "assignment"
+        : activityKind === "approval"
+          ? "review"
+          : "participation";
 
   const [entry] = await db
-    .select({ id: lotteryEntries.id })
+    .select({ id: lotteryEntries.id, joinedAt: lotteryEntries.joinedAt })
     .from(lotteryEntries)
     .where(and(
       eq(lotteryEntries.tenantId, draw.tenantId),
@@ -643,9 +660,8 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     ))
     .limit(1);
 
-  // 1. 是否中奖 + 奖品信息 + 可选卡密
-  // 人工履约（manual_fulfillment）无码池：仍必须 won=true，并返回奖品名/履约说明，
-  // 禁止前端把「有 winner 行但无 prizeCode」当成「未获得奖品」（docs/100）。
+  // 1. 抽奖/领取：是否中奖 + 奖品信息 + 可选卡密
+  // 人工履约（manual_fulfillment）无码池：仍必须 won=true，并返回奖品名/履约说明（docs/100）。
   let won = false;
   let prizeCode: string | null = null;
   let prizeName: string | null = null;
@@ -653,7 +669,18 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   let prizeValueText: string | null = null;
   let fulfillmentNote: string | null = null;
   let tierName: string | null = null;
-  if (entry) {
+  /** 接龙/审批等：与 join 返回的 outcome 同形，查结果必须能回放（docs/101） */
+  let outcome: {
+    id: string;
+    outcomeType: string;
+    status: string;
+    sequenceNo: number | null;
+    assignmentNo: number | null;
+    resultLabel: string;
+    decidedAt: string | null;
+  } | null = null;
+
+  if (entry && resultFamily === "lottery") {
     const [winner] = await db
       .select({
         prizeCodeId: lotteryWinners.prizeCodeId,
@@ -668,7 +695,6 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
       .limit(1);
     if (winner) {
       won = true;
-      // 档位 → 奖品：用于人工发放展示（无卡密也要知道中了什么）
       if (winner.tierId) {
         const [tierRow] = await db
           .select({
@@ -703,13 +729,30 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
         if (pc) prizeCode = pc.secret ? `${pc.code}:${pc.secret}` : pc.code;
       }
     }
+  } else if (entry && (resultFamily === "assignment" || resultFamily === "review")) {
+    // 接龙在 join 时已写 activity_outcomes；审批在后台写入。
+    // 旧 my-result 只查 winners → 接龙永远 won=false → 前端「未获得奖品」（docs/101）。
+    const row = await getActivityOutcome(db, draw.tenantId, draw.id, entry.id);
+    if (row) {
+      outcome = {
+        id: row.id,
+        outcomeType: row.outcomeType,
+        status: row.status,
+        sequenceNo: row.sequenceNo ?? null,
+        assignmentNo: row.assignmentNo ?? null,
+        resultLabel: row.resultLabel || "",
+        decidedAt: row.decidedAt || null,
+      };
+      // 正式占位可视为「有结果成功」；候补/待审不是「未中奖」
+      if (row.status === "assigned" || row.status === "approved") {
+        won = false; // 语义上不是抽奖中奖；前端靠 resultFamily+outcome 展示
+      }
+    }
   }
 
-  // 2. 安慰奖（未中奖自动发券）
-  // 查询键与 entry 身份一致：registered 用户 coupon.recipient_email 存的是 userId。
-  // 必须带 drawId：同租户多场活动时，仅按邮箱会串场返回他场安慰券（docs/099 发版审查 P0）。
+  // 2. 安慰奖：仅抽奖类且未中奖（接龙/问卷不应套用「未中奖发券」查询语义干扰主结果）
   let consolationCoupon: string | null = null;
-  if (!won) {
+  if (resultFamily === "lottery" && !won) {
     const [coupon] = await db
       .select({ code: couponCodes.code, status: couponCodes.status })
       .from(couponCodes)
@@ -726,8 +769,12 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
 
   return ok(c, {
     joined: !!entry,
+    joinedAt: entry?.joinedAt || null,
     won,
-    /** 活动状态：open/drawing/drawn… 前端可区分「尚未开奖」与「已开奖未中」 */
+    activityKind,
+    /** lottery | assignment | review | participation — 前端分支用，勿再默认「未抽中」 */
+    resultFamily,
+    /** 活动状态：open/drawing/drawn… 仅 lottery 终态可说「未中奖」 */
     drawStatus: draw.status,
     resultMode: draw.resultMode || null,
     prizeCode,
@@ -737,6 +784,7 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     fulfillmentNote,
     tierName,
     consolationCoupon,
+    outcome,
   });
 });
 

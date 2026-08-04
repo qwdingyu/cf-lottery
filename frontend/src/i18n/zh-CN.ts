@@ -681,6 +681,17 @@ export default {
     signupStatus: "已接龙",
     signupWaitlisted: "候补中",
     signupAssigned: "已占位",
+    signupAssignedHint: "你已获得正式名额，请按主办方说明到场或履约。",
+    signupWaitlistedHint: "当前为候补；有人退出时可能自动转正，请留意通知。",
+    signupMissingOutcomeHint: "已记录参与，名额详情暂未同步，请稍后重试或联系主办方。",
+    // 非抽奖：问卷/投票/签到
+    resultJoinedNoLottery: "你已成功参与本活动",
+    resultParticipationHint: "本活动不抽奖；你的提交/参与已记录。",
+    // 审批
+    reviewPending: "已提交，等待审核",
+    reviewPendingHint: "主办方审核后可在此查看结果。",
+    reviewApproved: "审核已通过",
+    reviewRejected: "审核未通过",
     // 投票 / 问卷
     voteRequired: "请选择一个投票选项",
     votePickTitle: "请选择一项",

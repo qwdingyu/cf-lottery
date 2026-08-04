@@ -1197,6 +1197,162 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/101：接龙结果在 activity_outcomes，不是 lottery_winners。
+   * my-result 必须返回 resultFamily=assignment + outcome，禁止 won=false 被前端当成「未抽中奖品」。
+   */
+  it("my-result 接龙：resultFamily=assignment、outcome 有占位文案、won 不代表未中奖", async () => {
+    const app = createPublicTestApp();
+    const email = "signup-result@test.com";
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "signup-my-result",
+      title: "接龙查结果", status: "open", activityKind: "signup_chain",
+      participationMode: "open", experienceType: "list", resultMode: "ordered_assignment",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 0, maxParticipants: 10,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: email, joinedAt: new Date().toISOString(),
+    });
+    await db.insert(activityOutcomes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      entryId,
+      outcomeType: "assignment",
+      status: "assigned",
+      sequenceNo: 2,
+      assignmentNo: 2,
+      resultKey: "slot_2",
+      resultLabel: "第 2 位",
+      decidedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const token = await signJwt(
+      { sub: crypto.randomUUID(), tenantId: TENANT, email },
+      TEST_ENV.JWT_SECRET,
+      3600,
+    );
+    const res = await app.request("/public/draws/signup-my-result/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.81",
+      },
+      body: JSON.stringify({ email, code: "" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.joined).toBe(true);
+    expect(body.activityKind).toBe("signup_chain");
+    expect(body.resultFamily).toBe("assignment");
+    expect(body.outcome).toBeTruthy();
+    expect(body.outcome.status).toBe("assigned");
+    expect(body.outcome.resultLabel).toBe("第 2 位");
+    expect(body.outcome.assignmentNo).toBe(2);
+    // 接龙无 lottery_winners：won 保持 false，但绝不能只有「未中奖」字段可解释结果
+    expect(body.won).toBe(false);
+    expect(body.prizeCode).toBeNull();
+  });
+
+  it("my-result 接龙候补：outcome.status=waitlisted", async () => {
+    const app = createPublicTestApp();
+    const email = "signup-wait@test.com";
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "signup-wait-result",
+      title: "接龙候补", status: "open", activityKind: "signup_chain",
+      participationMode: "open", resultMode: "ordered_assignment",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 0, maxParticipants: 1,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: email, joinedAt: new Date().toISOString(),
+    });
+    await db.insert(activityOutcomes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      entryId,
+      outcomeType: "assignment",
+      status: "waitlisted",
+      sequenceNo: 3,
+      assignmentNo: null,
+      resultKey: "waitlist_2",
+      resultLabel: "候补第 2 位",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const token = await signJwt(
+      { sub: crypto.randomUUID(), tenantId: TENANT, email },
+      TEST_ENV.JWT_SECRET,
+      3600,
+    );
+    const res = await app.request("/public/draws/signup-wait-result/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.82",
+      },
+      body: JSON.stringify({ email, code: "" }),
+    }, TEST_ENV);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.resultFamily).toBe("assignment");
+    expect(body.outcome?.status).toBe("waitlisted");
+    expect(body.outcome?.resultLabel).toContain("候补");
+  });
+
+  it("my-result 问卷：resultFamily=participation，不查 winners 语义", async () => {
+    const app = createPublicTestApp();
+    const email = "survey-result@test.com";
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "survey-my-result",
+      title: "问卷", status: "open", activityKind: "survey",
+      participationMode: "open", resultMode: "no_result",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 0,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: email, joinedAt: new Date().toISOString(),
+    });
+    const token = await signJwt(
+      { sub: crypto.randomUUID(), tenantId: TENANT, email },
+      TEST_ENV.JWT_SECRET,
+      3600,
+    );
+    const res = await app.request("/public/draws/survey-my-result/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.83",
+      },
+      body: JSON.stringify({ email, code: "" }),
+    }, TEST_ENV);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.joined).toBe(true);
+    expect(body.resultFamily).toBe("participation");
+    expect(body.won).toBe(false);
+    expect(body.outcome).toBeNull();
+  });
+
+  /**
    * docs/099：my-result 安慰券必须按 drawId 过滤，禁止同租户串场。
    */
   it("my-result 安慰券仅返回本活动 issued 券，不串他场", async () => {

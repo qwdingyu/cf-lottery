@@ -605,18 +605,64 @@
           </template>
         </div>
 
-        <!-- 查询结果：按 joined / drawStatus / won / prizeType 诚实分支（docs/100） -->
+        <!-- 查询结果：按 resultFamily / joined / outcome / won 诚实分支（docs/100、docs/101） -->
         <div v-else class="result-detail">
           <!-- 身份通过但未参与 -->
           <template v-if="myResultData.joined === false">
             <div class="result-line">{{ $t('lottery.resultNotJoined') }}</div>
           </template>
-          <!-- 已参与、尚未开奖：勿写「未获得奖品」 -->
+
+          <!-- 接龙 / 候补 / 预约：占位或候补，绝不是「未抽中奖品」 -->
+          <template v-else-if="myResultFamily === 'assignment'">
+            <template v-if="myResultData.outcome">
+              <div class="result-line">
+                <strong v-if="myResultData.outcome.status === 'assigned'">✅ {{ $t('lottery.signupAssigned') }}</strong>
+                <strong v-else-if="myResultData.outcome.status === 'waitlisted'">⏳ {{ $t('lottery.signupWaitlisted') }}</strong>
+                <strong v-else>📋 {{ $t('lottery.signupStatus') }}</strong>
+              </div>
+              <div v-if="myResultData.outcome.resultLabel" class="result-line result-outcome-label">
+                {{ myResultData.outcome.resultLabel }}
+              </div>
+              <p v-if="myResultData.outcome.status === 'assigned'" class="result-hint">
+                {{ $t('lottery.signupAssignedHint') }}
+              </p>
+              <p v-else-if="myResultData.outcome.status === 'waitlisted'" class="result-hint">
+                {{ $t('lottery.signupWaitlistedHint') }}
+              </p>
+            </template>
+            <template v-else>
+              <div class="result-line">✅ {{ $t('lottery.resultJoinedNoLottery') }}</div>
+              <p class="result-hint">{{ $t('lottery.signupMissingOutcomeHint') }}</p>
+            </template>
+          </template>
+
+          <!-- 审批：待审 / 通过 / 拒绝 -->
+          <template v-else-if="myResultFamily === 'review'">
+            <template v-if="myResultData.outcome">
+              <div class="result-line">
+                <strong v-if="myResultData.outcome.status === 'approved'">✅ {{ $t('lottery.reviewApproved') }}</strong>
+                <strong v-else-if="myResultData.outcome.status === 'rejected'">❌ {{ $t('lottery.reviewRejected') }}</strong>
+                <strong v-else>⏳ {{ $t('lottery.reviewPending') }}</strong>
+              </div>
+              <div v-if="myResultData.outcome.resultLabel" class="result-hint">{{ myResultData.outcome.resultLabel }}</div>
+            </template>
+            <template v-else>
+              <div class="result-line">⏳ {{ $t('lottery.reviewPending') }}</div>
+              <p class="result-hint">{{ $t('lottery.reviewPendingHint') }}</p>
+            </template>
+          </template>
+
+          <!-- 问卷 / 投票 / 签到：参与即完成，无中奖语义 -->
+          <template v-else-if="myResultFamily === 'participation'">
+            <div class="result-line">✅ {{ $t('lottery.resultJoinedNoLottery') }}</div>
+            <p class="result-hint">{{ $t('lottery.resultParticipationHint') }}</p>
+          </template>
+
+          <!-- 以下仅 lottery / claim 抽奖族 -->
           <template v-else-if="!myResultData.won && !isMyResultDrawFinal">
             <div class="result-line">⏳ {{ $t('lottery.resultPendingDraw') }}</div>
             <p class="result-hint">{{ $t('lottery.resultPendingDrawHint') }}</p>
           </template>
-          <!-- 中奖：有卡密 / 人工履约 / 仅有档位名 -->
           <template v-else-if="myResultData.won">
             <div class="result-line">🎉 <strong>{{ $t('lottery.won') }}</strong></div>
             <div v-if="myResultData.prizeName || myResultData.tierName" class="result-prize-meta">
@@ -634,7 +680,6 @@
               <code class="result-code" @click="copyMyResult(myResultData.prizeCode)">{{ myResultData.prizeCode }}</code>
               <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
             </div>
-            <!-- 人工履约：无卡密是设计如此，不是「未中奖」 -->
             <template v-else-if="isManualFulfillmentPrize(myResultData.prizeType)">
               <p class="result-hint result-fulfill-hint">{{ $t('lottery.wonManualFulfillmentHint') }}</p>
               <p v-if="myResultData.fulfillmentNote" class="result-hint">{{ myResultData.fulfillmentNote }}</p>
@@ -660,11 +705,15 @@
               <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
             </div>
           </template>
-          <!-- 已开奖且未中奖（仅此才用「未获得」语义） -->
+          <!-- 仅抽奖族 + 已开奖 + 未中奖 -->
           <template v-else>
             <div class="result-line">😊 {{ $t('lottery.thanksForParticipating') }}</div>
           </template>
-          <div v-if="myResultData.joined !== false && !myResultData.won && isMyResultDrawFinal && getResultCta(myResultDraw, 'after_loss')" class="result-cta-card">
+
+          <div
+            v-if="myResultFamily === 'lottery' && myResultData.joined !== false && !myResultData.won && isMyResultDrawFinal && getResultCta(myResultDraw, 'after_loss')"
+            class="result-cta-card"
+          >
             <a :href="getResultCta(myResultDraw, 'after_loss')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
               {{ getResultCta(myResultDraw, 'after_loss')!.title || $t('lottery.viewDetail') }}
             </a>
@@ -1133,10 +1182,14 @@ const myResultLoading = ref(false)
 const myResultSendingCode = ref(false)
 const myResultCodeCooldown = ref(0)
 let myResultCooldownTimer: ReturnType<typeof setInterval> | null = null
-/** my-result 载荷：含人工履约奖品信息（docs/100） */
+/** my-result 载荷：抽奖奖品 + 接龙 outcome + resultFamily（docs/100、docs/101） */
 type MyResultPayload = {
   joined: boolean
+  joinedAt?: string | null
   won: boolean
+  activityKind?: string | null
+  /** lottery | assignment | review | participation */
+  resultFamily?: string | null
   drawStatus?: string | null
   resultMode?: string | null
   prizeCode: string | null
@@ -1146,12 +1199,38 @@ type MyResultPayload = {
   fulfillmentNote?: string | null
   tierName?: string | null
   consolationCoupon: string | null
+  outcome?: {
+    id?: string
+    outcomeType?: string
+    status?: string
+    sequenceNo?: number | null
+    assignmentNo?: number | null
+    resultLabel?: string
+    decidedAt?: string | null
+  } | null
 }
 const myResultData = ref<MyResultPayload | null>(null)
 const myResultError = ref('')
 
-/** 活动是否已终态（可诚实说「未中奖」） */
+/**
+ * 结果族：优先 API resultFamily；缺省时用活动 activityKind 推断（兼容旧后端）。
+ * 接龙绝不能落到 lottery 的「未抽中」分支。
+ */
+const myResultFamily = computed(() => {
+  const fromApi = String(myResultData.value?.resultFamily || '').trim()
+  if (fromApi) return fromApi
+  const kind = String(
+    myResultData.value?.activityKind || myResultDraw.value?.activityKind || 'lottery',
+  ).trim()
+  if (kind === 'lottery' || kind === 'claim') return 'lottery'
+  if (kind === 'signup_chain' || kind === 'waitlist' || kind === 'reservation') return 'assignment'
+  if (kind === 'approval') return 'review'
+  return 'participation'
+})
+
+/** 仅抽奖族：活动是否已终态（可诚实说「未中奖」） */
 const isMyResultDrawFinal = computed(() => {
+  if (myResultFamily.value !== 'lottery') return false
   const st = String(myResultData.value?.drawStatus || myResultDraw.value?.status || '')
   return st === 'drawn' || st === 'cancelled'
 })
