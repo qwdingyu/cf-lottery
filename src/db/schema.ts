@@ -171,9 +171,18 @@ export const prizeCodes = sqliteTable("prize_codes", {
   code: text("code").notNull(),
   secret: text("secret").notNull().default(""),
   note: text("note").notNull().default(""),
+  /**
+   * 状态机（docs/111 §7.3）：
+   *   available → issued（中奖发放）
+   *   issued → revoked（违规撤奖 / 运营人工作废）
+   *   issued + expires_at 到期 → expired（自动作废，由 cron 标记）
+   *   available → revoked（导入后直接作废）
+   */
   status: text("status").notNull().default("available"),
   winnerId: text("winner_id").default(""),
   issuedAt: text("issued_at"),
+  /** 奖品卡密过期时间（可空，空=永不过期，限时卡密奖品刚需） */
+  expiresAt: text("expires_at"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   // 这是按租户、奖品、状态领取可用码的性能索引，不是业务唯一约束。
@@ -436,7 +445,7 @@ export const couponCodes = sqliteTable("coupon_codes", {
   drawId: text("draw_id"),
   code: text("code").notNull(),
   label: text("label").notNull().default(""),
-  status: text("status").notNull().default("available"), // available/reserved/issued/redeemed/expired
+  status: text("status").notNull().default("available"), // available/reserved/issued/redeemed/expired/revoked
   recipientEmail: text("recipient_email"),
   redeemedAt: text("redeemed_at"),
   expiresAt: text("expires_at"),

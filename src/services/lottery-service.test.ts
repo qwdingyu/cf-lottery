@@ -1145,3 +1145,100 @@ describe("裂变加权开奖", () => {
     expect(result.candidateCount).toBe(2);
   });
 });
+
+// ── 处罚波及名单测试（docs/111 §5 阶段二） ──
+// 直接通过 DB 插入构造归因链，不依赖 joinDraw/publishDraw 的完整流程，
+// 保持对 computePenaltyTargets 查询逻辑的独立验证。
+describe("computePenaltyTargets", () => {
+  it("退群者未参与活动时返回 null", async () => {
+    const { computePenaltyTargets } = await import("../services/lottery-service");
+    const { id } = await setupDraw();
+    const result = await computePenaltyTargets(db, TENANT, id, "nobody@test.com");
+    expect(result).toBeNull();
+  });
+
+  it("退群者有邀请人时，inviterEntryId 不为 null", async () => {
+    const { computePenaltyTargets, recordActivityEvent } = await import("../services/lottery-service");
+    const { id: drawId } = await setupDraw();
+
+    // 邀请人直接插入 lottery_entries（绕过 joinDraw 的状态校验）
+    const inviterEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: inviterEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "inviter@test.com",
+      ipHash: "ip1", joinedAt: new Date().toISOString(),
+    });
+
+    // 邀请人生成的分享链接
+    const shareCode = `test-sc-${Date.now()}`;
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      sharerEntryId: inviterEntryId, shareCode,
+      createdAt: new Date().toISOString(),
+    });
+
+    // 退群者手动插入 entry
+    const leaverEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: leaverEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "leaver@test.com",
+      ipHash: "ip2", joinedAt: new Date().toISOString(),
+    });
+
+    // 归因事件：退群者通过分享链接参与
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId,
+      entryId: leaverEntryId,
+      eventType: "attributed_join",
+      refCode: shareCode,
+    });
+
+    const result = await computePenaltyTargets(db, TENANT, drawId, "leaver@test.com");
+    expect(result).not.toBeNull();
+    expect(result!.leaverEntryId).toBe(leaverEntryId);
+    expect(result!.inviterEntryId).toBe(inviterEntryId);
+    expect(result!.invitedEntryIds).toEqual([]);
+  });
+
+  it("退群者邀请了其他人时，invitedEntryIds 不为空", async () => {
+    const { computePenaltyTargets, recordActivityEvent } = await import("../services/lottery-service");
+    const { id: drawId } = await setupDraw();
+
+    // 退群者插入 entry
+    const leaverEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: leaverEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "leaver2@test.com",
+      ipHash: "ip3", joinedAt: new Date().toISOString(),
+    });
+
+    // 退群者生成分享链接
+    const shareCode = `test-sc2-${Date.now()}`;
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      sharerEntryId: leaverEntryId, shareCode, joinedCount: 1,
+      createdAt: new Date().toISOString(),
+    });
+
+    // 被邀请者插入 entry
+    const inviteeEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: inviteeEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "invitee@test.com",
+      ipHash: "ip4", joinedAt: new Date().toISOString(),
+    });
+
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId,
+      entryId: inviteeEntryId,
+      eventType: "attributed_join",
+      refCode: shareCode,
+    });
+
+    const result = await computePenaltyTargets(db, TENANT, drawId, "leaver2@test.com");
+    expect(result).not.toBeNull();
+    expect(result!.invitedEntryIds).toContain(inviteeEntryId);
+    expect(result!.inviterEntryId).toBeNull();
+  });
+});
+

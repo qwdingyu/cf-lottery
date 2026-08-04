@@ -48,7 +48,17 @@ export type ActivityEventType =
   | "share_created"
   | "share_click"
   | "attributed_join"
-  | "external_conversion_reported";
+  | "external_conversion_reported"
+  /** 奖励意图已生成（通知中转站发卡时记录） */
+  | "reward_earned"
+  /** 处罚请求已发起（波及名单计算后记录） */
+  | "penalty_requested"
+  /** 外部事件：退群上报 */
+  | "ext:member.left_group"
+  /** 外部事件：中转站回传发卡确认 */
+  | "ext:reward.issued"
+  /** 外部事件：中转站回传处罚执行确认 */
+  | "ext:penalty.executed";
 
 export type RecordActivityEventInput = {
   tenantId: string;
@@ -72,7 +82,9 @@ export type WebhookEventType =
   | "prize.issued"
   | "share.created"
   | "share.clicked"
-  | "activity.event.recorded";
+  | "activity.event.recorded"
+  | "reward.earned"
+  | "penalty.requested";
 
 export type EnqueueWebhookEventInput = {
   tenantId: string;
@@ -119,6 +131,11 @@ export const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "share_click",
   "attributed_join",
   "external_conversion_reported",
+  "reward_earned",
+  "penalty_requested",
+  "ext:member.left_group",
+  "ext:reward.issued",
+  "ext:penalty.executed",
 ]);
 
 export const WEBHOOK_EVENT_TYPES = new Set<WebhookEventType>([
@@ -130,6 +147,10 @@ export const WEBHOOK_EVENT_TYPES = new Set<WebhookEventType>([
   "share.created",
   "share.clicked",
   "activity.event.recorded",
+  /** 通知中转站生成奖励（111 方案：拉新归因成功后触发） */
+  "reward.earned",
+  /** 通知中转站执行处罚（111 方案：退群波及名单计算后触发） */
+  "penalty.requested",
 ]);
 
 export const EXTERNAL_CONVERSION_TYPES = new Set<ExternalConversionType>([
