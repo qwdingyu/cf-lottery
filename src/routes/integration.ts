@@ -111,14 +111,17 @@ integrationRoute.post("/conversions", async (c) => {
 // ═════════════════════════════════════════════════════════
 // 外部事件入口（docs/111 §5 阶段二 + docs/114 §4）
 //
+// 机制：租户 API Key 鉴权 + 限流 + 幂等 + 事件路由。
+// 幂等实现：同一 API key 的同一 idempotencyKey 只处理一次。
+//   幂等检查通过 activityEvents 表：eventType=ext:{event}, refCode=idempotencyKey。
+//   refCode 字段截断到 80 字符——与 activityEvents.refCode 的存储长度一致，
+//   避免越界 INSERT。假定 idempotencyKey 是 UUID/短哈希，前 80 字符足够唯一。
+//
 // 支持事件类型：
 //   member.left_group — QQ 机器人上报退群，触发波及名单计算 + 处罚 Webhook
 //   reward.issued     — 中转站回传发卡确认
 //   penalty.executed  — 中转站回传处罚执行确认
 //   reward.redeemed   — 中转站回传兑换码核销确认（标记 prizeCode redeemed）
-//
-// 鉴权：租户 API Key（与 /conversions 相同）
-// 幂等：idempotencyKey 去重，防机器人重报
 // ═════════════════════════════════════════════════════════
 
 const INTEGRATION_EVENT_LIMIT = 60;  // 外部事件限流：60 次/分钟/API key
@@ -172,6 +175,11 @@ integrationRoute.post("/events", async (c) => {
   }
 
   // ── 处理 member.left_group ──
+  // 流程：验证活动存在 → 计算波及名单 → 将 entryId 映射为 identityValue
+  //       → 记录退群事件 → 记录处罚意图 → 发送处罚 Webhook 通知中转站。
+  //
+  // 注意：webhook 入队失败不影响事件记录。penalty_requested 事件和 ext:member.left_group
+  // 事件都是看板/审计依据，webhook 投递失败可通过管理端重试。
   if (event === "member.left_group") {
     const account = String(payload.account || "").trim();
     const drawId = String(payload.drawId || "").trim();
@@ -200,7 +208,13 @@ integrationRoute.post("/events", async (c) => {
       return ok(c, { handled: true, penaltyTriggered: false, reason: "退群者未参与此活动" });
     }
 
-    // 将 entryId 列表转换为 identityValue（供 Webhook 负载使用）
+    // 将 entryId 列表转换为 identityValue（供 Webhook 负载使用）。
+    // 为什么需要这一步？computePenaltyTargets 返回的是 entryId（UUID），
+    // 但中转站需要人类可读的账号（邮箱/用户名）来定位用户和作废兑换码。
+    // 这里做一次批量查询映射，避免在 Webhook payload 中暴露内部 UUID。
+    //
+    // penaltyEntryIds 可能包含重复 ID（退群者本人可能在 inviterEntryId 或 invitedEntryIds 中重复），
+    // 但 Map 的 key 去重特性保证 identityMap 不会重复，inArray 查数据库也不会有问题。
     const penaltyEntryIds = [targets.leaverEntryId];
     if (targets.inviterEntryId) penaltyEntryIds.push(targets.inviterEntryId);
     penaltyEntryIds.push(...targets.invitedEntryIds);
@@ -270,9 +284,15 @@ integrationRoute.post("/events", async (c) => {
   // ── reward.redeemed：中转站回传兑换码核销确认（docs/114 §4） ──
   // 将 prizeCode 从 issued 标记为 redeemed，让 cf-lottery 知道"卡已被用"，
   // 退群处罚时可区分"发了没换"与"发了已换"（已核销的由中转站扣余额，不重复 revoked）。
-  // 幂等设计：如果卡已被 revoked（退群收回）或已 redeemed（重复回传），
-  //   返回 redeemed=false 但 HTTP 200——告诉中转站"卡当前状态不允许核销"，
-  //   同时 previousStatus 帮助中转站排查（是已被收回还是已核销过）。
+  //
+  // 幂等设计（为什么不是简单的 UPDATE）：
+  // - 如果卡已被 revoked（退群收回），再次回传 redeemed 是无效操作——返回 redeemed=false，
+  //   HTTP 200（不是 409/422），因为这是正常业务状态（退群先于核销），不是调用方错误。
+  // - 如果卡已被 redeemed（重复回传），同样返回 redeemed=false，幂等。
+  // - previousStatus 字段帮助中转站排查：是"被退群收回了"还是"已经核销过了"。
+  //
+  // 为什么不检查 drawId 一致性？reward.redeemed 是"卡密级别的操作"，不依赖活动上下文。
+  // 卡密的归属（tenantId + prizeId）已在 importPrizeCodes 时确定，核销只需校验租户权限。
   } else if (event === "reward.redeemed") {
     const code = String(payload.code || "").trim();
     const prizeCodeId = String(payload.prizeCodeId || "").trim();

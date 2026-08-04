@@ -11,6 +11,9 @@
  *   perUserPerDay 按「邀请人」维度，globalPerDay 按活动维度。
  * - 通知只入队（enqueue），实际 HTTP 投递由调用方在事务外异步触发，
  *   与 performDraw 的 webhook 模式一致，失败不影响参与主流程。
+ * - 配额校验顺序：先个人后全局。个人超限时立即拒绝，避免消耗全局配额的写入。
+ *   如果个人通过但全局超限，个人配额已被消耗——这是已知的权衡：
+ *   "有人被邀请了"是事实，只是池子暂时满了，个人配额的消耗是合理的。
  */
 import type { DbType } from "../../db/client";
 import { and, eq } from "drizzle-orm";
@@ -31,9 +34,13 @@ export type TriggerRewardEarnedResult = {
 /**
  * 归因成功后触发奖励意图。
  *
+ * 调用时机：joinDraw 事务内，归因成功（attributed=true）后。
+ * 调用方（maybeTriggerReward）用 try/catch 包裹，确保奖励失败不影响参与主流程。
+ *
  * @param tx 事务实例（与 joinDraw 同事务，保证归因与奖励意图原子性）
  * @param drawId 活动 ID
- * @param sharerEntryId 邀请人（奖励受益人）的 entryId
+ * @param sharerEntryId 邀请人（奖励受益人）的 entryId——用作配额 key 而非 identityValue，
+ *   因为 entryId 是 UUID，无特殊字符，且同一 draw 内同一 identity 只有一个 entry
  * @param inviterIdentityValue 邀请人的身份值（用于 Webhook payload 与对账）
  * @param refCode 归因使用的分享码
  */
@@ -51,7 +58,9 @@ export async function triggerRewardEarned(
     .limit(1);
   if (!draw) return { triggered: false, reason: "no_reward_config", sharerEntryId, deliveryIds: [] };
 
-  // 宽容解析 activityConfig：只有带 reward.perInviteAmount 的配置才触发
+  // 宽容解析 activityConfig：只用 reward.perInviteAmount 字段判断是否触发。
+  // 不依赖严格的 schema 校验——活动配置可能包含多种玩法（lottery/survey/vote），
+  // 只有显式配置了 reward 规则的活动才触发，其余活动不受影响。
   let config: { reward?: { perInviteAmount?: number; currency?: string }; quota?: { perUserPerDay?: number; globalPerDay?: number } } | null = null;
   try {
     config = draw.activityConfig ? JSON.parse(draw.activityConfig) : null;
@@ -59,24 +68,32 @@ export async function triggerRewardEarned(
     config = null;
   }
   const rewardConfig = config?.reward;
+  // 用 Number() 而非 parseInt，因为配置值可能是字符串 "100" 或数字 100。
+  // NaN <= 0 为 true，会走 no_reward_config 分支，防御非法配置。
   const perInviteAmount = Number(rewardConfig?.perInviteAmount || 0);
   if (!rewardConfig || perInviteAmount <= 0) {
     return { triggered: false, reason: "no_reward_config", sharerEntryId, deliveryIds: [] };
   }
 
+  // 每个配额门槛用 Math.max(1, ...) 防御：配置为 0 或负数时降级为 1（至少允许 1 次），
+  // 避免"配置了 reward 但因为配额为 0 永远不触发"的静默故障。
   const perUserPerDay = Math.max(1, Number(config?.quota?.perUserPerDay || 1));
   const globalPerDay = Math.max(1, Number(config?.quota?.globalPerDay || 100));
 
-  // 配额校验 1：邀请人（奖励受益人）每天最多 perUserPerDay 次
-  // 先校验个人配额，再校验全局配额——个人配额是"防刷"的第一道闸门，
-  // 全局配额是"总池子"的第二道闸门。顺序有意义：个人超限时立即拒绝，
-  // 避免消耗全局配额 key 的写入（每次 checkDbRateLimit 会 INSERT 一条计数记录）。
+  // 配额校验 1：邀请人（奖励受益人）每天最多 perUserPerDay 次。
+  //
+  // 先校验个人配额，再校验全局配额。顺序有意义：
+  // - 个人配额是"防刷"的第一道闸门：同一邀请人短时间大量邀请 = 羊毛行为。
+  // - 全局配额是"总池子"的第二道闸门：限制活动总奖励消耗。
+  // - 个人超限时立即拒绝，避免消耗全局配额 key 的 INSERT（checkDbRateLimit 每次写入一条计数）。
+  // - 如果个人通过但全局超限：个人配额已被消耗，但奖励未触发。这是已知设计权衡——
+  //   "有人被邀请了"是事实，池子满只是暂时，下一次配额的消耗是合理的。
   const userKey = `reward:${drawId}:${sharerEntryId}`;
   if (!(await checkDbRateLimit(tx, userKey, perUserPerDay, REWARD_QUOTA_WINDOW_MS))) {
     return { triggered: false, reason: "quota_exceeded", sharerEntryId, deliveryIds: [] };
   }
 
-  // 配额校验 2：活动每天最多 globalPerDay 次（总池子）
+  // 配额校验 2：活动每天最多 globalPerDay 次
   const globalKey = `reward:global:${drawId}`;
   if (!(await checkDbRateLimit(tx, globalKey, globalPerDay, REWARD_QUOTA_WINDOW_MS))) {
     return { triggered: false, reason: "quota_exceeded", sharerEntryId, deliveryIds: [] };
@@ -84,7 +101,11 @@ export async function triggerRewardEarned(
 
   const tenantId = draw.tenantId;
 
-  // 记录奖励意图事件（看板/审计依据）
+  // 记录奖励意图事件——必须先在事务内落库，再入队 webhook。
+  // 顺序原因：如果 enqueueWebhookEvent 失败（抛异常），recordActivityEvent 已写入。
+  // 此时事务会被 maybeTriggerReward 的 catch 捕获，但事件记录保留在事务中。
+  // 这是有意为之：reward_earned 事件是看板/审计的唯一真相源（source of truth），
+  // webhook 投递失败可以通过事件列表人工补偿。
   await recordActivityEvent(tx, {
     tenantId,
     drawId,
@@ -99,7 +120,9 @@ export async function triggerRewardEarned(
     },
   });
 
-  // 通知中转站生成兑换码（入队，HTTP 投递由调用方异步执行）
+  // 通知中转站生成兑换码（入队，HTTP 投递由调用方在事务内异步 fire-and-forget）。
+  // 与 performDraw 的 webhook 模式一致：入队是写库操作（事务内），实际 HTTP 调用
+  // 由 dispatchWebhookDelivery 在事务内异步执行——SQLite 同连接事务内 SELECT 可见。
   const webhookResult = await enqueueWebhookEvent(tx, {
     tenantId,
     eventType: "reward.earned",
@@ -118,6 +141,12 @@ export async function triggerRewardEarned(
 
 /**
  * 查询奖励受益人（分享者）的参与身份，供 Webhook 对账使用。
+ * 
+ * 为什么需要这个函数而不是直接用 inviterIdentityValue？
+ * maybeTriggerReward 从 recordAttributedJoin 拿到的是 sharerEntryId（UUID），
+ * 但 Webhook payload 需要人类可读的账号（邮箱/用户名）供中转站对账。
+ * 这个函数做 entryId → identityValue 的映射，查询结果可能为空（entry 被删除的极端情况），
+ * 此时返回空字符串——Webhook 仍然会发送，但 payload 中的 account 为空。
  */
 export async function getSharerIdentityValue(
   db: DbType,

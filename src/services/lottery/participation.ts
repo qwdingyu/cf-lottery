@@ -440,11 +440,17 @@ export async function cancelSignupChainEntry(
  * 归因成功后按活动 reward 配置触发奖励意图（docs/111 §5 阶段一）。
  *
  * - 仅当活动 activityConfig 中配置了 reward.perInviteAmount 时才触发；
- *   未配置或配额超限时静默跳过，不影响任何现有活动。
- * - Webhook 投递与 performDraw 一致：fire-and-forget + 容错，失败不影响参与主流程。
+ *   未配置或配额超限时静默跳过，不影响任何现有活动。这是设计原则：
+ *   reward 是附加行为，不是参与的必要条件。如果 reward 触发失败，参与仍应成功。
+ * - Webhook 投递与 performDraw 一致：在事务内 fire-and-forget + 容错。
+ *   为什么 dispatchWebhookDelivery 可以在事务内异步执行？
+ *   SQLite 同连接事务内，enqueueWebhookEvent 写入的 delivery 记录在 SELECT 时可见，
+ *   所以 dispatchWebhookDelivery 能读到刚入队的记录。HTTP 调用的 fire-and-forget 不会
+ *   阻塞事务提交——void + catch 意味着即使 HTTP 失败，事务正常提交，参与记录不丢失。
  * - 与 joinDraw 同事务执行：归因、配额消耗、奖励意图入队三者原子。
- *   如果奖励触发失败（catch 捕获），事务仍会提交参与记录——奖励是附加行为，
- *   参与主流程不应因奖励失败而回滚（与 grantLoserRewards 的容错设计一致）。
+ *   如果 triggerRewardEarned 抛异常（catch 捕获），事务仍会提交参与记录：
+ *   奖励是附加行为，参与主流程不应因奖励失败而回滚。
+ *   此设计与 grantLoserRewards 的容错原则一致——"开奖成功，未中奖发券失败"不回滚开奖结果。
  */
 async function maybeTriggerReward(
   tx: DbType,
