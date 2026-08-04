@@ -19,11 +19,8 @@ import {
   lotteryInviteCodes,
   lotteryWinners,
   lotteryEntries,
-  shareRecords,
   activityOutcomes,
   activitySubmissions,
-  emailAccessCodes,
-  activityEvents,
 } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
