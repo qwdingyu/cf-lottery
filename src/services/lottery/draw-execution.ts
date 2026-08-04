@@ -378,22 +378,24 @@ export async function performDraw(
 }
 
 /**
- * 异步发送中奖通知邮件。
- * 在开奖完成后调用，不阻塞主流程。
- * 每个中奖者独立发送，失败不影响其他人。
+ * 发送中奖通知邮件（开奖后 fire-and-forget，也可被管理端 retry-email 同步调用）。
+ *
+ * - 跳过已 sent；处理 pending / failed（及空状态）
+ * - 每人独立发送，一人失败不影响其他人
+ * - 返回 sent/failed 计数供运营台 toast（docs/078 闭环）
  */
 export async function sendWinnerNotifications(
   db: DbType,
   tenantId: string,
   drawId: string,
   emailEnv: { resendApiKey?: string; emailFrom?: string },
-) {
+): Promise<{ sent: number; failed: number }> {
   const [draw] = await db
     .select()
     .from(lotteryDraws)
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
     .limit(1);
-  if (!draw) return;
+  if (!draw) return { sent: 0, failed: 0 };
 
   const winners = await db
     .select({
@@ -429,6 +431,9 @@ export async function sendWinnerNotifications(
     for (const c of codes) codeMap.set(c.id, { code: c.code, secret: c.secret });
   }
 
+  let sent = 0;
+  let failed = 0;
+
   for (const winner of winners) {
     if (winner.notificationStatus === "sent") continue;
 
@@ -462,6 +467,8 @@ export async function sendWinnerNotifications(
           notificationError: result.ok ? "" : (result.message || "").slice(0, 500),
         })
         .where(eq(lotteryWinners.id, winner.winnerId));
+      if (result.ok) sent += 1;
+      else failed += 1;
     } catch (err) {
       await db
         .update(lotteryWinners)
@@ -470,8 +477,11 @@ export async function sendWinnerNotifications(
           notificationError: (err as Error).message.slice(0, 500),
         })
         .where(eq(lotteryWinners.id, winner.winnerId));
+      failed += 1;
     }
   }
+
+  return { sent, failed };
 }
 
 /**
@@ -575,9 +585,11 @@ export async function healDrawingState(
   db: DbType,
   drawId: string,
   tenantId: string,
-  options?: { staleMs?: number },
+  options?: { staleMs?: number; force?: boolean },
 ): Promise<"drawn" | "open" | null> {
   const staleMs = options?.staleMs ?? 300000; // 默认 5 分钟超时
+  // force：管理端「恢复」按钮——不等待超时窗口（docs/078）
+  const force = options?.force === true;
 
   const [draw] = await db
     .select()
@@ -604,13 +616,16 @@ export async function healDrawingState(
     return "drawn";
   }
 
-  // 无中奖记录：检查是否超时
+  // 无中奖记录：超时（cron）或运营强制恢复 → 回滚为 open
   const updatedAt = new Date(draw.updatedAt || draw.createdAt).getTime();
-  if (Date.now() - updatedAt > staleMs) {
-    // 超时且无中奖：回滚为 open
+  if (force || Date.now() - updatedAt > staleMs) {
     await db
       .update(lotteryDraws)
-      .set({ status: "open", failureReason: "开奖超时，已自动回滚", updatedAt: nowIso })
+      .set({
+        status: "open",
+        failureReason: force ? "运营手动恢复开奖状态" : "开奖超时，已自动回滚",
+        updatedAt: nowIso,
+      })
       .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.status, "drawing")));
     return "open";
   }

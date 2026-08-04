@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
+import { getEnv } from "../lib/platform";
 import {
   lotteryDraws,
   prizes,
@@ -33,6 +34,8 @@ import {
   getActivityEventSummary,
   getExternalConversionSummary,
   listExternalConversions,
+  sendWinnerNotifications,
+  healDrawingState,
 } from "../services/lottery-service";
 import { buildPublishCheck } from "../services/publish-check-service";
 import { parseActivityConfig } from "../lib/activity-config";
@@ -466,25 +469,96 @@ route.post("/draws/:id/winners/:winnerId/retry-code", async (c) => {
   return ok(c, { prizeCodeId: lockedCode?.id || "" });
 });
 
-/** 重发中奖通知 */
+/**
+ * 单条：重置为 pending 后同步投递（历史上只改状态、无 cron 扫通知 → 永久 pending）。
+ * 实际发送走 sendWinnerNotifications（跳过已 sent，可顺带处理同活动其它 failed）。
+ */
 route.post("/draws/:id/winners/:winnerId/resend", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
   const [winner] = await db
     .select()
     .from(lotteryWinners)
-    .where(and(eq(lotteryWinners.id, c.req.param("winnerId")), eq(lotteryWinners.tenantId, tenantId)))
+    .where(and(
+      eq(lotteryWinners.id, c.req.param("winnerId")),
+      eq(lotteryWinners.tenantId, tenantId),
+      eq(lotteryWinners.drawId, drawId),
+    ))
     .limit(1);
 
   if (!winner) return fail(c, "中奖记录不存在", 404);
 
-  // 重置通知状态
   await db
     .update(lotteryWinners)
     .set({ notificationStatus: "pending", notificationError: "" })
     .where(eq(lotteryWinners.id, winner.id));
 
-  return ok(c, { retry: true });
+  // 同步发送：无独立「pending 邮件」cron，只重置状态等于空操作
+  const result = await sendWinnerNotifications(db, tenantId, drawId, {
+    resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+    emailFrom: getEnv(c, "EMAIL_FROM") || "",
+  });
+  await recordTenantAudit(c, "draw.winner_resend", "lottery_winner", winner.id);
+  return ok(c, { retry: true, sent: result.sent, failed: result.failed });
+});
+
+/**
+ * 批量重发中奖通知（管理端「重发邮件」主路径）。
+ * 前端契约：POST /api/admin/draws/:id/retry-email → { sent, failed }
+ * 证据：docs/078 前此路由缺失，运营台按钮 404。
+ */
+route.post("/draws/:id/retry-email", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, status: lotteryDraws.status })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+
+  if (!draw) return fail(c, "活动不存在", 404);
+  // drawn 才有 winners；drawing 中途不发；其它状态无结果可通知
+  if (draw.status !== "drawn") {
+    return fail(c, "仅已开奖活动可重发中奖通知", 400);
+  }
+
+  const result = await sendWinnerNotifications(db, tenantId, drawId, {
+    resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+    emailFrom: getEnv(c, "EMAIL_FROM") || "",
+  });
+  await recordTenantAudit(c, "draw.retry_email", "lottery_draw", drawId);
+  return ok(c, { sent: result.sent, failed: result.failed });
+});
+
+/**
+ * drawing 卡死恢复（管理端「恢复」）。
+ * 有中奖 → drawn（不二次开奖）；无中奖 → open。
+ * staleMs=0：运营手动点恢复即 force，不要求等 5 分钟超时。
+ * 证据：docs/078 前此路由缺失，前端 recoverLotteryDraw 404。
+ */
+route.post("/draws/:id/recover", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, status: lotteryDraws.status })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.status !== "drawing") {
+    return fail(c, "仅 drawing 状态的活动可恢复", 400);
+  }
+
+  const healed = await healDrawingState(db, drawId, tenantId, { force: true });
+  if (!healed) return fail(c, "无法恢复该活动状态", 400);
+  await recordTenantAudit(c, "draw.recover", "lottery_draw", drawId);
+  return ok(c, { healed });
 });
 
 /** 发布前校验 */

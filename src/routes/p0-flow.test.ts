@@ -740,3 +740,171 @@ describe("L2 视角：registered 参与者身份可读", () => {
     expect(body.message).toContain("限制参与");
   });
 });
+
+/**
+ * docs/078：管理端重发邮件 / drawing 恢复 — 前端已接线，后端此前缺路由 → 404。
+ * 不依赖真实 Resend：mock fetch；校验状态迁移与 sent/failed 契约。
+ */
+describe("L2 运营闭环：retry-email 与 recover", () => {
+  it("retry-email：failed 中奖通知可重发并返回 sent/failed", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const drawId = crypto.randomUUID();
+    const winnerId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT_ID,
+      publicSlug: "retry-email-drawn",
+      title: "重发邮件测试",
+      status: "drawn",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: futureIso(-60),
+      endAt: futureIso(60),
+      winnerCount: 1,
+      drawnAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(lotteryWinners).values({
+      id: winnerId,
+      tenantId: TENANT_ID,
+      drawId,
+      tierId: "tier-retry",
+      entryId: "entry-retry",
+      identityType: "email",
+      identityValue: "winner-retry@test.com",
+      prizeCodeId: null,
+      notificationStatus: "failed",
+      notificationError: "previous fail",
+    });
+
+    const { vi } = await import("vitest");
+    let resendHits = 0;
+    vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+      if (String(url).includes("resend.com")) {
+        resendHits += 1;
+        return new Response(JSON.stringify({ id: "mock-retry" }), { status: 200 });
+      }
+      return new Response("", { status: 404 });
+    });
+
+    const env = { ...TEST_ENV, RESEND_API_KEY: "test-resend-key", EMAIL_FROM: "noreply@test.com" };
+    const res = await app.request(`/api/admin/draws/${drawId}/retry-email`, {
+      method: "POST",
+      headers: { ...(await authHeader()) },
+    }, env);
+    vi.unstubAllGlobals();
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; sent: number; failed: number };
+    expect(body.ok).toBe(true);
+    expect(body.sent).toBe(1);
+    expect(body.failed).toBe(0);
+    expect(resendHits).toBe(1);
+
+    const [winner] = await db.select().from(lotteryWinners).where(eq(lotteryWinners.id, winnerId));
+    expect(winner?.notificationStatus).toBe("sent");
+  });
+
+  it("retry-email：非 drawn 活动拒绝", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const drawId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT_ID,
+      publicSlug: "retry-email-open",
+      title: "未开奖",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: futureIso(-60),
+      endAt: futureIso(60),
+      winnerCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const res = await app.request(`/api/admin/draws/${drawId}/retry-email`, {
+      method: "POST",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; message: string };
+    expect(body.ok).toBe(false);
+    expect(body.message).toContain("已开奖");
+  });
+
+  it("recover：drawing 有中奖 → drawn；无中奖 force → open", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const now = new Date().toISOString();
+
+    const drawnId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawnId,
+      tenantId: TENANT_ID,
+      publicSlug: "recover-with-winners",
+      title: "卡死有中奖",
+      status: "drawing",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: futureIso(-60),
+      endAt: futureIso(60),
+      winnerCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(lotteryWinners).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_ID,
+      drawId: drawnId,
+      tierId: "t1",
+      entryId: "e1",
+      identityType: "email",
+      identityValue: "w@test.com",
+      prizeCodeId: null,
+      notificationStatus: "pending",
+    });
+
+    const resDrawn = await app.request(`/api/admin/draws/${drawnId}/recover`, {
+      method: "POST",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(resDrawn.status).toBe(200);
+    const bodyDrawn = await resDrawn.json() as { ok: boolean; healed: string };
+    expect(bodyDrawn.healed).toBe("drawn");
+    const [d1] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawnId));
+    expect(d1?.status).toBe("drawn");
+
+    const openId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: openId,
+      tenantId: TENANT_ID,
+      publicSlug: "recover-no-winners",
+      title: "卡死无中奖",
+      status: "drawing",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: futureIso(-60),
+      endAt: futureIso(60),
+      winnerCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const resOpen = await app.request(`/api/admin/draws/${openId}/recover`, {
+      method: "POST",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(resOpen.status).toBe(200);
+    const bodyOpen = await resOpen.json() as { ok: boolean; healed: string };
+    expect(bodyOpen.healed).toBe("open");
+    const [d2] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, openId));
+    expect(d2?.status).toBe("open");
+  });
+});
