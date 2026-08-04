@@ -1010,3 +1010,7 @@
 .lottery-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
 .lottery-badge.open { background: rgba(34,197,94,0.15); color: #22c55e; }
 .lottery-badge.drawn { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.4); }
+
+/* ── 语言切换（公共页与 admin 布局一致） ── */
+.lang-select { background: transparent; color: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; outline: none; }
+.lang-select option { background: #1a1a2e; color: #fff; }
