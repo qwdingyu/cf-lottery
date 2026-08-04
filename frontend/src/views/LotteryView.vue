@@ -1629,15 +1629,13 @@ async function ensureParticipationSessionFromAdmin(): Promise<{
       const meRes = await fetch(API_BASE + '/admin/me', {
         headers: { Authorization: `Bearer ${adminTok}` },
       })
+      // ok() 展开为 { ok, user: { email, username }, ... }
       const me = (await meRes.json().catch(() => ({}))) as {
         ok?: boolean
-        email?: string
-        username?: string
+        user?: { email?: string; username?: string }
       }
-      if (me?.ok || me?.email || me?.username) {
-        if (me.email) emailHint = String(me.email).trim()
-        if (me.username) nameHint = String(me.username).trim()
-      }
+      if (me?.user?.email) emailHint = String(me.user.email).trim()
+      if (me?.user?.username && !nameHint) nameHint = String(me.user.username).trim()
     } catch {
       /* 忽略：后续可能仍能用 session 已有值 */
     }

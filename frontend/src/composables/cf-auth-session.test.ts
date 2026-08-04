@@ -154,6 +154,44 @@ describe("cf-auth-session（参与闭环）", () => {
     expect(missingJoinCredentialForMode({ participationMode: "open" })).toBeNull();
   });
 
+  it("readEmailFromBusinessJwt 粗读 email claim", () => {
+    expect(readEmailFromBusinessJwt(fakeJwt({ sub: "u", email: "A@B.C" }))).toBe("a@b.c");
+    expect(readEmailFromBusinessJwt(fakeJwt({ sub: "u" }))).toBe("");
+    expect(readEmailFromBusinessJwt("not-a-jwt")).toBe("");
+  });
+
+  it("hydrateLotterySessionFromAdminToken：无参与会话时双写；已有 token 不覆盖", () => {
+    const store = memoryStore();
+    const adminJwt = fakeJwt({ sub: "u1", tenantId: "t1", email: "admin@test.com" });
+    const first = hydrateLotterySessionFromAdminToken({
+      sessionStore: store,
+      adminToken: adminJwt,
+    });
+    expect(first?.token).toBe(adminJwt);
+    expect(first?.email).toBe("admin@test.com");
+    expect(store.getItem(LOTTERY_REGISTERED_TOKEN_KEY)).toBe(adminJwt);
+    expect(store.getItem(LOTTERY_SESSION_EMAIL_KEY)).toBe("admin@test.com");
+
+    // 已有参与会话：不覆盖 token
+    store.setItem(LOTTERY_REGISTERED_TOKEN_KEY, "part-only-jwt");
+    const second = hydrateLotterySessionFromAdminToken({
+      sessionStore: store,
+      adminToken: adminJwt,
+      email: "other@test.com",
+    });
+    expect(second?.token).toBe("part-only-jwt");
+    expect(store.getItem(LOTTERY_REGISTERED_TOKEN_KEY)).toBe("part-only-jwt");
+  });
+
+  it("hydrate 无 adminToken 返回 null", () => {
+    expect(
+      hydrateLotterySessionFromAdminToken({
+        sessionStore: memoryStore(),
+        adminToken: "",
+      }),
+    ).toBeNull();
+  });
+
   it("readTenantIdFromBusinessJwt + resolveAdminPathAfterCfAuth 空租户进 onboarding", () => {
     const emptyTenant = fakeJwt({ sub: "u1", tenantId: "", email: "a@b.c" });
     const withTenant = fakeJwt({ sub: "u1", tenantId: "ten-1", email: "a@b.c" });

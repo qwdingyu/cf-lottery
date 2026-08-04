@@ -273,7 +273,22 @@ platformRoute.post("/tenants/:id/impersonate", requirePlatformMember(["platform_
 
   const jwtSecret = getEnv(c, "JWT_SECRET");
   if (!jwtSecret) return fail(c, "服务未配置 JWT 密钥", 500);
-  const token = await signJwt({ sub: member.userId, tenantId: member.tenantId, impersonated: true }, jwtSecret, 3600);
+  // email claim：模拟登录进活动页时 open 系亦可 Bearer 免 OTP（docs/093）
+  const [impUser] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, member.userId))
+    .limit(1);
+  const token = await signJwt(
+    {
+      sub: member.userId,
+      tenantId: member.tenantId,
+      email: impUser?.email || "",
+      impersonated: true,
+    },
+    jwtSecret,
+    3600,
+  );
 
   // 平台审计：模拟登录属于高风险操作，必须留痕
   await writePlatformAudit(db, {
