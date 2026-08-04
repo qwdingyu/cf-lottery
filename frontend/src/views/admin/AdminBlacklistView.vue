@@ -16,10 +16,35 @@
       <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">{{ $t('adminBlacklist.retry') }}</button>
     </div>
 
+    <div v-if="selectedCount > 0" class="table-command-actions bulk-bar" :aria-busy="batchOperating">
+      <span class="selection-summary">
+        {{ $t('adminBlacklist.selectedCount', { count: selectedCount }) }}
+        <template v-if="batchOperating">
+          · {{ $t('adminBlacklist.batchProgress', { done: batchCompleted, total: batchTotal }) }}
+        </template>
+      </span>
+      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || batchOperating" @click="clearSelection">
+        {{ $t('adminBlacklist.clearSelection') }}
+      </button>
+      <button class="btn btn-danger btn-sm" type="button" :disabled="loading || batchOperating || selectedCount === 0" @click="batchRemove">
+        {{ $t('adminBlacklist.batchDelete', { count: selectedCount }) }}
+      </button>
+    </div>
+
     <div class="table-wrap">
       <table class="admin-table">
         <thead>
           <tr>
+            <th class="select-cell">
+              <input
+                type="checkbox"
+                :checked="allVisibleSelected"
+                :indeterminate.prop="partiallySelected"
+                :disabled="loading || batchOperating || items.length === 0"
+                :aria-label="$t('adminBlacklist.selectAll')"
+                @change="toggleAllVisible(($event.target as HTMLInputElement).checked)"
+              />
+            </th>
             <th>{{ $t('adminBlacklist.colEmail') }}</th>
             <th>{{ $t('adminBlacklist.colNote') }}</th>
             <th>{{ $t('adminBlacklist.colCreatedAt') }}</th>
@@ -28,22 +53,31 @@
         </thead>
         <tbody v-if="loading">
           <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row">
-            <td :colspan="4"><div class="skeleton-cell" /></td>
+            <td :colspan="5"><div class="skeleton-cell" /></td>
           </tr>
         </tbody>
         <tbody v-else>
-          <tr v-for="item in items" :key="item.id">
+          <tr v-for="item in items" :key="item.id" :class="{ 'is-selected': isSelected(item.id) }">
+            <td class="select-cell">
+              <input
+                type="checkbox"
+                :checked="isSelected(item.id)"
+                :disabled="loading || batchOperating"
+                :aria-label="$t('adminBlacklist.selectRow')"
+                @click="setSelected(item.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
+              />
+            </td>
             <td>{{ item.identityValue }}</td>
             <td>{{ item.note || '-' }}</td>
             <td>{{ formatDate(item.createdAt) }}</td>
             <td class="col-actions">
-              <button class="btn btn-ghost btn-xs" :disabled="operatingId === item.id" @click="handleRemove(item.id)">
+              <button class="btn btn-ghost btn-xs" type="button" :disabled="operatingId === item.id || batchOperating" @click="handleRemove(item.id)">
                 {{ operatingId === item.id ? $t('adminBlacklist.deleting') : $t('adminBlacklist.delete') }}
               </button>
             </td>
           </tr>
           <tr v-if="items.length === 0">
-            <td colspan="4" class="empty-text">{{ $t('adminBlacklist.empty') }}</td>
+            <td colspan="5" class="empty-text">{{ $t('adminBlacklist.empty') }}</td>
           </tr>
         </tbody>
       </table>
@@ -69,19 +103,26 @@
         </div>
       </form>
     </AdminModal>
+
+    <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" danger @confirm="onConfirm" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
+import { useTableSelection } from '@/composables/useTableSelection'
+import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
 import { formatDate } from '@/composables/useFormat'
 import AdminModal from '@/components/AdminModal.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 const items = ref<any[]>([])
 const loading = ref(false)
 const loadError = ref('')
@@ -91,6 +132,23 @@ const showAdd = ref(false)
 const formEmail = ref('')
 const formNote = ref('')
 
+const itemsRef = computed(() => items.value)
+const {
+  operating: batchOperating,
+  completed: batchCompleted,
+  total: batchTotal,
+  runSequential,
+} = useAdminBatchOperation()
+const {
+  selectedIds,
+  selectedCount,
+  isSelected,
+  setSelected,
+  toggleAllVisible,
+  clearSelection,
+  allVisibleSelected,
+  partiallySelected,
+} = useTableSelection(itemsRef, (row) => row.id)
 
 async function loadData() {
   loading.value = true
@@ -129,7 +187,8 @@ async function handleAdd() {
 }
 
 async function handleRemove(id: string) {
-  if (operatingId.value) return
+  if (operatingId.value || batchOperating.value) return
+  if (!(await askConfirm(t('adminBlacklist.deleteConfirm')))) return
   operatingId.value = id
   try {
     await adminRequest(`/api/admin/blacklist/${id}`, { method: 'DELETE' })
@@ -140,6 +199,24 @@ async function handleRemove(id: string) {
   } finally {
     operatingId.value = ''
   }
+}
+
+/** 测试清场：多选顺序删，无后端 batch API */
+async function batchRemove() {
+  const ids = selectedIds.value.slice()
+  if (ids.length === 0 || loading.value || batchOperating.value) return
+  if (!(await askConfirm(t('adminBlacklist.batchDeleteConfirm', { count: ids.length })))) return
+  const result = await runSequential(ids, async (id) => {
+    await adminRequest(`/api/admin/blacklist/${id}`, { method: 'DELETE' })
+  })
+  if (!result) return
+  if (result.failed > 0) {
+    showToast(t('adminBlacklist.batchDeleteResult', { success: result.success, failed: result.failed }), 'error')
+  } else {
+    showToast(t('adminBlacklist.batchDeleteSuccess', { count: result.success }), 'success')
+  }
+  clearSelection()
+  await loadData()
 }
 
 onMounted(loadData)

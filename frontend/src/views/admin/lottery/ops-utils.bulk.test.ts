@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   canBatchHideDraw,
   canDeleteDraw,
+  canDeletePrizeCode,
   canSelectDrawForBulk,
   drawDisplayName,
   formatLotteryVisibilityLabel,
   hasActiveDrawListFilter,
   isLotteryUserVisible,
   isNonDefaultDrawStatusFilter,
+  isPrizeActive,
   prizeCodePoolLeft,
 } from './ops-utils'
 
@@ -83,5 +85,13 @@ describe('drawDisplayName / prizeCodePoolLeft', () => {
     expect(prizeCodePoolLeft({ totalCount: 10, usedCount: 3 })).toBe(7)
     expect(prizeCodePoolLeft({ totalCount: 2, usedCount: 5 })).toBe(0)
     expect(prizeCodePoolLeft({})).toBe(0)
+  })
+
+  it('only available codes are deletable; prize active defaults true', () => {
+    expect(canDeletePrizeCode('available')).toBe(true)
+    expect(canDeletePrizeCode('issued')).toBe(false)
+    expect(isPrizeActive(undefined)).toBe(true)
+    expect(isPrizeActive(0)).toBe(false)
+    expect(isPrizeActive(1)).toBe(true)
   })
 })

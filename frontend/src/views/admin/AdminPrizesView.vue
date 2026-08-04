@@ -18,10 +18,39 @@
       <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">{{ $t('adminPrizes.retry') }}</button>
     </div>
 
+    <!-- docs/082：奖品多选批量启停 -->
+    <div v-if="prizeSelectedCount > 0" class="table-command-actions bulk-bar" :aria-busy="prizeBatchOperating">
+      <span class="selection-summary">
+        {{ $t('adminPrizes.selectedCount', { count: prizeSelectedCount }) }}
+        <template v-if="prizeBatchOperating">
+          · {{ $t('adminPrizes.batchProgress', { done: prizeBatchCompleted, total: prizeBatchTotal }) }}
+        </template>
+      </span>
+      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || prizeBatchOperating" @click="clearPrizeSelection">
+        {{ $t('adminPrizes.clearSelection') }}
+      </button>
+      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || prizeBatchOperating || prizeSelectedCount === 0" @click="batchSetPrizeActive(1)">
+        {{ $t('adminPrizes.batchEnable', { count: prizeSelectedCount }) }}
+      </button>
+      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || prizeBatchOperating || prizeSelectedCount === 0" @click="batchSetPrizeActive(0)">
+        {{ $t('adminPrizes.batchDisable', { count: prizeSelectedCount }) }}
+      </button>
+    </div>
+
     <div class="table-wrap">
       <table class="admin-table">
         <thead>
           <tr>
+            <th class="select-cell">
+              <input
+                type="checkbox"
+                :checked="allPrizesSelected"
+                :indeterminate.prop="prizePartiallySelected"
+                :disabled="loading || prizeBatchOperating || prizes.length === 0"
+                :aria-label="$t('adminPrizes.selectAll')"
+                @change="toggleAllPrizes(($event.target as HTMLInputElement).checked)"
+              />
+            </th>
             <th>{{ $t('adminPrizes.colImage') }}</th>
             <th>{{ $t('adminPrizes.colName') }}</th>
             <th>{{ $t('adminPrizes.colType') }}</th>
@@ -34,11 +63,20 @@
         </thead>
         <tbody v-if="loading">
           <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row">
-            <td :colspan="8"><div class="skeleton-cell" /></td>
+            <td :colspan="9"><div class="skeleton-cell" /></td>
           </tr>
         </tbody>
         <tbody v-else>
-          <tr v-for="prize in prizes" :key="prize.id">
+          <tr v-for="prize in prizes" :key="prize.id" :class="{ 'is-selected': isPrizeSelected(prize.id) }">
+            <td class="select-cell">
+              <input
+                type="checkbox"
+                :checked="isPrizeSelected(prize.id)"
+                :disabled="loading || prizeBatchOperating"
+                :aria-label="$t('adminPrizes.selectRow')"
+                @click="setPrizeSelected(prize.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
+              />
+            </td>
             <td>
               <img :src="prizeImageUrl(prize.imageUrl)" :alt="prize.name || $t('adminPrizes.prizeAlt')" class="prize-thumb" />
             </td>
@@ -80,7 +118,7 @@
             </td>
           </tr>
           <tr v-if="prizes.length === 0">
-            <td colspan="8" class="empty-text">{{ $t('adminPrizes.empty') }}</td>
+            <td colspan="9" class="empty-text">{{ $t('adminPrizes.empty') }}</td>
           </tr>
         </tbody>
       </table>
@@ -235,15 +273,14 @@
       </div>
     </AdminModal>
 
-    <!-- 查看码弹窗 -->
+    <!-- 查看码弹窗：真多选删除（仅勾选且 available），禁止「本页全部盲删」 -->
     <AdminModal hide-actions v-model="showCodesModal" :title="$t('adminPrizes.codesTitle', { name: codesPrize?.name || '' })" max-width="800px">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-        <select v-model="codesFilter" @change="loadCodes(true)">
+        <select v-model="codesFilter" @change="onCodesFilterChange">
           <option value="">{{ $t('adminPrizes.allStatus') }}</option>
           <option value="available">{{ $t('adminPrizes.available') }}</option>
           <option value="issued">{{ $t('adminPrizes.issued') }}</option>
         </select>
-        <!-- 码文本搜索（047 文档 🔴）：导入几百个码后按码内容精确查找 -->
         <input
           v-model="codeSearch"
           type="search"
@@ -253,10 +290,31 @@
           @keyup.enter="loadCodes(true)"
         />
         <span class="field-hint">{{ $t('adminPrizes.codesSummary', { total: codesTotal, avail: totalAvailable, issued: totalIssued }) }}</span>
-        <button class="btn btn-ghost btn-xs" :disabled="codesLoading" @click="loadCodes(true)">{{ $t('adminPrizes.refresh') }}</button>
-        <button class="btn btn-primary btn-xs" @click="exportCodes">{{ $t('adminPrizes.exportCsv') }}</button>
-        <button v-if="codesFilter === 'available' && codesList.length > 0" class="btn btn-ghost btn-xs" style="color:var(--tg-danger)" @click="batchDeleteCodes">{{ $t('adminPrizes.batchDelete') }}</button>
+        <button class="btn btn-ghost btn-xs" type="button" :disabled="codesLoading || codeBatchOperating" @click="loadCodes(true)">{{ $t('adminPrizes.refresh') }}</button>
+        <button class="btn btn-primary btn-xs" type="button" :disabled="codeBatchOperating" @click="exportCodes">{{ $t('adminPrizes.exportCsv') }}</button>
       </div>
+
+      <div v-if="codeSelectedCount > 0" class="table-command-actions bulk-bar" style="margin-bottom:12px" :aria-busy="codeBatchOperating">
+        <span class="selection-summary">
+          {{ $t('adminPrizes.selectedCount', { count: codeSelectedCount }) }}
+          · {{ $t('adminPrizes.selectedDeletableCodes', { count: codeDeletableCount }) }}
+          <template v-if="codeBatchOperating">
+            · {{ $t('adminPrizes.batchProgress', { done: codeBatchCompleted, total: codeBatchTotal }) }}
+          </template>
+        </span>
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="codeBatchOperating" @click="clearCodeSelection">
+          {{ $t('adminPrizes.clearSelection') }}
+        </button>
+        <button
+          class="btn btn-danger btn-sm"
+          type="button"
+          :disabled="codeBatchOperating || codeDeletableCount === 0"
+          @click="batchDeleteSelectedCodes"
+        >
+          {{ $t('adminPrizes.batchDeleteSelected', { count: codeDeletableCount }) }}
+        </button>
+      </div>
+
       <div v-if="codesLoading" class="skeleton-list">
         <div v-for="i in 5" :key="'sk' + i" class="skeleton-line" />
       </div>
@@ -265,6 +323,16 @@
         <table class="admin-table">
           <thead>
             <tr>
+              <th class="select-cell">
+                <input
+                  type="checkbox"
+                  :checked="allCodesSelected"
+                  :indeterminate.prop="codePartiallySelected"
+                  :disabled="codesLoading || codeBatchOperating || codeSelectableCount === 0"
+                  :aria-label="$t('adminPrizes.selectAllCodes')"
+                  @change="toggleAllCodes(($event.target as HTMLInputElement).checked)"
+                />
+              </th>
               <th>{{ $t('adminPrizes.colCode') }}</th>
               <th>{{ $t('adminPrizes.colSecret') }}</th>
               <th>{{ $t('adminPrizes.colStatus') }}</th>
@@ -274,7 +342,16 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="c in codesList" :key="c.id">
+            <tr v-for="c in codesList" :key="c.id" :class="{ 'is-selected': isCodeSelected(c.id) }">
+              <td class="select-cell">
+                <input
+                  type="checkbox"
+                  :checked="isCodeSelected(c.id)"
+                  :disabled="codesLoading || codeBatchOperating || !canDeleteCodeRow(c)"
+                  :aria-label="$t('adminPrizes.selectCodeRow')"
+                  @click="setCodeSelected(c.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
+                />
+              </td>
               <td>
                 <code class="code-cell">{{ c.code }}</code>
               </td>
@@ -290,32 +367,39 @@
               <td>{{ c.winnerId || '—' }}</td>
               <td>{{ c.issuedAt || '—' }}</td>
               <td class="col-actions">
-                <button class="btn btn-ghost btn-xs" @click="copyCode(c.code, c.secret)">{{ $t('adminPrizes.copy') }}</button>
-                <button v-if="c.status === 'available'" class="btn btn-ghost btn-xs" style="color:var(--tg-danger)" @click="deleteCode(c)">{{ $t('adminPrizes.delete') }}</button>
+                <button class="btn btn-ghost btn-xs" type="button" @click="copyCode(c.code, c.secret)">{{ $t('adminPrizes.copy') }}</button>
+                <button v-if="canDeleteCodeRow(c)" class="btn btn-ghost btn-xs" type="button" style="color:var(--tg-danger)" @click="deleteCode(c)">{{ $t('adminPrizes.delete') }}</button>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
       <div v-if="codesTotal > 50" style="margin-top:8px;display:flex;gap:8px;align-items:center;justify-content:center">
-        <button class="btn btn-ghost btn-xs" :disabled="codesPage <= 0" @click="codesPage--; loadCodes()">{{ $t('adminPrizes.prevPage') }}</button>
+        <button class="btn btn-ghost btn-xs" type="button" :disabled="codesPage <= 0 || codeBatchOperating" @click="codesPage--; loadCodes()">{{ $t('adminPrizes.prevPage') }}</button>
         <span class="field-hint">{{ codesPage * 50 + 1 }}-{{ Math.min((codesPage + 1) * 50, codesTotal) }} / {{ codesTotal }}</span>
-        <button class="btn btn-ghost btn-xs" :disabled="(codesPage + 1) * 50 >= codesTotal" @click="codesPage++; loadCodes()">{{ $t('adminPrizes.nextPage') }}</button>
+        <button class="btn btn-ghost btn-xs" type="button" :disabled="(codesPage + 1) * 50 >= codesTotal || codeBatchOperating" @click="codesPage++; loadCodes()">{{ $t('adminPrizes.nextPage') }}</button>
       </div>
     </AdminModal>
+
+    <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" danger @confirm="onConfirm" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
+import { useTableSelection } from '@/composables/useTableSelection'
+import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
 import { adminRequest } from '@/composables/useAdminRequest'
 import AdminModal from '@/components/AdminModal.vue'
-import { prizeCodePoolLeft } from './lottery/ops-utils'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import { canDeletePrizeCode, prizeCodePoolLeft } from './lottery/ops-utils'
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 
 const loading = ref(false)
 const loadError = ref('')
@@ -345,6 +429,59 @@ const genCount = ref(100)
 const genPrefix = ref('')
 const genCodeLen = ref(8)
 const prizes = ref<any[]>([])
+
+// ── 奖品列表多选（批量启停）──
+const prizesRef = computed(() => prizes.value)
+const {
+  operating: prizeBatchOperating,
+  completed: prizeBatchCompleted,
+  total: prizeBatchTotal,
+  runSequential: runPrizeBatch,
+} = useAdminBatchOperation()
+const {
+  selectedIds: prizeSelectedIds,
+  selectedCount: prizeSelectedCount,
+  isSelected: isPrizeSelected,
+  setSelected: setPrizeSelected,
+  toggleAllVisible: toggleAllPrizes,
+  clearSelection: clearPrizeSelection,
+  allVisibleSelected: allPrizesSelected,
+  partiallySelected: prizePartiallySelected,
+} = useTableSelection(prizesRef, (row) => row.id)
+
+// ── 码池多选（仅 available 可勾选删除）──
+const codesRef = computed(() => codesList.value)
+const {
+  operating: codeBatchOperating,
+  completed: codeBatchCompleted,
+  total: codeBatchTotal,
+  runSequential: runCodeBatch,
+} = useAdminBatchOperation()
+const {
+  selectedIds: codeSelectedIds,
+  selectedCount: codeSelectedCount,
+  selectableCount: codeSelectableCount,
+  isSelected: isCodeSelected,
+  setSelected: setCodeSelected,
+  toggleAllVisible: toggleAllCodes,
+  clearSelection: clearCodeSelection,
+  allVisibleSelected: allCodesSelected,
+  partiallySelected: codePartiallySelected,
+} = useTableSelection(codesRef, (row) => row.id, {
+  isSelectable: (row) => canDeletePrizeCode(String(row.status || '')),
+})
+
+const codeDeletableCount = computed(
+  () => codesList.value.filter((c) => codeSelectedIds.value.includes(c.id) && canDeletePrizeCode(String(c.status || ''))).length,
+)
+
+function canDeleteCodeRow(c: { status?: string }) {
+  return canDeletePrizeCode(String(c.status || ''))
+}
+
+watch(showCodesModal, (open) => {
+  if (!open) clearCodeSelection()
+})
 
 const form = ref({
   name: '',
@@ -466,8 +603,14 @@ async function showCodes(prize: any) {
   codesPage.value = 0
   totalAvailable.value = 0
   totalIssued.value = 0
+  clearCodeSelection()
   showCodesModal.value = true
   await loadCodes()
+}
+
+function onCodesFilterChange() {
+  clearCodeSelection()
+  void loadCodes(true)
 }
 
 async function loadCodes(resetPage = false) {
@@ -503,7 +646,7 @@ async function copyCode(code: string, secret?: string) {
 }
 
 async function deleteCode(code: any) {
-  if (!confirm(t('adminPrizes.deleteConfirm', { code: code.code }))) return
+  if (!(await askConfirm(t('adminPrizes.deleteConfirm', { code: code.code })))) return
   try {
     await adminRequest(`/api/admin/prizes/codes/${code.id}`, { method: 'DELETE' })
     showToast(t('adminPrizes.deleted'), 'success')
@@ -532,27 +675,62 @@ async function exportCodes() {
   URL.revokeObjectURL(a.href)
 }
 
-async function batchDeleteCodes() {
-  if (!codesPrize.value) return
-  if (!confirm(t('adminPrizes.batchDeleteConfirm', { count: codesList.value.length }))) return
-  codesLoading.value = true
-  let deleted = 0
-  let failed = 0
-  for (const c of codesList.value) {
-    try {
-      await adminRequest(`/api/admin/prizes/codes/${c.id}`, { method: 'DELETE' })
-      deleted++
-    } catch { failed++ }
-  }
+/**
+ * 批量删除：仅已勾选且 available。
+ * 为什么去掉「本页全部 available 盲删」：测试期易误删、无法精确清 10 条脏码（docs/082）。
+ */
+async function batchDeleteSelectedCodes() {
+  if (!codesPrize.value || codeBatchOperating.value) return
+  const targets = codesList.value.filter(
+    (c) => codeSelectedIds.value.includes(c.id) && canDeletePrizeCode(String(c.status || '')),
+  )
+  if (targets.length === 0) return
+  if (!(await askConfirm(t('adminPrizes.batchDeleteSelectedConfirm', { count: targets.length })))) return
+  const result = await runCodeBatch(targets.map((c) => c.id as string), async (id) => {
+    await adminRequest(`/api/admin/prizes/codes/${id}`, { method: 'DELETE' })
+  })
+  if (!result) return
   showToast(
     t('adminPrizes.batchDeleteDone', {
-      deleted,
-      failedText: failed > 0 ? t('adminPrizes.batchDeleteFailedSuffix', { failed }) : '',
+      deleted: result.success,
+      failedText: result.failed > 0 ? t('adminPrizes.batchDeleteFailedSuffix', { failed: result.failed }) : '',
     }),
-    failed > 0 ? 'error' : 'success',
+    result.failed > 0 ? 'error' : 'success',
   )
-  codesLoading.value = false
+  clearCodeSelection()
   await loadCodes(true)
+  await loadData()
+}
+
+/** 批量启停：顺序 PATCH active，测试清场与运营停用脏奖品 */
+async function batchSetPrizeActive(active: 0 | 1) {
+  if (prizeBatchOperating.value || loading.value) return
+  const ids = prizeSelectedIds.value.slice()
+  if (ids.length === 0) return
+  const okConfirm = await askConfirm(
+    active
+      ? t('adminPrizes.batchEnableConfirm', { count: ids.length })
+      : t('adminPrizes.batchDisableConfirm', { count: ids.length }),
+  )
+  if (!okConfirm) return
+  const result = await runPrizeBatch(ids, async (id) => {
+    await adminRequest(`/api/admin/prizes/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ active }),
+    })
+  })
+  if (!result) return
+  if (result.failed > 0) {
+    showToast(t('adminPrizes.batchActiveResult', { success: result.success, failed: result.failed }), 'error')
+  } else {
+    showToast(
+      active
+        ? t('adminPrizes.batchEnableSuccess', { count: result.success })
+        : t('adminPrizes.batchDisableSuccess', { count: result.success }),
+      'success',
+    )
+  }
+  clearPrizeSelection()
   await loadData()
 }
 

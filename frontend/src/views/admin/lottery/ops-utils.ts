@@ -258,6 +258,17 @@ export function prizeCodePoolLeft(prize: { totalCount?: number; usedCount?: numb
   return Math.max(0, (Number(prize.totalCount) || 0) - (Number(prize.usedCount) || 0))
 }
 
+/** 仅 available 可删（已发放保留审计，对齐后端 DELETE） */
+export function canDeletePrizeCode(status: string): boolean {
+  return status === 'available'
+}
+
+/** 奖品是否启用（缺省 active 视为启用，与常见 DEFAULT 1 一致） */
+export function isPrizeActive(active?: number | null): boolean {
+  if (active === undefined || active === null) return true
+  return Number(active) !== 0
+}
+
 /** 状态 → 共享 .tag* class（禁止自造 chip） */
 export function statusClass(status: string): string {
   if (status === 'open') return 'tag-success'
