@@ -664,13 +664,15 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   }
 
   // 2. 安慰奖（未中奖自动发券）
-  // 查询键与 entry 身份一致：registered 用户 coupon.recipient_email 存的是 userId
+  // 查询键与 entry 身份一致：registered 用户 coupon.recipient_email 存的是 userId。
+  // 必须带 drawId：同租户多场活动时，仅按邮箱会串场返回他场安慰券（docs/099 发版审查 P0）。
   let consolationCoupon: string | null = null;
   const [coupon] = await db
     .select({ code: couponCodes.code, status: couponCodes.status })
     .from(couponCodes)
     .where(and(
       eq(couponCodes.tenantId, draw.tenantId),
+      eq(couponCodes.drawId, draw.id),
       eq(couponCodes.recipientEmail, identityValue),
     ))
     .limit(1);

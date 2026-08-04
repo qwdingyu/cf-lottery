@@ -1906,6 +1906,29 @@ async function loadPrizeOptions() {
   } catch { prizeOptions.value = [] }
 }
 
+/**
+ * 保存活动的奖项配置（创建 + 编辑共用）。
+ * 抽奖活动必须配置奖项才能通过发布门禁，编辑时遗漏保存会导致「已更新但无奖项」。
+ */
+async function saveDrawTiers(drawId: string) {
+  const validTiers = form.value.tiers
+    .filter((tier) => tier.prizeId)
+    .map((tier, i) => ({
+      prizeId: tier.prizeId,
+      tierName: tier.tierName || t('lottery.adminTierName', { n: i + 1 }),
+      winnerCount: Math.max(1, Number(tier.winnerCount) || 1),
+    }))
+  if (validTiers.length === 0) return
+  try {
+    await adminRequest(`/api/admin/draws/${drawId}/tiers`, {
+      method: 'POST',
+      body: JSON.stringify({ tiers: validTiers }),
+    })
+  } catch {
+    showToast(t('lottery.adminFailed'), 'error')
+  }
+}
+
 /** 添加一个奖项（最多 10 个） */
 function addTier() {
   if (form.value.tiers.length >= 10) return
@@ -3161,6 +3184,8 @@ async function handleCreate() {
       }
       await updateLotteryDraw(form.value.id, payload)
       showToast(t('lottery.adminDrawUpdated'), 'success')
+      // ★ 编辑活动同样需要保存奖项配置（修复：编辑后奖项丢失的 bug）
+      await saveDrawTiers(form.value.id)
     } else {
       const created = await createLotteryDraw(payload)
       if (created?.id) {
@@ -3191,23 +3216,7 @@ async function handleCreate() {
         }
         // 抽奖活动：创建成功后保存奖项配置（选择奖品库中的奖品 + 中奖名额）
         if (form.value.activityKind === 'lottery' && form.value.tiers.some(t => t.prizeId)) {
-          const validTiers = form.value.tiers
-            .filter((tier) => tier.prizeId)
-            .map((tier, i) => ({
-              prizeId: tier.prizeId,
-              tierName: tier.tierName || t('lottery.adminTierName', { n: i + 1 }),
-              winnerCount: Math.max(1, Number(tier.winnerCount) || 1),
-            }))
-          if (validTiers.length > 0) {
-            try {
-              await adminRequest(`/api/admin/draws/${created.id}/tiers`, {
-                method: 'POST',
-                body: JSON.stringify({ tiers: validTiers }),
-              })
-            } catch {
-              showToast(t('lottery.adminFailed'), 'error')
-            }
-          }
+          await saveDrawTiers(created.id)
         }
         try {
           await writeClipboardText(publicShareUrl(created.publicSlug || created.id))

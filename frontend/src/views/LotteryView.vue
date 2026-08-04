@@ -62,7 +62,7 @@
               <span class="lottery-tag" :class="draw.status">{{ statusText(draw.status) }}</span>
               <span v-if="resultModeLabel(draw)" class="lottery-tag mode">{{ resultModeLabel(draw) }}</span>
               <span v-if="myWonById[draw.id]" class="lottery-tag won">🎉 {{ $t('lottery.wonTag') }}</span>
-              <span v-else-if="myJoinedById[draw.id]" class="lottery-tag joined">{{ $t('lottery.joined') }}</span>
+              <span v-else-if="isDrawJoined(draw)" class="lottery-tag joined">{{ $t('lottery.joined') }}</span>
               <span v-if="draw.entryCount != null" class="lottery-tag count">{{ $t('lottery.drawCount', { count: draw.entryCount }) }}</span>
             </div>
           </div>
@@ -110,7 +110,7 @@
             与 experience 游戏壳解耦：先填内容，再点游戏/底部 CTA 触发 handleJoin。
           -->
           <div
-            v-if="requiresActivitySubmission(draw) && draw.status === 'open' && !myJoinedById[draw.id]"
+            v-if="requiresActivitySubmission(draw) && draw.status === 'open' && !isDrawJoined(draw)"
             class="activity-submission"
           >
             <template v-if="draw.activityConfig?.kind === 'vote'">
@@ -186,7 +186,7 @@
               :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
               :key="draw.id"
               :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || $t('lottery.productPlaceholder'), color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
-              :disabled="joiningId === draw.id || !!myJoinedById[draw.id] || draw.status !== 'open'"
+              :disabled="joiningId === draw.id || isDrawJoined(draw) || draw.status !== 'open'"
               :loading="joiningId === draw.id"
               :celebrate-key="celebrateKeyById[draw.id] || 0"
               @play="handleJoin(draw.id)"
@@ -227,7 +227,7 @@
                 >{{ $t('lottery.copyShareLink') }}</button>
               </div>
             </template>
-            <template v-else-if="myJoinedById[draw.id]">
+            <template v-else-if="isDrawJoined(draw)">
               <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
               <!-- 查自己的结果始终可点；showWinnerList 只控制公开中奖名单，不挡个人查询 -->
               <button type="button" class="lottery-result-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
@@ -707,6 +707,7 @@ import {
   isSilentFetchOption,
   joinedOpenStatusHintKey,
   readJoinedHints,
+  removeJoinedHintsForKeys,
   resolvePublicDrawPathKey,
   upsertJoinedHint,
 } from './lottery/joined-session'
@@ -1763,11 +1764,9 @@ async function hydrateJoinedStateFromSession() {
   // —— 1) 无 JWT 也能恢复：读 lottery_joined_hints ——
   const hints = readJoinedHints(sessionStorage)
   const hintKeys = [draw.id, draw.publicSlug || '', props.id || '']
-  let hintHit = false
   for (const k of hintKeys) {
     const h = hints[String(k || '').trim().toLowerCase()]
     if (!h) continue
-    hintHit = true
     markDrawJoined(draw.id, {
       joinedAt: h.joinedAt,
       drawName: h.drawName,
@@ -1807,13 +1806,32 @@ async function hydrateJoinedStateFromSession() {
       })
       if (data.won) {
         myWonById.value = { ...myWonById.value, [draw.id]: true }
+      } else {
+        // 服务端未中奖：清掉本机可能误写的 won 标签
+        const nextWon = { ...myWonById.value }
+        delete nextWon[draw.id]
+        if (draw.publicSlug) delete nextWon[draw.publicSlug]
+        myWonById.value = nextWon
       }
-    } else if (data?.ok && data.joined === false && hintHit) {
-      // 服务端明确未参与：本机 hint 可能串号/脏数据，不主动清全库，仅取消本活动 UI
-      // （真退出登录会 clearJoinedHints）
+    } else if (data?.ok && data.joined === false) {
+      // 服务端明确未参与：清本活动 UI + 相关 hints（防脏数据假灰钮，docs/099）
+      const dropKeys = [draw.id, draw.publicSlug || '', props.id || '']
+      removeJoinedHintsForKeys(sessionStorage, dropKeys)
+      const nextJoined = { ...myJoinedById.value }
+      const nextWon = { ...myWonById.value }
+      for (const k of dropKeys) {
+        if (!k) continue
+        delete nextJoined[k]
+        delete nextWon[k]
+      }
+      myJoinedById.value = nextJoined
+      myWonById.value = nextWon
+      myEntryList.value = myEntryList.value.filter(
+        (r) => r.drawId !== draw.id && r.drawId !== draw.publicSlug,
+      )
     }
   } catch {
-    /* 静默：不影响主路径；hints 已足够灰钮 */
+    /* 静默：不影响主路径；无 JWT 失败时 hints 仍可灰钮 */
   }
 }
 

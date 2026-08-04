@@ -21,6 +21,8 @@ import {
   lotteryDraws,
   lotteryEntries,
   lotteryWinners,
+  couponCodes,
+  shareRecords,
   systemConfig,
   tenantMembers,
   tenants,
@@ -1113,6 +1115,128 @@ describe("公开参与流程", () => {
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
     expect(String(body.message || "")).toContain("未开放");
+  });
+
+  /**
+   * docs/099：my-result 安慰券必须按 drawId 过滤，禁止同租户串场。
+   */
+  it("my-result 安慰券仅返回本活动 issued 券，不串他场", async () => {
+    const app = createPublicTestApp();
+    const email = "coupon-scope@test.com";
+    const drawA = crypto.randomUUID();
+    const drawB = crypto.randomUUID();
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawA, tenantId: TENANT, publicSlug: "coupon-draw-a",
+        title: "场 A", status: "drawn", participationMode: "open",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+      {
+        id: drawB, tenantId: TENANT, publicSlug: "coupon-draw-b",
+        title: "场 B", status: "drawn", participationMode: "open",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId: drawA,
+      identityType: "email", identityValue: email, joinedAt: new Date().toISOString(),
+    });
+    // 仅 B 场有安慰券；A 场查询不得返回 B 的码
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: drawB,
+      code: "COUPON-B-ONLY",
+      label: "loser",
+      status: "issued",
+      recipientEmail: email,
+    });
+    const codeHash = "unused-hash-for-query";
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email,
+      drawId: drawA,
+      codeHash,
+      used: 0,
+      expiresAt: futureTimeISO(10),
+    });
+    // 走 JWT 免 OTP，避免 mock hash
+    const token = await signJwt(
+      { sub: crypto.randomUUID(), tenantId: TENANT, email },
+      TEST_ENV.JWT_SECRET,
+      3600,
+    );
+    const res = await app.request("/public/draws/coupon-draw-a/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.70",
+      },
+      body: JSON.stringify({ email, code: "" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.joined).toBe(true);
+    expect(body.consolationCoupon).toBeNull();
+  });
+
+  /**
+   * docs/099：share 的 entryId 必须属于本活动。
+   */
+  it("share：entry 不属于本活动则 404；属于则发码成功", async () => {
+    const app = createPublicTestApp();
+    const drawA = crypto.randomUUID();
+    const drawB = crypto.randomUUID();
+    const entryOnB = crypto.randomUUID();
+    const entryOnA = crypto.randomUUID();
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawA, tenantId: TENANT, publicSlug: "share-own-a",
+        title: "分享 A", status: "open", participationMode: "open",
+        startAt: futureTimeISO(-10), endAt: futureTimeISO(60),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+      {
+        id: drawB, tenantId: TENANT, publicSlug: "share-own-b",
+        title: "分享 B", status: "open", participationMode: "open",
+        startAt: futureTimeISO(-10), endAt: futureTimeISO(60),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(lotteryEntries).values([
+      {
+        id: entryOnA, tenantId: TENANT, drawId: drawA,
+        identityType: "email", identityValue: "share-a@test.com", joinedAt: new Date().toISOString(),
+      },
+      {
+        id: entryOnB, tenantId: TENANT, drawId: drawB,
+        identityType: "email", identityValue: "share-b@test.com", joinedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const bad = await app.request("/public/draws/share-own-a/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.71" },
+      body: JSON.stringify({ entryId: entryOnB }),
+    }, TEST_ENV);
+    expect(bad.status).toBe(404);
+
+    const good = await app.request("/public/draws/share-own-a/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.72" },
+      body: JSON.stringify({ entryId: entryOnA }),
+    }, TEST_ENV);
+    expect(good.status).toBe(200);
+    const goodBody = await good.json() as any;
+    expect(goodBody.ok).toBe(true);
+    expect(goodBody.shareCode).toBeTruthy();
+    const rows = await db.select().from(shareRecords).where(eq(shareRecords.drawId, drawA));
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.sharerEntryId).toBe(entryOnA);
   });
 
   it("registered 中奖者通知：user_id 身份关联 users 表真实邮箱发送", async () => {

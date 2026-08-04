@@ -76,6 +76,24 @@ export function clearJoinedHints(store: SessionStore): void {
 }
 
 /**
+ * 删除与某活动相关的本机提示（按 slug/id 多键）。
+ * 用于 JWT my-result 明确「未参与」时清脏数据，避免假灰钮（docs/099）。
+ */
+export function removeJoinedHintsForKeys(store: SessionStore, keys: string[]): JoinedHintsMap {
+  const map = readJoinedHints(store)
+  let changed = false
+  for (const k of keys) {
+    const key = joinedHintKey(k)
+    if (key && map[key]) {
+      delete map[key]
+      changed = true
+    }
+  }
+  if (changed) writeJoinedHints(store, map)
+  return map
+}
+
+/**
  * 写入或合并一条已参与提示（按 slug 与 drawId 双键，避免 id/slug 漂移丢状态）。
  */
 export function upsertJoinedHint(

@@ -7,6 +7,7 @@ import {
   joinedOpenStatusHintKey,
   joinedHintKey,
   readJoinedHints,
+  removeJoinedHintsForKeys,
   resolvePublicDrawPathKey,
   upsertJoinedHint,
 } from "./joined-session";
@@ -72,5 +73,15 @@ describe("joined-session", () => {
     expect(isSilentFetchOption(undefined)).toBe(false);
     // 模拟 click Event：无 silent 字段
     expect(isSilentFetchOption({ type: "click" } as unknown as Event)).toBe(false);
+  });
+
+  it("removeJoinedHintsForKeys 只删指定活动键", () => {
+    const store = memStore();
+    upsertJoinedHint(store, ["a-slug", "uuid-a"], { drawId: "uuid-a" });
+    upsertJoinedHint(store, ["b-slug", "uuid-b"], { drawId: "uuid-b" });
+    removeJoinedHintsForKeys(store, ["a-slug", "uuid-a"]);
+    const map = readJoinedHints(store);
+    expect(map[joinedHintKey("a-slug")]).toBeUndefined();
+    expect(map[joinedHintKey("uuid-b")]?.drawId).toBe("uuid-b");
   });
 });

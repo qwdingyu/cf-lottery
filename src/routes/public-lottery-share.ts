@@ -193,17 +193,30 @@ route.post("/draws/:slug/share", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
   const body = await c.req.json<{ entryId: string }>();
-  if (!body.entryId) return fail(c, "缺少参与记录 ID", 400);
+  const entryId = String(body.entryId || "").trim();
+  if (!entryId) return fail(c, "缺少参与记录 ID", 400);
 
   const [draw] = await db.select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId }).from(lotteryDraws).where(eq(lotteryDraws.publicSlug, slug)).limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
+
+  // entry 必须属于本活动：否则任意 UUID 可污染 share_records / 裂变归因（docs/099）
+  const [entry] = await db
+    .select({ id: lotteryEntries.id })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.id, entryId),
+      eq(lotteryEntries.drawId, draw.id),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+    ))
+    .limit(1);
+  if (!entry) return fail(c, "参与记录不存在或不属于本活动", 404);
 
   const shareCode = crypto.randomUUID().slice(0, 12);
   await db.insert(shareRecords).values({
     id: crypto.randomUUID(),
     tenantId: draw.tenantId,
     drawId: draw.id,
-    sharerEntryId: body.entryId,
+    sharerEntryId: entryId,
     shareCode,
   });
 
