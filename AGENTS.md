@@ -100,6 +100,12 @@ cp .env.example .env
 bash local-deploy.sh
 ```
 
+> ⚠️ **铁律：部署必须使用 `bash local-deploy.sh`**
+> - 该脚本会自动执行 `npm run db:migrate`（应用未执行的迁移，如 0026 visible 列）
+> - **禁止**直接用 `npx wrangler deploy` 部署——它会跳过迁移，导致 schema 与代码不一致（曾因此导致 /api/admin/draws 500 错误）
+> - 数据库迁移（新增列/表）只通过 `npm run db:migrate` 或 `local-deploy.sh` 应用
+```
+
 ## 验收标准
 
 - TypeScript 类型检查: 0 errors
