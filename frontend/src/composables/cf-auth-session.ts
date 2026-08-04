@@ -177,24 +177,92 @@ export function shouldResumeCfAuthJoin(input: {
   return Boolean(drawId && token)
 }
 
+/** 业务 JWT payload 粗读（不验签；仅前端分流/预填） */
+function readBusinessJwtPayload(token: string): Record<string, unknown> | null {
+  const raw = String(token || '').trim()
+  if (!raw) return null
+  try {
+    const parts = raw.split('.')
+    if (parts.length < 2 || !parts[1]) return null
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4))
+    const json = atob(b64 + pad)
+    const payload = JSON.parse(json) as Record<string, unknown>
+    return payload && typeof payload === 'object' ? payload : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * 从业务 JWT payload 粗读 tenantId（不验签；仅前端路由分流）。
  * 无租户 → 管理端应进 onboarding（与 router jwtTenantId 对齐）。
  */
 export function readTenantIdFromBusinessJwt(token: string): string {
-  const raw = String(token || '').trim()
-  if (!raw) return ''
-  try {
-    const parts = raw.split('.')
-    if (parts.length < 2 || !parts[1]) return ''
-    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4))
-    const json = atob(b64 + pad)
-    const payload = JSON.parse(json) as { tenantId?: unknown }
-    return typeof payload.tenantId === 'string' ? payload.tenantId.trim() : ''
-  } catch {
-    return ''
+  const payload = readBusinessJwtPayload(token)
+  const tenantId = payload?.tenantId
+  return typeof tenantId === 'string' ? tenantId.trim() : ''
+}
+
+/**
+ * 从业务 JWT 粗读 email（不验签）。
+ * open 系 verify-join / my-result 免 OTP 依赖 payload.email 与请求一致。
+ */
+export function readEmailFromBusinessJwt(token: string): string {
+  const payload = readBusinessJwtPayload(token)
+  const email = payload?.email
+  return typeof email === 'string' ? email.trim().toLowerCase() : ''
+}
+
+/**
+ * 管理端已登录、参与轨尚无 JWT 时：把 admin_token 同步进 lottery_registered_*。
+ *
+ * 为什么：历史上故意隔离 admin_token（localStorage）与参与 session，
+ * 导致顶栏显示「已登录」但点转盘仍弹邮箱 OTP（docs/093 根因）。
+ * 同一业务 JWT 可同时服务 L2 后台与 L1 公开参与（cf-auth exchange 本就双写）。
+ * 不覆盖已有 lottery_registered_token（参与专用会话优先）。
+ */
+export function hydrateLotterySessionFromAdminToken(input: {
+  sessionStore: SessionStore
+  adminToken: string
+  /** 可选：/me 或登录响应补的邮箱（旧 JWT 无 email claim 时） */
+  email?: string
+  displayName?: string
+}): { token: string; email: string; displayName: string } | null {
+  const adminToken = String(input.adminToken || '').trim()
+  if (!adminToken) return null
+  const existing = String(input.sessionStore.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || '').trim()
+  if (existing) {
+    // 已有参与会话：仅补 email/display 缺口，不换 token
+    const email =
+      String(input.sessionStore.getItem(LOTTERY_SESSION_EMAIL_KEY) || '').trim() ||
+      String(input.email || '').trim() ||
+      readEmailFromBusinessJwt(existing)
+    if (email && !input.sessionStore.getItem(LOTTERY_SESSION_EMAIL_KEY)) {
+      input.sessionStore.setItem(LOTTERY_SESSION_EMAIL_KEY, email)
+    }
+    const displayName =
+      String(input.sessionStore.getItem(LOTTERY_REGISTERED_USERNAME_KEY) || '').trim() ||
+      String(input.displayName || '').trim() ||
+      (email.includes('@') ? email.split('@')[0]! : '') ||
+      'user'
+    if (displayName && !input.sessionStore.getItem(LOTTERY_REGISTERED_USERNAME_KEY)) {
+      input.sessionStore.setItem(LOTTERY_REGISTERED_USERNAME_KEY, displayName)
+    }
+    return { token: existing, email, displayName }
   }
+  const email =
+    String(input.email || '').trim() ||
+    readEmailFromBusinessJwt(adminToken)
+  const displayName =
+    String(input.displayName || '').trim() ||
+    (email.includes('@') ? email.split('@')[0]! : '') ||
+    'user'
+  return applyCfAuthSessionToLottery(input.sessionStore, {
+    token: adminToken,
+    email,
+    displayName,
+  })
 }
 
 /**

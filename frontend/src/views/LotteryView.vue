@@ -613,8 +613,11 @@ import {
   buildCfAuthVerifyJoinBody,
   missingJoinCredentialForMode,
   shouldResumeCfAuthJoin,
+  hydrateLotterySessionFromAdminToken,
+  readEmailFromBusinessJwt,
 } from '@/composables/cf-auth-session'
 import { clearLotteryBrowserSessionOnly } from '@/composables/business-session'
+import { readAdminToken } from '@/composables/useAdminAuth'
 import { isOtpComplete, normalizeOtpDigits } from '@/composables/otp-input'
 import {
   publicNonOpenPrimaryCta,
@@ -1539,6 +1542,126 @@ async function joinWithRegisteredToken(drawId: string, token: string) {
 }
 
 /**
+ * open 系：已有业务 JWT + email → verify-join 免 OTP 直参（docs/093）。
+ * password/invite 缺凭证时仍弹窗，只补凭证不强迫再发码。
+ */
+async function joinOpenWithBearer(drawId: string, token: string, email: string) {
+  const draw = draws.value.find((d) => d.id === drawId)
+  if (draw) {
+    const message = validateSubmissionDraft(draw)
+    if (message) {
+      showToast(message, 'error')
+      expandedId.value = drawId
+      return
+    }
+  }
+  const missing = missingJoinCredentialForMode({
+    participationMode: draw?.participationMode,
+    accessPassword: joinAccessPassword.value,
+    inviteCode: joinInviteCode.value,
+  })
+  if (missing) {
+    // 已登录仍可能缺活动密码/邀请码：只弹凭证，不走「邮箱验证」主路径
+    openLogin(drawId)
+    loginError.value =
+      missing === 'password' ? t('lottery.accessPasswordRequired') : t('lottery.inviteCodeRequired')
+    return
+  }
+  joiningId.value = drawId
+  try {
+    const res = await fetch(
+      API_BASE + '/public/draws/' + encodeURIComponent(drawId) + '/verify-join',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(
+          buildCfAuthVerifyJoinBody({
+            email,
+            pending: {
+              drawId,
+              accessPassword: joinAccessPassword.value || undefined,
+              inviteCode: joinInviteCode.value || undefined,
+              refCode: routeParam('ref') || undefined,
+            },
+            submission: draw ? buildSubmissionPayload(draw) : undefined,
+          }),
+        ),
+      },
+    )
+    const data = (await res.json()) as any
+    if (data.ok && data.joined) {
+      completeJoinSuccess(drawId, data, { email })
+    } else {
+      showToast(data.message || t('lottery.joinFailed'), 'error')
+      // 后端拒绝（如 JWT 无 email claim）时降级弹窗，仍可 OTP
+      openLogin(drawId)
+    }
+  } catch {
+    showToast(t('lottery.networkError'), 'error')
+  } finally {
+    joiningId.value = ''
+  }
+}
+
+/**
+ * 把管理端 admin_token 同步到参与会话（顶栏已登录 ≠ 参与轨有 JWT 的断层修复）。
+ * 旧 JWT 无 email claim 时尝试 /api/admin/me 补邮箱。
+ */
+async function ensureParticipationSessionFromAdmin(): Promise<{
+  token: string
+  email: string
+} | null> {
+  const adminTok = readAdminToken()
+  if (!adminTok && !registeredToken.value) return null
+
+  let emailHint =
+    sessionEmail.value ||
+    readEmailFromBusinessJwt(registeredToken.value || adminTok) ||
+    ''
+  let nameHint = registeredUsername.value || ''
+
+  // 旧 token 无 email：用管理端 /me 补（同一业务 JWT，requireAuth 可验）
+  if (adminTok && !emailHint) {
+    try {
+      const meRes = await fetch(API_BASE + '/admin/me', {
+        headers: { Authorization: `Bearer ${adminTok}` },
+      })
+      const me = (await meRes.json().catch(() => ({}))) as {
+        ok?: boolean
+        email?: string
+        username?: string
+      }
+      if (me?.ok || me?.email || me?.username) {
+        if (me.email) emailHint = String(me.email).trim()
+        if (me.username) nameHint = String(me.username).trim()
+      }
+    } catch {
+      /* 忽略：后续可能仍能用 session 已有值 */
+    }
+  }
+
+  const hydrated = hydrateLotterySessionFromAdminToken({
+    sessionStore: sessionStorage,
+    adminToken: adminTok || registeredToken.value,
+    email: emailHint,
+    displayName: nameHint,
+  })
+  if (!hydrated) return null
+
+  registeredToken.value = hydrated.token
+  if (hydrated.email) persistSessionEmail(hydrated.email)
+  if (hydrated.displayName) {
+    registeredUsername.value = hydrated.displayName
+    sessionStorage.setItem(LOTTERY_REGISTERED_USERNAME_KEY, hydrated.displayName)
+  }
+  if (!hydrated.email) return null
+  return { token: hydrated.token, email: hydrated.email }
+}
+
+/**
  * cf-auth OAuth 回调后自动参与（docs/059）。
  * 只 read pending，join **成功后** 才 consume——失败可补密码/再试，避免一次失败丢意图。
  */
@@ -1687,14 +1810,26 @@ async function handleJoin(drawId: string) {
   }
   void recordActivityEvent(drawId, 'participation_started')
 
+  // 先尝试把管理端登录同步到参与轨（顶栏已显示用户名时不应再强迫邮箱 OTP）
+  const session = await ensureParticipationSessionFromAdmin()
+  const token = session?.token || registeredToken.value
+  const email = session?.email || sessionEmail.value || readEmailFromBusinessJwt(token)
+
   // registered 且已登录：跳过弹窗，直参与（核心 UX：游戏点一次就提交）
-  if (draw.participationMode === 'registered' && registeredToken.value) {
+  if (draw.participationMode === 'registered' && token) {
     pendingJoinDrawId.value = drawId
-    await joinWithRegisteredToken(drawId, registeredToken.value)
+    await joinWithRegisteredToken(drawId, token)
     return
   }
 
-  // 打开登录/验证弹窗
+  // open / roster / password / invite：有业务 JWT + email → 免 OTP 直参（docs/093）
+  if (token && email && email.includes('@')) {
+    pendingJoinDrawId.value = drawId
+    await joinOpenWithBearer(drawId, token, email)
+    return
+  }
+
+  // 无强会话：打开登录/验证弹窗
   openLogin(drawId)
 }
 
@@ -1843,6 +1978,9 @@ onMounted(async () => {
   if (storedUser && !registeredUsername.value) registeredUsername.value = storedUser
   const storedEmail = sessionStorage.getItem(LOTTERY_SESSION_EMAIL_KEY)
   if (storedEmail && !sessionEmail.value) persistSessionEmail(storedEmail)
+
+  // 管理端已登录时同步参与轨，避免顶栏「已登录」与点转盘弹 OTP 矛盾（docs/093）
+  await ensureParticipationSessionFromAdmin()
 
   countdownTimer = setInterval(() => {
     nowMs.value = Date.now()

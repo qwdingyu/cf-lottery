@@ -11,7 +11,16 @@
       tabindex="-1"
       @keydown="handleKeydown"
     >
-      <h3 v-if="title" :id="titleId" class="modal-title">{{ title }}</h3>
+      <div class="modal-header">
+        <h3 v-if="title" :id="titleId" class="modal-title">{{ title }}</h3>
+        <!-- 始终显示关闭按钮：hide-actions 隐藏底部时用户仍需能关闭 -->
+        <button
+          type="button"
+          class="modal-close"
+          :aria-label="$t('adminModal.close')"
+          @click="close"
+        >✕</button>
+      </div>
       <div ref="bodyRef" class="modal-body">
         <slot />
       </div>
@@ -151,6 +160,9 @@ onBeforeUnmount(() => {
   color: var(--tg-text);
   line-height: 1.35;
 }
+.modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 4px; }
+.modal-close { background: none; border: none; color: rgba(255,255,255,0.4); font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 6px; line-height: 1; }
+.modal-close:hover { color: #fff; background: rgba(255,255,255,0.08); }
 
 .modal-body {
   min-height: 0;

@@ -255,12 +255,16 @@ authRoute.post("/verify-email", async (c) => {
   const [member] = await db.select({ tenantId: tenantMembers.tenantId }).from(tenantMembers).where(eq(tenantMembers.userId, user.id)).limit(1);
   const tenantId = member?.tenantId || "";
 
-  // 签发 JWT
+  // 签发 JWT（含 email：公开页 open 系 Bearer 免 OTP 依赖，docs/093）
   const jwtSecret = getJwtSecret(c);
-  const token = await signJwt({ sub: user.id, tenantId }, jwtSecret, SESSION_TOKEN_TTL_SECONDS);
+  const token = await signJwt(
+    { sub: user.id, tenantId, email: user.email },
+    jwtSecret,
+    SESSION_TOKEN_TTL_SECONDS,
+  );
 
   // needsTenant 与 /login 对齐：方案 C 下新注册用户无租户，前端引导 onboarding
-  return c.json({ ok: true, token, tenantId, needsTenant: !member });
+  return c.json({ ok: true, token, tenantId, needsTenant: !member, email: user.email });
 });
 
 // ══════════════════════════════════════════════════════════
@@ -347,12 +351,19 @@ authRoute.post("/login", async (c) => {
   const tenantId = memberships[0]?.tenantId || "";
 
   const jwtSecret = getJwtSecret(c);
-  const token = await signJwt({ sub: user.id, tenantId }, jwtSecret, SESSION_TOKEN_TTL_SECONDS);
+  // email 进 claims：活动页 open 系 verify-join / my-result 与 JWT.email 对齐免 OTP
+  const token = await signJwt(
+    { sub: user.id, tenantId, email: user.email },
+    jwtSecret,
+    SESSION_TOKEN_TTL_SECONDS,
+  );
 
   return c.json({
     ok: true,
     token,
     tenantId,
+    email: user.email,
+    username: user.username,
     needsTenant: memberships.length === 0,
     tenants: memberships.map((m) => ({
       id: m.tenantId,
@@ -386,11 +397,26 @@ authRoute.post("/switch-tenant", requireAuth, async (c) => {
     .limit(1);
   if (!membership) return c.json({ ok: false, message: "您不是该租户的成员" }, 403);
 
-  // 签发新 JWT（切换后的租户上下文）
+  // 签发新 JWT（切换后的租户上下文；保留 email 供公开参与免 OTP）
+  const [switchUser] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
   const jwtSecret = getJwtSecret(c);
-  const token = await signJwt({ sub: userId, tenantId: targetTenantId }, jwtSecret, SESSION_TOKEN_TTL_SECONDS);
+  const token = await signJwt(
+    { sub: userId, tenantId: targetTenantId, email: switchUser?.email || "" },
+    jwtSecret,
+    SESSION_TOKEN_TTL_SECONDS,
+  );
 
-  return c.json({ ok: true, token, tenantId: targetTenantId, role: membership.role });
+  return c.json({
+    ok: true,
+    token,
+    tenantId: targetTenantId,
+    role: membership.role,
+    email: switchUser?.email || "",
+  });
 });
 
 /**
@@ -413,9 +439,18 @@ authRoute.post("/create-tenant", requireAuth, async (c) => {
     await tx.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
   });
 
-  const token = await signJwt({ sub: userId, tenantId }, getJwtSecret(c), SESSION_TOKEN_TTL_SECONDS);
+  const [ctUser] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const token = await signJwt(
+    { sub: userId, tenantId, email: ctUser?.email || "" },
+    getJwtSecret(c),
+    SESSION_TOKEN_TTL_SECONDS,
+  );
 
-  return c.json({ ok: true, tenantId, name, token });
+  return c.json({ ok: true, tenantId, name, token, email: ctUser?.email || "" });
 });
 
 /** 注销 */

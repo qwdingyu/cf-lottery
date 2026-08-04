@@ -2,7 +2,7 @@
   <div class="lucky-wheel-container">
     <!-- 外圈装饰光点 -->
     <div class="wheel-lights">
-      <span v-for="i in 12" :key="i" class="light-dot" :class="{ active: spinning }" :style="{ transform: `rotate(${i * 30}deg) translateY(-${canvasSize/2 + 8}px)` }" />
+      <span v-for="i in 12" :key="i" class="light-dot" :class="{ active: lightsActive }" :style="{ transform: `rotate(${i * 30}deg) translateY(-${canvasSize/2 + 8}px)` }" />
     </div>
     <!-- 转盘 -->
     <canvas ref="wheelCanvasRef" class="wheel-canvas" :width="canvasSize" :height="canvasSize" />
@@ -16,13 +16,13 @@
       @keydown.enter.prevent="handleSpin"
       @keydown.space.prevent="handleSpin"
     >
-      <div class="wheel-pointer" :class="{ spinning }">
+      <div class="wheel-pointer" :class="{ spinning: spinning || loading }">
         <span class="pointer-arrow">▼</span>
       </div>
-      <div class="wheel-btn" :class="{ disabled: disabled || spinning || loading }">
+      <div class="wheel-btn" :class="{ disabled: disabled || spinning || loading, loading }">
         <!--
-          语义诚实（docs/055a）：join 路径只提交参与；随机旋转是成功后的氛围，不是开奖。
-          空闲=参与抽奖；loading=提交中；spinning=参与成功氛围。
+          语义诚实（docs/055a / 093）：join 路径只提交参与；随机旋转是成功后的氛围，不是开奖。
+          空闲=参与抽奖；loading=提交中（慢速 idle 旋转，避免「点了没反应」）；spinning=参与成功氛围。
         -->
         <span v-if="loading" class="wheel-btn-label">{{ $t('lottery.gameWheelSubmitting') }}</span>
         <span v-else-if="spinning" class="wheel-btn-label">{{ $t('lottery.gameWheelCelebrating') }}</span>
@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import type { GameProps, GameEmits } from './types'
 
 const props = withDefaults(defineProps<GameProps>(), {
@@ -48,8 +48,12 @@ const spinning = ref(false)
 const canvasSize = 320
 /** 避免 celebrateKey 初始 0 触发一次空庆祝 */
 let lastCelebrate = 0
+/** loading 期间慢速 idle 旋转的 rAF id */
+let idleRaf = 0
 
 const sliceAngle = computed(() => (2 * Math.PI) / Math.max(props.prizes.length, 1))
+/** 外圈灯：提交中或庆祝旋转都亮，给即时反馈 */
+const lightsActive = computed(() => spinning.value || props.loading)
 
 const COLORS = [
   ['#FF6B6B', '#FF8E8E'], ['#FFD93D', '#FFE570'], ['#6BCB77', '#8FD99A'],
@@ -58,6 +62,10 @@ const COLORS = [
 ]
 
 function getColors(i: number) { return COLORS[i % COLORS.length]! }
+
+function currentRot(): number {
+  return parseFloat(wheelCanvasRef.value?.dataset?.rot || '0') || 0
+}
 
 function drawWheel(rotation: number) {
   const cvs = wheelCanvasRef.value; if (!cvs) return
@@ -94,7 +102,34 @@ function drawWheel(rotation: number) {
   ctx.strokeStyle = '#ccc'; ctx.lineWidth = 2; ctx.stroke()
 }
 
-/** 点击：只表达参与意图；不在此处开转动画（等 join 成功 celebrateKey） */
+function stopIdleSpin() {
+  if (idleRaf) {
+    cancelAnimationFrame(idleRaf)
+    idleRaf = 0
+  }
+}
+
+/**
+ * 提交中慢速 idle 旋转：用户点中心后立刻看到盘在动，
+ * 而不是等 OTP/网络才 celebrate（docs/093 时机问题）。
+ * 不表示开奖结果；成功后由 runCelebrateSpin 接棒加速减速。
+ */
+function startIdleSpin() {
+  stopIdleSpin()
+  const tick = () => {
+    if (!props.loading || spinning.value) {
+      idleRaf = 0
+      return
+    }
+    const rot = (currentRot() + 0.04) % (Math.PI * 2)
+    drawWheel(rot)
+    if (wheelCanvasRef.value) wheelCanvasRef.value.dataset.rot = String(rot)
+    idleRaf = requestAnimationFrame(tick)
+  }
+  idleRaf = requestAnimationFrame(tick)
+}
+
+/** 点击：只表达参与意图；不在此处开庆祝旋转（等 join 成功 celebrateKey） */
 function handleSpin() {
   if (spinning.value || props.disabled || props.loading) return
   emit('play')
@@ -103,9 +138,10 @@ function handleSpin() {
 /** 参与成功后的氛围旋转：随机停角，不对准中奖扇区 */
 async function runCelebrateSpin() {
   if (spinning.value) return
+  stopIdleSpin()
   spinning.value = true
   const targetAngle = Math.PI * 2 * (5 + Math.random())
-  const startRot = parseFloat(wheelCanvasRef.value?.dataset?.rot || '0')
+  const startRot = currentRot()
   const duration = 2800
   const start = performance.now()
 
@@ -125,13 +161,22 @@ async function runCelebrateSpin() {
   spinning.value = false
 }
 
-watch(() => props.prizes, () => drawWheel(parseFloat(wheelCanvasRef.value?.dataset?.rot || '0') || 0), { immediate: true })
+watch(() => props.prizes, () => drawWheel(currentRot()), { immediate: true })
+
+watch(() => props.loading, (loading) => {
+  if (loading && !spinning.value) startIdleSpin()
+  else if (!loading) stopIdleSpin()
+})
 
 watch(() => props.celebrateKey, (key) => {
   const n = Number(key) || 0
   if (n <= 0 || n === lastCelebrate) return
   lastCelebrate = n
   void runCelebrateSpin()
+})
+
+onUnmounted(() => {
+  stopIdleSpin()
 })
 </script>
 
@@ -185,6 +230,16 @@ watch(() => props.celebrateKey, (key) => {
 .wheel-btn:not(.disabled):hover { transform: scale(1.1); }
 .wheel-btn:not(.disabled):active { transform: scale(0.95); }
 .wheel-btn.disabled { opacity: 0.5; cursor: not-allowed; }
+/* 提交中：按钮仍醒目，脉冲表示「在处理」而非死灰 */
+.wheel-btn.loading {
+  opacity: 1;
+  cursor: wait;
+  animation: wheelBtnPulse 1s ease-in-out infinite;
+}
+@keyframes wheelBtnPulse {
+  0%, 100% { box-shadow: 0 4px 16px rgba(245, 158, 11, 0.35); }
+  50% { box-shadow: 0 4px 28px rgba(245, 158, 11, 0.65); }
+}
 
 @media (max-width: 640px) {
   .wheel-btn {
