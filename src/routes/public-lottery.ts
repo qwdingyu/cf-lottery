@@ -50,6 +50,8 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
 
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "open" && draw.status !== "drawn") return fail(c, "活动未开放", 400);
+  // docs/083：visible=0 时对公众与「未开放」同文案，不额外泄露「存在但隐藏」
+  if (Number(draw.visible ?? 1) !== 1) return fail(c, "活动未开放", 400);
 
   const [{ total }] = await db
     .select({ total: count() })
@@ -558,7 +560,7 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   }
   const slug = c.req.param("slug");
   const body = await c.req.json<{ email: string; code: string }>();
-  const email = String(body.email || "").trim().toLowerCase();
+  let email = String(body.email || "").trim().toLowerCase();
   const code = String(body.code || "").trim();
 
   const [draw] = await db
@@ -568,27 +570,58 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
+  // docs/084：open 系对齐 verify-join——业务 JWT.email 可免 OTP；无 body.email 时用 JWT 邮箱。
+  // 须在 resolveParticipantIdentity 之前解析，避免空 email 先写成错误身份键。
+  let bearerEmailVerified = false;
+  if (draw.participationMode !== "registered") {
+    const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    if (bearerToken) {
+      const jwtSecret = getEnv(c, "JWT_SECRET");
+      if (jwtSecret) {
+        try {
+          const payload = await verifyJwt(bearerToken, jwtSecret);
+          const tokenEmail = String(payload?.email || "").trim().toLowerCase();
+          if (tokenEmail && isValidEmail(tokenEmail)) {
+            if (!email) {
+              email = tokenEmail;
+              bearerEmailVerified = true;
+            } else if (tokenEmail === email) {
+              bearerEmailVerified = true;
+            }
+            // body.email 与 token.email 不一致：不授信 JWT，仍走 OTP（防拿别人 token 查指定邮箱）
+          }
+        } catch {
+          /* token 无效，继续走 OTP */
+        }
+      }
+    }
+  }
+
   // ── 统一身份解析：registered → (user_id, userId)；其他 → (email, email) ──
-  // registered 用户参与时 entry.identity_value 是 userId（UUID），邮箱+验证码无法匹配；
-  // JWT 即身份证明，跳过验证码。无 JWT 直接拒绝。
+  // registered：JWT 即身份证明，跳过验证码。无 JWT 直接拒绝。
   const identity = await resolveParticipantIdentity(c, draw.participationMode, email);
   if (!identity) return fail(c, "此活动需要登录后查询", 401);
 
-  // 邮箱+验证码必填：仅邮箱身份要求（JWT 身份无需验证码）
-  if (identity.identityType === "email" && (!email || !code)) return fail(c, "请输入邮箱和验证码", 400);
+  // 邮箱身份：无 JWT 免码时必须 email+OTP
+  if (identity.identityType === "email" && !bearerEmailVerified) {
+    if (!email || !code) return fail(c, "请输入邮箱和验证码", 400);
+  }
+  if (identity.identityType === "email" && !email) {
+    return fail(c, "请输入邮箱和验证码", 400);
+  }
   if (identity.identityType === "email" && !(await checkPublicIdentityRateLimit(db, "my-result", draw.id, email, 10, 60000))) {
     return fail(c, "查询过于频繁，请稍后再试", 429);
   }
 
-  // 验证码校验：仅邮箱身份需要（查询类操作不消耗验证码，仅校验身份防枚举）
-  if (identity.identityType === "email") {
+  // 验证码：仅邮箱身份且未持有匹配 email 的业务 JWT（查询不消耗验证码，防枚举）
+  if (identity.identityType === "email" && !bearerEmailVerified) {
     const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
     if (!validCode) {
       return fail(c, "验证码无效或已过期", 400);
     }
   }
 
-  const identityValue = identity.identityValue;
+  const identityValue = identity.identityType === "email" ? email : identity.identityValue;
 
   const [entry] = await db
     .select({ id: lotteryEntries.id })

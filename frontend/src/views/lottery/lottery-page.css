@@ -945,19 +945,18 @@
   padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
 }
 .game-result-modal {
-  background: var(--tg-bg, #1f2937); border-radius: 16px; padding: 32px 24px;
+  background: var(--tg-bg, #1f2937); border-radius: 16px; padding: 24px 20px 20px;
   max-width: 360px; width: 90%; text-align: center; position: relative;
   animation: modalIn .3s ease;
   max-height: min(90vh, 100%); overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
-.result-close { position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--tg-hint, #9aa4b2); min-width: 44px; min-height: 44px; }
-.result-icon { font-size: 48px; margin-bottom: 12px; }
-.result-title { font-size: 22px; font-weight: 700; margin-bottom: 16px; }
+.result-close { position: absolute; top: 8px; right: 8px; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--tg-hint, #9aa4b2); min-width: 44px; min-height: 44px; }
+.result-title { font-size: 18px; font-weight: 700; margin: 8px 0 14px; color: var(--tg-text, #f0f2f5); }
 .result-form { display: flex; flex-direction: column; gap: 10px; text-align: left; }
 .result-form input {
   box-sizing: border-box; width: 100%;
-  min-height: 44px; padding: 10px 12px; border-radius: 8px;
+  min-height: 44px; padding: 10px 12px; border-radius: 10px;
   border: 1px solid var(--border, rgba(255,255,255,.1));
   background: var(--tg-secondary-bg, #151b28); color: var(--tg-text, #f0f2f5);
   font-size: 16px; /* iOS 防缩放 */
@@ -970,6 +969,31 @@
 .result-send-code-btn {
   flex: 0 0 auto; min-height: 44px; white-space: nowrap;
   padding: 8px 12px;
+}
+/* docs/084：主 CTA 固定高度，与活动页琥珀主色一致，避免半屏死按钮 */
+.result-primary-btn {
+  width: 100%;
+  min-height: 48px;
+  max-height: 52px;
+  margin-top: 4px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 15px;
+  background: linear-gradient(135deg, #f59e0b, #fbbf24);
+  color: #111;
+  border: none;
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.28);
+}
+.result-primary-btn:disabled {
+  opacity: 0.55;
+  box-shadow: none;
+}
+.result-secondary-btn {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 2px;
+  border-radius: 10px;
+  font-size: 13px;
 }
 .result-hint { font-size: 12px; color: var(--tg-hint, #9aa4b2); margin: 0; line-height: 1.45; }
 .result-error { font-size: 13px; color: #ef4444; margin: 0; }

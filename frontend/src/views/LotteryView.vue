@@ -438,21 +438,29 @@
     <div v-if="showMyResultModal" class="game-result-overlay" @click.self="showMyResultModal = false">
       <div class="game-result-modal">
         <button class="result-close" @click="showMyResultModal = false">✕</button>
-        <div class="result-icon">🎫</div>
         <h2 class="result-title">{{ $t('lottery.myResultTitle') }}</h2>
 
-        <!-- 查询表单 -->
+        <!-- 查询表单：docs/084 按会话态分流 -->
         <div v-if="!myResultData" class="result-form">
-          <!-- registered 模式：JWT 已证明身份，无需邮箱/验证码 -->
-          <template v-if="isRegMyResult">
-            <p class="result-hint">{{ $t('lottery.loggedInQueryHint', { name: registeredUsername }) }}</p>
+          <template v-if="myResultHasStrongSession">
+            <p class="result-hint">
+              {{
+                $t('lottery.loggedInQueryHint', {
+                  name: registeredUsername || sessionEmail || myResultEmail || '…',
+                })
+              }}
+            </p>
             <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
-            <button class="btn btn-primary join-modal-primary" :disabled="myResultLoading" @click="queryMyResult">
+            <button
+              type="button"
+              class="btn btn-primary result-primary-btn"
+              :disabled="myResultLoading"
+              @click="queryMyResult"
+            >
               {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.queryText') }}
             </button>
           </template>
           <template v-else>
-            <!-- docs/077：本页可发查询码（purpose=query），不依赖「参与时」旧码 -->
             <input
               v-model="myResultEmail"
               type="email"
@@ -478,7 +486,7 @@
                 :placeholder="$t('lottery.resultCodePlaceholder')"
                 maxlength="6"
                 :disabled="myResultLoading || myResultSendingCode"
-                @keyup.enter="queryMyResult"
+                @keyup.enter="myResultCode.trim() ? queryMyResult() : sendMyResultCode()"
               />
               <button
                 type="button"
@@ -495,10 +503,34 @@
                 }}
               </button>
             </div>
-            <p class="result-hint">{{ $t('lottery.resultCodeHint') }}</p>
+            <p class="result-hint">{{ $t('lottery.resultCodeHintShort') }}</p>
             <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
-            <button class="btn btn-primary join-modal-primary" :disabled="myResultLoading || myResultSendingCode" @click="queryMyResult">
-              {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.queryText') }}
+            <button
+              v-if="!myResultCode.trim()"
+              type="button"
+              class="btn btn-primary result-primary-btn"
+              :disabled="myResultLoading || myResultSendingCode || myResultCodeCooldown > 0 || !myResultEmail.trim()"
+              @click="sendMyResultCode"
+            >
+              {{ myResultSendingCode ? $t('lottery.loadingText') : $t('lottery.sendCode') }}
+            </button>
+            <button
+              v-else
+              type="button"
+              class="btn btn-primary result-primary-btn"
+              :disabled="myResultLoading || myResultSendingCode"
+              @click="queryMyResult"
+            >
+              {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.viewMyResultCta') }}
+            </button>
+            <button
+              v-if="cfAuthEnabled"
+              type="button"
+              class="btn btn-ghost result-secondary-btn"
+              :disabled="myResultLoading || cfAuthLoading"
+              @click="handleCfAuthForMyResult"
+            >
+              {{ $t('lottery.cfAuthQueryFaster') }}
             </button>
           </template>
         </div>
@@ -789,8 +821,8 @@ function completeJoinSuccess(
     }, delayMs)
   }
 }
-/** 结果查询弹窗对应的活动是否是 registered 模式（决定是否用 JWT 查询） */
-const isRegMyResult = computed(() => myResultDraw.value?.participationMode === 'registered')
+/** docs/084：持有业务 JWT 即强会话（registered 按 sub；open 按 JWT.email 免 OTP） */
+const myResultHasStrongSession = computed(() => Boolean(registeredToken.value))
 
 /** 头部标题：单活动模式用活动名，多活动模式用默认标题 */
 const drawTitle = computed(() => {
@@ -978,8 +1010,8 @@ function openMyResult(draw: LotteryDraw) {
   myResultSendingCode.value = false
   stopMyResultCooldown()
   showMyResultModal.value = true
-  // registered + 已登录：打开即查，少一次「点查询」
-  if (draw.participationMode === 'registered' && registeredToken.value) {
+  // docs/084：有业务 JWT 则打开即查（open 系后端用 JWT.email）
+  if (registeredToken.value) {
     void queryMyResult()
   }
 }
@@ -1024,9 +1056,13 @@ async function sendMyResultCode() {
 async function queryMyResult() {
   if (!myResultDraw.value) return
   const isReg = myResultDraw.value.participationMode === 'registered'
-  // registered 模式：已登录用户带 JWT 直接查询，无需邮箱/验证码；
-  // 其他模式仍需邮箱+验证码防枚举
-  if (!isReg && (!myResultEmail.value.trim() || !myResultCode.value.trim())) {
+  const hasBearer = Boolean(registeredToken.value)
+  // registered：必须 JWT；open 系：有 Bearer 可免 OTP，否则必须邮箱+码
+  if (isReg && !hasBearer) {
+    myResultError.value = t('lottery.registeredRequired') || ''
+    return
+  }
+  if (!isReg && !hasBearer && (!myResultEmail.value.trim() || !myResultCode.value.trim())) {
     myResultError.value = t('lottery.emailCodeRequired') || ''
     return
   }
@@ -1034,20 +1070,19 @@ async function queryMyResult() {
   myResultError.value = ''
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    // registered 模式：JWT 即身份证明（后端按 userId 匹配 entry，跳过验证码）
-    if (isReg && registeredToken.value) headers['Authorization'] = 'Bearer ' + registeredToken.value
+    // registered：user_id；open+JWT：后端按 email 免 OTP（docs/084）
+    if (hasBearer) headers['Authorization'] = 'Bearer ' + registeredToken.value
     const res = await fetch(`${API_BASE}/public/draws/${myResultDraw.value.publicSlug}/my-result`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        email: isReg ? registeredUsername.value : myResultEmail.value.trim(),
-        code: isReg ? '' : myResultCode.value.trim(),
+        email: isReg ? (sessionEmail.value || registeredUsername.value) : myResultEmail.value.trim(),
+        code: hasBearer && !isReg ? '' : isReg ? '' : myResultCode.value.trim(),
       }),
     })
     const data = await res.json()
     if (data.ok) {
       myResultData.value = data
-      // 查到结果后记住邮箱会话，方便「我的记录」
       if (!isReg && myResultEmail.value.trim()) {
         persistSessionEmail(myResultEmail.value.trim())
       }
@@ -1059,6 +1094,16 @@ async function queryMyResult() {
   } finally {
     myResultLoading.value = false
   }
+}
+
+/** 查结果场景拉起 cf-auth：写回业务 JWT 后自动再查（pending 用当前活动 slug） */
+function handleCfAuthForMyResult() {
+  const draw = myResultDraw.value
+  if (!draw || !cfAuthEnabled.value) return
+  // 复用参与 OAuth：pendingJoin 指向当前活动，回调后用户再点查结果即可带 JWT；
+  // 若已在参与流写过 token，openMyResult 会自动查。
+  pendingJoinDrawId.value = draw.publicSlug || draw.id
+  void handleCfAuthJoin()
 }
 
 function copyMyResult(text: string) {

@@ -940,6 +940,97 @@ describe("公开参与流程", () => {
     expect(data.joined).toBe(true);
   });
 
+  /**
+   * docs/084：open 系 my-result 对齐 verify-join——持有 email 一致的业务 JWT 可免 OTP。
+   */
+  it("open 模式：my-result 业务 JWT.email 一致免 OTP；无 token 无码拒绝；邮箱不一致不授信", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const email = "jwt-query@test.com";
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "open-myresult-jwt",
+      title: "JWT 查结果", status: "drawn", participationMode: "open",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      identityType: "email", identityValue: email, joinedAt: new Date().toISOString(),
+    });
+    const token = await signJwt(
+      { sub: crypto.randomUUID(), tenantId: TENANT, email },
+      TEST_ENV.JWT_SECRET,
+      3600,
+    );
+
+    // 无 JWT、无验证码 → 400
+    const bare = await app.request("/public/draws/open-myresult-jwt/my-result", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.51" },
+      body: JSON.stringify({ email, code: "" }),
+    }, TEST_ENV);
+    expect(bare.status).toBe(400);
+
+    // JWT.email 一致、无码 → 200
+    const withJwt = await app.request("/public/draws/open-myresult-jwt/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.52",
+      },
+      body: JSON.stringify({ email, code: "" }),
+    }, TEST_ENV);
+    expect(withJwt.status).toBe(200);
+    const okBody = await withJwt.json() as any;
+    expect(okBody.ok).toBe(true);
+    expect(okBody.joined).toBe(true);
+
+    // 仅 JWT、body 无 email → 用 token.email
+    const jwtOnly = await app.request("/public/draws/open-myresult-jwt/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.53",
+      },
+      body: JSON.stringify({ email: "", code: "" }),
+    }, TEST_ENV);
+    expect(jwtOnly.status).toBe(200);
+    expect((await jwtOnly.json() as any).joined).toBe(true);
+
+    // body.email 与 token.email 不一致 → 不授信 JWT，无码仍 400
+    const mismatch = await app.request("/public/draws/open-myresult-jwt/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.54",
+      },
+      body: JSON.stringify({ email: "other@test.com", code: "" }),
+    }, TEST_ENV);
+    expect(mismatch.status).toBe(400);
+  });
+
+  it("公开详情：visible=0 时拒绝（与未开放同文案）", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "hidden-draw-slug",
+      title: "已隐藏", status: "drawn", participationMode: "open",
+      visible: 0,
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    const res = await app.request("/public/draws/hidden-draw-slug", {
+      headers: { "CF-Connecting-IP": "10.0.0.55" },
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(false);
+    expect(String(body.message || "")).toContain("未开放");
+  });
+
   it("registered 中奖者通知：user_id 身份关联 users 表真实邮箱发送", async () => {
     const tenantId = TENANT;
     const drawId = crypto.randomUUID();

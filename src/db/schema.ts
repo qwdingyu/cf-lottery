@@ -205,6 +205,11 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   showParticipantCount: integer("show_participant_count").notNull().default(1),
   showWinnerCount: integer("show_winner_count").notNull().default(1),
   showWinnerList: integer("show_winner_list").notNull().default(0),
+  /**
+   * 公开展示：1 用户面可见；0 公开详情/列表拒绝（管理端仍可见）。
+   * 与 status、start/end 时间窗独立——drawn 后可隐藏公示而不改业务终态（docs/083，对齐 cf-shop）。
+   */
+  visible: integer("visible").notNull().default(1),
   drawnAt: text("drawn_at"),
   failureReason: text("failure_reason").notNull().default(""),
   drawSeedHash: text("draw_seed_hash").notNull().default(""),

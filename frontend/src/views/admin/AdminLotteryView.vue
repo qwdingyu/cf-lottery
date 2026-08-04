@@ -2711,11 +2711,14 @@ async function handleEdit(draw: LotteryDraw) {
 }
 
 async function handleToggleVisibility(id: string, visible: number | undefined) {
-  if (!(await askConfirm(t('lottery.adminConfirmToggleVisibility')))) return
+  // docs/083：仅 drawn 可切换；默认 visible 缺省视为 1（用户可见）
+  const currentlyVisible = visible === undefined || visible === null ? 1 : Number(visible)
+  const action = currentlyVisible ? t('lottery.adminHide') : t('lottery.adminShow')
+  if (!(await askConfirm(t('lottery.adminConfirmToggleVisibility', { action })))) return
   operatingId.value = id
   try {
-    await updateLotteryDraw(id, { visible: visible ? 0 : 1 })
-    showToast(visible ? t('lottery.adminHidden') : t('lottery.adminShown'), 'success')
+    await updateLotteryDraw(id, { visible: currentlyVisible ? 0 : 1 })
+    showToast(currentlyVisible ? t('lottery.adminHidden') : t('lottery.adminShown'), 'success')
     await loadData()
   } catch (e: any) {
     showToast(e?.message || t('lottery.adminFailed'), 'error')

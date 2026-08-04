@@ -165,6 +165,8 @@ export async function createDraw(
         showParticipantCount: data.showParticipantCount ?? 1,
         showWinnerCount: data.showWinnerCount ?? 1,
         showWinnerList: data.showWinnerList ?? 0,
+        // 新建默认对用户可见；运营可在 drawn 后单独关闭（docs/083）
+        visible: 1,
         productLink: data.productLink || "{}",
         promotionConfig: data.promotionConfig || "{}",
         activityConfig: data.activityConfig || "{}",

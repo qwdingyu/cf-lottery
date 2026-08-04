@@ -484,7 +484,12 @@ adminLotteryRoute.post("/draws", async (c) => {
   }
 });
 
-/** 编辑活动 */
+/** 编辑活动
+ *
+ * - draft：可改业务字段（时间、标题、配置等）
+ * - drawn：仅允许切换 visible（docs/083，对齐 cf-shop）——公示结束后可对用户隐藏，不改已定结果
+ * - 其它状态：禁止 PATCH（暂停/取消请走状态机接口）
+ */
 adminLotteryRoute.patch("/draws/:id", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
@@ -498,6 +503,22 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
+
+  // ── 已开奖：仅允许 { visible: 0|1|true|false } ──
+  if (draw.status === "drawn") {
+    const keys = Object.keys(body || {}).filter((k) => body[k] !== undefined);
+    if (keys.length !== 1 || body.visible === undefined) {
+      return fail(c, "已开奖活动仅可切换可见性", 409);
+    }
+    const nextVisible = body.visible === true || body.visible === 1 || body.visible === "1" ? 1 : 0;
+    await db
+      .update(lotteryDraws)
+      .set({ visible: nextVisible, updatedAt: new Date().toISOString() })
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+    await recordTenantAudit(c, "draw.update_visibility", "lottery_draw", drawId, { visible: nextVisible });
+    return ok(c, { updated: true, visible: nextVisible });
+  }
+
   if (draw.status !== "draft") return fail(c, "只有草稿状态的活动可以编辑", 400);
 
   // 校验时间顺序（如果一起修改了时间）

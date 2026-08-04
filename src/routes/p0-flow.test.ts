@@ -908,3 +908,87 @@ describe("L2 运营闭环：retry-email 与 recover", () => {
     expect(d2?.status).toBe("open");
   });
 });
+
+/**
+ * docs/083：drawn 仅可切换 visible；公开详情拒绝 visible=0；open 不可靠 visible 下架。
+ */
+describe("P0 活动可见性 visible", () => {
+  it("drawn 可 PATCH visible；open 拒绝；隐藏后公开详情 400", async () => {
+    const app = createTestApp();
+    await seedOwner();
+    const now = new Date().toISOString();
+    const drawnId = crypto.randomUUID();
+    const openId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawnId,
+      tenantId: TENANT_ID,
+      publicSlug: "vis-drawn",
+      title: "已开奖可藏",
+      status: "drawn",
+      activityKind: "lottery",
+      participationMode: "open",
+      visible: 1,
+      startAt: futureIso(-120),
+      endAt: futureIso(-60),
+      winnerCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(lotteryDraws).values({
+      id: openId,
+      tenantId: TENANT_ID,
+      publicSlug: "vis-open",
+      title: "进行中不可藏",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      visible: 1,
+      startAt: futureIso(-10),
+      endAt: futureIso(60),
+      winnerCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const hide = await app.request(`/api/admin/draws/${drawnId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ visible: 0 }),
+    }, TEST_ENV);
+    expect(hide.status).toBe(200);
+    const hideBody = await hide.json() as { ok: boolean; visible: number };
+    expect(hideBody.visible).toBe(0);
+    const [row] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawnId));
+    expect(row?.visible).toBe(0);
+
+    const publicHidden = await app.request("/api/public/draws/vis-drawn", {
+      headers: { "CF-Connecting-IP": "10.0.1.1" },
+    }, TEST_ENV);
+    expect(publicHidden.status).toBe(400);
+
+    const openHide = await app.request(`/api/admin/draws/${openId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ visible: 0 }),
+    }, TEST_ENV);
+    expect(openHide.status).toBe(400);
+
+    const drawnExtra = await app.request(`/api/admin/draws/${drawnId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ visible: 1, title: "篡改" }),
+    }, TEST_ENV);
+    expect(drawnExtra.status).toBe(409);
+
+    const show = await app.request(`/api/admin/draws/${drawnId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ visible: 1 }),
+    }, TEST_ENV);
+    expect(show.status).toBe(200);
+    const publicOk = await app.request("/api/public/draws/vis-drawn", {
+      headers: { "CF-Connecting-IP": "10.0.1.2" },
+    }, TEST_ENV);
+    expect(publicOk.status).toBe(200);
+  });
+});
