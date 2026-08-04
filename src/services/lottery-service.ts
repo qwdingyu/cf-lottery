@@ -159,6 +159,7 @@ export async function processDueDraws(
     .from(lotteryDraws)
     .where(and(
       eq(lotteryDraws.status, "open"),
+      eq(lotteryDraws.activityKind, "lottery"), // 纵深：仅抽奖可 performDraw；防误配 scheduled 的非 lottery
       eq(lotteryDraws.drawTrigger, "scheduled"),
       sql`${lotteryDraws.drawAt} <= ${now}`,  // 开奖时间已到
     ))

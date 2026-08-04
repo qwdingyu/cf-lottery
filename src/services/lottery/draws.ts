@@ -195,7 +195,11 @@ export async function createDraw(
   const requestedMaxParticipants = normalizeRequestedMaxParticipants(data.maxParticipants);
   const title = String(data.title || "").trim();
   const activityKind = data.activityKind || "lottery";
-  const drawTrigger = data.drawTrigger || "manual";
+  // docs/115：仅 lottery 且带 drawAt、调用方未显式传 trigger 时推断 scheduled。
+  // 禁止「写了开奖时间却 manual」导致 Cron 永不扫到；显式 data.drawTrigger 仍优先。
+  const drawTrigger =
+    data.drawTrigger ||
+    (activityKind === "lottery" && data.drawAt ? "scheduled" : "manual");
   const winnerCount = normalizeWinnerCount(activityKind, data.winnerCount);
 
   // 创建阶段就拒绝无法发布的活动，避免运营者生成“看似保存成功、后续必然失败”的草稿。

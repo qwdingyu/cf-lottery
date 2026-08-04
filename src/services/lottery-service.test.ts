@@ -188,6 +188,42 @@ describe("活动生命周期", () => {
     })).rejects.toThrow("开奖时间必须在参与结束后");
   });
 
+  it("lottery 仅传 drawAt、不传 drawTrigger → 推断 scheduled + resultMode scheduled（docs/115）", async () => {
+    const start = new Date().toISOString();
+    const end = new Date(Date.now() + 3600000).toISOString();
+    const drawAt = new Date(Date.now() + 7200000).toISOString();
+    const { id } = await createDraw(db, TENANT, {
+      title: "仅 drawAt",
+      startAt: start,
+      endAt: end,
+      drawAt,
+      winnerCount: 1,
+      // 故意不传 drawTrigger / resultMode：模拟旧管理端表单
+    });
+    const draw = await getDraw(db, id, TENANT);
+    expect(draw?.drawTrigger).toBe("scheduled");
+    expect(draw?.resultMode).toBe("scheduled");
+    expect(draw?.drawAt).toBeTruthy();
+  });
+
+  it("显式 drawTrigger=manual + drawAt 仍尊重 manual（不强制改 scheduled）", async () => {
+    const start = new Date().toISOString();
+    const end = new Date(Date.now() + 3600000).toISOString();
+    const drawAt = new Date(Date.now() + 7200000).toISOString();
+    const { id } = await createDraw(db, TENANT, {
+      title: "手动但记时间",
+      startAt: start,
+      endAt: end,
+      drawAt,
+      drawTrigger: "manual",
+      resultMode: "manual",
+      winnerCount: 1,
+    });
+    const draw = await getDraw(db, id, TENANT);
+    expect(draw?.drawTrigger).toBe("manual");
+    expect(draw?.resultMode).toBe("manual");
+  });
+
   it("重复发布已发布活动被拒绝", async () => {
     const { id } = await setupDraw();
     await expect(publishDraw(db, TENANT, id)).rejects.toThrow("只有草稿");

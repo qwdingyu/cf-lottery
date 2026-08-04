@@ -103,6 +103,22 @@ function validateBasic(draw: LotteryDraw, result: PublishCheckResult) {
     }
   }
 
+  // docs/115：有 drawAt 但 trigger 仍是 manual → Cron 永不扫到；运营以为「到点自动开」会失效。
+  // 仅警告不阻断：仍可手动开奖；修复路径是改 drawTrigger=scheduled 或清空 drawAt。
+  if (
+    draw.activityKind === "lottery" &&
+    draw.drawAt &&
+    drawAt &&
+    draw.drawTrigger !== "scheduled"
+  ) {
+    add(
+      result.warnings,
+      "basic",
+      "basic.draw_at.orphan",
+      "已填写开奖时间，但开奖触发仍为「手动」。系统不会到点自动开奖；请改为定时开奖，或依赖列表「立即开奖」",
+    );
+  }
+
   if (draw.maxParticipants !== null && draw.maxParticipants !== undefined && draw.maxParticipants < 1) {
     add(result.errors, "basic", "basic.capacity.invalid", "参与人数上限必须大于 0");
   }

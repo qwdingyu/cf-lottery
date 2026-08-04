@@ -5,32 +5,22 @@
  * 便于单测与从 3k+ 行 SFC 中减负，同时不拆成十几个 50 行碎片文件。
  */
 import { toDateTimeLocalValue } from '@/composables/useFormat'
+import { downloadCsv as kitDownloadCsv } from '@usethink/cf-admin-fe/utils'
 import {
   defaultExperienceForParticipation,
   defaultResultModeForActivity,
+  resolveDrawTrigger,
+  resultModeForLotteryDrawTrigger,
 } from '@/lib/activity-defaults'
 import { normalizeActivityConfig, type ActivityConfigTranslate } from './activity-config'
 import type { ExternalConversion, LotteryWinner, PublishCheckItem } from './types'
 
-/** 下载 CSV（含公式注入防护，须与后端 csvEscape 语义对齐） */
+/**
+ * 下载 CSV（公式注入防护在 cf-admin-fe safeCsvCell）。
+ * 后端 admin-lottery.ts 服务端导出须保持同类语义，不跨运行时共享实现。
+ */
 export function downloadCsv(filename: string, rows: string[][]) {
-  // 公式注入防护：Excel/Sheets 会把 = + - @ 开头的单元格当公式执行，
-  // 加 ' 前缀阻止；结构上统一引号包裹 + 引号加倍。
-  // 注意：后端 admin-lottery.ts 的 csvEscape 有相同逻辑（服务端导出），
-  // 修改此处时必须同步修改后端版本，保持一致（跨运行环境不强行共享）。
-  const escapeCell = (c: unknown): string => {
-    const raw = String(c ?? '')
-    const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw
-    return `"${safe.replace(/"/g, '""')}"`
-  }
-  const csv = rows.map((r) => r.map(escapeCell).join(',')).join('\n')
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+  kitDownloadCsv(filename, rows)
 }
 
 /** 后端 winners 以 notificationStatus 为准；emailSent/emailError 为历史兼容字段，不可单独依赖 */
@@ -190,6 +180,39 @@ export function buildLotteryDuplicateDraft(
     resultMode: draw.resultMode || defaultResultModeForActivity(activityKind),
     activityConfig: normalizeActivityConfig(activityKind, draw.activityConfig, t),
     accessPassword: '',
+  }
+}
+
+/**
+ * 创建/编辑活动时：drawAt ↔ drawTrigger ↔ lottery resultMode 单一真相。
+ * 禁止只写 drawAt 却保持 manual（Cron 永远扫不到）。
+ */
+export function resolveLotteryScheduleFields(input: {
+  activityKind?: string | null
+  drawAt?: string | null
+  drawTrigger?: string | null
+  resultMode?: string | null
+}): {
+  drawTrigger: 'manual' | 'scheduled'
+  resultMode: string
+} {
+  const activityKind = String(input.activityKind || 'lottery')
+  const drawTrigger = resolveDrawTrigger({
+    activityKind,
+    drawAt: input.drawAt,
+    drawTrigger: input.drawTrigger,
+  })
+  if (activityKind === 'lottery') {
+    // lottery：resultMode 跟 trigger；勿让表单默认 manual 覆盖 scheduled
+    return {
+      drawTrigger,
+      resultMode: resultModeForLotteryDrawTrigger(drawTrigger),
+    }
+  }
+  // 非 lottery：保留调用方 resultMode（问卷/接龙等），trigger 恒 manual
+  return {
+    drawTrigger,
+    resultMode: String(input.resultMode || defaultResultModeForActivity(activityKind)),
   }
 }
 

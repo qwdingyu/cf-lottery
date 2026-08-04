@@ -1515,6 +1515,7 @@ import {
   formatLotteryVisibilityLabel,
   formatPublishCheckItems as formatPublishCheckItemsRaw,
   publishFixSectionTargetId,
+  resolveLotteryScheduleFields,
   statusClass,
 } from './lottery/ops-utils'
 import { usePosterQr } from './lottery/usePosterQr'
@@ -3183,20 +3184,28 @@ async function handleCreate() {
   try {
     // 注意：后端 API 使用 title/startAt/endAt/drawAt/winnerCount 字段名
     // 前端 form 使用 name/startTime/endTime/drawTime/maxWinners 需要映射
+    const activityKind = form.value.activityKind || 'lottery'
+    const drawAtIso = form.value.drawTime ? dateTimeLocalToIso(form.value.drawTime) : undefined
+    // docs/115：drawAt 必须配对 drawTrigger=scheduled，否则 Cron 永不扫到（表单文案写「系统自动开奖」）
+    const schedule = resolveLotteryScheduleFields({
+      activityKind,
+      drawAt: drawAtIso,
+      resultMode: form.value.resultMode || defaultResultModeForActivity(activityKind),
+    })
     const payload = {
       title: form.value.name,
       description: form.value.description,
       startAt: dateTimeLocalToIso(form.value.startTime),
       endAt: dateTimeLocalToIso(form.value.endTime),
-      drawAt: form.value.drawTime ? dateTimeLocalToIso(form.value.drawTime) : undefined,
-      winnerCount: form.value.activityKind === 'lottery' ? Number(form.value.winnerCount) || 1 : 0,
+      drawAt: drawAtIso,
+      drawTrigger: schedule.drawTrigger,
+      winnerCount: activityKind === 'lottery' ? Number(form.value.winnerCount) || 1 : 0,
       maxParticipants: form.value.maxParticipants ? Number(form.value.maxParticipants) : undefined,
       participationMode: form.value.participationMode || 'open',
-      experienceType: form.value.experienceType || defaultExperienceForActivity(form.value.activityKind || 'lottery', form.value.participationMode || 'open'),
-      activityKind: form.value.activityKind || 'lottery',
-      // resultMode 是“结果什么时候/如何产生”的业务语义，不能由抽奖旧逻辑统一覆盖。
-      // 模板和活动类型默认值必须原样传给后端，否则问卷/签到/资料领取会被误建成 manual 抽奖语义。
-      resultMode: form.value.resultMode || defaultResultModeForActivity(form.value.activityKind || 'lottery'),
+      experienceType: form.value.experienceType || defaultExperienceForActivity(activityKind, form.value.participationMode || 'open'),
+      activityKind,
+      // lottery：resultMode 跟 drawTrigger；非 lottery：保留表单/类型默认（问卷等禁止被抽奖覆盖）
+      resultMode: schedule.resultMode,
       allocationPolicy: form.value.allocationPolicy || 'capacity',
       // 表单「展示中奖名单」对应后端 showWinnerList；模板 defaults 也可经此写入
       showWinnerList: form.value.showWinners ? 1 : 0,

@@ -116,6 +116,34 @@ describe("发布预检 — 基础信息", () => {
     expect(result.warnings.some((item) => item.code === "promotion.empty")).toBe(true);
     expect(result.infos.some((item) => item.code === "webhook.empty")).toBe(true);
   });
+
+  it("lottery 有 drawAt 但 trigger=manual：警告 orphan，仍可发布（可手动开奖）", async () => {
+    const future = new Date(Date.now() + 2 * 86400000).toISOString();
+    const draw = makeDraw({
+      drawTrigger: "manual",
+      resultMode: "manual",
+      drawAt: future,
+      endAt: new Date(Date.now() + 86400000).toISOString(),
+    });
+    await addManualTier(draw.id);
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(true);
+    expect(result.warnings.some((item) => item.code === "basic.draw_at.orphan")).toBe(true);
+  });
+
+  it("lottery + scheduled + 合法 drawAt：无 orphan 警告", async () => {
+    const end = new Date(Date.now() + 86400000).toISOString();
+    const drawAt = new Date(Date.now() + 2 * 86400000).toISOString();
+    const draw = makeDraw({
+      drawTrigger: "scheduled",
+      resultMode: "scheduled",
+      endAt: end,
+      drawAt,
+    });
+    await addManualTier(draw.id);
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.warnings.some((item) => item.code === "basic.draw_at.orphan")).toBe(false);
+  });
 });
 
 describe("发布预检 — 参与模式", () => {

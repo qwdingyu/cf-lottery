@@ -45,3 +45,34 @@ export function defaultResultModeForActivity(activityKind: string): string {
   if (activityKind === 'claim') return 'instant'
   return 'manual'
 }
+
+/**
+ * 管理端「开奖时间」与后端 drawTrigger 对齐（docs/115 续审）。
+ *
+ * 证据：Cron / dashboard 到期列表只扫 `drawTrigger === 'scheduled'`；
+ * 旧表单必填 drawTime 并写 drawAt，却不传 drawTrigger → 落库 manual → **到点不会自动开奖**。
+ *
+ * 规则：
+ * - 显式 `manual` / `scheduled` 优先
+ * - 仅 `activityKind=lottery` 且有 drawAt 时推断为 scheduled
+ * - 非 lottery 即使有 drawAt 也保持 manual（避免问卷被 Cron 误开奖）
+ */
+export function resolveDrawTrigger(opts: {
+  activityKind?: string | null
+  drawAt?: string | null
+  drawTrigger?: string | null
+}): 'manual' | 'scheduled' {
+  const explicit = String(opts.drawTrigger || '')
+    .trim()
+    .toLowerCase()
+  if (explicit === 'scheduled' || explicit === 'manual') return explicit
+  const kind = String(opts.activityKind || 'lottery').trim() || 'lottery'
+  if (kind !== 'lottery') return 'manual'
+  const hasDrawAt = Boolean(opts.drawAt && String(opts.drawAt).trim())
+  return hasDrawAt ? 'scheduled' : 'manual'
+}
+
+/** lottery 的 resultMode 与 drawTrigger 对齐（公开文案 scheduled vs manual） */
+export function resultModeForLotteryDrawTrigger(trigger: string): 'manual' | 'scheduled' {
+  return trigger === 'scheduled' ? 'scheduled' : 'manual'
+}

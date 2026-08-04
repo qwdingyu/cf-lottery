@@ -115,6 +115,7 @@ adminLotteryRoute.get("/dashboard", async (c) => {
     .where(and(
       eq(lotteryDraws.tenantId, tenantId),
       eq(lotteryDraws.status, "open"),
+      eq(lotteryDraws.activityKind, "lottery"),
       eq(lotteryDraws.drawTrigger, "scheduled"),
       sql`${lotteryDraws.drawAt} <= ${now}`,
     ));
@@ -443,7 +444,16 @@ adminLotteryRoute.post("/draws", async (c) => {
     if (!enabledModes.includes(participationMode)) {
       return fail(c, `参与模式 "${participationMode}" 当前未启用，请联系平台运营`, 400);
     }
-    const drawTrigger = coerceEnum(body.drawTrigger, DRAW_TRIGGERS, "manual");
+    // docs/115 续审：管理端表单必填 drawAt（文案「系统自动开奖」）却常不传 drawTrigger。
+    // coerceEnum 缺省会落 manual → Cron 只扫 scheduled → 到点永不自动开奖。
+    // 仅 lottery + 有 drawAt 时推断 scheduled；显式 body.drawTrigger 仍优先。
+    const drawAtRaw = body.drawAt ? String(body.drawAt) : "";
+    const hasDrawAt = Boolean(drawAtRaw.trim());
+    const triggerFallback =
+      activityKind === "lottery" && hasDrawAt && body.drawTrigger === undefined
+        ? "scheduled"
+        : "manual";
+    const drawTrigger = coerceEnum(body.drawTrigger, DRAW_TRIGGERS, triggerFallback);
 
     // 运营者可通过系统配置控制活动创建的默认参数（闭环：L3 配置 → L2 生效）
     const defaultWinnerCount = parseInt(config["draw_default_winner_count"], 10) || 1;
@@ -460,6 +470,19 @@ adminLotteryRoute.post("/draws", async (c) => {
       }
     }
 
+    // lottery + scheduled：若客户端仍传 resultMode=manual，与 drawTrigger 对齐，避免公开页文案说谎
+    let resultModeInput = body.resultMode;
+    if (
+      activityKind === "lottery" &&
+      drawTrigger === "scheduled" &&
+      (resultModeInput === undefined ||
+        resultModeInput === null ||
+        String(resultModeInput).trim() === "" ||
+        String(resultModeInput).trim().toLowerCase() === "manual")
+    ) {
+      resultModeInput = "scheduled";
+    }
+
     const { id, publicSlug } = await createDraw(db, tenantId, {
       title: String(body.title || ""),
       description: String(body.description || ""),
@@ -469,8 +492,8 @@ adminLotteryRoute.post("/draws", async (c) => {
         ? coerceEnum(body.experienceType, EXPERIENCE_TYPES, defaultExperienceForActivity(activityKind, participationMode))
         : undefined,
       drawTrigger,
-      resultMode: body.resultMode !== undefined
-        ? coerceEnum(body.resultMode, RESULT_MODES, defaultResultModeForActivity(activityKind, drawTrigger))
+      resultMode: resultModeInput !== undefined
+        ? coerceEnum(resultModeInput, RESULT_MODES, defaultResultModeForActivity(activityKind, drawTrigger))
         : undefined,
       allocationPolicy: body.allocationPolicy !== undefined
         ? coerceEnum(body.allocationPolicy, ALLOCATION_POLICIES, "capacity")

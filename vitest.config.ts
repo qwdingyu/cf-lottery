@@ -42,6 +42,9 @@ export default defineConfig({
       "frontend/src/views/lottery/viral-leaderboard-ui.test.ts",
       // docs/114：管理端裂变回填与 promotionConfig 提交防擦
       "frontend/src/views/admin/lottery/growth-config.test.ts",
+      // docs/115：drawAt ↔ drawTrigger 推断（定时开奖接线）
+      "frontend/src/lib/activity-defaults.test.ts",
+      "frontend/src/views/admin/lottery/ops-utils.schedule.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {
