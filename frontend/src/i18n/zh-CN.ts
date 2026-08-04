@@ -764,6 +764,10 @@ export default {
     viralInviteHint: "每邀请 1 人额外获得 {n} 次参与机会",
     viralInvitedLabel: "已邀请",
     viralMaxLabel: "最多额外次数",
+    /** 已赚取的额外加权票（不含基础 1，docs/108） */
+    viralExtraEarnedLabel: "已获额外",
+    /** 开奖袋总票数 = 1 + 额外（同场加权，docs/108） */
+    viralDrawWeightLabel: "开奖权重",
     viralLoadShareLink: "加载分享链接…",
     /** 分享失败后重试（与加载态互斥，docs/105） */
     viralRetryShare: "重新获取分享链接",

@@ -45,11 +45,17 @@ export type LotteryDraw = {
   productTitle?: string
   productLink?: { url: string; title: string; imageUrl?: string; price?: string }
   activityConfig?: ActivityConfig
-  /** 运营者配置的多状态 CTA（中奖/未中奖导流） */
+  /** 运营者配置的多状态 CTA / 裂变（公开 API 已解析 JSON） */
   promotionConfig?: {
     ctas?: {
       after_win?: { url?: string; title?: string }
       after_loss?: { url?: string; title?: string }
+    }
+    viral?: {
+      enabled?: boolean
+      extraEntriesPerInvite?: number
+      maxExtraEntries?: number
+      leaderboardEnabled?: boolean
     }
   }
 }
@@ -92,6 +98,8 @@ export type MyEntry = {
   drawTime?: string
   /** 玩法类型：记录行「未中奖」标签仅 lottery/claim 使用（docs/104） */
   activityKind?: string
+  /** 本场参与记录 ID：裂变分享 / 排行榜「我的」数据依赖（docs/108） */
+  entryId?: string
 }
 
 export type ActivityEventType =

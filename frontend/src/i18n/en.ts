@@ -791,6 +791,10 @@ export default {
     viralInviteHint: "+{n} extra entries per invite",
     viralInvitedLabel: "Invited",
     viralMaxLabel: "Max extra",
+    /** Extra tickets earned (excludes base 1, docs/108) */
+    viralExtraEarnedLabel: "Extra earned",
+    /** Draw bag weight = 1 + extra (same-draw weighting, docs/108) */
+    viralDrawWeightLabel: "Draw weight",
     viralLoadShareLink: "Loading share link…",
     /** Retry after share failure (mutually exclusive with loading, docs/105) */
     viralRetryShare: "Retry share link",

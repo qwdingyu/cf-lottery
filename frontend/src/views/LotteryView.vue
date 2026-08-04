@@ -246,6 +246,17 @@
               </button>
             </template>
           </div>
+          <!--
+            同场裂变：额外次数进度 + 排行榜（docs/041 / docs/108）。
+            仅 viral.enabled 时挂载；已开奖/取消仍可看历史榜（组件内 API 不依赖 open）。
+            entryId 来自当次参与快照 / myEntryList / joined hints。
+          -->
+          <ViralLeaderboard
+            v-if="getDrawViral(draw)?.enabled && (draw.publicSlug || draw.id)"
+            :draw-slug="String(draw.publicSlug || draw.id)"
+            :entry-id="resolveViralEntryId(draw)"
+            :viral-config="getDrawViral(draw)"
+          />
         </div>
       </div>
     </div>
@@ -758,6 +769,7 @@ import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { getGameComponent, hasRegisteredGameExperience } from '@/components/games/GameRegistry'
 import GameResultModal from '@/components/games/GameResultModal.vue'
+import ViralLeaderboard from '@/components/ViralLeaderboard.vue'
 import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
 import {
   consumeCfAuthPendingJoin,
@@ -980,12 +992,16 @@ function markDrawJoined(
   myJoinedById.value = joinedMap
   const activityKind =
     extra?.activityKind || draw?.activityKind || undefined
+  // 再次 mark（如 409 已参与）时保留已有 entryId，避免裂变面板丢失归因身份
+  const prev = myEntryList.value.find((r) => r.drawId === key || r.drawId === joinedDrawId)
+  const entryId = extra?.entryId || prev?.entryId
   const row: MyEntry = {
     drawId: key,
-    joinedAt: extra?.joinedAt || new Date().toISOString(),
-    drawName: extra?.drawName || draw?.name || draw?.title || key,
-    drawStatus: extra?.drawStatus || draw?.status,
-    activityKind,
+    joinedAt: extra?.joinedAt || prev?.joinedAt || new Date().toISOString(),
+    drawName: extra?.drawName || prev?.drawName || draw?.name || draw?.title || key,
+    drawStatus: extra?.drawStatus || prev?.drawStatus || draw?.status,
+    activityKind: activityKind || prev?.activityKind,
+    entryId,
   }
   const rest = myEntryList.value.filter((r) => r.drawId !== key && r.drawId !== joinedDrawId)
   myEntryList.value = [row, ...rest]
@@ -995,7 +1011,7 @@ function markDrawJoined(
     [key, joinedDrawId, draw?.publicSlug || '', props.id || ''],
     {
       drawId: key,
-      entryId: extra?.entryId,
+      entryId: row.entryId,
       joinedAt: row.joinedAt,
       drawName: row.drawName,
       drawStatus: row.drawStatus,
@@ -1299,12 +1315,43 @@ const lastJoinDrawSlug = computed(() => {
   return draw?.publicSlug || draw?.id || lastJoinResult.value.drawId || undefined
 })
 
+/** 公开活动 promotionConfig.viral（API 已解析对象） */
+function getDrawViral(draw: LotteryDraw | null | undefined) {
+  if (!draw?.promotionConfig) return undefined
+  return draw.promotionConfig.viral
+}
+
+/**
+ * 解析本场 entryId：优先当次参与成功快照，再 myEntryList / hints。
+ * 无 entryId 时 ViralLeaderboard 仍可展示公开排行榜。
+ */
+function resolveViralEntryId(draw: LotteryDraw): string | undefined {
+  if (
+    lastJoinResult.value &&
+    (lastJoinResult.value.drawId === draw.id || lastJoinResult.value.drawId === draw.publicSlug)
+  ) {
+    return lastJoinResult.value.entryId
+  }
+  const fromList = myEntryList.value.find(
+    (r) => r.drawId === draw.id || r.drawId === draw.publicSlug,
+  )
+  if (fromList?.entryId) return fromList.entryId
+  try {
+    const hints = readJoinedHints(sessionStorage)
+    const keys = [draw.id, draw.publicSlug || ''].filter(Boolean)
+    for (const k of keys) {
+      const h = hints[String(k).trim().toLowerCase()]
+      if (h?.entryId) return h.entryId
+    }
+  } catch { /* ignore */ }
+  return undefined
+}
+
 /** 从最近参与的活动数据中提取裂变配置 */
 const lastJoinViralConfig = computed(() => {
   if (!lastJoinResult.value) return undefined
   const draw = draws.value.find(d => d.id === lastJoinResult.value!.drawId)
-  const pc = (draw as any)?.promotionConfig
-  return pc?.viral ?? undefined
+  return getDrawViral(draw)
 })
 
 /** 结果模式：优先用参与时快照，否则读当前活动（弹窗语义用） */

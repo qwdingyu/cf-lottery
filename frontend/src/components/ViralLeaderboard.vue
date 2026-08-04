@@ -1,15 +1,26 @@
 <template>
-  <div v-if="hasData" class="viral-section">
-    <!-- 我的裂变数据（需要 entryId） -->
+  <!--
+    同场裂变面板（docs/041 / docs/108）：
+    - 有 entryId：展示我的邀请 / 额外机会进度 / 分享链接
+    - leaderboardEnabled：展示 Top 20 邀请排行
+    - 仅排行榜关时仍可展示「我的邀请」（管理端开关独立）
+  -->
+  <div v-if="shouldMount" class="viral-section">
     <div v-if="entryId && myStats" class="my-viral-card">
       <div class="my-viral-head">
         <span class="my-viral-title">{{ $t('lottery.viralMyInvite') }}</span>
         <span class="my-viral-extra">{{ $t('lottery.viralInviteHint', { n: myStats.extraEntriesPerInvite }) }}</span>
       </div>
       <div class="my-viral-body">
-        <div class="my-viral-stat">
-          <span class="my-viral-num">{{ myStats.invitedCount }}</span>
-          <span class="my-viral-label">{{ $t('lottery.viralInvitedLabel') }}</span>
+        <div class="my-viral-stat-row">
+          <div class="my-viral-stat">
+            <span class="my-viral-num">{{ myStats.invitedCount }}</span>
+            <span class="my-viral-label">{{ $t('lottery.viralInvitedLabel') }}</span>
+          </div>
+          <div class="my-viral-stat">
+            <span class="my-viral-num my-viral-num--weight">{{ myStats.drawWeight ?? (1 + myStats.extraEntriesEarned) }}</span>
+            <span class="my-viral-label">{{ $t('lottery.viralDrawWeightLabel') }}</span>
+          </div>
         </div>
         <div class="my-viral-progress-wrap">
           <div class="my-viral-progress">
@@ -21,18 +32,22 @@
           <span class="my-viral-progress-text">{{ $t('lottery.viralExtraProgress', { earned: myStats.extraEntriesEarned, max: myStats.maxExtraEntries }) }}</span>
         </div>
         <div class="my-viral-share">
-          <code class="my-viral-link">{{ myStats.shareUrl || $t('lottery.viralGenerateHint') }}</code>
-          <button class="btn btn-sm btn-primary" @click="handleGenerateShareLink">
-            {{ myStats.shareUrl ? $t('lottery.viralCopy') : $t('lottery.viralGenerateLink') }}
+          <code class="my-viral-link">{{ displayShareUrl || $t('lottery.viralGenerateHint') }}</code>
+          <button type="button" class="btn btn-sm btn-primary" :disabled="shareBusy" @click="handleGenerateShareLink">
+            {{ displayShareUrl ? $t('lottery.viralCopy') : $t('lottery.viralGenerateLink') }}
           </button>
         </div>
+        <p v-if="shareError" class="my-viral-error">{{ shareError }}</p>
       </div>
     </div>
 
-    <!-- 排行榜 -->
-    <div class="leaderboard-card">
+    <!-- 未参与但开启排行：仅榜单，激励先参与再邀请 -->
+    <div v-if="showLeaderboard" class="leaderboard-card">
       <h4 class="leaderboard-title">{{ $t('lottery.viralLeaderboardTitle') }}</h4>
-      <div v-if="leaderboard.length === 0" class="leaderboard-empty">
+      <div v-if="loading && leaderboard.length === 0" class="leaderboard-empty">
+        {{ $t('lottery.loadingText') }}
+      </div>
+      <div v-else-if="leaderboard.length === 0" class="leaderboard-empty">
         {{ $t('lottery.viralEmptyHint') }}
       </div>
       <ol v-else class="leaderboard-list">
@@ -47,7 +62,6 @@
           <span class="leaderboard-count">{{ $t('lottery.viralPeopleCount', { n: item.invitedCount }) }}</span>
         </li>
       </ol>
-      <!-- 我的排名（不在 Top 20 时展示） -->
       <div v-if="myRank && myRank.rank > 20" class="leaderboard-my-rank">
         <span class="leaderboard-rank">{{ myRank.rank }}</span>
         <span class="leaderboard-name">{{ $t('lottery.viralMe') }}</span>
@@ -60,89 +74,179 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { writeClipboardText } from '@/composables/useClipboard'
+import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{
   /** 活动 publicSlug */
   drawSlug: string
-  /** 当前参与者的 entryId（可选，用于查询"我的"数据） */
+  /** 当前参与者的 entryId（可选，用于查询「我的」数据与分享） */
   entryId?: string
-  /** 裂变配置 */
-  viralConfig?: { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | null
+  /** 裂变配置（来自 promotionConfig.viral） */
+  viralConfig?: {
+    enabled?: boolean
+    extraEntriesPerInvite?: number
+    maxExtraEntries?: number
+    leaderboardEnabled?: boolean
+  } | null
 }>()
+
+const { t } = useI18n()
+const { showToast } = useToast()
 
 interface LeaderboardEntry { rank: number; displayName: string; invitedCount: number }
 interface MyViralStats {
-  shareCode: string; shareUrl: string
-  clickedCount: number; invitedCount: number
-  extraEntriesEarned: number; extraEntriesPerInvite: number; maxExtraEntries: number
+  shareCode: string
+  shareUrl: string
+  clickedCount: number
+  invitedCount: number
+  extraEntriesEarned: number
+  extraEntriesPerInvite: number
+  maxExtraEntries: number
+  /** 开奖袋票数 = 1 + extra；旧接口缺省时前端回退 */
+  drawWeight?: number
 }
 
 const leaderboard = ref<LeaderboardEntry[]>([])
 const myRank = ref<{ rank: number; invitedCount: number } | null>(null)
 const myStats = ref<MyViralStats | null>(null)
 const loading = ref(false)
+const shareBusy = ref(false)
+const shareError = ref('')
 
-const hasData = computed(() => leaderboard.value.length > 0 || (myStats.value !== null))
+/** 裂变总开关 */
+const viralOn = computed(() => props.viralConfig?.enabled === true)
+/** 管理端「展示排行榜」 */
+const showLeaderboard = computed(
+  () => viralOn.value && props.viralConfig?.leaderboardEnabled !== false,
+)
+/**
+ * 何时挂载整块：
+ * - 裂变开启 + 有 slug
+ * - 有 entryId（可拉我的数据）或开启排行榜（可只看榜）
+ */
+const shouldMount = computed(
+  () => viralOn.value && !!props.drawSlug && (!!props.entryId || showLeaderboard.value),
+)
+
+/** 进度条按「已赚额外次数 / 上限」，与开奖公式一致，勿用邀请人数当分子 */
 const myProgressPercent = computed(() => {
   if (!myStats.value) return 0
   const max = myStats.value.maxExtraEntries
-  return max > 0 ? Math.min(100, Math.round((myStats.value.invitedCount / max) * 100)) : 0
+  const earned = myStats.value.extraEntriesEarned
+  return max > 0 ? Math.min(100, Math.round((earned / max) * 100)) : 0
+})
+
+const displayShareUrl = computed(() => {
+  const path = myStats.value?.shareUrl || ''
+  if (!path) return ''
+  if (typeof window === 'undefined') return path
+  return path.startsWith('http') ? path : window.location.origin + path
 })
 
 async function fetchData() {
+  if (!shouldMount.value) return
   loading.value = true
+  shareError.value = ''
   const slug = encodeURIComponent(props.drawSlug)
   try {
-    // 并行请求排行榜和我的数据
-    const [lbRes, statsRes] = await Promise.all([
-      fetch(`/api/public/draws/${slug}/viral-leaderboard${props.entryId ? `?entryId=${encodeURIComponent(props.entryId)}` : ''}`),
-      props.entryId
-        ? fetch(`/api/public/draws/${slug}/my-viral-stats?entryId=${encodeURIComponent(props.entryId)}`)
-        : Promise.resolve(null),
-    ])
+    const tasks: Promise<Response | null>[] = []
+    if (showLeaderboard.value) {
+      tasks.push(
+        fetch(
+          `/api/public/draws/${slug}/viral-leaderboard${
+            props.entryId ? `?entryId=${encodeURIComponent(props.entryId)}` : ''
+          }`,
+        ),
+      )
+    } else {
+      tasks.push(Promise.resolve(null))
+    }
+    if (props.entryId) {
+      tasks.push(
+        fetch(`/api/public/draws/${slug}/my-viral-stats?entryId=${encodeURIComponent(props.entryId)}`),
+      )
+    } else {
+      tasks.push(Promise.resolve(null))
+    }
 
-    if (lbRes.ok) {
+    const [lbRes, statsRes] = await Promise.all(tasks)
+
+    if (lbRes && lbRes.ok) {
       const lb = await lbRes.json()
-      leaderboard.value = lb.entries || []
-      myRank.value = lb.myRank || null
+      // ok() 扁平展开：{ ok, entries, myRank }
+      if (lb.ok !== false) {
+        leaderboard.value = lb.entries || []
+        myRank.value = lb.myRank || null
+      }
+    } else if (showLeaderboard.value) {
+      leaderboard.value = []
+      myRank.value = null
     }
 
     if (statsRes && statsRes.ok) {
-      myStats.value = await statsRes.json()
+      const stats = await statsRes.json()
+      if (stats.ok !== false) {
+        myStats.value = {
+          shareCode: stats.shareCode || '',
+          shareUrl: stats.shareUrl || '',
+          clickedCount: stats.clickedCount ?? 0,
+          invitedCount: stats.invitedCount ?? 0,
+          extraEntriesEarned: stats.extraEntriesEarned ?? 0,
+          extraEntriesPerInvite: stats.extraEntriesPerInvite ?? props.viralConfig?.extraEntriesPerInvite ?? 1,
+          maxExtraEntries: stats.maxExtraEntries ?? props.viralConfig?.maxExtraEntries ?? 10,
+          drawWeight: stats.drawWeight,
+        }
+      }
     }
   } catch {
-    // 排行榜加载失败不影响主流程
+    // 排行榜/统计失败不阻断主流程
   } finally {
     loading.value = false
   }
 }
 
-/** 生成分享链接（复制到剪贴板） */
+/** 生成或复制归因分享链接 */
 async function handleGenerateShareLink() {
-  if (myStats.value?.shareUrl) {
-    await writeClipboardText(window.location.origin + myStats.value.shareUrl)
-  } else if (props.entryId) {
-    // 调用 /share API 生成新链接
-    try {
-      const slug = encodeURIComponent(props.drawSlug)
-      const res = await fetch(`/api/public/draws/${slug}/share`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entryId: props.entryId }),
-      })
-      const data = await res.json()
-      if (data.ok) {
-        await writeClipboardText(window.location.origin + data.shareUrl)
-        // 刷新数据
-        await fetchData()
-      }
-    } catch { /* 忽略 */ }
+  if (!props.entryId || !props.drawSlug) return
+  shareBusy.value = true
+  shareError.value = ''
+  try {
+    if (myStats.value?.shareUrl) {
+      const full = displayShareUrl.value
+      await writeClipboardText(full)
+      showToast(t('lottery.shareLinkCopied'))
+      return
+    }
+    const slug = encodeURIComponent(props.drawSlug)
+    const res = await fetch(`/api/public/draws/${slug}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entryId: props.entryId }),
+    })
+    const data = await res.json()
+    if (data.ok && data.shareUrl) {
+      const full = data.shareUrl.startsWith('http')
+        ? data.shareUrl
+        : window.location.origin + data.shareUrl
+      await writeClipboardText(full)
+      showToast(t('lottery.shareLinkCopied'))
+      await fetchData()
+    } else {
+      shareError.value = data.message || t('lottery.shareLinkFailed')
+    }
+  } catch {
+    shareError.value = t('lottery.networkError')
+  } finally {
+    shareBusy.value = false
   }
 }
 
-// 组件挂载时和 props 变化时刷新
 onMounted(() => { void fetchData() })
-watch(() => [props.entryId, props.drawSlug], () => { void fetchData() })
+watch(
+  () => [props.entryId, props.drawSlug, props.viralConfig?.enabled, props.viralConfig?.leaderboardEnabled],
+  () => { void fetchData() },
+)
 </script>
 
 <style scoped>
@@ -153,7 +257,6 @@ watch(() => [props.entryId, props.drawSlug], () => { void fetchData() })
   gap: 12px;
 }
 
-/* 我的裂变卡片 */
 .my-viral-card {
   background: linear-gradient(135deg, rgba(74,222,128,.08), rgba(34,197,94,.04));
   border: 1px solid rgba(74,222,128,.2);
@@ -165,12 +268,20 @@ watch(() => [props.entryId, props.drawSlug], () => { void fetchData() })
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .my-viral-title { font-weight: 600; font-size: 14px; }
 .my-viral-extra { font-size: 11px; color: var(--tg-hint); }
 .my-viral-body { display: flex; flex-direction: column; gap: 10px; }
+.my-viral-stat-row {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+}
 .my-viral-stat { text-align: center; }
 .my-viral-num { font-size: 28px; font-weight: 700; color: #4ade80; }
+.my-viral-num--weight { color: #60a5fa; }
 .my-viral-label { display: block; font-size: 11px; color: var(--tg-hint); }
 .my-viral-progress-wrap { text-align: center; }
 .my-viral-progress {
@@ -202,9 +313,15 @@ watch(() => [props.entryId, props.drawSlug], () => { void fetchData() })
   background: var(--tg-bg, rgba(0,0,0,.2));
   padding: 4px 8px;
   border-radius: 4px;
+  text-align: left;
+}
+.my-viral-error {
+  margin: 0;
+  font-size: 12px;
+  color: #ef4444;
+  text-align: center;
 }
 
-/* 排行榜 */
 .leaderboard-card {
   background: var(--tg-secondary-bg, rgba(255,255,255,.03));
   border-radius: 12px;
@@ -221,7 +338,13 @@ watch(() => [props.entryId, props.drawSlug], () => { void fetchData() })
   border-bottom: 1px solid rgba(255,255,255,.04);
 }
 .leaderboard-row:last-child { border-bottom: none; }
-.leaderboard-row.is-me { background: rgba(74,222,128,.06); margin: 0 -14px; padding-left: 14px; padding-right: 14px; border-radius: 6px; }
+.leaderboard-row.is-me {
+  background: rgba(74,222,128,.06);
+  margin: 0 -14px;
+  padding-left: 14px;
+  padding-right: 14px;
+  border-radius: 6px;
+}
 .leaderboard-rank { width: 28px; text-align: center; font-size: 16px; flex-shrink: 0; }
 .leaderboard-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .leaderboard-count { font-size: 12px; color: var(--tg-hint); flex-shrink: 0; }
@@ -238,4 +361,5 @@ watch(() => [props.entryId, props.drawSlug], () => { void fetchData() })
 .btn { cursor: pointer; border: none; border-radius: 6px; font-size: 13px; padding: 6px 14px; }
 .btn-primary { background: var(--tg-button, #4f8ef7); color: #fff; }
 .btn-sm { font-size: 12px; padding: 4px 10px; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
 </style>

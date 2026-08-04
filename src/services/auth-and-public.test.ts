@@ -1469,9 +1469,122 @@ describe("公开参与流程", () => {
     const goodBody = await good.json() as any;
     expect(goodBody.ok).toBe(true);
     expect(goodBody.shareCode).toBeTruthy();
+    // docs/108：统一 /lottery/{slug}?ref=，禁止裸 /{slug}
+    expect(goodBody.shareUrl).toBe(`/lottery/share-own-a?ref=${goodBody.shareCode}`);
     const rows = await db.select().from(shareRecords).where(eq(shareRecords.drawId, drawA));
     expect(rows.length).toBe(1);
     expect(rows[0]!.sharerEntryId).toBe(entryOnA);
+  });
+
+  /**
+   * docs/108：my-viral-stats 与开奖同一公式 min(invited × perInvite, max)；
+   * shareUrl 与 POST /share 路径一致。
+   */
+  it("my-viral-stats：extraEntriesPerInvite 计入 earned 且 shareUrl 规范", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "viral-stats-a",
+      title: "裂变统计",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: {
+          enabled: true,
+          extraEntriesPerInvite: 2,
+          maxExtraEntries: 5,
+          leaderboardEnabled: true,
+        },
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "viral-stats@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId: entryId,
+      shareCode: "viralref001",
+      joinedCount: 3,
+      clickedCount: 7,
+    });
+
+    const res = await app.request(
+      `/public/draws/viral-stats-a/my-viral-stats?entryId=${encodeURIComponent(entryId)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.73" } },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.invitedCount).toBe(3);
+    // 3 × 2 = 6，上限 5 → earned 5；drawWeight = 1 + 5
+    expect(body.extraEntriesEarned).toBe(5);
+    expect(body.extraEntriesPerInvite).toBe(2);
+    expect(body.maxExtraEntries).toBe(5);
+    expect(body.drawWeight).toBe(6);
+    expect(body.shareUrl).toBe("/lottery/viral-stats-a?ref=viralref001");
+  });
+
+  it("ref 点击重定向保留 ?ref= 归因参数", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "viral-ref-a",
+      title: "裂变点击",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "viral-ref@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId: entryId,
+      shareCode: "clickref001",
+      joinedCount: 0,
+      clickedCount: 0,
+    });
+
+    const res = await app.request(
+      "/public/draws/viral-ref-a/ref/clickref001",
+      { headers: { "CF-Connecting-IP": "10.0.0.74" }, redirect: "manual" },
+      TEST_ENV,
+    );
+    expect([301, 302, 303, 307, 308]).toContain(res.status);
+    const loc = res.headers.get("Location") || "";
+    expect(loc).toContain("/lottery/viral-ref-a");
+    expect(loc).toContain("ref=clickref001");
   });
 
   it("registered 中奖者通知：user_id 身份关联 users 表真实邮箱发送", async () => {

@@ -1062,4 +1062,33 @@ describe("裂变加权开奖", () => {
     expect(result.winnerCount).toBe(2);
     expect(result.candidateCount).toBe(3);  // 候选数仍为真实参与人数
   });
+
+  it("extraEntriesPerInvite>1 时仍只中一次且 candidateCount 为真实人数", async () => {
+    // 每邀 3 次额外、上限 9：邀请 2 人 → extra=6 → 袋中 7 票，但 winners 去重后仍 1 人一奖
+    const { id, publicSlug } = await setupDraw("open", { winnerCount: 1 });
+    await client.execute({
+      sql: "UPDATE lottery_draws SET promotion_config = ? WHERE id = ?",
+      args: [JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 3, maxExtraEntries: 9, leaderboardEnabled: true },
+      }), id],
+    });
+    await joinDraw(db, publicSlug, "heavy@t.com");
+    await joinDraw(db, publicSlug, "light@t.com");
+    const [heavy] = await db.select({ id: lotteryEntries.id }).from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT), eq(lotteryEntries.drawId, id), eq(lotteryEntries.identityValue, "heavy@t.com")))
+      .limit(1);
+    expect(heavy).toBeTruthy();
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      sharerEntryId: heavy!.id,
+      shareCode: "test-share-per3",
+      joinedCount: 2,
+    });
+    const result = await performDraw(db, TENANT, id, USER);
+    expect(result.winnerCount).toBe(1);
+    expect(result.candidateCount).toBe(2);
+  });
 });

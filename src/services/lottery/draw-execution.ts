@@ -24,6 +24,7 @@ import {
 import { randomSelect, hashDrawSeed } from "./utils";
 import { enqueueWebhookEvent, dispatchWebhookDelivery } from "./integration";
 import { sendEmail, buildLotteryWinnerTemplateData } from "../email-service";
+import { computeViralDrawWeight, normalizeViralWeightNumbers } from "./viral-weight";
 import type { DrawResult } from "./types";
 
 /* ── 开奖核心 ─────────────────────────────────────────────── */
@@ -150,17 +151,18 @@ export async function performDraw(
       ? tiers.reduce((sum, t) => sum + t.winnerCount, 0)
       : draw.winnerCount;
 
-    // ── 裂变加权：活动开启了裂变时，按邀请人数加权候选数组 ──
-    // 每个参与者出现 1 次（基础）+ min(invitedCount, maxExtraEntries) 次（裂变加权）。
+    // ── 裂变加权：活动开启了裂变时，按「邀请人数 × 每邀额外次数」封顶后加权 ──
+    // 权重 = 1 + min(invited × extraEntriesPerInvite, maxExtraEntries)（viral-weight.ts）。
+    // 不写入额外 entries：不占 maxParticipants；同一人仍只中一次（seenEntryIds）。
     // 不加权时 candidates = entries（保持原有行为）。
     let pc: Record<string, unknown> | null = null;
     try { pc = JSON.parse(draw.promotionConfig || "{}"); } catch { /* 忽略非法 JSON */ }
     const viral = pc?.viral as { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | undefined;
     let weightedCandidates: typeof entries;
-    const inviteMap = new Map<string, number>();  // entryId → 邀请人数
+    const inviteMap = new Map<string, number>();  // entryId → 有效邀请人数（joinedCount 聚合）
 
     if (viral?.enabled) {
-      const maxExtra = viral.maxExtraEntries ?? 10;
+      const { extraEntriesPerInvite, maxExtraEntries } = normalizeViralWeightNumbers(viral);
 
       // 查询该活动所有分享者的邀请人数
       const shareRows = await db
@@ -173,11 +175,12 @@ export async function performDraw(
         inviteMap.set(row.sharerEntryId, (inviteMap.get(row.sharerEntryId) || 0) + row.joinedCount);
       }
 
-      // 构建加权候选数组
+      // 构建加权候选数组（票袋）：每人出现 computeViralDrawWeight 次
       weightedCandidates = [];
       for (const entry of entries) {
-        const invited = Math.min(inviteMap.get(entry.id) || 0, maxExtra);
-        for (let i = 0; i < 1 + invited; i++) {
+        const invited = inviteMap.get(entry.id) || 0;
+        const weight = computeViralDrawWeight(invited, extraEntriesPerInvite, maxExtraEntries);
+        for (let i = 0; i < weight; i++) {
           weightedCandidates.push(entry);
         }
       }

@@ -32,11 +32,16 @@
         <template v-if="inviteShareAllowed">
           <div v-if="viralEnabled && shareLoaded" class="viral-card">
             <div class="viral-headline">{{ $t('lottery.viralHeadline') }}</div>
+            <p class="viral-hint">{{ $t('lottery.viralInviteHint', { n: extraPerInvite }) }}</p>
 
             <div class="viral-stats">
               <div class="viral-stat">
                 <span class="viral-stat-value">{{ shareData?.joinedCount ?? 0 }}</span>
                 <span class="viral-stat-label">{{ $t('lottery.viralInvitedLabel') }}</span>
+              </div>
+              <div class="viral-stat">
+                <span class="viral-stat-value">{{ extraEntriesEarned }}</span>
+                <span class="viral-stat-label">{{ $t('lottery.viralExtraEarnedLabel') }}</span>
               </div>
               <div class="viral-stat">
                 <span class="viral-stat-value">{{ maxExtraEntries }}</span>
@@ -47,9 +52,10 @@
             <div class="viral-progress">
               <div class="viral-progress-fill" :style="{ width: extraProgressPercent + '%' }" />
             </div>
+            <p class="viral-progress-caption">{{ $t('lottery.viralExtraProgress', { earned: extraEntriesEarned, max: maxExtraEntries }) }}</p>
 
             <div class="viral-link-row">
-              <code class="viral-link-text">{{ shareUrl }}</code>
+              <code class="viral-link-text">{{ displayShareUrl }}</code>
               <button type="button" class="btn btn-sm btn-primary" @click="copyAttributedLink">
                 {{ $t('lottery.copyShareLink') }}
               </button>
@@ -128,7 +134,14 @@ const { showToast } = useToast()
 const modalRef = ref<HTMLElement | null>(null)
 const titleId = `game-result-title-${useId()}`
 
-const shareData = ref<{ shareCode: string; shareUrl: string; clickedCount?: number; joinedCount?: number } | null>(null)
+const shareData = ref<{
+  shareCode: string
+  shareUrl: string
+  clickedCount?: number
+  joinedCount?: number
+  /** 与开奖公式一致的已赚额外次数（来自 my-viral-stats） */
+  extraEntriesEarned?: number
+} | null>(null)
 const shareLoading = ref(false)
 const shareError = ref('')
 
@@ -197,14 +210,38 @@ const inviteShareAllowed = computed(() => shouldShowInviteShareCta(props.drawSta
 const viralEnabled = computed(
   () => inviteShareAllowed.value && props.viralConfig?.enabled === true && !!props.entryId,
 )
-const maxExtraEntries = computed(() => props.viralConfig?.maxExtraEntries ?? 10)
-const extraProgressPercent = computed(() => {
+const maxExtraEntries = computed(() => {
+  const n = Number(props.viralConfig?.maxExtraEntries)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 10
+})
+/** 每邀额外次数：与后端 normalize 一致 */
+const extraPerInvite = computed(() => {
+  const n = Number(props.viralConfig?.extraEntriesPerInvite)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1
+})
+/**
+ * 弹窗侧估算已赚额外次数（刚生成分享时 joined 多为 0）。
+ * 优先用 my-viral-stats 回填的 earned；否则 min(joined × per, max)。
+ */
+const extraEntriesEarned = computed(() => {
+  if (shareData.value?.extraEntriesEarned != null) {
+    return Math.max(0, Number(shareData.value.extraEntriesEarned) || 0)
+  }
   const joined = shareData.value?.joinedCount ?? 0
+  return Math.min(joined * extraPerInvite.value, maxExtraEntries.value)
+})
+const extraProgressPercent = computed(() => {
   const max = maxExtraEntries.value
-  return max > 0 ? Math.min(100, Math.round((joined / max) * 100)) : 0
+  return max > 0 ? Math.min(100, Math.round((extraEntriesEarned.value / max) * 100)) : 0
 })
 const shareLoaded = computed(() => shareData.value !== null)
 const shareUrl = computed(() => shareData.value?.shareUrl ?? '')
+const displayShareUrl = computed(() => {
+  const path = shareUrl.value
+  if (!path) return ''
+  if (path.startsWith('http')) return path
+  return typeof window !== 'undefined' ? window.location.origin + path : path
+})
 
 async function loadShareLink() {
   if (!inviteShareAllowed.value) return
@@ -212,14 +249,38 @@ async function loadShareLink() {
   shareLoading.value = true
   shareError.value = ''
   try {
-    const res = await fetch(`/api/public/draws/${encodeURIComponent(props.drawSlug)}/share`, {
+    const slug = encodeURIComponent(props.drawSlug)
+    // 先拉已有统计（含正确 extra 公式）；无码再 POST /share
+    const statsRes = await fetch(
+      `/api/public/draws/${slug}/my-viral-stats?entryId=${encodeURIComponent(props.entryId)}`,
+    )
+    if (statsRes.ok) {
+      const stats = await statsRes.json()
+      if (stats.ok !== false && stats.shareUrl) {
+        shareData.value = {
+          shareCode: stats.shareCode,
+          shareUrl: stats.shareUrl,
+          clickedCount: stats.clickedCount,
+          joinedCount: stats.invitedCount,
+          extraEntriesEarned: stats.extraEntriesEarned,
+        }
+        return
+      }
+    }
+    const res = await fetch(`/api/public/draws/${slug}/share`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entryId: props.entryId }),
     })
     const data = await res.json()
     if (data.ok) {
-      shareData.value = data
+      shareData.value = {
+        shareCode: data.shareCode,
+        shareUrl: data.shareUrl,
+        clickedCount: 0,
+        joinedCount: 0,
+        extraEntriesEarned: 0,
+      }
     } else {
       shareError.value = data.message || t('lottery.shareLinkFailed')
     }
@@ -235,9 +296,10 @@ async function copyAttributedLink() {
   const url = shareData.value?.shareUrl
   if (!url) {
     await writeClipboardText(window.location.href)
+  } else if (url.startsWith('http')) {
+    await writeClipboardText(url)
   } else {
-    const origin = window.location.origin
-    await writeClipboardText(origin + url)
+    await writeClipboardText(window.location.origin + url)
   }
   showToast(t('lottery.shareLinkCopied'))
 }
@@ -269,6 +331,16 @@ watch(() => props.show, async (newVal) => {
   align-items: center;
   gap: 8px;
 }
+.viral-hint {
+  font-size: 12px;
+  color: var(--tg-hint);
+  margin: 0 0 10px;
+}
+.viral-progress-caption {
+  font-size: 11px;
+  color: var(--tg-hint);
+  margin: 6px 0 10px;
+}
 .result-actions {
   display: flex;
   flex-wrap: wrap;
@@ -295,7 +367,7 @@ watch(() => props.show, async (newVal) => {
   height: 6px;
   background: var(--tg-secondary-bg, rgba(255,255,255,.1));
   border-radius: 3px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
   overflow: hidden;
 }
 .viral-progress-fill {

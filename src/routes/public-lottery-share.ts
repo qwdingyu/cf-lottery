@@ -19,6 +19,11 @@ import {
   tryParseJson,
   hashEventValue,
 } from "./public-lottery-helpers";
+import {
+  buildPublicSharePath,
+  computeViralExtraEntries,
+  normalizeViralWeightNumbers,
+} from "../services/lottery/viral-weight";
 
 export function setupPublicShareRoutes(route: Hono<AppEnv>) {
 /** 接龙模式：公开参与列表（按参与时间排序） */
@@ -165,17 +170,22 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
     .from(shareRecords)
     .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.sharerEntryId, entryId)));
 
-  // 聚合统计
+  // 聚合统计：额外次数与开奖 performDraw 同一公式（invited × perInvite 封顶）
   const totalClicked = myShares.reduce((s, r) => s + r.clickedCount, 0);
   const totalJoined = myShares.reduce((s, r) => s + r.joinedCount, 0);
-  const extraEntriesPerInvite = viral?.extraEntriesPerInvite ?? 1;
-  const maxExtraEntries = viral?.maxExtraEntries ?? 10;
-  const extraEntriesEarned = Math.min(totalJoined, maxExtraEntries);
+  const { extraEntriesPerInvite, maxExtraEntries } = normalizeViralWeightNumbers(viral);
+  const extraEntriesEarned = computeViralExtraEntries(
+    totalJoined,
+    extraEntriesPerInvite,
+    maxExtraEntries,
+  );
+  // 开奖袋中总票数（含基础 1），便于前端展示「相当于 N 次机会」
+  const drawWeight = 1 + extraEntriesEarned;
 
-  // 取最新一条分享码作为默认链接
+  // 取最新一条分享码作为默认链接（路径与 POST /share 一致）
   const latestShare = myShares.length > 0 ? myShares[myShares.length - 1] : null;
   const shareCode = latestShare?.shareCode || "";
-  const shareUrl = shareCode ? `/${slug}?ref=${shareCode}` : "";
+  const shareUrl = shareCode ? buildPublicSharePath(slug, shareCode) : "";
 
   return ok(c, {
     shareCode,
@@ -185,6 +195,7 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
     extraEntriesEarned,
     extraEntriesPerInvite,
     maxExtraEntries,
+    drawWeight,
   });
 });
 
@@ -220,10 +231,14 @@ route.post("/draws/:slug/share", async (c) => {
     shareCode,
   });
 
-  return ok(c, { shareCode, shareUrl: `/lottery/${slug}?ref=${shareCode}` });
+  // 统一 /lottery/{slug}?ref=，与前端 router 及 my-viral-stats 一致（docs/108）
+  return ok(c, { shareCode, shareUrl: buildPublicSharePath(slug, shareCode) });
 });
 
-/** 通过分享链接打开活动（记录点击） */
+/**
+ * 通过分享链接打开活动（记录点击）。
+ * 重定向必须保留 ?ref=，否则好友打开后参与无法归因到分享者。
+ */
 route.get("/draws/:slug/ref/:shareCode", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
@@ -242,6 +257,8 @@ route.get("/draws/:slug/ref/:shareCode", async (c) => {
     });
   }
 
-  return c.redirect(`/${slug}`);
+  // 落到公开活动页并保留 ref，供 join 写入 attributed_join
+  const target = buildPublicSharePath(slug, shareCode) || `/lottery/${encodeURIComponent(slug)}`;
+  return c.redirect(target);
 });
 }
