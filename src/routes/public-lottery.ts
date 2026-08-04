@@ -447,9 +447,12 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
 
-  // ── 业务 JWT 跳过验证码（cf-auth OAuth 交换后的自签 JWT，docs/059） ──
-  // Authorization Bearer 有效且 payload.email 与请求 email 一致时，
-  // 用户已在 IdP 完成身份认证，跳过 6 位邮箱 OTP（减少 Resend 额度）。
+  // ── 业务 JWT 跳过验证码（cf-auth OAuth / 管理端登录自签 JWT，docs/059/093） ──
+  // Authorization Bearer 验签通过，且 payload.email 与 body.email 一致（大小写不敏感）时，
+  // 视为已完成身份认证，跳过 6 位邮箱 OTP。
+  // 必须与 my-result 同策略：body.email 已 toLowerCase，JWT claim 也必须规范化后再比；
+  // 否则 MixedCase claim 会误拒合法登录、把用户逼回 OTP（或空码失败）。
+  // 不一致 / 无 email claim / 验签失败 → 不授信，继续 OTP（防拿别人 token 代参指定邮箱）。
   let bearerIdentityVerified = false;
   if (!code) {
     const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
@@ -458,7 +461,8 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       if (jwtSecret) {
         try {
           const payload = await verifyJwt(bearerToken, jwtSecret);
-          if (payload?.email === email) {
+          const tokenEmail = String(payload?.email || "").trim().toLowerCase();
+          if (tokenEmail && tokenEmail === email) {
             bearerIdentityVerified = true;
           }
         } catch { /* token 无效，继续走验证码流程 */ }

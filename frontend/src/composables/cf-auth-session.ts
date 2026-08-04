@@ -152,8 +152,9 @@ export function buildCfAuthVerifyJoinBody(input: {
   pending: CfAuthPendingJoin
   submission?: unknown
 }): Record<string, unknown> {
+  // 与后端 body.email toLowerCase 对齐，避免大小写漂移导致免 OTP 误拒
   const body: Record<string, unknown> = {
-    email: String(input.email || '').trim(),
+    email: String(input.email || '').trim().toLowerCase(),
     code: '',
   }
   if (input.pending.accessPassword) body.accessPassword = input.pending.accessPassword
@@ -215,6 +216,25 @@ export function readEmailFromBusinessJwt(token: string): string {
 }
 
 /**
+ * 解析 open 系 verify-join 应使用的邮箱。
+ * 优先级：JWT.email（与 Bearer 同源，后端比的就是它）> 显式 hint > session 缓存。
+ * 禁止 sessionEmail 压过 JWT：陈旧 session 邮箱会导致 body/JWT 不一致、免 OTP 失败甚至错身份请求。
+ */
+export function resolveOpenJoinEmail(input: {
+  token: string
+  emailHint?: string
+  sessionEmail?: string
+}): string {
+  const fromJwt = readEmailFromBusinessJwt(input.token)
+  if (fromJwt) return fromJwt
+  const hint = String(input.emailHint || '').trim().toLowerCase()
+  if (hint.includes('@')) return hint
+  const session = String(input.sessionEmail || '').trim().toLowerCase()
+  if (session.includes('@')) return session
+  return ''
+}
+
+/**
  * 管理端已登录、参与轨尚无 JWT 时：把 admin_token 同步进 lottery_registered_*。
  *
  * 为什么：历史上故意隔离 admin_token（localStorage）与参与 session，
@@ -233,12 +253,14 @@ export function hydrateLotterySessionFromAdminToken(input: {
   if (!adminToken) return null
   const existing = String(input.sessionStore.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || '').trim()
   if (existing) {
-    // 已有参与会话：仅补 email/display 缺口，不换 token
-    const email =
-      String(input.sessionStore.getItem(LOTTERY_SESSION_EMAIL_KEY) || '').trim() ||
-      String(input.email || '').trim() ||
-      readEmailFromBusinessJwt(existing)
-    if (email && !input.sessionStore.getItem(LOTTERY_SESSION_EMAIL_KEY)) {
+    // 已有参与会话：不换 token；邮箱以「当前 Bearer 的 JWT claim」为准，纠偏陈旧 sessionEmail
+    const email = resolveOpenJoinEmail({
+      token: existing,
+      emailHint: input.email,
+      sessionEmail: input.sessionStore.getItem(LOTTERY_SESSION_EMAIL_KEY) || '',
+    })
+    const storedEmail = String(input.sessionStore.getItem(LOTTERY_SESSION_EMAIL_KEY) || '').trim().toLowerCase()
+    if (email && email !== storedEmail) {
       input.sessionStore.setItem(LOTTERY_SESSION_EMAIL_KEY, email)
     }
     const displayName =
@@ -251,9 +273,11 @@ export function hydrateLotterySessionFromAdminToken(input: {
     }
     return { token: existing, email, displayName }
   }
-  const email =
-    String(input.email || '').trim() ||
-    readEmailFromBusinessJwt(adminToken)
+  // 无参与轨：email 优先 JWT claim，再 /me hint（旧 token 无 claim）
+  const email = resolveOpenJoinEmail({
+    token: adminToken,
+    emailHint: input.email,
+  })
   const displayName =
     String(input.displayName || '').trim() ||
     (email.includes('@') ? email.split('@')[0]! : '') ||

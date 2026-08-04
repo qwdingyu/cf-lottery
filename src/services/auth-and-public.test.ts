@@ -941,6 +941,90 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/093 审计加固：verify-join 免 OTP 必须大小写不敏感对齐 my-result，
+   * 且 body.email 与 JWT.email 不一致时绝不授信（防拿别人 token 代参）。
+   */
+  it("open 模式：verify-join JWT.email 大小写不敏感免 OTP；不一致不授信；无 claim 不授信", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const emailLower = "jwt-join@test.com";
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "open-verify-jwt-case",
+      title: "JWT 参与大小写", status: "open", participationMode: "open",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    // claim 为 MixedCase，body 为 lower——旧实现严格 === 会误拒
+    const mixedToken = await signJwt(
+      { sub: crypto.randomUUID(), tenantId: TENANT, email: "Jwt-Join@Test.COM" },
+      TEST_ENV.JWT_SECRET,
+      3600,
+    );
+    const okRes = await app.request("/public/draws/open-verify-jwt-case/verify-join", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${mixedToken}`,
+        "CF-Connecting-IP": "10.0.0.61",
+      },
+      body: JSON.stringify({ email: emailLower, code: "" }),
+    }, TEST_ENV);
+    expect(okRes.status).toBe(200);
+    const okBody = await okRes.json() as any;
+    expect(okBody.ok).toBe(true);
+    expect(okBody.joined).toBe(true);
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId)).limit(1);
+    expect(entry?.identityType).toBe("email");
+    expect(entry?.identityValue).toBe(emailLower);
+
+    // 另一活动：body 与 claim 邮箱不一致 → 无码必须 400，不得代参
+    const drawId2 = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId2, tenantId: TENANT, publicSlug: "open-verify-jwt-mismatch",
+      title: "JWT 邮箱不一致", status: "open", participationMode: "open",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    const mismatch = await app.request("/public/draws/open-verify-jwt-mismatch/verify-join", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${mixedToken}`,
+        "CF-Connecting-IP": "10.0.0.62",
+      },
+      body: JSON.stringify({ email: "other@test.com", code: "" }),
+    }, TEST_ENV);
+    expect(mismatch.status).toBe(400);
+    const [noEntry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId2)).limit(1);
+    expect(noEntry).toBeFalsy();
+
+    // 无 email claim 的旧 JWT + 空码 → 400（不可仅凭 sub 冒充 open 邮箱身份）
+    const drawId3 = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId3, tenantId: TENANT, publicSlug: "open-verify-jwt-no-email",
+      title: "JWT 无 email", status: "open", participationMode: "open",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    const noEmailTok = await signJwt(
+      { sub: crypto.randomUUID(), tenantId: TENANT },
+      TEST_ENV.JWT_SECRET,
+      3600,
+    );
+    const noClaim = await app.request("/public/draws/open-verify-jwt-no-email/verify-join", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${noEmailTok}`,
+        "CF-Connecting-IP": "10.0.0.63",
+      },
+      body: JSON.stringify({ email: emailLower, code: "" }),
+    }, TEST_ENV);
+    expect(noClaim.status).toBe(400);
+  });
+
+  /**
    * docs/084：open 系 my-result 对齐 verify-join——持有 email 一致的业务 JWT 可免 OTP。
    */
   it("open 模式：my-result 业务 JWT.email 一致免 OTP；无 token 无码拒绝；邮箱不一致不授信", async () => {

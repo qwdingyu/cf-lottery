@@ -614,7 +614,7 @@ import {
   missingJoinCredentialForMode,
   shouldResumeCfAuthJoin,
   hydrateLotterySessionFromAdminToken,
-  readEmailFromBusinessJwt,
+  resolveOpenJoinEmail,
 } from '@/composables/cf-auth-session'
 import { clearLotteryBrowserSessionOnly } from '@/composables/business-session'
 import { readAdminToken } from '@/composables/useAdminAuth'
@@ -1617,10 +1617,12 @@ async function ensureParticipationSessionFromAdmin(): Promise<{
   const adminTok = readAdminToken()
   if (!adminTok && !registeredToken.value) return null
 
-  let emailHint =
-    sessionEmail.value ||
-    readEmailFromBusinessJwt(registeredToken.value || adminTok) ||
-    ''
+  // 邮箱优先 JWT claim（与 Bearer 同源）；sessionEmail 只作兜底，避免陈旧缓存压过 JWT
+  const bearerProbe = registeredToken.value || adminTok
+  let emailHint = resolveOpenJoinEmail({
+    token: bearerProbe,
+    sessionEmail: sessionEmail.value,
+  })
   let nameHint = registeredUsername.value || ''
 
   // 旧 token 无 email：用管理端 /me 补（同一业务 JWT，requireAuth 可验）
@@ -1634,7 +1636,7 @@ async function ensureParticipationSessionFromAdmin(): Promise<{
         ok?: boolean
         user?: { email?: string; username?: string }
       }
-      if (me?.user?.email) emailHint = String(me.user.email).trim()
+      if (me?.user?.email) emailHint = String(me.user.email).trim().toLowerCase()
       if (me?.user?.username && !nameHint) nameHint = String(me.user.username).trim()
     } catch {
       /* 忽略：后续可能仍能用 session 已有值 */
@@ -1650,13 +1652,19 @@ async function ensureParticipationSessionFromAdmin(): Promise<{
   if (!hydrated) return null
 
   registeredToken.value = hydrated.token
-  if (hydrated.email) persistSessionEmail(hydrated.email)
+  // 最终邮箱仍以「实际 Bearer token」的 claim 为准
+  const email = resolveOpenJoinEmail({
+    token: hydrated.token,
+    emailHint: hydrated.email,
+    sessionEmail: sessionEmail.value,
+  })
+  if (email) persistSessionEmail(email)
   if (hydrated.displayName) {
     registeredUsername.value = hydrated.displayName
     sessionStorage.setItem(LOTTERY_REGISTERED_USERNAME_KEY, hydrated.displayName)
   }
-  if (!hydrated.email) return null
-  return { token: hydrated.token, email: hydrated.email }
+  if (!email) return null
+  return { token: hydrated.token, email }
 }
 
 /**
@@ -1671,8 +1679,12 @@ async function resumeCfAuthJoinAfterCallback() {
   if (!pending?.drawId) return
 
   registeredToken.value = token
-  const email =
-    sessionStorage.getItem(LOTTERY_SESSION_EMAIL_KEY) || sessionEmail.value || ''
+  // 与 handleJoin 一致：JWT.email 优先于 session 缓存
+  const email = resolveOpenJoinEmail({
+    token,
+    sessionEmail:
+      sessionStorage.getItem(LOTTERY_SESSION_EMAIL_KEY) || sessionEmail.value || '',
+  })
   if (email) persistSessionEmail(email)
   const uname = sessionStorage.getItem(LOTTERY_REGISTERED_USERNAME_KEY) || ''
   if (uname) registeredUsername.value = uname
@@ -1811,7 +1823,12 @@ async function handleJoin(drawId: string) {
   // 先尝试把管理端登录同步到参与轨（顶栏已显示用户名时不应再强迫邮箱 OTP）
   const session = await ensureParticipationSessionFromAdmin()
   const token = session?.token || registeredToken.value
-  const email = session?.email || sessionEmail.value || readEmailFromBusinessJwt(token)
+  // 邮箱：JWT claim 优先（后端免 OTP 比的就是它），禁止陈旧 sessionEmail 压过
+  const email = resolveOpenJoinEmail({
+    token: token || '',
+    emailHint: session?.email,
+    sessionEmail: sessionEmail.value,
+  })
 
   // registered 且已登录：跳过弹窗，直参与（核心 UX：游戏点一次就提交）
   if (draw.participationMode === 'registered' && token) {

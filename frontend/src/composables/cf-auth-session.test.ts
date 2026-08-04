@@ -19,6 +19,7 @@ import {
   resolveAdminPathAfterCfAuth,
   resolveCfAuthCallbackLanding,
   resolveCfAuthReturnPath,
+  resolveOpenJoinEmail,
   saveCfAuthPendingJoin,
   shouldResumeCfAuthJoin,
   type SessionStore,
@@ -160,6 +161,22 @@ describe("cf-auth-session（参与闭环）", () => {
     expect(readEmailFromBusinessJwt("not-a-jwt")).toBe("");
   });
 
+  it("resolveOpenJoinEmail：JWT.email 优先于 session/hint（防陈旧 session 代参）", () => {
+    const tok = fakeJwt({ sub: "u", email: "Real@User.COM" });
+    expect(
+      resolveOpenJoinEmail({
+        token: tok,
+        emailHint: "hint@other.com",
+        sessionEmail: "stale@old.com",
+      }),
+    ).toBe("real@user.com");
+    // 无 claim 时才用 hint / session
+    const bare = fakeJwt({ sub: "u" });
+    expect(resolveOpenJoinEmail({ token: bare, emailHint: "Hint@X.COM" })).toBe("hint@x.com");
+    expect(resolveOpenJoinEmail({ token: bare, sessionEmail: "Sess@Y.COM" })).toBe("sess@y.com");
+    expect(resolveOpenJoinEmail({ token: bare })).toBe("");
+  });
+
   it("hydrateLotterySessionFromAdminToken：无参与会话时双写；已有 token 不覆盖", () => {
     const store = memoryStore();
     const adminJwt = fakeJwt({ sub: "u1", tenantId: "t1", email: "admin@test.com" });
@@ -181,6 +198,21 @@ describe("cf-auth-session（参与闭环）", () => {
     });
     expect(second?.token).toBe("part-only-jwt");
     expect(store.getItem(LOTTERY_REGISTERED_TOKEN_KEY)).toBe("part-only-jwt");
+  });
+
+  it("hydrate 已有参与 token：用 JWT.email 纠偏陈旧 sessionEmail", () => {
+    const store = memoryStore();
+    const partJwt = fakeJwt({ sub: "u2", email: "owner@tenant.com" });
+    store.setItem(LOTTERY_REGISTERED_TOKEN_KEY, partJwt);
+    store.setItem(LOTTERY_SESSION_EMAIL_KEY, "stale-visitor@other.com");
+    const out = hydrateLotterySessionFromAdminToken({
+      sessionStore: store,
+      adminToken: fakeJwt({ sub: "admin", email: "admin@x.com" }),
+      email: "ignored-hint@x.com",
+    });
+    expect(out?.token).toBe(partJwt);
+    expect(out?.email).toBe("owner@tenant.com");
+    expect(store.getItem(LOTTERY_SESSION_EMAIL_KEY)).toBe("owner@tenant.com");
   });
 
   it("hydrate 无 adminToken 返回 null", () => {
