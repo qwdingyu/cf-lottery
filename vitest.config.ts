@@ -26,6 +26,8 @@ export default defineConfig({
       "frontend/src/composables/admin-list-ux.test.ts",
       // 公开页 draft/paused CTA
       "frontend/src/composables/lottery-public-ux.test.ts",
+      // docs/082：管理台批量顺序写 + 进度
+      "frontend/src/composables/useAdminBatchOperation.test.ts",
       // 中奖邮件状态与开奖反馈档
       "frontend/src/views/admin/lottery/ops-utils.email.test.ts",
     ],

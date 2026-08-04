@@ -11,7 +11,7 @@ import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { lotteryDraws, prizes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig } from "../db/schema";
-import { eq, and, desc, sql, count } from "drizzle-orm";
+import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import {
   createDraw,
   publishDraw,
@@ -254,7 +254,12 @@ adminLotteryRoute.get("/draws", async (c) => {
   const createdTo = c.req.query("createdTo") || "";
 
   const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
-  if (status) conditions.push(eq(lotteryDraws.status, status));
+  // docs/083 P1：status=active 虚拟筛 = 进行中视角（draft/open/paused/drawing），排除 drawn/cancelled
+  if (status === "active") {
+    conditions.push(inArray(lotteryDraws.status, ["draft", "open", "paused", "drawing"]));
+  } else if (status) {
+    conditions.push(eq(lotteryDraws.status, status));
+  }
   if (query) conditions.push(sql`${lotteryDraws.title} LIKE ${'%' + escapeLike(query) + '%'}`);
   if (activityKind) conditions.push(eq(lotteryDraws.activityKind, activityKind));
   if (createdFrom) conditions.push(sql`${lotteryDraws.createdAt} >= ${createdFrom}`);

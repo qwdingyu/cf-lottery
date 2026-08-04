@@ -51,19 +51,30 @@
             <td>{{ prize.description || '-' }}</td>
             <td>
               <template v-if="prize.prizeType === 'code'">
-                <span :class="{ 'tag-danger': (prize.totalCount - prize.usedCount) <= 0, 'tag-success': (prize.totalCount - prize.usedCount) > 0 }">
+                <span :class="{ 'tag-danger': codePoolLeft(prize) <= 0, 'tag-success': codePoolLeft(prize) > 0 }">
                   {{ prize.usedCount || 0 }}/{{ prize.totalCount || 0 }}
                 </span>
-                <small class="field-hint" style="display:block">{{ $t('adminPrizes.leftLabel', { n: Math.max(0, (prize.totalCount || 0) - (prize.usedCount || 0)) }) }}</small>
+                <small class="field-hint" style="display:block">{{ $t('adminPrizes.leftLabel', { n: codePoolLeft(prize) }) }}</small>
+                <!-- 空码池硬提示：卡密奖未灌库 = 中奖发不出，避免「空头支票」 -->
+                <small v-if="codePoolLeft(prize) <= 0" class="pool-empty-warn">{{ $t('adminPrizes.poolEmptyWarn') }}</small>
               </template>
               <template v-else>—</template>
             </td>
             <td>{{ prize.createdAt }}</td>
             <td class="col-actions">
-              <button v-if="prize.prizeType === 'code'" class="btn btn-ghost btn-xs" @click="showImport(prize)">{{ $t('adminPrizes.importCodes') }}</button>
-              <button v-if="prize.prizeType === 'code'" class="btn btn-ghost btn-xs" @click="showCodes(prize)">{{ $t('adminPrizes.viewCodes') }}</button>
-              <button class="btn btn-ghost btn-xs" @click="showEdit(prize)">{{ $t('adminPrizes.edit') }}</button>
-              <button class="btn btn-ghost btn-xs" :title="prize.active !== 0 ? $t('adminPrizes.deactivateTitle') : $t('adminPrizes.activateTitle')" @click="toggleActive(prize)">
+              <!-- 卡密主路径：生成置顶主色；导入/查看次之，避免「生成藏在导入 Tab」被误认为功能缺失 -->
+              <template v-if="prize.prizeType === 'code'">
+                <button
+                  class="btn btn-primary btn-xs"
+                  type="button"
+                  :title="$t('adminPrizes.generateCodesTitle')"
+                  @click="showGenerate(prize)"
+                >{{ $t('adminPrizes.generateCodes') }}</button>
+                <button class="btn btn-ghost btn-xs" type="button" @click="showImport(prize)">{{ $t('adminPrizes.importCodes') }}</button>
+                <button class="btn btn-ghost btn-xs" type="button" @click="showCodes(prize)">{{ $t('adminPrizes.viewCodes') }}</button>
+              </template>
+              <button class="btn btn-ghost btn-xs" type="button" @click="showEdit(prize)">{{ $t('adminPrizes.edit') }}</button>
+              <button class="btn btn-ghost btn-xs" type="button" :title="prize.active !== 0 ? $t('adminPrizes.deactivateTitle') : $t('adminPrizes.activateTitle')" @click="toggleActive(prize)">
                 {{ prize.active !== 0 ? $t('adminPrizes.deactivate') : $t('adminPrizes.activate') }}
               </button>
             </td>
@@ -171,11 +182,21 @@
       </form>
     </AdminModal>
 
-    <!-- 导入码弹窗 -->
-    <AdminModal hide-actions v-model="showImportModal" :title="$t('adminPrizes.importTitle', { name: importPrize?.name || '' })" max-width="600px">
+    <!-- 导入 / 生成卡密弹窗（同一弹窗双 Tab；行上「生成卡密」会默认落在生成 Tab） -->
+    <AdminModal
+      hide-actions
+      v-model="showImportModal"
+      :title="importTab === 'generate'
+        ? $t('adminPrizes.generateTitle', { name: importPrize?.name || '' })
+        : $t('adminPrizes.importTitle', { name: importPrize?.name || '' })"
+      max-width="600px"
+    >
+      <p v-if="importPrize && codePoolLeft(importPrize) <= 0" class="notice-card pool-empty-banner" role="note">
+        {{ $t('adminPrizes.poolEmptyModalHint') }}
+      </p>
       <div class="tabs" style="margin-bottom:12px">
-        <button type="button" class="tab" :class="{ active: importTab === 'paste' }" @click="importTab = 'paste'">{{ $t('adminPrizes.pasteTab') }}</button>
         <button type="button" class="tab" :class="{ active: importTab === 'generate' }" @click="importTab = 'generate'">{{ $t('adminPrizes.generateTab') }}</button>
+        <button type="button" class="tab" :class="{ active: importTab === 'paste' }" @click="importTab = 'paste'">{{ $t('adminPrizes.pasteTab') }}</button>
       </div>
 
       <div v-if="importTab === 'paste'" class="modal-form">
@@ -409,9 +430,30 @@ async function handleCreate() {
   }
 }
 
+function codePoolLeft(prize: { totalCount?: number; usedCount?: number }) {
+  return Math.max(0, (prize.totalCount || 0) - (prize.usedCount || 0))
+}
+
+/** 打开导入弹窗（粘贴 Tab） */
 function showImport(prize: any) {
   importPrize.value = prize
   codesText.value = ''
+  importTab.value = 'paste'
+  showImportModal.value = true
+}
+
+/**
+ * 打开生成弹窗（生成 Tab 优先）。
+ * 为什么独立入口：用户常以为「卡密生成被删」——其实藏在导入里的次要 Tab。
+ */
+function showGenerate(prize: any) {
+  importPrize.value = prize
+  codesText.value = ''
+  importTab.value = 'generate'
+  // 空池时给一个更贴合名额的默认量，仍可改
+  if (codePoolLeft(prize) <= 0 && (!genCount.value || genCount.value < 1)) {
+    genCount.value = 100
+  }
   showImportModal.value = true
 }
 
@@ -645,6 +687,19 @@ onMounted(loadData)
   object-fit: cover;
   border-radius: 8px;
   background: var(--tg-secondary-bg, #151b28);
+}
+
+.pool-empty-warn {
+  display: block;
+  margin-top: 2px;
+  color: var(--tg-danger, #ef4444);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pool-empty-banner {
+  margin-bottom: 12px;
+  font-size: 13px;
 }
 
 .prize-preview {

@@ -3,6 +3,8 @@
     <div class="toolbar">
       <div class="filters">
         <select v-model="statusFilter" :aria-label="$t('lottery.adminStatus')" @change="loadData">
+          <!-- docs/083 P1：默认「进行中」视角，避免 drawn/cancelled 刷屏 -->
+          <option value="active">{{ $t('lottery.adminStatusActive') }}</option>
           <option value="">{{ $t('lottery.adminStatusAll') }}</option>
           <option value="draft">{{ $t('lottery.adminDrawDraft') }}</option>
           <option value="open">{{ $t('lottery.statusOpen') }}</option>
@@ -54,15 +56,36 @@
       <span>{{ $t('lottery.adminListTtvHint') }}</span>
     </div>
 
-    <div v-if="selectedCount > 0" class="table-command-actions">
+    <div v-if="selectedCount > 0" class="table-command-actions bulk-bar" :aria-busy="batchOperating">
       <span class="selection-summary">
         {{ t('lottery.adminSelectedCount', { count: selectedCount }) }}
+        <template v-if="selectedHideableCount > 0">
+          · {{ t('lottery.adminSelectedHideable', { count: selectedHideableCount }) }}
+        </template>
+        <template v-if="selectedDeletableCount > 0">
+          · {{ t('lottery.adminSelectedDeletable', { count: selectedDeletableCount }) }}
+        </template>
+        <template v-if="batchOperating">
+          · {{ t('lottery.adminBatchProgress', { done: batchCompleted, total: batchTotal }) }}
+        </template>
       </span>
       <button class="btn btn-ghost btn-sm" :disabled="loading || batchOperating" @click="clearSelection">
         {{ t('lottery.adminClearSelection') }}
       </button>
-      <button class="btn btn-danger btn-sm" :disabled="loading || batchOperating || selectedCount === 0" @click="batchDeleteDraws">
-        {{ t('lottery.adminBatchDelete', { count: selectedCount }) }}
+      <!-- docs/083：批量隐藏已开奖比批量删更安全，适合清用户视野 -->
+      <button
+        class="btn btn-ghost btn-sm"
+        :disabled="loading || batchOperating || selectedHideableCount === 0"
+        @click="batchHideDrawn"
+      >
+        {{ t('lottery.adminBatchHide', { count: selectedHideableCount }) }}
+      </button>
+      <button
+        class="btn btn-danger btn-sm"
+        :disabled="loading || batchOperating || selectedDeletableCount === 0"
+        @click="batchDeleteDraws"
+      >
+        {{ t('lottery.adminBatchDelete', { count: selectedDeletableCount }) }}
       </button>
     </div>
 
@@ -108,9 +131,9 @@
               <input
                 type="checkbox"
                 :checked="isSelected(draw.id)"
-                :disabled="loading || batchOperating || !canDeleteDraw(draw)"
+                :disabled="loading || batchOperating || !canSelectDraw(draw)"
                 :aria-label="$t('lottery.adminSelectRow')"
-                @change="setSelected(draw.id, ($event.target as HTMLInputElement).checked)"
+                @change="setSelected(draw.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
               />
             </td>
             <td class="col-name">
@@ -1333,6 +1356,7 @@ import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
+import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
 import { writeClipboardText } from '@/composables/useClipboard'
 import {
@@ -1510,7 +1534,8 @@ function canGuidePublishFixInEditor(draw: LotteryDraw, errors: PublishCheckItem[
 }
 
 const draws = ref<LotteryDraw[]>([])
-const statusFilter = ref('')
+/** docs/083 P1：默认「进行中」虚拟筛（draft/open/paused/drawing），深链 ?status= 可覆盖 */
+const statusFilter = ref('active')
 /** 名称 / 奖品 / id 本地模糊搜索 */
 const listQuery = ref('')
 /** 活动类型筛选（047 文档 🔴） */
@@ -1683,8 +1708,13 @@ const {
 // 模板绑定的 composable 字段：避免 vue-tsc 在部分配置下误报 TS6133
 void analyticsStats
 
-// batchOperating 必须在 useTableSelection 之前声明，确保模板访问时已初始化
-const batchOperating = ref(false)
+// docs/082 P0：统一批量进度；batchOperating 须在 useTableSelection 前可用
+const {
+  operating: batchOperating,
+  completed: batchCompleted,
+  total: batchTotal,
+  runSequential: runBatchSequential,
+} = useAdminBatchOperation()
 const pagination = useTablePagination({ initialLimit: 50 })
 let loadSequence = 0
 let winnersStatusTimer: ReturnType<typeof setInterval> | null = null
@@ -1698,7 +1728,22 @@ const hasListFilter = computed(
   () => Boolean(String(statusFilter.value || '').trim() || String(listQuery.value || '').trim()),
 )
 
-// 多选删除：复用 useTableSelection（与 AdminCardsView 一致）
+/**
+ * 多选可选行：可删 或 可批量隐藏（drawn 且仍用户可见）。
+ * 为什么不只 canDelete：批量隐藏是清用户视野的主路径，drawn 必须能勾选。
+ */
+function canSelectDraw(draw: LotteryDraw): boolean {
+  return canDeleteDraw(draw) || canBatchHideDraw(draw)
+}
+
+/** drawn 且当前对用户可见（缺省 visible=1）→ 可批量隐藏 */
+function canBatchHideDraw(draw: LotteryDraw): boolean {
+  if (draw.status !== 'drawn') return false
+  const v = draw.visible === undefined || draw.visible === null ? 1 : Number(draw.visible)
+  return v !== 0
+}
+
+// 多选：可删 + 可隐藏 drawn；Shift 连选由 setSelected 第三参处理
 const visibleItems = computed(() => filteredDraws.value)
 const {
   selectedIds,
@@ -1709,8 +1754,15 @@ const {
   clearSelection,
   allVisibleSelected,
 } = useTableSelection(visibleItems, (row) => row.id, {
-  isSelectable: canDeleteDraw,
+  isSelectable: canSelectDraw,
 })
+
+const selectedDeletableCount = computed(
+  () => draws.value.filter((d) => selectedIds.value.includes(d.id) && canDeleteDraw(d)).length,
+)
+const selectedHideableCount = computed(
+  () => draws.value.filter((d) => selectedIds.value.includes(d.id) && canBatchHideDraw(d)).length,
+)
 
 const winnersEmailFailureCount = computed(() => countLotteryEmailFailures(winners.value))
 // 与后端 notificationStatus 对齐；旧逻辑把 failed 误算进 pending，重发条会不出现
@@ -2605,30 +2657,38 @@ async function batchDeleteDraws() {
   if (selectedDraws.length === 0) return
   const drawnCount = selectedDraws.filter((draw) => draw.status === 'drawn').length
   if (!(await askConfirm(t('lottery.adminConfirmBatchDelete', { count: selectedDraws.length, drawnCount })))) return
-  batchOperating.value = true
-  try {
-    let success = 0
-    let failed = 0
-    for (const id of selectedDraws.map((draw) => draw.id)) {
-      try {
-        await deleteLotteryDraw(id)
-        success++
-      } catch {
-        failed++
-      }
-    }
-    if (failed > 0) {
-      showToast(t('lottery.adminBatchDeleteResult', { success, failed }), 'error')
-    } else {
-      showToast(t('lottery.adminBatchDeleteSuccess', { count: success }), 'success')
-    }
-    clearSelection()
-    await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
-  } finally {
-    batchOperating.value = false
+  const result = await runBatchSequential(selectedDraws.map((d) => d.id), async (id) => {
+    await deleteLotteryDraw(id)
+  })
+  if (!result) return
+  if (result.failed > 0) {
+    showToast(t('lottery.adminBatchDeleteResult', { success: result.success, failed: result.failed }), 'error')
+  } else {
+    showToast(t('lottery.adminBatchDeleteSuccess', { count: result.success }), 'success')
   }
+  clearSelection()
+  await loadData()
+}
+
+/**
+ * 批量隐藏已开奖活动（visible=0）。
+ * 为什么优先于批量删：数据与中奖记录保留，只清用户视野；仅 drawn 且当前可见。
+ */
+async function batchHideDrawn() {
+  const targets = draws.value.filter((d) => selectedIds.value.includes(d.id) && canBatchHideDraw(d))
+  if (targets.length === 0 || loading.value || batchOperating.value) return
+  if (!(await askConfirm(t('lottery.adminConfirmBatchHide', { count: targets.length })))) return
+  const result = await runBatchSequential(targets.map((d) => d.id), async (id) => {
+    await updateLotteryDraw(id, { visible: 0 })
+  })
+  if (!result) return
+  if (result.failed > 0) {
+    showToast(t('lottery.adminBatchHideResult', { success: result.success, failed: result.failed }), 'error')
+  } else {
+    showToast(t('lottery.adminBatchHideSuccess', { count: result.success }), 'success')
+  }
+  clearSelection()
+  await loadData()
 }
 
 async function handlePause(id: string) {
@@ -2958,9 +3018,12 @@ async function handleCreate() {
 
 onMounted(() => {
   // Dashboard「邮件失败」待办深链：?status=drawn 预筛已开奖，便于点「查看结果」重发
-  const statusQ = String(route.query.status || '').trim()
-  if (statusQ && ['draft', 'open', 'paused', 'drawing', 'drawn', 'cancelled'].includes(statusQ)) {
+  // 亦支持 ?status=active（与默认一致）或 ?status= 空串表示全部
+  const statusQ = String(route.query.status ?? '').trim()
+  if (statusQ && ['active', 'draft', 'open', 'paused', 'drawing', 'drawn', 'cancelled'].includes(statusQ)) {
     statusFilter.value = statusQ
+  } else if (route.query.status === '') {
+    statusFilter.value = ''
   }
   loadData()
   loadPrizeOptions()

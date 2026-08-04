@@ -991,4 +991,31 @@ describe("P0 活动可见性 visible", () => {
     }, TEST_ENV);
     expect(publicOk.status).toBe(200);
   });
+
+  it("docs/083 P1：status=active 列表排除 drawn/cancelled，含 draft/open", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const headers = { ...(await authHeader()) };
+
+    const draft = await createDraft(app, "lottery", { title: "active-list-draft" });
+    const open = await createAndPublish(app, "lottery");
+    await db.update(lotteryDraws).set({ status: "drawn", title: "active-list-drawn" }).where(eq(lotteryDraws.id, open.id));
+    const cancelled = await createDraft(app, "lottery", { title: "active-list-cancel" });
+    await db.update(lotteryDraws).set({ status: "cancelled" }).where(eq(lotteryDraws.id, cancelled.id));
+
+    const activeRes = await app.request("/api/admin/draws?status=active&limit=50&offset=0", { headers }, TEST_ENV);
+    expect(activeRes.status).toBe(200);
+    const activeBody = await activeRes.json() as { draws: Array<{ id: string; status: string }> };
+    const activeIds = new Set(activeBody.draws.map((d) => d.id));
+    expect(activeIds.has(draft.id)).toBe(true);
+    expect(activeIds.has(open.id)).toBe(false);
+    expect(activeIds.has(cancelled.id)).toBe(false);
+    expect(activeBody.draws.every((d) => ["draft", "open", "paused", "drawing"].includes(d.status))).toBe(true);
+
+    const allRes = await app.request("/api/admin/draws?limit=50&offset=0", { headers }, TEST_ENV);
+    const allBody = await allRes.json() as { draws: Array<{ id: string }> };
+    const allIds = new Set(allBody.draws.map((d) => d.id));
+    expect(allIds.has(open.id)).toBe(true);
+    expect(allIds.has(cancelled.id)).toBe(true);
+  });
 });
