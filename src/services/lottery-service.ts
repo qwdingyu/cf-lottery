@@ -43,6 +43,7 @@ export * from "./lottery/draws";
 export * from "./lottery/participation";
 export * from "./lottery/draw-execution";
 export * from "./lottery/penalty";
+export * from "./lottery/reward";
 
 /* ── 奖品管理 ────────────────────────────────────────────── */
 

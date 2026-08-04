@@ -27,8 +27,9 @@ import {
   createPrize,
   importPrizeCodes,
   randomSelect,
+  triggerRewardEarned,
 } from "../services/lottery-service";
-import { lotteryPrizeTiers, shareRecords, lotteryEntries, apiKeys } from "../db/schema";
+import { lotteryPrizeTiers, shareRecords, lotteryEntries, apiKeys, activityEvents } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -1239,6 +1240,99 @@ describe("computePenaltyTargets", () => {
     expect(result).not.toBeNull();
     expect(result!.invitedEntryIds).toContain(inviteeEntryId);
     expect(result!.inviterEntryId).toBeNull();
+  });
+});
+
+// ── 奖励意图触发测试（docs/111 §5 阶段一） ──
+describe("triggerRewardEarned", () => {
+  // 创建带 reward 配置的活动（用 createDraw 走既有逻辑，再手动插入邀请人 entry）
+  async function setupRewardDraw(activityConfig: string) {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id } = await createDraw(db, TENANT, {
+      title: "日卡奖励活动",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      participationMode: "open",
+      winnerCount: 1,
+      activityConfig,
+    });
+    const sharerEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: sharerEntryId, tenantId: TENANT, drawId: id,
+      identityType: "email", identityValue: "sharer@test.com",
+      ipHash: "ip-r1", joinedAt: now.toISOString(),
+    });
+    return { drawId: id, sharerEntryId };
+  }
+
+  it("未配置 reward 时静默跳过，不影响参与", async () => {
+    const { drawId, sharerEntryId } = await setupRewardDraw("{}");
+    const result = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    expect(result.triggered).toBe(false);
+    expect(result.reason).toBe("no_reward_config");
+  });
+
+  it("配置 reward 且配额充足时触发，并记录 reward_earned 事件", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { perInviteAmount: 100, currency: "USD" },
+      quota: { perUserPerDay: 2, globalPerDay: 100 },
+    });
+    const { drawId, sharerEntryId } = await setupRewardDraw(config);
+    const result = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    expect(result.triggered).toBe(true);
+    expect(result.reason).toBe("reward_sent");
+
+    // reward_earned 事件已落库（看板/审计依据）
+    const events = await db
+      .select({ eventType: activityEvents.eventType })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(events.length).toBe(1);
+  });
+
+  it("每人每日配额超限时不触发（perUserPerDay=1）", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { perInviteAmount: 100 },
+      quota: { perUserPerDay: 1, globalPerDay: 100 },
+    });
+    const { drawId, sharerEntryId } = await setupRewardDraw(config);
+    // 第一次触发：消耗当日配额
+    const first = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    expect(first.triggered).toBe(true);
+    // 第二次触发：配额超限
+    const second = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc2");
+    expect(second.triggered).toBe(false);
+    expect(second.reason).toBe("quota_exceeded");
+  });
+
+  it("全局每日配额超限时不触发（globalPerDay=1，两个不同邀请人）", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { perInviteAmount: 100 },
+      quota: { perUserPerDay: 10, globalPerDay: 1 },
+    });
+    const { drawId, sharerEntryId } = await setupRewardDraw(config);
+    // 第二个邀请人（不同 entryId，perUserPerDay 不超）
+    const sharer2Id = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: sharer2Id, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "sharer2@test.com",
+      ipHash: "ip-r2", joinedAt: new Date().toISOString(),
+    });
+
+    const first = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    expect(first.triggered).toBe(true);
+    // 全局配额已满（perUserPerDay=10 未超，但 global=1 已消耗）
+    const second = await triggerRewardEarned(db, drawId, sharer2Id, "sharer2@test.com", "sc2");
+    expect(second.triggered).toBe(false);
+    expect(second.reason).toBe("quota_exceeded");
   });
 });
 

@@ -22,7 +22,8 @@ import {
   users,
 } from "../../db/schema";
 import { verifyAccessPassword } from "./utils";
-import { recordActivityEvent } from "./integration";
+import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
+import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
 
 /* ── 候选池 ───────────────────────────────────────────────── */
 
@@ -230,6 +231,7 @@ export async function joinDraw(
           ipHash: options?.ipHash,
           userAgent: options?.userAgent,
         });
+        await maybeTriggerReward(tx, draw, attribution);
         return { joined: true, entryId, activityKind: draw.activityKind, attribution, submissionId };
       }
 
@@ -269,6 +271,8 @@ export async function joinDraw(
         ipHash: options?.ipHash,
         userAgent: options?.userAgent,
       });
+
+      await maybeTriggerReward(tx, draw, attribution);
 
       return {
         joined: true,
@@ -432,6 +436,40 @@ export async function cancelSignupChainEntry(
   });
 }
 
+/**
+ * 归因成功后按活动 reward 配置触发奖励意图（docs/111 §5 阶段一）。
+ *
+ * - 仅当活动 activityConfig 配置了 reward.perInviteAmount 时才触发；
+ *   未配置或配额超限时静默跳过，不影响任何现有活动。
+ * - Webhook 投递与 performDraw 一致：fire-and-forget + 容错，失败不影响参与主流程。
+ * - 与 joinDraw 同事务执行：归因、配额消耗、奖励意图入队三者原子。
+ */
+async function maybeTriggerReward(
+  tx: DbType,
+  draw: { id: string; tenantId: string },
+  attribution: { attributed: boolean; sharerEntryId?: string; refCode?: string },
+) {
+  if (!attribution.attributed || !attribution.sharerEntryId) return;
+  try {
+    const sharerIdentity = await getSharerIdentityValue(tx, draw.id, attribution.sharerEntryId);
+    const result = await triggerRewardEarned(
+      tx,
+      draw.id,
+      attribution.sharerEntryId,
+      sharerIdentity,
+      attribution.refCode || "",
+    );
+    for (const deliveryId of result.deliveryIds) {
+      void dispatchWebhookDelivery(tx, draw.tenantId, deliveryId).catch((err) => {
+        console.error(`[lottery] reward webhook dispatch failed for ${deliveryId}:`, err);
+      });
+    }
+  } catch (err) {
+    // 奖励触发失败不影响参与成功（与 grantLoserRewards 的容错一致）
+    console.error(`[lottery] triggerRewardEarned failed for ${draw.id}:`, err);
+  }
+}
+
 async function recordAttributedJoin(
   db: DbWriteScope,
   input: {
@@ -532,7 +570,7 @@ async function recordAttributedJoin(
     },
   });
 
-  return { attributed: true, refCode, shareRecordId: share.id };
+  return { attributed: true, refCode, shareRecordId: share.id, sharerEntryId: share.sharerEntryId };
 }
 
 /**

@@ -20,6 +20,7 @@ import {
   lotteryEntries,
   lotteryDraws,
   activityEvents,
+  prizeCodes,
 } from "../db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 
@@ -108,12 +109,13 @@ integrationRoute.post("/conversions", async (c) => {
 });
 
 // ═════════════════════════════════════════════════════════
-// 外部事件入口（docs/111 §5 阶段二）
+// 外部事件入口（docs/111 §5 阶段二 + docs/114 §4）
 //
 // 支持事件类型：
 //   member.left_group — QQ 机器人上报退群，触发波及名单计算 + 处罚 Webhook
 //   reward.issued     — 中转站回传发卡确认
 //   penalty.executed  — 中转站回传处罚执行确认
+//   reward.redeemed   — 中转站回传兑换码核销确认（标记 prizeCode redeemed）
 //
 // 鉴权：租户 API Key（与 /conversions 相同）
 // 幂等：idempotencyKey 去重，防机器人重报
@@ -122,11 +124,12 @@ integrationRoute.post("/conversions", async (c) => {
 const INTEGRATION_EVENT_LIMIT = 60;  // 外部事件限流：60 次/分钟/API key
 const INTEGRATION_EVENT_WINDOW_MS = 60000;
 
-type IntegrationEventType = "member.left_group" | "reward.issued" | "penalty.executed";
+type IntegrationEventType = "member.left_group" | "reward.issued" | "penalty.executed" | "reward.redeemed";
 const INTEGRATION_EVENT_TYPES = new Set<IntegrationEventType>([
   "member.left_group",
   "reward.issued",
   "penalty.executed",
+  "reward.redeemed",
 ]);
 
 integrationRoute.post("/events", async (c) => {
@@ -263,6 +266,45 @@ integrationRoute.post("/events", async (c) => {
       },
       webhookDeliveryIds: webhookResult.deliveryIds,
     });
+
+  // ── reward.redeemed：中转站回传兑换码核销确认（docs/114 §4） ──
+  // 将 prizeCode 从 issued 标记为 redeemed，让 cf-lottery 知道"卡已被用"，
+  // 退群处罚时可区分"发了没换"与"发了已换"（已核销的由中转站扣余额，不重复 revoked）。
+  } else if (event === "reward.redeemed") {
+    const code = String(payload.code || "").trim();
+    const prizeCodeId = String(payload.prizeCodeId || "").trim();
+    if (!code && !prizeCodeId) return fail(c, "payload.code 或 payload.prizeCodeId 至少提供一个", 400);
+
+    // 按 tenant + (id 或 code) 定位卡密
+    const conditions = prizeCodeId
+      ? and(eq(prizeCodes.tenantId, apiKey.tenantId), eq(prizeCodes.id, prizeCodeId))
+      : and(eq(prizeCodes.tenantId, apiKey.tenantId), eq(prizeCodes.code, code));
+    const [prizeCode] = await db
+      .select({ id: prizeCodes.id, status: prizeCodes.status })
+      .from(prizeCodes)
+      .where(conditions)
+      .limit(1);
+    if (!prizeCode) return fail(c, "卡密不存在或不属于该租户", 404);
+
+    let redeemed = false;
+    if (prizeCode.status === "issued") {
+      await db.update(prizeCodes)
+        .set({ status: "redeemed" })
+        .where(eq(prizeCodes.id, prizeCode.id));
+      redeemed = true;
+    }
+    // 幂等：already redeemed 也返回成功，但标记 redeemed=false（未发生变更）
+
+    await recordActivityEvent(db, {
+      tenantId: apiKey.tenantId,
+      drawId: String(payload.drawId || "").trim() || "",
+      entryId: String(payload.entryId || "").trim() || "",
+      eventType: "ext:reward.redeemed",
+      refCode: idempotencyKey,
+      metadata: { ...payload, prizeCodeId: prizeCode.id, previousStatus: prizeCode.status },
+    });
+
+    return ok(c, { handled: true, redeemed, prizeCodeId: prizeCode.id, previousStatus: prizeCode.status });
 
   // ── reward.issued / penalty.executed：仅记录事实 ──
   } else {

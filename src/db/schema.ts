@@ -172,9 +172,10 @@ export const prizeCodes = sqliteTable("prize_codes", {
   secret: text("secret").notNull().default(""),
   note: text("note").notNull().default(""),
   /**
-   * 状态机（docs/111 §7.3）：
+   * 状态机（docs/111 §7.3 + docs/114 §4）：
    *   available → issued（中奖发放）
-   *   issued → revoked（违规撤奖 / 运营人工作废）
+   *   issued → redeemed（中转站回传核销确认，ext:reward.redeemed）
+   *   issued → revoked（违规撤奖 / 运营人工作废 / 退群未核销收回）
    *   issued + expires_at 到期 → expired（自动作废，由 cron 标记）
    *   available → revoked（导入后直接作废）
    */
