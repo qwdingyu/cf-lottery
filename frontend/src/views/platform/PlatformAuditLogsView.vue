@@ -2,32 +2,32 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
-        <input v-model="filter.tenantId" type="search" placeholder="租户 ID" @keyup.enter="searchData" />
-        <input v-model="filter.action" type="search" placeholder="操作类型" @keyup.enter="searchData" />
+        <input v-model="filter.tenantId" type="search" :placeholder="$t('platformAudit.tenantPlaceholder')" @keyup.enter="searchData" />
+        <input v-model="filter.action" type="search" :placeholder="$t('platformAudit.actionPlaceholder')" @keyup.enter="searchData" />
         <button class="btn btn-primary btn-sm" :disabled="loading" @click="searchData">
-          {{ loading ? '查询中…' : '查询' }}
+          {{ loading ? $t('platformAudit.searching') : $t('platformAudit.search') }}
         </button>
       </div>
       <div class="toolbar-actions">
-        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">刷新</button>
+        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">{{ $t('platformAudit.refresh') }}</button>
       </div>
     </div>
 
     <div v-if="loadError" class="table-error" role="alert">
       <span>{{ loadError }}</span>
-      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">重试</button>
+      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">{{ $t('platformAudit.retry') }}</button>
     </div>
 
-    <div class="table-wrap" role="region" aria-label="审计日志" :aria-busy="loading">
+    <div class="table-wrap" role="region" :aria-label="$t('platformAudit.tableAria')" :aria-busy="loading">
       <table class="admin-table">
         <thead>
           <tr>
-            <th>时间</th>
-            <th>租户</th>
-            <th>操作人</th>
-            <th>操作</th>
-            <th>目标类型</th>
-            <th>目标 ID</th>
+            <th>{{ $t('platformAudit.colTime') }}</th>
+            <th>{{ $t('platformAudit.colTenant') }}</th>
+            <th>{{ $t('platformAudit.colActor') }}</th>
+            <th>{{ $t('platformAudit.colAction') }}</th>
+            <th>{{ $t('platformAudit.colTargetType') }}</th>
+            <th>{{ $t('platformAudit.colTargetId') }}</th>
           </tr>
         </thead>
         <tbody v-if="loading">
@@ -45,7 +45,7 @@
             <td><code class="code-id" :title="log.targetId" @click="copyText(log.targetId)">{{ log.targetId?.slice(0, 12) }}…</code></td>
           </tr>
           <tr v-if="logs.length === 0">
-            <td colspan="6" class="empty-text">暂无审计日志</td>
+            <td colspan="6" class="empty-text">{{ $t('platformAudit.empty') }}</td>
           </tr>
         </tbody>
       </table>
@@ -67,11 +67,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AdminPagination from '@/components/AdminPagination.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { useTablePagination } from '@/composables/useTablePagination'
 
+const { t } = useI18n()
 const loading = ref(false)
 const loadError = ref('')
 const logs = ref<any[]>([])
@@ -80,7 +82,7 @@ const pagination = useTablePagination({ initialLimit: 50 })
 
 function formatTime(iso: string): string {
   if (!iso) return '-'
-  try { return new Date(iso).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
+  try { return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
   catch { return iso }
 }
 
@@ -99,13 +101,15 @@ async function loadData() {
     logs.value = data.logs || []
     pagination.setTotal(data.logs?.length === pagination.limit.value ? pagination.page.value * pagination.limit.value + 1 : (pagination.page.value - 1) * pagination.limit.value + (data.logs?.length || 0))
   } catch (err: any) {
-    loadError.value = err.message || '加载失败'
+    loadError.value = err.message || t('platformAudit.loadFailed')
   } finally {
     loading.value = false
   }
 }
 
 function searchData() { pagination.setPage(1); loadData() }
+
+onMounted(loadData)
 </script>
 
 <style scoped>

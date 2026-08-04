@@ -22,7 +22,7 @@
         <!-- L3 平台运营入口：仅 platform_owner/operator/support 可见 -->
         <RouterLink v-if="isPlatformMember" to="/platform/tenants" class="nav-item nav-item--platform">
           <span class="nav-icon">🏢</span>
-          <span class="nav-label">平台运营</span>
+          <span class="nav-label">{{ $t('adminLayout.menuPlatform') }}</span>
         </RouterLink>
       </nav>
 
@@ -48,8 +48,8 @@
         </div>
         <div class="admin-header-actions">
           <select class="lang-select" :value="locale" @change="onLanguageChange">
-            <option value="zh-CN">中文</option>
-            <option value="en">EN</option>
+            <option value="zh-CN">{{ $t('adminLayout.langZh') }}</option>
+            <option value="en">{{ $t('adminLayout.langEn') }}</option>
           </select>
           <button
             class="btn btn-ghost header-logout"
@@ -71,8 +71,8 @@
     <!-- 模拟登录横幅（L3→L2 路径）：平台运营者以租户身份查看时全屏提示，
          所有操作将以该租户 owner 身份执行；提供"返回平台"清除模拟态回到运营者会话 -->
     <div v-if="impersonating" class="impersonate-banner" role="alert">
-      <span class="impersonate-banner-text">🔍 模拟中：以租户身份查看，操作将以该租户 owner 身份执行</span>
-      <button class="btn btn-primary btn-xs" type="button" @click="handleReturnToPlatform">返回平台</button>
+      <span class="impersonate-banner-text">{{ $t('adminLayout.impersonateBanner') }}</span>
+      <button class="btn btn-primary btn-xs" type="button" @click="handleReturnToPlatform">{{ $t('adminLayout.returnToPlatform') }}</button>
     </div>
   </div>
 </template>
@@ -104,7 +104,7 @@ function onLanguageChange(event: Event) {
 /** 返回平台：清除模拟态（impersonated_token），回到运营者自己的会话并跳转平台租户列表 */
 function handleReturnToPlatform() {
   clearImpersonation()
-  showToast('已退出模拟登录，返回平台', 'success')
+  showToast(t('adminLayout.impersonateExitToast'), 'success')
   router.push('/platform/tenants')
 }
 

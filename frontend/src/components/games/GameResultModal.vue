@@ -162,10 +162,10 @@ async function loadShareLink() {
     if (data.ok) {
       shareData.value = data
     } else {
-      shareError.value = data.message || '生成分享链接失败'
+      shareError.value = data.message || t('lottery.shareLinkFailed')
     }
   } catch {
-    shareError.value = '网络错误'
+    shareError.value = t('lottery.networkError')
   } finally {
     shareLoading.value = false
   }

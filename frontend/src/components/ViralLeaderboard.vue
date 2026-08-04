@@ -3,8 +3,8 @@
     <!-- 我的裂变数据（需要 entryId） -->
     <div v-if="entryId && myStats" class="my-viral-card">
       <div class="my-viral-head">
-        <span class="my-viral-title">🎁 我的邀请</span>
-        <span class="my-viral-extra">$t('lottery.viralInviteHint', { n: myStats.extraEntriesPerInvite })</span>
+        <span class="my-viral-title">{{ $t('lottery.viralMyInvite') }}</span>
+        <span class="my-viral-extra">{{ $t('lottery.viralInviteHint', { n: myStats.extraEntriesPerInvite }) }}</span>
       </div>
       <div class="my-viral-body">
         <div class="my-viral-stat">
@@ -18,12 +18,12 @@
               :style="{ width: myProgressPercent + '%' }"
             />
           </div>
-          <span class="my-viral-progress-text">{{ myStats.extraEntriesEarned }} / {{ myStats.maxExtraEntries }} 次额外机会</span>
+          <span class="my-viral-progress-text">{{ $t('lottery.viralExtraProgress', { earned: myStats.extraEntriesEarned, max: myStats.maxExtraEntries }) }}</span>
         </div>
         <div class="my-viral-share">
-          <code class="my-viral-link">{{ myStats.shareUrl || '点击下方按钮生成' }}</code>
+          <code class="my-viral-link">{{ myStats.shareUrl || $t('lottery.viralGenerateHint') }}</code>
           <button class="btn btn-sm btn-primary" @click="handleGenerateShareLink">
-            {{ myStats.shareUrl ? '📋 复制' : '🔗 生成链接' }}
+            {{ myStats.shareUrl ? $t('lottery.viralCopy') : $t('lottery.viralGenerateLink') }}
           </button>
         </div>
       </div>
@@ -31,9 +31,9 @@
 
     <!-- 排行榜 -->
     <div class="leaderboard-card">
-      <h4 class="leaderboard-title">🏆 邀请排行榜</h4>
+      <h4 class="leaderboard-title">{{ $t('lottery.viralLeaderboardTitle') }}</h4>
       <div v-if="leaderboard.length === 0" class="leaderboard-empty">
-        $t('lottery.viralEmptyHint')
+        {{ $t('lottery.viralEmptyHint') }}
       </div>
       <ol v-else class="leaderboard-list">
         <li
@@ -44,14 +44,14 @@
         >
           <span class="leaderboard-rank">{{ item.rank <= 3 ? ['🥇','🥈','🥉'][item.rank - 1] : item.rank }}</span>
           <span class="leaderboard-name">{{ item.displayName }}</span>
-          <span class="leaderboard-count">{{ item.invitedCount }} 人</span>
+          <span class="leaderboard-count">{{ $t('lottery.viralPeopleCount', { n: item.invitedCount }) }}</span>
         </li>
       </ol>
       <!-- 我的排名（不在 Top 20 时展示） -->
       <div v-if="myRank && myRank.rank > 20" class="leaderboard-my-rank">
         <span class="leaderboard-rank">{{ myRank.rank }}</span>
         <span class="leaderboard-name">{{ $t('lottery.viralMe') }}</span>
-        <span class="leaderboard-count">{{ myRank.invitedCount }} 人</span>
+        <span class="leaderboard-count">{{ $t('lottery.viralPeopleCount', { n: myRank.invitedCount }) }}</span>
       </div>
     </div>
   </div>

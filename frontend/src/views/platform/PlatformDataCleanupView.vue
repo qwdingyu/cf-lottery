@@ -1,11 +1,11 @@
 <template>
   <div class="admin-page">
-    <h3>数据清理</h3>
-    <p class="field-hint" style="margin-bottom:16px">清理临时数据和日志，用于重置测试环境或释放 Turso 免费层存储。</p>
+    <h3>{{ $t('platformCleanup.title') }}</h3>
+    <p class="field-hint" style="margin-bottom:16px">{{ $t('platformCleanup.desc') }}</p>
 
     <div v-if="loadError" class="table-error" role="alert">
       <span>{{ loadError }}</span>
-      <button class="btn btn-ghost btn-xs" @click="loadStats">重试</button>
+      <button class="btn btn-ghost btn-xs" @click="loadStats">{{ $t('platformCleanup.retry') }}</button>
     </div>
 
     <div class="stats-grid" style="margin-bottom:24px">
@@ -16,9 +16,9 @@
     </div>
 
     <div class="cleanup-actions">
-      <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadStats">刷新统计</button>
+      <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadStats">{{ $t('platformCleanup.refreshStats') }}</button>
       <button class="btn btn-danger btn-sm" :disabled="cleaning" @click="cleanTargets(['email_access_codes', 'rate_limit_log', 'audit_logs', 'platform_audit_logs', 'activity_events'])">
-        {{ cleaning ? '清理中...' : '清理日志/验证码/事件' }}
+        {{ cleaning ? $t('platformCleanup.cleaning') : $t('platformCleanup.cleanLogs') }}
       </button>
     </div>
 
@@ -28,8 +28,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { adminRequest } from '@/composables/useAdminRequest'
 
+const { t } = useI18n()
 const stats = ref<Record<string, number>>({})
 const loading = ref(false)
 const cleaning = ref(false)
@@ -43,7 +45,7 @@ async function loadStats() {
     const data = await adminRequest<{ stats: Record<string, number> }>('/api/platform/data/stats')
     stats.value = data.stats
   } catch (err: any) {
-    loadError.value = err?.message || '加载失败'
+    loadError.value = err?.message || t('platformCleanup.loadFailed')
   } finally {
     loading.value = false
   }
@@ -57,11 +59,11 @@ async function cleanTargets(targets: string[]) {
       method: 'POST',
       body: JSON.stringify({ targets }),
     })
-    const parts = Object.entries(data.results).map(([k, v]) => `${k}: ${v} 行`)
-    cleanResult.value = `已清理：${parts.join('，')}`
+    const parts = Object.entries(data.results).map(([k, v]) => t('platformCleanup.rowUnit', { k, v }))
+    cleanResult.value = t('platformCleanup.cleaned', { parts: parts.join('，') })
     await loadStats()
   } catch (err: any) {
-    cleanResult.value = '清理失败: ' + (err?.message || '未知错误')
+    cleanResult.value = t('platformCleanup.cleanFailed', { msg: err?.message || t('platformCleanup.unknownError') })
   } finally {
     cleaning.value = false
   }
@@ -69,7 +71,6 @@ async function cleanTargets(targets: string[]) {
 
 onMounted(loadStats)
 </script>
-
 <style scoped>
 .stats-grid {
   display: grid;

@@ -57,13 +57,13 @@ const menuItems = computed(() => [
   { name: 'PlatformRedemptionCodes', to: '/platform/redemption-codes', label: t('platformLayout.menuRedemptionCodes'), icon: '🎵' },
   { name: 'PlatformAuditLogs', to: '/platform/audit-logs', label: t('platformLayout.menuAuditLogs'), icon: '📝' },
   { name: 'PlatformWebhookDeliveries', to: '/platform/webhook-deliveries', label: t('platformLayout.menuWebhookDeliveries'), icon: '📨' },
-  { name: 'PlatformDataCleanup', to: '/platform/data-cleanup', label: '数据清理', icon: '🧹' },
+  { name: 'PlatformDataCleanup', to: '/platform/data-cleanup', label: t('platformLayout.menuDataCleanup'), icon: '🧹' },
 ])
 
 const currentName = computed(() => route.name as string | undefined)
 const pageTitle = computed(() => {
   const item = menuItems.value.find((i) => i.name === currentName.value)
-  return item?.label || '平台运营'
+  return item?.label || t('platformLayout.title')
 })
 
 function onNavClick(to: string) {

@@ -76,7 +76,7 @@
     </div>
 
     <!-- 创建奖品弹窗 -->
-    <AdminModal v-model="showCreate" :title="$t('adminPrizes.createTitle')" max-width="480px">
+    <AdminModal hide-actions v-model="showCreate" :title="$t('adminPrizes.createTitle')" max-width="480px">
       <form @submit.prevent="handleCreate">
         <div class="modal-form">
           <label>
@@ -131,7 +131,7 @@
     </AdminModal>
 
     <!-- 编辑奖品弹窗（复用创建表单） -->
-    <AdminModal v-model="showEditModal" :title="$t('adminPrizes.editTitle')" max-width="480px">
+    <AdminModal hide-actions v-model="showEditModal" :title="$t('adminPrizes.editTitle')" max-width="480px">
       <form @submit.prevent="handleEdit">
         <div class="modal-form">
           <label>
@@ -172,7 +172,7 @@
     </AdminModal>
 
     <!-- 导入码弹窗 -->
-    <AdminModal v-model="showImportModal" :title="$t('adminPrizes.importTitle', { name: importPrize?.name || '' })" max-width="600px">
+    <AdminModal hide-actions v-model="showImportModal" :title="$t('adminPrizes.importTitle', { name: importPrize?.name || '' })" max-width="600px">
       <div class="tabs" style="margin-bottom:12px">
         <button type="button" class="tab" :class="{ active: importTab === 'paste' }" @click="importTab = 'paste'">{{ $t('adminPrizes.pasteTab') }}</button>
         <button type="button" class="tab" :class="{ active: importTab === 'generate' }" @click="importTab = 'generate'">{{ $t('adminPrizes.generateTab') }}</button>
@@ -215,7 +215,7 @@
     </AdminModal>
 
     <!-- 查看码弹窗 -->
-    <AdminModal v-model="showCodesModal" :title="$t('adminPrizes.codesTitle', { name: codesPrize?.name || '' })" max-width="800px">
+    <AdminModal hide-actions v-model="showCodesModal" :title="$t('adminPrizes.codesTitle', { name: codesPrize?.name || '' })" max-width="800px">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
         <select v-model="codesFilter" @change="loadCodes(true)">
           <option value="">{{ $t('adminPrizes.allStatus') }}</option>

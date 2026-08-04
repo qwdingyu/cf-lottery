@@ -43,11 +43,11 @@
     <div v-if="roi.totalConversions > 0" class="stats-row" style="margin-top: 0;">
       <div class="stat-card stat-card-roi">
         <span class="stat-value">{{ roi.totalConversions }}</span>
-        <span class="stat-label">近 {{ roiDays }} 天转化</span>
+        <span class="stat-label">{{ $t('adminDashboard.roiConversions', { days: roiDays }) }}</span>
       </div>
       <div class="stat-card stat-card-roi">
         <span class="stat-value">{{ formatAmountCents(roi.totalAmountCents) }}</span>
-        <span class="stat-label">近 {{ roiDays }} 天 GMV</span>
+        <span class="stat-label">{{ $t('adminDashboard.roiGmv', { days: roiDays }) }}</span>
       </div>
       <div v-for="item in roi.byType" :key="item.type" class="stat-card stat-card-roi">
         <span class="stat-value">{{ item.count }}<small v-if="item.amountCents > 0" style="font-size:11px;color:var(--tg-hint)"> / {{ formatAmountCents(item.amountCents) }}</small></span>
@@ -55,23 +55,23 @@
       </div>
     </div>
     <div v-else class="roi-empty-hint">
-      💡 配置外部转化回传后，这里将展示 GMV 和转化数据。<br>
-      <small>通过 API Key 调用 <code>POST /api/integration/conversions</code> 回传成交、注册等转化事件。</small>
+      {{ $t('adminDashboard.roiEmpty') }}<br>
+      <small>{{ $t('adminDashboard.roiEmptyHint') }}</small>
     </div>
 
     <!-- 待办事项：提示运营者需要处理的事项 -->
-    <div v-if="hasTodos" class="todo-panel" role="region" aria-label="待办事项">
-      <div class="todo-panel-title">📋 待办事项</div>
+    <div v-if="hasTodos" class="todo-panel" role="region" :aria-label="$t('adminDashboard.todosAria')">
+      <div class="todo-panel-title">{{ $t('adminDashboard.todosTitle') }}</div>
       <div class="todo-items">
         <RouterLink v-if="todos.dueDraws > 0" to="/admin/draws" class="todo-item">
           <span class="todo-badge">{{ todos.dueDraws }}</span>
-          <span>个定时活动到期待开奖</span>
+          <span>{{ $t('adminDashboard.todosDueDraws') }}</span>
           <span class="todo-arrow">→</span>
         </RouterLink>
         <!-- docs/076：深链到已开奖列表；运营进结果弹窗即可重发（列表本身无 per-draw 失败数） -->
         <RouterLink v-if="todos.failedNotifications > 0" to="/admin/draws?status=drawn" class="todo-item">
           <span class="todo-badge todo-badge-danger">{{ todos.failedNotifications }}</span>
-          <span>个中奖通知发送失败 — 打开「查看结果」可重发</span>
+          <span>{{ $t('adminDashboard.todosFailedNotify') }}</span>
           <span class="todo-arrow">→</span>
         </RouterLink>
       </div>
@@ -160,7 +160,14 @@ function formatAmountCents(cents: number): string {
   return '¥' + (cents / 100).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 }
 function conversionLabel(type: string): string {
-  const map: Record<string, string> = { purchase: '购买', registration: '注册', coupon_redeemed: '券核销', lead_qualified: '线索', offline_redeemed: '线下核销', custom: '自定义' }
+  const map: Record<string, string> = {
+    purchase: t('adminDashboard.convPurchase'),
+    registration: t('adminDashboard.convRegistration'),
+    coupon_redeemed: t('adminDashboard.convCoupon'),
+    lead_qualified: t('adminDashboard.convLead'),
+    offline_redeemed: t('adminDashboard.convOffline'),
+    custom: t('adminDashboard.convCustom'),
+  }
   return map[type] || type
 }
 const hasTodos = computed(() => todos.value.dueDraws > 0 || todos.value.failedNotifications > 0)
@@ -231,7 +238,7 @@ async function loadData() {
     // 营销 ROI 数据
     roi.value = dashboardData?.roi ?? { totalConversions: 0, totalAmountCents: 0, byType: [] }
   } catch (err: any) {
-    showToast(err.message || '加载失败', 'error')
+    showToast(err.message || t('adminDashboard.loadFailed'), 'error')
   }
 }
 

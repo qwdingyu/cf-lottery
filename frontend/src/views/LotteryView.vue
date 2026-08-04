@@ -31,7 +31,7 @@
     <div v-else-if="fetchError" class="lottery-center">
       <div class="empty-icon">⚠️</div>
       <p>{{ fetchError }}</p>
-      <button class="btn btn-ghost btn-sm" style="margin-top:12px" @click="fetchDraws">{{ $t('adminPrizes.retry') }}</button>
+      <button class="btn btn-ghost btn-sm" style="margin-top:12px" @click="fetchDraws">{{ $t('lottery.retry') }}</button>
     </div>
     <div v-else-if="draws.length === 0" class="lottery-center">
       <div class="empty-icon">🎪</div>

@@ -2,38 +2,38 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
-        <input v-model="filter.tenantId" type="search" placeholder="租户 ID" @keyup.enter="searchData" />
+        <input v-model="filter.tenantId" type="search" :placeholder="$t('platformWebhooks.tenantPlaceholder')" @keyup.enter="searchData" />
         <select v-model="filter.status" @change="searchData">
-          <option value="">全部状态</option>
-          <option value="pending">待重试</option>
-          <option value="sent">成功</option>
-          <option value="failed">失败</option>
+          <option value="">{{ $t('platformWebhooks.allStatus') }}</option>
+          <option value="pending">{{ $t('platformWebhooks.statusPending') }}</option>
+          <option value="sent">{{ $t('platformWebhooks.statusSent') }}</option>
+          <option value="failed">{{ $t('platformWebhooks.statusFailed') }}</option>
         </select>
         <button class="btn btn-primary btn-sm" :disabled="loading" @click="searchData">
-          {{ loading ? '查询中…' : '查询' }}
+          {{ loading ? $t('platformWebhooks.searching') : $t('platformWebhooks.search') }}
         </button>
       </div>
       <div class="toolbar-actions">
-        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">刷新</button>
+        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">{{ $t('platformWebhooks.refresh') }}</button>
       </div>
     </div>
 
     <div v-if="loadError" class="table-error" role="alert">
       <span>{{ loadError }}</span>
-      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">重试</button>
+      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">{{ $t('platformWebhooks.retry') }}</button>
     </div>
 
-    <div class="table-wrap" role="region" aria-label="Webhook 投递" :aria-busy="loading">
+    <div class="table-wrap" role="region" :aria-label="$t('platformWebhooks.tableAria')" :aria-busy="loading">
       <table class="admin-table">
         <thead>
           <tr>
-            <th>时间</th>
-            <th>租户</th>
-            <th>事件</th>
-            <th>状态</th>
-            <th>重试次数</th>
-            <th>错误信息</th>
-            <th class="col-actions">操作</th>
+            <th>{{ $t('platformWebhooks.colTime') }}</th>
+            <th>{{ $t('platformWebhooks.colTenant') }}</th>
+            <th>{{ $t('platformWebhooks.colEvent') }}</th>
+            <th>{{ $t('platformWebhooks.colStatus') }}</th>
+            <th>{{ $t('platformWebhooks.colAttempts') }}</th>
+            <th>{{ $t('platformWebhooks.colError') }}</th>
+            <th class="col-actions">{{ $t('platformWebhooks.colActions') }}</th>
           </tr>
         </thead>
         <tbody v-if="loading">
@@ -57,11 +57,11 @@
                 class="btn btn-ghost btn-xs"
                 :disabled="retryingId === d.id"
                 @click="retryDelivery(d.id)"
-              >{{ retryingId === d.id ? '重试中…' : '重试' }}</button>
+              >{{ retryingId === d.id ? $t('platformWebhooks.retrying') : $t('platformWebhooks.retry') }}</button>
             </td>
           </tr>
           <tr v-if="deliveries.length === 0">
-            <td colspan="7" class="empty-text">暂无投递记录</td>
+            <td colspan="7" class="empty-text">{{ $t('platformWebhooks.empty') }}</td>
           </tr>
         </tbody>
       </table>
@@ -84,6 +84,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AdminPagination from '@/components/AdminPagination.vue'
 import { useTablePagination } from '@/composables/useTablePagination'
 import { adminRequest } from '@/composables/useAdminRequest'
@@ -100,6 +101,7 @@ type WebhookDelivery = {
   createdAt: string
 }
 
+const { t } = useI18n()
 const { showToast } = useToast()
 const loading = ref(false)
 const loadError = ref('')
@@ -110,17 +112,21 @@ const pagination = useTablePagination({ initialLimit: 50 })
 
 function formatTime(iso: string): string {
   if (!iso) return '-'
-  try { return new Date(iso).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
+  try { return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
   catch { return iso }
 }
 
 function statusLabel(status: string): string {
-  const map: Record<string,string> = { pending: '待重试', sent: '成功', failed: '失败' }
+  const map: Record<string, string> = {
+    pending: t('platformWebhooks.statusPending'),
+    sent: t('platformWebhooks.statusSent'),
+    failed: t('platformWebhooks.statusFailed'),
+  }
   return map[status] || status
 }
 
 function statusClass(status: string): string {
-  const map: Record<string,string> = { pending: 'tag-muted', sent: 'tag-success', failed: 'tag-danger' }
+  const map: Record<string, string> = { pending: 'tag-muted', sent: 'tag-success', failed: 'tag-danger' }
   return map[status] || 'tag-muted'
 }
 
@@ -143,7 +149,7 @@ async function loadData() {
     deliveries.value = data.deliveries || []
     pagination.setTotal(data.deliveries?.length === pagination.limit.value ? pagination.page.value * pagination.limit.value + 1 : (pagination.page.value - 1) * pagination.limit.value + (data.deliveries?.length || 0))
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : '加载失败'
+    loadError.value = err instanceof Error ? err.message : t('platformWebhooks.loadFailed')
   } finally {
     loading.value = false
   }
@@ -156,10 +162,10 @@ async function retryDelivery(id: string) {
   retryingId.value = id
   try {
     await adminRequest(`/api/platform/webhook-deliveries/${id}/retry`, { method: 'POST' })
-    showToast('Webhook 已重试', 'success')
+    showToast(t('platformWebhooks.retried'), 'success')
     await loadData()
   } catch (err) {
-    showToast(err instanceof Error ? err.message : '重试失败', 'error')
+    showToast(err instanceof Error ? err.message : t('platformWebhooks.retryFailed'), 'error')
   }
   retryingId.value = ''
 }

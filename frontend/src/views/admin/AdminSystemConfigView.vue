@@ -47,10 +47,10 @@
               <button
                 type="button"
                 class="btn btn-ghost btn-xs"
-                :title="showAdvanced ? '隐藏高级参数' : '显示高级参数'"
+                :title="showAdvanced ? $t('adminConfig.hideAdvanced') : $t('adminConfig.showAdvanced')"
                 @click="showAdvanced = !showAdvanced"
               >
-                {{ showAdvanced ? '⚙️ 收起' : `🔧 高级 ${advancedItemCount}` }}
+                {{ showAdvanced ? $t('adminConfig.collapseAdvanced') : $t('adminConfig.expandAdvanced', { n: advancedItemCount }) }}
               </button>
               <span class="config-count">{{ $t('adminConfig.itemCount', { count: activeSectionItemCount }) }}</span>
             </div>
@@ -80,7 +80,7 @@
                 @reset="reset"
               />
             </div>
-            <div v-if="group.name === '邮件服务'" class="config-test-panel">
+            <div v-if="groupNameKey(group.name) === 'email_service'" class="config-test-panel">
               <div class="config-test-main">
                 <label>
                   <span>{{ $t('adminConfig.emailTest.toLabel') }}</span>
