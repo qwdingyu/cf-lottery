@@ -3,27 +3,27 @@
     <div class="toolbar">
       <div class="filters">
         <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">
-          {{ loading ? '加载中…' : '刷新' }}
+          {{ loading ? $t('adminBlacklist.loading') : $t('adminBlacklist.refresh') }}
         </button>
       </div>
       <div class="toolbar-actions">
-        <button class="btn btn-primary btn-sm" :disabled="loading" @click="showAdd = true">添加黑名单</button>
+        <button class="btn btn-primary btn-sm" :disabled="loading" @click="showAdd = true">{{ $t('adminBlacklist.add') }}</button>
       </div>
     </div>
 
     <div v-if="loadError" class="table-error" role="alert">
       <span>{{ loadError }}</span>
-      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">重试</button>
+      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">{{ $t('adminBlacklist.retry') }}</button>
     </div>
 
     <div class="table-wrap">
       <table class="admin-table">
         <thead>
           <tr>
-            <th>邮箱</th>
-            <th>备注</th>
-            <th>添加时间</th>
-            <th class="col-actions">操作</th>
+            <th>{{ $t('adminBlacklist.colEmail') }}</th>
+            <th>{{ $t('adminBlacklist.colNote') }}</th>
+            <th>{{ $t('adminBlacklist.colCreatedAt') }}</th>
+            <th class="col-actions">{{ $t('adminBlacklist.colActions') }}</th>
           </tr>
         </thead>
         <tbody v-if="loading">
@@ -38,33 +38,33 @@
             <td>{{ formatDate(item.createdAt) }}</td>
             <td class="col-actions">
               <button class="btn btn-ghost btn-xs" :disabled="operatingId === item.id" @click="handleRemove(item.id)">
-                {{ operatingId === item.id ? '删除中…' : '删除' }}
+                {{ operatingId === item.id ? $t('adminBlacklist.deleting') : $t('adminBlacklist.delete') }}
               </button>
             </td>
           </tr>
           <tr v-if="items.length === 0">
-            <td colspan="4" class="empty-text">暂无黑名单</td>
+            <td colspan="4" class="empty-text">{{ $t('adminBlacklist.empty') }}</td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <AdminModal v-model="showAdd" title="添加黑名单" max-width="480px">
+    <AdminModal v-model="showAdd" :title="$t('adminBlacklist.addTitle')" max-width="480px" hide-actions>
       <form @submit.prevent="handleAdd">
         <div class="modal-form">
           <label>
-            <span>邮箱地址</span>
-            <input v-model="formEmail" type="email" required placeholder="user@example.com" />
+            <span>{{ $t('adminBlacklist.emailLabel') }}</span>
+            <input v-model="formEmail" type="email" required :placeholder="$t('adminBlacklist.emailPlaceholder')" />
           </label>
           <label>
-            <span>备注（可选）</span>
-            <input v-model="formNote" maxlength="200" placeholder="添加原因" />
+            <span>{{ $t('adminBlacklist.noteLabel') }}</span>
+            <input v-model="formNote" maxlength="200" :placeholder="$t('adminBlacklist.notePlaceholder')" />
           </label>
         </div>
         <div class="modal-actions">
-          <button type="button" class="btn btn-ghost btn-sm" @click="showAdd = false">取消</button>
+          <button type="button" class="btn btn-ghost btn-sm" @click="showAdd = false">{{ $t('adminBlacklist.cancel') }}</button>
           <button type="submit" class="btn btn-primary btn-sm" :disabled="submitting">
-            {{ submitting ? '添加中…' : '添加' }}
+            {{ submitting ? $t('adminBlacklist.adding') : $t('adminBlacklist.addBtn') }}
           </button>
         </div>
       </form>
@@ -74,11 +74,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/composables/useFormat'
 import AdminModal from '@/components/AdminModal.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
 
+const { t } = useI18n()
 const { showToast } = useToast()
 const items = ref<any[]>([])
 const loading = ref(false)
@@ -97,7 +99,7 @@ async function loadData() {
     const data = await adminRequest<{ items: any[] }>('/api/admin/blacklist')
     items.value = data.items || []
   } catch (err: any) {
-    loadError.value = err.message || '加载失败'
+    loadError.value = err.message || t('adminBlacklist.loadFailed')
   } finally {
     loading.value = false
   }
@@ -105,7 +107,7 @@ async function loadData() {
 
 async function handleAdd() {
   if (!formEmail.value.includes('@')) {
-    showToast('请输入有效的邮箱地址', 'error')
+    showToast(t('adminBlacklist.invalidEmail'), 'error')
     return
   }
   submitting.value = true
@@ -114,13 +116,13 @@ async function handleAdd() {
       method: 'POST',
       body: JSON.stringify({ identityValue: formEmail.value.trim(), note: formNote.value.trim() }),
     })
-    showToast('已添加', 'success')
+    showToast(t('adminBlacklist.added'), 'success')
     showAdd.value = false
     formEmail.value = ''
     formNote.value = ''
     await loadData()
   } catch (err: any) {
-    showToast(err.message || '添加失败', 'error')
+    showToast(err.message || t('adminBlacklist.addFailed'), 'error')
   } finally {
     submitting.value = false
   }
@@ -131,10 +133,10 @@ async function handleRemove(id: string) {
   operatingId.value = id
   try {
     await adminRequest(`/api/admin/blacklist/${id}`, { method: 'DELETE' })
-    showToast('已删除', 'success')
+    showToast(t('adminBlacklist.deleted'), 'success')
     await loadData()
   } catch (err: any) {
-    showToast(err.message || '删除失败', 'error')
+    showToast(err.message || t('adminBlacklist.deleteFailed'), 'error')
   } finally {
     operatingId.value = ''
   }

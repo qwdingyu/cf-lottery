@@ -1,12 +1,12 @@
 <template>
   <div class="admin-page">
     <section class="section">
-      <h3 class="section-title">兑换额度</h3>
-      <p class="muted-text">输入平台发放的额度码，为当前租户增加活动次数或参与人数额度。</p>
+      <h3 class="section-title">{{ $t('adminQuota.title') }}</h3>
+      <p class="muted-text">{{ $t('adminQuota.desc') }}</p>
 
       <form class="redeem-form" @submit.prevent="handleRedeem">
         <label class="redeem-input-wrap">
-          <span class="redeem-input-label">额度码</span>
+          <span class="redeem-input-label">{{ $t('adminQuota.codeLabel') }}</span>
           <input
             v-model="code"
             type="text"
@@ -15,50 +15,50 @@
             placeholder="LUCKY-XXXX-XXXX-XXXX"
             required
           />
-          <small class="field-hint">兑换码只会作用于当前登录租户，不会展示平台码池。</small>
+          <small class="field-hint">{{ $t('adminQuota.codeHint') }}</small>
         </label>
         <button class="btn btn-primary redeem-btn" type="submit" :disabled="submitting">
-          <span v-if="!submitting">🎟️ 兑换额度</span>
-          <span v-else>兑换中…</span>
+          <span v-if="!submitting">{{ $t('adminQuota.redeem') }}</span>
+          <span v-else>{{ $t('adminQuota.redeeming') }}</span>
         </button>
       </form>
     </section>
 
     <section v-if="result" class="section">
-      <h3 class="section-title">兑换结果</h3>
+      <h3 class="section-title">{{ $t('adminQuota.resultTitle') }}</h3>
       <div class="stats-row">
         <div class="stat-card">
           <span class="stat-value">{{ result.activityQuota }}</span>
-          <span class="stat-label">新增活动次数</span>
+          <span class="stat-label">{{ $t('adminQuota.newActivity') }}</span>
         </div>
         <div class="stat-card">
           <span class="stat-value">{{ result.participantQuota }}</span>
-          <span class="stat-label">新增参与人数</span>
+          <span class="stat-label">{{ $t('adminQuota.newParticipant') }}</span>
         </div>
         <div class="stat-card">
           <span class="stat-value quota-expiry">{{ formatDate(result.expiresAt) }}</span>
-          <span class="stat-label">额度有效期</span>
+          <span class="stat-label">{{ $t('adminQuota.expiresAt') }}</span>
         </div>
       </div>
       <div class="toolbar">
         <div class="filters">
-          <button class="btn btn-ghost btn-sm" type="button" @click="router.push('/admin')">查看运营台</button>
-          <button class="btn btn-primary btn-sm" type="button" @click="router.push('/admin/draws')">创建活动</button>
+          <button class="btn btn-ghost btn-sm" type="button" @click="router.push('/admin')">{{ $t('adminQuota.goDashboard') }}</button>
+          <button class="btn btn-primary btn-sm" type="button" @click="router.push('/admin/draws')">{{ $t('adminQuota.createActivity') }}</button>
         </div>
       </div>
     </section>
 
     <section class="section">
-      <h3 class="section-title">兑换历史</h3>
+      <h3 class="section-title">{{ $t('adminQuota.historyTitle') }}</h3>
       <div class="table-wrap">
         <table class="admin-table">
           <thead>
             <tr>
-              <th>兑换码</th>
-              <th>活动次数</th>
-              <th>参与人数</th>
-              <th>有效期</th>
-              <th>兑换时间</th>
+              <th>{{ $t('adminQuota.colCode') }}</th>
+              <th>{{ $t('adminQuota.colActivity') }}</th>
+              <th>{{ $t('adminQuota.colParticipant') }}</th>
+              <th>{{ $t('adminQuota.colExpires') }}</th>
+              <th>{{ $t('adminQuota.colRedeemedAt') }}</th>
             </tr>
           </thead>
           <tbody v-if="recordsLoading">
@@ -75,7 +75,7 @@
               <td>{{ formatDate(r.redeemedAt) }}</td>
             </tr>
             <tr v-if="records.length === 0">
-              <td colspan="5" class="empty-text">暂无兑换记录</td>
+              <td colspan="5" class="empty-text">{{ $t('adminQuota.empty') }}</td>
             </tr>
           </tbody>
         </table>
@@ -87,6 +87,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/composables/useFormat'
 import { adminRequest } from '@/composables/useAdminRequest'
@@ -101,15 +102,14 @@ type RedeemResult = {
 const ADMIN_REDEMPTION_REDEEM_API = '/api/admin/redemption-codes/redeem'
 
 const router = useRouter()
+const { t } = useI18n()
 const { showToast } = useToast()
 const code = ref('')
 const submitting = ref(false)
 const result = ref<RedeemResult | null>(null)
-// 兑换历史
 const records = ref<any[]>([])
 const recordsLoading = ref(false)
 
-/** 加载兑换历史 */
 async function loadRecords() {
   recordsLoading.value = true
   try {
@@ -124,23 +124,21 @@ onMounted(loadRecords)
 async function handleRedeem() {
   const normalizedCode = code.value.trim().toUpperCase()
   if (!normalizedCode) {
-    showToast('请输入额度码', 'error')
+    showToast(t('adminQuota.codeRequired'), 'error')
     return
   }
 
   submitting.value = true
   try {
-    // 租户只能兑换额度；平台发码、查码池、统计都在 /api/platform/redemption-codes。
     result.value = await adminRequest<RedeemResult>(ADMIN_REDEMPTION_REDEEM_API, {
       method: 'POST',
       body: JSON.stringify({ code: normalizedCode }),
     })
     code.value = ''
-    showToast('额度已兑换', 'success')
-    // 兑换成功后刷新历史记录
+    showToast(t('adminQuota.success'), 'success')
     await loadRecords()
   } catch (err: any) {
-    showToast(err?.message || '兑换失败', 'error')
+    showToast(err?.message || t('adminQuota.failed'), 'error')
   } finally {
     submitting.value = false
   }

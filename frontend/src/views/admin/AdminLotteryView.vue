@@ -1067,7 +1067,7 @@
             role="menuitem"
             :disabled="operatingId === expandedActionDraw.id"
             :title="$t('lottery.adminCopyLinkHint')"
-            @click="runMoreAction(() => handleCopyShareLink(expandedActionDraw!))"
+            @click="runMoreAction(d => handleCopyShareLink(d))"
           >{{ $t('lottery.adminCopyLink') }}</button>
           <button
             type="button"
@@ -1075,21 +1075,21 @@
             role="menuitem"
             :disabled="operatingId === expandedActionDraw.id"
             :title="$t('lottery.adminOpenPublicHint')"
-            @click="runMoreAction(() => handleOpenPublic(expandedActionDraw!))"
+            @click="runMoreAction(d => handleOpenPublic(d))"
           >{{ $t('lottery.adminOpenPublic') }}</button>
           <button
             type="button"
             class="btn btn-ghost btn-xs table-actions-menu-item"
             role="menuitem"
             :title="$t('lottery.adminGenerateQr')"
-            @click="runMoreAction(() => handleShowQrCode(expandedActionDraw!))"
+            @click="runMoreAction(d => handleShowQrCode(d))"
           >{{ $t('lottery.adminQrCode') }}</button>
           <button
             type="button"
             class="btn btn-ghost btn-xs table-actions-menu-item"
             role="menuitem"
             :title="$t('lottery.adminGeneratePoster')"
-            @click="runMoreAction(() => handleShowPoster(expandedActionDraw!))"
+            @click="runMoreAction(d => handleShowPoster(d))"
           >{{ $t('lottery.adminPoster') }}</button>
         </div>
         <div class="table-actions-group" role="group">
@@ -1100,7 +1100,7 @@
             role="menuitem"
             :disabled="operatingId === expandedActionDraw.id"
             :title="$t('lottery.adminViewAnalytics')"
-            @click="runMoreAction(() => handleViewAnalytics(expandedActionDraw!))"
+            @click="runMoreAction(d => handleViewAnalytics(d))"
           >{{ $t('lottery.adminAnalytics') }}</button>
           <button
             type="button"
@@ -1108,7 +1108,7 @@
             role="menuitem"
             :disabled="operatingId === expandedActionDraw.id"
             :title="$t('lottery.adminDuplicateHint')"
-            @click="runMoreAction(() => handleDuplicate(expandedActionDraw!))"
+            @click="runMoreAction(d => handleDuplicate(d))"
           >{{ $t('lottery.adminDuplicate') }}</button>
           <button
             v-if="expandedActionDraw.status === 'open' && expandedActionDraw.activityKind === 'lottery'"
@@ -1116,7 +1116,7 @@
             class="btn btn-ghost btn-xs table-actions-menu-item"
             role="menuitem"
             :disabled="operatingId === expandedActionDraw.id"
-            @click="runMoreAction(() => handlePause(expandedActionDraw!.id))"
+            @click="runMoreAction(d => handlePause(d.id))"
           >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminPause') }}</button>
           <button
             v-if="expandedActionDraw.status === 'drawn'"
@@ -1124,7 +1124,7 @@
             class="btn btn-ghost btn-xs table-actions-menu-item"
             role="menuitem"
             :disabled="operatingId === expandedActionDraw.id"
-            @click="runMoreAction(() => handleToggleVisibility(expandedActionDraw!.id, expandedActionDraw!.visible))"
+            @click="runMoreAction(d => handleToggleVisibility(d.id, d.visible))"
           >{{ expandedActionDraw.visible ? $t('lottery.adminHide') : $t('lottery.adminShow') }}</button>
           <button
             v-if="expandedActionDraw.status === 'drawn'"
@@ -1132,7 +1132,7 @@
             class="btn btn-ghost btn-xs table-actions-menu-item"
             role="menuitem"
             :disabled="operatingId === expandedActionDraw.id"
-            @click="runMoreAction(() => handleRetryEmail(expandedActionDraw!.id))"
+            @click="runMoreAction(d => handleRetryEmail(d.id))"
           >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
         </div>
         <div class="table-actions-group table-actions-group--danger" role="group">
@@ -1143,7 +1143,7 @@
             class="btn btn-danger btn-xs table-actions-menu-item"
             role="menuitem"
             :disabled="operatingId === expandedActionDraw.id"
-            @click="runMoreAction(() => handleCancel(expandedActionDraw!.id))"
+            @click="runMoreAction(d => handleCancel(d.id))"
           >{{ $t('lottery.adminDrawCancel') }}</button>
           <button
             v-if="canDeleteDraw(expandedActionDraw)"
@@ -1151,7 +1151,7 @@
             class="btn btn-danger btn-xs table-actions-menu-item"
             role="menuitem"
             :disabled="batchOperating"
-            @click="runMoreAction(() => handleDelete(expandedActionDraw!.id))"
+            @click="runMoreAction(d => handleDelete(d.id))"
           >{{ $t('lottery.adminDrawDelete') }}</button>
         </div>
       </div>
@@ -1587,9 +1587,10 @@ function refineMoreMenuPosition(anchor: HTMLElement) {
 }
 
 /** 点菜单项：先关浮层再执行（避免 confirm/modal 叠层） */
-function runMoreAction(action: () => void | Promise<void>) {
+function runMoreAction(action: (draw: LotteryDraw) => void | Promise<void>) {
+  const draw = expandedActionDraw.value
   closeRowActions()
-  void action()
+  if (draw) void action(draw)
 }
 /** 055a P1：当前创建来自哪个模板（仅提示用，不参与提交） */
 const activeTemplateId = ref('')
