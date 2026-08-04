@@ -6,13 +6,23 @@ declare module '*.vue' {
   export default component
 }
 
-interface Window {
-  Telegram?: {
-    WebApp: import('./types/telegram').TelegramWebApp
-  }
-  turnstile?: {
-    render: (container: string | HTMLElement, options?: { sitekey: string; callback?: (token: string) => void; 'error-callback'?: () => void }) => number
-    getResponse: (widgetId?: number) => string | null
-    reset: (widgetId?: number) => void
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp: unknown
+    }
+    turnstile?: {
+      render: (container: string | HTMLElement, options?: { sitekey: string; callback?: (token: string) => void; 'error-callback'?: () => void }) => number
+      getResponse: (widgetId?: number) => string | null
+      reset: (widgetId?: number) => void
+    }
   }
 }
+
+declare module 'vue' {
+  interface ComponentCustomProperties {
+    $t: (key: string, params?: Record<string, unknown>) => string
+  }
+}
+
+export {}

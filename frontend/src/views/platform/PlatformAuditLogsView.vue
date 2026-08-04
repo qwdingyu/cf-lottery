@@ -69,7 +69,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AdminPagination from '@/components/AdminPagination.vue'
+import AdminPagination from '@/components/AdminPagination'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { useTablePagination } from '@/composables/useTablePagination'
 

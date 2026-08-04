@@ -12,7 +12,7 @@
  * 根壳：路由 + Toast。
  * 统一认证回调在 /auth/callback（cf-auth OAuth RP，docs/059）；不再挂 Logto SDK。
  */
-import ToastContainer from '@/components/ToastContainer.vue'
+import ToastContainer from '@/components/ToastContainer'
 </script>
 
 <style scoped>

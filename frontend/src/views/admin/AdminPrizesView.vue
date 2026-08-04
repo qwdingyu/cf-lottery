@@ -393,8 +393,8 @@ import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
 import { adminRequest } from '@/composables/useAdminRequest'
-import AdminModal from '@/components/AdminModal.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import AdminModal from '@/components/AdminModal'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { canDeletePrizeCode, prizeCodePoolLeft } from './lottery/ops-utils'
 
 const { t } = useI18n()

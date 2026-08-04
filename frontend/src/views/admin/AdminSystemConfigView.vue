@@ -170,7 +170,7 @@ import { useI18n } from 'vue-i18n'
 import i18n from '@/i18n'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import ConfigField from '@/components/admin/ConfigField.vue'
 import {

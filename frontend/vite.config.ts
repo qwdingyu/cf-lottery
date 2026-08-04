@@ -6,7 +6,10 @@ export default defineConfig({
   plugins: [vue()],
   envDir: '../',  // 读取根目录 .env（含 VITE_* 构建变量），避免重复定义 frontend/.env
   resolve: {
+    dedupe: ['vue'],
     alias: {
+      // Single Vue instance for @usethink/cf-admin peer types
+      vue: resolve(__dirname, '../node_modules/vue'),
       '@': resolve(__dirname, 'src'),
       '@shared': resolve(__dirname, 'src/shared'),
     },

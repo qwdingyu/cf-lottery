@@ -2,7 +2,7 @@
  * HTTP 工具模块
  *
  * 提供统一的响应封装和数据库获取函数。
- * 不依赖 cf-shop 的 @usethink/cf-core 包，独立实现。
+ * ok/fail/getDb 本地保留（message 契约）；clampInteger/isValidEmail 来自 cf-core。
  */
 
 import type { Context } from "hono";
@@ -56,16 +56,7 @@ export function getDb(c: Context<AppEnv>): DbType {
 }
 
 /**
- * 整型值钳位 + NaN 防护。
- * 用于解析 query 参数中的分页/计数/阈值等整型字段。
+ * 整型钳位 / email 校验：纯函数上收 @usethink/cf-core/utils。
+ * fail/ok 仍本地实现（message 字段契约，禁止直接换成 core fail）。
  */
-export function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(Math.max(Math.trunc(parsed), min), max);
-}
-
-/** 统一 email 格式校验（比简单的 includes("@") 更严格，避免无效邮箱写入数据库） */
-export function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-}
+export { clampInteger, isValidEmail } from "@usethink/cf-core/utils";

@@ -10,12 +10,28 @@
 import { eq, inArray } from "drizzle-orm";
 import type { DbType, DbWriteScope } from "../../db/client";
 import { systemConfig } from "../../db/schema";
-import { decryptSecretConfigValue, encryptSecretConfigValue } from "../../lib/secret-config";
+import {
+  decryptSecretConfigValueObserved,
+  encryptSecretConfigValue,
+  type SecretDecryptObserveEvent,
+} from "../../lib/secret-config";
 import {
   SYSTEM_CONFIG_KEYS,
   buildSystemConfigMap,
   isSensitiveSystemConfigKey,
 } from "../../lib/system-config-registry";
+
+function logSecretDecryptFailure(configKey: string, event: SecretDecryptObserveEvent): void {
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      event: "secret_config_decrypt_failed",
+      configKey,
+      reason: event.reason,
+      encrypted: event.encrypted,
+    }),
+  );
+}
 
 // ── G18: 读取系统配置 ──────────────────────────────
 
@@ -31,7 +47,9 @@ export async function getSystemConfig(
   const config = buildSystemConfigMap(rows);
   for (const key of SYSTEM_CONFIG_KEYS) {
     if (isSensitiveSystemConfigKey(key) && config[key]) {
-      config[key] = await decryptSecretConfigValue(config[key], encryptionKey);
+      config[key] = await decryptSecretConfigValueObserved(config[key], encryptionKey, (e) =>
+        logSecretDecryptFailure(key, e),
+      );
     }
   }
   return config;

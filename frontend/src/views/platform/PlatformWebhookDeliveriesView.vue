@@ -123,8 +123,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AdminPagination from '@/components/AdminPagination.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import AdminPagination from '@/components/AdminPagination'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { useTablePagination } from '@/composables/useTablePagination'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'

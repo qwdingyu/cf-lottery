@@ -146,8 +146,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AdminModal from '@/components/AdminModal.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import AdminModal from '@/components/AdminModal'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { useToast } from '@/composables/useToast'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'

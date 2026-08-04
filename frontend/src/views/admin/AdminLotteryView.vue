@@ -1444,10 +1444,10 @@ import {
   OPEN_PUBLIC_PREVIEW_OPTION_KEY,
   shouldOpenPublicPreview,
 } from '@/composables/admin-list-ux'
-import AdminModal from '@/components/AdminModal.vue'
-import AdminPagination from '@/components/AdminPagination.vue'
+import AdminModal from '@/components/AdminModal'
+import AdminPagination from '@/components/AdminPagination'
 import { useTablePagination } from '@/composables/useTablePagination'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { adminRequest } from '@/composables/useAdminRequest'
 import {
   defaultExperienceForActivity,
