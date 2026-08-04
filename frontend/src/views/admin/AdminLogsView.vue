@@ -54,20 +54,24 @@
     </div>
 
     <div v-if="selectedCount > 0" class="bulk-bar" role="status" aria-live="polite" :aria-busy="loading || logsMutating">
-      <span>{{ $t('adminLogs.selectedCount', { count: selectedCount }) }}</span>
+      <span>
+        {{ $t('adminLogs.selectedCount', { count: selectedCount }) }}
+        <template v-if="batchOperating">
+          · {{ $t('adminLogs.batchProgress', { done: batchCompleted, total: batchTotal }) }}
+        </template>
+      </span>
       <div class="bulk-actions">
         <button class="btn btn-ghost btn-sm" :disabled="loading || logsMutating" @click="clearSelection">{{ $t('adminLogs.clearSelection') }}</button>
         <button class="btn btn-ghost btn-sm" :disabled="loading || logsMutating" @click="copySelectedLogs">{{ $t('adminLogs.copySelected') }}</button>
         <button class="btn btn-primary btn-sm" :disabled="loading || logsMutating" @click="exportSelectedLogs">{{ $t('adminLogs.exportSelectedCsv') }}</button>
-        <!-- 批量删除 API 未开放：保留提示按钮，不走假删除路径 -->
+        <!-- docs/082 P2：真实 POST /logs/batch-delete；无 id 的行不可删 -->
         <button
-          class="btn btn-ghost btn-sm"
+          class="btn btn-danger btn-sm"
           type="button"
-          :disabled="loading"
-          :title="$t('adminLogs.batchDeleteUnavailable')"
-          @click="showToast($t('adminLogs.batchDeleteUnavailable'), 'info')"
+          :disabled="loading || logsMutating || deletableSelectedCount === 0"
+          @click="batchDeleteSelectedLogs"
         >
-          {{ $t('adminLogs.batchDelete', { count: selectedCount }) }}
+          {{ $t('adminLogs.batchDelete', { count: deletableSelectedCount }) }}
         </button>
       </div>
     </div>
@@ -141,6 +145,8 @@
       @update:limit="changeLimit"
     />
 
+    <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" danger @confirm="onConfirm" />
+
     <AdminModal v-model="metadataVisible" :title="$t('adminLogs.metadataTitle')" max-width="640px">
       <div v-if="currentLog" class="detail-box">
         <div class="detail-section">
@@ -163,14 +169,18 @@
 
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import i18n from '@/i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 import { useTableSelection } from '@/composables/useTableSelection'
+import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { formatDate } from '@/composables/useFormat'
 import AdminPagination from '@/components/AdminPagination.vue'
 import AdminModal from '@/components/AdminModal.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import type { AdminAuditLog, AdminAuditLogFilter, AdminAuditLogListResult } from '@/types/admin'
 import { adminRequest } from '@/composables/useAdminRequest'
 
@@ -184,12 +194,18 @@ function downloadCsv(filename: string, rows: string[][]) {
   a.click(); URL.revokeObjectURL(url);
 }
 
+const { t } = useI18n()
 const { token } = useAdminAuth()
 const { showToast } = useToast()
+const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
+const {
+  operating: batchOperating,
+  completed: batchCompleted,
+  total: batchTotal,
+} = useAdminBatchOperation()
 const items = ref<AdminAuditLog[]>([])
 const loading = ref(false)
-// 批量删/清空日志 API 未开放，不再走 mutating 路径；保留多选复制导出
-const logsMutating = computed(() => false)
+const logsMutating = computed(() => batchOperating.value)
 const snapshotAt = ref('')
 const page = ref(1)
 const limit = ref(20)
@@ -209,6 +225,10 @@ const {
   toggleAllVisible,
   clearSelection,
 } = useTableSelection(items, logKey)
+/** 仅有真实 id 的日志可 batch-delete（合成 key 无法打 API） */
+const deletableSelectedCount = computed(
+  () => selectedLogs().filter((item) => Boolean(item.id)).length,
+)
 const filter = reactive<AdminAuditLogFilter>({
   action: '',
   targetType: '',
@@ -385,6 +405,47 @@ function exportSelectedLogs() {
     ...logRows(logs),
   ])
   showToast(i18n.global.t('adminLogs.exportSelectedSuccess', { count: logs.length }), 'success')
+}
+
+/**
+ * 批量删除选中审计日志（docs/082 P2）。
+ * 仅提交有 id 的行；服务端一条汇总审计；不提供「清空全部」。
+ */
+async function batchDeleteSelectedLogs() {
+  if (loading.value || batchOperating.value) return
+  const ids = selectedLogs()
+    .map((item) => String(item.id || '').trim())
+    .filter(Boolean)
+  if (ids.length === 0) {
+    showToast(t('adminLogs.batchDeleteNeedId'), 'info')
+    return
+  }
+  if (!(await askConfirm(t('adminLogs.batchDeleteConfirm', { count: ids.length })))) return
+
+  batchOperating.value = true
+  batchCompleted.value = 0
+  batchTotal.value = ids.length
+  try {
+    const data = await adminRequest<{ deleted: number; failed: number }>(
+      '/api/admin/logs/batch-delete',
+      { method: 'POST', body: JSON.stringify({ ids }) },
+    )
+    batchCompleted.value = ids.length
+    if (data.failed > 0) {
+      showToast(
+        t('adminLogs.batchDeleteResult', { success: data.deleted, failed: data.failed }),
+        'error',
+      )
+    } else {
+      showToast(t('adminLogs.batchDeleteSuccess', { count: data.deleted }), 'success')
+    }
+    clearSelection()
+    await loadData()
+  } catch (err: any) {
+    showToast(err?.message || t('adminLogs.batchDeleteFailed'), 'error')
+  } finally {
+    batchOperating.value = false
+  }
 }
 
 onMounted(loadData)

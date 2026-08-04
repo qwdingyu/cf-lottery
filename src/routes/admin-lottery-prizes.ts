@@ -7,9 +7,10 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
-import { eq, and, desc, sql, count } from "drizzle-orm";
+import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import { prizes, prizeCodes, auditLogs } from "../db/schema";
 import { importPrizeCodes, createPrize } from "../services/lottery-service";
+import { parseBatchDeleteIds } from "./admin-lottery-helpers";
 
 // ── 辅助函数（与 admin-lottery.ts 共享，为避免循环依赖复制至此） ──
 
@@ -300,8 +301,88 @@ route.delete("/prizes/codes/:codeId", async (c) => {
   return ok(c, { deleted: true });
 });
 
-// ═════════════════════════════════════════════════════════
-// 活动管理
-// ═════════════════════════════════════════════════════════
+/**
+ * 批量删除奖品码（docs/082 P2）。
+ * 仅 available；已发放的计入 failed。一次 inArray 删除 + 一条审计汇总。
+ * 请求体：{ ids: string[] }，上限见 ADMIN_BATCH_DELETE_MAX。
+ */
+route.post("/prizes/codes/batch-delete", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return fail(c, "请求体无效", 400);
+  }
+  const parsed = parseBatchDeleteIds(body);
+  if (parsed.error) return fail(c, parsed.error, 400);
+
+  // 本租户范围内查状态，决定可删与失败原因
+  const rows = await db
+    .select({ id: prizeCodes.id, status: prizeCodes.status })
+    .from(prizeCodes)
+    .where(and(eq(prizeCodes.tenantId, tenantId), inArray(prizeCodes.id, parsed.ids)));
+
+  const found = new Map(rows.map((r) => [r.id, r.status]));
+  const deletable: string[] = [];
+  const failed: Array<{ id: string; reason: string }> = [];
+
+  for (const id of parsed.ids) {
+    const status = found.get(id);
+    if (!status) {
+      failed.push({ id, reason: "码不存在" });
+      continue;
+    }
+    if (status !== "available") {
+      failed.push({ id, reason: "已发放，无法删除" });
+      continue;
+    }
+    deletable.push(id);
+  }
+
+  let deletedCount = 0;
+  if (deletable.length > 0) {
+    const result = await db
+      .delete(prizeCodes)
+      .where(and(
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.status, "available"),
+        inArray(prizeCodes.id, deletable),
+      ));
+    deletedCount = Number(result.rowsAffected ?? 0);
+    // 极端并发：状态在查后变 issued → rowsAffected 可能小于 deletable
+    if (deletedCount < deletable.length) {
+      const still = await db
+        .select({ id: prizeCodes.id })
+        .from(prizeCodes)
+        .where(and(eq(prizeCodes.tenantId, tenantId), inArray(prizeCodes.id, deletable)));
+      const stillSet = new Set(still.map((r) => r.id));
+      for (const id of deletable) {
+        if (stillSet.has(id)) {
+          failed.push({ id, reason: "删除失败或状态已变更" });
+        }
+      }
+      deletedCount = deletable.length - stillSet.size;
+    }
+  }
+
+  const deletedIds = deletable.filter((id) => !failed.some((f) => f.id === id));
+
+  await recordTenantAudit(c, "prize.codes.batch_delete", "prize_code", "batch", {
+    requested: parsed.ids.length,
+    deleted: deletedIds.length,
+    failed: failed.length,
+    deletedIds: deletedIds.slice(0, 50),
+    failedSample: failed.slice(0, 20),
+  });
+
+  return ok(c, {
+    deleted: deletedIds.length,
+    failed: failed.length,
+    deletedIds,
+    failedItems: failed,
+  });
+});
 
 }

@@ -45,6 +45,9 @@ import {
   decorateIdentityDisplay,
   csvEscape,
   isUniqueConstraintError,
+  cascadeDeleteDraw,
+  isDrawStatusDeletable,
+  parseBatchDeleteIds,
 } from "./admin-lottery-helpers";
 
 export function setupDrawOpsRoutes(route: Hono<AppEnv>) {
@@ -304,7 +307,10 @@ route.get("/draws/:id/export", async (c) => {
   });
 });
 
-/** 删除活动（仅草稿状态可删除） */
+/**
+ * 删除活动（draft/paused/drawn/cancelled；open/drawing 禁止，无 force）。
+ * 级联逻辑见 cascadeDeleteDraw，与 batch-delete 同源。
+ */
 route.delete("/draws/:id", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
@@ -317,25 +323,79 @@ route.delete("/draws/:id", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.status === "open" || draw.status === "drawing") return fail(c, "进行中的活动不可删除，请先暂停或取消", 400);
+  if (!isDrawStatusDeletable(draw.status)) {
+    return fail(c, "进行中的活动不可删除，请先暂停或取消", 400);
+  }
 
-  // ★ 级联删除子记录：先删子表，再删主表（FK 约束）
   await withDbTransaction(db, async (tx) => {
-    await tx.delete(lotteryPrizeTiers).where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)));
-    await tx.delete(lotteryRosterMembers).where(and(eq(lotteryRosterMembers.drawId, drawId), eq(lotteryRosterMembers.tenantId, tenantId)));
-    await tx.delete(lotteryInviteCodes).where(and(eq(lotteryInviteCodes.drawId, drawId), eq(lotteryInviteCodes.tenantId, tenantId)));
-    await tx.delete(lotteryWinners).where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
-    await tx.delete(lotteryEntries).where(and(eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)));
-    await tx.delete(activitySubmissions).where(and(eq(activitySubmissions.drawId, drawId), eq(activitySubmissions.tenantId, tenantId)));
-    await tx.delete(activityEvents).where(and(eq(activityEvents.drawId, drawId), eq(activityEvents.tenantId, tenantId)));
-    await tx.delete(activityOutcomes).where(and(eq(activityOutcomes.drawId, drawId), eq(activityOutcomes.tenantId, tenantId)));
-    await tx.delete(shareRecords).where(and(eq(shareRecords.drawId, drawId), eq(shareRecords.tenantId, tenantId)));
-    await tx.delete(emailAccessCodes).where(eq(emailAccessCodes.drawId, drawId));
-    await tx.delete(lotteryDraws).where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+    await cascadeDeleteDraw(tx, tenantId, drawId);
   });
 
   await recordTenantAudit(c, "draw.delete", "lottery_draw", drawId);
   return ok(c, { deleted: true });
+});
+
+/**
+ * 批量删除活动（docs/082 P2）。
+ * - 同单条：open/drawing 计入 failed，不 force
+ * - 顺序逐条级联（每条独立事务），避免长事务锁死
+ * - 一条审计汇总：draw.batch_delete
+ */
+route.post("/draws/batch-delete", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return fail(c, "请求体无效", 400);
+  }
+  const parsed = parseBatchDeleteIds(body);
+  if (parsed.error) return fail(c, parsed.error, 400);
+
+  const deleted: string[] = [];
+  const failed: Array<{ id: string; reason: string }> = [];
+
+  for (const drawId of parsed.ids) {
+    const [draw] = await db
+      .select({ status: lotteryDraws.status })
+      .from(lotteryDraws)
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+      .limit(1);
+
+    if (!draw) {
+      failed.push({ id: drawId, reason: "活动不存在" });
+      continue;
+    }
+    if (!isDrawStatusDeletable(draw.status)) {
+      failed.push({ id: drawId, reason: "进行中的活动不可删除，请先暂停或取消" });
+      continue;
+    }
+    try {
+      await withDbTransaction(db, async (tx) => {
+        await cascadeDeleteDraw(tx, tenantId, drawId);
+      });
+      deleted.push(drawId);
+    } catch (err) {
+      console.error("[admin] draw batch-delete item failed:", drawId, err);
+      failed.push({ id: drawId, reason: "删除失败" });
+    }
+  }
+
+  await recordTenantAudit(c, "draw.batch_delete", "lottery_draw", "batch", {
+    requested: parsed.ids.length,
+    deleted: deleted.length,
+    failed: failed.length,
+    deletedIds: deleted.slice(0, 50),
+    failedSample: failed.slice(0, 20),
+  });
+
+  return ok(c, {
+    deleted: deleted.length,
+    failed: failed.length,
+    deletedIds: deleted,
+    failedItems: failed,
+  });
 });
 
 // ═════════════════════════════════════════════════════════

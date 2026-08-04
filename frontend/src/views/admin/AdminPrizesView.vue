@@ -677,7 +677,7 @@ async function exportCodes() {
 
 /**
  * 批量删除：仅已勾选且 available。
- * 为什么去掉「本页全部 available 盲删」：测试期易误删、无法精确清 10 条脏码（docs/082）。
+ * 优先 POST /prizes/codes/batch-delete；失败降级顺序单条 DELETE（docs/082 P2）。
  */
 async function batchDeleteSelectedCodes() {
   if (!codesPrize.value || codeBatchOperating.value) return
@@ -686,16 +686,39 @@ async function batchDeleteSelectedCodes() {
   )
   if (targets.length === 0) return
   if (!(await askConfirm(t('adminPrizes.batchDeleteSelectedConfirm', { count: targets.length })))) return
-  const result = await runCodeBatch(targets.map((c) => c.id as string), async (id) => {
-    await adminRequest(`/api/admin/prizes/codes/${id}`, { method: 'DELETE' })
-  })
-  if (!result) return
+
+  const targetIds = targets.map((c) => c.id as string)
+  codeBatchOperating.value = true
+  codeBatchCompleted.value = 0
+  codeBatchTotal.value = targetIds.length
+  let deleted = 0
+  let failed = 0
+  try {
+    const data = await adminRequest<{ deleted: number; failed: number }>(
+      '/api/admin/prizes/codes/batch-delete',
+      { method: 'POST', body: JSON.stringify({ ids: targetIds }) },
+    )
+    codeBatchCompleted.value = targetIds.length
+    deleted = data.deleted
+    failed = data.failed
+  } catch {
+    codeBatchOperating.value = false
+    const result = await runCodeBatch(targetIds, async (id) => {
+      await adminRequest(`/api/admin/prizes/codes/${id}`, { method: 'DELETE' })
+    })
+    if (!result) return
+    deleted = result.success
+    failed = result.failed
+  } finally {
+    codeBatchOperating.value = false
+  }
+
   showToast(
     t('adminPrizes.batchDeleteDone', {
-      deleted: result.success,
-      failedText: result.failed > 0 ? t('adminPrizes.batchDeleteFailedSuffix', { failed: result.failed }) : '',
+      deleted,
+      failedText: failed > 0 ? t('adminPrizes.batchDeleteFailedSuffix', { failed }) : '',
     }),
-    result.failed > 0 ? 'error' : 'success',
+    failed > 0 ? 'error' : 'success',
   )
   clearCodeSelection()
   await loadCodes(true)

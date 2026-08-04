@@ -7,9 +7,26 @@
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, fail, clampInteger } from "../lib/http";
-import type { DbType } from "../db/client";
-import { auditLogs, users } from "../db/schema";
-import { inArray } from "drizzle-orm";
+import type { DbType, DbWriteScope } from "../db/client";
+import {
+  auditLogs,
+  users,
+  lotteryPrizeTiers,
+  lotteryRosterMembers,
+  lotteryInviteCodes,
+  lotteryWinners,
+  lotteryEntries,
+  activitySubmissions,
+  activityEvents,
+  activityOutcomes,
+  shareRecords,
+  emailAccessCodes,
+  lotteryDraws,
+} from "../db/schema";
+import { and, eq, inArray } from "drizzle-orm";
+
+/** 单次 batch-delete 上限：防误炸与 Turso 长事务（docs/082 P2） */
+export const ADMIN_BATCH_DELETE_MAX = 100;
 
 export const TENANT_MEMBER_ROLES = new Set(["owner", "admin", "viewer"]);
 
@@ -66,6 +83,62 @@ export async function recordTenantAudit(
     // 审计失败不影响主业务（审计是尽力而为的留痕，不阻塞操作）
     console.error("[admin] audit write failed:", err);
   }
+}
+
+/**
+ * 解析 batch-delete 请求体的 ids。
+ * 去重、去空、上限 ADMIN_BATCH_DELETE_MAX；不在此做业务状态校验。
+ */
+export function parseBatchDeleteIds(body: unknown): { ids: string[]; error?: string } {
+  if (!body || typeof body !== "object") {
+    return { ids: [], error: "请求体无效" };
+  }
+  const raw = (body as { ids?: unknown }).ids;
+  if (!Array.isArray(raw)) {
+    return { ids: [], error: "ids 必须为数组" };
+  }
+  const ids = [
+    ...new Set(
+      raw
+        .map((x) => String(x ?? "").trim())
+        .filter((id) => id.length > 0),
+    ),
+  ];
+  if (ids.length === 0) {
+    return { ids: [], error: "请提供至少一个 id" };
+  }
+  if (ids.length > ADMIN_BATCH_DELETE_MAX) {
+    return { ids: [], error: `单次最多删除 ${ADMIN_BATCH_DELETE_MAX} 条` };
+  }
+  return { ids };
+}
+
+/**
+ * 活动级联删除子表 + 主表（单事务内调用）。
+ * 与 DELETE /draws/:id 同源，供单删与 batch-delete 复用，避免两套级联漂移。
+ * 调用方须先校验 status 非 open/drawing、且活动属于本租户。
+ */
+export async function cascadeDeleteDraw(
+  tx: DbWriteScope,
+  tenantId: string,
+  drawId: string,
+): Promise<void> {
+  await tx.delete(lotteryPrizeTiers).where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)));
+  await tx.delete(lotteryRosterMembers).where(and(eq(lotteryRosterMembers.drawId, drawId), eq(lotteryRosterMembers.tenantId, tenantId)));
+  await tx.delete(lotteryInviteCodes).where(and(eq(lotteryInviteCodes.drawId, drawId), eq(lotteryInviteCodes.tenantId, tenantId)));
+  await tx.delete(lotteryWinners).where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
+  await tx.delete(lotteryEntries).where(and(eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)));
+  await tx.delete(activitySubmissions).where(and(eq(activitySubmissions.drawId, drawId), eq(activitySubmissions.tenantId, tenantId)));
+  await tx.delete(activityEvents).where(and(eq(activityEvents.drawId, drawId), eq(activityEvents.tenantId, tenantId)));
+  await tx.delete(activityOutcomes).where(and(eq(activityOutcomes.drawId, drawId), eq(activityOutcomes.tenantId, tenantId)));
+  await tx.delete(shareRecords).where(and(eq(shareRecords.drawId, drawId), eq(shareRecords.tenantId, tenantId)));
+  await tx.delete(emailAccessCodes).where(eq(emailAccessCodes.drawId, drawId));
+  await tx.delete(lotteryDraws).where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+}
+
+/** 活动状态是否允许物理删除（与 canDeleteDraw / DELETE 单条一致；无 force） */
+export function isDrawStatusDeletable(status: string): boolean {
+  return status === "draft" || status === "paused" || status === "drawn" || status === "cancelled";
 }
 
 export function escapeLike(value: string): string {

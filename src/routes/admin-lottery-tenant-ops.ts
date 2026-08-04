@@ -10,12 +10,13 @@ import {
   auditLogs, lotteryBlacklist, lotteryDraws, lotteryEntries, lotteryWinners,
   tenantMembers, users,
 } from "../db/schema";
-import { eq, and, desc, sql, count } from "drizzle-orm";
+import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import { getTenantUsage } from "../services/lottery-service";
 import {
   parseAdminPagination,
   parseTenantMemberRole,
   recordTenantAudit,
+  parseBatchDeleteIds,
 } from "./admin-lottery-helpers";
 
 export function setupTenantOpsRoutes(adminLotteryRoute: Hono<AppEnv>) {
@@ -47,6 +48,62 @@ adminLotteryRoute.get("/logs", async (c) => {
     .where(and(...conditions));
 
   return ok(c, { logs: rows, total: Number(total) });
+});
+
+/**
+ * 批量删除租户审计日志（docs/082 P2）。
+ * - 仅本租户；ids 上限见 parseBatchDeleteIds
+ * - 删除后写入一条汇总审计（不会被本次 ids 删掉，因新 id）
+ * - 不支持「清空全部」；全量清理由平台 data/cleanup 承担
+ */
+adminLotteryRoute.post("/logs/batch-delete", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return fail(c, "请求体无效", 400);
+  }
+  const parsed = parseBatchDeleteIds(body);
+  if (parsed.error) return fail(c, parsed.error, 400);
+
+  const existing = await db
+    .select({ id: auditLogs.id })
+    .from(auditLogs)
+    .where(and(eq(auditLogs.tenantId, tenantId), inArray(auditLogs.id, parsed.ids)));
+
+  const existingIds = existing.map((r) => r.id);
+  const existingSet = new Set(existingIds);
+  const failed: Array<{ id: string; reason: string }> = [];
+  for (const id of parsed.ids) {
+    if (!existingSet.has(id)) {
+      failed.push({ id, reason: "日志不存在" });
+    }
+  }
+
+  let deletedCount = 0;
+  if (existingIds.length > 0) {
+    const result = await db
+      .delete(auditLogs)
+      .where(and(eq(auditLogs.tenantId, tenantId), inArray(auditLogs.id, existingIds)));
+    deletedCount = Number(result.rowsAffected ?? existingIds.length);
+  }
+
+  await recordTenantAudit(c, "logs.batch_delete", "audit_log", "batch", {
+    requested: parsed.ids.length,
+    deleted: deletedCount,
+    failed: failed.length,
+    deletedIds: existingIds.slice(0, 50),
+    failedSample: failed.slice(0, 20),
+  });
+
+  return ok(c, {
+    deleted: deletedCount,
+    failed: failed.length,
+    deletedIds: existingIds,
+    failedItems: failed,
+  });
 });
 
 // ═════════════════════════════════════════════════════════

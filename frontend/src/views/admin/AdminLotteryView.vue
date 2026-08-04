@@ -1453,6 +1453,7 @@ import {
   cancelLotteryDraw,
   createLotteryDraw,
   deleteLotteryDraw,
+  batchDeleteLotteryDraws,
   fetchLotteryDraws,
   fetchLotteryWinners,
   fetchPublishCheck,
@@ -2776,6 +2777,10 @@ async function handleDelete(id: string) {
   }
 }
 
+/**
+ * 批量删除：优先 POST /draws/batch-delete（单次请求 + 一条审计）；
+ * 失败时降级为顺序单条 DELETE，保持测试清场可用。
+ */
 async function batchDeleteDraws() {
   const ids = selectedIds.value
   if (ids.length === 0 || loading.value || batchOperating.value) return
@@ -2783,16 +2788,38 @@ async function batchDeleteDraws() {
   if (selectedDraws.length === 0) return
   const drawnCount = selectedDraws.filter((draw) => draw.status === 'drawn').length
   if (!(await askConfirm(t('lottery.adminConfirmBatchDelete', { count: selectedDraws.length, drawnCount })))) return
-  const result = await runBatchSequential(selectedDraws.map((d) => d.id), async (id) => {
-    await deleteLotteryDraw(id)
-  })
-  if (!result) return
-  if (result.success === 0 && result.failed === 0) {
-    showToast(t('lottery.adminBatchNothingDone'), 'info')
-  } else if (result.failed > 0) {
-    showToast(t('lottery.adminBatchDeleteResult', { success: result.success, failed: result.failed }), 'error')
-  } else {
-    showToast(t('lottery.adminBatchDeleteSuccess', { count: result.success }), 'success')
+
+  const targetIds = selectedDraws.map((d) => d.id)
+  // 标记 busy 供 bulk-bar；勿与 runBatchSequential 重叠占用 operating
+  batchOperating.value = true
+  batchCompleted.value = 0
+  batchTotal.value = targetIds.length
+  try {
+    const data = await batchDeleteLotteryDraws(targetIds)
+    batchCompleted.value = targetIds.length
+    if (data.deleted === 0 && data.failed === 0) {
+      showToast(t('lottery.adminBatchNothingDone'), 'info')
+    } else if (data.failed > 0) {
+      showToast(t('lottery.adminBatchDeleteResult', { success: data.deleted, failed: data.failed }), 'error')
+    } else {
+      showToast(t('lottery.adminBatchDeleteSuccess', { count: data.deleted }), 'success')
+    }
+  } catch {
+    // 旧后端或网络异常：释放 busy 后降级顺序 DELETE（runSequential 自己管 operating）
+    batchOperating.value = false
+    const result = await runBatchSequential(targetIds, async (id) => {
+      await deleteLotteryDraw(id)
+    })
+    if (!result) return
+    if (result.success === 0 && result.failed === 0) {
+      showToast(t('lottery.adminBatchNothingDone'), 'info')
+    } else if (result.failed > 0) {
+      showToast(t('lottery.adminBatchDeleteResult', { success: result.success, failed: result.failed }), 'error')
+    } else {
+      showToast(t('lottery.adminBatchDeleteSuccess', { count: result.success }), 'success')
+    }
+  } finally {
+    batchOperating.value = false
   }
   clearSelection()
   await loadData()

@@ -4,6 +4,17 @@
       <h1 class="login-title">{{ $t('app.title') }} {{ $t('adminLogin.title') }}</h1>
       <p class="login-subtitle">{{ $t('adminLogin.subtitle') }}</p>
 
+      <!-- cf-auth 统一认证（docs/059；OAuth 授权码+PKCE）——首选登录方式 -->
+      <div v-if="cfAuthEnabled" class="oauth-section oauth-primary">
+        <button
+          type="button"
+          class="btn btn-primary oauth-btn"
+          :disabled="cfAuthLoading"
+          @click="handleCfAuthLogin"
+        >{{ cfAuthLoading ? '正在跳转…' : $t('adminLogin.cfAuthLogin') }}</button>
+        <div class="oauth-divider"><span class="divider-text">{{ $t('adminLogin.or') }}</span></div>
+      </div>
+
       <form class="login-form" @submit.prevent="handleLogin">
         <label class="field-label">
           <span>{{ $t('adminLogin.username') }}</span>
@@ -34,17 +45,6 @@
 
         <p v-if="error" class="login-error">{{ error }}</p>
       </form>
-
-      <!-- cf-auth 统一认证（docs/059；OAuth 授权码+PKCE） -->
-      <div v-if="cfAuthEnabled" class="oauth-section">
-        <div class="oauth-divider"><span class="divider-text">{{ $t('adminLogin.or') }}</span></div>
-        <button
-          type="button"
-          class="btn btn-ghost login-btn"
-          :disabled="cfAuthLoading"
-          @click="handleCfAuthLogin"
-        >{{ $t('adminLogin.cfAuthLogin') }}</button>
-      </div>
 
       <div class="login-footer">
         <span>{{ $t('adminLogin.noAccount') }}</span>
@@ -412,6 +412,9 @@ async function handleVerifyEmail() {
 .oauth-section {
   margin-top: 16px;
 }
+/* SSO 首选样式：全宽主按钮置顶 */
+.oauth-section.oauth-primary { margin: 0 0 20px; }
+.oauth-btn { width: 100%; height: 42px; font-size: 14px; font-weight: 600; }
 .oauth-divider {
   display: flex;
   align-items: center;

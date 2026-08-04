@@ -61,6 +61,18 @@ export const cancelLotteryDraw = async (id: string) =>
 export const deleteLotteryDraw = async (id: string) =>
   adminRequest(`/api/admin/draws/${id}`, { method: 'DELETE' })
 
+/** 服务端 batch 删除活动；同单条状态规则，一条审计汇总（docs/082 P2） */
+export const batchDeleteLotteryDraws = async (ids: string[]) =>
+  adminRequest<{
+    deleted: number
+    failed: number
+    deletedIds: string[]
+    failedItems: Array<{ id: string; reason: string }>
+  }>('/api/admin/draws/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  })
+
 export const fetchLotteryWinners = async (id: string) =>
   adminRequest<{ winners: LotteryWinner[] }>(`/api/admin/draws/${id}/winners`)
 
