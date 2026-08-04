@@ -33,6 +33,12 @@ describe("public-helpers experience UX", () => {
     expect(gamePrimaryCtaHintKey("form", "open")).toBe("gamePrimaryCtaHintForm");
     expect(gamePrimaryCtaHintKey("reveal", "open")).toBe("gamePrimaryCtaHintReveal");
     expect(gamePrimaryCtaHintKey("submit", "open")).toBe("gamePrimaryCtaHintSubmit");
+    // 非抽奖别名：与 GameRegistry 壳对齐
+    expect(gamePrimaryCtaHintKey("ballot", "open")).toBe("gamePrimaryCtaHintForm");
+    expect(gamePrimaryCtaHintKey("list", "open")).toBe("gamePrimaryCtaHintSubmit");
+    expect(gamePrimaryCtaHintKey("queue", "open")).toBe("gamePrimaryCtaHintSubmit");
+    expect(gamePrimaryCtaHintKey("calendar", "open")).toBe("gamePrimaryCtaHintSubmit");
+    expect(gamePrimaryCtaHintKey("checkin", "open")).toBe("gamePrimaryCtaHintSubmit");
     // 未知体验回退通用 hint
     expect(gamePrimaryCtaHintKey("unknown_xyz", "open")).toBe("gamePrimaryCtaHint");
   });

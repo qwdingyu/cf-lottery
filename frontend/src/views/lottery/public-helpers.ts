@@ -54,9 +54,18 @@ export function gamePrimaryCtaHintKey(
   if (exp === 'scratch') return 'gamePrimaryCtaHintScratch'
   if (exp === 'card') return 'gamePrimaryCtaHintCard'
   if (exp === 'grid') return 'gamePrimaryCtaHintGrid'
-  if (exp === 'form') return 'gamePrimaryCtaHintForm'
+  if (exp === 'form' || exp === 'ballot') return 'gamePrimaryCtaHintForm'
   if (exp === 'reveal') return 'gamePrimaryCtaHintReveal'
-  if (exp === 'submit') return 'gamePrimaryCtaHintSubmit'
+  // list/queue/calendar/checkin/submit 等 → 一键提交壳
+  if (
+    exp === 'submit' ||
+    exp === 'list' ||
+    exp === 'queue' ||
+    exp === 'calendar' ||
+    exp === 'checkin'
+  ) {
+    return 'gamePrimaryCtaHintSubmit'
+  }
   return 'gamePrimaryCtaHint'
 }
 

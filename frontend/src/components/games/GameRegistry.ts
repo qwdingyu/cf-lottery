@@ -45,15 +45,32 @@ const GAME_MAP: Record<string, () => Promise<Component>> = {
   'submit':  () => import('./SubmitGame.vue'),     // 通用提交按钮（抽奖/接龙）
   'reveal':  () => import('./RevealGame.vue'),     // 领取/揭晓（资料领取/盲盒）
   'form':    () => import('./FormGame.vue'),       // 表单提交（问卷/调研/审核申请）
+  // ── 非抽奖语义的体验别名：后台可选 list/queue 等，公开页必须有主 CTA 壳 ──
+  // 不另造重型组件：统一落到 Submit（一键参与）或 Form（问卷/投票已有字段区）
+  'list':     () => import('./SubmitGame.vue'),    // 报名列表 → 主按钮参与
+  'queue':    () => import('./SubmitGame.vue'),    // 候补队列
+  'calendar': () => import('./SubmitGame.vue'),    // 预约占位（字段在 activity 区）
+  'checkin':  () => import('./SubmitGame.vue'),    // 签到
+  'ballot':   () => import('./FormGame.vue'),      // 投票：提示填上方选项后提交
 }
 
 /**
  * 根据体验类型获取对应的游戏组件。
- * 未匹配到任何模式时返回 null，由调用方回退到默认按钮交互。
+ * 未匹配到任何模式时回退 SubmitGame，避免「无壳 + 底部双路径」断层（docs/096）。
  * 使用 defineAsyncComponent 实现懒加载，减少首屏 JS 体积。
  */
 export function getGameComponent(experienceType: string): Component | null {
-  const loader = GAME_MAP[experienceType]
+  const key = String(experienceType || '').trim().toLowerCase()
+  const loader = GAME_MAP[key] || GAME_MAP.submit
   if (!loader) return null
   return defineAsyncComponent(loader)
+}
+
+/**
+ * 是否已在注册表（含别名）。
+ * 注意：getGameComponent 对未知 key 也会回退 Submit；本函数只答「是否显式映射」。
+ */
+export function hasRegisteredGameExperience(experienceType: string): boolean {
+  const key = String(experienceType || '').trim().toLowerCase()
+  return Boolean(key && GAME_MAP[key])
 }

@@ -16,7 +16,11 @@ export function defaultExperienceForParticipation(participationMode: string): st
   return 'wheel'
 }
 
-/** 按活动类型 + 参与模式选默认体验；非 lottery 类型优先类型语义 */
+/**
+ * 按活动类型 + 参与模式选默认体验；非 lottery 类型优先类型语义。
+ * 取值须能被 GameRegistry 解析（含 list/queue 等别名 → Submit/Form），
+ * 避免公开页「有活动无主 CTA 壳」（docs/096）。
+ */
 export function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
   if (activityKind === 'signup_chain') return 'list'
   if (activityKind === 'reservation') return 'calendar'

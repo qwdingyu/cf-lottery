@@ -249,17 +249,24 @@
       </div>
     </div>
 
-    <!-- 我的参与记录 -->
+    <!-- 我的参与记录：点行可查结果，避免只展示标签无下一步（docs/096） -->
     <section v-if="(sessionEmail || registeredUsername) && sortedMyEntries.length > 0" class="lottery-records">
       <h2 class="lottery-section-title">{{ $t('lottery.myRecords') }}</h2>
       <div v-if="recordsLoading" class="lottery-center">{{ $t('lottery.loadingText') }}</div>
       <div v-else class="lottery-records-list">
-        <div v-for="row in sortedMyEntries" :key="row.drawId" class="lottery-record">
+        <button
+          v-for="row in sortedMyEntries"
+          :key="row.drawId"
+          type="button"
+          class="lottery-record lottery-record--action"
+          @click="openMyResultFromRecord(row)"
+        >
           <span class="lottery-record-name">{{ row.drawName || row.drawId }}</span>
           <span v-if="myWonById[row.drawId]" class="lottery-tag won">🎉 {{ $t('lottery.wonTag') }}</span>
           <span v-else-if="row.drawStatus === 'drawn'" class="lottery-tag muted">{{ $t('lottery.notWonTag') }}</span>
           <span v-else class="lottery-tag joined">{{ $t('lottery.joined') }}</span>
-        </div>
+          <span class="lottery-record-cta">{{ $t('lottery.queryResult') }}</span>
+        </button>
       </div>
     </section>
 
@@ -268,10 +275,26 @@
         <h3 class="modal-title">{{ isRegisteredJoin ? $t('lottery.loginAndJoin') : $t('lottery.emailVerify') }}</h3>
         <p class="modal-hint">{{ isRegisteredJoin ? $t('lottery.registeredRequired') : isLoginOnly ? $t('lottery.loginToViewRecords') : $t('lottery.emailVerifyHint') }}</p>
 
-        <!-- 仅登录（无具体活动）：跳转到完整登录页，确保邮箱验证码验证 -->
+        <!--
+          仅登录（无具体活动）：优先本页 cf-auth / 邮箱会话，避免硬跳 /admin/login 打断参与心智（docs/096）。
+          后台密码登录仍可作次要入口。
+        -->
         <div v-if="isLoginOnly" class="modal-form">
-          <p class="field-hint" style="text-align:center;margin-bottom:12px">{{ $t('lottery.loginToViewRecords') }}</p>
-          <a href="/admin/login" class="btn btn-primary" style="width:100%;text-align:center;text-decoration:none">{{ $t('landing.login') }}</a>
+          <p class="field-hint" style="text-align:center;margin-bottom:12px">{{ $t('lottery.loginOnlyHint') }}</p>
+          <button
+            v-if="cfAuthEnabled"
+            type="button"
+            class="btn btn-primary"
+            style="width:100%"
+            :disabled="cfAuthLoading"
+            @click="handleCfAuthLoginOnly"
+          >{{ $t('adminLogin.cfAuthLogin') }}</button>
+          <a
+            href="/admin/login"
+            class="btn"
+            :class="cfAuthEnabled ? 'btn-ghost' : 'btn-primary'"
+            style="width:100%;text-align:center;text-decoration:none;margin-top:8px;display:inline-block;box-sizing:border-box"
+          >{{ $t('lottery.loginViaAdmin') }}</a>
           <button type="button" class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" @click="closeLogin">{{ $t('confirm.cancel') }}</button>
         </div>
 
@@ -308,122 +331,161 @@
 
         <!-- open / roster / password / invite_code：邮箱验证码 + 模式附加凭证 -->
         <div v-else class="modal-form">
-          <label>
-            <span>{{ $t('lottery.emailPlaceholder') }}</span>
-            <input
-              v-model="loginEmail"
-              type="email"
-              autocomplete="email"
-              inputmode="email"
-              @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
-            />
-          </label>
           <!--
-            密码 / 邀请码：后端 joinDraw 强制校验；此前前端从未采集 → 模式活动 100% 参与失败。
-            与邮箱码分离：活动访问凭证 ≠ 邮箱 OTP。
+            docs/096：已登录（有业务 JWT）仅缺活动密码/邀请码 → 只补凭证，不重复邮箱 OTP。
           -->
-          <label v-if="pendingJoinNeedsPassword">
-            <span>{{ $t('lottery.accessPasswordLabel') }}</span>
-            <input
-              v-model="joinAccessPassword"
-              type="password"
-              autocomplete="current-password"
-              maxlength="64"
-              :placeholder="$t('lottery.accessPasswordPlaceholder')"
-              @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
-            />
-          </label>
-          <label v-if="pendingJoinNeedsInvite">
-            <span>{{ $t('lottery.inviteCodeLabel') }}</span>
-            <input
-              v-model="joinInviteCode"
-              type="text"
-              autocomplete="one-time-code"
-              maxlength="64"
-              :placeholder="$t('lottery.inviteCodePlaceholder')"
-              @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
-            />
-          </label>
-          <!-- cf-auth 统一认证（docs/059） -->
-          <div v-if="cfAuthEnabled && !codeSent" class="oauth-section" style="margin-top:8px">
-            <div class="oauth-divider" style="margin:8px 0"><span class="divider-text" style="font-size:12px;color:var(--tg-hint)">{{ $t('adminLogin.or') }}</span></div>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm"
-              style="width:100%"
-              :disabled="cfAuthLoading"
-              @click="handleCfAuthJoin"
-            >{{ $t('adminLogin.cfAuthLogin') }}</button>
-          </div>
-          <div v-if="codeSent" class="verified-email-row">
-            <span>{{ $t('lottery.emailVerified', { email: loginEmail }) }}</span>
-            <button type="button" class="btn btn-primary btn-sm" :disabled="verifyingCode" @click="handleVerifyCode">
-              {{ $t('lottery.oneClickContinue') }}
-            </button>
-            <button type="button" class="btn btn-ghost btn-sm" @click="loginEmail=''; loginCode=''; codeSent=false">
-              {{ $t('lottery.switchEmail') }}
-            </button>
-          </div>
-          <div v-if="codeSent" class="code-row">
-            <label class="code-label">
-              <span>{{ $t('lottery.codePlaceholder') }}</span>
-              <!--
-                055a P1：SMS/邮件 OTP 自动填充协议。
-                autocomplete=one-time-code + numeric + 仅数字规范化；满 6 位自动校验（见 watch）。
-              -->
+          <template v-if="pendingJoinCredentialOnly">
+            <p class="field-hint" style="margin-bottom:8px">{{ $t('lottery.credentialOnlyHint') }}</p>
+            <label v-if="pendingJoinNeedsPassword">
+              <span>{{ $t('lottery.accessPasswordLabel') }}</span>
               <input
-                ref="loginCodeInputRef"
-                v-model="loginCode"
-                type="text"
-                name="one-time-code"
-                inputmode="numeric"
-                pattern="[0-9]*"
-                maxlength="6"
-                class="code-input"
-                autocomplete="one-time-code"
-                enterkeyhint="done"
-                autocapitalize="off"
-                autocorrect="off"
-                spellcheck="false"
-                :aria-label="$t('lottery.codePlaceholder')"
-                @keyup.enter="handleVerifyCode"
+                v-model="joinAccessPassword"
+                type="password"
+                autocomplete="current-password"
+                maxlength="64"
+                :placeholder="$t('lottery.accessPasswordPlaceholder')"
+                @keyup.enter="handleCredentialJoinWithBearer"
               />
             </label>
-            <span class="code-timer">{{ codeCooldown > 0 ? codeCooldown + 's' : '' }}</span>
-          </div>
-          <div class="modal-actions join-modal-actions">
-            <button
-              v-if="!codeSent"
-              type="button"
-              class="btn btn-primary join-modal-primary"
-              :disabled="sendingCode"
-              @click="handleSendCode"
-            >
-              {{ sendingCode ? $t('lottery.loadingText') : $t('lottery.sendCode') }}
-            </button>
-            <template v-else>
+            <label v-if="pendingJoinNeedsInvite">
+              <span>{{ $t('lottery.inviteCodeLabel') }}</span>
+              <input
+                v-model="joinInviteCode"
+                type="text"
+                autocomplete="one-time-code"
+                maxlength="64"
+                :placeholder="$t('lottery.inviteCodePlaceholder')"
+                @keyup.enter="handleCredentialJoinWithBearer"
+              />
+            </label>
+            <div class="modal-actions join-modal-actions">
               <button
                 type="button"
                 class="btn btn-primary join-modal-primary"
-                :disabled="verifyingCode"
-                @click="handleVerifyCode"
+                :disabled="verifyingCode || Boolean(joiningId)"
+                @click="handleCredentialJoinWithBearer"
               >
-                {{ verifyingCode ? $t('lottery.loadingText') : $t('lottery.verifyAndJoin') }}
+                {{ verifyingCode || joiningId ? $t('lottery.loadingText') : $t('lottery.verifyAndJoin') }}
               </button>
+              <button type="button" class="btn btn-ghost" @click="closeLogin">
+                {{ $t('confirm.cancel') }}
+              </button>
+            </div>
+            <p v-if="loginError" class="form-error">{{ loginError }}</p>
+          </template>
+          <template v-else>
+            <label>
+              <span>{{ $t('lottery.emailPlaceholder') }}</span>
+              <input
+                v-model="loginEmail"
+                type="email"
+                autocomplete="email"
+                inputmode="email"
+                @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
+              />
+            </label>
+            <!--
+              密码 / 邀请码：后端 joinDraw 强制校验；与邮箱码分离：活动访问凭证 ≠ 邮箱 OTP。
+            -->
+            <label v-if="pendingJoinNeedsPassword">
+              <span>{{ $t('lottery.accessPasswordLabel') }}</span>
+              <input
+                v-model="joinAccessPassword"
+                type="password"
+                autocomplete="current-password"
+                maxlength="64"
+                :placeholder="$t('lottery.accessPasswordPlaceholder')"
+                @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
+              />
+            </label>
+            <label v-if="pendingJoinNeedsInvite">
+              <span>{{ $t('lottery.inviteCodeLabel') }}</span>
+              <input
+                v-model="joinInviteCode"
+                type="text"
+                autocomplete="one-time-code"
+                maxlength="64"
+                :placeholder="$t('lottery.inviteCodePlaceholder')"
+                @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
+              />
+            </label>
+            <!-- cf-auth 统一认证（docs/059） -->
+            <div v-if="cfAuthEnabled && !codeSent" class="oauth-section" style="margin-top:8px">
+              <div class="oauth-divider" style="margin:8px 0"><span class="divider-text" style="font-size:12px;color:var(--tg-hint)">{{ $t('adminLogin.or') }}</span></div>
               <button
                 type="button"
-                class="btn btn-ghost"
-                :disabled="sendingCode || codeCooldown > 0"
+                class="btn btn-ghost btn-sm"
+                style="width:100%"
+                :disabled="cfAuthLoading"
+                @click="handleCfAuthJoin"
+              >{{ $t('adminLogin.cfAuthLogin') }}</button>
+            </div>
+            <div v-if="codeSent" class="verified-email-row">
+              <span>{{ $t('lottery.emailVerified', { email: loginEmail }) }}</span>
+              <button type="button" class="btn btn-primary btn-sm" :disabled="verifyingCode" @click="handleVerifyCode">
+                {{ $t('lottery.oneClickContinue') }}
+              </button>
+              <button type="button" class="btn btn-ghost btn-sm" @click="loginEmail=''; loginCode=''; codeSent=false">
+                {{ $t('lottery.switchEmail') }}
+              </button>
+            </div>
+            <div v-if="codeSent" class="code-row">
+              <label class="code-label">
+                <span>{{ $t('lottery.codePlaceholder') }}</span>
+                <input
+                  ref="loginCodeInputRef"
+                  v-model="loginCode"
+                  type="text"
+                  name="one-time-code"
+                  inputmode="numeric"
+                  pattern="[0-9]*"
+                  maxlength="6"
+                  class="code-input"
+                  autocomplete="one-time-code"
+                  enterkeyhint="done"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  spellcheck="false"
+                  :aria-label="$t('lottery.codePlaceholder')"
+                  @keyup.enter="handleVerifyCode"
+                />
+              </label>
+              <span class="code-timer">{{ codeCooldown > 0 ? codeCooldown + 's' : '' }}</span>
+            </div>
+            <div class="modal-actions join-modal-actions">
+              <button
+                v-if="!codeSent"
+                type="button"
+                class="btn btn-primary join-modal-primary"
+                :disabled="sendingCode"
                 @click="handleSendCode"
               >
-                {{ codeCooldown > 0 ? $t('lottery.resendIn', { s: codeCooldown }) : $t('lottery.sendCode') }}
+                {{ sendingCode ? $t('lottery.loadingText') : $t('lottery.sendCode') }}
               </button>
-            </template>
-            <button type="button" class="btn btn-ghost" @click="closeLogin">
-              {{ $t('confirm.cancel') }}
-            </button>
-          </div>
-          <p v-if="loginError" class="form-error">{{ loginError }}</p>
+              <template v-else>
+                <button
+                  type="button"
+                  class="btn btn-primary join-modal-primary"
+                  :disabled="verifyingCode"
+                  @click="handleVerifyCode"
+                >
+                  {{ verifyingCode ? $t('lottery.loadingText') : $t('lottery.verifyAndJoin') }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  :disabled="sendingCode || codeCooldown > 0"
+                  @click="handleSendCode"
+                >
+                  {{ codeCooldown > 0 ? $t('lottery.resendIn', { s: codeCooldown }) : $t('lottery.sendCode') }}
+                </button>
+              </template>
+              <button type="button" class="btn btn-ghost" @click="closeLogin">
+                {{ $t('confirm.cancel') }}
+              </button>
+            </div>
+            <p v-if="loginError" class="form-error">{{ loginError }}</p>
+          </template>
         </div>
       </div>
     </div>
@@ -437,6 +499,7 @@
     :outcome-label="lastJoinOutcomeLabel"
     :viral-config="lastJoinViralConfig"
     @close="showResult = false"
+    @query-result="onResultModalQuery"
   />
 
   <!-- 查询我的结果弹窗 -->
@@ -606,7 +669,7 @@ import { useI18n } from 'vue-i18n'
 import { switchLanguage } from '@/i18n'
 import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
-import { getGameComponent } from '@/components/games/GameRegistry'
+import { getGameComponent, hasRegisteredGameExperience } from '@/components/games/GameRegistry'
 import GameResultModal from '@/components/games/GameResultModal.vue'
 import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
 import {
@@ -754,6 +817,14 @@ const pendingJoinDraw = computed(() => {
 })
 const pendingJoinNeedsPassword = computed(() => pendingJoinDraw.value?.participationMode === 'password')
 const pendingJoinNeedsInvite = computed(() => pendingJoinDraw.value?.participationMode === 'invite_code')
+/**
+ * 已有参与 JWT，只差活动密码/邀请码：弹窗不走邮箱 OTP（docs/096）。
+ * roster/open 有 JWT 时通常不会进弹窗（直参）。
+ */
+const pendingJoinCredentialOnly = computed(() => {
+  if (!pendingJoinDrawId.value || !registeredToken.value) return false
+  return pendingJoinNeedsPassword.value || pendingJoinNeedsInvite.value
+})
 /** 仅登录查看记录（无具体活动，不需要验证码） */
 const isLoginOnly = computed(() => !pendingJoinDrawId.value)
 
@@ -1027,6 +1098,23 @@ function openMyResult(draw: LotteryDraw) {
 }
 
 /**
+ * 参与记录行 → 查结果：优先用列表里的活动对象（含 publicSlug），否则用记录里的 id/slug 拼最小 draw。
+ */
+function openMyResultFromRecord(row: MyEntry) {
+  const draw =
+    draws.value.find((d) => d.id === row.drawId || d.publicSlug === row.drawId) ||
+    ({
+      id: row.drawId,
+      publicSlug: row.drawId,
+      name: row.drawName || row.drawId,
+      title: row.drawName || row.drawId,
+      status: row.drawStatus || 'open',
+      participationMode: 'open',
+    } as LotteryDraw)
+  openMyResult(draw)
+}
+
+/**
  * 为查结果发邮箱 OTP（purpose=query）。
  * 与参与发码分离：已参与/已开奖仍可发；不走 join 的 409。
  */
@@ -1288,10 +1376,14 @@ function validateSubmissionDraft(draw: LotteryDraw): string {
   }
   return ''
 }
-/** 是否已挂载可交互游戏壳（与 GameRegistry 对齐）；有则游戏区即主 CTA，底部不再放第二颗参与按钮 */
+/**
+ * 是否已挂载可交互游戏壳（与 GameRegistry 对齐，含 list/queue 等别名与未知→Submit 回退）。
+ * 有则游戏区即主 CTA，底部不再放第二颗参与按钮。
+ */
 function hasInteractiveGame(draw: { experienceType?: string; participationMode?: string }): boolean {
   const exp = draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open')
-  return getGameComponent(exp) != null
+  // getGameComponent 对未知类型也回退 Submit，故几乎总有壳；用注册表/回退语义即可
+  return hasRegisteredGameExperience(exp) || getGameComponent(exp) != null
 }
 
 function formatTime(iso: string): string {
@@ -1377,6 +1469,64 @@ function openLogin(drawId?: string) {
   if (sessionEmail.value && !loginEmail.value) loginEmail.value = sessionEmail.value
   showLoginModal.value = true
   nextTick(() => loginModalRef.value?.focus())
+}
+
+/**
+ * 结果弹窗 → 查结果：关成功弹窗后打开 my-result，
+ * 有 JWT 时 openMyResult 会自动 query（docs/084/096 闭环）。
+ */
+function onResultModalQuery() {
+  showResult.value = false
+  const drawId = lastJoinResult.value?.drawId
+  const draw =
+    (drawId ? draws.value.find((d) => d.id === drawId) : null) ||
+    draws.value[0] ||
+    null
+  if (draw) openMyResult(draw)
+}
+
+/** 仅登录：cf-auth 回当前活动页（不带 pendingJoin 自动参与） */
+async function handleCfAuthLoginOnly() {
+  try {
+    await cfAuth.login({
+      returnTo: route.fullPath || '/lottery',
+    })
+  } catch (e: any) {
+    showToast(e?.message || t('lottery.joinFailed'), 'error')
+  }
+}
+
+/**
+ * 已登录 + 仅补活动凭证后直参（不发邮箱 OTP）。
+ */
+async function handleCredentialJoinWithBearer() {
+  const drawId = pendingJoinDrawId.value
+  if (!drawId) return
+  const credErr = validateJoinCredentials()
+  if (credErr) {
+    loginError.value = credErr
+    return
+  }
+  const session = await ensureParticipationSessionFromAdmin()
+  const token = session?.token || registeredToken.value
+  const email = resolveOpenJoinEmail({
+    token: token || '',
+    emailHint: session?.email,
+    sessionEmail: sessionEmail.value,
+  })
+  if (!token || !email) {
+    // 会话丢失：降级完整 OTP 路径
+    loginError.value = t('lottery.registeredRequired')
+    return
+  }
+  verifyingCode.value = true
+  loginError.value = ''
+  try {
+    closeLogin()
+    await joinOpenWithBearer(drawId, token, email)
+  } finally {
+    verifyingCode.value = false
+  }
 }
 
 function closeLogin() {

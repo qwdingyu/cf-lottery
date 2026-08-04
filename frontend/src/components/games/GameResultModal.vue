@@ -63,8 +63,29 @@
         <!-- 分享链接加载中（非裂变模式） -->
         <div v-else-if="entryId" class="result-hint" style="margin-top:12px">{{ $t('lottery.viralLoadShareLink') }}</div>
 
+        <!--
+          闭环 CTA（docs/096）：「知道了」只关弹窗不够；
+          非即时或尚无 outcome 时提供「查我的结果」；有分享链接时一键复制。
+        -->
         <div class="result-actions">
-          <button type="button" class="btn btn-primary" @click="emit('close')">{{ $t('lottery.gotIt') }}</button>
+          <button
+            v-if="showQueryResultCta"
+            type="button"
+            class="btn btn-primary"
+            @click="emit('query-result')"
+          >{{ $t('lottery.queryResult') }}</button>
+          <button
+            v-if="shareLoaded && shareUrl"
+            type="button"
+            class="btn btn-ghost"
+            @click="copyAttributedLink"
+          >{{ $t('lottery.copyShareLink') }}</button>
+          <button
+            type="button"
+            class="btn"
+            :class="showQueryResultCta ? 'btn-ghost' : 'btn-primary'"
+            @click="emit('close')"
+          >{{ $t('lottery.gotIt') }}</button>
         </div>
       </div>
     </div>
@@ -88,7 +109,7 @@ const props = defineProps<{
   viralConfig?: { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | null
 }>()
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; 'query-result': [] }>()
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -101,6 +122,13 @@ const shareError = ref('')
 
 const isInstant = computed(() => (props.resultMode || '').toLowerCase() === 'instant')
 const hasOutcome = computed(() => Boolean(props.outcomeLabel && String(props.outcomeLabel).trim()))
+
+/**
+ * 何时展示「查我的结果」：
+ * - 已有即时 outcome → 弹窗本身已是结果，不必再查
+ * - 否则（scheduled/manual/instant 尚无标签）→ 引导查卡密/状态，闭环不中断
+ */
+const showQueryResultCta = computed(() => !(isInstant.value && hasOutcome.value))
 
 /** 标题：有即时 outcome 用带结果文案；否则统一「参与成功」 */
 const statusTitle = computed(() => {
@@ -201,7 +229,14 @@ watch(() => props.show, async (newVal) => {
 .result-icon { font-size: 48px; margin-bottom: 12px; }
 .result-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
 .result-hint { font-size: 14px; color: var(--tg-hint); margin-bottom: 16px; }
-.result-actions { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 16px;
+}
+.result-actions .btn { min-height: 44px; }
 
 /* 裂变引导卡片 */
 .viral-card {

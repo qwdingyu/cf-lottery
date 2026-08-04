@@ -740,6 +740,9 @@ export default {
     gamePrimaryCtaHintReveal: "Tap the button below to claim / join",
     gamePrimaryCtaHintSubmit: "Tap the button above to join",
     prizeStripAria: "Prizes in this activity",
+    loginOnlyHint: "Sign in to see your entries and results on this page. Prefer unified login so you stay on the activity.",
+    loginViaAdmin: "Sign in with password (admin)",
+    credentialOnlyHint: "You're signed in — enter this activity's access credentials to continue.",
     gameCardHint: "Flip at least two cards, then submit to join",
     gameCardNeedMore: "Flip one more card, then submit to join",
     gameCardFlipAria: "Flip card {n}",
@@ -750,9 +753,12 @@ export default {
     gameWheelCelebrating: "Joined",
     gameGridPickHint: "Pick a cell to join (not a prize result)",
     gameGridJoinedHint: "Joined · results follow activity rules",
-    gameFormHint: "Fill the form above if shown, then submit to join",
+    /** Form/ballot: fields live in activity block; primary button only submits */
+    gameFormHint: "Complete the form or options above, then tap submit to join.",
     gameSubmitSubmitting: "Submitting…",
     gameSubmitJoin: "Enter Now",
+    /** Submit/Form/Reveal when already joined (disabled, not loading) */
+    gameSubmitJoined: "You're in",
     viralInviteHint: "+{n} extra entries per invite",
     viralInvitedLabel: "Invited",
     viralMaxLabel: "Max extra",

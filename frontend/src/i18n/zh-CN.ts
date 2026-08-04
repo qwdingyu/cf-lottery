@@ -710,6 +710,9 @@ export default {
     gamePrimaryCtaHintReveal: "点击下方按钮领取 / 参与",
     gamePrimaryCtaHintSubmit: "点击上方按钮即可参与",
     prizeStripAria: "本活动奖品",
+    loginOnlyHint: "登录后可查看本页参与记录与结果；推荐使用统一认证，无需离开活动页。",
+    loginViaAdmin: "使用账号密码登录（管理端）",
+    credentialOnlyHint: "你已登录，请补全本活动的访问凭证后继续参与。",
     gameCardHint: "翻开至少两张牌后，再提交参与",
     gameCardNeedMore: "再翻一张牌，然后提交参与",
     gameCardFlipAria: "翻开第 {n} 张牌",
@@ -720,9 +723,12 @@ export default {
     gameWheelCelebrating: "已参与",
     gameGridPickHint: "点选一格参与（不代表中奖）",
     gameGridJoinedHint: "已参与 · 结果以活动规则为准",
-    gameFormHint: "请先填写上方表单（如有），再点击提交参与",
+    /** Form/ballot：字段在 activity 区，主按钮只负责提交 */
+    gameFormHint: "请先完成上方表单或选项，再点击提交参与。",
     gameSubmitSubmitting: "提交中…",
     gameSubmitJoin: "立即参与",
+    /** Submit/Form/Reveal 已参与（disabled 且非 loading） */
+    gameSubmitJoined: "已成功参与",
     // 裂变组件
     viralInviteHint: "每邀请 1 人额外获得 {n} 次抽奖机会",
     viralInvitedLabel: "已邀请",

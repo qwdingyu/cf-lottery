@@ -28,6 +28,8 @@ export default defineConfig({
       "frontend/src/composables/lottery-public-ux.test.ts",
       // 公开页体验氛围时长 / 主 CTA 文案 key（docs/095）
       "frontend/src/views/lottery/public-helpers.test.ts",
+      // docs/096：体验别名与未知→Submit 回退
+      "frontend/src/components/games/GameRegistry.test.ts",
       // docs/082：管理台批量顺序写 + 进度
       "frontend/src/composables/useAdminBatchOperation.test.ts",
       // 中奖邮件状态与开奖反馈档
