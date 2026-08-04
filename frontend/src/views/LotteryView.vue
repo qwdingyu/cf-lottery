@@ -810,6 +810,7 @@ import {
   resultModeTagI18nKey,
 } from './lottery/public-helpers'
 import {
+  entryIdFromAlreadyJoined,
   isAlreadyJoinedResponse,
   isSilentFetchOption,
   joinedOpenStatusHintKey,
@@ -1026,9 +1027,16 @@ function markDrawJoined(
 
 /**
  * 后端「已参与」/409：标 joined + 友好提示，可选打开查结果（勿当 joinFailed）。
+ * 若响应带 entryId（docs/110），立即写入 hints，公开卡可生成 ?ref= 专属链接。
  */
-function handleAlreadyJoined(joinedDrawId: string, opts?: { openResult?: boolean }) {
-  markDrawJoined(joinedDrawId)
+function handleAlreadyJoined(
+  joinedDrawId: string,
+  opts?: { openResult?: boolean; entryId?: string },
+) {
+  markDrawJoined(joinedDrawId, { entryId: opts?.entryId })
+  if (opts?.entryId) {
+    rememberJoinSuccess(joinedDrawId, opts.entryId)
+  }
   closeLogin()
   showToast(t('lottery.alreadyJoinedHint'), 'success')
   if (opts?.openResult !== false) {
@@ -1530,13 +1538,23 @@ async function queryMyResult() {
       if (!isReg && myResultEmail.value.trim()) {
         persistSessionEmail(myResultEmail.value.trim().toLowerCase())
       }
-      // 查到已参与：回填 joined / 中奖标签 + activityKind（docs/097 / docs/105）
+      // 查到已参与：回填 joined / entryId / 中奖标签（docs/097 / 105 / 110）
+      // entryId 是裂变身份键：缺了公开卡只能诚实提示「去查结果」，无法生成 ?ref=
       const drawKey = myResultDraw.value.id
       if (data.joined) {
+        const recoveredEntryId = data.entryId ? String(data.entryId).trim() : undefined
         markDrawJoined(drawKey, {
           drawStatus: data.drawStatus || myResultDraw.value.status,
           activityKind: data.activityKind || myResultDraw.value.activityKind,
+          entryId: recoveredEntryId,
+          won: Boolean(data.won),
         })
+        if (recoveredEntryId) {
+          rememberJoinSuccess(drawKey, recoveredEntryId, {
+            resultMode: data.resultMode || myResultDraw.value.resultMode,
+            outcomeLabel: data.outcome?.resultLabel,
+          })
+        }
         if (data.won) {
           myWonById.value = { ...myWonById.value, [drawKey]: true }
         }
@@ -1571,23 +1589,30 @@ function copyMyResult(text: string) {
   showToast(t('lottery.copied'), 'success')
 }
 
-/** 中奖后分享活动链接（仅未终态；归因到当前用户的分享记录） */
+/**
+ * 中奖/查结果弹窗内分享（仅未终态）。
+ * 优先用 resolveViralEntryId（含 my-result 回填的 entryId），POST /share 生成 ?ref=；
+ * 无 entry 才降级裸链——避免刷新后只复制无归因链接（docs/110）。
+ */
 async function shareMyWin() {
   if (!showMyResultInviteShare.value) return
   const draw = myResultDraw.value
   if (!draw) return
   const slug = draw.publicSlug || draw.id
   const origin = window.location.origin
-  if (lastJoinResult.value && lastJoinResult.value.drawId === draw.id) {
+  const entryId = resolveViralEntryId(draw)
+  if (entryId) {
     try {
       const res = await fetch(`${API_BASE}/public/draws/${encodeURIComponent(slug)}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entryId: lastJoinResult.value.entryId }),
+        body: JSON.stringify({ entryId }),
       })
       const data = await res.json()
       if (data.ok && data.shareUrl) {
-        await writeClipboardText(origin + data.shareUrl)
+        const path = String(data.shareUrl)
+        const full = path.startsWith('http') ? path : origin + path
+        await writeClipboardText(full)
         showToast(t('lottery.shareLinkCopied'), 'success')
         return
       }
@@ -1922,13 +1947,33 @@ function toggleExpand(id: string) {
   }
 }
 
+/**
+ * 顶栏/卡内「复制分享链接」。
+ * 已参与且能解析 entryId 时走 POST /share，复制带 ?ref= 的专属链（裂变主转化入口）；
+ * 否则复制裸活动链（路人传播仍有价值，只是无个人归因）。
+ */
 async function handleCopyPublicLink(drawId: string) {
   const draw = draws.value.find(d => d.id === drawId)
   const slug = draw?.publicSlug || drawId
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
-  const url = `${origin}/lottery/${slug}`
+  const entryId = draw ? resolveViralEntryId(draw) : undefined
   try {
-    await writeClipboardText(url)
+    if (entryId && draw && shouldShowInviteShareCta(draw.status)) {
+      const res = await fetch(`${API_BASE}/public/draws/${encodeURIComponent(slug)}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entryId }),
+      })
+      const data = await res.json()
+      if (data.ok && data.shareUrl) {
+        const path = String(data.shareUrl)
+        const full = path.startsWith('http') ? path : origin + path
+        await writeClipboardText(full)
+        showToast(t('lottery.shareLinkCopied'))
+        return
+      }
+    }
+    await writeClipboardText(`${origin}/lottery/${slug}`)
     showToast(t('lottery.shareLinkCopied'))
   } catch {
     showToast(t('lottery.shareLinkCopyFailed'))
@@ -2146,7 +2191,7 @@ async function joinWithRegisteredToken(drawId: string, token: string) {
     if (data.ok && data.joined) {
       completeJoinSuccess(drawId, data)
     } else if (isAlreadyJoinedResponse(data, res.status)) {
-      handleAlreadyJoined(drawId)
+      handleAlreadyJoined(drawId, { entryId: entryIdFromAlreadyJoined(data) })
     } else {
       const msg = data.message || t('lottery.joinFailed')
       loginError.value = msg
@@ -2215,7 +2260,7 @@ async function joinOpenWithBearer(drawId: string, token: string, email: string) 
     if (data.ok && data.joined) {
       completeJoinSuccess(drawId, data, { email })
     } else if (isAlreadyJoinedResponse(data, res.status)) {
-      handleAlreadyJoined(drawId)
+      handleAlreadyJoined(drawId, { entryId: entryIdFromAlreadyJoined(data) })
     } else {
       showToast(data.message || t('lottery.joinFailed'), 'error')
       // 后端拒绝（如 JWT 无 email claim）时降级弹窗，仍可 OTP
@@ -2349,7 +2394,7 @@ async function resumeCfAuthJoinAfterCallback() {
         completeJoinSuccess(joinKey, data)
       } else if (isAlreadyJoinedResponse(data, res.status)) {
         finishPendingOk()
-        handleAlreadyJoined(joinKey)
+        handleAlreadyJoined(joinKey, { entryId: entryIdFromAlreadyJoined(data) })
       } else {
         // 保留 pending；打开登录便于用户改凭证或看错误
         const msg = data.message || t('lottery.joinFailed')
@@ -2414,7 +2459,7 @@ async function resumeCfAuthJoinAfterCallback() {
       completeJoinSuccess(joinKey, data, { email })
     } else if (isAlreadyJoinedResponse(data, res.status)) {
       finishPendingOk()
-      handleAlreadyJoined(joinKey)
+      handleAlreadyJoined(joinKey, { entryId: entryIdFromAlreadyJoined(data) })
     } else {
       // 失败不 consume；若用户刚在弹窗改了密码，写回 pending 供下次自动/手动
       saveCfAuthPendingJoin(sessionStorage, {
@@ -2563,7 +2608,7 @@ async function handleSendCode() {
       codeSent.value = true
       startCooldown(data.expiresInSeconds || 60)
     } else if (isAlreadyJoinedResponse(data, res.status)) {
-      handleAlreadyJoined(pendingJoinDrawId.value!)
+      handleAlreadyJoined(pendingJoinDrawId.value!, { entryId: entryIdFromAlreadyJoined(data) })
     } else {
       loginError.value = data.message || t('lottery.sendFailed')
     }
@@ -2623,7 +2668,7 @@ async function handleVerifyCode() {
       loginCode.value = ''
       codeSent.value = false
     } else if (isAlreadyJoinedResponse(data, res.status)) {
-      handleAlreadyJoined(pendingJoinDrawId.value!)
+      handleAlreadyJoined(pendingJoinDrawId.value!, { entryId: entryIdFromAlreadyJoined(data) })
     } else {
       loginError.value = data.message || t('lottery.verifyFailed')
     }

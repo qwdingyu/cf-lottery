@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clearJoinedHints,
+  entryIdFromAlreadyJoined,
   isAlreadyJoinedResponse,
   isSilentFetchOption,
   joinResultHintI18nKey,
@@ -43,8 +44,17 @@ describe("joined-session", () => {
   it("isAlreadyJoinedResponse 认 409 与中英文案", () => {
     expect(isAlreadyJoinedResponse({}, 409)).toBe(true);
     expect(isAlreadyJoinedResponse({ message: "您已参与此活动" })).toBe(true);
+    expect(isAlreadyJoinedResponse({ alreadyJoined: true, entryId: "e1" })).toBe(true);
+    expect(isAlreadyJoinedResponse({ message: "ok" }, 409)).toBe(true);
     expect(isAlreadyJoinedResponse({ message: "Already joined" })).toBe(true);
     expect(isAlreadyJoinedResponse({ message: "验证码错误" }, 400)).toBe(false);
+  });
+
+  it("entryIdFromAlreadyJoined 从 409 载荷取 entryId", () => {
+    expect(entryIdFromAlreadyJoined({ entryId: "e-abc" })).toBe("e-abc");
+    expect(entryIdFromAlreadyJoined({ entryId: "  " })).toBeUndefined();
+    expect(entryIdFromAlreadyJoined({})).toBeUndefined();
+    expect(entryIdFromAlreadyJoined(null)).toBeUndefined();
   });
 
   it("resolvePublicDrawPathKey 优先 publicSlug", () => {

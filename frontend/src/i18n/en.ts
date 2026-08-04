@@ -814,7 +814,7 @@ export default {
     viralPeopleCount: "{n} people",
     viralSectionAria: "Invites and leaderboard",
     viralJoinFirstHint: "Join first to get your invite link and earn extra draw weight.",
-    viralNeedEntryHint: "You're in. Use “My result” to confirm identity, then generate your invite link.",
+    viralNeedEntryHint: "You're in. Tap “My result” to confirm identity, then get your personal invite link (friends who join count for you).",
     viralInviteClosedHint: "Activity ended — historical invite stats",
     viralHistoryLinkNote: "Activity ended; link is for reference only",
     viralNotOnBoard: "Not ranked yet",

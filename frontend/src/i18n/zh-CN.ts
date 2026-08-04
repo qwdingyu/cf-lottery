@@ -787,7 +787,7 @@ export default {
     viralPeopleCount: "{n} 人",
     viralSectionAria: "邀请好友与排行榜",
     viralJoinFirstHint: "先参与本活动，即可生成专属邀请链接、赚额外开奖机会。",
-    viralNeedEntryHint: "已参与。请先「查我的结果」确认身份后，再生成专属邀请链接。",
+    viralNeedEntryHint: "已参与本活动。点「查我的结果」确认身份后，即可生成带专属邀请码的链接（好友参与算你的邀请）。",
     viralInviteClosedHint: "活动已结束，以下为历史邀请数据",
     viralHistoryLinkNote: "活动已结束，专属链接仅供回顾",
     viralNotOnBoard: "尚未上榜",

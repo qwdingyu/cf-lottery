@@ -288,13 +288,61 @@ export async function joinDraw(
         },
       };
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     // UNIQUE 约束冲突：同一参与者重复提交
-    if (err.message?.includes("UNIQUE constraint")) {
-      return { joined: false, message: "您已参与此活动" };
+    // LibSQL/Drizzle 可能把文案放在 message 或 cause 链上（docs/110）
+    if (isUniqueConstraintError(err)) {
+      try {
+        const [exist] = await db
+          .select({ id: lotteryEntries.id })
+          .from(lotteryEntries)
+          .where(and(
+            eq(lotteryEntries.tenantId, draw.tenantId),
+            eq(lotteryEntries.drawId, draw.id),
+            eq(lotteryEntries.identityType, identityType),
+            eq(lotteryEntries.identityValue, checkinDateSuffix ? uniqueValue : normalizedValue),
+          ))
+          .limit(1);
+        return {
+          joined: false,
+          message: "您已参与此活动",
+          alreadyJoined: true as const,
+          entryId: exist?.id,
+        };
+      } catch {
+        return { joined: false, message: "您已参与此活动", alreadyJoined: true as const };
+      }
     }
     throw err;
   }
+}
+
+/** 识别 SQLite/LibSQL UNIQUE 冲突（含 cause 链与 code 字段） */
+function isUniqueConstraintError(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let depth = 0; cur && depth < 6; depth += 1) {
+    if (typeof cur === "object") {
+      const o = cur as { message?: string; code?: string; cause?: unknown; rawCode?: number };
+      const msg = String(o.message || "");
+      const code = String(o.code || "");
+      if (
+        /UNIQUE constraint/i.test(msg) ||
+        /SQLITE_CONSTRAINT_UNIQUE/i.test(msg) ||
+        /SQLITE_CONSTRAINT_UNIQUE/i.test(code) ||
+        code === "SQLITE_CONSTRAINT" && /unique/i.test(msg) ||
+        o.rawCode === 2067
+      ) {
+        return true;
+      }
+      cur = o.cause;
+      continue;
+    }
+    if (typeof cur === "string" && /UNIQUE constraint|SQLITE_CONSTRAINT_UNIQUE/i.test(cur)) {
+      return true;
+    }
+    break;
+  }
+  return false;
 }
 
 /**

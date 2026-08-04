@@ -294,14 +294,21 @@ async function loadShareLink() {
 async function copyAttributedLink() {
   if (!inviteShareAllowed.value) return
   const url = shareData.value?.shareUrl
+  // 无专属链时禁止静默复制当前页（可能带别人的 ?ref=，会污染归因，docs/110）
   if (!url) {
-    await writeClipboardText(window.location.href)
-  } else if (url.startsWith('http')) {
-    await writeClipboardText(url)
-  } else {
-    await writeClipboardText(window.location.origin + url)
+    shareError.value = t('lottery.shareLinkFailed')
+    return
   }
-  showToast(t('lottery.shareLinkCopied'))
+  try {
+    if (url.startsWith('http')) {
+      await writeClipboardText(url)
+    } else {
+      await writeClipboardText(window.location.origin + url)
+    }
+    showToast(t('lottery.shareLinkCopied'))
+  } catch {
+    shareError.value = t('lottery.viralCopyFailed')
+  }
 }
 
 watch(() => props.show, async (newVal) => {

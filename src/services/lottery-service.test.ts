@@ -201,8 +201,13 @@ describe("四种参与模式", () => {
 
   it("open：同邮箱不可重复参与", async () => {
     const { publicSlug } = await setupDraw("open");
-    await joinDraw(db, publicSlug, "user@test.com");
-    await expect(joinDraw(db, publicSlug, "user@test.com")).rejects.toThrow();
+    const first = await joinDraw(db, publicSlug, "user@test.com");
+    expect(first.joined).toBe(true);
+    const again = await joinDraw(db, publicSlug, "user@test.com");
+    expect(again.joined).toBe(false);
+    expect(again.message).toContain("已参与");
+    expect("alreadyJoined" in again && again.alreadyJoined).toBe(true);
+    expect("entryId" in again ? again.entryId : "").toBeTruthy();
   });
 
   it("password：正确密码可参与", async () => {
@@ -632,7 +637,8 @@ describe("活动事件", () => {
     const { id, publicSlug } = await setupDraw("open", { maxParticipants: 10 });
     const sharer = await joinDraw(db, publicSlug, "sharer@test.com");
     expect(sharer.joined).toBe(true);
-    const sharerEntryId = "entryId" in sharer ? sharer.entryId : "";
+    const sharerEntryId = ("entryId" in sharer && sharer.entryId) ? String(sharer.entryId) : "";
+    expect(sharerEntryId).toBeTruthy();
     await client.execute({
       sql: `INSERT INTO share_records (id, tenant_id, draw_id, sharer_entry_id, share_code, clicked_count, joined_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: ["share-1", TENANT, id, sharerEntryId, "ref-001", 7, 0],
@@ -644,7 +650,10 @@ describe("活动事件", () => {
       userAgent: "test-agent",
     });
     expect(invited.joined).toBe(true);
-    await expect(joinDraw(db, publicSlug, "invited@test.com", "email", { refCode: "ref-001" })).rejects.toThrow();
+    // 重复参与：joinDraw 返回 alreadyJoined（不再 throw），且不二次归因
+    const dup = await joinDraw(db, publicSlug, "invited@test.com", "email", { refCode: "ref-001" });
+    expect(dup.joined).toBe(false);
+    expect("alreadyJoined" in dup && dup.alreadyJoined).toBe(true);
 
     const shareRows = await client.execute("SELECT clicked_count, joined_count FROM share_records WHERE id = 'share-1'");
     expect(Number(shareRows.rows[0]?.clicked_count)).toBe(7);
@@ -935,7 +944,9 @@ describe("签到活动", () => {
     const first = await joinDraw(db, publicSlug, "Daily@T.com");
     expect(first.joined).toBe(true);
 
-    await expect(joinDraw(db, publicSlug, "daily@t.com")).rejects.toThrow();
+    const again = await joinDraw(db, publicSlug, "daily@t.com");
+    expect(again.joined).toBe(false);
+    expect(again.message).toContain("已参与");
 
     const rows = await client.execute({
       sql: "SELECT identity_value FROM lottery_entries WHERE tenant_id = ? AND draw_id = ?",
@@ -999,8 +1010,12 @@ describe("接龙活动", () => {
 
   it("signup_chain：同一身份不能重复接龙", async () => {
     const { publicSlug } = await setupSignupChain({ maxParticipants: 3 });
-    await joinDraw(db, publicSlug, "u1@t.com");
-    await expect(joinDraw(db, publicSlug, "u1@t.com")).rejects.toThrow();
+    const first = await joinDraw(db, publicSlug, "u1@t.com");
+    expect(first.joined).toBe(true);
+    const again = await joinDraw(db, publicSlug, "u1@t.com");
+    expect(again.joined).toBe(false);
+    expect(again.message).toContain("已参与");
+    expect("alreadyJoined" in again && again.alreadyJoined).toBe(true);
   });
 });
 

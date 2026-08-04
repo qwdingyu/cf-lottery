@@ -134,14 +134,25 @@ export function upsertJoinedHint(
   return map
 }
 
-/** 响应是否表示「已参与」（409 或中英 message） */
+/** 响应是否表示「已参与」（409 / alreadyJoined 标记 / 中英 message） */
 export function isAlreadyJoinedResponse(
-  data: { message?: string } | null | undefined,
+  data: { message?: string; alreadyJoined?: boolean; entryId?: string } | null | undefined,
   httpStatus?: number,
 ): boolean {
   if (httpStatus === 409) return true
+  if (data?.alreadyJoined === true) return true
   const msg = String(data?.message || '')
   return /已参与|already\s*join/i.test(msg)
+}
+
+/**
+ * 从「已参与」响应提取 entryId（docs/110：409 载荷可带回 entryId 恢复裂变身份）。
+ */
+export function entryIdFromAlreadyJoined(
+  data: { entryId?: string | null } | null | undefined,
+): string | undefined {
+  const id = data?.entryId != null ? String(data.entryId).trim() : ''
+  return id || undefined
 }
 
 /**

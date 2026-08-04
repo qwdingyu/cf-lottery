@@ -323,8 +323,18 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     .from(lotteryEntries)
     .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.identityValue, identity.identityValue)))
     .limit(1);
-  // join 意图：已参与 → 409；query 意图：已参与仍可发码（docs/077 查结果闭环）
-  if (purpose === "join" && existing) return fail(c, "您已参与此活动", 409);
+  // join 意图：已参与 → 409 + entryId（裂变身份可恢复，docs/110）；query 仍可发码
+  if (purpose === "join" && existing) {
+    return c.json(
+      {
+        ok: false,
+        message: "您已参与此活动",
+        alreadyJoined: true,
+        entryId: existing.id,
+      },
+      409,
+    );
+  }
 
   // 名单模式校验（仅邮箱身份；registered 与 roster 互斥，由参与模式控制）
   // query：未在名单且未参与则拒，避免给无关邮箱滥发码；已参与可发
@@ -349,7 +359,21 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
         userAgent: c.req.header("User-Agent") || "",
         submissionPayload: body.submission,
       });
-      if (!result.joined) return fail(c, result.message || "参与失败", 400);
+      if (!result.joined) {
+        // joinDraw 对 UNIQUE 会返回 alreadyJoined + entryId（docs/110）
+        if ("alreadyJoined" in result && result.alreadyJoined) {
+          return c.json(
+            {
+              ok: false,
+              message: result.message || "您已参与此活动",
+              alreadyJoined: true,
+              entryId: "entryId" in result ? result.entryId : undefined,
+            },
+            409,
+          );
+        }
+        return fail(c, result.message || "参与失败", 400);
+      }
       // 返回 entryId/outcome/resultMode（与 verify-join 对齐）：前端依赖它们弹出结果弹窗、
       // 生成归因分享链接（GameResultModal 的 :entry-id 与 share API 均需要）。
       return ok(c, {
@@ -385,7 +409,20 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
         userAgent: c.req.header("User-Agent") || "",
         submissionPayload: body.submission,
       });
-      if (!result.joined) return fail(c, result.message || "参与失败", 400);
+      if (!result.joined) {
+        if ("alreadyJoined" in result && result.alreadyJoined) {
+          return c.json(
+            {
+              ok: false,
+              message: result.message || "您已参与此活动",
+              alreadyJoined: true,
+              entryId: "entryId" in result ? result.entryId : undefined,
+            },
+            409,
+          );
+        }
+        return fail(c, result.message || "参与失败", 400);
+      }
       return ok(c, {
         joined: true,
         entryId: "entryId" in result ? result.entryId : undefined,
@@ -544,7 +581,20 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       /** 验证码 ID：joinDraw 事务内标记已用；Bearer 身份跳过 OTP 时不传 */
       codeIdToConsume: validCode?.id,
     });
-    if (!result.joined) return fail(c, result.message || "参与失败", 400);
+    if (!result.joined) {
+      if ("alreadyJoined" in result && result.alreadyJoined) {
+        return c.json(
+          {
+            ok: false,
+            message: result.message || "您已参与此活动",
+            alreadyJoined: true,
+            entryId: "entryId" in result ? result.entryId : undefined,
+          },
+          409,
+        );
+      }
+      return fail(c, result.message || "参与失败", 400);
+    }
     return ok(c, {
       joined: true,
       entryId: "entryId" in result ? result.entryId : undefined,
@@ -777,6 +827,12 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
 
   return ok(c, {
     joined: !!entry,
+    /**
+     * 裂变身份键：已参与必须返回 entryId。
+     * 前端 hydrateJoinedState / queryMyResult / ViralLeaderboard / share 全链路依赖它；
+     * 缺省会导致「已参与无 entry」只能看榜、无法生成 ?ref= 专属链接（docs/110）。
+     */
+    entryId: entry?.id || null,
     joinedAt: entry?.joinedAt || null,
     won,
     activityKind,
@@ -894,6 +950,17 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
       submissionPayload: submission.payload,
     });
     if (!result.joined) {
+      if ("alreadyJoined" in result && result.alreadyJoined) {
+        return c.json(
+          {
+            ok: false,
+            message: result.message || "您已参与此活动",
+            alreadyJoined: true,
+            entryId: "entryId" in result ? result.entryId : undefined,
+          },
+          409,
+        );
+      }
       return fail(c, result.message || "参与失败", 400);
     }
     return ok(c, {

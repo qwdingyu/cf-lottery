@@ -826,13 +826,17 @@ describe("公开参与流程", () => {
     expect(entry?.identityType).toBe("user_id");
     expect(entry?.identityValue).toBe(userId);
 
-    // 同一用户再次参与 → 409（按 userId 判重，而非 email）
+    // 同一用户再次参与 → 409 + entryId（按 userId 判重；裂变身份可恢复，docs/110）
     const again = await app.request("/public/draws/registered-valid-jwt/access-code", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, "CF-Connecting-IP": "10.0.0.31" },
       body: JSON.stringify({ email: "reg@test.com" }),
     }, TEST_ENV);
     expect(again.status).toBe(409);
+    const againBody = await again.json() as any;
+    expect(againBody.ok).toBe(false);
+    expect(againBody.alreadyJoined).toBe(true);
+    expect(againBody.entryId).toBe(body.entryId);
   });
 
   it("registered 模式：无效 JWT 返回 401", async () => {
@@ -1034,6 +1038,7 @@ describe("公开参与流程", () => {
   it("open 模式：my-result 业务 JWT.email 一致免 OTP；无 token 无码拒绝；邮箱不一致不授信", async () => {
     const app = createPublicTestApp();
     const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
     const email = "jwt-query@test.com";
     await db.insert(lotteryDraws).values({
       id: drawId, tenantId: TENANT, publicSlug: "open-myresult-jwt",
@@ -1042,7 +1047,7 @@ describe("公开参与流程", () => {
       winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
     await db.insert(lotteryEntries).values({
-      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      id: entryId, tenantId: TENANT, drawId,
       identityType: "email", identityValue: email, joinedAt: new Date().toISOString(),
     });
     const token = await signJwt(
@@ -1072,6 +1077,9 @@ describe("公开参与流程", () => {
     expect(withJwt.status).toBe(200);
     const okBody = await withJwt.json() as any;
     expect(okBody.ok).toBe(true);
+    // docs/110：已参与必须带回 entryId，供公开卡/分享归因恢复
+    expect(okBody.joined).toBe(true);
+    expect(okBody.entryId).toBe(entryId);
     expect(okBody.joined).toBe(true);
 
     // 仅 JWT、body 无 email → 用 token.email
@@ -1187,6 +1195,7 @@ describe("公开参与流程", () => {
     const body = await res.json() as any;
     expect(body.ok).toBe(true);
     expect(body.joined).toBe(true);
+    expect(body.entryId).toBe(entryId);
     expect(body.won).toBe(true);
     expect(body.prizeCode).toBeNull();
     expect(body.prizeName).toBe("限定周边");
