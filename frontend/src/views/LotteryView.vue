@@ -605,24 +605,47 @@
           </template>
         </div>
 
-        <!-- 查询结果 -->
+        <!-- 查询结果：按 joined / drawStatus / won / prizeType 诚实分支（docs/100） -->
         <div v-else class="result-detail">
-          <!-- 身份通过但未参与：诚实说明，避免误显示「谢谢参与」 -->
+          <!-- 身份通过但未参与 -->
           <template v-if="myResultData.joined === false">
             <div class="result-line">{{ $t('lottery.resultNotJoined') }}</div>
           </template>
+          <!-- 已参与、尚未开奖：勿写「未获得奖品」 -->
+          <template v-else-if="!myResultData.won && !isMyResultDrawFinal">
+            <div class="result-line">⏳ {{ $t('lottery.resultPendingDraw') }}</div>
+            <p class="result-hint">{{ $t('lottery.resultPendingDrawHint') }}</p>
+          </template>
+          <!-- 中奖：有卡密 / 人工履约 / 仅有档位名 -->
           <template v-else-if="myResultData.won">
             <div class="result-line">🎉 <strong>{{ $t('lottery.won') }}</strong></div>
+            <div v-if="myResultData.prizeName || myResultData.tierName" class="result-prize-meta">
+              <div class="result-line">
+                {{ $t('lottery.wonPrizeLabel') }}
+                <strong>{{ myResultData.prizeName || myResultData.tierName }}</strong>
+              </div>
+              <div v-if="myResultData.tierName && myResultData.prizeName && myResultData.tierName !== myResultData.prizeName" class="result-hint">
+                {{ $t('lottery.wonTierLabel') }}{{ myResultData.tierName }}
+              </div>
+              <div v-if="myResultData.prizeValueText" class="result-hint">{{ myResultData.prizeValueText }}</div>
+            </div>
             <div v-if="myResultData.prizeCode" class="result-code-block">
               <span class="result-code-label">{{ $t('lottery.prizeCodeLabel') }}</span>
               <code class="result-code" @click="copyMyResult(myResultData.prizeCode)">{{ myResultData.prizeCode }}</code>
               <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
             </div>
+            <!-- 人工履约：无卡密是设计如此，不是「未中奖」 -->
+            <template v-else-if="isManualFulfillmentPrize(myResultData.prizeType)">
+              <p class="result-hint result-fulfill-hint">{{ $t('lottery.wonManualFulfillmentHint') }}</p>
+              <p v-if="myResultData.fulfillmentNote" class="result-hint">{{ myResultData.fulfillmentNote }}</p>
+            </template>
+            <template v-else-if="!myResultData.prizeCode">
+              <p class="result-hint">{{ $t('lottery.wonNoCodeHint') }}</p>
+            </template>
             <div class="result-share-win">
               <p class="result-share-hint">🎁 {{ $t('lottery.shareYourLuck') }}</p>
               <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 {{ $t('lottery.shareActivityBtn') }}</button>
             </div>
-            <!-- 中奖后 CTA：运营者配置的导流卡片 -->
             <div v-if="getResultCta(myResultDraw, 'after_win')" class="result-cta-card">
               <a :href="getResultCta(myResultDraw, 'after_win')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
                 {{ getResultCta(myResultDraw, 'after_win')!.title || $t('lottery.viewDetail') }}
@@ -637,11 +660,11 @@
               <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
             </div>
           </template>
+          <!-- 已开奖且未中奖（仅此才用「未获得」语义） -->
           <template v-else>
             <div class="result-line">😊 {{ $t('lottery.thanksForParticipating') }}</div>
           </template>
-          <!-- 未中奖 CTA：运营者配置的导流卡片（安慰奖和未中奖都展示） -->
-          <div v-if="myResultData.joined !== false && !myResultData.won && getResultCta(myResultDraw, 'after_loss')" class="result-cta-card">
+          <div v-if="myResultData.joined !== false && !myResultData.won && isMyResultDrawFinal && getResultCta(myResultDraw, 'after_loss')" class="result-cta-card">
             <a :href="getResultCta(myResultDraw, 'after_loss')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
               {{ getResultCta(myResultDraw, 'after_loss')!.title || $t('lottery.viewDetail') }}
             </a>
@@ -1110,8 +1133,33 @@ const myResultLoading = ref(false)
 const myResultSendingCode = ref(false)
 const myResultCodeCooldown = ref(0)
 let myResultCooldownTimer: ReturnType<typeof setInterval> | null = null
-const myResultData = ref<{ joined: boolean; won: boolean; prizeCode: string | null; consolationCoupon: string | null } | null>(null)
+/** my-result 载荷：含人工履约奖品信息（docs/100） */
+type MyResultPayload = {
+  joined: boolean
+  won: boolean
+  drawStatus?: string | null
+  resultMode?: string | null
+  prizeCode: string | null
+  prizeName?: string | null
+  prizeType?: string | null
+  prizeValueText?: string | null
+  fulfillmentNote?: string | null
+  tierName?: string | null
+  consolationCoupon: string | null
+}
+const myResultData = ref<MyResultPayload | null>(null)
 const myResultError = ref('')
+
+/** 活动是否已终态（可诚实说「未中奖」） */
+const isMyResultDrawFinal = computed(() => {
+  const st = String(myResultData.value?.drawStatus || myResultDraw.value?.status || '')
+  return st === 'drawn' || st === 'cancelled'
+})
+
+function isManualFulfillmentPrize(prizeType: string | null | undefined): boolean {
+  const t = String(prizeType || '').trim().toLowerCase()
+  return t === 'manual_fulfillment' || t === 'manual'
+}
 
 /** 从最近参与的活动数据中提取 publicSlug，供 GameResultModal 调用 /share API */
 const lastJoinDrawSlug = computed(() => {

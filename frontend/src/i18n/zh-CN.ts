@@ -664,7 +664,14 @@ export default {
     shareActivityBtn: "分享活动",
     gotConsolation: "获得安慰奖！",
     couponLabel: "优惠券：",
-    thanksForParticipating: "感谢参与，本次活动未获得奖品",
+    /** 仅「已开奖 + 未中奖」使用；勿用于人工履约中奖无码 */
+    thanksForParticipating: "感谢参与，本次未抽中奖品",
+    resultPendingDraw: "你已参与，结果尚未公布",
+    resultPendingDrawHint: "主办方开奖后，可再次查询是否中奖。",
+    wonPrizeLabel: "奖品：",
+    wonTierLabel: "奖项：",
+    wonManualFulfillmentHint: "本奖品为人工发放：主办方将按登记信息联系你或线下履约，无需卡密。",
+    wonNoCodeHint: "你已中奖。本场未绑定可复制卡密，请留意主办方通知。",
     codeHint: "验证码需先在参与/登录时获取，用于验证邮箱归属",
     // 导流
     viewProduct: "查看商品",

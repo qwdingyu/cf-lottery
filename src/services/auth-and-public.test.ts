@@ -21,6 +21,8 @@ import {
   lotteryDraws,
   lotteryEntries,
   lotteryWinners,
+  lotteryPrizeTiers,
+  prizes,
   couponCodes,
   shareRecords,
   systemConfig,
@@ -1115,6 +1117,83 @@ describe("公开参与流程", () => {
     const body = await res.json() as any;
     expect(body.ok).toBe(false);
     expect(String(body.message || "")).toContain("未开放");
+  });
+
+  /**
+   * docs/100：人工履约中奖无码池时，my-result 仍 won=true 并返回奖品名，
+   * 禁止前端只能靠 prizeCode 判断中奖。
+   */
+  it("my-result 人工履约中奖：won=true、无 prizeCode、带 prizeName/prizeType", async () => {
+    const app = createPublicTestApp();
+    const email = "manual-win@test.com";
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    const prizeId = crypto.randomUUID();
+    const tierId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "manual-fulfill-win",
+      title: "人工奖刮刮卡", status: "drawn", participationMode: "open",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    await db.insert(prizes).values({
+      id: prizeId,
+      tenantId: TENANT,
+      name: "限定周边",
+      description: "线下领取",
+      prizeType: "manual_fulfillment",
+      valueText: "价值约 99",
+      fulfillmentNote: "请凭中奖邮件联系客服",
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: tierId,
+      tenantId: TENANT,
+      drawId,
+      prizeId,
+      tierName: "一等奖",
+      winnerCount: 1,
+      sortOrder: 1,
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: email, joinedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryWinners).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      tierId,
+      entryId,
+      identityType: "email",
+      identityValue: email,
+      prizeCodeId: "", // 人工履约：无卡密
+      notificationStatus: "pending",
+    });
+    const token = await signJwt(
+      { sub: crypto.randomUUID(), tenantId: TENANT, email },
+      TEST_ENV.JWT_SECRET,
+      3600,
+    );
+    const res = await app.request("/public/draws/manual-fulfill-win/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.80",
+      },
+      body: JSON.stringify({ email, code: "" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.joined).toBe(true);
+    expect(body.won).toBe(true);
+    expect(body.prizeCode).toBeNull();
+    expect(body.prizeName).toBe("限定周边");
+    expect(body.prizeType).toBe("manual_fulfillment");
+    expect(body.tierName).toBe("一等奖");
+    expect(body.fulfillmentNote).toContain("客服");
+    expect(body.drawStatus).toBe("drawn");
   });
 
   /**

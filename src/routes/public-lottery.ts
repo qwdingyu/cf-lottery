@@ -568,7 +568,13 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   const code = String(body.code || "").trim();
 
   const [draw] = await db
-    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, participationMode: lotteryDraws.participationMode })
+    .select({
+      id: lotteryDraws.id,
+      tenantId: lotteryDraws.tenantId,
+      participationMode: lotteryDraws.participationMode,
+      status: lotteryDraws.status,
+      resultMode: lotteryDraws.resultMode,
+    })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
     .limit(1);
@@ -637,12 +643,22 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     ))
     .limit(1);
 
-  // 1. 是否中奖 + 中奖卡密
+  // 1. 是否中奖 + 奖品信息 + 可选卡密
+  // 人工履约（manual_fulfillment）无码池：仍必须 won=true，并返回奖品名/履约说明，
+  // 禁止前端把「有 winner 行但无 prizeCode」当成「未获得奖品」（docs/100）。
   let won = false;
   let prizeCode: string | null = null;
+  let prizeName: string | null = null;
+  let prizeType: string | null = null;
+  let prizeValueText: string | null = null;
+  let fulfillmentNote: string | null = null;
+  let tierName: string | null = null;
   if (entry) {
     const [winner] = await db
-      .select({ prizeCodeId: lotteryWinners.prizeCodeId, identityValue: lotteryWinners.identityValue })
+      .select({
+        prizeCodeId: lotteryWinners.prizeCodeId,
+        tierId: lotteryWinners.tierId,
+      })
       .from(lotteryWinners)
       .where(and(
         eq(lotteryWinners.tenantId, draw.tenantId),
@@ -652,6 +668,32 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
       .limit(1);
     if (winner) {
       won = true;
+      // 档位 → 奖品：用于人工发放展示（无卡密也要知道中了什么）
+      if (winner.tierId) {
+        const [tierRow] = await db
+          .select({
+            tierName: lotteryPrizeTiers.tierName,
+            prizeId: lotteryPrizeTiers.prizeId,
+            prizeName: prizes.name,
+            prizeType: prizes.prizeType,
+            valueText: prizes.valueText,
+            fulfillmentNote: prizes.fulfillmentNote,
+          })
+          .from(lotteryPrizeTiers)
+          .leftJoin(prizes, eq(prizes.id, lotteryPrizeTiers.prizeId))
+          .where(and(
+            eq(lotteryPrizeTiers.id, winner.tierId),
+            eq(lotteryPrizeTiers.tenantId, draw.tenantId),
+          ))
+          .limit(1);
+        if (tierRow) {
+          tierName = tierRow.tierName || null;
+          prizeName = tierRow.prizeName || tierRow.tierName || null;
+          prizeType = tierRow.prizeType || null;
+          prizeValueText = tierRow.valueText || null;
+          fulfillmentNote = tierRow.fulfillmentNote || null;
+        }
+      }
       if (winner.prizeCodeId) {
         const [pc] = await db
           .select({ code: prizeCodes.code, secret: prizeCodes.secret })
@@ -667,20 +709,35 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   // 查询键与 entry 身份一致：registered 用户 coupon.recipient_email 存的是 userId。
   // 必须带 drawId：同租户多场活动时，仅按邮箱会串场返回他场安慰券（docs/099 发版审查 P0）。
   let consolationCoupon: string | null = null;
-  const [coupon] = await db
-    .select({ code: couponCodes.code, status: couponCodes.status })
-    .from(couponCodes)
-    .where(and(
-      eq(couponCodes.tenantId, draw.tenantId),
-      eq(couponCodes.drawId, draw.id),
-      eq(couponCodes.recipientEmail, identityValue),
-    ))
-    .limit(1);
-  if (coupon && coupon.status === "issued") {
-    consolationCoupon = coupon.code;
+  if (!won) {
+    const [coupon] = await db
+      .select({ code: couponCodes.code, status: couponCodes.status })
+      .from(couponCodes)
+      .where(and(
+        eq(couponCodes.tenantId, draw.tenantId),
+        eq(couponCodes.drawId, draw.id),
+        eq(couponCodes.recipientEmail, identityValue),
+      ))
+      .limit(1);
+    if (coupon && coupon.status === "issued") {
+      consolationCoupon = coupon.code;
+    }
   }
 
-  return ok(c, { joined: !!entry, won, prizeCode, consolationCoupon });
+  return ok(c, {
+    joined: !!entry,
+    won,
+    /** 活动状态：open/drawing/drawn… 前端可区分「尚未开奖」与「已开奖未中」 */
+    drawStatus: draw.status,
+    resultMode: draw.resultMode || null,
+    prizeCode,
+    prizeName,
+    prizeType,
+    prizeValueText,
+    fulfillmentNote,
+    tierName,
+    consolationCoupon,
+  });
 });
 
 // ═════════════════════════════════════════════════════════
