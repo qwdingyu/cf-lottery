@@ -118,15 +118,14 @@ export function usePosterQr() {
 
   async function generatePosterFromDom() {
     const node = posterDomRef.value
-    if (!node) return
+    if (!node) { showToast('海报模板未渲染', 'error'); return }
     try {
-      posterDataUrl.value = await toPng(node, {
-        pixelRatio: 2,
-        cacheBust: true,
-      })
+      posterDataUrl.value = await toPng(node, { pixelRatio: 2, cacheBust: true })
+      if (!posterDataUrl.value) showToast('海报生成失败：空结果', 'error')
     } catch (err) {
       console.warn('[poster] html-to-image failed:', err)
       posterDataUrl.value = ''
+      showToast('海报生成失败，请查看控制台日志', 'error')
     }
   }
 
