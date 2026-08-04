@@ -62,9 +62,11 @@ describe("joined-session", () => {
     expect(joinResultHintI18nKey("vote_tally")).toBe("joinResultHintVoteTally");
     expect(joinResultHintI18nKey("ordered_assignment")).toBe("joinResultHintOrdered");
     expect(joinResultHintI18nKey("manual")).toBe("joinResultHintManual");
+    expect(joinResultHintI18nKey("review_decision")).toBe("joinResultHintReview");
     expect(joinedOpenStatusHintKey("no_result")).toBe("statusHintJoinedNoResult");
     expect(joinedOpenStatusHintKey("instant")).toBe("statusHintJoinedInstant");
     expect(joinedOpenStatusHintKey("manual")).toBe("statusHintJoinedPending");
+    expect(joinedOpenStatusHintKey("review_decision")).toBe("statusHintJoinedReview");
   });
 
   it("isSilentFetchOption 忽略 DOM Event 形状", () => {

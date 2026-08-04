@@ -10,6 +10,7 @@ import {
   shouldShowInviteShareCta,
   shouldShowNotWonRecordTag,
   statusHintDrawnI18nKey,
+  statusHintDrawingI18nKey,
 } from "./public-helpers";
 
 describe("public-helpers experience UX", () => {
@@ -92,5 +93,14 @@ describe("public-helpers experience UX", () => {
     // 缺 kind：公开页多为抽奖深链，仍用抽奖文案
     expect(statusHintDrawnI18nKey(undefined)).toBe("statusHintDrawn");
     expect(statusHintDrawnI18nKey("")).toBe("statusHintDrawn");
+  });
+
+  it("statusHintDrawingI18nKey：抽奖说开奖中，其它玩法中性", () => {
+    expect(statusHintDrawingI18nKey("lottery")).toBe("statusHintDrawing");
+    expect(statusHintDrawingI18nKey("claim")).toBe("statusHintDrawing");
+    expect(statusHintDrawingI18nKey("signup_chain")).toBe("statusHintDrawingGeneric");
+    expect(statusHintDrawingI18nKey("survey")).toBe("statusHintDrawingGeneric");
+    expect(statusHintDrawingI18nKey(undefined)).toBe("statusHintDrawing");
+    expect(statusHintDrawingI18nKey("")).toBe("statusHintDrawing");
   });
 });

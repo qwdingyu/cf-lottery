@@ -515,14 +515,18 @@
         <button class="result-close" @click="showMyResultModal = false">✕</button>
         <h2 class="result-title">{{ $t('lottery.myResultTitle') }}</h2>
 
-        <!-- 查询表单：docs/084 按会话态分流 -->
+        <!-- 查询表单：docs/084 强会话 / docs/105 会话邮箱一键尝试 / 否则 OTP -->
         <div v-if="!myResultData" class="result-form">
-          <template v-if="myResultHasStrongSession">
+          <template v-if="myResultCanOneClickQuery && !myResultForceOtpForm">
             <p class="result-hint">
               {{
-                $t('lottery.loggedInQueryHint', {
-                  name: registeredUsername || sessionEmail || myResultEmail || '…',
-                })
+                myResultHasStrongSession
+                  ? $t('lottery.loggedInQueryHint', {
+                      name: registeredUsername || sessionEmail || myResultEmail || '…',
+                    })
+                  : $t('lottery.sessionEmailQueryHint', {
+                      email: sessionEmail || myResultEmail || '…',
+                    })
               }}
             </p>
             <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
@@ -533,6 +537,15 @@
               @click="queryMyResult"
             >
               {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.queryText') }}
+            </button>
+            <button
+              v-if="myResultHasSessionEmailOnly"
+              type="button"
+              class="btn btn-ghost result-secondary-btn"
+              :disabled="myResultLoading"
+              @click="myResultForceOtpForm = true"
+            >
+              {{ $t('lottery.useOtherEmailOrCode') }}
             </button>
           </template>
           <template v-else>
@@ -782,6 +795,7 @@ import {
   shouldShowInviteShareCta,
   shouldShowNotWonRecordTag,
   statusHintDrawnI18nKey,
+  statusHintDrawingI18nKey,
 } from './lottery/public-helpers'
 import {
   isAlreadyJoinedResponse,
@@ -1069,8 +1083,19 @@ function completeJoinSuccess(
     }, delayMs)
   }
 }
-/** docs/084：持有业务 JWT 即强会话（registered 按 sub；open 按 JWT.email 免 OTP） */
+/**
+ * docs/084：业务 JWT = 强会话（registered / open+JWT 免 OTP）。
+ * docs/105：同页已有 sessionEmail（open OTP 刚参与）= 弱会话——仍可一键发起查结果，
+ * 后端若要求码会返回错误，再展示 OTP 表单；避免「顶栏已登录却必须先填码」的假门槛。
+ */
 const myResultHasStrongSession = computed(() => Boolean(registeredToken.value))
+/** 无 JWT 但本页会话邮箱已在：预填邮箱并优先尝试查询（非密码学证明） */
+const myResultHasSessionEmailOnly = computed(
+  () => !registeredToken.value && Boolean(String(sessionEmail.value || '').trim().includes('@')),
+)
+const myResultCanOneClickQuery = computed(
+  () => myResultHasStrongSession.value || myResultHasSessionEmailOnly.value,
+)
 
 /** 头部标题：单活动模式用活动名，多活动模式用默认标题 */
 const drawTitle = computed(() => {
@@ -1104,12 +1129,13 @@ function resultModeLabel(draw: LotteryDraw) {
   if (mode === 'instant') return t('lottery.resultModeInstantTag')
   if (mode === 'scheduled') return t('lottery.resultModeScheduledTag')
   if (mode === 'manual') return t('lottery.resultModeManualTag')
-  // 非抽奖：有标签总比空白好（docs/097）
+  // 非抽奖：有标签总比空白好（docs/097 / docs/105）
   if (mode === 'no_result') return t('lottery.adminResultNoResult')
   if (mode === 'vote_tally') return t('lottery.adminResultVoteTally')
   if (mode === 'ordered_assignment' || mode === 'capacity_assignment') {
     return t('lottery.adminResultOrdered')
   }
+  if (mode === 'review_decision') return t('lottery.adminResultReview')
   return ''
 }
 
@@ -1122,15 +1148,17 @@ function statusPathHint(draw: LotteryDraw) {
   if (isDrawJoined(draw) && draw.status === 'open') {
     return t(`lottery.${joinedOpenStatusHintKey(draw.resultMode)}`)
   }
-  // drawn：抽奖族可说「是否中奖」；其它玩法用中性「查询结果」（docs/104）
+  // drawn / drawing：抽奖族可说开奖；其它玩法中性（docs/104 / docs/105）
   if (draw.status === 'drawn') {
     return t(`lottery.${statusHintDrawnI18nKey(draw.activityKind)}`)
+  }
+  if (draw.status === 'drawing') {
+    return t(`lottery.${statusHintDrawingI18nKey(draw.activityKind)}`)
   }
   const key = ({
     draft: 'lottery.statusHintDraft',
     open: '',
     paused: 'lottery.statusHintPaused',
-    drawing: 'lottery.statusHintDrawing',
     cancelled: 'lottery.statusHintCancelled',
   } as Record<string, string>)[draw.status]
   return key ? t(key) : ''
@@ -1232,6 +1260,11 @@ type MyResultPayload = {
 }
 const myResultData = ref<MyResultPayload | null>(null)
 const myResultError = ref('')
+/**
+ * docs/105：弱会话一键查询失败后，强制展开邮箱+OTP 表单；
+ * 成功或重新打开弹窗时清零。勿与 myResultHasSessionEmailOnly 混用（后者是派生态）。
+ */
+const myResultForceOtpForm = ref(false)
 
 /**
  * 结果族：优先 API resultFamily；缺省时用活动 activityKind 推断（兼容旧后端）。
@@ -1343,10 +1376,11 @@ function openMyResult(draw: LotteryDraw) {
   myResultData.value = null
   myResultError.value = ''
   myResultSendingCode.value = false
+  myResultForceOtpForm.value = false
   stopMyResultCooldown()
   showMyResultModal.value = true
-  // docs/084：有业务 JWT 则打开即查（open 系后端用 JWT.email）
-  if (registeredToken.value) {
+  // docs/084：JWT 打开即查；docs/105：仅有 sessionEmail 也先尝试（失败再 OTP）
+  if (registeredToken.value || myResultHasSessionEmailOnly.value) {
     void queryMyResult()
   }
 }
@@ -1364,6 +1398,7 @@ function openMyResultFromRecord(row: MyEntry) {
       title: row.drawName || row.drawId,
       status: row.drawStatus || 'open',
       participationMode: 'open',
+      activityKind: row.activityKind || 'lottery',
     } as LotteryDraw)
   openMyResult(draw)
 }
@@ -1409,12 +1444,18 @@ async function queryMyResult() {
   if (!myResultDraw.value) return
   const isReg = myResultDraw.value.participationMode === 'registered'
   const hasBearer = Boolean(registeredToken.value)
-  // registered：必须 JWT；open 系：有 Bearer 可免 OTP，否则必须邮箱+码
+  // open 弱会话：用 sessionEmail 填邮箱，允许无码先试（后端拒绝则切 OTP 表单，docs/105）
+  if (!isReg && !hasBearer && !myResultEmail.value.trim() && sessionEmail.value) {
+    myResultEmail.value = sessionEmail.value
+  }
+  const sessionOnlyAttempt =
+    !isReg && !hasBearer && !myResultCode.value.trim() && Boolean(myResultEmail.value.trim().includes('@'))
+  // registered：必须 JWT；open 系：Bearer 免 OTP，或邮箱+码，或仅会话邮箱先试
   if (isReg && !hasBearer) {
     myResultError.value = t('lottery.registeredRequired') || ''
     return
   }
-  if (!isReg && !hasBearer && (!myResultEmail.value.trim() || !myResultCode.value.trim())) {
+  if (!isReg && !hasBearer && !sessionOnlyAttempt && (!myResultEmail.value.trim() || !myResultCode.value.trim())) {
     myResultError.value = t('lottery.emailCodeRequired') || ''
     return
   }
@@ -1447,22 +1488,31 @@ async function queryMyResult() {
     const data = await res.json()
     if (data.ok) {
       myResultData.value = data
+      myResultForceOtpForm.value = false
       if (!isReg && myResultEmail.value.trim()) {
         persistSessionEmail(myResultEmail.value.trim().toLowerCase())
       }
-      // 查到已参与：回填 joined / 中奖标签（刷新后恢复 UI，docs/097）
+      // 查到已参与：回填 joined / 中奖标签 + activityKind（docs/097 / docs/105）
       const drawKey = myResultDraw.value.id
       if (data.joined) {
-        markDrawJoined(drawKey, { drawStatus: myResultDraw.value.status })
+        markDrawJoined(drawKey, {
+          drawStatus: data.drawStatus || myResultDraw.value.status,
+          activityKind: data.activityKind || myResultDraw.value.activityKind,
+        })
         if (data.won) {
           myWonById.value = { ...myWonById.value, [drawKey]: true }
         }
       }
     } else {
       myResultError.value = data.message || t('lottery.queryFailed')
+      // 无码尝试被拒：展开 OTP，不让用户困在「一键查询」死胡同（docs/105）
+      if (sessionOnlyAttempt) {
+        myResultForceOtpForm.value = true
+      }
     }
   } catch {
     myResultError.value = t('lottery.networkError') || ''
+    if (sessionOnlyAttempt) myResultForceOtpForm.value = true
   } finally {
     myResultLoading.value = false
   }

@@ -25,10 +25,10 @@
         <h2 :id="titleId" class="result-title">{{ statusTitle }}</h2>
         <p class="result-hint">{{ statusHint }}</p>
 
-        <!-- 分享错误提示 -->
-        <p v-if="shareError" class="result-error">{{ shareError }}</p>
-
-        <!-- 裂变/邀请：仅活动未终态；已开奖再推邀请无意义（docs/103） -->
+        <!--
+          裂变/邀请：仅活动未终态（docs/103）。
+          加载中 / 成功 / 失败三态互斥，禁止失败后仍显示「加载分享链接…」（docs/105）。
+        -->
         <template v-if="inviteShareAllowed">
           <div v-if="viralEnabled && shareLoaded" class="viral-card">
             <div class="viral-headline">{{ $t('lottery.viralHeadline') }}</div>
@@ -60,7 +60,16 @@
             <button type="button" class="btn btn-ghost" @click="copyAttributedLink">{{ $t('lottery.shareActivityBtn') }}</button>
           </div>
 
-          <div v-else-if="entryId" class="result-hint" style="margin-top:12px">{{ $t('lottery.viralLoadShareLink') }}</div>
+          <div v-else-if="shareError" class="viral-share-fail">
+            <p class="result-error">{{ shareError }}</p>
+            <button type="button" class="btn btn-ghost btn-sm" :disabled="shareLoading" @click="loadShareLink">
+              {{ shareLoading ? $t('lottery.loadingText') : $t('lottery.viralRetryShare') }}
+            </button>
+          </div>
+
+          <div v-else-if="entryId && shareLoading" class="result-hint" style="margin-top:12px">
+            {{ $t('lottery.viralLoadShareLink') }}
+          </div>
         </template>
 
         <!--
@@ -160,7 +169,7 @@ const statusHint = computed(() => {
   if (mode === 'manual') {
     return t('lottery.joinResultHintManual')
   }
-  // 非抽奖：诚实语义，勿套「等开奖」（docs/097）
+  // 非抽奖：诚实语义，勿套「等开奖」（docs/097 / docs/105）
   if (mode === 'no_result') {
     return t('lottery.joinResultHintNoResult')
   }
@@ -170,7 +179,10 @@ const statusHint = computed(() => {
   if (mode === 'ordered_assignment' || mode === 'capacity_assignment') {
     return t('lottery.joinResultHintOrdered')
   }
-  // 未知或未传：保守为「已登记，等待开奖」
+  if (mode === 'review_decision') {
+    return t('lottery.joinResultHintReview')
+  }
+  // 未知或未传：保守为「已登记，等待开奖」（仅抽奖缺省）
   return t('lottery.joinResultHintPending')
 })
 
@@ -249,6 +261,14 @@ watch(() => props.show, async (newVal) => {
 .result-icon { font-size: 48px; margin-bottom: 12px; }
 .result-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
 .result-hint { font-size: 14px; color: var(--tg-hint); margin-bottom: 16px; }
+.result-error { font-size: 13px; color: #ef4444; margin: 0 0 8px; }
+.viral-share-fail {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
 .result-actions {
   display: flex;
   flex-wrap: wrap;

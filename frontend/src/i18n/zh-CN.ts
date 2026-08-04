@@ -570,6 +570,8 @@ export default {
     joinResultHintNoResult: "你已成功提交。本活动不产生中奖结果，主办方如有后续将另行通知。",
     joinResultHintVoteTally: "你已成功投票。计票完成后可在本页或主办方渠道查看。",
     joinResultHintOrdered: "你已成功登记。名额按顺序分配，可在本页查询排队/分配状态。",
+    /** 审批类 result_mode：勿套「等开奖 / 是否中奖」（docs/105） */
+    joinResultHintReview: "你已成功提交。主办方审核后，可在本页查询审核结果。",
     joinFailed: "参与失败",
     loginExpired: "登录已过期，请重新验证",
     checkOrder: "查看结果",
@@ -723,8 +725,8 @@ export default {
     gameSlotPulling: "…",
     gameSlotAriaSpinning: "提交中",
     gameSlotAriaPull: "参与活动",
-    // 转盘：join 路径是「提交参与」动效，不是开奖决定结果（docs/055a 技术更正）
-    gameWheelJoin: "参与\n抽奖",
+    // 转盘/老虎机：join 路径是「提交参与」动效，不是开奖决定结果（docs/055a / docs/105）
+    gameWheelJoin: "立即\n参与",
     /** 有游戏壳时底部提示：主操作在游戏区，避免与底部第二颗「参与」双入口 */
     gamePrimaryCtaHint: "请在上方互动区完成参与（点击转盘中心 / 刮开 / 提交等）",
     gamePrimaryCtaHintWheel: "点击转盘中心即可参与",
@@ -756,13 +758,16 @@ export default {
     /** Submit/Form/Reveal 已参与（disabled 且非 loading） */
     gameSubmitJoined: "已成功参与",
     // 裂变组件
-    viralInviteHint: "每邀请 1 人额外获得 {n} 次抽奖机会",
+    viralInviteHint: "每邀请 1 人额外获得 {n} 次参与机会",
     viralInvitedLabel: "已邀请",
     viralMaxLabel: "最多额外次数",
     viralLoadShareLink: "加载分享链接…",
+    /** 分享失败后重试（与加载态互斥，docs/105） */
+    viralRetryShare: "重新获取分享链接",
     viralMe: "我",
     viralEmptyHint: "还没有人邀请好友，快来成为第一个！",
-    viralHeadline: "邀请好友，赚额外抽奖次数",
+    /** 中性：额外参与机会，不绑定「抽奖次数」话术（docs/105） */
+    viralHeadline: "邀请好友，赚额外参与机会",
     viralMyInvite: "🎁 我的邀请",
     viralExtraProgress: "{earned} / {max} 次额外机会",
     viralGenerateHint: "点击下方按钮生成",
@@ -1197,16 +1202,19 @@ export default {
     statusHintDraft: "活动尚未对外开放。请稍后再来，或点「刷新状态」查看是否已开启。",
     statusHintPaused: "主办方已暂停本活动，暂不可新参与。可刷新状态或复制链接稍后再进。",
     statusHintDrawing: "正在开奖，请稍后点刷新或查询结果。",
+    /** 非抽奖 drawing：勿写「正在开奖」（docs/105） */
+    statusHintDrawingGeneric: "结果处理中，请稍后点刷新或查询结果。",
     statusHintDrawn: "活动已结束。若已参与，可查询是否中奖。",
     /** 非抽奖玩法 status=drawn/结束：勿写「是否中奖」（docs/104） */
     statusHintDrawnGeneric: "活动已结束。若已参与，可在本页查询你的结果。",
     statusHintCancelled: "活动已取消。",
     statusHintJoinedPending: "你已参与。开奖后可在本页查询结果。",
-    /** 已参与 + open：按 result_mode 诚实分支（docs/098） */
+    /** 已参与 + open：按 result_mode 诚实分支（docs/098 / docs/105） */
     statusHintJoinedNoResult: "你已提交。本活动不产生中奖结果，主办方如有后续将另行通知。",
     statusHintJoinedVote: "你已投票。计票完成后可在本页或主办方渠道查看。",
     statusHintJoinedOrdered: "你已登记。名额按顺序分配，可在本页查询排队/分配状态。",
     statusHintJoinedInstant: "你已参与。若本场即时出结果，可点「查询结果」查看。",
+    statusHintJoinedReview: "你已提交。主办方审核后，可在本页查询审核结果。",
     refreshStatus: "刷新状态",
     resultCodeHint: "点击「发送验证码」到邮箱，填写后查询（开奖后也可发码）。",
     resultCodeHintShort: "验证码发到该邮箱，用于保护中奖信息。",
@@ -1223,6 +1231,9 @@ export default {
     requiredField: "请填写：{label}",
     myResultTitle: "我的结果",
     loggedInQueryHint: "已验证：{name}，正在获取你的结果",
+    /** 弱会话：本页已有邮箱，先一键尝试；失败再 OTP（docs/105） */
+    sessionEmailQueryHint: "将使用本页邮箱 {email} 查询结果。若需验证码，会提示你填写。",
+    useOtherEmailOrCode: "使用其他邮箱或验证码",
     viewMyResultCta: "查看结果",
     cfAuthQueryFaster: "使用统一登录更快查询",
     resultEmailPlaceholder: "参与时填写的邮箱",

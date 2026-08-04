@@ -172,6 +172,8 @@ export function joinResultHintI18nKey(resultMode: string | null | undefined): st
   if (mode === 'ordered_assignment' || mode === 'capacity_assignment') {
     return 'joinResultHintOrdered'
   }
+  // 审批：禁止落入「等开奖 / 是否中奖」（docs/105）
+  if (mode === 'review_decision') return 'joinResultHintReview'
   return 'joinResultHintPending'
 }
 
@@ -188,6 +190,7 @@ export function joinedOpenStatusHintKey(resultMode: string | null | undefined): 
     return 'statusHintJoinedOrdered'
   }
   if (mode === 'instant') return 'statusHintJoinedInstant'
+  if (mode === 'review_decision') return 'statusHintJoinedReview'
   return 'statusHintJoinedPending'
 }
 

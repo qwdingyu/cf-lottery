@@ -155,6 +155,16 @@ export function statusHintDrawnI18nKey(activityKind?: string | null): string {
 }
 
 /**
+ * drawing 状态横幅 key：仅抽奖族说「正在开奖」；其它说中性「结果处理中」（docs/105）。
+ */
+export function statusHintDrawingI18nKey(activityKind?: string | null): string {
+  if (isLotteryResultFamilyKind(activityKind) || !String(activityKind || '').trim()) {
+    return 'statusHintDrawing'
+  }
+  return 'statusHintDrawingGeneric'
+}
+
+/**
  * 即时出结果后的说明文案 key。
  * 邀请 CTA 由 shouldShowInviteShareCta 单独门禁；此处 hint **永不**鼓动「邀请好友」（docs/103/104）。
  */

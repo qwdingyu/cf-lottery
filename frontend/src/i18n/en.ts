@@ -610,6 +610,8 @@ export default {
     joinResultHintNoResult: "Submitted. This activity has no prize draw; the host will follow up if needed.",
     joinResultHintVoteTally: "Your vote is in. Check back here or with the host after tallying.",
     joinResultHintOrdered: "You're registered. Spots are assigned in order — check status on this page.",
+    /** Review result_mode: no “waiting for draw / whether you won” (docs/105) */
+    joinResultHintReview: "Submitted. After the host reviews, check the decision on this page.",
     joinFailed: "Failed to join",
     loginExpired: "Session expired, please login again",
     checkOrder: "View result",
@@ -751,8 +753,8 @@ export default {
     gameSlotPulling: "...",
     gameSlotAriaSpinning: "Submitting",
     gameSlotAriaPull: "Join activity",
-    // Wheel: join path is submit animation, not draw resolution (docs/055a correction)
-    gameWheelJoin: "Join\nDraw",
+    // Wheel/slot: join path is submit animation, not draw resolution (docs/055a / docs/105)
+    gameWheelJoin: "Join\nNow",
     /** When a game shell is mounted, primary CTA lives in the game; bar shows a hint only */
     gamePrimaryCtaHint: "Use the interaction above to join (center of the wheel / scratch / submit, etc.)",
     gamePrimaryCtaHintWheel: "Tap the center of the wheel to join",
@@ -787,8 +789,11 @@ export default {
     viralInvitedLabel: "Invited",
     viralMaxLabel: "Max extra",
     viralLoadShareLink: "Loading share link…",
+    /** Retry after share failure (mutually exclusive with loading, docs/105) */
+    viralRetryShare: "Retry share link",
     viralMe: "Me",
     viralEmptyHint: "No invites yet. Be the first!",
+    /** Neutral extra entries — not lottery-only wording (docs/105) */
     viralHeadline: "Invite friends for extra entries",
     viralMyInvite: "🎁 My invites",
     viralExtraProgress: "{earned} / {max} extra entries",
@@ -1223,16 +1228,19 @@ export default {
     statusHintDraft: "This activity is not open to the public yet. Refresh later or tap “Refresh status” when the host opens it.",
     statusHintPaused: "The host paused this activity; new joins are off. Refresh status or copy the link for later.",
     statusHintDrawing: "Drawing in progress. Refresh or check results shortly.",
+    /** Non-lottery drawing: no “drawing” prize wording (docs/105) */
+    statusHintDrawingGeneric: "Results are being processed. Refresh or check results shortly.",
     statusHintDrawn: "This activity has ended. If you joined, you can check whether you won.",
     /** Non-lottery ended: no “whether you won” (docs/104) */
     statusHintDrawnGeneric: "This activity has ended. If you joined, check your result on this page.",
     statusHintCancelled: "This activity was cancelled.",
     statusHintJoinedPending: "You have joined. Check results here after the draw.",
-    /** Joined + open: honest by result_mode (docs/098) */
+    /** Joined + open: honest by result_mode (docs/098 / docs/105) */
     statusHintJoinedNoResult: "Submitted. This activity has no prize draw; the host will follow up if needed.",
     statusHintJoinedVote: "Your vote is in. Check back here or with the host after tallying.",
     statusHintJoinedOrdered: "You're registered. Spots are assigned in order — check status on this page.",
     statusHintJoinedInstant: "You've joined. If results are instant, tap “Check result”.",
+    statusHintJoinedReview: "Submitted. After the host reviews, check the decision on this page.",
     refreshStatus: "Refresh status",
     resultCodeHint: "Tap “Send code” to your email, then query (works after the draw too).",
     resultCodeHintShort: "We email a code to protect prize details.",
@@ -1249,6 +1257,9 @@ export default {
     requiredField: "Please fill in: {label}",
     myResultTitle: "My result",
     loggedInQueryHint: "Verified as {name} — fetching your result",
+    /** Weak session: try page email first; fall back to OTP (docs/105) */
+    sessionEmailQueryHint: "We'll query with this page email {email}. If a code is required, you'll be asked next.",
+    useOtherEmailOrCode: "Use another email or code",
     viewMyResultCta: "View result",
     cfAuthQueryFaster: "Faster with unified login",
     resultEmailPlaceholder: "Email used to join",
