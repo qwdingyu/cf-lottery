@@ -1075,13 +1075,14 @@
             >{{ $t('lottery.adminExportWinners') }}</button>
           </div>
         </div>
+        <p class="field-hint winners-fulfill-hint">{{ $t('lottery.adminWinnersFulfillHint') }}</p>
         <div class="table-wrap">
           <table class="admin-table">
             <thead>
               <tr>
                 <th>{{ $t('lottery.adminEmail') }}</th>
-                <th>{{ $t('lottery.adminOrderNo') }}</th>
-                <th>{{ $t('lottery.adminCards') }}</th>
+                <th>{{ $t('lottery.adminPrizeCol') }}</th>
+                <th>{{ $t('lottery.adminFulfillmentCol') }}</th>
                 <th>{{ $t('lottery.adminEmailStatus') }}</th>
               </tr>
             </thead>
@@ -1091,19 +1092,30 @@
                      email 身份等于 identityValue。兜底 identityValue 防止旧数据无字段 -->
                 <td>{{ w.identityDisplay || w.identityValue || '-' }}</td>
                 <td>
-                  <RouterLink
-                    v-if="w.orderNo"
-                    class="btn btn-ghost btn-xs"
-                    :to="{ path: '/admin/orders', query: { q: String(w.orderNo).slice(0, 120) } }"
-                    :title="$t('lottery.adminSearchOrders')"
-                  >{{ w.orderNo }}</RouterLink>
-                  <span v-else class="muted-text">-</span>
+                  <div class="relation-cell">
+                    <span>{{ w.prizeName || w.tierName || '-' }}</span>
+                    <small v-if="w.tierName && w.prizeName && w.tierName !== w.prizeName" class="muted-text">{{ w.tierName }}</small>
+                  </div>
                 </td>
                 <td>
-                  <div class="relation-cell">
-                    <span>{{ w.cardAccountLabel || '-' }}</span>
-                    <small v-if="w.cardDeliverySecret" class="muted-text">{{ w.cardDeliverySecret }}</small>
+                  <!-- 卡密：展示 code/secret；人工履约：说明；缺码：警示（docs/102） -->
+                  <div v-if="w.cardAccountLabel || w.prizeCode" class="relation-cell">
+                    <code
+                      class="result-code mono-text"
+                      :title="$t('lottery.clickToCopy')"
+                      @click="copyWinnerCode(w)"
+                    >{{ w.prizeCode || w.cardAccountLabel }}</code>
+                    <small v-if="w.cardDeliverySecret && !String(w.prizeCode || '').includes(':')" class="muted-text">{{ w.cardDeliverySecret }}</small>
                   </div>
+                  <div v-else-if="w.fulfillmentKind === 'manual' || isManualWinnerPrize(w)" class="relation-cell">
+                    <span class="tag tag-info">{{ $t('lottery.adminFulfillManual') }}</span>
+                    <small v-if="w.fulfillmentNote" class="muted-text">{{ w.fulfillmentNote }}</small>
+                  </div>
+                  <div v-else-if="w.fulfillmentKind === 'code_missing'" class="relation-cell">
+                    <span class="tag tag-danger">{{ $t('lottery.adminFulfillCodeMissing') }}</span>
+                    <small class="muted-text">{{ $t('lottery.adminFulfillCodeMissingHint') }}</small>
+                  </div>
+                  <span v-else class="muted-text">-</span>
                 </td>
                 <td>
                   <span class="tag" :class="emailStatusClass(w)" :title="winnerEmailErrorTitle(w)">
@@ -1417,7 +1429,7 @@
  * 抽奖管理页 — cf-lottery 适配版。
  */
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { useAdminAuth } from '@/composables/useAdminAuth'
@@ -2395,6 +2407,22 @@ function handleOpenPublic(draw: LotteryDraw) {
     window.open(path, '_blank', 'noopener,noreferrer')
   }
 }
+function isManualWinnerPrize(w: LotteryWinner): boolean {
+  const t = String(w.prizeType || '').trim().toLowerCase()
+  return t === 'manual_fulfillment' || t === 'manual'
+}
+
+async function copyWinnerCode(w: LotteryWinner) {
+  const text = String(w.prizeCode || w.cardAccountLabel || '').trim()
+  if (!text) return
+  try {
+    await writeClipboardText(text)
+    showToast(t('lottery.copied'), 'success')
+  } catch {
+    showToast(t('lottery.networkError'), 'error')
+  }
+}
+
 function handleExportWinners() {
   if (winners.value.length === 0) {
     showToast(t('lottery.adminExportWinnersEmpty'), 'error')
@@ -2402,12 +2430,14 @@ function handleExportWinners() {
   }
   const rows = buildLotteryWinnersCsvRows(winners.value, {
     email: t('lottery.adminEmail'),
-    orderNo: t('lottery.adminOrderNo'),
-    card: t('lottery.adminCards'),
+    prize: t('lottery.adminPrizeCol'),
+    fulfillment: t('lottery.adminFulfillmentCol'),
     emailStatus: t('lottery.adminEmailStatus'),
     sent: t('lottery.adminEmailSent'),
     pending: t('lottery.adminEmailPending'),
     failed: t('lottery.adminEmailFailed'),
+    manual: t('lottery.adminFulfillManual'),
+    codeMissing: t('lottery.adminFulfillCodeMissing'),
   })
   const idPart = (winnersModalDrawId.value || 'winners').slice(0, 40)
   downloadCsv(`lottery-winners-${idPart}-${new Date().toISOString().slice(0, 10)}.csv`, rows)

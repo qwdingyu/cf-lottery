@@ -77,9 +77,19 @@ export type LotteryWinner = {
   notificationStatus: string
   notificationError: string
   email?: string
-  orderNo?: string
-  cardAccountLabel?: string
-  cardDeliverySecret?: string
+  /** 独立孵化后不再创建 0 元订单；恒空（docs/102） */
+  orderNo?: string | null
+  cardAccountLabel?: string | null
+  cardDeliverySecret?: string | null
+  prizeCode?: string | null
+  hasPrizeCode?: boolean
+  tierName?: string | null
+  prizeName?: string | null
+  prizeType?: string | null
+  prizeValueText?: string | null
+  fulfillmentNote?: string | null
+  /** code | manual | code_missing | none */
+  fulfillmentKind?: string | null
   emailSent?: number
   emailError?: string
   /** 后端 decorateIdentityDisplay 注入：registered 身份解析为用户名(邮箱)；email 身份不注入 */

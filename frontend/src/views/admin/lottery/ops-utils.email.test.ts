@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildLotteryWinnersCsvRows,
   countLotteryEmailFailures,
   countLotteryEmailPending,
   drawDoneFeedbackKind,
@@ -69,5 +70,43 @@ describe("ops-utils email status", () => {
     expect(
       winnersPollSettleKind({ prevPending: 1, nextFail: 0, nextPending: 1, hitMaxRefreshes: false }),
     ).toBe("none");
+  });
+
+  it("buildLotteryWinnersCsvRows 导出奖品与卡密/人工履约", () => {
+    const rows = buildLotteryWinnersCsvRows(
+      [
+        w({
+          identityValue: "a@t.com",
+          prizeName: "周边",
+          prizeCode: "C1:S1",
+          cardAccountLabel: "C1",
+          notificationStatus: "sent",
+        }),
+        w({
+          id: "2",
+          identityValue: "b@t.com",
+          prizeName: "礼品",
+          prizeType: "manual_fulfillment",
+          fulfillmentKind: "manual",
+          fulfillmentNote: "线下领",
+          notificationStatus: "pending",
+        }),
+      ],
+      {
+        email: "邮箱",
+        prize: "奖品",
+        fulfillment: "履约",
+        emailStatus: "邮件",
+        sent: "已发送",
+        pending: "待发送",
+        failed: "失败",
+        manual: "人工发放",
+        codeMissing: "未锁定卡密",
+      },
+    );
+    expect(rows[0]).toEqual(["邮箱", "奖品", "履约", "邮件"]);
+    expect(rows[1]).toEqual(["a@t.com", "周边", "C1:S1", "已发送"]);
+    expect(rows[2]![2]).toContain("人工发放");
+    expect(rows[2]![2]).toContain("线下领");
   });
 });

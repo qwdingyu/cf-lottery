@@ -289,7 +289,23 @@ route.get("/draws/:id/export", async (c) => {
   ];
 
   if (draw.activityKind === "lottery") {
-    lines.push("", "中奖者,中奖时间", ...winners.map((w) => `${csvEscape((w as any).identityDisplay || w.identityValue)},${csvEscape(w.drawnAt)}`));
+    // docs/102：导出含奖品/卡密/履约，避免只有身份+时间、运营以为没发码
+    lines.push(
+      "",
+      "中奖者,奖品,档位,履约类型,卡密,中奖时间,邮件状态",
+      ...winners.map((w) => {
+        const anyW = w as any;
+        return [
+          csvEscape(anyW.identityDisplay || w.identityValue),
+          csvEscape(anyW.prizeName || ""),
+          csvEscape(anyW.tierName || ""),
+          csvEscape(anyW.fulfillmentKind || ""),
+          csvEscape(anyW.prizeCode || anyW.cardAccountLabel || ""),
+          csvEscape(w.drawnAt),
+          csvEscape(w.notificationStatus),
+        ].join(",");
+      }),
+    );
   } else {
     lines.push(
       "",

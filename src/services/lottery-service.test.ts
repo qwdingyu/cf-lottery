@@ -265,11 +265,22 @@ describe("四种参与模式", () => {
 
 describe("开奖核心流程", () => {
   it("创建奖品→导入码→参与→开奖，完整闭环", async () => {
+    // setupDraw 默认挂 manual 档位；本用例要测卡密锁码，必须覆盖为 code 奖项（docs/102）
     const { id: prizeId } = await createPrize(db, TENANT, { name: "奖品", prizeType: "code" });
     await importPrizeCodes(db, TENANT, prizeId, [
       { code: "C1", secret: "S1" }, { code: "C2", secret: "S2" }, { code: "C3", secret: "S3" },
     ]);
     const { id, publicSlug } = await setupDraw("open", { winnerCount: 2 });
+    await db.delete(lotteryPrizeTiers).where(and(eq(lotteryPrizeTiers.drawId, id), eq(lotteryPrizeTiers.tenantId, TENANT)));
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      prizeId,
+      tierName: "一等奖",
+      winnerCount: 2,
+      sortOrder: 1,
+    });
     await joinDraw(db, publicSlug, "u1@t.com");
     await joinDraw(db, publicSlug, "u2@t.com");
     await joinDraw(db, publicSlug, "u3@t.com");
@@ -280,11 +291,38 @@ describe("开奖核心流程", () => {
 
     const winners = await getDrawWinners(db, id, TENANT);
     expect(winners).toHaveLength(2);
+    // 卡密必须锁上并被 getDrawWinners 水合（管理端结果表依赖这些字段）
+    for (const w of winners) {
+      expect(w.prizeCodeId).toBeTruthy();
+      expect(w.hasPrizeCode).toBe(true);
+      expect(w.cardAccountLabel).toMatch(/^C[123]$/);
+      expect(w.cardDeliverySecret).toMatch(/^S[123]$/);
+      expect(w.prizeName).toBe("奖品");
+      expect(w.prizeType).toBe("code");
+      expect(w.fulfillmentKind).toBe("code");
+      expect(w.orderNo).toBeNull();
+    }
+    const labels = new Set(winners.map((w) => w.cardAccountLabel));
+    expect(labels.size).toBe(2);
 
     const draw = await getDraw(db, id, TENANT);
     expect(draw!.status).toBe("drawn");
     expect(draw!.drawSeedHash).toBeTruthy();
     expect(draw!.algorithmVersion).toBe("uniform_v1");
+  });
+
+  it("人工履约开奖：无卡密但 getDrawWinners 返回 prizeName/manual", async () => {
+    const { id, publicSlug } = await setupDraw("open", { winnerCount: 1 });
+    await joinDraw(db, publicSlug, "manual-win@t.com");
+    await performDraw(db, TENANT, id, USER);
+    const winners = await getDrawWinners(db, id, TENANT);
+    expect(winners).toHaveLength(1);
+    expect(winners[0]!.prizeCodeId).toBeFalsy();
+    expect(winners[0]!.hasPrizeCode).toBe(false);
+    expect(winners[0]!.prizeType).toBe("manual_fulfillment");
+    expect(winners[0]!.prizeName).toBe("测试奖品");
+    expect(winners[0]!.fulfillmentKind).toBe("manual");
+    expect(winners[0]!.orderNo).toBeNull();
   });
 
   it("空候选池开奖失败并回滚到 open", async () => {

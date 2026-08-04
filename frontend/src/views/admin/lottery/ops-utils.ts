@@ -119,16 +119,37 @@ export const buildLotteryWinnersCsvRows = (
   winners: LotteryWinner[],
   labels: Record<string, string>,
 ) => {
-  const header = [labels.email, labels.emailStatus]
-  // 与中奖名单展示一致：优先 identityDisplay（registered 用户为用户名(邮箱)）
-  const rows = winners.map((w) => [
-    w.identityDisplay || w.identityValue,
-    w.notificationStatus === 'sent'
-      ? labels.sent
-      : w.notificationStatus === 'failed'
-        ? labels.failed
-        : labels.pending,
-  ])
+  // docs/102：导出含奖品与履约（卡密/人工），不再假装有电商订单号
+  const header = [
+    labels.email,
+    labels.prize || labels.orderNo || 'prize',
+    labels.fulfillment || labels.card || 'fulfillment',
+    labels.emailStatus,
+  ]
+  const rows = winners.map((w) => {
+    const prizeLabel = w.prizeName || w.tierName || ''
+    let fulfill = ''
+    if (w.prizeCode || w.cardAccountLabel) {
+      fulfill = w.prizeCode || (w.cardDeliverySecret
+        ? `${w.cardAccountLabel}:${w.cardDeliverySecret}`
+        : String(w.cardAccountLabel || ''))
+    } else if (w.fulfillmentKind === 'manual' || w.prizeType === 'manual_fulfillment' || w.prizeType === 'manual') {
+      fulfill = labels.manual || 'manual'
+      if (w.fulfillmentNote) fulfill = `${fulfill}: ${w.fulfillmentNote}`
+    } else if (w.fulfillmentKind === 'code_missing') {
+      fulfill = labels.codeMissing || 'code_missing'
+    }
+    return [
+      w.identityDisplay || w.identityValue,
+      prizeLabel,
+      fulfill,
+      w.notificationStatus === 'sent'
+        ? labels.sent
+        : w.notificationStatus === 'failed'
+          ? labels.failed
+          : labels.pending,
+    ]
+  })
   return [header, ...rows]
 }
 

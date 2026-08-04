@@ -6,8 +6,15 @@
  * 参与域与开奖域直接查库读取活动配置，不依赖本模块（无反向依赖）。
  */
 import type { DbType } from "../../db/client";
-import { and, eq, count } from "drizzle-orm";
-import { lotteryDraws, lotteryEntries, lotteryWinners } from "../../db/schema";
+import { and, eq, count, inArray } from "drizzle-orm";
+import {
+  lotteryDraws,
+  lotteryEntries,
+  lotteryWinners,
+  lotteryPrizeTiers,
+  prizes,
+  prizeCodes,
+} from "../../db/schema";
 import { DEFAULT_ACTIVITY_PARTICIPANT_CAP } from "./types";
 import { enforceTenantActivityQuota } from "./plan";
 import { hashAccessPassword } from "./utils";
@@ -42,13 +49,106 @@ export async function getDrawEntriesCount(db: DbType, drawId: string, tenantId?:
 }
 
 /**
- * 获取中奖记录（带租户隔离）。
+ * 获取中奖记录（带租户隔离）并水合奖项/奖品/卡密，供管理端「开奖结果」展示。
+ *
+ * 独立孵化后**不再**创建电商 0 元订单：`orderNo` 恒为空是设计如此（docs/001、docs/102）。
+ * 旧 UI 读 `cardAccountLabel` / `cardDeliverySecret`；若不 join `prize_codes`，
+ * 即便开奖已锁码，结果表也会显示「订单号/卡密全是 -」——运营会误以为没发码。
  */
 export async function getDrawWinners(db: DbType, drawId: string, tenantId: string) {
-  return db
+  const winners = await db
     .select()
     .from(lotteryWinners)
     .where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
+
+  if (winners.length === 0) return [];
+
+  const tierIds = [...new Set(winners.map((w) => w.tierId).filter(Boolean))];
+  const prizeCodeIds = [...new Set(winners.map((w) => w.prizeCodeId).filter((id): id is string => Boolean(id)))];
+
+  const tierMap = new Map<string, {
+    tierName: string;
+    prizeId: string;
+    prizeName: string | null;
+    prizeType: string | null;
+    fulfillmentNote: string | null;
+    valueText: string | null;
+  }>();
+  if (tierIds.length > 0) {
+    const tierRows = await db
+      .select({
+        id: lotteryPrizeTiers.id,
+        tierName: lotteryPrizeTiers.tierName,
+        prizeId: lotteryPrizeTiers.prizeId,
+        prizeName: prizes.name,
+        prizeType: prizes.prizeType,
+        fulfillmentNote: prizes.fulfillmentNote,
+        valueText: prizes.valueText,
+      })
+      .from(lotteryPrizeTiers)
+      .leftJoin(prizes, and(eq(prizes.id, lotteryPrizeTiers.prizeId), eq(prizes.tenantId, tenantId)))
+      .where(and(
+        eq(lotteryPrizeTiers.tenantId, tenantId),
+        inArray(lotteryPrizeTiers.id, tierIds),
+      ));
+    for (const row of tierRows) {
+      tierMap.set(row.id, {
+        tierName: row.tierName || "",
+        prizeId: row.prizeId || "",
+        prizeName: row.prizeName || null,
+        prizeType: row.prizeType || null,
+        fulfillmentNote: row.fulfillmentNote || null,
+        valueText: row.valueText || null,
+      });
+    }
+  }
+
+  const codeMap = new Map<string, { code: string; secret: string; status: string }>();
+  if (prizeCodeIds.length > 0) {
+    const codeRows = await db
+      .select({
+        id: prizeCodes.id,
+        code: prizeCodes.code,
+        secret: prizeCodes.secret,
+        status: prizeCodes.status,
+      })
+      .from(prizeCodes)
+      .where(and(eq(prizeCodes.tenantId, tenantId), inArray(prizeCodes.id, prizeCodeIds)));
+    for (const row of codeRows) {
+      codeMap.set(row.id, { code: row.code, secret: row.secret || "", status: row.status });
+    }
+  }
+
+  return winners.map((w) => {
+    const tier = w.tierId ? tierMap.get(w.tierId) : undefined;
+    const code = w.prizeCodeId ? codeMap.get(w.prizeCodeId) : undefined;
+    const prizeType = tier?.prizeType || null;
+    const isManual = prizeType === "manual_fulfillment" || prizeType === "manual";
+    return {
+      ...w,
+      // 电商订单已剥离：保留字段兼容前端，恒空，避免假订单链接
+      orderNo: null as string | null,
+      tierName: tier?.tierName || null,
+      prizeId: tier?.prizeId || null,
+      prizeName: tier?.prizeName || null,
+      prizeType,
+      prizeValueText: tier?.valueText || null,
+      fulfillmentNote: isManual ? (tier?.fulfillmentNote || null) : null,
+      /** 卡密账号位（兼容旧列 cardAccountLabel） */
+      cardAccountLabel: code?.code || null,
+      cardDeliverySecret: code?.secret || null,
+      /** 显式字段，导出/新 UI 优先用 */
+      prizeCode: code ? (code.secret ? `${code.code}:${code.secret}` : code.code) : null,
+      hasPrizeCode: Boolean(code),
+      fulfillmentKind: code
+        ? "code"
+        : isManual
+          ? "manual"
+          : tier?.prizeId
+            ? "code_missing"
+            : "none",
+    };
+  });
 }
 
 /* ── 活动管理 ────────────────────────────────────────────── */
