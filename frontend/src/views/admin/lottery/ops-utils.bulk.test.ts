@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildSelectedDrawsCsvRows,
   canBatchHideDraw,
+  canCancelDraw,
   canDeleteDraw,
   canDeletePrizeCode,
   canDisableRedemptionCode,
@@ -11,6 +12,7 @@ import {
   canResumeDraw,
   canRetryWebhookDelivery,
   canSelectDrawForBulk,
+  describeDrawDeletePolicy,
   drawDisplayName,
   formatLotteryVisibilityLabel,
   hasActiveDrawListFilter,
@@ -46,11 +48,16 @@ describe('bulk select / hide helpers', () => {
     expect(canBatchHideDraw('draft', 1)).toBe(false)
   })
 
-  it('canSelectDrawForBulk unions delete + hide + pause + resume', () => {
-    // open 不可删但可暂停 → 可选
+  it('canSelectDrawForBulk unions delete + hide + pause + resume + cancel', () => {
+    // open 不可删但可暂停/取消 → 可选
     expect(canSelectDrawForBulk('open', 1)).toBe(true)
     expect(canPauseDraw('open')).toBe(true)
     expect(canResumeDraw('paused')).toBe(true)
+    expect(canCancelDraw('draft')).toBe(true)
+    expect(canCancelDraw('open')).toBe(true)
+    expect(canCancelDraw('paused')).toBe(true)
+    expect(canCancelDraw('drawn')).toBe(false)
+    expect(canCancelDraw('drawing')).toBe(false)
     expect(canPauseDraw('paused')).toBe(false)
     expect(canResumeDraw('open')).toBe(false)
     expect(canSelectDrawForBulk('draft', 1)).toBe(true)
@@ -65,6 +72,13 @@ describe('bulk select / hide helpers', () => {
     ])
     expect(rows[0]).toEqual(['id', 'publicSlug', 'title', 'status', 'activityKind', 'visible', 'createdAt'])
     expect(rows[1]).toEqual(['d1', 'abc', 'T1', 'open', 'lottery', '1', '2026-01-01'])
+  })
+
+  it('describeDrawDeletePolicy matches backend open/drawing block', () => {
+    const policy = describeDrawDeletePolicy()
+    expect(policy.deletableStatuses).toContain('draft')
+    expect(policy.deletableStatuses).toContain('drawn')
+    expect(policy.nonDeletableStatuses).toEqual(expect.arrayContaining(['open', 'drawing']))
   })
 })
 

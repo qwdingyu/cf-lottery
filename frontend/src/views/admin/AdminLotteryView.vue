@@ -72,6 +72,9 @@
         <template v-if="selectedResumableCount > 0">
           · {{ t('lottery.adminSelectedResumable', { count: selectedResumableCount }) }}
         </template>
+        <template v-if="selectedCancellableCount > 0">
+          · {{ t('lottery.adminSelectedCancellable', { count: selectedCancellableCount }) }}
+        </template>
         <template v-if="selectedHideableCount > 0">
           · {{ t('lottery.adminSelectedHideable', { count: selectedHideableCount }) }}
         </template>
@@ -109,6 +112,15 @@
         @click="batchResumeDraws"
       >
         {{ t('lottery.adminBatchResume', { count: selectedResumableCount }) }}
+      </button>
+      <!-- draft/open/paused → cancelled：关停保留记录，比物理删除更安全 -->
+      <button
+        class="btn btn-ghost btn-sm"
+        type="button"
+        :disabled="loading || batchOperating || selectedCancellableCount === 0"
+        @click="batchCancelDraws"
+      >
+        {{ t('lottery.adminBatchCancel', { count: selectedCancellableCount }) }}
       </button>
       <!-- docs/083：批量隐藏已开奖比批量删更安全，适合清用户视野 -->
       <button
@@ -1468,6 +1480,7 @@ import {
   canBatchHideDraw as canBatchHideDrawByFields,
   canDeleteDraw as canDeleteDrawByStatus,
   canGuidePublishFixInEditor as canGuidePublishFixInEditorRaw,
+  canCancelDraw as canCancelDrawByStatus,
   canPauseDraw as canPauseDrawByStatus,
   canResumeDraw as canResumeDrawByStatus,
   canSelectDrawForBulk,
@@ -1815,6 +1828,10 @@ function canResumeDraw(draw: LotteryDraw): boolean {
   return canResumeDrawByStatus(draw.status)
 }
 
+function canCancelDraw(draw: LotteryDraw): boolean {
+  return canCancelDrawByStatus(draw.status)
+}
+
 function isDrawUserVisible(draw: LotteryDraw): boolean {
   return isLotteryUserVisible(draw.visible)
 }
@@ -1845,6 +1862,9 @@ const selectedPausableCount = computed(
 )
 const selectedResumableCount = computed(
   () => draws.value.filter((d) => selectedIds.value.includes(d.id) && canResumeDraw(d)).length,
+)
+const selectedCancellableCount = computed(
+  () => draws.value.filter((d) => selectedIds.value.includes(d.id) && canCancelDraw(d)).length,
 )
 
 const winnersEmailFailureCount = computed(() => countLotteryEmailFailures(winners.value))
@@ -2834,9 +2854,26 @@ async function batchResumeDraws() {
   await loadData()
 }
 
+/**
+ * draft/open/paused → cancelled。
+ * 为什么：测试关停优先取消而非物理删；保留行便于审计，drawn/drawing 不可取消。
+ */
+async function batchCancelDraws() {
+  const targets = draws.value.filter((d) => selectedIds.value.includes(d.id) && canCancelDraw(d))
+  if (targets.length === 0 || loading.value || batchOperating.value) return
+  if (!(await askConfirm(t('lottery.adminConfirmBatchCancel', { count: targets.length })))) return
+  const result = await runBatchSequential(targets.map((d) => d.id), async (id) => {
+    await cancelLotteryDraw(id)
+  })
+  if (!result) return
+  toastBatchLifecycle(result, 'cancel')
+  clearSelection()
+  await loadData()
+}
+
 function toastBatchLifecycle(
   result: { success: number; failed: number },
-  kind: 'hide' | 'pause' | 'resume',
+  kind: 'hide' | 'pause' | 'resume' | 'cancel',
 ) {
   if (result.success === 0 && result.failed === 0) {
     showToast(t('lottery.adminBatchNothingDone'), 'info')
@@ -2846,6 +2883,7 @@ function toastBatchLifecycle(
     hide: { ok: 'lottery.adminBatchHideSuccess', fail: 'lottery.adminBatchHideResult' },
     pause: { ok: 'lottery.adminBatchPauseSuccess', fail: 'lottery.adminBatchPauseResult' },
     resume: { ok: 'lottery.adminBatchResumeSuccess', fail: 'lottery.adminBatchResumeResult' },
+    cancel: { ok: 'lottery.adminBatchCancelSuccess', fail: 'lottery.adminBatchCancelResult' },
   } as const
   const keys = map[kind]
   if (result.failed > 0) {

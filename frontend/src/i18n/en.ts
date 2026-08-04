@@ -624,6 +624,7 @@ export default {
     adminSelectedCount: "{count} selected",
     adminSelectedPausable: "{count} pausable",
     adminSelectedResumable: "{count} resumable",
+    adminSelectedCancellable: "{count} cancellable",
     adminSelectedHideable: "{count} hideable",
     adminSelectedDeletable: "{count} deletable",
     adminClearSelection: "Clear selection",
@@ -633,6 +634,7 @@ export default {
     adminBatchHide: "Hide drawn ({count})",
     adminBatchPause: "Pause selected ({count})",
     adminBatchResume: "Resume selected ({count})",
+    adminBatchCancel: "Cancel selected ({count})",
     adminBatchProgress: "Progress {done}/{total}",
     adminConfirmBatchDelete:
       "Permanently delete {count} selected draws? {drawnCount} are completed.\n\nThis deletes draws, entries, and winner records. Generated lottery orders and issued card delivery records are retained. This cannot be undone.",
@@ -642,6 +644,8 @@ export default {
       "Pause {count} open draw(s)?\n\nParticipation closes temporarily; you can bulk-resume anytime.",
     adminConfirmBatchResume:
       "Resume {count} paused draw(s)?",
+    adminConfirmBatchCancel:
+      "Cancel {count} draw(s) (draft/open/paused)?\n\nThey become cancelled (records kept). Drawn/drawing cannot be cancelled. Not one-click restorable to open from the list.",
     adminBatchDeleteSuccess: "Deleted {count} draws",
     adminBatchDeleteResult: "Done: {success} succeeded, {failed} failed",
     adminBatchHideSuccess: "Hidden {count} draws",
@@ -650,6 +654,8 @@ export default {
     adminBatchPauseResult: "Pause done: {success} succeeded, {failed} failed",
     adminBatchResumeSuccess: "Resumed {count} draws",
     adminBatchResumeResult: "Resume done: {success} succeeded, {failed} failed",
+    adminBatchCancelSuccess: "Cancelled {count} draws",
+    adminBatchCancelResult: "Cancel done: {success} succeeded, {failed} failed",
     adminBatchNothingDone: "Nothing to run",
     adminClearFilters: "Clear filters",
     adminShowAllStatuses: "Show all statuses",

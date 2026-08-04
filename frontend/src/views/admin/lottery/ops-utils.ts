@@ -227,14 +227,46 @@ export function canResumeDraw(status: string): boolean {
 }
 
 /**
- * 多选可选：可删 / 可隐藏 / 可暂停 / 可恢复（与 bulk 条动作对齐）。
- * open 本身不可删，但必须能勾选才能批量暂停。
+ * 可取消：draft/open/paused → cancelled（对齐 cancelDraw）。
+ * drawn/drawing 不可取消，避免开奖中/已履约数据不一致。
+ * 取消是终态但保留记录，比物理删除更适合「关停测试活动」。
+ */
+export function canCancelDraw(status: string): boolean {
+  return status === 'draft' || status === 'open' || status === 'paused'
+}
+
+/**
+ * 多选可选：可删 / 可隐藏 / 可暂停 / 可恢复 / 可取消（与 bulk 条动作对齐）。
+ * open 本身不可删，但必须能勾选才能批量暂停/取消。
  */
 export function canSelectDrawForBulk(status: string, visible?: number | null): boolean {
   return canDeleteDraw(status)
     || canBatchHideDraw(status, visible)
     || canPauseDraw(status)
     || canResumeDraw(status)
+    || canCancelDraw(status)
+}
+
+/**
+ * 活动删除策略摘要（与后端 DELETE /draws/:id 对齐，供 UI/文档同源）。
+ * - 默认可删：draft / paused / drawn / cancelled
+ * - 不可删：open（须先暂停或取消）、drawing（开奖中）
+ * - 不 force 删 open/drawing；已开奖删会清候选/中奖行，订单与卡密交付保留
+ */
+export function describeDrawDeletePolicy(): {
+  deletableStatuses: string[]
+  nonDeletableStatuses: string[]
+  notes: string[]
+} {
+  return {
+    deletableStatuses: ['draft', 'paused', 'drawn', 'cancelled'],
+    nonDeletableStatuses: ['open', 'drawing'],
+    notes: [
+      'open 须先 pause 或 cancel 再删',
+      'drawing 不可删、不可取消',
+      '删除级联 entries/winners/tiers 等；不默认 force 已履约',
+    ],
+  }
 }
 
 /** 已选活动元数据 CSV 行（含表头；测试排障/交接用，不含敏感参与者数据） */

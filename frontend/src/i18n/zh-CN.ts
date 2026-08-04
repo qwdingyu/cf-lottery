@@ -584,6 +584,7 @@ export default {
     adminSelectedCount: "已选中 {count} 项",
     adminSelectedPausable: "可暂停 {count}",
     adminSelectedResumable: "可恢复 {count}",
+    adminSelectedCancellable: "可取消 {count}",
     adminSelectedHideable: "可隐藏 {count}",
     adminSelectedDeletable: "可删除 {count}",
     adminClearSelection: "清除选择",
@@ -593,6 +594,7 @@ export default {
     adminBatchHide: "隐藏已开奖 ({count})",
     adminBatchPause: "暂停选中 ({count})",
     adminBatchResume: "恢复选中 ({count})",
+    adminBatchCancel: "取消选中 ({count})",
     adminBatchProgress: "进度 {done}/{total}",
     adminConfirmBatchDelete:
       "确认永久删除选中的 {count} 个活动？其中已开奖 {drawnCount} 个。\n\n会删除抽奖活动、候选池和中奖记录；已开奖活动生成的 lottery 订单和卡密交付记录会保留。此操作不可恢复。",
@@ -602,6 +604,8 @@ export default {
       "确认暂停选中的 {count} 个进行中活动？\n\n参与入口将暂时关闭，可随时批量恢复。",
     adminConfirmBatchResume:
       "确认恢复选中的 {count} 个已暂停活动？",
+    adminConfirmBatchCancel:
+      "确认取消选中的 {count} 个活动（草稿/进行中/已暂停）？\n\n活动将变为已取消终态并保留记录；已开奖/开奖中不可取消。此操作不可从列表一键恢复为 open。",
     adminBatchDeleteSuccess: "成功删除 {count} 个活动",
     adminBatchDeleteResult: "删除完成：{success} 成功，{failed} 失败",
     adminBatchHideSuccess: "已隐藏 {count} 个活动",
@@ -610,6 +614,8 @@ export default {
     adminBatchPauseResult: "暂停完成：{success} 成功，{failed} 失败",
     adminBatchResumeSuccess: "已恢复 {count} 个活动",
     adminBatchResumeResult: "恢复完成：{success} 成功，{failed} 失败",
+    adminBatchCancelSuccess: "已取消 {count} 个活动",
+    adminBatchCancelResult: "取消完成：{success} 成功，{failed} 失败",
     adminBatchNothingDone: "没有可执行的项",
     adminClearFilters: "清空筛选",
     adminShowAllStatuses: "查看全部状态",
