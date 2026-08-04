@@ -47,6 +47,10 @@
           <h1 class="admin-header-title">{{ pageTitle }}</h1>
         </div>
         <div class="admin-header-actions">
+          <select class="lang-select" :value="locale" @change="switchLanguage($event.target.value)">
+            <option value="zh-CN">中文</option>
+            <option value="en">EN</option>
+          </select>
           <button
             class="btn btn-ghost header-logout"
             type="button"
@@ -77,13 +81,14 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { switchLanguage } from '@/i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { readPlatformRole, isImpersonating, clearImpersonation } from '@/composables/useAdminAuth'
 import { useToast } from '@/composables/useToast'
 
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { clearToken } = useAdminAuth()
 const { showToast } = useToast()
 const isPlatformMember = ref(!!readPlatformRole())
@@ -274,6 +279,13 @@ function handleLogout() {
   overflow: hidden;
   min-width: 0;
 }
+
+/* ── 语言切换 ── */
+.lang-select {
+  background: transparent; color: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; outline: none;
+}
+.lang-select option { background: #1a1a2e; color: #fff; }
 
 .header-logout {
   padding: 2px 6px;
