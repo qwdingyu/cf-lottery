@@ -207,7 +207,7 @@ route.post("/draws/:slug/share", async (c) => {
     shareCode,
   });
 
-  return ok(c, { shareCode, shareUrl: `/${slug}?ref=${shareCode}` });
+  return ok(c, { shareCode, shareUrl: `/lottery/${slug}?ref=${shareCode}` });
 });
 
 /** 通过分享链接打开活动（记录点击） */

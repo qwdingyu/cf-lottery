@@ -9,6 +9,10 @@
         </div>
       </div>
       <div class="lottery-header-actions">
+        <select class="lang-select" :value="locale" @change="switchLanguage($event.target.value)">
+          <option value="zh-CN">中文</option>
+          <option value="en">EN</option>
+        </select>
         <template v-if="sessionEmail || registeredUsername">
           <span class="lottery-user">{{ registeredUsername || sessionEmail }}</span>
           <button class="lottery-logout" @click="handleLogout">{{ $t('lottery.logout') }}</button>
@@ -561,6 +565,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { switchLanguage } from '@/i18n'
 import { useToast } from '@/composables/useToast'
 import { writeClipboardText } from '@/composables/useClipboard'
 import { getGameComponent } from '@/components/games/GameRegistry'

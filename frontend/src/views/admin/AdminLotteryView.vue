@@ -177,11 +177,10 @@
             </td>
             <td class="col-actions">
               <!--
-                055a 列表再收敛：行内 ≤3（状态主 CTA + 一个高频次操作 + 更多）。
-                按 status 换主路径；分享/打开/二维码/危险操作进「更多」分组面板。
-                不删 handler、不改 API。
+                055a / docs/079：行内 ≤3（主 CTA + 次操作 + 更多）。
+                「更多」用 Teleport 浮层，不撑开行高（旧版行内展开会把行拉成「操作墙」）。
               -->
-              <div class="table-actions" :class="{ 'is-expanded': expandedActionId === draw.id }">
+              <div class="table-actions">
                 <!-- draft：开启 + 编辑（编辑曾埋在更多，TTV 断点） -->
                 <template v-if="draw.status === 'draft'">
                   <button
@@ -298,103 +297,12 @@
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs table-actions-more-btn"
+                  :ref="(el) => setMoreBtnRef(draw.id, el)"
                   :aria-expanded="expandedActionId === draw.id"
+                  :aria-haspopup="true"
                   :title="$t('lottery.adminActionsMoreHint')"
-                  @click="toggleRowActions(draw.id)"
+                  @click.stop="toggleRowActions(draw.id, $event)"
                 >{{ expandedActionId === draw.id ? $t('lottery.adminActionsLess') : $t('lottery.adminActionsMore') }}</button>
-
-                <div
-                  v-if="expandedActionId === draw.id"
-                  class="table-actions-more-panel"
-                  role="group"
-                  :aria-label="$t('lottery.adminActionsMore')"
-                >
-                  <div class="table-actions-group">
-                    <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupShare') }}</span>
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-xs"
-                      :disabled="operatingId === draw.id"
-                      :title="$t('lottery.adminCopyLinkHint')"
-                      @click="handleCopyShareLink(draw)"
-                    >{{ $t('lottery.adminCopyLink') }}</button>
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-xs"
-                      :disabled="operatingId === draw.id"
-                      :title="$t('lottery.adminOpenPublicHint')"
-                      @click="handleOpenPublic(draw)"
-                    >{{ $t('lottery.adminOpenPublic') }}</button>
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-xs"
-                      :title="$t('lottery.adminGenerateQr')"
-                      @click="handleShowQrCode(draw)"
-                    >{{ $t('lottery.adminQrCode') }}</button>
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-xs"
-                      :title="$t('lottery.adminGeneratePoster')"
-                      @click="handleShowPoster(draw)"
-                    >{{ $t('lottery.adminPoster') }}</button>
-                  </div>
-                  <div class="table-actions-group">
-                    <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupOps') }}</span>
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-xs"
-                      :disabled="operatingId === draw.id"
-                      :title="$t('lottery.adminViewAnalytics')"
-                      @click="handleViewAnalytics(draw)"
-                    >{{ $t('lottery.adminAnalytics') }}</button>
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-xs"
-                      :disabled="operatingId === draw.id"
-                      :title="$t('lottery.adminDuplicateHint')"
-                      @click="handleDuplicate(draw)"
-                    >{{ $t('lottery.adminDuplicate') }}</button>
-                    <!-- 抽奖 open：暂停不与「立即开奖」抢主位 -->
-                    <button
-                      v-if="draw.status === 'open' && draw.activityKind === 'lottery'"
-                      type="button"
-                      class="btn btn-ghost btn-xs"
-                      :disabled="operatingId === draw.id"
-                      @click="handlePause(draw.id)"
-                    >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminPause') }}</button>
-                    <button
-                      v-if="draw.status === 'drawn'"
-                      type="button"
-                      class="btn btn-ghost btn-xs"
-                      :disabled="operatingId === draw.id"
-                      @click="handleToggleVisibility(draw.id, draw.visible)"
-                    >{{ draw.visible ? $t('lottery.adminHide') : $t('lottery.adminShow') }}</button>
-                    <button
-                      v-if="draw.status === 'drawn'"
-                      type="button"
-                      class="btn btn-ghost btn-xs"
-                      :disabled="operatingId === draw.id"
-                      @click="handleRetryEmail(draw.id)"
-                    >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
-                  </div>
-                  <div class="table-actions-group table-actions-group--danger">
-                    <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupDanger') }}</span>
-                    <button
-                      v-if="draw.status === 'draft' || draw.status === 'open' || draw.status === 'paused'"
-                      type="button"
-                      class="btn btn-danger btn-xs"
-                      :disabled="operatingId === draw.id"
-                      @click="handleCancel(draw.id)"
-                    >{{ $t('lottery.adminDrawCancel') }}</button>
-                    <button
-                      v-if="canDeleteDraw(draw)"
-                      type="button"
-                      class="btn btn-danger btn-xs"
-                      :disabled="batchOperating"
-                      @click="handleDelete(draw.id)"
-                    >{{ $t('lottery.adminDrawDelete') }}</button>
-                  </div>
-                </div>
               </div>
             </td>
           </tr>
