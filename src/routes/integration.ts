@@ -270,6 +270,9 @@ integrationRoute.post("/events", async (c) => {
   // ── reward.redeemed：中转站回传兑换码核销确认（docs/114 §4） ──
   // 将 prizeCode 从 issued 标记为 redeemed，让 cf-lottery 知道"卡已被用"，
   // 退群处罚时可区分"发了没换"与"发了已换"（已核销的由中转站扣余额，不重复 revoked）。
+  // 幂等设计：如果卡已被 revoked（退群收回）或已 redeemed（重复回传），
+  //   返回 redeemed=false 但 HTTP 200——告诉中转站"卡当前状态不允许核销"，
+  //   同时 previousStatus 帮助中转站排查（是已被收回还是已核销过）。
   } else if (event === "reward.redeemed") {
     const code = String(payload.code || "").trim();
     const prizeCodeId = String(payload.prizeCodeId || "").trim();

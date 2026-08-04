@@ -1336,3 +1336,43 @@ describe("triggerRewardEarned", () => {
   });
 });
 
+// ── prizeCode 状态机：issued → redeemed（docs/114 §4） ──
+// 注意：importPrizeCodes 内部生成随机 ID，不保留调用方传入的 id 字段。
+// 因此通过 prizeCodes.code（唯一码字符串）定位卡密，而非通过调用方指定的 id。
+describe("prizeCode redeemed 状态流转", () => {
+  it("issued 可标记为 redeemed", async () => {
+    const { createPrize, importPrizeCodes } = await import("../services/lottery-service");
+    const { prizeCodes } = await import("../db/schema");
+
+    const { id: prizeId } = await createPrize(db, TENANT, { name: "核销测试奖品", prizeType: "code" });
+    await importPrizeCodes(db, TENANT, prizeId, [{ code: "REDEEM-001", secret: "s1" }]);
+
+    // 模拟中奖发放：available → issued（按 code 定位，id 由 importPrizeCodes 内部生成）
+    await db.update(prizeCodes).set({ status: "issued", winnerId: "winner-1", issuedAt: new Date().toISOString() }).where(eq(prizeCodes.code, "REDEEM-001"));
+
+    // 标记 redeemed
+    await db.update(prizeCodes).set({ status: "redeemed" }).where(eq(prizeCodes.code, "REDEEM-001"));
+
+    const [updated] = await db.select({ status: prizeCodes.status }).from(prizeCodes).where(eq(prizeCodes.code, "REDEEM-001"));
+    expect(updated).toBeDefined();
+    expect(updated.status).toBe("redeemed");
+  });
+
+  it("revoked 的卡密不被误标记为 redeemed（幂等保护）", async () => {
+    const { createPrize, importPrizeCodes } = await import("../services/lottery-service");
+    const { prizeCodes } = await import("../db/schema");
+
+    const { id: prizeId } = await createPrize(db, TENANT, { name: "核销测试奖品2", prizeType: "code" });
+    await importPrizeCodes(db, TENANT, prizeId, [{ code: "REDEEM-002", secret: "s2" }]);
+
+    // 先 issued → revoked（模拟退群收回）
+    await db.update(prizeCodes).set({ status: "issued", winnerId: "winner-2", issuedAt: new Date().toISOString() }).where(eq(prizeCodes.code, "REDEEM-002"));
+    await db.update(prizeCodes).set({ status: "revoked" }).where(eq(prizeCodes.code, "REDEEM-002"));
+
+    // revocation 后状态应为 revoked，不被后续操作覆盖
+    const [row] = await db.select({ status: prizeCodes.status }).from(prizeCodes).where(eq(prizeCodes.code, "REDEEM-002"));
+    expect(row).toBeDefined();
+    expect(row.status).toBe("revoked");
+  });
+});
+

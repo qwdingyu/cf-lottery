@@ -68,6 +68,9 @@ export async function triggerRewardEarned(
   const globalPerDay = Math.max(1, Number(config?.quota?.globalPerDay || 100));
 
   // 配额校验 1：邀请人（奖励受益人）每天最多 perUserPerDay 次
+  // 先校验个人配额，再校验全局配额——个人配额是"防刷"的第一道闸门，
+  // 全局配额是"总池子"的第二道闸门。顺序有意义：个人超限时立即拒绝，
+  // 避免消耗全局配额 key 的写入（每次 checkDbRateLimit 会 INSERT 一条计数记录）。
   const userKey = `reward:${drawId}:${sharerEntryId}`;
   if (!(await checkDbRateLimit(tx, userKey, perUserPerDay, REWARD_QUOTA_WINDOW_MS))) {
     return { triggered: false, reason: "quota_exceeded", sharerEntryId, deliveryIds: [] };

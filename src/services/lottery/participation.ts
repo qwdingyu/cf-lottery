@@ -439,10 +439,12 @@ export async function cancelSignupChainEntry(
 /**
  * 归因成功后按活动 reward 配置触发奖励意图（docs/111 §5 阶段一）。
  *
- * - 仅当活动 activityConfig 配置了 reward.perInviteAmount 时才触发；
+ * - 仅当活动 activityConfig 中配置了 reward.perInviteAmount 时才触发；
  *   未配置或配额超限时静默跳过，不影响任何现有活动。
  * - Webhook 投递与 performDraw 一致：fire-and-forget + 容错，失败不影响参与主流程。
  * - 与 joinDraw 同事务执行：归因、配额消耗、奖励意图入队三者原子。
+ *   如果奖励触发失败（catch 捕获），事务仍会提交参与记录——奖励是附加行为，
+ *   参与主流程不应因奖励失败而回滚（与 grantLoserRewards 的容错设计一致）。
  */
 async function maybeTriggerReward(
   tx: DbType,
