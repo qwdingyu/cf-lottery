@@ -45,6 +45,8 @@ export default defineConfig({
       // docs/115：drawAt ↔ drawTrigger 推断（定时开奖接线）
       "frontend/src/lib/activity-defaults.test.ts",
       "frontend/src/views/admin/lottery/ops-utils.schedule.test.ts",
+      // docs/115 skeptic：裂变 i18n 加权票诚实性
+      "frontend/src/i18n/viral-copy-honesty.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

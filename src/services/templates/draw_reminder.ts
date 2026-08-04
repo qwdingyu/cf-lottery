@@ -6,7 +6,7 @@ export default `<!DOCTYPE html>
   <p>祝您好运，期待您中奖！</p>
   {{#if shareUrl}}<p style="margin-top: 20px;">
     <a href="{{shareUrl}}" style="display: inline-block; padding: 10px 20px; background: #4f8ef7; color: #fff; text-decoration: none; border-radius: 6px;">
-      邀请好友，增加抽奖机会
+      邀请好友，提高开奖权重
     </a>
   </p>{{/if}}
   <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;" />
