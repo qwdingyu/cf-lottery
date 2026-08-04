@@ -2,19 +2,19 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
-        <input v-model="filter.tenantId" type="search" :placeholder="$t('platformWebhooks.tenantPlaceholder')" @keyup.enter="searchData" />
-        <select v-model="filter.status" @change="searchData">
+        <input v-model="filter.tenantId" type="search" :placeholder="$t('platformWebhooks.tenantPlaceholder')" :disabled="batchOperating" @keyup.enter="searchData" />
+        <select v-model="filter.status" :disabled="batchOperating" @change="searchData">
           <option value="">{{ $t('platformWebhooks.allStatus') }}</option>
           <option value="pending">{{ $t('platformWebhooks.statusPending') }}</option>
           <option value="sent">{{ $t('platformWebhooks.statusSent') }}</option>
           <option value="failed">{{ $t('platformWebhooks.statusFailed') }}</option>
         </select>
-        <button class="btn btn-primary btn-sm" :disabled="loading" @click="searchData">
+        <button class="btn btn-primary btn-sm" :disabled="loading || batchOperating" @click="searchData">
           {{ loading ? $t('platformWebhooks.searching') : $t('platformWebhooks.search') }}
         </button>
       </div>
       <div class="toolbar-actions">
-        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="loadData">{{ $t('platformWebhooks.refresh') }}</button>
+        <button class="btn btn-ghost btn-sm" :disabled="loading || batchOperating" @click="loadData">{{ $t('platformWebhooks.refresh') }}</button>
       </div>
     </div>
 
@@ -23,10 +23,35 @@
       <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">{{ $t('platformWebhooks.retry') }}</button>
     </div>
 
+    <div v-if="selectedCount > 0" class="table-command-actions bulk-bar" :aria-busy="batchOperating">
+      <span class="selection-summary">
+        {{ $t('platformWebhooks.selectedCount', { count: selectedCount }) }}
+        <template v-if="batchOperating">
+          · {{ $t('platformWebhooks.batchProgress', { done: batchCompleted, total: batchTotal }) }}
+        </template>
+      </span>
+      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || batchOperating" @click="clearSelection">
+        {{ $t('platformWebhooks.clearSelection') }}
+      </button>
+      <button class="btn btn-primary btn-sm" type="button" :disabled="loading || batchOperating || selectedCount === 0" @click="batchRetry">
+        {{ $t('platformWebhooks.batchRetry', { count: selectedCount }) }}
+      </button>
+    </div>
+
     <div class="table-wrap" role="region" :aria-label="$t('platformWebhooks.tableAria')" :aria-busy="loading">
       <table class="admin-table">
         <thead>
           <tr>
+            <th class="select-cell">
+              <input
+                type="checkbox"
+                :checked="allVisibleSelected"
+                :indeterminate.prop="partiallySelected"
+                :disabled="loading || batchOperating || selectableCount === 0"
+                :aria-label="$t('platformWebhooks.selectAll')"
+                @change="toggleAllVisible(($event.target as HTMLInputElement).checked)"
+              />
+            </th>
             <th>{{ $t('platformWebhooks.colTime') }}</th>
             <th>{{ $t('platformWebhooks.colTenant') }}</th>
             <th>{{ $t('platformWebhooks.colEvent') }}</th>
@@ -38,11 +63,20 @@
         </thead>
         <tbody v-if="loading">
           <tr v-for="i in 5" :key="'sk' + i" class="skeleton-row">
-            <td :colspan="7"><div class="skeleton-cell" /></td>
+            <td :colspan="8"><div class="skeleton-cell" /></td>
           </tr>
         </tbody>
         <tbody v-else>
-          <tr v-for="d in deliveries" :key="d.id">
+          <tr v-for="d in deliveries" :key="d.id" :class="{ 'is-selected': isSelected(d.id) }">
+            <td class="select-cell">
+              <input
+                type="checkbox"
+                :checked="isSelected(d.id)"
+                :disabled="loading || batchOperating || !canRetryWebhookDelivery(d.status)"
+                :aria-label="$t('platformWebhooks.selectRow')"
+                @click="setSelected(d.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
+              />
+            </td>
             <td class="time-cell">{{ formatTime(d.createdAt) }}</td>
             <td><code class="code-id" :title="d.tenantId" @click="copyText(d.tenantId)">{{ d.tenantId?.slice(0, 8) }}…</code></td>
             <td><span class="tag tag-info">{{ d.eventType }}</span></td>
@@ -53,15 +87,17 @@
             <td class="error-cell" :title="d.lastError">{{ d.lastError ? truncate(d.lastError, 60) : '-' }}</td>
             <td class="col-actions">
               <button
-                v-if="d.status === 'failed' || d.status === 'pending'"
+                v-if="canRetryWebhookDelivery(d.status)"
                 class="btn btn-ghost btn-xs"
-                :disabled="retryingId === d.id"
+                type="button"
+                :disabled="retryingId === d.id || batchOperating"
                 @click="retryDelivery(d.id)"
               >{{ retryingId === d.id ? $t('platformWebhooks.retrying') : $t('platformWebhooks.retry') }}</button>
+              <span v-else class="tag tag-muted">—</span>
             </td>
           </tr>
           <tr v-if="deliveries.length === 0">
-            <td colspan="7" class="empty-text">{{ $t('platformWebhooks.empty') }}</td>
+            <td colspan="8" class="empty-text">{{ $t('platformWebhooks.empty') }}</td>
           </tr>
         </tbody>
       </table>
@@ -73,22 +109,29 @@
       :total="pagination.total.value"
       :total-pages="pagination.totalPages.value"
       :limit="pagination.limit.value"
-      :disabled="loading"
+      :disabled="loading || batchOperating"
       @prev="pagination.prevPage(); loadData()"
       @next="pagination.nextPage(); loadData()"
       @jump="pagination.setPage($event); loadData()"
       @update:limit="pagination.setLimit($event); loadData()"
     />
+
+    <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" danger @confirm="onConfirm" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminPagination from '@/components/AdminPagination.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useTablePagination } from '@/composables/useTablePagination'
+import { useTableSelection } from '@/composables/useTableSelection'
+import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { useToast } from '@/composables/useToast'
+import { canRetryWebhookDelivery } from '@/views/admin/lottery/ops-utils'
 
 type WebhookDelivery = {
   id: string
@@ -103,12 +146,34 @@ type WebhookDelivery = {
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
 const loading = ref(false)
 const loadError = ref('')
 const deliveries = ref<WebhookDelivery[]>([])
 const retryingId = ref('')
 const filter = ref({ tenantId: '', status: '' })
 const pagination = useTablePagination({ initialLimit: 50 })
+
+const deliveriesRef = computed(() => deliveries.value)
+const {
+  operating: batchOperating,
+  completed: batchCompleted,
+  total: batchTotal,
+  runSequential,
+} = useAdminBatchOperation()
+const {
+  selectedIds,
+  selectedCount,
+  selectableCount,
+  isSelected,
+  setSelected,
+  toggleAllVisible,
+  clearSelection,
+  allVisibleSelected,
+  partiallySelected,
+} = useTableSelection(deliveriesRef, (row) => row.id, {
+  isSelectable: (row) => canRetryWebhookDelivery(String(row.status || '')),
+})
 
 function formatTime(iso: string): string {
   if (!iso) return '-'
@@ -158,7 +223,7 @@ async function loadData() {
 function searchData() { pagination.setPage(1); loadData() }
 
 async function retryDelivery(id: string) {
-  if (retryingId.value) return
+  if (retryingId.value || batchOperating.value) return
   retryingId.value = id
   try {
     await adminRequest(`/api/platform/webhook-deliveries/${id}/retry`, { method: 'POST' })
@@ -168,6 +233,24 @@ async function retryDelivery(id: string) {
     showToast(err instanceof Error ? err.message : t('platformWebhooks.retryFailed'), 'error')
   }
   retryingId.value = ''
+}
+
+/** 测试排障：仅 failed/pending 顺序重试，真实打外部 URL，后端已写审计 */
+async function batchRetry() {
+  const ids = selectedIds.value.slice()
+  if (ids.length === 0 || loading.value || batchOperating.value) return
+  if (!(await askConfirm(t('platformWebhooks.batchRetryConfirm', { count: ids.length })))) return
+  const result = await runSequential(ids, async (id) => {
+    await adminRequest(`/api/platform/webhook-deliveries/${id}/retry`, { method: 'POST' })
+  })
+  if (!result) return
+  if (result.failed > 0) {
+    showToast(t('platformWebhooks.batchRetryResult', { success: result.success, failed: result.failed }), 'error')
+  } else {
+    showToast(t('platformWebhooks.batchRetrySuccess', { count: result.success }), 'success')
+  }
+  clearSelection()
+  await loadData()
 }
 
 onMounted(loadData)

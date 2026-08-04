@@ -4,7 +4,9 @@ import {
   canDeleteDraw,
   canDeletePrizeCode,
   canDisableRedemptionCode,
+  canOperatePlatformMember,
   canRemoveMember,
+  canRetryWebhookDelivery,
   canSelectDrawForBulk,
   drawDisplayName,
   formatLotteryVisibilityLabel,
@@ -105,5 +107,14 @@ describe('drawDisplayName / prizeCodePoolLeft', () => {
     expect(canDisableRedemptionCode('used')).toBe(false)
     expect(canDisableRedemptionCode('disabled')).toBe(false)
     expect(canDisableRedemptionCode('expired')).toBe(false)
+  })
+
+  it('platform member self is not operable; only failed/pending deliveries retry', () => {
+    expect(canOperatePlatformMember('u1', 'u1')).toBe(false)
+    expect(canOperatePlatformMember('u2', 'u1')).toBe(true)
+    expect(canOperatePlatformMember('u2', '')).toBe(true)
+    expect(canRetryWebhookDelivery('failed')).toBe(true)
+    expect(canRetryWebhookDelivery('pending')).toBe(true)
+    expect(canRetryWebhookDelivery('sent')).toBe(false)
   })
 })

@@ -279,6 +279,24 @@ export function canDisableRedemptionCode(status: string): boolean {
   return status === 'active'
 }
 
+/**
+ * 平台成员可否批量操作（禁用/移除）。
+ * 不能操作自己——后端也会拦，前端先排除避免选中后批量必失败。
+ */
+export function canOperatePlatformMember(userId: string, myUserId: string): boolean {
+  if (!userId) return false
+  if (!myUserId) return true
+  return userId !== myUserId
+}
+
+/**
+ * Webhook 投递可否重试。
+ * 仅 failed/pending 有意义；sent 再重试会重复打外部 URL。
+ */
+export function canRetryWebhookDelivery(status: string): boolean {
+  return status === 'failed' || status === 'pending'
+}
+
 /** 奖品是否启用（缺省 active 视为启用，与常见 DEFAULT 1 一致） */
 export function isPrizeActive(active?: number | null): boolean {
   if (active === undefined || active === null) return true
