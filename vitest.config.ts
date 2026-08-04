@@ -30,6 +30,8 @@ export default defineConfig({
       "frontend/src/views/lottery/public-helpers.test.ts",
       // docs/096：体验别名与未知→Submit 回退
       "frontend/src/components/games/GameRegistry.test.ts",
+      // docs/098：本机已参与提示 / 409 / result hint keys
+      "frontend/src/views/lottery/joined-session.test.ts",
       // docs/082：管理台批量顺序写 + 进度
       "frontend/src/composables/useAdminBatchOperation.test.ts",
       // 中奖邮件状态与开奖反馈档

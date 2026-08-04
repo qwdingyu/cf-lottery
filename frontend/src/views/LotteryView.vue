@@ -702,6 +702,14 @@ import {
   normalizePublicDraw,
   getResultCta,
 } from './lottery/public-helpers'
+import {
+  isAlreadyJoinedResponse,
+  isSilentFetchOption,
+  joinedOpenStatusHintKey,
+  readJoinedHints,
+  resolvePublicDrawPathKey,
+  upsertJoinedHint,
+} from './lottery/joined-session'
 import type { ActivityEventType, ActivityOutcome, LotteryDraw, MyEntry } from './lottery/types'
 import './lottery/lottery-page.css'
 
@@ -856,16 +864,26 @@ function clearResultModalTimer() {
  * 统一参与成功收尾：写已参与态、结果弹窗、事件；避免 access-code 直通 / verify-join / registered 三处行为不一致。
  */
 /**
- * 标记本活动已参与，并写入「当次会话」记录行（无跨活动列表 API 时的最小闭环，docs/097）。
+ * 标记本活动已参与，并写入「当次会话」记录行 + sessionStorage 提示（docs/097/098）。
+ * 无 JWT 的 open OTP 路径刷新后依赖 hints 回填 myJoinedById，避免再点参与变 409。
  */
 function markDrawJoined(
   joinedDrawId: string,
-  extra?: { joinedAt?: string; drawName?: string; drawStatus?: string },
+  extra?: {
+    joinedAt?: string
+    drawName?: string
+    drawStatus?: string
+    entryId?: string
+    won?: boolean
+  },
 ) {
-  myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
   const draw =
     draws.value.find((d) => d.id === joinedDrawId || d.publicSlug === joinedDrawId) || null
   const key = draw?.id || joinedDrawId
+  // id / slug / 入参三键，模板多看 draw.id（docs/098）
+  const joinedMap: Record<string, true> = { ...myJoinedById.value, [joinedDrawId]: true, [key]: true }
+  if (draw?.publicSlug) joinedMap[draw.publicSlug] = true
+  myJoinedById.value = joinedMap
   const row: MyEntry = {
     drawId: key,
     joinedAt: extra?.joinedAt || new Date().toISOString(),
@@ -874,6 +892,19 @@ function markDrawJoined(
   }
   const rest = myEntryList.value.filter((r) => r.drawId !== key && r.drawId !== joinedDrawId)
   myEntryList.value = [row, ...rest]
+  // 本机提示：无密码学意义；退出登录时 clearJoinedHints（business-session）
+  upsertJoinedHint(
+    sessionStorage,
+    [key, joinedDrawId, draw?.publicSlug || '', props.id || ''],
+    {
+      drawId: key,
+      entryId: extra?.entryId,
+      joinedAt: row.joinedAt,
+      drawName: row.drawName,
+      drawStatus: row.drawStatus,
+      won: extra?.won,
+    },
+  )
 }
 
 /**
@@ -890,19 +921,12 @@ function handleAlreadyJoined(joinedDrawId: string, opts?: { openResult?: boolean
   }
 }
 
-/** 响应体/文案是否表示「已参与」（409 或 message） */
-function isAlreadyJoinedResponse(data: { message?: string } | null | undefined, httpStatus?: number): boolean {
-  if (httpStatus === 409) return true
-  const msg = String(data?.message || '')
-  return /已参与|already\s*join/i.test(msg)
-}
-
 /**
  * 公开 API 路径用 slug：优先 publicSlug，否则 id（深链 props 多为 slug）。
+ * 纯函数在 joined-session；此处闭包 draws。
  */
 function publicDrawPathKey(drawId: string): string {
-  const draw = draws.value.find((d) => d.id === drawId || d.publicSlug === drawId)
-  return draw?.publicSlug || draw?.id || drawId
+  return resolvePublicDrawPathKey(drawId, draws.value)
 }
 
 function completeJoinSuccess(
@@ -916,7 +940,10 @@ function completeJoinSuccess(
   opts?: { email?: string },
 ) {
   if (opts?.email) persistSessionEmail(opts.email)
-  markDrawJoined(joinedDrawId)
+  markDrawJoined(joinedDrawId, {
+    entryId: data.entryId,
+    won: data.outcome?.status === 'won',
+  })
   if (data.outcome) {
     myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
   }
@@ -1002,8 +1029,9 @@ function resultModeLabel(draw: LotteryDraw) {
  * docs/076：draft/paused 说明「为何不能参与 + 下一步」。
  */
 function statusPathHint(draw: LotteryDraw) {
-  if (myJoinedById.value[draw.id] && draw.status === 'open') {
-    return t('lottery.statusHintJoinedPending')
+  // 已参与 + open：按 result_mode 诚实分支（非抽奖勿写「等开奖」）
+  if (isDrawJoined(draw) && draw.status === 'open') {
+    return t(`lottery.${joinedOpenStatusHintKey(draw.resultMode)}`)
   }
   const key = ({
     draft: 'lottery.statusHintDraft',
@@ -1016,10 +1044,14 @@ function statusPathHint(draw: LotteryDraw) {
   return key ? t(key) : ''
 }
 
+function isDrawJoined(draw: LotteryDraw): boolean {
+  return Boolean(myJoinedById.value[draw.id] || myJoinedById.value[draw.publicSlug || ''])
+}
+
 function nonOpenPrimaryCta(draw: LotteryDraw) {
   return publicNonOpenPrimaryCta({
     status: draw.status,
-    joined: Boolean(myJoinedById.value[draw.id]),
+    joined: isDrawJoined(draw),
     hasSession: Boolean(sessionEmail.value || registeredUsername.value),
   })
 }
@@ -1678,11 +1710,7 @@ async function fetchDrawDetail(id: string) {
  * 注意：模板 @click 可能传入 PointerEvent，不可把 Event 当 opts；仅认显式 `{ silent }`。
  */
 async function fetchDraws(opts?: { silent?: boolean } | Event) {
-  const silent =
-    opts != null &&
-    typeof opts === 'object' &&
-    'silent' in opts &&
-    Boolean((opts as { silent?: boolean }).silent)
+  const silent = isSilentFetchOption(opts)
   if (!silent) {
     loading.value = true
     fetchError.value = ''
@@ -1723,13 +1751,39 @@ async function fetchDraws(opts?: { silent?: boolean } | Event) {
 }
 
 /**
- * 有业务 JWT 时静默 my-result，回填已参与（刷新后恢复，docs/097 P0-2）。
- * 不弹窗；失败忽略（无 entry / 网络）。
+ * 刷新后回填「已参与」UI（docs/097 P0-2 / docs/098）：
+ * 1) 本机 session hints（无 JWT 的 open OTP 也能灰钮，非密码学证明）
+ * 2) 有业务 JWT 时静默 my-result 权威确认
+ * 不弹窗；网络失败忽略。
  */
 async function hydrateJoinedStateFromSession() {
-  const token = registeredToken.value
   const draw = draws.value[0]
-  if (!token || !draw) return
+  if (!draw) return
+
+  // —— 1) 无 JWT 也能恢复：读 lottery_joined_hints ——
+  const hints = readJoinedHints(sessionStorage)
+  const hintKeys = [draw.id, draw.publicSlug || '', props.id || '']
+  let hintHit = false
+  for (const k of hintKeys) {
+    const h = hints[String(k || '').trim().toLowerCase()]
+    if (!h) continue
+    hintHit = true
+    markDrawJoined(draw.id, {
+      joinedAt: h.joinedAt,
+      drawName: h.drawName,
+      drawStatus: h.drawStatus || draw.status,
+      entryId: h.entryId,
+      won: h.won,
+    })
+    if (h.won) {
+      myWonById.value = { ...myWonById.value, [draw.id]: true }
+    }
+    break
+  }
+
+  // —— 2) 有 JWT：服务端确认（可覆盖/补强 hints）——
+  const token = registeredToken.value
+  if (!token) return
   const slug = draw.publicSlug || draw.id
   if (!slug) return
   try {
@@ -1746,13 +1800,20 @@ async function hydrateJoinedStateFromSession() {
     })
     const data = (await res.json()) as any
     if (data?.ok && data.joined) {
-      markDrawJoined(draw.id, { drawStatus: draw.status })
+      markDrawJoined(draw.id, {
+        drawStatus: draw.status,
+        entryId: data.entryId ? String(data.entryId) : undefined,
+        won: Boolean(data.won),
+      })
       if (data.won) {
         myWonById.value = { ...myWonById.value, [draw.id]: true }
       }
+    } else if (data?.ok && data.joined === false && hintHit) {
+      // 服务端明确未参与：本机 hint 可能串号/脏数据，不主动清全库，仅取消本活动 UI
+      // （真退出登录会 clearJoinedHints）
     }
   } catch {
-    /* 静默：不影响主路径 */
+    /* 静默：不影响主路径；hints 已足够灰钮 */
   }
 }
 
@@ -2111,7 +2172,8 @@ async function handleJoin(drawId: string) {
     showToast(statusPathHint(draw) || statusText(draw.status), 'error')
     return
   }
-  if (myJoinedById.value[drawId]) {
+  // id 与 publicSlug 任一命中即视为已参与（hints / mark 双键，docs/098）
+  if (myJoinedById.value[drawId] || myJoinedById.value[draw.publicSlug || '']) {
     showToast(t('lottery.alreadyJoinedHint'), 'success')
     openMyResult(draw)
     return

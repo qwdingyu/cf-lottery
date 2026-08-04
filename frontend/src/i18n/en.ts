@@ -1200,6 +1200,11 @@ export default {
     statusHintDrawn: "This activity has ended. If you joined, you can check whether you won.",
     statusHintCancelled: "This activity was cancelled.",
     statusHintJoinedPending: "You have joined. Check results here after the draw.",
+    /** Joined + open: honest by result_mode (docs/098) */
+    statusHintJoinedNoResult: "Submitted. This activity has no prize draw; the host will follow up if needed.",
+    statusHintJoinedVote: "Your vote is in. Check back here or with the host after tallying.",
+    statusHintJoinedOrdered: "You're registered. Spots are assigned in order — check status on this page.",
+    statusHintJoinedInstant: "You've joined. If results are instant, tap “Check result”.",
     refreshStatus: "Refresh status",
     resultCodeHint: "Tap “Send code” to your email, then query (works after the draw too).",
     resultCodeHintShort: "We email a code to protect prize details.",

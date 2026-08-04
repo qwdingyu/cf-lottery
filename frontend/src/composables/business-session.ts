@@ -13,6 +13,7 @@ import {
   LOTTERY_SESSION_EMAIL_KEY,
   type SessionStore,
 } from './cf-auth-session'
+import { clearJoinedHints } from '@/views/lottery/joined-session'
 
 /** 与 useAdminAuth 保持同一 key，避免分叉 */
 export const ADMIN_TOKEN_KEY = 'admin_token'
@@ -27,6 +28,8 @@ export function clearLotteryParticipationSession(store: SessionStore): void {
   store.removeItem(LOTTERY_REGISTERED_TOKEN_KEY)
   store.removeItem(LOTTERY_REGISTERED_USERNAME_KEY)
   store.removeItem(LOTTERY_SESSION_EMAIL_KEY)
+  // 本机「已参与」UI 提示随参与会话清掉，避免换号后仍显示已参与（docs/098）
+  clearJoinedHints(store)
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   clearLotteryBrowserSessionOnly,
   clearLotteryParticipationSession,
 } from "./business-session";
+import { LOTTERY_JOINED_HINTS_KEY } from "@/views/lottery/joined-session";
 
 function memoryStore(init: Record<string, string> = {}): SessionStore {
   const map = new Map<string, string>(Object.entries(init));
@@ -32,11 +33,12 @@ function memoryStore(init: Record<string, string> = {}): SessionStore {
 }
 
 describe("business-session 登出清理", () => {
-  it("clearLotteryParticipationSession 只清参与三键", () => {
+  it("clearLotteryParticipationSession 清参与三键 + 本机已参与提示", () => {
     const store = memoryStore({
       [LOTTERY_REGISTERED_TOKEN_KEY]: "jwt",
       [LOTTERY_REGISTERED_USERNAME_KEY]: "u",
       [LOTTERY_SESSION_EMAIL_KEY]: "a@b.c",
+      [LOTTERY_JOINED_HINTS_KEY]: JSON.stringify({ slug: { drawId: "d1" } }),
       [CF_AUTH_PKCE_KEY]: "pkce",
       other: "keep",
     });
@@ -44,6 +46,7 @@ describe("business-session 登出清理", () => {
     expect(store.getItem(LOTTERY_REGISTERED_TOKEN_KEY)).toBeNull();
     expect(store.getItem(LOTTERY_REGISTERED_USERNAME_KEY)).toBeNull();
     expect(store.getItem(LOTTERY_SESSION_EMAIL_KEY)).toBeNull();
+    expect(store.getItem(LOTTERY_JOINED_HINTS_KEY)).toBeNull();
     expect(store.getItem(CF_AUTH_PKCE_KEY)).toBe("pkce");
     expect(store.getItem("other")).toBe("keep");
   });

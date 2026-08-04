@@ -1172,6 +1172,11 @@ export default {
     statusHintDrawn: "活动已结束。若已参与，可查询是否中奖。",
     statusHintCancelled: "活动已取消。",
     statusHintJoinedPending: "你已参与。开奖后可在本页查询结果。",
+    /** 已参与 + open：按 result_mode 诚实分支（docs/098） */
+    statusHintJoinedNoResult: "你已提交。本活动不产生中奖结果，主办方如有后续将另行通知。",
+    statusHintJoinedVote: "你已投票。计票完成后可在本页或主办方渠道查看。",
+    statusHintJoinedOrdered: "你已登记。名额按顺序分配，可在本页查询排队/分配状态。",
+    statusHintJoinedInstant: "你已参与。若本场即时出结果，可点「查询结果」查看。",
     refreshStatus: "刷新状态",
     resultCodeHint: "点击「发送验证码」到邮箱，填写后查询（开奖后也可发码）。",
     resultCodeHintShort: "验证码发到该邮箱，用于保护中奖信息。",
