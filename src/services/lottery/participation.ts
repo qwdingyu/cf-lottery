@@ -460,6 +460,59 @@ async function recordAttributedJoin(
     .limit(1);
   if (!share) return { attributed: false };
 
+  /**
+   * 自邀请不计分（docs/112）：
+   * - 仅比 entryId 不够：首次 join 的新 entryId 永远 ≠ 已有 sharerEntryId
+   * - 真实刷票：同 identity（邮箱/user_id）用自己的 ref 再参与（签到跨日、脏路径等）
+   * - 防御：分享者 entry 的 identity 与当前参与者 identity 一致 → 不涨分
+   * - entryId 相等仍挡一层（脏数据 / 未来路径）
+   */
+  if (share.sharerEntryId && share.sharerEntryId === input.entryId) {
+    return { attributed: false, selfInvite: true as const, refCode, shareRecordId: share.id };
+  }
+  if (share.sharerEntryId) {
+    const [sharerEntry] = await db
+      .select({
+        identityType: lotteryEntries.identityType,
+        identityValue: lotteryEntries.identityValue,
+      })
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.id, share.sharerEntryId),
+        eq(lotteryEntries.tenantId, input.tenantId),
+        eq(lotteryEntries.drawId, input.drawId),
+      ))
+      .limit(1);
+    if (sharerEntry) {
+      const [joinerEntry] = await db
+        .select({
+          identityType: lotteryEntries.identityType,
+          identityValue: lotteryEntries.identityValue,
+        })
+        .from(lotteryEntries)
+        .where(and(
+          eq(lotteryEntries.id, input.entryId),
+          eq(lotteryEntries.tenantId, input.tenantId),
+          eq(lotteryEntries.drawId, input.drawId),
+        ))
+        .limit(1);
+      if (joinerEntry) {
+        const sameType = String(sharerEntry.identityType || "") === String(joinerEntry.identityType || "");
+        // 签到 identity_value 带 :YYYY-MM-DD 后缀：比「邮箱/user 主干」防跨日自邀刷权重
+        const baseOf = (v: string) => {
+          const s = String(v || "").trim().toLowerCase();
+          const m = s.match(/^(.*):(\d{4}-\d{2}-\d{2})$/);
+          return m ? m[1]! : s;
+        };
+        const sameIdentity =
+          sameType && baseOf(sharerEntry.identityValue) === baseOf(joinerEntry.identityValue);
+        if (sameIdentity) {
+          return { attributed: false, selfInvite: true as const, refCode, shareRecordId: share.id };
+        }
+      }
+    }
+  }
+
   await db
     .update(shareRecords)
     .set({ joinedCount: sql`${shareRecords.joinedCount} + 1` })

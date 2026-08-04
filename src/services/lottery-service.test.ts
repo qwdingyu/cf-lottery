@@ -663,6 +663,44 @@ describe("活动事件", () => {
     expect(summary.totals.attributed_join).toBe(1);
     expect(summary.attributedJoins).toBe(1);
   });
+
+  it("自邀请：同 identity 用自己的 share 码参与（签到跨日）不计 joined_count", async () => {
+    // 签到允许同邮箱跨日再参与；day2 仍带 day1 的 ?ref= 不得给自己涨邀请（docs/112）
+    const { id, publicSlug } = await setupCheckinActivity();
+    const day1 = await joinDraw(db, publicSlug, "Self@Checkin.com");
+    expect(day1.joined).toBe(true);
+    const e1 = ("entryId" in day1 && day1.entryId) ? String(day1.entryId) : "";
+    expect(e1).toBeTruthy();
+    await client.execute({
+      sql: `INSERT INTO share_records (id, tenant_id, draw_id, sharer_entry_id, share_code, clicked_count, joined_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ["share-self-ck", TENANT, id, e1, "self-ck-ref", 0, 0],
+    });
+    // 伪造「昨日」entry，腾出今日 UNIQUE，再 day2 join 带 self ref
+    const y = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    await client.execute({
+      sql: `UPDATE lottery_entries SET identity_value = ? WHERE id = ?`,
+      args: [`self@checkin.com:${y}`, e1],
+    });
+    const day2 = await joinDraw(db, publicSlug, "self@checkin.com", "email", {
+      refCode: "self-ck-ref",
+    });
+    expect(day2.joined).toBe(true);
+    const shareRows = await client.execute(
+      "SELECT joined_count FROM share_records WHERE id = 'share-self-ck'",
+    );
+    expect(Number(shareRows.rows[0]?.joined_count)).toBe(0);
+    const summary = await getActivityEventSummary(db, TENANT, id);
+    expect(summary.totals.attributed_join || 0).toBe(0);
+    // 他人用同一 ref 仍应计分
+    const friend = await joinDraw(db, publicSlug, "friend@checkin.com", "email", {
+      refCode: "self-ck-ref",
+    });
+    expect(friend.joined).toBe(true);
+    const after = await client.execute(
+      "SELECT joined_count FROM share_records WHERE id = 'share-self-ck'",
+    );
+    expect(Number(after.rows[0]?.joined_count)).toBe(1);
+  });
 });
 
 describe("外部转化回传", () => {

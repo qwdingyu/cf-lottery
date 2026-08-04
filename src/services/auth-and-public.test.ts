@@ -839,6 +839,46 @@ describe("公开参与流程", () => {
     expect(againBody.entryId).toBe(body.entryId);
   });
 
+  /**
+   * docs/112：registered 的 access-code 必须透传 refCode，否则登录用户裂变归因全断。
+   */
+  it("registered access-code 带 refCode 时计入分享者 joined_count", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const sharerEntryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "registered-ref-attr",
+      title: "注册裂变归因", status: "open", participationMode: "registered",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: sharerEntryId, tenantId: TENANT, drawId,
+      identityType: "user_id", identityValue: "sharer-user", joinedAt: new Date().toISOString(),
+    });
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      sharerEntryId, shareCode: "regref001", joinedCount: 0, clickedCount: 0,
+    });
+    const inviteeId = crypto.randomUUID();
+    const token = await signJwt({ sub: inviteeId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+    const res = await app.request("/public/draws/registered-ref-attr/access-code", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.88",
+      },
+      body: JSON.stringify({ email: "invitee@test.com", refCode: "regref001" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.joined).toBe(true);
+    const [share] = await db.select().from(shareRecords).where(eq(shareRecords.shareCode, "regref001")).limit(1);
+    expect(share?.joinedCount).toBe(1);
+  });
+
   it("registered 模式：无效 JWT 返回 401", async () => {
     const app = createPublicTestApp();
     const drawId = crypto.randomUUID();
@@ -1548,6 +1588,7 @@ describe("公开参与流程", () => {
     expect(body.maxExtraEntries).toBe(5);
     expect(body.drawWeight).toBe(6);
     expect(body.shareUrl).toBe("/lottery/viral-stats-a?ref=viralref001");
+    // 若存在多码，应取 createdAt 最新（与 POST /share 复用一致）；本用例仅一条
     expect(body.inviteOpen).toBe(true);
   });
 

@@ -2182,10 +2182,14 @@ async function joinWithRegisteredToken(drawId: string, token: string) {
   joiningId.value = drawId
   try {
     const pathKey = publicDrawPathKey(drawId)
+    // refCode：registered 经 access-code 也要归因（docs/112）
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pathKey) + '/access-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body: JSON.stringify({ submission: draw ? buildSubmissionPayload(draw) : undefined }),
+      body: JSON.stringify({
+        submission: draw ? buildSubmissionPayload(draw) : undefined,
+        refCode: routeParam('ref') || undefined,
+      }),
     })
     const data = await res.json()
     if (data.ok && data.joined) {
@@ -2375,6 +2379,8 @@ async function resumeCfAuthJoinAfterCallback() {
     joiningId.value = joinKey
     try {
       const pathKey = publicDrawPathKey(joinKey)
+      // pending.refCode 优先（cf-auth 跳转前写入），否则当前 URL ?ref=
+      const refFromPending = pending.refCode ? String(pending.refCode).trim() : ''
       const res = await fetch(
         API_BASE + '/public/draws/' + encodeURIComponent(pathKey) + '/access-code',
         {
@@ -2385,6 +2391,7 @@ async function resumeCfAuthJoinAfterCallback() {
           },
           body: JSON.stringify({
             submission: draw ? buildSubmissionPayload(draw) : undefined,
+            refCode: refFromPending || routeParam('ref') || undefined,
           }),
         },
       )

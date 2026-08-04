@@ -182,11 +182,12 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
     .limit(1);
   if (!entry) return fail(c, "参与记录不存在或不属于本活动", 404);
 
-  // 查询该参与者的分享记录
+  // 查询该参与者的分享记录（按创建时间降序：与 POST /share 复用「最新码」一致，docs/112）
   const myShares = await db
     .select()
     .from(shareRecords)
-    .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.sharerEntryId, entryId)));
+    .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.sharerEntryId, entryId)))
+    .orderBy(desc(shareRecords.createdAt));
 
   // 聚合统计：额外次数与开奖 performDraw 同一公式（invited × perInvite 封顶）
   const totalClicked = myShares.reduce((s, r) => s + r.clickedCount, 0);
@@ -200,8 +201,8 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
   // 开奖袋中总票数（含基础 1），便于前端展示「相当于 N 次机会」
   const drawWeight = 1 + extraEntriesEarned;
 
-  // 取最新一条分享码作为默认链接（路径与 POST /share 一致）
-  const latestShare = myShares.length > 0 ? myShares[myShares.length - 1] : null;
+  // 最新一条（已 orderBy desc）作为默认链接，与 POST /share 复用策略对齐
+  const latestShare = myShares.length > 0 ? myShares[0] : null;
   const shareCode = latestShare?.shareCode || "";
   const shareUrl = shareCode ? buildPublicSharePath(slug, shareCode) : "";
 

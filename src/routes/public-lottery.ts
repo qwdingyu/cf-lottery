@@ -354,9 +354,11 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
       return fail(c, "登录用户请直接查询结果，无需邮箱验证码", 400);
     }
     try {
+      // registered 也必须透传 refCode：否则登录用户裂变归因全断（docs/112）
       const result = await joinDraw(db, slug, identity.identityValue, "user_id", {
         ipHash: ip,
         userAgent: c.req.header("User-Agent") || "",
+        refCode: body.refCode,
         submissionPayload: body.submission,
       });
       if (!result.joined) {
