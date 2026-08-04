@@ -443,11 +443,12 @@
           <template v-if="isRegMyResult">
             <p class="result-hint">{{ $t('lottery.loggedInQueryHint', { name: registeredUsername }) }}</p>
             <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
-            <button class="btn btn-primary" :disabled="myResultLoading" @click="queryMyResult">
+            <button class="btn btn-primary join-modal-primary" :disabled="myResultLoading" @click="queryMyResult">
               {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.queryText') }}
             </button>
           </template>
           <template v-else>
+            <!-- docs/077：本页可发查询码（purpose=query），不依赖「参与时」旧码 -->
             <input
               v-model="myResultEmail"
               type="email"
@@ -456,26 +457,43 @@
               enterkeyhint="next"
               :placeholder="$t('lottery.resultEmailPlaceholder')"
               maxlength="120"
-              :disabled="myResultLoading"
+              :disabled="myResultLoading || myResultSendingCode"
             />
-            <input
-              v-model="myResultCode"
-              type="text"
-              name="one-time-code"
-              inputmode="numeric"
-              pattern="[0-9]*"
-              autocomplete="one-time-code"
-              enterkeyhint="done"
-              autocapitalize="off"
-              spellcheck="false"
-              :placeholder="$t('lottery.resultCodePlaceholder')"
-              maxlength="10"
-              :disabled="myResultLoading"
-              @keyup.enter="queryMyResult"
-            />
-            <p class="result-hint">{{ $t('lottery.codeHint') }}</p>
+            <div class="result-code-row">
+              <input
+                v-model="myResultCode"
+                type="text"
+                name="one-time-code"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                autocomplete="one-time-code"
+                enterkeyhint="done"
+                autocapitalize="off"
+                spellcheck="false"
+                class="result-code-input"
+                :placeholder="$t('lottery.resultCodePlaceholder')"
+                maxlength="6"
+                :disabled="myResultLoading || myResultSendingCode"
+                @keyup.enter="queryMyResult"
+              />
+              <button
+                type="button"
+                class="btn btn-ghost result-send-code-btn"
+                :disabled="myResultLoading || myResultSendingCode || myResultCodeCooldown > 0"
+                @click="sendMyResultCode"
+              >
+                {{
+                  myResultSendingCode
+                    ? $t('lottery.loadingText')
+                    : myResultCodeCooldown > 0
+                      ? $t('lottery.resendIn', { s: myResultCodeCooldown })
+                      : $t('lottery.sendCode')
+                }}
+              </button>
+            </div>
+            <p class="result-hint">{{ $t('lottery.resultCodeHint') }}</p>
             <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
-            <button class="btn btn-primary join-modal-primary" :disabled="myResultLoading" @click="queryMyResult">
+            <button class="btn btn-primary join-modal-primary" :disabled="myResultLoading || myResultSendingCode" @click="queryMyResult">
               {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.queryText') }}
             </button>
           </template>
@@ -483,7 +501,11 @@
 
         <!-- 查询结果 -->
         <div v-else class="result-detail">
-          <template v-if="myResultData.won">
+          <!-- 身份通过但未参与：诚实说明，避免误显示「谢谢参与」 -->
+          <template v-if="myResultData.joined === false">
+            <div class="result-line">{{ $t('lottery.resultNotJoined') }}</div>
+          </template>
+          <template v-else-if="myResultData.won">
             <div class="result-line">🎉 <strong>{{ $t('lottery.won') }}</strong></div>
             <div v-if="myResultData.prizeCode" class="result-code-block">
               <span class="result-code-label">{{ $t('lottery.prizeCodeLabel') }}</span>
@@ -513,7 +535,7 @@
             <div class="result-line">😊 {{ $t('lottery.thanksForParticipating') }}</div>
           </template>
           <!-- 未中奖 CTA：运营者配置的导流卡片（安慰奖和未中奖都展示） -->
-          <div v-if="!myResultData.won && getResultCta(myResultDraw, 'after_loss')" class="result-cta-card">
+          <div v-if="myResultData.joined !== false && !myResultData.won && getResultCta(myResultDraw, 'after_loss')" class="result-cta-card">
             <a :href="getResultCta(myResultDraw, 'after_loss')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
               {{ getResultCta(myResultDraw, 'after_loss')!.title || $t('lottery.viewDetail') }}
             </a>
@@ -871,6 +893,9 @@ const myResultDraw = ref<LotteryDraw | null>(null)
 const myResultEmail = ref('')
 const myResultCode = ref('')
 const myResultLoading = ref(false)
+const myResultSendingCode = ref(false)
+const myResultCodeCooldown = ref(0)
+let myResultCooldownTimer: ReturnType<typeof setInterval> | null = null
 const myResultData = ref<{ joined: boolean; won: boolean; prizeCode: string | null; consolationCoupon: string | null } | null>(null)
 const myResultError = ref('')
 
@@ -915,13 +940,74 @@ function rememberJoinSuccess(
   }
 }
 
+function stopMyResultCooldown() {
+  if (myResultCooldownTimer) {
+    clearInterval(myResultCooldownTimer)
+    myResultCooldownTimer = null
+  }
+  myResultCodeCooldown.value = 0
+}
+
+function startMyResultCooldown(seconds: number) {
+  stopMyResultCooldown()
+  myResultCodeCooldown.value = Math.max(0, Math.floor(seconds) || 60)
+  if (myResultCodeCooldown.value <= 0) return
+  myResultCooldownTimer = setInterval(() => {
+    myResultCodeCooldown.value = Math.max(0, myResultCodeCooldown.value - 1)
+    if (myResultCodeCooldown.value <= 0) stopMyResultCooldown()
+  }, 1000)
+}
+
 function openMyResult(draw: LotteryDraw) {
   myResultDraw.value = draw
   myResultEmail.value = sessionEmail.value || ''
   myResultCode.value = ''
   myResultData.value = null
   myResultError.value = ''
+  myResultSendingCode.value = false
+  stopMyResultCooldown()
   showMyResultModal.value = true
+  // registered + 已登录：打开即查，少一次「点查询」
+  if (draw.participationMode === 'registered' && registeredToken.value) {
+    void queryMyResult()
+  }
+}
+
+/**
+ * 为查结果发邮箱 OTP（purpose=query）。
+ * 与参与发码分离：已参与/已开奖仍可发；不走 join 的 409。
+ */
+async function sendMyResultCode() {
+  if (!myResultDraw.value) return
+  const email = myResultEmail.value.trim()
+  if (!email.includes('@')) {
+    myResultError.value = t('lottery.invalidEmail')
+    return
+  }
+  myResultSendingCode.value = true
+  myResultError.value = ''
+  try {
+    const slug = myResultDraw.value.publicSlug || myResultDraw.value.id
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(slug) + '/access-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, purpose: 'query' }),
+    })
+    const data = await res.json() as any
+    if (data.ok && data.sent) {
+      startMyResultCooldown(data.expiresInSeconds ? Math.min(60, Number(data.expiresInSeconds) || 60) : 60)
+      showToast(t('lottery.resultCodeSent'), 'success')
+    } else if (data.ok && data.joined) {
+      // 极端：误走 join 直参；查结果场景不应出现
+      myResultError.value = data.message || t('lottery.sendFailed')
+    } else {
+      myResultError.value = data.message || t('lottery.sendFailed')
+    }
+  } catch {
+    myResultError.value = t('lottery.networkError') || ''
+  } finally {
+    myResultSendingCode.value = false
+  }
 }
 
 async function queryMyResult() {
@@ -950,6 +1036,10 @@ async function queryMyResult() {
     const data = await res.json()
     if (data.ok) {
       myResultData.value = data
+      // 查到结果后记住邮箱会话，方便「我的记录」
+      if (!isReg && myResultEmail.value.trim()) {
+        persistSessionEmail(myResultEmail.value.trim())
+      }
     } else {
       myResultError.value = data.message || t('lottery.queryFailed')
     }
@@ -1723,6 +1813,7 @@ onUnmounted(() => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  stopMyResultCooldown()
   clearResultModalTimer()
 })
 </script>

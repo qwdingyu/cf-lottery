@@ -651,6 +651,88 @@ describe("公开参与流程", () => {
     expect(codes.length).toBeGreaterThanOrEqual(1);
   });
 
+  /**
+   * docs/077：查结果 OTP 闭环。
+   * 旧行为：已参与 → access-code 409；drawn → 活动已结束。
+   * 新行为：purpose=query 时仍可发码，供 my-result 校验。
+   */
+  it("purpose=query：已参与且 drawn 仍可发查询验证码；join 意图仍 409", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const email = "query-after-join@test.com";
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "query-otp-drawn",
+      title: "开奖后查结果发码",
+      status: "drawn",
+      participationMode: "open",
+      startAt: futureTimeISO(-120),
+      endAt: futureTimeISO(-30),
+      winnerCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: email,
+      joinedAt: new Date().toISOString(),
+    });
+
+    // join 意图：drawn 仍拒（不是 open）
+    const joinRes = await app.request("/public/draws/query-otp-drawn/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.91" },
+      body: JSON.stringify({ email }),
+    }, TEST_ENV);
+    expect(joinRes.status).toBe(400);
+
+    // query 意图：已参与 + drawn → 可发码
+    const queryRes = await app.request("/public/draws/query-otp-drawn/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.92" },
+      body: JSON.stringify({ email, purpose: "query" }),
+    }, TEST_ENV);
+    const queryBody = (await queryRes.json()) as {
+      ok?: boolean;
+      sent?: boolean;
+      purpose?: string;
+      message?: string;
+    };
+    expect(queryRes.status, queryBody.message).toBe(200);
+    expect(queryBody.ok).toBe(true);
+    expect(queryBody.purpose).toBe("query");
+    expect(queryBody.sent === true || queryBody.sent === false).toBe(true);
+
+    const codes = await db
+      .select()
+      .from(emailAccessCodes)
+      .where(and(eq(emailAccessCodes.email, email), eq(emailAccessCodes.drawId, drawId)));
+    expect(codes.some((row) => row.used === 0)).toBe(true);
+
+    // open + 已参与：join 仍 409；query 可发
+    await db
+      .update(lotteryDraws)
+      .set({ status: "open", endAt: futureTimeISO(60) })
+      .where(eq(lotteryDraws.id, drawId));
+    const joinOpen = await app.request("/public/draws/query-otp-drawn/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.93" },
+      body: JSON.stringify({ email }),
+    }, TEST_ENV);
+    expect(joinOpen.status).toBe(409);
+
+    const queryOpen = await app.request("/public/draws/query-otp-drawn/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.94" },
+      body: JSON.stringify({ email, purpose: "query" }),
+    }, TEST_ENV);
+    expect(queryOpen.status).toBe(200);
+  });
+
   it("roster 模式：名单外不能参与", async () => {
     const drawId = crypto.randomUUID();
     await db.insert(lotteryDraws).values({

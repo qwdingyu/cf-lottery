@@ -1369,6 +1369,7 @@ import {
   emailStatusClass,
   isWinnerEmailFailed,
   isWinnerEmailSent,
+  winnersPollSettleKind,
   formatLotteryEntryProgress,
   formatLotteryVisibilityLabel,
   formatPublishCheckItems as formatPublishCheckItemsRaw,
@@ -1975,13 +1976,32 @@ function stopWinnersStatusPolling() {
 async function refreshWinnersStatus(id: string) {
   if (winnersStatusInFlight || !showWinnersModal.value || winnersModalDrawId.value !== id) return
   winnersStatusInFlight = true
+  const prevPending = winnersEmailPendingCount.value
   try {
     const data = await fetchLotteryWinners(id)
     winners.value = data.winners || []
     rememberDrawEmailFails(id, winners.value)
     winnersStatusRefreshes += 1
-    if (winnersEmailPendingCount.value === 0 || winnersStatusRefreshes >= MAX_WINNERS_STATUS_REFRESHES) {
+    const nextFail = winnersEmailFailureCount.value
+    const nextPending = winnersEmailPendingCount.value
+    const hitMax = winnersStatusRefreshes >= MAX_WINNERS_STATUS_REFRESHES
+    const shouldStop = nextPending === 0 || hitMax
+    if (shouldStop) {
       stopWinnersStatusPolling()
+      // docs/077：pending 收敛后给一次可感知反馈（失败优先）
+      const settle = winnersPollSettleKind({
+        prevPending,
+        nextFail,
+        nextPending,
+        hitMaxRefreshes: hitMax,
+      })
+      if (settle === 'became_failed') {
+        showToast(t('lottery.adminEmailPollBecameFailed', { count: nextFail }), 'error')
+      } else if (settle === 'all_sent') {
+        showToast(t('lottery.adminEmailPollAllSent'), 'success')
+      } else if (settle === 'still_pending') {
+        showToast(t('lottery.adminEmailPollStillPending'), 'success')
+      }
     }
   } catch {
     winnersStatusRefreshes += 1

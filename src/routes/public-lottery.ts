@@ -267,14 +267,17 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   }
   const slug = c.req.param("slug");
   // accessPassword / inviteCode：邮箱验证关闭（bypass）直参时也要带上，否则 password/invite 模式永远失败
+  // purpose=query：仅为 my-result 发码（已参与 / 已开奖仍可发）；默认 join 保持原语义
   const body = await c.req.json<{
     email?: string;
     submission?: Record<string, unknown>;
     accessPassword?: string;
     inviteCode?: string;
     refCode?: string;
+    purpose?: string;
   }>();
   const email = String(body.email || "").trim().toLowerCase();
+  const purpose = String(body.purpose || "join").trim().toLowerCase() === "query" ? "query" : "join";
 
   // 查询活动
   const [draw] = await db
@@ -284,12 +287,19 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.status !== "open") return fail(c, "活动已结束", 400);
+  // join：仅 open；query：开奖后仍需 OTP 证明邮箱，允许 open/paused/drawing/drawn
+  if (purpose === "join") {
+    if (draw.status !== "open") return fail(c, "活动已结束", 400);
+  } else if (!["open", "paused", "drawing", "drawn"].includes(draw.status)) {
+    return fail(c, "当前无法发送查询验证码", 400);
+  }
 
   // ── 统一身份解析：registered → (user_id, userId)；其他 → (email, email) ──
   // 身份在端点层一步解析，joinDraw 只消费不再覆盖，杜绝"传 email 存 userId"的兼容 hack。
   const identity = await resolveParticipantIdentity(c, draw.participationMode, email);
-  if (!identity) return fail(c, "此活动需要登录后才能参与", 401);
+  if (!identity) {
+    return fail(c, purpose === "query" ? "此活动需要登录后查询" : "此活动需要登录后才能参与", 401);
+  }
   if (identity.identityType === "email" && !isValidEmail(email)) {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
@@ -303,10 +313,12 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     .from(lotteryEntries)
     .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.identityValue, identity.identityValue)))
     .limit(1);
-  if (existing) return fail(c, "您已参与此活动", 409);
+  // join 意图：已参与 → 409；query 意图：已参与仍可发码（docs/077 查结果闭环）
+  if (purpose === "join" && existing) return fail(c, "您已参与此活动", 409);
 
   // 名单模式校验（仅邮箱身份；registered 与 roster 互斥，由参与模式控制）
-  if (identity.identityType === "email" && draw.participationMode === "roster") {
+  // query：未在名单且未参与则拒，避免给无关邮箱滥发码；已参与可发
+  if (identity.identityType === "email" && draw.participationMode === "roster" && !existing) {
     const [inRoster] = await db
       .select({ id: lotteryRosterMembers.id })
       .from(lotteryRosterMembers)
@@ -315,8 +327,12 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     if (!inRoster) return fail(c, "您不在本次活动名单中", 403);
   }
 
-  // ── registered 模式：JWT 已认证，身份即 userId，跳过邮箱验证码直接参与 ──
+  // ── registered 模式 ──
   if (identity.identityType === "user_id") {
+    // 查结果：前端应带 JWT 直调 my-result，不经邮箱 OTP
+    if (purpose === "query") {
+      return fail(c, "登录用户请直接查询结果，无需邮箱验证码", 400);
+    }
     try {
       const result = await joinDraw(db, slug, identity.identityValue, "user_id", {
         ipHash: ip,
@@ -344,11 +360,12 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   // 与 cf-auth **无关**：关闭时 open 系仅凭邮箱字符串 join（弱身份，生产务必 true）。
   // 错误审查「无 cf-auth 则无法参与 / 应探测 IdP 再回退发码」不成立——本分支从不读 CF_AUTH_*。
   // cf-auth 仅是可选：verify-join 带业务 JWT 可跳过 OTP；registered 模式才强制登录态。
+  // purpose=query 时即使 bypass 也必须发码：my-result 仍靠 OTP 防枚举。
   const [emailBypassCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "enable_email_verification")).limit(1);
   const emailBypass = emailBypassCfg?.value === "false"; // 默认未配置时走正常流程
 
-  // 邮箱验证码关闭：跳过邮件发码，直接参与（测试环境专用，生产务必开启）
-  if (emailBypass) {
+  // 邮箱验证码关闭 + 参与意图：跳过邮件发码，直接参与（测试环境专用，生产务必开启）
+  if (purpose === "join" && emailBypass) {
     try {
       const result = await joinDraw(db, slug, email, "email", {
         accessPassword: body.accessPassword,
@@ -373,7 +390,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     }
   }
 
-  // 生成验证码
+  // 生成验证码（join 发码 或 query 查结果发码）
   const code = generateCode();
   const codeHash = await hashCode(code);
   // 验证码有效期：优先从系统配置读取（平台运营者可调整），默认 10 分钟。
@@ -402,6 +419,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     sent: sendResult.ok,
     message: sendResult.ok ? "验证码已发送" : "发送失败，请稍后重试",
     expiresInSeconds: expiresSeconds,
+    purpose,
   });
 });
 

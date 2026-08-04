@@ -939,14 +939,39 @@
 }
 
 /* 查询我的结果弹窗 */
-.game-result-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-.game-result-modal { background: var(--tg-bg, #1f2937); border-radius: 16px; padding: 32px 24px; max-width: 360px; width: 90%; text-align: center; position: relative; animation: modalIn .3s ease; }
-.result-close { position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--tg-hint, #9aa4b2); }
+.game-result-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+}
+.game-result-modal {
+  background: var(--tg-bg, #1f2937); border-radius: 16px; padding: 32px 24px;
+  max-width: 360px; width: 90%; text-align: center; position: relative;
+  animation: modalIn .3s ease;
+  max-height: min(90vh, 100%); overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.result-close { position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--tg-hint, #9aa4b2); min-width: 44px; min-height: 44px; }
 .result-icon { font-size: 48px; margin-bottom: 12px; }
 .result-title { font-size: 22px; font-weight: 700; margin-bottom: 16px; }
-.result-form { display: flex; flex-direction: column; gap: 10px; }
-.result-form input { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border, rgba(255,255,255,.1)); background: var(--tg-secondary-bg, #151b28); color: var(--tg-text, #f0f2f5); font-size: 14px; }
-.result-hint { font-size: 12px; color: var(--tg-hint, #9aa4b2); margin: 0; }
+.result-form { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.result-form input {
+  box-sizing: border-box; width: 100%;
+  min-height: 44px; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--border, rgba(255,255,255,.1));
+  background: var(--tg-secondary-bg, #151b28); color: var(--tg-text, #f0f2f5);
+  font-size: 16px; /* iOS 防缩放 */
+}
+/* docs/077：验证码 + 发码同排，触控友好 */
+.result-code-row {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch;
+}
+.result-code-input { flex: 1 1 140px; letter-spacing: 0.2em; text-align: center; font-variant-numeric: tabular-nums; }
+.result-send-code-btn {
+  flex: 0 0 auto; min-height: 44px; white-space: nowrap;
+  padding: 8px 12px;
+}
+.result-hint { font-size: 12px; color: var(--tg-hint, #9aa4b2); margin: 0; line-height: 1.45; }
 .result-error { font-size: 13px; color: #ef4444; margin: 0; }
 .result-detail { display: flex; flex-direction: column; gap: 12px; align-items: center; }
 .result-line { font-size: 16px; }

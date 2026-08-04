@@ -72,6 +72,31 @@ export function drawDoneFeedbackKind(winners: LotteryWinner[]): DrawDoneFeedback
   return 'ok'
 }
 
+/**
+ * 中奖名单轮询：pending 收敛后的一次反馈（避免静默结束）。
+ * - became_failed：出现/仍有失败（优先于成功）
+ * - all_sent：pending 清零且无失败
+ * - still_pending：触达轮询上限仍有 pending
+ * - none：中间态或无事可报
+ */
+export type WinnersPollSettleKind = 'none' | 'became_failed' | 'all_sent' | 'still_pending'
+
+export function winnersPollSettleKind(input: {
+  prevPending: number
+  nextFail: number
+  nextPending: number
+  hitMaxRefreshes: boolean
+}): WinnersPollSettleKind {
+  const { prevPending, nextFail, nextPending, hitMaxRefreshes } = input
+  // 仍有 pending 且未到上限：继续等，不弹
+  if (nextPending > 0 && !hitMaxRefreshes) return 'none'
+  if (nextFail > 0) return 'became_failed'
+  if (nextPending > 0 && hitMaxRefreshes) return 'still_pending'
+  // pending 从有到无且无失败
+  if (prevPending > 0 && nextPending === 0 && nextFail === 0) return 'all_sent'
+  return 'none'
+}
+
 export const formatLotteryEntryProgress = (count?: number | null, max?: number | null) =>
   max ? `${count ?? 0} / ${max}` : `${count ?? 0}`
 

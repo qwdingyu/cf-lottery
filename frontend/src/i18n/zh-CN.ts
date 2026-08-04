@@ -569,6 +569,10 @@ export default {
     adminEmailFailureHint: "开奖结果已保存，邮件失败不会回滚。请检查发信配置后重发。",
     adminEmailPendingSummary: "{count} 封通知发送中",
     adminEmailPendingHint: "稍后自动刷新状态",
+    // docs/077：中奖名单轮询收敛反馈
+    adminEmailPollBecameFailed: "邮件状态已更新：{count} 封发送失败，请重发",
+    adminEmailPollAllSent: "中奖通知均已发送",
+    adminEmailPollStillPending: "仍有通知发送中，可稍后打开结果查看或重试",
     adminDrawOpened: "已开启",
     // 模板通用文本
     loadingText: "加载中…",
@@ -1074,6 +1078,9 @@ export default {
     statusHintCancelled: "活动已取消。",
     statusHintJoinedPending: "你已参与。开奖后可在本页查询结果。",
     refreshStatus: "刷新状态",
+    resultCodeHint: "点击「发送验证码」到邮箱，填写后查询（开奖后也可发码）。",
+    resultCodeSent: "查询验证码已发送，请查收邮件",
+    resultNotJoined: "该邮箱未参与本活动，或活动尚未记录你的参与。",
     wonTag: "已中奖",
     notWonTag: "未中奖",
     loginToViewRecords: "登录查看记录",

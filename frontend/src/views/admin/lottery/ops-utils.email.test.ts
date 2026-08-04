@@ -7,6 +7,7 @@ import {
   isWinnerEmailFailed,
   isWinnerEmailPending,
   isWinnerEmailSent,
+  winnersPollSettleKind,
 } from "./ops-utils";
 import type { LotteryWinner } from "./types";
 
@@ -53,5 +54,20 @@ describe("ops-utils email status", () => {
         w({ id: "2", notificationStatus: "failed" }),
       ]),
     ).toBe("email_failed");
+  });
+
+  it("轮询收敛：pending→failed 报失败；pending→sent 报成功；触顶仍 pending", () => {
+    expect(
+      winnersPollSettleKind({ prevPending: 2, nextFail: 1, nextPending: 0, hitMaxRefreshes: false }),
+    ).toBe("became_failed");
+    expect(
+      winnersPollSettleKind({ prevPending: 2, nextFail: 0, nextPending: 0, hitMaxRefreshes: false }),
+    ).toBe("all_sent");
+    expect(
+      winnersPollSettleKind({ prevPending: 1, nextFail: 0, nextPending: 1, hitMaxRefreshes: true }),
+    ).toBe("still_pending");
+    expect(
+      winnersPollSettleKind({ prevPending: 1, nextFail: 0, nextPending: 1, hitMaxRefreshes: false }),
+    ).toBe("none");
   });
 });
