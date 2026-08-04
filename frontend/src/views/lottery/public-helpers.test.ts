@@ -11,6 +11,8 @@ import {
   shouldShowNotWonRecordTag,
   statusHintDrawnI18nKey,
   statusHintDrawingI18nKey,
+  publicStatusTagI18nKey,
+  resultModeTagI18nKey,
 } from "./public-helpers";
 
 describe("public-helpers experience UX", () => {
@@ -102,5 +104,23 @@ describe("public-helpers experience UX", () => {
     expect(statusHintDrawingI18nKey("survey")).toBe("statusHintDrawingGeneric");
     expect(statusHintDrawingI18nKey(undefined)).toBe("statusHintDrawing");
     expect(statusHintDrawingI18nKey("")).toBe("statusHintDrawing");
+  });
+
+  it("publicStatusTagI18nKey：drawing 按 kind；其它 status 固定", () => {
+    expect(publicStatusTagI18nKey("drawing", "lottery")).toBe("statusDrawing");
+    expect(publicStatusTagI18nKey("drawing", "signup_chain")).toBe("statusDrawingTagGeneric");
+    expect(publicStatusTagI18nKey("drawing", undefined)).toBe("statusDrawing");
+    expect(publicStatusTagI18nKey("open")).toBe("statusOpen");
+    expect(publicStatusTagI18nKey("drawn")).toBe("ended");
+    expect(publicStatusTagI18nKey("unknown")).toBe("");
+  });
+
+  it("resultModeTagI18nKey：覆盖抽奖与非抽奖 mode", () => {
+    expect(resultModeTagI18nKey("instant")).toBe("resultModeInstantTag");
+    expect(resultModeTagI18nKey("scheduled")).toBe("resultModeScheduledTag");
+    expect(resultModeTagI18nKey("manual")).toBe("resultModeManualTag");
+    expect(resultModeTagI18nKey("review_decision")).toBe("adminResultReview");
+    expect(resultModeTagI18nKey("vote_tally")).toBe("adminResultVoteTally");
+    expect(resultModeTagI18nKey("")).toBe("");
   });
 });

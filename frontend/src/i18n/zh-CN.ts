@@ -1197,13 +1197,16 @@ export default {
     needActivityLink: "请使用活动链接打开",
     needActivityLinkHint: "参与页不提供活动广场。请向主办方索取分享链接或扫描活动二维码。",
     resultModeInstantTag: "即时结果",
-    resultModeScheduledTag: "定时开奖",
-    resultModeManualTag: "手动开奖",
+    /** scheduled/manual：中性「出结果」，非抽奖也可用（docs/106） */
+    resultModeScheduledTag: "定时出结果",
+    resultModeManualTag: "手动出结果",
     statusHintDraft: "活动尚未对外开放。请稍后再来，或点「刷新状态」查看是否已开启。",
     statusHintPaused: "主办方已暂停本活动，暂不可新参与。可刷新状态或复制链接稍后再进。",
     statusHintDrawing: "正在开奖，请稍后点刷新或查询结果。",
     /** 非抽奖 drawing：勿写「正在开奖」（docs/105） */
     statusHintDrawingGeneric: "结果处理中，请稍后点刷新或查询结果。",
+    /** 角标短标签：非抽奖 drawing（docs/106） */
+    statusDrawingTagGeneric: "处理中",
     statusHintDrawn: "活动已结束。若已参与，可查询是否中奖。",
     /** 非抽奖玩法 status=drawn/结束：勿写「是否中奖」（docs/104） */
     statusHintDrawnGeneric: "活动已结束。若已参与，可在本页查询你的结果。",
@@ -1217,7 +1220,7 @@ export default {
     statusHintJoinedReview: "你已提交。主办方审核后，可在本页查询审核结果。",
     refreshStatus: "刷新状态",
     resultCodeHint: "点击「发送验证码」到邮箱，填写后查询（开奖后也可发码）。",
-    resultCodeHintShort: "验证码发到该邮箱，用于保护中奖信息。",
+    resultCodeHintShort: "验证码发到该邮箱，用于确认身份并保护结果信息。",
     resultCodeSent: "查询验证码已发送，请查收邮件",
     resultNotJoined: "该邮箱未参与本活动，或活动尚未记录你的参与。",
     wonTag: "已中奖",
@@ -1231,9 +1234,8 @@ export default {
     requiredField: "请填写：{label}",
     myResultTitle: "我的结果",
     loggedInQueryHint: "已验证：{name}，正在获取你的结果",
-    /** 弱会话：本页已有邮箱，先一键尝试；失败再 OTP（docs/105） */
-    sessionEmailQueryHint: "将使用本页邮箱 {email} 查询结果。若需验证码，会提示你填写。",
-    useOtherEmailOrCode: "使用其他邮箱或验证码",
+    /** 弱会话：已预填本页邮箱，仍需验证码（docs/106，无假一键） */
+    sessionEmailQueryHint: "已填入本页邮箱 {email}，请发送并填写验证码后查询。",
     viewMyResultCta: "查看结果",
     cfAuthQueryFaster: "使用统一登录更快查询",
     resultEmailPlaceholder: "参与时填写的邮箱",

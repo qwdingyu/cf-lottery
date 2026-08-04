@@ -59,7 +59,7 @@
           <div class="lottery-card-left">
             <h3 class="lottery-card-title">{{ draw.name || draw.title }}</h3>
             <div class="lottery-card-tags">
-              <span class="lottery-tag" :class="draw.status">{{ statusText(draw.status) }}</span>
+              <span class="lottery-tag" :class="draw.status">{{ statusText(draw) }}</span>
               <span v-if="resultModeLabel(draw)" class="lottery-tag mode">{{ resultModeLabel(draw) }}</span>
               <span v-if="myWonById[draw.id]" class="lottery-tag won">🎉 {{ $t('lottery.wonTag') }}</span>
               <span v-else-if="isDrawJoined(draw)" class="lottery-tag joined">{{ $t('lottery.joined') }}</span>
@@ -198,7 +198,7 @@
           -->
           <div class="lottery-join-bar">
             <template v-if="draw.status !== 'open'">
-              <span class="lottery-join-hint">{{ statusPathHint(draw) || statusText(draw.status) }}</span>
+              <span class="lottery-join-hint">{{ statusPathHint(draw) || statusText(draw) }}</span>
               <div class="lottery-status-actions">
                 <button
                   v-if="nonOpenPrimaryCta(draw) === 'refresh'"
@@ -515,18 +515,19 @@
         <button class="result-close" @click="showMyResultModal = false">✕</button>
         <h2 class="result-title">{{ $t('lottery.myResultTitle') }}</h2>
 
-        <!-- 查询表单：docs/084 强会话 / docs/105 会话邮箱一键尝试 / 否则 OTP -->
+        <!--
+          查询表单（docs/084 / docs/106）：
+          - 强会话 JWT：一键查询（后端免 OTP）
+          - 弱会话仅 sessionEmail：预填邮箱 + OTP（无码请求必 400，禁止假一键）
+          - 无会话：空表单 + OTP
+        -->
         <div v-if="!myResultData" class="result-form">
-          <template v-if="myResultCanOneClickQuery && !myResultForceOtpForm">
+          <template v-if="myResultHasStrongSession">
             <p class="result-hint">
               {{
-                myResultHasStrongSession
-                  ? $t('lottery.loggedInQueryHint', {
-                      name: registeredUsername || sessionEmail || myResultEmail || '…',
-                    })
-                  : $t('lottery.sessionEmailQueryHint', {
-                      email: sessionEmail || myResultEmail || '…',
-                    })
+                $t('lottery.loggedInQueryHint', {
+                  name: registeredUsername || sessionEmail || myResultEmail || '…',
+                })
               }}
             </p>
             <p v-if="myResultError" class="result-error">{{ myResultError }}</p>
@@ -538,17 +539,12 @@
             >
               {{ myResultLoading ? $t('lottery.queryingText') : $t('lottery.queryText') }}
             </button>
-            <button
-              v-if="myResultHasSessionEmailOnly"
-              type="button"
-              class="btn btn-ghost result-secondary-btn"
-              :disabled="myResultLoading"
-              @click="myResultForceOtpForm = true"
-            >
-              {{ $t('lottery.useOtherEmailOrCode') }}
-            </button>
           </template>
           <template v-else>
+            <p
+              v-if="myResultEmailPrefillHint"
+              class="result-hint"
+            >{{ $t('lottery.sessionEmailQueryHint', { email: myResultEmailPrefillHint }) }}</p>
             <input
               v-model="myResultEmail"
               type="email"
@@ -746,13 +742,12 @@
 
 <script setup lang="ts">
 /**
- * 用户端抽奖页。
+ * 用户端公开活动页（抽奖是默认玩法，非唯一）。
  *
  * 体验要点：
- * - 顶栏会话 +「我的记录」汇总中奖/参与（/lottery/my）
- * - 卡片折叠态即可参与、查单，减少二次点击
+ * - 顶栏会话 +「我的记录」汇总参与/结果（/lottery/my）
+ * - 卡片折叠态即可参与、查结果，减少二次点击
  * - 登录后可选自动加入 pendingDrawId
- * - 订单链接使用 history 模式 /order?token=（禁止 hash 路由伪链接）
  * - 个人状态用普通对象（非 Map.set 原地修改）保证 Vue 响应式
  */
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
@@ -796,6 +791,8 @@ import {
   shouldShowNotWonRecordTag,
   statusHintDrawnI18nKey,
   statusHintDrawingI18nKey,
+  publicStatusTagI18nKey,
+  resultModeTagI18nKey,
 } from './lottery/public-helpers'
 import {
   isAlreadyJoinedResponse,
@@ -1084,18 +1081,18 @@ function completeJoinSuccess(
   }
 }
 /**
- * docs/084：业务 JWT = 强会话（registered / open+JWT 免 OTP）。
- * docs/105：同页已有 sessionEmail（open OTP 刚参与）= 弱会话——仍可一键发起查结果，
- * 后端若要求码会返回错误，再展示 OTP 表单；避免「顶栏已登录却必须先填码」的假门槛。
+ * docs/084：业务 JWT = 强会话（registered / open+JWT 免 OTP，可一键查）。
+ * docs/106：仅 sessionEmail = 弱会话——只能预填邮箱 + 发码，禁止无码一键（后端必 400）。
  */
 const myResultHasStrongSession = computed(() => Boolean(registeredToken.value))
-/** 无 JWT 但本页会话邮箱已在：预填邮箱并优先尝试查询（非密码学证明） */
-const myResultHasSessionEmailOnly = computed(
-  () => !registeredToken.value && Boolean(String(sessionEmail.value || '').trim().includes('@')),
-)
-const myResultCanOneClickQuery = computed(
-  () => myResultHasStrongSession.value || myResultHasSessionEmailOnly.value,
-)
+/** OTP 表单上：邮箱已由会话预填时展示说明（非一键查询） */
+const myResultEmailPrefillHint = computed(() => {
+  if (myResultHasStrongSession.value) return ''
+  const email = String(myResultEmail.value || sessionEmail.value || '')
+    .trim()
+    .toLowerCase()
+  return email.includes('@') ? email : ''
+})
 
 /** 头部标题：单活动模式用活动名，多活动模式用默认标题 */
 const drawTitle = computed(() => {
@@ -1105,9 +1102,18 @@ const drawTitle = computed(() => {
   }
   return t('lottery.title')
 })
-/** 状态精简文案 */
-const statusText = (s: string) =>
-  ({ draft: t('lottery.adminDrawDraft'), open: t('lottery.statusOpen'), paused: t('lottery.statusPaused'), drawing: t('lottery.statusDrawing'), drawn: t('lottery.ended'), cancelled: t('lottery.adminDrawCancelled') } as Record<string,string>)[s] || s
+/**
+ * 状态精简文案（角标）。
+ * drawing 按 activityKind 中性化，避免接龙/问卷显示「开奖中」（docs/106）。
+ */
+function statusText(draw: LotteryDraw | string) {
+  if (typeof draw === 'string') {
+    const key = publicStatusTagI18nKey(draw)
+    return key ? t(`lottery.${key}`) : draw
+  }
+  const key = publicStatusTagI18nKey(draw.status, draw.activityKind)
+  return key ? t(`lottery.${key}`) : draw.status
+}
 
 /** 深链始终展开；非深链按 expandedId */
 function isCardExpanded(drawId: string) {
@@ -1122,21 +1128,11 @@ function drawDescription(draw: LotteryDraw) {
 
 /**
  * 结果模式短标签：让用户知道「参与后是否马上出结果」。
- * 不推导 experience / participation，只展示 result_mode 诚实语义。
+ * 不推导 experience / participation；scheduled/manual 用中性「出结果」（docs/106）。
  */
 function resultModeLabel(draw: LotteryDraw) {
-  const mode = String(draw.resultMode || '').toLowerCase()
-  if (mode === 'instant') return t('lottery.resultModeInstantTag')
-  if (mode === 'scheduled') return t('lottery.resultModeScheduledTag')
-  if (mode === 'manual') return t('lottery.resultModeManualTag')
-  // 非抽奖：有标签总比空白好（docs/097 / docs/105）
-  if (mode === 'no_result') return t('lottery.adminResultNoResult')
-  if (mode === 'vote_tally') return t('lottery.adminResultVoteTally')
-  if (mode === 'ordered_assignment' || mode === 'capacity_assignment') {
-    return t('lottery.adminResultOrdered')
-  }
-  if (mode === 'review_decision') return t('lottery.adminResultReview')
-  return ''
+  const key = resultModeTagI18nKey(draw.resultMode)
+  return key ? t(`lottery.${key}`) : ''
 }
 
 /**
@@ -1260,11 +1256,6 @@ type MyResultPayload = {
 }
 const myResultData = ref<MyResultPayload | null>(null)
 const myResultError = ref('')
-/**
- * docs/105：弱会话一键查询失败后，强制展开邮箱+OTP 表单；
- * 成功或重新打开弹窗时清零。勿与 myResultHasSessionEmailOnly 混用（后者是派生态）。
- */
-const myResultForceOtpForm = ref(false)
 
 /**
  * 结果族：优先 API resultFamily；缺省时用活动 activityKind 推断（兼容旧后端）。
@@ -1371,16 +1362,16 @@ function startMyResultCooldown(seconds: number) {
 
 function openMyResult(draw: LotteryDraw) {
   myResultDraw.value = draw
+  // 弱会话：预填邮箱，用户只需发码（docs/106）；强会话邮箱仅展示用
   myResultEmail.value = sessionEmail.value || ''
   myResultCode.value = ''
   myResultData.value = null
   myResultError.value = ''
   myResultSendingCode.value = false
-  myResultForceOtpForm.value = false
   stopMyResultCooldown()
   showMyResultModal.value = true
-  // docs/084：JWT 打开即查；docs/105：仅有 sessionEmail 也先尝试（失败再 OTP）
-  if (registeredToken.value || myResultHasSessionEmailOnly.value) {
+  // 仅 JWT 可一键查；无码请求后端必拒，禁止弱会话空跑（docs/106）
+  if (registeredToken.value) {
     void queryMyResult()
   }
 }
@@ -1444,18 +1435,16 @@ async function queryMyResult() {
   if (!myResultDraw.value) return
   const isReg = myResultDraw.value.participationMode === 'registered'
   const hasBearer = Boolean(registeredToken.value)
-  // open 弱会话：用 sessionEmail 填邮箱，允许无码先试（后端拒绝则切 OTP 表单，docs/105）
+  // 弱会话：打开时已预填；查询前再兜底一次，避免用户清空后仍带空邮箱
   if (!isReg && !hasBearer && !myResultEmail.value.trim() && sessionEmail.value) {
     myResultEmail.value = sessionEmail.value
   }
-  const sessionOnlyAttempt =
-    !isReg && !hasBearer && !myResultCode.value.trim() && Boolean(myResultEmail.value.trim().includes('@'))
-  // registered：必须 JWT；open 系：Bearer 免 OTP，或邮箱+码，或仅会话邮箱先试
+  // registered：必须 JWT；open 系：Bearer 免 OTP，否则必须邮箱+码（docs/106，无假一键）
   if (isReg && !hasBearer) {
     myResultError.value = t('lottery.registeredRequired') || ''
     return
   }
-  if (!isReg && !hasBearer && !sessionOnlyAttempt && (!myResultEmail.value.trim() || !myResultCode.value.trim())) {
+  if (!isReg && !hasBearer && (!myResultEmail.value.trim() || !myResultCode.value.trim())) {
     myResultError.value = t('lottery.emailCodeRequired') || ''
     return
   }
@@ -1488,7 +1477,6 @@ async function queryMyResult() {
     const data = await res.json()
     if (data.ok) {
       myResultData.value = data
-      myResultForceOtpForm.value = false
       if (!isReg && myResultEmail.value.trim()) {
         persistSessionEmail(myResultEmail.value.trim().toLowerCase())
       }
@@ -1505,14 +1493,9 @@ async function queryMyResult() {
       }
     } else {
       myResultError.value = data.message || t('lottery.queryFailed')
-      // 无码尝试被拒：展开 OTP，不让用户困在「一键查询」死胡同（docs/105）
-      if (sessionOnlyAttempt) {
-        myResultForceOtpForm.value = true
-      }
     }
   } catch {
     myResultError.value = t('lottery.networkError') || ''
-    if (sessionOnlyAttempt) myResultForceOtpForm.value = true
   } finally {
     myResultLoading.value = false
   }
@@ -2403,7 +2386,7 @@ async function handleJoin(drawId: string) {
   const draw = draws.value.find((item) => item.id === drawId)
   if (!draw) return
   if (draw.status !== 'open') {
-    showToast(statusPathHint(draw) || statusText(draw.status), 'error')
+    showToast(statusPathHint(draw) || statusText(draw), 'error')
     return
   }
   // id 与 publicSlug 任一命中即视为已参与（hints / mark 双键，docs/098）

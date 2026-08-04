@@ -165,6 +165,54 @@ export function statusHintDrawingI18nKey(activityKind?: string | null): string {
 }
 
 /**
+ * 卡片角标 status 短标签 key（lottery.*）。
+ * drawing 仅抽奖族用「开奖中」；其它玩法用「处理中」（docs/106）。
+ * 其它 status 与玩法无关。
+ */
+export function publicStatusTagI18nKey(
+  status: string | null | undefined,
+  activityKind?: string | null,
+): string {
+  const s = String(status || '')
+    .trim()
+    .toLowerCase()
+  if (s === 'drawing') {
+    if (isLotteryResultFamilyKind(activityKind) || !String(activityKind || '').trim()) {
+      return 'statusDrawing'
+    }
+    return 'statusDrawingTagGeneric'
+  }
+  const map: Record<string, string> = {
+    draft: 'adminDrawDraft',
+    open: 'statusOpen',
+    paused: 'statusPaused',
+    drawn: 'ended',
+    cancelled: 'adminDrawCancelled',
+  }
+  return map[s] || ''
+}
+
+/**
+ * 公开页 result_mode 短标签 key。
+ * scheduled/manual 不再写死「开奖」——非抽奖同样可能用这两种 result_mode（docs/106）。
+ */
+export function resultModeTagI18nKey(resultMode: string | null | undefined): string {
+  const mode = String(resultMode || '')
+    .trim()
+    .toLowerCase()
+  if (mode === 'instant') return 'resultModeInstantTag'
+  if (mode === 'scheduled') return 'resultModeScheduledTag'
+  if (mode === 'manual') return 'resultModeManualTag'
+  if (mode === 'no_result') return 'adminResultNoResult'
+  if (mode === 'vote_tally') return 'adminResultVoteTally'
+  if (mode === 'ordered_assignment' || mode === 'capacity_assignment') {
+    return 'adminResultOrdered'
+  }
+  if (mode === 'review_decision') return 'adminResultReview'
+  return ''
+}
+
+/**
  * 即时出结果后的说明文案 key。
  * 邀请 CTA 由 shouldShowInviteShareCta 单独门禁；此处 hint **永不**鼓动「邀请好友」（docs/103/104）。
  */

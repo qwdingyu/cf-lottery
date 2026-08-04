@@ -1223,13 +1223,16 @@ export default {
     needActivityLink: "Open with an activity link",
     needActivityLinkHint: "This page is not an activity plaza. Ask the host for the share link or scan the activity QR code.",
     resultModeInstantTag: "Instant result",
-    resultModeScheduledTag: "Scheduled draw",
-    resultModeManualTag: "Manual draw",
+    /** scheduled/manual: neutral “result”, not lottery-only (docs/106) */
+    resultModeScheduledTag: "Scheduled result",
+    resultModeManualTag: "Manual result",
     statusHintDraft: "This activity is not open to the public yet. Refresh later or tap “Refresh status” when the host opens it.",
     statusHintPaused: "The host paused this activity; new joins are off. Refresh status or copy the link for later.",
     statusHintDrawing: "Drawing in progress. Refresh or check results shortly.",
     /** Non-lottery drawing: no “drawing” prize wording (docs/105) */
     statusHintDrawingGeneric: "Results are being processed. Refresh or check results shortly.",
+    /** Status chip: non-lottery drawing (docs/106) */
+    statusDrawingTagGeneric: "Processing",
     statusHintDrawn: "This activity has ended. If you joined, you can check whether you won.",
     /** Non-lottery ended: no “whether you won” (docs/104) */
     statusHintDrawnGeneric: "This activity has ended. If you joined, check your result on this page.",
@@ -1243,7 +1246,7 @@ export default {
     statusHintJoinedReview: "Submitted. After the host reviews, check the decision on this page.",
     refreshStatus: "Refresh status",
     resultCodeHint: "Tap “Send code” to your email, then query (works after the draw too).",
-    resultCodeHintShort: "We email a code to protect prize details.",
+    resultCodeHintShort: "We email a code to confirm identity and protect result details.",
     resultCodeSent: "Query code sent — check your inbox",
     resultNotJoined: "This email did not join this activity, or no entry was recorded.",
     wonTag: "Won",
@@ -1257,9 +1260,8 @@ export default {
     requiredField: "Please fill in: {label}",
     myResultTitle: "My result",
     loggedInQueryHint: "Verified as {name} — fetching your result",
-    /** Weak session: try page email first; fall back to OTP (docs/105) */
-    sessionEmailQueryHint: "We'll query with this page email {email}. If a code is required, you'll be asked next.",
-    useOtherEmailOrCode: "Use another email or code",
+    /** Weak session: email prefilled; code still required (docs/106, no fake one-click) */
+    sessionEmailQueryHint: "Email {email} is filled from this page. Send and enter the code to query.",
     viewMyResultCta: "View result",
     cfAuthQueryFaster: "Faster with unified login",
     resultEmailPlaceholder: "Email used to join",
