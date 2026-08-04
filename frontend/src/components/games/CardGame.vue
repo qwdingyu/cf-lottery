@@ -28,7 +28,7 @@
       :disabled="disabled || loading"
       @click="onPlay"
     >
-      {{ loading ? $t('lottery.gameWheelSubmitting') : $t('lottery.gameWheelJoin') }}
+      {{ loading ? $t('lottery.gameSubmitSubmitting') : $t('lottery.gameSubmitJoin') }}
     </button>
     <p v-else-if="flippedCount === 0" class="card-hint">{{ $t('lottery.gameCardHint') }}</p>
     <p v-else-if="flippedCount === 1" class="card-hint">{{ $t('lottery.gameCardNeedMore') }}</p>

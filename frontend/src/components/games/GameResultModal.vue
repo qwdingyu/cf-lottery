@@ -156,6 +156,16 @@ const statusHint = computed(() => {
   if (mode === 'manual') {
     return t('lottery.joinResultHintManual')
   }
+  // 非抽奖：诚实语义，勿套「等开奖」（docs/097）
+  if (mode === 'no_result') {
+    return t('lottery.joinResultHintNoResult')
+  }
+  if (mode === 'vote_tally') {
+    return t('lottery.joinResultHintVoteTally')
+  }
+  if (mode === 'ordered_assignment' || mode === 'capacity_assignment') {
+    return t('lottery.joinResultHintOrdered')
+  }
   // 未知或未传：保守为「已登记，等待开奖」
   return t('lottery.joinResultHintPending')
 })

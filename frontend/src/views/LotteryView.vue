@@ -75,7 +75,8 @@
         </div>
         <!-- 折叠态快捷操作（仅非深链列表心智；深链始终展开） -->
         <div v-if="!isDeepLinked && expandedId !== draw.id && draw.status === 'drawn' && !sessionEmail" class="lottery-quick-bar">
-          <button class="lottery-share-btn" @click="openLogin(draw.id)">{{ $t('lottery.loginToCheck') }}</button>
+          <!-- docs/097：登录查结果，不带 drawId 以免进「参与 OTP」弹窗 -->
+          <button class="lottery-share-btn" @click="openLogin()">{{ $t('lottery.loginToCheck') }}</button>
         </div>
         <div v-if="!isDeepLinked && expandedId !== draw.id && draw.status === 'drawn' && sessionEmail" class="lottery-quick-bar">
           <button class="lottery-share-btn" @click="openMyResult(draw)">{{ $t('lottery.queryResult') }}</button>
@@ -216,7 +217,7 @@
                   v-else-if="nonOpenPrimaryCta(draw) === 'login_to_check'"
                   type="button"
                   class="lottery-join-btn primary"
-                  @click="openLogin(draw.id)"
+                  @click="openLogin()"
                 >{{ $t('lottery.loginToCheck') }}</button>
                 <button
                   v-if="nonOpenSecondaryCta(draw) === 'copy_link'"
@@ -854,6 +855,56 @@ function clearResultModalTimer() {
 /**
  * 统一参与成功收尾：写已参与态、结果弹窗、事件；避免 access-code 直通 / verify-join / registered 三处行为不一致。
  */
+/**
+ * 标记本活动已参与，并写入「当次会话」记录行（无跨活动列表 API 时的最小闭环，docs/097）。
+ */
+function markDrawJoined(
+  joinedDrawId: string,
+  extra?: { joinedAt?: string; drawName?: string; drawStatus?: string },
+) {
+  myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
+  const draw =
+    draws.value.find((d) => d.id === joinedDrawId || d.publicSlug === joinedDrawId) || null
+  const key = draw?.id || joinedDrawId
+  const row: MyEntry = {
+    drawId: key,
+    joinedAt: extra?.joinedAt || new Date().toISOString(),
+    drawName: extra?.drawName || draw?.name || draw?.title || key,
+    drawStatus: extra?.drawStatus || draw?.status,
+  }
+  const rest = myEntryList.value.filter((r) => r.drawId !== key && r.drawId !== joinedDrawId)
+  myEntryList.value = [row, ...rest]
+}
+
+/**
+ * 后端「已参与」/409：标 joined + 友好提示，可选打开查结果（勿当 joinFailed）。
+ */
+function handleAlreadyJoined(joinedDrawId: string, opts?: { openResult?: boolean }) {
+  markDrawJoined(joinedDrawId)
+  closeLogin()
+  showToast(t('lottery.alreadyJoinedHint'), 'success')
+  if (opts?.openResult !== false) {
+    const draw =
+      draws.value.find((d) => d.id === joinedDrawId || d.publicSlug === joinedDrawId) || null
+    if (draw) openMyResult(draw)
+  }
+}
+
+/** 响应体/文案是否表示「已参与」（409 或 message） */
+function isAlreadyJoinedResponse(data: { message?: string } | null | undefined, httpStatus?: number): boolean {
+  if (httpStatus === 409) return true
+  const msg = String(data?.message || '')
+  return /已参与|already\s*join/i.test(msg)
+}
+
+/**
+ * 公开 API 路径用 slug：优先 publicSlug，否则 id（深链 props 多为 slug）。
+ */
+function publicDrawPathKey(drawId: string): string {
+  const draw = draws.value.find((d) => d.id === drawId || d.publicSlug === drawId)
+  return draw?.publicSlug || draw?.id || drawId
+}
+
 function completeJoinSuccess(
   joinedDrawId: string,
   data: {
@@ -865,7 +916,7 @@ function completeJoinSuccess(
   opts?: { email?: string },
 ) {
   if (opts?.email) persistSessionEmail(opts.email)
-  myJoinedById.value = { ...myJoinedById.value, [joinedDrawId]: true }
+  markDrawJoined(joinedDrawId)
   if (data.outcome) {
     myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
   }
@@ -937,6 +988,12 @@ function resultModeLabel(draw: LotteryDraw) {
   if (mode === 'instant') return t('lottery.resultModeInstantTag')
   if (mode === 'scheduled') return t('lottery.resultModeScheduledTag')
   if (mode === 'manual') return t('lottery.resultModeManualTag')
+  // 非抽奖：有标签总比空白好（docs/097）
+  if (mode === 'no_result') return t('lottery.adminResultNoResult')
+  if (mode === 'vote_tally') return t('lottery.adminResultVoteTally')
+  if (mode === 'ordered_assignment' || mode === 'capacity_assignment') {
+    return t('lottery.adminResultOrdered')
+  }
   return ''
 }
 
@@ -1027,7 +1084,8 @@ const myResultError = ref('')
 const lastJoinDrawSlug = computed(() => {
   if (!lastJoinResult.value) return undefined
   const draw = draws.value.find(d => d.id === lastJoinResult.value!.drawId)
-  return draw?.publicSlug
+  // docs/097：publicSlug 空时回退 drawId / 路由 slug，避免 /share 打到 undefined
+  return draw?.publicSlug || draw?.id || lastJoinResult.value.drawId || undefined
 })
 
 /** 从最近参与的活动数据中提取裂变配置 */
@@ -1170,19 +1228,39 @@ async function queryMyResult() {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     // registered：user_id；open+JWT：后端按 email 免 OTP（docs/084）
     if (hasBearer) headers['Authorization'] = 'Bearer ' + registeredToken.value
-    const res = await fetch(`${API_BASE}/public/draws/${myResultDraw.value.publicSlug}/my-result`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        email: isReg ? (sessionEmail.value || registeredUsername.value) : myResultEmail.value.trim(),
-        code: hasBearer && !isReg ? '' : isReg ? '' : myResultCode.value.trim(),
-      }),
-    })
+    // docs/097：slug 回退 + encode，禁止 `/draws/undefined/my-result`
+    const slug =
+      myResultDraw.value.publicSlug || myResultDraw.value.id || props.id || ''
+    if (!slug) {
+      myResultError.value = t('lottery.drawNotLoaded') || ''
+      return
+    }
+    const res = await fetch(
+      `${API_BASE}/public/draws/${encodeURIComponent(slug)}/my-result`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          email: isReg
+            ? sessionEmail.value || registeredUsername.value
+            : myResultEmail.value.trim().toLowerCase(),
+          code: hasBearer && !isReg ? '' : isReg ? '' : myResultCode.value.trim(),
+        }),
+      },
+    )
     const data = await res.json()
     if (data.ok) {
       myResultData.value = data
       if (!isReg && myResultEmail.value.trim()) {
-        persistSessionEmail(myResultEmail.value.trim())
+        persistSessionEmail(myResultEmail.value.trim().toLowerCase())
+      }
+      // 查到已参与：回填 joined / 中奖标签（刷新后恢复 UI，docs/097）
+      const drawKey = myResultDraw.value.id
+      if (data.joined) {
+        markDrawJoined(drawKey, { drawStatus: myResultDraw.value.status })
+        if (data.won) {
+          myWonById.value = { ...myWonById.value, [drawKey]: true }
+        }
       }
     } else {
       myResultError.value = data.message || t('lottery.queryFailed')
@@ -1194,14 +1272,18 @@ async function queryMyResult() {
   }
 }
 
-/** 查结果场景拉起 cf-auth：写回业务 JWT 后自动再查（pending 用当前活动 slug） */
-function handleCfAuthForMyResult() {
-  const draw = myResultDraw.value
-  if (!draw || !cfAuthEnabled.value) return
-  // 复用参与 OAuth：pendingJoin 指向当前活动，回调后用户再点查结果即可带 JWT；
-  // 若已在参与流写过 token，openMyResult 会自动查。
-  pendingJoinDrawId.value = draw.publicSlug || draw.id
-  void handleCfAuthJoin()
+/**
+ * 查结果场景 cf-auth：只登录回本页，不写 pendingJoin（避免 drawn 活动被 resume 成参与，docs/097 P0-6）。
+ */
+async function handleCfAuthForMyResult() {
+  if (!cfAuthEnabled.value) return
+  try {
+    await cfAuth.login({
+      returnTo: route.fullPath || '/lottery',
+    })
+  } catch (e: any) {
+    showToast(e?.message || t('lottery.joinFailed'), 'error')
+  }
 }
 
 function copyMyResult(text: string) {
@@ -1590,13 +1672,25 @@ async function fetchDrawDetail(id: string) {
   }
 }
 
-async function fetchDraws() {
-  loading.value = true
-  fetchError.value = ''
+/**
+ * 拉取公开活动。
+ * @param opts.silent 轮询/后台刷新：不置 loading、失败不擦掉已有 draws（docs/097 P0-3）
+ * 注意：模板 @click 可能传入 PointerEvent，不可把 Event 当 opts；仅认显式 `{ silent }`。
+ */
+async function fetchDraws(opts?: { silent?: boolean } | Event) {
+  const silent =
+    opts != null &&
+    typeof opts === 'object' &&
+    'silent' in opts &&
+    Boolean((opts as { silent?: boolean }).silent)
+  if (!silent) {
+    loading.value = true
+    fetchError.value = ''
+  }
   try {
     // 公开页：只支持深链 /lottery/:slug（011 Option C）；无 slug 不做活动广场
     if (!props.id) {
-      draws.value = []
+      if (!silent) draws.value = []
       return
     }
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(props.id))
@@ -1606,22 +1700,59 @@ async function fetchDraws() {
       draws.value = [draw]
       ensureSubmissionDraft(draw)
       expandedId.value = draw.id
-      trackPageView(draw)
+      if (!silent) trackPageView(draw)
       if (draw.title || draw.name) {
         document.title = (draw.name || draw.title) + ' - ' + t('lottery.title')
       }
-      // 详情与列表同源；再拉一次以触发懒开奖等服务端副作用
-      void fetchDrawDetail(draw.publicSlug || draw.id)
-    } else {
+      // 详情与列表同源；再拉一次以触发懒开奖等服务端副作用（静默轮询跳过，减请求）
+      if (!silent) void fetchDrawDetail(draw.publicSlug || draw.id)
+    } else if (!silent) {
       draws.value = []
       fetchError.value = data.message || t('lottery.noActivity')
     }
+    // silent 失败：保留现有 draws，避免参与中闪空
   } catch (e) {
     console.error('[lottery] fetch draws failed:', e)
-    fetchError.value = t('lottery.networkError')
-    draws.value = []
+    if (!silent) {
+      fetchError.value = t('lottery.networkError')
+      draws.value = []
+    }
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
+  }
+}
+
+/**
+ * 有业务 JWT 时静默 my-result，回填已参与（刷新后恢复，docs/097 P0-2）。
+ * 不弹窗；失败忽略（无 entry / 网络）。
+ */
+async function hydrateJoinedStateFromSession() {
+  const token = registeredToken.value
+  const draw = draws.value[0]
+  if (!token || !draw) return
+  const slug = draw.publicSlug || draw.id
+  if (!slug) return
+  try {
+    const res = await fetch(`${API_BASE}/public/draws/${encodeURIComponent(slug)}/my-result`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        email: sessionEmail.value || '',
+        code: '',
+      }),
+    })
+    const data = (await res.json()) as any
+    if (data?.ok && data.joined) {
+      markDrawJoined(draw.id, { drawStatus: draw.status })
+      if (data.won) {
+        myWonById.value = { ...myWonById.value, [draw.id]: true }
+      }
+    }
+  } catch {
+    /* 静默：不影响主路径 */
   }
 }
 
@@ -1677,7 +1808,8 @@ async function joinWithRegisteredToken(drawId: string, token: string) {
   }
   joiningId.value = drawId
   try {
-    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(drawId) + '/access-code', {
+    const pathKey = publicDrawPathKey(drawId)
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pathKey) + '/access-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
       body: JSON.stringify({ submission: draw ? buildSubmissionPayload(draw) : undefined }),
@@ -1685,6 +1817,8 @@ async function joinWithRegisteredToken(drawId: string, token: string) {
     const data = await res.json()
     if (data.ok && data.joined) {
       completeJoinSuccess(drawId, data)
+    } else if (isAlreadyJoinedResponse(data, res.status)) {
+      handleAlreadyJoined(drawId)
     } else {
       const msg = data.message || t('lottery.joinFailed')
       loginError.value = msg
@@ -1726,8 +1860,9 @@ async function joinOpenWithBearer(drawId: string, token: string, email: string) 
   }
   joiningId.value = drawId
   try {
+    const pathKey = publicDrawPathKey(drawId)
     const res = await fetch(
-      API_BASE + '/public/draws/' + encodeURIComponent(drawId) + '/verify-join',
+      API_BASE + '/public/draws/' + encodeURIComponent(pathKey) + '/verify-join',
       {
         method: 'POST',
         headers: {
@@ -1751,6 +1886,8 @@ async function joinOpenWithBearer(drawId: string, token: string, email: string) 
     const data = (await res.json()) as any
     if (data.ok && data.joined) {
       completeJoinSuccess(drawId, data, { email })
+    } else if (isAlreadyJoinedResponse(data, res.status)) {
+      handleAlreadyJoined(drawId)
     } else {
       showToast(data.message || t('lottery.joinFailed'), 'error')
       // 后端拒绝（如 JWT 无 email claim）时降级弹窗，仍可 OTP
@@ -1864,8 +2001,9 @@ async function resumeCfAuthJoinAfterCallback() {
     closeLogin()
     joiningId.value = joinKey
     try {
+      const pathKey = publicDrawPathKey(joinKey)
       const res = await fetch(
-        API_BASE + '/public/draws/' + encodeURIComponent(joinKey) + '/access-code',
+        API_BASE + '/public/draws/' + encodeURIComponent(pathKey) + '/access-code',
         {
           method: 'POST',
           headers: {
@@ -1881,6 +2019,9 @@ async function resumeCfAuthJoinAfterCallback() {
       if (data.ok && data.joined) {
         finishPendingOk()
         completeJoinSuccess(joinKey, data)
+      } else if (isAlreadyJoinedResponse(data, res.status)) {
+        finishPendingOk()
+        handleAlreadyJoined(joinKey)
       } else {
         // 保留 pending；打开登录便于用户改凭证或看错误
         const msg = data.message || t('lottery.joinFailed')
@@ -1916,8 +2057,9 @@ async function resumeCfAuthJoinAfterCallback() {
     return
   }
   try {
+    const pathKey = publicDrawPathKey(joinKey)
     const res = await fetch(
-      API_BASE + '/public/draws/' + encodeURIComponent(joinKey) + '/verify-join',
+      API_BASE + '/public/draws/' + encodeURIComponent(pathKey) + '/verify-join',
       {
         method: 'POST',
         headers: {
@@ -1942,6 +2084,9 @@ async function resumeCfAuthJoinAfterCallback() {
     if (data.ok && data.joined) {
       finishPendingOk()
       completeJoinSuccess(joinKey, data, { email })
+    } else if (isAlreadyJoinedResponse(data, res.status)) {
+      finishPendingOk()
+      handleAlreadyJoined(joinKey)
     } else {
       // 失败不 consume；若用户刚在弹窗改了密码，写回 pending 供下次自动/手动
       saveCfAuthPendingJoin(sessionStorage, {
@@ -1958,6 +2103,8 @@ async function resumeCfAuthJoinAfterCallback() {
 }
 
 async function handleJoin(drawId: string) {
+  // docs/097 P0-5：入口互斥（含 ensureSession 等待期），避免连点双请求
+  if (joiningId.value) return
   const draw = draws.value.find((item) => item.id === drawId)
   if (!draw) return
   if (draw.status !== 'open') {
@@ -1965,7 +2112,8 @@ async function handleJoin(drawId: string) {
     return
   }
   if (myJoinedById.value[drawId]) {
-    showToast(t('lottery.joined'), 'success')
+    showToast(t('lottery.alreadyJoinedHint'), 'success')
+    openMyResult(draw)
     return
   }
   ensureSubmissionDraft(draw)
@@ -1977,32 +2125,34 @@ async function handleJoin(drawId: string) {
   }
   void recordActivityEvent(drawId, 'participation_started')
 
-  // 先尝试把管理端登录同步到参与轨（顶栏已显示用户名时不应再强迫邮箱 OTP）
-  const session = await ensureParticipationSessionFromAdmin()
-  const token = session?.token || registeredToken.value
-  // 邮箱：JWT claim 优先（后端免 OTP 比的就是它），禁止陈旧 sessionEmail 压过
-  const email = resolveOpenJoinEmail({
-    token: token || '',
-    emailHint: session?.email,
-    sessionEmail: sessionEmail.value,
-  })
+  // 在 await 会话同步前锁住；join* 复用同一 joiningId，结束时由其 finally 或下方 finally 清空
+  joiningId.value = drawId
+  try {
+    const session = await ensureParticipationSessionFromAdmin()
+    const token = session?.token || registeredToken.value
+    const email = resolveOpenJoinEmail({
+      token: token || '',
+      emailHint: session?.email,
+      sessionEmail: sessionEmail.value,
+    })
 
-  // registered 且已登录：跳过弹窗，直参与（核心 UX：游戏点一次就提交）
-  if (draw.participationMode === 'registered' && token) {
-    pendingJoinDrawId.value = drawId
-    await joinWithRegisteredToken(drawId, token)
-    return
+    if (draw.participationMode === 'registered' && token) {
+      pendingJoinDrawId.value = drawId
+      await joinWithRegisteredToken(drawId, token)
+      return
+    }
+
+    if (token && email && email.includes('@')) {
+      pendingJoinDrawId.value = drawId
+      await joinOpenWithBearer(drawId, token, email)
+      return
+    }
+
+    openLogin(drawId)
+  } finally {
+    // join* 成功路径已在其 finally 清空；开弹窗 / 早退时若仍锁着本 draw 则释放
+    if (joiningId.value === drawId) joiningId.value = ''
   }
-
-  // open / roster / password / invite：有业务 JWT + email → 免 OTP 直参（docs/093）
-  if (token && email && email.includes('@')) {
-    pendingJoinDrawId.value = drawId
-    await joinOpenWithBearer(drawId, token, email)
-    return
-  }
-
-  // 无强会话：打开登录/验证弹窗
-  openLogin(drawId)
 }
 
 function startCooldown(seconds: number) {
@@ -2059,7 +2209,8 @@ async function handleSendCode() {
   sendingCode.value = true
   loginError.value = ''
   try {
-    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/access-code', {
+    const pathKey = publicDrawPathKey(pendingJoinDrawId.value)
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pathKey) + '/access-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2082,6 +2233,8 @@ async function handleSendCode() {
     } else if (data.ok && data.sent) {
       codeSent.value = true
       startCooldown(data.expiresInSeconds || 60)
+    } else if (isAlreadyJoinedResponse(data, res.status)) {
+      handleAlreadyJoined(pendingJoinDrawId.value!)
     } else {
       loginError.value = data.message || t('lottery.sendFailed')
     }
@@ -2121,7 +2274,8 @@ async function handleVerifyCode() {
   joiningId.value = pendingJoinDrawId.value
   loginError.value = ''
   try {
-    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pendingJoinDrawId.value) + '/verify-join', {
+    const pathKey = publicDrawPathKey(pendingJoinDrawId.value)
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pathKey) + '/verify-join', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2139,6 +2293,8 @@ async function handleVerifyCode() {
       completeJoinSuccess(joinedDrawId, data, { email })
       loginCode.value = ''
       codeSent.value = false
+    } else if (isAlreadyJoinedResponse(data, res.status)) {
+      handleAlreadyJoined(pendingJoinDrawId.value!)
     } else {
       loginError.value = data.message || t('lottery.verifyFailed')
     }
@@ -2166,11 +2322,13 @@ onMounted(async () => {
   countdownTimer = setInterval(() => {
     nowMs.value = Date.now()
   }, 1000)
-  // 每 30 秒轮询活动状态，自动反映开奖/状态变更（P1-4）
+  // 每 30 秒静默轮询：不闪 skeleton、不擦失败态（docs/097 P0-3）
   pollTimer = setInterval(() => {
-    fetchDraws()
+    void fetchDraws({ silent: true })
   }, 30000)
   await fetchDraws()
+  // 有业务 JWT 时静默回填已参与（刷新后恢复 UI）
+  await hydrateJoinedStateFromSession()
   // cf-auth OAuth 往返后：有 pendingJoin + 业务 JWT 则自动参与（docs/059）
   await resumeCfAuthJoinAfterCallback()
 })

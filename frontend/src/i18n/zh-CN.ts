@@ -563,6 +563,10 @@ export default {
     joinResultHintManual: "你已成功登记。主办方开奖后，可在本页查询是否中奖。",
     joinResultHintInstant: "你已成功提交。若本场为即时开奖，结果将随后展示或可在本页查询。",
     joinResultHintInstantDone: "结果已生成。可保存本页记录，或使用分享邀请好友。",
+    /** 非抽奖 result_mode：勿套「等开奖」 */
+    joinResultHintNoResult: "你已成功提交。本活动不产生中奖结果，主办方如有后续将另行通知。",
+    joinResultHintVoteTally: "你已成功投票。计票完成后可在本页或主办方渠道查看。",
+    joinResultHintOrdered: "你已成功登记。名额按顺序分配，可在本页查询排队/分配状态。",
     joinFailed: "参与失败",
     loginExpired: "登录已过期，请重新验证",
     checkOrder: "查看订单",
@@ -1175,7 +1179,11 @@ export default {
     resultNotJoined: "该邮箱未参与本活动，或活动尚未记录你的参与。",
     wonTag: "已中奖",
     notWonTag: "未中奖",
-    loginToViewRecords: "登录查看记录",
+    /** 顶栏登录：深链单活动无跨活动列表 API，承诺「查结果」而非空「记录」 */
+    loginToViewRecords: "登录后查结果",
+    /** 后端 409 / 已参与：当次会话标 joined，引导查结果而非当失败 */
+    alreadyJoinedHint: "你已参与过本活动",
+    alreadyJoinedQueryCta: "查看我的结果",
     registeredRequired: "此活动需要注册账号后才能参与",
     requiredField: "请填写：{label}",
     myResultTitle: "我的结果",

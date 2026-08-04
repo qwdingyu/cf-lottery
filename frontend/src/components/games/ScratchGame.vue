@@ -112,17 +112,20 @@ function pointerToCanvas(clientX: number, clientY: number) {
 }
 
 function startScratch(e: MouseEvent) {
+  // 已参与 / 提交中禁止再刮（docs/097 P1-1）
+  if (props.disabled || props.loading || joinedPulse.value) return
   isDrawing.value = true
   const p = pointerToCanvas(e.clientX, e.clientY)
   scratchAt(p.x, p.y)
 }
 function scratch(e: MouseEvent) {
-  if (!isDrawing.value) return
+  if (!isDrawing.value || props.disabled) return
   const p = pointerToCanvas(e.clientX, e.clientY)
   scratchAt(p.x, p.y)
 }
 function endScratch() { isDrawing.value = false; checkScratched() }
 function startTouchScratch(e: TouchEvent) {
+  if (props.disabled || props.loading || joinedPulse.value) return
   isDrawing.value = true
   const t = e.touches[0]
   if (!t) return
@@ -130,7 +133,7 @@ function startTouchScratch(e: TouchEvent) {
   scratchAt(p.x, p.y)
 }
 function touchScratch(e: TouchEvent) {
-  if (!isDrawing.value) return
+  if (!isDrawing.value || props.disabled) return
   const t = e.touches[0]
   if (!t) return
   const p = pointerToCanvas(t.clientX, t.clientY)

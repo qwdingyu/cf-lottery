@@ -603,6 +603,10 @@ export default {
     joinResultHintManual: "You're registered. After the host draws, check this page for your result.",
     joinResultHintInstant: "Submitted. If this draw is instant, your result will show next or on this page.",
     joinResultHintInstantDone: "Result is ready. Keep this page or share to invite friends.",
+    /** Non-lottery result_mode: do not say "waiting for draw" */
+    joinResultHintNoResult: "Submitted. This activity has no prize draw; the host will follow up if needed.",
+    joinResultHintVoteTally: "Your vote is in. Check back here or with the host after tallying.",
+    joinResultHintOrdered: "You're registered. Spots are assigned in order — check status on this page.",
     joinFailed: "Failed to join",
     loginExpired: "Session expired, please login again",
     checkOrder: "View Order",
@@ -1203,7 +1207,11 @@ export default {
     resultNotJoined: "This email did not join this activity, or no entry was recorded.",
     wonTag: "Won",
     notWonTag: "Not won",
-    loginToViewRecords: "Login to view records",
+    /** Header login: deep-link has no cross-activity list API — promise result check, not empty "records" */
+    loginToViewRecords: "Sign in to check results",
+    /** Backend 409 / already joined: mark joined and guide to results */
+    alreadyJoinedHint: "You've already joined this activity",
+    alreadyJoinedQueryCta: "View my result",
     registeredRequired: "This activity requires a registered account to join",
     requiredField: "Please fill in: {label}",
     myResultTitle: "My result",
