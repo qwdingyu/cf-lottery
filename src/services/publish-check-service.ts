@@ -260,7 +260,8 @@ function validatePromotion(draw: LotteryDraw, result: PublishCheckResult) {
       add(result.warnings, "promotion", "viral.extra_exceeds_max", `裂变传播：每邀请 ${perInvite} 次超过了最多 ${maxExtra} 次上限，实际效果以最大值为准`);
     }
     // 裂变开启但排行榜未开启时提示
-    if (!viral.leaderboardEnabled) {
+    // 与 isViralLeaderboardEnabled 一致：仅显式关闭才提示（缺省开启不误报 off）
+    if (viral.enabled === true && viral.leaderboardEnabled === false) {
       add(result.infos, "promotion", "viral.leaderboard.off", "裂变传播：排行榜未开启，参与者无法看到排行对比");
     }
   }

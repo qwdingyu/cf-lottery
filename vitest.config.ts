@@ -38,6 +38,10 @@ export default defineConfig({
       "frontend/src/views/admin/lottery/ops-utils.email.test.ts",
       // docs/086 复查：批量选中/可见性/列表筛选空态
       "frontend/src/views/admin/lottery/ops-utils.bulk.test.ts",
+      // docs/114：邀请排行榜 UI 决策（门禁/高亮/底栏/错误解析）
+      "frontend/src/views/lottery/viral-leaderboard-ui.test.ts",
+      // docs/114：管理端裂变回填与 promotionConfig 提交防擦
+      "frontend/src/views/admin/lottery/growth-config.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

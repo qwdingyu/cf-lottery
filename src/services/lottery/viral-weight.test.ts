@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  aggregateViralInviteCounts,
   buildPublicSharePath,
   buildViralLeaderboardRanking,
   computeViralDrawWeight,
   computeViralExtraEntries,
+  isViralLeaderboardEnabled,
   normalizeViralWeightNumbers,
   weightedSampleUnique,
 } from "./viral-weight";
@@ -95,6 +97,45 @@ describe("weightedSampleUnique 无放回加权（docs/109）", () => {
   });
 });
 
+describe("isViralLeaderboardEnabled 门禁（docs/114）", () => {
+  it("enabled 未开 → 关", () => {
+    expect(isViralLeaderboardEnabled(undefined)).toBe(false);
+    expect(isViralLeaderboardEnabled(null)).toBe(false);
+    expect(isViralLeaderboardEnabled({ enabled: false, leaderboardEnabled: true })).toBe(false);
+    expect(isViralLeaderboardEnabled({ leaderboardEnabled: true })).toBe(false);
+  });
+
+  it("enabled 开 + leaderboard 缺省 / true → 开；显式 false → 关", () => {
+    expect(isViralLeaderboardEnabled({ enabled: true })).toBe(true);
+    expect(isViralLeaderboardEnabled({ enabled: true, leaderboardEnabled: true })).toBe(true);
+    expect(isViralLeaderboardEnabled({ enabled: true, leaderboardEnabled: false })).toBe(false);
+  });
+});
+
+describe("aggregateViralInviteCounts 多码 SUM（榜=开奖）", () => {
+  it("同一 sharer 多条 share 行累加 joinedCount", () => {
+    const map = aggregateViralInviteCounts([
+      { sharerEntryId: "a", joinedCount: 2 },
+      { sharerEntryId: "a", joinedCount: 3 },
+      { sharerEntryId: "b", joinedCount: 1 },
+    ]);
+    expect(map.get("a")).toBe(5);
+    expect(map.get("b")).toBe(1);
+  });
+
+  it("空 id / 非法 count 不污染", () => {
+    const map = aggregateViralInviteCounts([
+      { sharerEntryId: "", joinedCount: 9 },
+      { sharerEntryId: "  ", joinedCount: 9 },
+      { sharerEntryId: "c", joinedCount: null },
+      { sharerEntryId: "c", joinedCount: -2 },
+      { sharerEntryId: "c", joinedCount: 1.9 },
+    ]);
+    expect(map.has("")).toBe(false);
+    expect(map.get("c")).toBe(1); // floor(1.9)+0+0
+  });
+});
+
 describe("buildViralLeaderboardRanking 真实名次（docs/109）", () => {
   it("Top N 截断后 myRank 仍是全量名次而非恒 21", () => {
     const map = new Map<string, number>();
@@ -119,5 +160,67 @@ describe("buildViralLeaderboardRanking 真实名次（docs/109）", () => {
   it("无 entryId 时 myRank 为 null", () => {
     const { myRank } = buildViralLeaderboardRanking(new Map([["a", 1]]));
     expect(myRank).toBeNull();
+  });
+
+  it("joined=0 的 entry 不进 Top 列表", () => {
+    const map = new Map([
+      ["alive", 2],
+      ["ghost", 0],
+    ]);
+    const { entries, myRank } = buildViralLeaderboardRanking(map, { entryId: "ghost" });
+    expect(entries.map((e) => e.entryId)).toEqual(["alive"]);
+    expect(myRank).toEqual({ rank: 0, invitedCount: 0 });
+  });
+
+  it("同票按 entryId 字典序稳定，刷新不乱跳", () => {
+    const map = new Map([
+      ["z-user", 5],
+      ["a-user", 5],
+      ["m-user", 5],
+    ]);
+    const { entries } = buildViralLeaderboardRanking(map, { topN: 10 });
+    expect(entries.map((e) => e.entryId)).toEqual(["a-user", "m-user", "z-user"]);
+    expect(entries.map((e) => e.rank)).toEqual([1, 2, 3]);
+  });
+
+  it("支持 Record 输入且与 Map 结果一致", () => {
+    const asMap = buildViralLeaderboardRanking(new Map([["x", 3], ["y", 1]]), { entryId: "x" });
+    const asRec = buildViralLeaderboardRanking({ x: 3, y: 1 }, { entryId: "x" });
+    expect(asRec).toEqual(asMap);
+  });
+
+  it("聚合后再排名：多码 SUM 后名次用合计", () => {
+    const agg = aggregateViralInviteCounts([
+      { sharerEntryId: "p1", joinedCount: 1 },
+      { sharerEntryId: "p1", joinedCount: 4 },
+      { sharerEntryId: "p2", joinedCount: 3 },
+    ]);
+    const { entries, myRank } = buildViralLeaderboardRanking(agg, { entryId: "p1", topN: 10 });
+    expect(entries[0]).toEqual({ rank: 1, entryId: "p1", invitedCount: 5 });
+    expect(entries[1]).toEqual({ rank: 2, entryId: "p2", invitedCount: 3 });
+    expect(myRank).toEqual({ rank: 1, invitedCount: 5 });
+  });
+
+  it("空聚合 + 带 entryId → 空榜 + myRank rank=0（与 HTTP 空榜契约一致）", () => {
+    const { entries, myRank } = buildViralLeaderboardRanking(new Map(), {
+      entryId: "lonely",
+      topN: 20,
+    });
+    expect(entries).toEqual([]);
+    expect(myRank).toEqual({ rank: 0, invitedCount: 0 });
+  });
+
+  it("topN 非法时至少 1；密集名次无并列并列号", () => {
+    const map = new Map([
+      ["a", 10],
+      ["b", 10],
+    ]);
+    const { entries } = buildViralLeaderboardRanking(map, { topN: 0 });
+    // topN 被夹到 ≥1，同票按 entryId 序只保证稳定，名次为 1..n 密集
+    expect(entries.length).toBeGreaterThanOrEqual(1);
+    expect(entries[0]!.rank).toBe(1);
+    const full = buildViralLeaderboardRanking(map, { topN: 10 });
+    expect(full.entries.map((e) => e.rank)).toEqual([1, 2]);
+    expect(full.entries.map((e) => e.entryId)).toEqual(["a", "b"]);
   });
 });

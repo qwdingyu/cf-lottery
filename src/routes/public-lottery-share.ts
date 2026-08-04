@@ -20,10 +20,13 @@ import {
   hashEventValue,
 } from "./public-lottery-helpers";
 import {
+  aggregateViralInviteCounts,
   buildPublicSharePath,
   buildViralLeaderboardRanking,
   computeViralExtraEntries,
+  isViralLeaderboardEnabled,
   normalizeViralWeightNumbers,
+  type ViralWeightConfig,
 } from "../services/lottery/viral-weight";
 
 export function setupPublicShareRoutes(route: Hono<AppEnv>) {
@@ -76,14 +79,14 @@ route.get("/draws/:slug/viral-leaderboard", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  // 解析裂变配置，判断是否开启排行榜
-  const pc = tryParseJson(draw.promotionConfig) as any;
+  // 解析裂变配置：门禁与 isViralLeaderboardEnabled 单一真相（docs/114）
+  const pc = tryParseJson(draw.promotionConfig) as { viral?: ViralWeightConfig } | undefined;
   const viral = pc?.viral;
-  if (!viral?.enabled || !viral?.leaderboardEnabled) {
+  if (!isViralLeaderboardEnabled(viral)) {
     return fail(c, "该活动未开启裂变排行榜", 400);
   }
 
-  // 查询所有分享记录，按分享者聚合邀请人数
+  // 查询所有分享记录，按分享者聚合邀请人数（多码 SUM，与开奖一致）
   const shareRows = await db
     .select({
       sharerEntryId: shareRecords.sharerEntryId,
@@ -92,11 +95,7 @@ route.get("/draws/:slug/viral-leaderboard", async (c) => {
     .from(shareRecords)
     .where(eq(shareRecords.drawId, draw.id));
 
-  // 按 sharerEntryId 聚合 SUM(joinedCount)
-  const aggMap = new Map<string, number>();
-  for (const row of shareRows) {
-    aggMap.set(row.sharerEntryId, (aggMap.get(row.sharerEntryId) || 0) + row.joinedCount);
-  }
+  const aggMap = aggregateViralInviteCounts(shareRows);
 
   // 全量排名再截 Top20；myRank 在全量上算，未进榜也是真实名次（docs/109）
   const ranking = buildViralLeaderboardRanking(aggMap, { entryId, topN: 20 });

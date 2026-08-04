@@ -160,14 +160,14 @@
           </li>
         </ol>
 
-        <!-- 我的排名：真实名次；0 邀请诚实展示 -->
-        <div v-if="myRank && myRank.rank === 0" class="leaderboard-my-rank leaderboard-my-rank--zero">
+        <!-- 我的排名：真实名次；0 邀请诚实展示（模式由 viralMyRankFooterMode 决策） -->
+        <div v-if="myRankFooterMode === 'zero'" class="leaderboard-my-rank leaderboard-my-rank--zero">
           <span class="leaderboard-rank">—</span>
           <span class="leaderboard-name">{{ $t('lottery.viralMe') }} · {{ $t('lottery.viralNotOnBoard') }}</span>
           <span class="leaderboard-count">{{ $t('lottery.viralPeopleCount', { n: 0 }) }}</span>
         </div>
         <div
-          v-else-if="myRank && myRank.rank > 0 && (myRank.rank > 20 || !meVisibleInTop)"
+          v-else-if="myRankFooterMode === 'footer' && myRank"
           class="leaderboard-my-rank"
         >
           <span class="leaderboard-rank">{{ myRank.rank }}</span>
@@ -192,6 +192,15 @@ import { writeClipboardText } from '@/composables/useClipboard'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { shouldShowInviteShareCta } from '@/views/lottery/public-helpers'
+import {
+  isMeVisibleInViralTop,
+  isViralFeatureEnabled,
+  isViralLeaderboardMeRow,
+  parseViralLeaderboardResponse,
+  shouldShowViralLeaderboard,
+  viralMyRankFooterMode,
+  viralRankBadge,
+} from '@/views/lottery/viral-leaderboard-ui'
 
 const props = defineProps<{
   drawSlug: string
@@ -241,13 +250,11 @@ const shareError = ref('')
 const statsError = ref('')
 const lbError = ref('')
 
-const viralOn = computed(() => props.viralConfig?.enabled === true)
+const viralOn = computed(() => isViralFeatureEnabled(props.viralConfig))
 const drawSlug = computed(() => String(props.drawSlug || '').trim())
 
-/** 管理端「展示排行榜」：显式 false 才关；缺省 true（与 admin 默认一致） */
-const showLeaderboard = computed(
-  () => viralOn.value && props.viralConfig?.leaderboardEnabled !== false,
-)
+/** 管理端「展示排行榜」：显式 false 才关；缺省 true（与 admin / API 一致） */
+const showLeaderboard = computed(() => shouldShowViralLeaderboard(props.viralConfig))
 
 /** 活动是否仍适合推邀请（与 docs/103 一致） */
 const inviteOpenByStatus = computed(() => shouldShowInviteShareCta(props.drawStatus))
@@ -336,27 +343,27 @@ const primaryShareLabel = computed(() => {
   return t('lottery.viralGenerateLink')
 })
 
-const meVisibleInTop = computed(() => {
-  if (!props.entryId || !myRank.value || myRank.value.rank <= 0) return false
-  return leaderboard.value.some(
-    (row) => row.entryId === props.entryId || (row.rank === myRank.value!.rank && isMeOnRow(row)),
-  )
-})
+const meVisibleInTop = computed(() =>
+  isMeVisibleInViralTop(leaderboard.value, {
+    entryId: props.entryId,
+    myRank: myRank.value,
+  }),
+)
+
+/** 底栏：zero / footer / in_top / none — 与纯函数一致，避免模板条件漂移 */
+const myRankFooterMode = computed(() =>
+  viralMyRankFooterMode(myRank.value, { meVisibleInTop: meVisibleInTop.value }),
+)
 
 function isMeOnRow(item: LeaderboardEntry): boolean {
-  if (props.entryId && item.entryId && item.entryId === props.entryId) return true
-  // 无 entryId 字段的旧响应：rank 对齐且有 myRank
-  if (props.entryId && myRank.value && myRank.value.rank > 0 && item.rank === myRank.value.rank) {
-    return true
-  }
-  return false
+  return isViralLeaderboardMeRow(item, {
+    entryId: props.entryId,
+    myRank: myRank.value,
+  })
 }
 
 function rankBadge(rank: number): string {
-  if (rank === 1) return '🥇'
-  if (rank === 2) return '🥈'
-  if (rank === 3) return '🥉'
-  return String(rank)
+  return viralRankBadge(rank)
 }
 
 async function fetchData() {
@@ -390,22 +397,20 @@ async function fetchData() {
     const [lbRes, statsRes] = await Promise.all(tasks)
 
     if (lbRes) {
-      if (lbRes.ok) {
-        const lb = await lbRes.json()
-        if (lb.ok !== false) {
-          leaderboard.value = (lb.entries || []).map((e: LeaderboardEntry) => ({
-            rank: e.rank,
-            displayName: e.displayName,
-            invitedCount: e.invitedCount,
-            entryId: e.entryId,
-          }))
-          myRank.value = lb.myRank || null
-          lbError.value = ''
-        } else {
-          lbError.value = lb.message || t('lottery.networkError')
-        }
+      // 始终读 JSON：业务 message 优先（docs/114）；解析逻辑锁在 parseViralLeaderboardResponse
+      let lbBody: unknown = {}
+      try {
+        lbBody = await lbRes.json()
+      } catch {
+        lbBody = {}
+      }
+      const parsed = parseViralLeaderboardResponse(lbRes.ok, lbBody, t('lottery.networkError'))
+      if (parsed.ok) {
+        leaderboard.value = parsed.entries
+        myRank.value = parsed.myRank
+        lbError.value = ''
       } else {
-        lbError.value = t('lottery.networkError')
+        lbError.value = parsed.error
         leaderboard.value = []
         myRank.value = null
       }

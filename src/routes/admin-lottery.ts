@@ -547,10 +547,16 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     return fail(c, "开奖时间必须在参与结束后", 400);
   }
 
-  // 编辑时校验 productLink
-  if (body.productLink !== undefined) {
-    const err = validateProductLink(body.productLink);
-    if (err) return fail(c, err, 400);
+  // 编辑时校验 productLink；null / 空对象表示清空导流，不走「必须有 url」校验
+  if (body.productLink !== undefined && body.productLink !== null) {
+    const isEmptyClear =
+      typeof body.productLink === "object" &&
+      !Array.isArray(body.productLink) &&
+      !String((body.productLink as { url?: string }).url || "").trim();
+    if (!isEmptyClear) {
+      const err = validateProductLink(body.productLink);
+      if (err) return fail(c, err, 400);
+    }
   }
 
   let maxParticipantsUpdate: number | null | undefined;
@@ -591,8 +597,26 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       ...(body.showParticipantCount !== undefined ? { showParticipantCount: body.showParticipantCount ? 1 : 0 } : {}),
       ...(body.showWinnerCount !== undefined ? { showWinnerCount: body.showWinnerCount ? 1 : 0 } : {}),
       ...(body.showWinnerList !== undefined ? { showWinnerList: body.showWinnerList ? 1 : 0 } : {}),
-      ...(body.productLink !== undefined ? { productLink: typeof body.productLink === "string" ? body.productLink : JSON.stringify(body.productLink) } : {}),
-      ...(body.promotionConfig !== undefined ? { promotionConfig: typeof body.promotionConfig === "string" ? body.promotionConfig : JSON.stringify(body.promotionConfig) } : {}),
+      ...(body.productLink !== undefined
+        ? {
+            productLink:
+              body.productLink === null
+                ? "{}"
+                : typeof body.productLink === "string"
+                  ? body.productLink
+                  : JSON.stringify(body.productLink),
+          }
+        : {}),
+      ...(body.promotionConfig !== undefined
+        ? {
+            promotionConfig:
+              body.promotionConfig === null
+                ? "{}"
+                : typeof body.promotionConfig === "string"
+                  ? body.promotionConfig
+                  : JSON.stringify(body.promotionConfig),
+          }
+        : {}),
       ...(body.activityConfig !== undefined ? { activityConfig: typeof body.activityConfig === "string" ? body.activityConfig : JSON.stringify(body.activityConfig) } : {}),
       updatedAt: new Date().toISOString(),
     })

@@ -1485,6 +1485,7 @@ import {
   normalizeSurveyFieldOptions as normalizeSurveyFieldOptionsRaw,
 } from './lottery/activity-config'
 import { emptyLotteryEditorForm } from './lottery/form-defaults'
+import { buildPromotionConfigPayload, growthFieldsFromDraw } from './lottery/growth-config'
 import {
   buildLotteryDrawConfirmMessage,
   buildLotteryDuplicateDraft as buildLotteryDuplicateDraftRaw,
@@ -3042,14 +3043,19 @@ async function handleEdit(draw: LotteryDraw) {
     showToast(t('lottery.adminEditNonDraft'), 'error')
     return
   }
-  // 调详情 API 获取完整活动数据（含奖项配置 tiers）
+  // 调详情 API 获取完整活动数据（含奖项配置 tiers + promotionConfig）
   let tiers: Array<{ prizeId: string; tierName: string; winnerCount: number }> = []
+  let detailDraw: Record<string, any> | null = null
   try {
     const detail = await adminRequest<{ draw: any; tiers: Array<{ prizeId: string; tierName: string; winnerCount: number }> }>(`/api/admin/draws/${draw.id}`)
     if (detail.tiers) {
       tiers = detail.tiers.map(t => ({ prizeId: t.prizeId || '', tierName: t.tierName || '', winnerCount: t.winnerCount || 1 }))
     }
-  } catch { /* 详情加载失败时使用空奖项 */ }
+    if (detail.draw) detailDraw = detail.draw
+  } catch { /* 详情加载失败时使用空奖项 + 列表行上的字段 */ }
+  // 详情优先（含完整 promotionConfig）；列表行作 fallback
+  const source = detailDraw || (draw as Record<string, any>)
+  const growth = growthFieldsFromDraw(source)
   form.value = {
     ...emptyForm(),
     id: draw.id,
@@ -3070,12 +3076,24 @@ async function handleEdit(draw: LotteryDraw) {
     showWinners: Number(draw.showWinnerList ?? draw.showWinnerCount ?? 0) === 1,
     showParticipantCount: (Number(draw.showParticipantCount ?? 1) === 1 ? 1 : 0) as 0 | 1,
     tiers,  // 回填奖项配置（修复编辑时奖项带不出来的 bug）
+    enableProductLink: growth.enableProductLink,
+    productLink: growth.productLink,
+    enableViral: growth.enableViral,
+    viralExtraEntriesPerInvite: growth.viralExtraEntriesPerInvite,
+    viralMaxExtraEntries: growth.viralMaxExtraEntries,
+    viralLeaderboardEnabled: growth.viralLeaderboardEnabled,
+    enableAfterWinCta: growth.enableAfterWinCta,
+    afterWinCtaUrl: growth.afterWinCtaUrl,
+    afterWinCtaTitle: growth.afterWinCtaTitle,
+    enableAfterLossCta: growth.enableAfterLossCta,
+    afterLossCtaUrl: growth.afterLossCtaUrl,
+    afterLossCtaTitle: growth.afterLossCtaTitle,
   }
   isEditing.value = true
   // 回填未中奖自动发券开关状态
   initLoserRewardFromConfig()
-  // 编辑时默认仍折叠高级项；已启用的增长配置不自动展开，避免打断「改核心字段」路径
-  showAdvancedGrowth.value = false
+  // 已有裂变/导流时展开高级增长区，否则运营看不到「已开启」状态（易二次保存擦掉）
+  showAdvancedGrowth.value = growth.hasGrowthConfig
   activeTemplateId.value = ''
   activeTemplateName.value = ''
   // 缺奖项时焦点落在步骤 4，方便门禁失败后的补齐路径
@@ -3197,46 +3215,12 @@ async function handleCreate() {
         return undefined
       })(),
       accessPassword: form.value.accessPassword || '',
-      // 导流：商品链接（启用时发送，关闭时发送 undefined）
+      // 导流：商品链接（启用时发送；编辑关闭时显式 null，避免 PATCH 跳过字段导致旧链接残留）
       productLink: form.value.enableProductLink && form.value.productLink.url
         ? form.value.productLink
-        : undefined,
-      // 导流与裂变：版本化配置（PromotionConfigV1 + ctas 扩展）
-      promotionConfig: (form.value.enableProductLink && form.value.productLink.url) || form.value.enableViral
-        || form.value.enableAfterWinCta || form.value.enableAfterLossCta
-        ? {
-            version: 1,
-            enabled: true,
-            kind: 'destination',
-            placement: 'after_join',
-            ...(form.value.enableProductLink && form.value.productLink.url ? {
-              destination: {
-                url: form.value.productLink.url,
-                title: form.value.productLink.title,
-                imageUrl: form.value.productLink.imageUrl || '',
-                priceText: form.value.productLink.price || '',
-              },
-              tracking: { enabled: true },
-            } : {}),
-            ...(form.value.enableViral ? {
-              viral: {
-                enabled: true,
-                extraEntriesPerInvite: form.value.viralExtraEntriesPerInvite || 1,
-                maxExtraEntries: form.value.viralMaxExtraEntries || 10,
-                leaderboardEnabled: form.value.viralLeaderboardEnabled ?? true,
-              },
-            } : {}),
-            // 多状态 CTA：中奖/未中奖不同导流卡片
-            ctas: {
-              ...(form.value.enableAfterWinCta && form.value.afterWinCtaUrl ? {
-                after_win: { url: form.value.afterWinCtaUrl, title: form.value.afterWinCtaTitle || '' },
-              } : {}),
-              ...(form.value.enableAfterLossCta && form.value.afterLossCtaUrl ? {
-                after_loss: { url: form.value.afterLossCtaUrl, title: form.value.afterLossCtaTitle || '' },
-              } : {}),
-            },
-          }
-        : undefined,
+        : (isEditing.value ? null : undefined),
+      // 导流与裂变：buildPromotionConfigPayload 单一真相（docs/114，可单测）
+      promotionConfig: buildPromotionConfigPayload(form.value, { isEditing: isEditing.value }),
     }
     if (isEditing.value && form.value.id) {
       const current = draws.value.find((d) => d.id === form.value.id)

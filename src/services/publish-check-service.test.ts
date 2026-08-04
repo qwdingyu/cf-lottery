@@ -244,6 +244,14 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     const r4 = await buildPublishCheckForDraw(db, TENANT, noBoard as any);
     expect(r4.infos.some((item) => item.code === "viral.leaderboard.off")).toBe(true);
 
+    // 缺省 leaderboardEnabled（与运行时一致视为开）→ 不误报 off
+    const defaultBoard = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10 } }),
+    });
+    await addManualTier(defaultBoard.id);
+    const r4b = await buildPublishCheckForDraw(db, TENANT, defaultBoard as any);
+    expect(r4b.infos.some((item) => item.code === "viral.leaderboard.off")).toBe(false);
+
     // 合法配置 → 无错误
     const ok = makeDraw({
       promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true } }),

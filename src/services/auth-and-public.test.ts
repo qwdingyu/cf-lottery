@@ -1712,6 +1712,367 @@ describe("公开参与流程", () => {
     expect(zeroBody.myRank).toEqual(expect.objectContaining({ rank: 0, invitedCount: 0 }));
   });
 
+  it("viral-leaderboard：缺省 leaderboardEnabled 视为开启；仅显式 false 关闭", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    // 旧数据 / 手工配置：只写 enabled，不写 leaderboardEnabled
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "viral-lb-default",
+      title: "排行缺省",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10 },
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "lb-default@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId: entryId,
+      shareCode: "lbdef001",
+      joinedCount: 2,
+    });
+
+    const onRes = await app.request(
+      `/public/draws/viral-lb-default/viral-leaderboard`,
+      { headers: { "CF-Connecting-IP": "10.0.0.84" } },
+      TEST_ENV,
+    );
+    expect(onRes.status).toBe(200);
+    const onBody = await onRes.json() as any;
+    expect(onBody.ok).toBe(true);
+    expect(onBody.entries.length).toBe(1);
+    expect(onBody.entries[0].invitedCount).toBe(2);
+
+    // 显式关闭必须 400
+    await db.update(lotteryDraws).set({
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: {
+          enabled: true,
+          extraEntriesPerInvite: 1,
+          maxExtraEntries: 10,
+          leaderboardEnabled: false,
+        },
+      }),
+    }).where(eq(lotteryDraws.id, drawId));
+
+    const offRes = await app.request(
+      `/public/draws/viral-lb-default/viral-leaderboard`,
+      { headers: { "CF-Connecting-IP": "10.0.0.85" } },
+      TEST_ENV,
+    );
+    expect(offRes.status).toBe(400);
+    const offBody = await offRes.json() as any;
+    expect(offBody.ok).toBe(false);
+    // UI parseViralLeaderboardResponse 依赖 message，禁止只返回空 body
+    expect(String(offBody.message || "")).toContain("排行榜");
+  });
+
+  /**
+   * 排行榜关 ≠ 裂变关：my-viral-stats 只看 viral.enabled，
+   * 运营关榜后仍应能看自己的邀请进度 / 权重（公开卡「仅我的邀请」路径）。
+   */
+  it("my-viral-stats：leaderboardEnabled false 时仍可查邀请统计", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "viral-stats-nolfb",
+      title: "关榜仍可 stats",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: {
+          enabled: true,
+          extraEntriesPerInvite: 2,
+          maxExtraEntries: 10,
+          leaderboardEnabled: false,
+        },
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "nolfb@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId: entryId,
+      shareCode: "nolfb001",
+      joinedCount: 3,
+    });
+
+    const lbRes = await app.request(
+      `/public/draws/viral-stats-nolfb/viral-leaderboard?entryId=${encodeURIComponent(entryId)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.91" } },
+      TEST_ENV,
+    );
+    expect(lbRes.status).toBe(400);
+
+    const statsRes = await app.request(
+      `/public/draws/viral-stats-nolfb/my-viral-stats?entryId=${encodeURIComponent(entryId)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.92" } },
+      TEST_ENV,
+    );
+    expect(statsRes.status).toBe(200);
+    const stats = await statsRes.json() as any;
+    expect(stats.ok).toBe(true);
+    expect(stats.invitedCount).toBe(3);
+    expect(stats.extraEntriesEarned).toBe(Math.min(3 * 2, 10));
+    expect(stats.drawWeight).toBe(1 + stats.extraEntriesEarned);
+  });
+
+  /**
+   * 排行榜 HTTP 死磕（docs/114）：聚合 / 脱敏 / entryId / 与 stats 一致 / 隔离 / 空榜。
+   * 只断言可观测契约，不假设未实现的并列名次算法。
+   */
+  it("viral-leaderboard：多码 SUM、脱敏、entryId、stats 一致、跨活动隔离", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const otherDrawId = crypto.randomUUID();
+    const p1 = crypto.randomUUID();
+    const p2 = crypto.randomUUID();
+    const stranger = crypto.randomUUID();
+
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "viral-lb-sum",
+      title: "多码聚合",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 2, maxExtraEntries: 10, leaderboardEnabled: true },
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    // 另一活动：同 sharer 码不得串榜
+    await db.insert(lotteryDraws).values({
+      id: otherDrawId,
+      tenantId: TENANT,
+      publicSlug: "viral-lb-other",
+      title: "隔离",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true },
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await db.insert(lotteryEntries).values([
+      {
+        id: p1,
+        tenantId: TENANT,
+        drawId,
+        identityType: "email",
+        identityValue: "alice@example.com",
+        displayName: "Alice公开名",
+        joinedAt: new Date().toISOString(),
+      },
+      {
+        id: p2,
+        tenantId: TENANT,
+        drawId,
+        identityType: "email",
+        identityValue: "bob@example.com",
+        joinedAt: new Date().toISOString(),
+      },
+      {
+        id: stranger,
+        tenantId: TENANT,
+        drawId: otherDrawId,
+        identityType: "email",
+        identityValue: "x@other.com",
+        joinedAt: new Date().toISOString(),
+      },
+    ]);
+
+    // p1 两条 share：2+3=5；p2 一条：4；other 活动脏数据 99 不得进本榜
+    await db.insert(shareRecords).values([
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId,
+        sharerEntryId: p1,
+        shareCode: "sum-p1-a",
+        joinedCount: 2,
+      },
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId,
+        sharerEntryId: p1,
+        shareCode: "sum-p1-b",
+        joinedCount: 3,
+      },
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId,
+        sharerEntryId: p2,
+        shareCode: "sum-p2",
+        joinedCount: 4,
+      },
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId: otherDrawId,
+        sharerEntryId: stranger,
+        shareCode: "sum-other",
+        joinedCount: 99,
+      },
+    ]);
+
+    const res = await app.request(
+      `/public/draws/viral-lb-sum/viral-leaderboard?entryId=${encodeURIComponent(p1)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.86" } },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.entries).toHaveLength(2);
+    // p1 合计 5 > p2 的 4
+    expect(body.entries[0]).toEqual(expect.objectContaining({
+      rank: 1,
+      entryId: p1,
+      invitedCount: 5,
+      displayName: "Alice公开名",
+    }));
+    expect(body.entries[1]).toEqual(expect.objectContaining({
+      rank: 2,
+      entryId: p2,
+      invitedCount: 4,
+    }));
+    // bob 无 displayName → 邮箱脱敏，禁止全文
+    expect(body.entries[1].displayName).not.toBe("bob@example.com");
+    expect(String(body.entries[1].displayName)).toContain("***");
+    expect(body.myRank).toEqual(expect.objectContaining({ rank: 1, invitedCount: 5 }));
+    // 串活动禁止
+    expect(body.entries.every((e: any) => e.entryId !== stranger)).toBe(true);
+    expect(body.entries.every((e: any) => e.invitedCount !== 99)).toBe(true);
+
+    // 与 my-viral-stats 同一合计（多码 SUM）+ perInvite 公式
+    const statsRes = await app.request(
+      `/public/draws/viral-lb-sum/my-viral-stats?entryId=${encodeURIComponent(p1)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.87" } },
+      TEST_ENV,
+    );
+    const stats = await statsRes.json() as any;
+    expect(stats.ok).toBe(true);
+    expect(stats.invitedCount).toBe(5);
+    expect(stats.extraEntriesEarned).toBe(Math.min(5 * 2, 10)); // 10
+    expect(stats.drawWeight).toBe(1 + 10);
+  });
+
+  it("viral-leaderboard：空榜 / viral 未开 / 活动不存在", async () => {
+    const app = createPublicTestApp();
+    const emptyId = crypto.randomUUID();
+    const offId = crypto.randomUUID();
+
+    await db.insert(lotteryDraws).values([
+      {
+        id: emptyId,
+        tenantId: TENANT,
+        publicSlug: "viral-lb-empty",
+        title: "空",
+        status: "open",
+        participationMode: "open",
+        startAt: futureTimeISO(-10),
+        endAt: futureTimeISO(60),
+        winnerCount: 1,
+        promotionConfig: JSON.stringify({
+          version: 1,
+          viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true },
+        }),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: offId,
+        tenantId: TENANT,
+        publicSlug: "viral-lb-noviral",
+        title: "未开裂变",
+        status: "open",
+        participationMode: "open",
+        startAt: futureTimeISO(-10),
+        endAt: futureTimeISO(60),
+        winnerCount: 1,
+        promotionConfig: JSON.stringify({ version: 1 }),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const emptyRes = await app.request(
+      `/public/draws/viral-lb-empty/viral-leaderboard`,
+      { headers: { "CF-Connecting-IP": "10.0.0.88" } },
+      TEST_ENV,
+    );
+    expect(emptyRes.status).toBe(200);
+    const emptyBody = await emptyRes.json() as any;
+    expect(emptyBody.ok).toBe(true);
+    expect(emptyBody.entries).toEqual([]);
+    expect(emptyBody.myRank).toBeNull();
+
+    const offRes = await app.request(
+      `/public/draws/viral-lb-noviral/viral-leaderboard`,
+      { headers: { "CF-Connecting-IP": "10.0.0.89" } },
+      TEST_ENV,
+    );
+    expect(offRes.status).toBe(400);
+
+    const miss = await app.request(
+      `/public/draws/no-such-slug-lb/viral-leaderboard`,
+      { headers: { "CF-Connecting-IP": "10.0.0.90" } },
+      TEST_ENV,
+    );
+    expect(miss.status).toBe(404);
+  });
+
   it("ref 点击重定向保留 ?ref= 归因参数", async () => {
     const app = createPublicTestApp();
     const drawId = crypto.randomUUID();

@@ -135,6 +135,38 @@ export function buildPublicSharePath(slug: string, shareCode: string): string {
 }
 
 /**
+ * 公开裂变排行榜是否应对外开放。
+ *
+ * 契约（docs/114，与管理端默认、ViralLeaderboard UI 对齐）：
+ * - viral.enabled 必须为真，否则整段裂变关闭
+ * - leaderboardEnabled 仅在显式 false 时关闭；缺省 / undefined 视为开启
+ *
+ * 禁止再用 `!viral.leaderboardEnabled`（会把缺省当成关，UI 请求 400）。
+ */
+export function isViralLeaderboardEnabled(viral?: ViralWeightConfig | null): boolean {
+  if (!viral || viral.enabled !== true) return false;
+  return viral.leaderboardEnabled !== false;
+}
+
+/**
+ * 将 share_records 行聚合成 entryId → 有效邀请人数。
+ * 同一 sharer 多条 shareCode 时 SUM(joinedCount)——与开奖 inviteMap、my-viral-stats 一致。
+ * 不在此过滤 joined=0 行（聚合后为 0 的 entry 由 ranking 再丢弃）。
+ */
+export function aggregateViralInviteCounts(
+  rows: ReadonlyArray<{ sharerEntryId: string; joinedCount: number | null | undefined }>,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const id = String(row?.sharerEntryId || "").trim();
+    if (!id) continue;
+    const n = Math.max(0, Math.floor(Number(row.joinedCount) || 0));
+    map.set(id, (map.get(id) || 0) + n);
+  }
+  return map;
+}
+
+/**
  * 排行榜：由「entryId → 邀请人数」得到 Top N + 我的真实名次。
  * 名次必须在全量（invited>0）上计算，禁止在 slice(0,20) 后再找导致「未进 Top20 恒为 21」。
  */

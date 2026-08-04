@@ -25,6 +25,7 @@ import { randomSelect, hashDrawSeed } from "./utils";
 import { enqueueWebhookEvent, dispatchWebhookDelivery } from "./integration";
 import { sendEmail, buildLotteryWinnerTemplateData } from "../email-service";
 import {
+  aggregateViralInviteCounts,
   computeViralDrawWeight,
   normalizeViralWeightNumbers,
   weightedSampleUnique,
@@ -174,8 +175,10 @@ export async function performDraw(
         .from(shareRecords)
         .where(and(eq(shareRecords.tenantId, tenantId), eq(shareRecords.drawId, drawId)));
 
-      for (const row of shareRows) {
-        inviteMap.set(row.sharerEntryId, (inviteMap.get(row.sharerEntryId) || 0) + row.joinedCount);
+      // 与公开排行榜同一聚合函数，避免「榜上人数 ≠ 开奖权重」静默分叉
+      const aggregated = aggregateViralInviteCounts(shareRows);
+      for (const [id, count] of aggregated) {
+        inviteMap.set(id, count);
       }
 
       const weightedPool = entries.map((entry) => ({
