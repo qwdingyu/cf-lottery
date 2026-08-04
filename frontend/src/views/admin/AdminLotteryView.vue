@@ -1290,7 +1290,7 @@
     </AdminModal>
 
     <!-- 海报模板（隐藏 DOM，html-to-image 截图用） -->
-    <div v-show="showPosterModal" ref="posterDomRef" class="poster-template" aria-hidden="true">
+    <div v-if="showPosterModal" ref="posterDomRef" class="poster-template" aria-hidden="true">
       <div class="poster-template-bg">
         <div class="poster-template-orb poster-template-orb-1"></div>
         <div class="poster-template-orb poster-template-orb-2"></div>
