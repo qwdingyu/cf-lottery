@@ -8,7 +8,7 @@ export default defineConfig({
   resolve: {
     dedupe: ['vue'],
     alias: {
-      // Single Vue instance for @usethink/cf-admin peer types
+      // Single Vue instance for @usethink/cf-admin-fe peer types
       vue: resolve(__dirname, '../node_modules/vue'),
       '@': resolve(__dirname, 'src'),
       '@shared': resolve(__dirname, 'src/shared'),

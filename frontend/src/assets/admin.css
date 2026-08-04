@@ -1,5 +1,5 @@
-/* Admin primitives — single source: @usethink/cf-admin
+/* Admin primitives — single source: @usethink/cf-admin-fe
  * Product pages keep @import '@/assets/admin.css' (stable path).
  * Tokens remain in base.css (shared with storefront) and are also in the kit.
  */
-@import '@usethink/cf-admin/styles/admin-primitives.css';
+@import '@usethink/cf-admin-fe/styles/admin-primitives.css';

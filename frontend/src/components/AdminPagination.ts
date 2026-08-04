@@ -1,2 +1,2 @@
-/** Thin re-export — implementation lives in @usethink/cf-admin */
-export { default } from '@usethink/cf-admin/components/AdminPagination.vue'
+/** Thin re-export — implementation lives in @usethink/cf-admin-fe */
+export { default } from '@usethink/cf-admin-fe/components/AdminPagination.vue'

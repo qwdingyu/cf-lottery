@@ -23,15 +23,15 @@
       "@shared/*": ["src/shared/*"],
       "vue": ["../node_modules/vue"],
       "vue/*": ["../node_modules/vue/*"],
-      "@usethink/cf-admin": ["../../cf-admin/src/index.ts"],
-      "@usethink/cf-admin/*": ["../../cf-admin/src/*"]
+      "@usethink/cf-admin-fe": ["../../cf-admin-fe/src/index.ts"],
+      "@usethink/cf-admin-fe/*": ["../../cf-admin-fe/src/*"]
     }
   },
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
     "src/**/*.vue",
-    "../../cf-admin/src/**/*.ts",
-    "../../cf-admin/src/**/*.vue"
+    "../../cf-admin-fe/src/**/*.ts",
+    "../../cf-admin-fe/src/**/*.vue"
   ]
 }
