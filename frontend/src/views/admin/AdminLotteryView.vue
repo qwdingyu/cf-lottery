@@ -124,6 +124,14 @@
                 >
                   {{ $t('lottery.adminFailureReason') }}：{{ shortFailure(draw.failureReason) }}
                 </small>
+                <!-- 开启失败后钉行内：不靠再点一次才看 toast；点编辑可补齐 -->
+                <small
+                  v-if="draw.status === 'draft' && draftPublishBlockers[draw.id]"
+                  class="draft-blocker-snippet"
+                  :title="draftPublishBlockers[draw.id]"
+                >
+                  {{ $t('lottery.adminDraftNeedFix') }}：{{ draftPublishBlockers[draw.id] }}
+                </small>
               </div>
             </td>
             <td>
@@ -1101,7 +1109,14 @@
       </div>
     </AdminModal>
 
-    <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" @confirm="onConfirm" />
+    <ConfirmDialog
+      v-model="confirmVisible"
+      :message="confirmMessage"
+      :options="confirmOptionDefs"
+      :option-values="confirmOptionValues"
+      @confirm="onConfirm"
+      @update:option="setConfirmOption"
+    />
 
     <!-- 活动数据：平台内漏斗 + 外部系统显式回传 -->
     <AdminModal v-model="showAnalyticsModal" :title="$t('lottery.adminAnalyticsTitle')" max-width="860px">
@@ -1281,7 +1296,12 @@ import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
 import { writeClipboardText } from '@/composables/useClipboard'
-import { canEnableDrawNow } from '@/composables/admin-list-ux'
+import {
+  canEnableDrawNow,
+  draftPublishBlockerSnippet,
+  OPEN_PUBLIC_PREVIEW_OPTION_KEY,
+  shouldOpenPublicPreview,
+} from '@/composables/admin-list-ux'
 import AdminModal from '@/components/AdminModal.vue'
 import AdminPagination from '@/components/AdminPagination.vue'
 import { useTablePagination } from '@/composables/useTablePagination'
@@ -1347,7 +1367,55 @@ const route = useRoute()
 const router = useRouter()
 const { showToast } = useToast()
 useAdminAuth()
-const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
+const {
+  confirmVisible,
+  confirmMessage,
+  confirmOptionDefs,
+  confirmOptionValues,
+  askConfirm,
+  askConfirmWithOptions,
+  onConfirm,
+  setConfirmOption,
+} = useConfirmDialog()
+
+/**
+ * 发布门禁失败后的行内提示（drawId → 首条 error 文案）。
+ * 为何不列表预拉 publish-check：N+1 请求贵；失败后再钉在行上，运营一眼知道「还差什么」。
+ */
+const draftPublishBlockers = ref<Record<string, string>>({})
+
+function setDraftPublishBlocker(drawId: string, firstMessage: string | undefined) {
+  const snip = draftPublishBlockerSnippet(firstMessage)
+  if (!snip) {
+    const next = { ...draftPublishBlockers.value }
+    delete next[drawId]
+    draftPublishBlockers.value = next
+    return
+  }
+  draftPublishBlockers.value = { ...draftPublishBlockers.value, [drawId]: snip }
+}
+
+function clearDraftPublishBlocker(drawId: string) {
+  if (!(drawId in draftPublishBlockers.value)) return
+  const next = { ...draftPublishBlockers.value }
+  delete next[drawId]
+  draftPublishBlockers.value = next
+}
+
+/** 开启/创建成功后：默认勾选「打开用户页」，确认即预览（仍保留用户手势，避免 window.open 被拦） */
+async function askOpenPublicPreview(message: string): Promise<boolean> {
+  const result = await askConfirmWithOptions(message, {
+    options: [
+      {
+        key: OPEN_PUBLIC_PREVIEW_OPTION_KEY,
+        label: t('lottery.adminOpenPublic'),
+        hint: t('lottery.adminOpenPublicHint'),
+        defaultChecked: true,
+      },
+    ],
+  })
+  return shouldOpenPublicPreview(result.confirmed, result.options)
+}
 
 // ── 从 lottery/* 抽出的纯逻辑：此处只保留需要 t / form 的薄包装 ──
 function normalizeActivityConfig(kind: string, config: any): ActivityConfigForm {
@@ -2186,6 +2254,8 @@ async function handleOpen(draw: LotteryDraw) {
     // 发布前先展示同一套服务端门禁结果：运营者需要知道缺奖项、码池、CTA、Webhook 等具体阻断点。
     const check = await fetchPublishCheck(draw.id)
     if (!check.canPublish) {
+      // 钉在列表行：下次扫一眼就知道还差什么，不必再点开启才出 toast
+      setDraftPublishBlocker(draw.id, check.errors[0]?.message)
       const summary = formatPublishCheckItems(check.errors, t('lottery.adminPublishErrorsPrefix'))
       // 可编辑补齐：确认后进编辑并滚到相关分区；否则仅 toast（如 webhook 类）
       if (canGuidePublishFixInEditor(draw, check.errors)) {
@@ -2200,18 +2270,20 @@ async function handleOpen(draw: LotteryDraw) {
       showToast(summary, 'error')
       return
     }
+    clearDraftPublishBlocker(draw.id)
     if (check.warnings.length > 0) {
       const confirmed = await askConfirm(formatPublishCheckItems(check.warnings, t('lottery.adminPublishWarningsPrefix')) + t('lottery.adminPublishStill'))
       if (!confirmed) return
     }
     await openLotteryDraw(draw.id)
     // 发布后复制公开 slug 链接，避免把内部活动 id 发给参与者导致公开页 404。
-    // 055a：复制成功后可选打开用户页，把「开启 → 分享 → 自检」收成一次操作闭环。
+    // docs/075：默认勾选「打开用户页」，确认即预览，少一次「是否打开？」心智负担。
     try {
       await writeClipboardText(publicShareUrl(draw.publicSlug))
       showToast(t('lottery.adminOpenedWithLink'), 'success')
-      const openPreview = await askConfirm(t('lottery.adminOpenedWithPreview'))
-      if (openPreview) handleOpenPublic(draw)
+      if (await askOpenPublicPreview(t('lottery.adminOpenedWithPreview'))) {
+        handleOpenPublic(draw)
+      }
     } catch {
       showToast(t('lottery.adminDrawOpened'), 'success')
     }
@@ -2645,14 +2717,12 @@ async function handleCreate() {
         await loadData()
         if (lotteryMissingTier) {
           showToast(t('lottery.adminCreatedNeedPrizeHint'), 'success')
-          const openPreview = await askConfirm(t('lottery.adminCreateNeedPrizeWithPreview'))
-          if (openPreview && previewSlug) {
+          if (previewSlug && await askOpenPublicPreview(t('lottery.adminCreateNeedPrizeWithPreview'))) {
             handleOpenPublic({ publicSlug: previewSlug } as LotteryDraw)
           }
         } else {
           showToast(t('lottery.adminCreateDoneWithLink'), 'success')
-          const openPreview = await askConfirm(t('lottery.adminCreateDoneWithPreview'))
-          if (openPreview && previewSlug) {
+          if (previewSlug && await askOpenPublicPreview(t('lottery.adminCreateDoneWithPreview'))) {
             handleOpenPublic({ publicSlug: previewSlug } as LotteryDraw)
           }
         }

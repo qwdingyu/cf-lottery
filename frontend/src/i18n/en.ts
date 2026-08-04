@@ -792,7 +792,9 @@ export default {
     adminSearchPlaceholder: "Search name / prize / ID",
     adminSearchAria: "Search lottery draws",
     adminOpenedWithLink: "Opened — share link copied",
-    adminOpenedWithPreview: "Activity opened; share link copied. Open the public page to preview?",
+    // docs/075: default-checked “Open public page”; confirm ≈ preview
+    adminOpenedWithPreview: "Activity opened; share link copied. Confirm to open the public page (uncheck below to skip).",
+    adminDraftNeedFix: "Fix before open",
     adminExportWinners: "Export CSV",
     adminExportWinnersDone: "Winners CSV downloaded",
     adminExportWinnersEmpty: "No winners to export",
@@ -1075,8 +1077,8 @@ export default {
     adminCreateMissingHint: "Before saving, consider: {items}",
     adminTemplateApplied: "Template “{name}” applied; schedule prefilled",
     adminCreatedNeedPrizeHint: "Draft created and link copied — edit to add prize tiers before publishing",
-    adminCreateDoneWithPreview: "Activity created; link copied. Open public page to preview?",
-    adminCreateNeedPrizeWithPreview: "Draft created; link copied. Add prizes before publishing — open public page to preview?",
+    adminCreateDoneWithPreview: "Activity created; link copied. Confirm to open the public page (uncheck below to skip).",
+    adminCreateNeedPrizeWithPreview: "Draft created; link copied. Add prizes before publishing — confirm to preview public page (uncheck below to skip).",
     adminPublishFixGoEdit: "Open the editor and jump to the related section? Fix issues, then tap Open again.",
 
     // LotteryView user-facing copy

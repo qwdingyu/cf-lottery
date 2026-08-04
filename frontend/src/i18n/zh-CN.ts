@@ -764,7 +764,9 @@ export default {
     adminSearchPlaceholder: "搜索名称 / 奖品 / ID",
     adminSearchAria: "搜索抽奖活动",
     adminOpenedWithLink: "已开启，分享链接已复制",
-    adminOpenedWithPreview: "活动已开启，分享链接已复制。是否打开用户页预览？",
+    // docs/075：配合默认勾选「打开用户页」；确认≈预览，取消勾选可只关弹窗
+    adminOpenedWithPreview: "活动已开启，分享链接已复制。确认后可打开用户页自检（可取消下方勾选）。",
+    adminDraftNeedFix: "开启前需处理",
     adminExportWinners: "导出 CSV",
     adminExportWinnersDone: "中奖名单已导出",
     adminExportWinnersEmpty: "暂无中奖记录可导出",
@@ -1047,8 +1049,8 @@ export default {
     adminCreateMissingHint: "保存前建议补齐：{items}",
     adminTemplateApplied: "已套用模板「{name}」，时间已预填",
     adminCreatedNeedPrizeHint: "草稿已创建并复制链接；发布前请编辑补齐奖项（或使用快速创建奖品）",
-    adminCreateDoneWithPreview: "活动已创建，链接已复制。是否打开用户页预览？",
-    adminCreateNeedPrizeWithPreview: "草稿已创建并复制链接；发布前请补齐奖项。是否先打开用户页预览？",
+    adminCreateDoneWithPreview: "活动已创建，链接已复制。确认后可打开用户页预览（可取消下方勾选）。",
+    adminCreateNeedPrizeWithPreview: "草稿已创建并复制链接；发布前请补齐奖项。确认后可先打开用户页预览（可取消下方勾选）。",
     adminPublishFixGoEdit: "是否打开编辑并跳到相关配置？补齐后可再次点「开启活动」。",
 
     // ── LotteryView 用户端 i18n 补全 ──
