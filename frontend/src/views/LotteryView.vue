@@ -247,15 +247,18 @@
             </template>
           </div>
           <!--
-            同场裂变：额外次数进度 + 排行榜（docs/041 / docs/108）。
-            仅 viral.enabled 时挂载；已开奖/取消仍可看历史榜（组件内 API 不依赖 open）。
-            entryId 来自当次参与快照 / myEntryList / joined hints。
+            同场裂变：自我裂变主入口（docs/041 / 108 / 109）。
+            viral.enabled 时挂载；leaderboard 独立；终态弱化邀请但可看历史。
+            entryId：参与快照 / myEntryList / hints；无 entry 时诚实提示。
           -->
           <ViralLeaderboard
             v-if="getDrawViral(draw)?.enabled && (draw.publicSlug || draw.id)"
             :draw-slug="String(draw.publicSlug || draw.id)"
             :entry-id="resolveViralEntryId(draw)"
+            :is-joined="isDrawJoined(draw)"
+            :draw-status="draw.status"
             :viral-config="getDrawViral(draw)"
+            @query-result="openMyResult(draw)"
           />
         </div>
       </div>

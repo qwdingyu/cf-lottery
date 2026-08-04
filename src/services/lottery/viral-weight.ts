@@ -49,7 +49,7 @@ export function computeViralExtraEntries(
 
 /**
  * 开奖袋中该参与者出现次数 = 1 + 额外票。
- * 同一人仍只能中一次（performDraw 内 seenEntryIds 去重）。
+ * 同一人仍只能中一次（加权无放回抽样，见 weightedSampleUnique）。
  */
 export function computeViralDrawWeight(
   invitedCount: number,
@@ -57,6 +57,69 @@ export function computeViralDrawWeight(
   maxExtraEntries: number,
 ): number {
   return 1 + computeViralExtraEntries(invitedCount, extraEntriesPerInvite, maxExtraEntries);
+}
+
+/**
+ * 按权重无放回抽取唯一中奖者（docs/109）。
+ *
+ * 为何不用「扩袋 + randomSelect(n) 再去重」：
+ * 扩袋后若只抽 n 个位置，高权重者可能占满 n 个槽，去重后名额不足
+ * （例：2 人抽 2 奖，A 权重 10、B 权重 1 → 可能抽到 [A,A] → 只中 1 人）。
+ *
+ * 算法：每轮按当前剩余权重比例抽 1 人，抽中后移出池，直到满员或池空。
+ * 公平性：权重 w 的相对中奖优势在「仍在池中」时保持 w 比例。
+ *
+ * @param items 候选（id 唯一）；weight 已含基础 1
+ * @param count 需要的唯一中奖人数
+ * @param random01 返回 [0,1) 的 CSPRNG 封装，便于单测注入
+ */
+export function weightedSampleUnique<T extends { id: string }>(
+  items: Array<{ item: T; weight: number }>,
+  count: number,
+  random01: () => number,
+): T[] {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (n <= 0 || items.length === 0) return [];
+
+  // 复制池；weight 至少 1，避免 0 权重永远抽不中也避免负权
+  const pool = items
+    .filter((row) => row?.item?.id)
+    .map((row) => ({
+      item: row.item,
+      weight: Math.max(1, Math.floor(Number(row.weight) || 1)),
+    }));
+
+  const picked: T[] = [];
+  const seen = new Set<string>();
+
+  while (picked.length < n && pool.length > 0) {
+    let total = 0;
+    for (const row of pool) total += row.weight;
+    if (total <= 0) break;
+
+    // CSPRNG → [0, total)：用 total * u，u∈[0,1)
+    let u = random01();
+    if (!Number.isFinite(u) || u < 0) u = 0;
+    if (u >= 1) u = 0.999999999999; // 避免边界卡在 total
+    let r = u * total;
+
+    let idx = pool.length - 1;
+    for (let i = 0; i < pool.length; i++) {
+      r -= pool[i]!.weight;
+      if (r < 0) {
+        idx = i;
+        break;
+      }
+    }
+
+    const chosen = pool[idx]!;
+    pool.splice(idx, 1);
+    if (seen.has(chosen.item.id)) continue;
+    seen.add(chosen.item.id);
+    picked.push(chosen.item);
+  }
+
+  return picked;
 }
 
 /**
@@ -69,4 +132,61 @@ export function buildPublicSharePath(slug: string, shareCode: string): string {
   const code = String(shareCode || "").trim();
   if (!s || !code) return "";
   return `/lottery/${encodeURIComponent(s)}?ref=${encodeURIComponent(code)}`;
+}
+
+/**
+ * 排行榜：由「entryId → 邀请人数」得到 Top N + 我的真实名次。
+ * 名次必须在全量（invited>0）上计算，禁止在 slice(0,20) 后再找导致「未进 Top20 恒为 21」。
+ */
+export function buildViralLeaderboardRanking(
+  inviteCounts: Map<string, number> | Record<string, number>,
+  options?: { entryId?: string; topN?: number },
+): {
+  entries: Array<{ rank: number; entryId: string; invitedCount: number }>;
+  myRank: { rank: number; invitedCount: number } | null;
+} {
+  const topN = Math.max(1, Math.floor(options?.topN ?? 20));
+  const entryId = String(options?.entryId || "").trim();
+
+  const pairs: Array<[string, number]> = [];
+  if (inviteCounts instanceof Map) {
+    for (const [id, count] of inviteCounts) {
+      const c = Math.max(0, Math.floor(Number(count) || 0));
+      if (c > 0) pairs.push([id, c]);
+    }
+  } else {
+    for (const [id, count] of Object.entries(inviteCounts)) {
+      const c = Math.max(0, Math.floor(Number(count) || 0));
+      if (c > 0) pairs.push([id, c]);
+    }
+  }
+
+  // 邀请人数降序；同票按 entryId 稳定排序，避免刷新乱跳
+  pairs.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+  const entries = pairs.slice(0, topN).map(([id, count], index) => ({
+    rank: index + 1,
+    entryId: id,
+    invitedCount: count,
+  }));
+
+  let myRank: { rank: number; invitedCount: number } | null = null;
+  if (entryId) {
+    const myCount = inviteCounts instanceof Map
+      ? (inviteCounts.get(entryId) || 0)
+      : (Number((inviteCounts as Record<string, number>)[entryId]) || 0);
+    const invited = Math.max(0, Math.floor(Number(myCount) || 0));
+    if (invited > 0) {
+      const rankIndex = pairs.findIndex(([id]) => id === entryId);
+      myRank = {
+        rank: rankIndex >= 0 ? rankIndex + 1 : pairs.length + 1,
+        invitedCount: invited,
+      };
+    } else {
+      // 已参与但 0 邀请：诚实返回，前端展示「尚未上榜」而非隐藏
+      myRank = { rank: 0, invitedCount: 0 };
+    }
+  }
+
+  return { entries, myRank };
 }

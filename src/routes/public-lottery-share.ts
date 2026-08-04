@@ -12,7 +12,7 @@ import {
   lotteryEntries,
   shareRecords,
 } from "../db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, desc } from "drizzle-orm";
 import { recordActivityEvent } from "../services/lottery-service";
 import {
   maskIdentity,
@@ -21,6 +21,7 @@ import {
 } from "./public-lottery-helpers";
 import {
   buildPublicSharePath,
+  buildViralLeaderboardRanking,
   computeViralExtraEntries,
   normalizeViralWeightNumbers,
 } from "../services/lottery/viral-weight";
@@ -96,49 +97,49 @@ route.get("/draws/:slug/viral-leaderboard", async (c) => {
   for (const row of shareRows) {
     aggMap.set(row.sharerEntryId, (aggMap.get(row.sharerEntryId) || 0) + row.joinedCount);
   }
-  if (aggMap.size === 0) {
+
+  // 全量排名再截 Top20；myRank 在全量上算，未进榜也是真实名次（docs/109）
+  const ranking = buildViralLeaderboardRanking(aggMap, { entryId, topN: 20 });
+  if (ranking.entries.length === 0 && !ranking.myRank) {
     return ok(c, { entries: [], myRank: null });
   }
 
-  // 查询参与者身份信息（脱敏展示）
-  const entryIds = Array.from(aggMap.keys());
-  const entryRows = await db
-    .select({ id: lotteryEntries.id, identityValue: lotteryEntries.identityValue, displayName: lotteryEntries.displayName })
-    .from(lotteryEntries)
-    .where(inArray(lotteryEntries.id, entryIds));
-
+  // 查询参与者身份信息（脱敏展示）— 含我的 entry（即使 0 邀请也要可展示）
+  const entryIds = new Set(ranking.entries.map((e) => e.entryId));
+  if (entryId) entryIds.add(entryId);
   const identityMap = new Map<string, string>();
-  for (const e of entryRows) {
-    identityMap.set(e.id, e.displayName || maskIdentity(e.identityValue));
-  }
-
-  // 构建排行榜（按邀请人数降序，Top 20）
-  const sorted = Array.from(aggMap.entries())
-    .filter(([, count]) => count > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20);
-
-  const leaderboard = sorted.map(([sharerEntryId, count], index) => ({
-    rank: index + 1,
-    displayName: identityMap.get(sharerEntryId) || "***",
-    invitedCount: count,
-  }));
-
-  // 查询"我"的排名
-  let myRank: { rank: number; invitedCount: number } | null = null;
-  if (entryId) {
-    const myCount = aggMap.get(entryId) || 0;
-    if (myCount > 0) {
-      const rankIndex = sorted.findIndex(([id]) => id === entryId);
-      if (rankIndex >= 0) {
-        myRank = { rank: rankIndex + 1, invitedCount: myCount };
-      } else {
-        myRank = { rank: sorted.length + 1, invitedCount: myCount };
-      }
+  if (entryIds.size > 0) {
+    const entryRows = await db
+      .select({
+        id: lotteryEntries.id,
+        identityValue: lotteryEntries.identityValue,
+        displayName: lotteryEntries.displayName,
+      })
+      .from(lotteryEntries)
+      .where(inArray(lotteryEntries.id, Array.from(entryIds)));
+    for (const e of entryRows) {
+      identityMap.set(e.id, e.displayName || maskIdentity(e.identityValue));
     }
   }
 
-  return ok(c, { entries: leaderboard, myRank });
+  const leaderboard = ranking.entries.map((row) => ({
+    rank: row.rank,
+    displayName: identityMap.get(row.entryId) || "***",
+    invitedCount: row.invitedCount,
+    /** 供前端高亮「是我」：勿仅靠 rank 相等（并列风险） */
+    entryId: row.entryId,
+  }));
+
+  return ok(c, {
+    entries: leaderboard,
+    myRank: ranking.myRank
+      ? {
+          rank: ranking.myRank.rank,
+          invitedCount: ranking.myRank.invitedCount,
+          displayName: identityMap.get(entryId) || undefined,
+        }
+      : null,
+  });
 });
 
 // ═════════════════════════════════════════════════════════
@@ -152,7 +153,12 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
   if (!entryId) return fail(c, "缺少参与记录 ID", 400);
 
   const [draw] = await db
-    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, promotionConfig: lotteryDraws.promotionConfig })
+    .select({
+      id: lotteryDraws.id,
+      tenantId: lotteryDraws.tenantId,
+      status: lotteryDraws.status,
+      promotionConfig: lotteryDraws.promotionConfig,
+    })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
     .limit(1);
@@ -163,6 +169,18 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
   if (!viral?.enabled) {
     return fail(c, "该活动未开启裂变", 400);
   }
+
+  // entry 必须属于本活动：防任意 UUID 窥探他人裂变数据
+  const [entry] = await db
+    .select({ id: lotteryEntries.id })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.id, entryId),
+      eq(lotteryEntries.drawId, draw.id),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+    ))
+    .limit(1);
+  if (!entry) return fail(c, "参与记录不存在或不属于本活动", 404);
 
   // 查询该参与者的分享记录
   const myShares = await db
@@ -187,6 +205,10 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
   const shareCode = latestShare?.shareCode || "";
   const shareUrl = shareCode ? buildPublicSharePath(slug, shareCode) : "";
 
+  // 终态活动：仍可看历史统计，但前端应弱化「继续邀请」主 CTA
+  const drawStatus = String(draw.status || "");
+  const inviteOpen = !["drawn", "cancelled", "closed"].includes(drawStatus.toLowerCase());
+
   return ok(c, {
     shareCode,
     shareUrl,
@@ -196,10 +218,15 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
     extraEntriesPerInvite,
     maxExtraEntries,
     drawWeight,
+    drawStatus,
+    inviteOpen,
   });
 });
 
-/** 生成分享码（参与者分享活动链接） */
+/**
+ * 生成或复用分享码（参与者分享活动链接）。
+ * 同一 entry 已有 share 时复用最新码，避免每次复制都 insert 污染 joined 归因链路。
+ */
 route.post("/draws/:slug/share", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
@@ -207,7 +234,16 @@ route.post("/draws/:slug/share", async (c) => {
   const entryId = String(body.entryId || "").trim();
   if (!entryId) return fail(c, "缺少参与记录 ID", 400);
 
-  const [draw] = await db.select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId }).from(lotteryDraws).where(eq(lotteryDraws.publicSlug, slug)).limit(1);
+  const [draw] = await db
+    .select({
+      id: lotteryDraws.id,
+      tenantId: lotteryDraws.tenantId,
+      status: lotteryDraws.status,
+      promotionConfig: lotteryDraws.promotionConfig,
+    })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
   // entry 必须属于本活动：否则任意 UUID 可污染 share_records / 裂变归因（docs/099）
@@ -222,6 +258,22 @@ route.post("/draws/:slug/share", async (c) => {
     .limit(1);
   if (!entry) return fail(c, "参与记录不存在或不属于本活动", 404);
 
+  // 已有码：复用最新一条（主链接稳定；历史多码的 joined 仍在 stats 里 SUM）
+  const existing = await db
+    .select({ shareCode: shareRecords.shareCode })
+    .from(shareRecords)
+    .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.sharerEntryId, entryId)))
+    .orderBy(desc(shareRecords.createdAt))
+    .limit(1);
+  if (existing.length > 0) {
+    const latest = existing[0]!;
+    return ok(c, {
+      shareCode: latest.shareCode,
+      shareUrl: buildPublicSharePath(slug, latest.shareCode),
+      reused: true,
+    });
+  }
+
   const shareCode = crypto.randomUUID().slice(0, 12);
   await db.insert(shareRecords).values({
     id: crypto.randomUUID(),
@@ -232,7 +284,11 @@ route.post("/draws/:slug/share", async (c) => {
   });
 
   // 统一 /lottery/{slug}?ref=，与前端 router 及 my-viral-stats 一致（docs/108）
-  return ok(c, { shareCode, shareUrl: buildPublicSharePath(slug, shareCode) });
+  return ok(c, {
+    shareCode,
+    shareUrl: buildPublicSharePath(slug, shareCode),
+    reused: false,
+  });
 });
 
 /**

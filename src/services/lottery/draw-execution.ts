@@ -24,7 +24,11 @@ import {
 import { randomSelect, hashDrawSeed } from "./utils";
 import { enqueueWebhookEvent, dispatchWebhookDelivery } from "./integration";
 import { sendEmail, buildLotteryWinnerTemplateData } from "../email-service";
-import { computeViralDrawWeight, normalizeViralWeightNumbers } from "./viral-weight";
+import {
+  computeViralDrawWeight,
+  normalizeViralWeightNumbers,
+  weightedSampleUnique,
+} from "./viral-weight";
 import type { DrawResult } from "./types";
 
 /* ── 开奖核心 ─────────────────────────────────────────────── */
@@ -151,50 +155,55 @@ export async function performDraw(
       ? tiers.reduce((sum, t) => sum + t.winnerCount, 0)
       : draw.winnerCount;
 
-    // ── 裂变加权：活动开启了裂变时，按「邀请人数 × 每邀额外次数」封顶后加权 ──
-    // 权重 = 1 + min(invited × extraEntriesPerInvite, maxExtraEntries)（viral-weight.ts）。
-    // 不写入额外 entries：不占 maxParticipants；同一人仍只中一次（seenEntryIds）。
-    // 不加权时 candidates = entries（保持原有行为）。
+    // ── 裂变加权 / 等权抽取 ──
+    // 裂变开启：权重 = 1 + min(invited × perInvite, maxExtra)（viral-weight.ts），
+    // 用「按权无放回」抽唯一中奖者——禁止「扩袋只抽 n 槽再去重」导致名额不足（docs/109）。
+    // 不写入额外 entries：不占 maxParticipants。
+    // 未开启裂变：等权 Fisher-Yates（randomSelect）。
     let pc: Record<string, unknown> | null = null;
     try { pc = JSON.parse(draw.promotionConfig || "{}"); } catch { /* 忽略非法 JSON */ }
     const viral = pc?.viral as { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | undefined;
-    let weightedCandidates: typeof entries;
     const inviteMap = new Map<string, number>();  // entryId → 有效邀请人数（joinedCount 聚合）
 
+    let selected: typeof entries;
     if (viral?.enabled) {
       const { extraEntriesPerInvite, maxExtraEntries } = normalizeViralWeightNumbers(viral);
 
-      // 查询该活动所有分享者的邀请人数
       const shareRows = await db
         .select({ sharerEntryId: shareRecords.sharerEntryId, joinedCount: shareRecords.joinedCount })
         .from(shareRecords)
         .where(and(eq(shareRecords.tenantId, tenantId), eq(shareRecords.drawId, drawId)));
 
-      // 按 sharerEntryId 聚合 SUM(joinedCount)
       for (const row of shareRows) {
         inviteMap.set(row.sharerEntryId, (inviteMap.get(row.sharerEntryId) || 0) + row.joinedCount);
       }
 
-      // 构建加权候选数组（票袋）：每人出现 computeViralDrawWeight 次
-      weightedCandidates = [];
-      for (const entry of entries) {
-        const invited = inviteMap.get(entry.id) || 0;
-        const weight = computeViralDrawWeight(invited, extraEntriesPerInvite, maxExtraEntries);
-        for (let i = 0; i < weight; i++) {
-          weightedCandidates.push(entry);
-        }
-      }
-    } else {
-      weightedCandidates = entries;
-    }
+      const weightedPool = entries.map((entry) => ({
+        item: entry,
+        weight: computeViralDrawWeight(
+          inviteMap.get(entry.id) || 0,
+          extraEntriesPerInvite,
+          maxExtraEntries,
+        ),
+      }));
 
-    // Fisher-Yates 随机抽取中奖者（加权候选数组）
-    const selected = await randomSelect(weightedCandidates, totalWinners);
+      // CSPRNG → [0,1)：与 randomSelect 同源 crypto.getRandomValues
+      const random01 = () => {
+        const buf = new Uint32Array(1);
+        crypto.getRandomValues(buf);
+        return (buf[0]! >>> 0) / 0x100000000;
+      };
+      selected = weightedSampleUnique(weightedPool, totalWinners, random01);
+    } else {
+      selected = await randomSelect(entries, totalWinners);
+    }
 
     // 4. 事务内写入中奖记录 + 原子锁码
     //    使用事务保证：锁码和写入中奖记录要么全部成功，要么全部回滚
     let entryIndex = 0;  // 已处理的中奖者数量（在事务外声明，用于审计日志）
-    const seenEntryIds = new Set<string>();  // 加权候选数组去重：同一人只中一次
+    // selected 在裂变路径已是唯一 entry；等权路径 randomSelect 也不重复。
+    // 仍保留 seen 作纵深防御（异常数据/历史调用约定）。
+    const seenEntryIds = new Set<string>();
     await withDbTransaction(db, async (tx) => {
       // 如果没有配置多奖项，创建默认奖项"中奖"
       const effectiveTiers = tiers.length > 0 ? tiers : [{
@@ -213,9 +222,9 @@ export async function performDraw(
           const entry = selected[entryIndex]!;
           entryIndex++;
 
-          // 加权候选数组去重：同一人可能因裂变加权被多次选中，只取第一次
+          // 纵深：同一 entry 只落一次奖（加权路径本已唯一）
           if (seenEntryIds.has(entry.id)) {
-            i--;  // 当前名额未填满，继续尝试下一个候选
+            i--;
             continue;
           }
           seenEntryIds.add(entry.id);

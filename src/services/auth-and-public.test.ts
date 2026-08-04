@@ -1539,6 +1539,127 @@ describe("公开参与流程", () => {
     expect(body.maxExtraEntries).toBe(5);
     expect(body.drawWeight).toBe(6);
     expect(body.shareUrl).toBe("/lottery/viral-stats-a?ref=viralref001");
+    expect(body.inviteOpen).toBe(true);
+  });
+
+  it("share：同一 entry 第二次发码复用，不重复 insert", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "share-reuse-a",
+      title: "复用分享",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "reuse@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+
+    const first = await app.request("/public/draws/share-reuse-a/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.80" },
+      body: JSON.stringify({ entryId }),
+    }, TEST_ENV);
+    const firstBody = await first.json() as any;
+    expect(firstBody.ok).toBe(true);
+    expect(firstBody.reused).toBe(false);
+
+    const second = await app.request("/public/draws/share-reuse-a/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.81" },
+      body: JSON.stringify({ entryId }),
+    }, TEST_ENV);
+    const secondBody = await second.json() as any;
+    expect(secondBody.ok).toBe(true);
+    expect(secondBody.reused).toBe(true);
+    expect(secondBody.shareCode).toBe(firstBody.shareCode);
+    const rows = await db.select().from(shareRecords).where(eq(shareRecords.drawId, drawId));
+    expect(rows.length).toBe(1);
+  });
+
+  it("viral-leaderboard：未进 Top20 返回真实名次；0 邀请 rank=0", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const entries: string[] = [];
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "viral-lb-rank",
+      title: "排行名次",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true },
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    for (let i = 0; i < 22; i++) {
+      const id = crypto.randomUUID();
+      entries.push(id);
+      await db.insert(lotteryEntries).values({
+        id,
+        tenantId: TENANT,
+        drawId,
+        identityType: "email",
+        identityValue: `lb${i}@test.com`,
+        joinedAt: new Date().toISOString(),
+      });
+      await db.insert(shareRecords).values({
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId,
+        sharerEntryId: id,
+        shareCode: `lbcode${i.toString().padStart(3, "0")}`,
+        joinedCount: 30 - i,
+      });
+    }
+    const lastId = entries[21]!;
+    const res = await app.request(
+      `/public/draws/viral-lb-rank/viral-leaderboard?entryId=${encodeURIComponent(lastId)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.82" } },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.entries.length).toBe(20);
+    expect(body.myRank.rank).toBe(22);
+    expect(body.myRank.invitedCount).toBe(9);
+
+    const zeroEntry = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: zeroEntry,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "zero@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+    const zeroRes = await app.request(
+      `/public/draws/viral-lb-rank/viral-leaderboard?entryId=${encodeURIComponent(zeroEntry)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.83" } },
+      TEST_ENV,
+    );
+    const zeroBody = await zeroRes.json() as any;
+    expect(zeroBody.myRank).toEqual(expect.objectContaining({ rank: 0, invitedCount: 0 }));
   });
 
   it("ref 点击重定向保留 ?ref= 归因参数", async () => {
