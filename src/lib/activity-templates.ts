@@ -26,44 +26,55 @@ export interface ActivityTemplate {
 }
 
 export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
-  // 大转盘抽奖模板
-// 注意：resultMode 使用 "manual"（手动开奖），因为 joinDraw 对 lottery 不产生即时结果。
-// 如果设置为 "instant"，运营者会在后台看到 resultMode="instant" 但参与后无即时开奖，产生困惑。
-{
+  // 大转盘：experience=wheel 只是参与壳；中奖由 performDraw（manual/scheduled）产生（docs/115）。
+  // 禁止 resultMode=instant：joinDraw 对 lottery 不写 winners，配 instant 只会文案误导。
+  {
     id: "lottery-wheel",
     name: "大转盘抽奖",
-    description: "经典转盘抽奖，用户转动转盘随机获得奖品。适合福利放送、粉丝互动、节日活动。",
+    description:
+      "转盘是参与互动壳：用户点击完成登记，进入开奖候选池；中奖由主办方开奖或定时开奖统一产生，不是转盘停下的那一格。适合福利放送、粉丝互动、节日活动。",
     icon: "🎡",
     category: "engagement",
     defaults: {
       activityKind: "lottery",
       experienceType: "wheel",
-      resultMode: "manual",   // lottery 不支持 instant，joinDraw 不产生即时结果
+      resultMode: "manual", // lottery 当前无 instant 结果机
       participationMode: "open",
       allocationPolicy: "capacity",
       winnerCount: 1,
       showParticipantCount: 1,
       showWinnerCount: 1,
     },
-    hints: ["设置奖品和中奖名额", "设置活动开始和结束时间", "可开启密码保护或邀请码模式"],
+    hints: [
+      "设置奖品和中奖名额（开奖时从参与池抽取）",
+      "设置活动开始/结束时间；需要到点自动开奖时改用定时开奖",
+      "公开页转盘动画表示「已参与」，不代表当场中奖",
+      "可开启密码保护或邀请码模式",
+    ],
   },
   {
     id: "lottery-scratch",
     name: "刮刮卡抽奖",
-    description: "用户刮开涂层即时揭晓是否中奖。适合线下活动引流、产品推广、节日营销。",
+    description:
+      "刮开涂层是参与前的互动，确认后提交登记进入候选池；是否中奖在主办方开奖或定时开奖后查询，不是刮开瞬间出奖。适合线下引流、产品推广、节日营销。",
     icon: "🎴",
     category: "engagement",
     defaults: {
       activityKind: "lottery",
       experienceType: "scratch",
-      resultMode: "manual",   // lottery 不支持 instant
+      resultMode: "manual",
       participationMode: "open",
       allocationPolicy: "capacity",
       winnerCount: 1,
       showParticipantCount: 0,
       showWinnerCount: 0,
     },
-    hints: ["设置奖品和中奖名额", "建议关闭参与人数显示以保持悬念", "可设置每人仅限一次"],
+    hints: [
+      "设置奖品和中奖名额",
+      "建议关闭参与人数显示以保持悬念",
+      "刮开后仍须点参与；结果以开奖后「查结果」为准",
+      "可设置每人仅限一次",
+    ],
   },
   {
     id: "signup-chain",
