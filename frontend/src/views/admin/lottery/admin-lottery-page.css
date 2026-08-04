@@ -55,9 +55,10 @@
 
 /* 海报模板（html-to-image 截图目标） */
 .poster-template {
-  position: fixed; left: -10000px; top: 0; /* 移出视口避免闪现，v-show 控制显示 */
+  position: fixed; left: 0; top: 0; z-index: 0; /* 不移出视口：html-to-image 需要元素在视口内才能截图 */
   width: 400px; height: 560px;
   overflow: hidden;
+  pointer-events: none; /* 不阻挡后台交互 */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   background: linear-gradient(160deg, #0f0c29 0%, #302b63 55%, #24243e 100%);
   color: #fff;
