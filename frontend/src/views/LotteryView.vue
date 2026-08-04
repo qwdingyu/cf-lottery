@@ -80,7 +80,15 @@
         <div v-if="isCardExpanded(draw.id)" class="lottery-card-body">
           <!-- 活动说明：深链沉浸首屏可见，减少「只有动画不知道规则」 -->
           <p v-if="drawDescription(draw)" class="lottery-draw-desc">{{ drawDescription(draw) }}</p>
-          <p v-if="statusPathHint(draw)" class="lottery-status-path">{{ statusPathHint(draw) }}</p>
+          <!-- docs/076：非 open 状态横幅 + 可执行 CTA，避免只剩一句灰字 -->
+          <div
+            v-if="statusPathHint(draw)"
+            class="lottery-status-banner"
+            :class="'lottery-status-banner--' + publicStatusBannerTone(draw.status)"
+            role="status"
+          >
+            <p class="lottery-status-path">{{ statusPathHint(draw) }}</p>
+          </div>
           <!-- 奖池陈列：诚实展示可赢什么，不宣称「你已中」 -->
           <ul v-if="(draw.prizes || []).length" class="lottery-prize-strip" aria-label="prizes">
             <li v-for="(p, pi) in draw.prizes" :key="pi" class="lottery-prize-chip">
@@ -182,12 +190,33 @@
           <div class="lottery-join-bar">
             <template v-if="draw.status !== 'open'">
               <span class="lottery-join-hint">{{ statusPathHint(draw) || statusText(draw.status) }}</span>
-              <button
-                v-if="draw.status === 'drawn' || myJoinedById[draw.id]"
-                type="button"
-                class="lottery-result-btn"
-                @click="openMyResult(draw)"
-              >{{ $t('lottery.queryResult') }}</button>
+              <div class="lottery-status-actions">
+                <button
+                  v-if="nonOpenPrimaryCta(draw) === 'refresh'"
+                  type="button"
+                  class="lottery-join-btn primary"
+                  :disabled="loading"
+                  @click="fetchDraws"
+                >{{ loading ? $t('lottery.loadingText') : $t('lottery.refreshStatus') }}</button>
+                <button
+                  v-else-if="nonOpenPrimaryCta(draw) === 'query_result'"
+                  type="button"
+                  class="lottery-result-btn lottery-result-btn--primary"
+                  @click="openMyResult(draw)"
+                >{{ $t('lottery.queryResult') }}</button>
+                <button
+                  v-else-if="nonOpenPrimaryCta(draw) === 'login_to_check'"
+                  type="button"
+                  class="lottery-join-btn primary"
+                  @click="openLogin(draw.id)"
+                >{{ $t('lottery.loginToCheck') }}</button>
+                <button
+                  v-if="nonOpenSecondaryCta(draw) === 'copy_link'"
+                  type="button"
+                  class="lottery-result-btn"
+                  @click="handleCopyPublicLink(draw.id)"
+                >{{ $t('lottery.copyShareLink') }}</button>
+              </div>
             </template>
             <template v-else-if="myJoinedById[draw.id]">
               <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
@@ -529,6 +558,11 @@ import {
 import { clearLotteryBrowserSessionOnly } from '@/composables/business-session'
 import { isOtpComplete, normalizeOtpDigits } from '@/composables/otp-input'
 import {
+  publicNonOpenPrimaryCta,
+  publicNonOpenSecondaryCta,
+  publicStatusBannerTone,
+} from '@/composables/lottery-public-ux'
+import {
   defaultExperienceForParticipation,
   ambienceMsForExperience,
   requiresActivitySubmission,
@@ -762,6 +796,7 @@ function resultModeLabel(draw: LotteryDraw) {
 
 /**
  * 状态路径提示：主 CTA 旁用完整句子，避免只显示「已结束」等单词。
+ * docs/076：draft/paused 说明「为何不能参与 + 下一步」。
  */
 function statusPathHint(draw: LotteryDraw) {
   if (myJoinedById.value[draw.id] && draw.status === 'open') {
@@ -776,6 +811,18 @@ function statusPathHint(draw: LotteryDraw) {
     cancelled: 'lottery.statusHintCancelled',
   } as Record<string, string>)[draw.status]
   return key ? t(key) : ''
+}
+
+function nonOpenPrimaryCta(draw: LotteryDraw) {
+  return publicNonOpenPrimaryCta({
+    status: draw.status,
+    joined: Boolean(myJoinedById.value[draw.id]),
+    hasSession: Boolean(sessionEmail.value || registeredUsername.value),
+  })
+}
+
+function nonOpenSecondaryCta(draw: LotteryDraw) {
+  return publicNonOpenSecondaryCta(draw.status)
 }
 
 /** 参与时间 */

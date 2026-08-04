@@ -5,6 +5,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@shared": fileURLToPath(new URL("./shared", import.meta.url)),
+      // 管理端 ops-utils 等用 @/ 导入 composables；邮件状态单测需解析
+      "@": fileURLToPath(new URL("./frontend/src", import.meta.url)),
     },
   },
   test: {
@@ -22,6 +24,10 @@ export default defineConfig({
       "frontend/src/composables/otp-input.test.ts",
       // 上线前列表/Onboarding UX 启发式
       "frontend/src/composables/admin-list-ux.test.ts",
+      // 公开页 draft/paused CTA
+      "frontend/src/composables/lottery-public-ux.test.ts",
+      // 中奖邮件状态与开奖反馈档
+      "frontend/src/views/admin/lottery/ops-utils.email.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

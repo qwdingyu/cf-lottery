@@ -90,10 +90,63 @@
 }
 .lottery-status-path {
   margin: 0;
-  padding: 8px 20px 0;
   font-size: 13px;
   line-height: 1.45;
-  color: rgba(245,158,11,0.9);
+  color: inherit;
+}
+/* docs/076：状态横幅 + 动作区，draft/paused 不再只有一句灰字 */
+.lottery-status-banner {
+  margin: 10px 20px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+}
+.lottery-status-banner--warn {
+  border-color: rgba(245,158,11,0.35);
+  background: rgba(245,158,11,0.1);
+  color: #fbbf24;
+}
+.lottery-status-banner--info {
+  border-color: rgba(59,130,246,0.35);
+  background: rgba(59,130,246,0.1);
+  color: #93c5fd;
+}
+.lottery-status-banner--muted {
+  border-color: rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.04);
+  color: rgba(255,255,255,0.65);
+}
+.lottery-status-banner--success {
+  border-color: rgba(34,197,94,0.3);
+  background: rgba(34,197,94,0.08);
+  color: #86efac;
+}
+.lottery-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+.lottery-result-btn--primary {
+  background: var(--admin-accent, #f59e0b);
+  color: #000;
+  border-color: transparent;
+  font-weight: 600;
+}
+.lottery-tag.draft,
+.lottery-tag.paused {
+  background: rgba(245,158,11,0.12);
+  color: #fbbf24;
+}
+.lottery-tag.drawing {
+  background: rgba(59,130,246,0.15);
+  color: #93c5fd;
+}
+.lottery-tag.cancelled {
+  background: rgba(239,68,68,0.12);
+  color: #fca5a5;
 }
 .lottery-prize-strip {
   list-style: none;

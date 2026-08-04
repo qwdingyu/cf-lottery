@@ -68,9 +68,10 @@
           <span>个定时活动到期待开奖</span>
           <span class="todo-arrow">→</span>
         </RouterLink>
-        <RouterLink v-if="todos.failedNotifications > 0" to="/admin/draws" class="todo-item">
+        <!-- docs/076：深链到已开奖列表；运营进结果弹窗即可重发（列表本身无 per-draw 失败数） -->
+        <RouterLink v-if="todos.failedNotifications > 0" to="/admin/draws?status=drawn" class="todo-item">
           <span class="todo-badge todo-badge-danger">{{ todos.failedNotifications }}</span>
-          <span>个中奖通知发送失败</span>
+          <span>个中奖通知发送失败 — 打开「查看结果」可重发</span>
           <span class="todo-arrow">→</span>
         </RouterLink>
       </div>

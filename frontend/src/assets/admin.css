@@ -1012,8 +1012,8 @@
 .admin-notice {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px var(--admin-inline-gap, 8px);
+  align-items: center;
+  gap: 8px var(--admin-inline-gap, 8px);
   padding: 8px 12px;
   border-radius: var(--r-md, 8px);
   border: 1px solid var(--admin-accent-border, rgba(245, 158, 11, 0.38));
@@ -1023,6 +1023,36 @@
   color: var(--tg-text, #f0f2f5);
   margin: 0;
   flex-shrink: 0;
+}
+
+/* docs/076：中奖邮件失败 — 危险色 + 主按钮重发 */
+.notice-card--danger {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.12);
+  align-items: flex-start;
+}
+
+.notice-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.notice-card-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--tg-hint, #9aa4b2);
+}
+
+.notice-card--danger .notice-card-hint {
+  color: rgba(252, 165, 165, 0.95);
+}
+
+.notice-card--danger strong {
+  color: #fca5a5;
 }
 
 .notice-card strong,

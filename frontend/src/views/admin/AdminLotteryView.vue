@@ -265,13 +265,15 @@
                     @click="viewWinners(draw.id)"
                   >{{ $t('lottery.checkResult') }}</button>
                 </template>
-                <!-- drawn：结果 + 分享 -->
+                <!-- drawn：结果 + 分享（邮件失败时「查看结果」升为 primary，引导进重发） -->
                 <template v-else-if="draw.status === 'drawn'">
                   <button
                     v-if="draw.activityKind === 'lottery'"
                     type="button"
-                    class="btn btn-ghost btn-xs"
+                    class="btn btn-xs"
+                    :class="drawnRowResultBtnClass(draw.id)"
                     :disabled="operatingId === draw.id || winnersLoading"
+                    :title="drawnRowResultTitle(draw.id)"
                     @click="viewWinners(draw.id)"
                   >{{ $t('lottery.checkResult') }}</button>
                   <button
@@ -1043,16 +1045,27 @@
           <div class="filters">
             <div
               v-if="winnersModalDrawId && winnersEmailFailureCount > 0"
+              class="notice-card notice-card--danger"
+              role="alert"
+            >
+              <div class="notice-card-body">
+                <strong>{{ $t('lottery.adminEmailFailureSummary', { count: winnersEmailFailureCount }) }}</strong>
+                <p class="notice-card-hint">{{ $t('lottery.adminEmailFailureHint') }}</p>
+              </div>
+              <button
+                type="button"
+                class="btn btn-primary btn-sm"
+                :disabled="operatingId === winnersModalDrawId"
+                @click="handleRetryEmail(winnersModalDrawId)"
+              >{{ operatingId === winnersModalDrawId ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
+            </div>
+            <div
+              v-else-if="winnersModalDrawId && winnersEmailPendingCount > 0"
               class="notice-card"
               role="status"
             >
-              <strong>{{ $t('lottery.adminEmailFailureSummary', { count: winnersEmailFailureCount }) }}</strong>
-              <button
-                type="button"
-                class="btn btn-ghost btn-xs"
-                :disabled="operatingId === winnersModalDrawId"
-                @click="handleRetryEmail(winnersModalDrawId)"
-              >{{ $t('lottery.adminRetryEmail') }}</button>
+              <strong>{{ $t('lottery.adminEmailPendingSummary', { count: winnersEmailPendingCount }) }}</strong>
+              <span class="muted-text">{{ $t('lottery.adminEmailPendingHint') }}</span>
             </div>
           </div>
           <div class="toolbar-actions">
@@ -1095,7 +1108,7 @@
                   </div>
                 </td>
                 <td>
-                  <span class="tag" :class="emailStatusClass(w)" :title="w.emailError || undefined">
+                  <span class="tag" :class="emailStatusClass(w)" :title="winnerEmailErrorTitle(w)">
                     {{ emailStatusLabel(w) }}
                   </span>
                 </td>
@@ -1350,8 +1363,12 @@ import {
   conversionAmount as conversionAmountRaw,
   conversionIdentity,
   countLotteryEmailFailures,
+  countLotteryEmailPending,
+  drawDoneFeedbackKind,
   downloadCsv,
   emailStatusClass,
+  isWinnerEmailFailed,
+  isWinnerEmailSent,
   formatLotteryEntryProgress,
   formatLotteryVisibilityLabel,
   formatPublishCheckItems as formatPublishCheckItemsRaw,
@@ -1383,6 +1400,33 @@ const {
  * 为何不列表预拉 publish-check：N+1 请求贵；失败后再钉在行上，运营一眼知道「还差什么」。
  */
 const draftPublishBlockers = ref<Record<string, string>>({})
+
+/**
+ * 开奖/查看结果后缓存的邮件失败数（drawId → count）。
+ * 列表 API 不含 per-draw 通知失败数；缓存后 drawn 行「查看结果」可升主按钮，形成「开奖→邮件失败→重发」闭环。
+ */
+const drawEmailFailHints = ref<Record<string, number>>({})
+
+function rememberDrawEmailFails(drawId: string, winnersList: LotteryWinner[]) {
+  const n = countLotteryEmailFailures(winnersList)
+  if (n <= 0) {
+    if (!(drawId in drawEmailFailHints.value)) return
+    const next = { ...drawEmailFailHints.value }
+    delete next[drawId]
+    drawEmailFailHints.value = next
+    return
+  }
+  drawEmailFailHints.value = { ...drawEmailFailHints.value, [drawId]: n }
+}
+
+function drawnRowResultBtnClass(drawId: string): string {
+  return (drawEmailFailHints.value[drawId] || 0) > 0 ? 'btn-primary' : 'btn-ghost'
+}
+
+function drawnRowResultTitle(drawId: string): string {
+  const n = drawEmailFailHints.value[drawId] || 0
+  return n > 0 ? t('lottery.adminEmailFailureSummary', { count: n }) : t('lottery.checkResult')
+}
 
 function setDraftPublishBlocker(drawId: string, firstMessage: string | undefined) {
   const snip = draftPublishBlockerSnippet(firstMessage)
@@ -1575,7 +1619,8 @@ const {
 })
 
 const winnersEmailFailureCount = computed(() => countLotteryEmailFailures(winners.value))
-const winnersEmailPendingCount = computed(() => winners.value.filter((winner) => Number(winner.emailSent) !== 1 && !winner.emailError).length)
+// 与后端 notificationStatus 对齐；旧逻辑把 failed 误算进 pending，重发条会不出现
+const winnersEmailPendingCount = computed(() => countLotteryEmailPending(winners.value))
 const emptyForm = () => emptyLotteryEditorForm(t)
 
 const form = ref(emptyForm())
@@ -1897,9 +1942,15 @@ function canDeleteDraw(draw: LotteryDraw): boolean {
 }
 
 function emailStatusLabel(w: LotteryWinner): string {
-  if (Number(w.emailSent) === 1) return t('lottery.adminEmailSent')
-  if (w.emailError) return t('lottery.adminEmailFailed')
+  if (isWinnerEmailSent(w)) return t('lottery.adminEmailSent')
+  if (isWinnerEmailFailed(w)) return t('lottery.adminEmailFailed')
   return t('lottery.adminEmailPending')
+}
+
+/** 中奖行 title：优先 notificationError，兼容旧 emailError */
+function winnerEmailErrorTitle(w: LotteryWinner): string | undefined {
+  const msg = String(w.notificationError || w.emailError || '').trim()
+  return msg || undefined
 }
 
 function scrollToPublishFixSection(errors: PublishCheckItem[]) {
@@ -1927,6 +1978,7 @@ async function refreshWinnersStatus(id: string) {
   try {
     const data = await fetchLotteryWinners(id)
     winners.value = data.winners || []
+    rememberDrawEmailFails(id, winners.value)
     winnersStatusRefreshes += 1
     if (winnersEmailPendingCount.value === 0 || winnersStatusRefreshes >= MAX_WINNERS_STATUS_REFRESHES) {
       stopWinnersStatusPolling()
@@ -2313,7 +2365,6 @@ async function handleDraw(draw: LotteryDraw) {
   try {
     await performLotteryDraw(draw.id)
     drawOk = true
-    showToast(t('lottery.adminDrawDone'), 'success')
     await loadData()
   } catch (e: any) {
     showToast(e?.message || t('lottery.adminFailed'), 'error')
@@ -2321,8 +2372,22 @@ async function handleDraw(draw: LotteryDraw) {
     operatingId.value = ''
   }
   // 与 viewWinners 各自管理 operatingId，避免 finally 互相覆盖导致按钮卡死
+  // docs/076：先打开中奖名单再按邮件态 toast——失败可感知，且名单上可一键重发
   if (drawOk) {
     await viewWinners(draw.id)
+    const kind = drawDoneFeedbackKind(winners.value)
+    if (kind === 'email_failed') {
+      showToast(
+        t('lottery.adminDrawDoneWithEmailFail', { count: winnersEmailFailureCount.value }),
+        'error',
+      )
+    } else if (kind === 'email_pending') {
+      showToast(t('lottery.adminDrawDonePendingEmail'), 'success')
+    } else if (kind === 'empty') {
+      showToast(t('lottery.adminDrawDoneEmpty'), 'success')
+    } else {
+      showToast(t('lottery.adminDrawDone'), 'success')
+    }
   }
 }
 
@@ -2336,6 +2401,7 @@ async function viewWinners(id: string) {
   try {
     const data = await fetchLotteryWinners(id)
     winners.value = data.winners || []
+    rememberDrawEmailFails(id, winners.value)
     startWinnersStatusPolling(id)
   } catch (e: any) {
     showToast(e?.message || t('lottery.adminFailed'), 'error')
@@ -2521,14 +2587,15 @@ async function handleRetryEmail(id: string) {
     } else {
       showToast(t('lottery.adminRetryFailed', { failed: result.failed }), 'error')
     }
-    // 若中奖弹窗正打开同一活动，刷新名单上的发送态
-    if (showWinnersModal.value && winnersModalDrawId.value === id) {
-      try {
-        const data = await fetchLotteryWinners(id)
+    // 若中奖弹窗正打开同一活动，刷新名单上的发送态；同步行内邮件失败提示
+    try {
+      const data = await fetchLotteryWinners(id)
+      if (showWinnersModal.value && winnersModalDrawId.value === id) {
         winners.value = data.winners || []
-      } catch {
-        /* 列表刷新失败不阻断主提示 */
       }
+      rememberDrawEmailFails(id, data.winners || [])
+    } catch {
+      /* 列表刷新失败不阻断主提示 */
     }
     await loadData()
   } catch (e: any) {
@@ -2741,6 +2808,11 @@ async function handleCreate() {
 }
 
 onMounted(() => {
+  // Dashboard「邮件失败」待办深链：?status=drawn 预筛已开奖，便于点「查看结果」重发
+  const statusQ = String(route.query.status || '').trim()
+  if (statusQ && ['draft', 'open', 'paused', 'drawing', 'drawn', 'cancelled'].includes(statusQ)) {
+    statusFilter.value = statusQ
+  }
   loadData()
   loadPrizeOptions()
   // 从运营台空状态跳转过来时，自动打开模板选择弹窗。

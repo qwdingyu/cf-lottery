@@ -33,8 +33,44 @@ export function downloadCsv(filename: string, rows: string[][]) {
   URL.revokeObjectURL(url)
 }
 
+/** 后端 winners 以 notificationStatus 为准；emailSent/emailError 为历史兼容字段，不可单独依赖 */
+export function isWinnerEmailSent(w: Pick<LotteryWinner, 'notificationStatus' | 'emailSent'>): boolean {
+  if (w.notificationStatus === 'sent') return true
+  if (w.notificationStatus === 'failed' || w.notificationStatus === 'pending') return false
+  // 无 notificationStatus 时的兜底（旧 mock / 残缺数据）
+  return Number(w.emailSent) === 1
+}
+
+export function isWinnerEmailFailed(w: Pick<LotteryWinner, 'notificationStatus' | 'emailError'>): boolean {
+  if (w.notificationStatus === 'failed') return true
+  if (w.notificationStatus === 'sent' || w.notificationStatus === 'pending') return false
+  return Boolean(w.emailError)
+}
+
+export function isWinnerEmailPending(w: Pick<LotteryWinner, 'notificationStatus' | 'emailSent' | 'emailError'>): boolean {
+  if (w.notificationStatus === 'pending') return true
+  if (w.notificationStatus === 'sent' || w.notificationStatus === 'failed') return false
+  return !isWinnerEmailSent(w) && !isWinnerEmailFailed(w)
+}
+
 export const countLotteryEmailFailures = (winners: LotteryWinner[]) =>
-  winners.filter((w) => w.notificationStatus === 'failed').length
+  winners.filter((w) => isWinnerEmailFailed(w)).length
+
+export const countLotteryEmailPending = (winners: LotteryWinner[]) =>
+  winners.filter((w) => isWinnerEmailPending(w)).length
+
+/**
+ * 开奖刚完成时的反馈档位：邮件失败必须压过「开奖完成」成功感（开奖结果已落库，邮件失败不回滚）。
+ * pure：便于 vitest，不依赖 toast 实现。
+ */
+export type DrawDoneFeedbackKind = 'ok' | 'email_pending' | 'email_failed' | 'empty'
+
+export function drawDoneFeedbackKind(winners: LotteryWinner[]): DrawDoneFeedbackKind {
+  if (!winners.length) return 'empty'
+  if (countLotteryEmailFailures(winners) > 0) return 'email_failed'
+  if (countLotteryEmailPending(winners) > 0) return 'email_pending'
+  return 'ok'
+}
 
 export const formatLotteryEntryProgress = (count?: number | null, max?: number | null) =>
   max ? `${count ?? 0} / ${max}` : `${count ?? 0}`
@@ -147,8 +183,9 @@ export function statusClass(status: string): string {
 }
 
 export function emailStatusClass(w: LotteryWinner): string {
-  if (Number(w.emailSent) === 1) return 'tag-success'
-  if (w.emailError) return 'tag-danger'
+  // 与 countLotteryEmailFailures / CSV 同源：notificationStatus 优先
+  if (isWinnerEmailSent(w)) return 'tag-success'
+  if (isWinnerEmailFailed(w)) return 'tag-danger'
   return 'tag-warning'
 }
 
