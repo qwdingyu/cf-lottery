@@ -9,7 +9,7 @@
         </div>
       </div>
       <div class="lottery-header-actions">
-        <select class="lang-select" :value="locale" @change="switchLanguage($event.target.value)">
+        <select class="lang-select" :value="locale" @change="onLanguageChange">
           <option value="zh-CN">中文</option>
           <option value="en">EN</option>
         </select>
@@ -601,6 +601,12 @@ import './lottery/lottery-page.css'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
+
+/** 语言切换：避免模板内 $event.target 在 vue-tsc 下可能为 null */
+function onLanguageChange(event: Event) {
+  const value = (event.target as HTMLSelectElement | null)?.value
+  if (value === 'zh-CN' || value === 'en') switchLanguage(value)
+}
 
 const cfAuth = useCfAuthLogin()
 const cfAuthEnabled = cfAuth.enabled

@@ -47,7 +47,7 @@
           <h1 class="admin-header-title">{{ pageTitle }}</h1>
         </div>
         <div class="admin-header-actions">
-          <select class="lang-select" :value="locale" @change="switchLanguage($event.target.value)">
+          <select class="lang-select" :value="locale" @change="onLanguageChange">
             <option value="zh-CN">中文</option>
             <option value="en">EN</option>
           </select>
@@ -94,6 +94,12 @@ const { showToast } = useToast()
 const isPlatformMember = ref(!!readPlatformRole())
 // 模拟登录态（L3→L2 路径）：挂载时读取；模拟会话存在时显示横幅 + 返回平台按钮
 const impersonating = ref(isImpersonating())
+
+/** 语言切换：模板内 $event.target 在 vue-tsc 下可能为 null，收口到 handler */
+function onLanguageChange(event: Event) {
+  const value = (event.target as HTMLSelectElement | null)?.value
+  if (value === 'zh-CN' || value === 'en') switchLanguage(value)
+}
 
 /** 返回平台：清除模拟态（impersonated_token），回到运营者自己的会话并跳转平台租户列表 */
 function handleReturnToPlatform() {
