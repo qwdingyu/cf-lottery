@@ -2,7 +2,7 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
-        <select v-model="statusFilter" :aria-label="$t('lottery.adminStatus')" @change="loadData">
+        <select v-model="statusFilter" :aria-label="$t('lottery.adminStatus')" @change="reloadFromFirstPage">
           <!-- docs/083 P1：默认「进行中」视角，避免 drawn/cancelled 刷屏 -->
           <option value="active">{{ $t('lottery.adminStatusActive') }}</option>
           <option value="">{{ $t('lottery.adminStatusAll') }}</option>
@@ -14,7 +14,7 @@
           <option value="cancelled">{{ $t('lottery.adminDrawCancelled') }}</option>
         </select>
         <!-- 活动类型筛选（047 文档 🔴） -->
-        <select v-model="activityKindFilter" :aria-label="$t('lottery.adminActivityKind')" @change="loadData">
+        <select v-model="activityKindFilter" :aria-label="$t('lottery.adminActivityKind')" @change="reloadFromFirstPage">
           <option value="">{{ $t('lottery.adminFilterKindAll') }}</option>
           <option value="lottery">{{ $t('lottery.adminKindLottery') }}</option>
           <option value="signup_chain">{{ $t('lottery.adminFilterKindSignup') }}</option>
@@ -30,14 +30,21 @@
           type="search"
           :placeholder="$t('lottery.adminSearchPlaceholder')"
           :aria-label="$t('lottery.adminSearchAria')"
-          @keyup.enter="loadData"
+          @keyup.enter="reloadFromFirstPage"
         />
         <!-- 创建时间范围筛选（047 文档 🟡） -->
-        <input v-model="createdFromFilter" type="date" :aria-label="$t('lottery.adminCreatedFrom')" :title="$t('lottery.adminCreatedFrom')" @change="loadData" />
-        <input v-model="createdToFilter" type="date" :aria-label="$t('lottery.adminCreatedTo')" :title="$t('lottery.adminCreatedTo')" @change="loadData" />
+        <input v-model="createdFromFilter" type="date" :aria-label="$t('lottery.adminCreatedFrom')" :title="$t('lottery.adminCreatedFrom')" @change="reloadFromFirstPage" />
+        <input v-model="createdToFilter" type="date" :aria-label="$t('lottery.adminCreatedTo')" :title="$t('lottery.adminCreatedTo')" @change="reloadFromFirstPage" />
         <button class="btn btn-ghost btn-sm" type="button" :disabled="loading" @click="loadData">
           {{ $t('lottery.adminReload') }}
         </button>
+        <button
+          v-if="hasListFilter"
+          class="btn btn-ghost btn-sm"
+          type="button"
+          :disabled="loading || batchOperating"
+          @click="clearListFilters"
+        >{{ $t('lottery.adminClearFilters') }}</button>
         <span
           v-if="hasListFilter"
           class="muted-text"
@@ -104,7 +111,7 @@
               <input
                 type="checkbox"
                 :checked="allVisibleSelected"
-                :indeterminate="selectedCount > 0 && !allVisibleSelected"
+                :indeterminate.prop="partiallySelected"
                 :disabled="loading || batchOperating"
                 :aria-label="$t('lottery.adminSelectAll')"
                 @change="toggleAllVisible(($event.target as HTMLInputElement).checked)"
@@ -128,12 +135,13 @@
         <tbody v-else>
           <tr v-for="draw in filteredDraws" :key="draw.id" :class="{ 'is-selected': isSelected(draw.id) }">
             <td class="select-cell">
+              <!-- Shift 连选必须用 click：change 事件无可靠的 shiftKey（对齐 AdminLogsView / cf-shop） -->
               <input
                 type="checkbox"
                 :checked="isSelected(draw.id)"
                 :disabled="loading || batchOperating || !canSelectDraw(draw)"
                 :aria-label="$t('lottery.adminSelectRow')"
-                @change="setSelected(draw.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
+                @click="setSelected(draw.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
               />
             </td>
             <td class="col-name">
@@ -333,17 +341,33 @@
             <td colspan="9" class="empty-text">
               <div v-if="hasListFilter" class="list-empty-block">
                 <p>{{ $t('lottery.adminNoMatch') }}</p>
+                <button
+                  class="btn btn-ghost btn-sm"
+                  type="button"
+                  :disabled="loading"
+                  @click="clearListFilters"
+                >{{ $t('lottery.adminClearFilters') }}</button>
               </div>
-              <!-- 上线 UX：零活动不是「暂无数据」，而是明确下一步（与 Dashboard 空态同级） -->
+              <!-- 上线 UX：零活动 / 默认进行中无数据 → 引导创建，不是「无匹配」 -->
               <div v-else class="list-empty-block list-empty-onboard">
                 <p class="list-empty-title">{{ $t('lottery.adminListEmptyTitle') }}</p>
                 <p class="list-empty-desc">{{ $t('lottery.adminListEmptyDesc') }}</p>
-                <button
-                  class="btn btn-primary btn-sm"
-                  type="button"
-                  :disabled="loading || creating"
-                  @click="openTemplatePicker"
-                >{{ $t('lottery.adminDrawCreate') }}</button>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+                  <button
+                    class="btn btn-primary btn-sm"
+                    type="button"
+                    :disabled="loading || creating"
+                    @click="openTemplatePicker"
+                  >{{ $t('lottery.adminDrawCreate') }}</button>
+                  <!-- 仅有历史 drawn 时：一键看全部，避免误以为系统空库 -->
+                  <button
+                    v-if="statusFilter === 'active'"
+                    class="btn btn-ghost btn-sm"
+                    type="button"
+                    :disabled="loading"
+                    @click="showAllStatuses"
+                  >{{ $t('lottery.adminShowAllStatuses') }}</button>
+                </div>
               </div>
             </td>
           </tr>
@@ -1148,7 +1172,7 @@
             role="menuitem"
             :disabled="operatingId === expandedActionDraw.id"
             @click="runMoreAction(d => handleToggleVisibility(d.id, d.visible))"
-          >{{ expandedActionDraw.visible ? $t('lottery.adminHide') : $t('lottery.adminShow') }}</button>
+          >{{ isDrawUserVisible(expandedActionDraw) ? $t('lottery.adminHide') : $t('lottery.adminShow') }}</button>
           <button
             v-if="expandedActionDraw.status === 'drawn'"
             type="button"
@@ -1408,15 +1432,20 @@ import {
   buildLotteryDrawConfirmMessage,
   buildLotteryDuplicateDraft as buildLotteryDuplicateDraftRaw,
   buildLotteryWinnersCsvRows,
+  canBatchHideDraw as canBatchHideDrawByFields,
   canDeleteDraw as canDeleteDrawByStatus,
   canGuidePublishFixInEditor as canGuidePublishFixInEditorRaw,
+  canSelectDrawForBulk,
   conversionAmount as conversionAmountRaw,
   conversionIdentity,
   countLotteryEmailFailures,
   countLotteryEmailPending,
+  drawDisplayName,
   drawDoneFeedbackKind,
   downloadCsv,
   emailStatusClass,
+  hasActiveDrawListFilter,
+  isLotteryUserVisible,
   isWinnerEmailFailed,
   isWinnerEmailSent,
   winnersPollSettleKind,
@@ -1724,26 +1753,30 @@ const MAX_WINNERS_STATUS_REFRESHES = 10
 
 const filteredDraws = computed(() => draws.value)
 
-const hasListFilter = computed(
-  () => Boolean(String(statusFilter.value || '').trim() || String(listQuery.value || '').trim()),
+/** 默认 status=active 不算「有筛选」，空库走创建引导而非「无匹配」 */
+const hasListFilter = computed(() =>
+  hasActiveDrawListFilter({
+    statusFilter: statusFilter.value,
+    listQuery: listQuery.value,
+    activityKindFilter: activityKindFilter.value,
+    createdFromFilter: createdFromFilter.value,
+    createdToFilter: createdToFilter.value,
+  }),
 )
 
-/**
- * 多选可选行：可删 或 可批量隐藏（drawn 且仍用户可见）。
- * 为什么不只 canDelete：批量隐藏是清用户视野的主路径，drawn 必须能勾选。
- */
 function canSelectDraw(draw: LotteryDraw): boolean {
-  return canDeleteDraw(draw) || canBatchHideDraw(draw)
+  return canSelectDrawForBulk(draw.status, draw.visible)
 }
 
-/** drawn 且当前对用户可见（缺省 visible=1）→ 可批量隐藏 */
 function canBatchHideDraw(draw: LotteryDraw): boolean {
-  if (draw.status !== 'drawn') return false
-  const v = draw.visible === undefined || draw.visible === null ? 1 : Number(draw.visible)
-  return v !== 0
+  return canBatchHideDrawByFields(draw.status, draw.visible)
 }
 
-// 多选：可删 + 可隐藏 drawn；Shift 连选由 setSelected 第三参处理
+function isDrawUserVisible(draw: LotteryDraw): boolean {
+  return isLotteryUserVisible(draw.visible)
+}
+
+// 多选：可删 + 可隐藏 drawn；Shift 连选由 setSelected 第三参（click）处理
 const visibleItems = computed(() => filteredDraws.value)
 const {
   selectedIds,
@@ -1753,6 +1786,7 @@ const {
   toggleAllVisible,
   clearSelection,
   allVisibleSelected,
+  partiallySelected,
 } = useTableSelection(visibleItems, (row) => row.id, {
   isSelectable: canSelectDraw,
 })
@@ -2085,6 +2119,29 @@ function resultModeLabel(mode: string): string {
 
 function canDeleteDraw(draw: LotteryDraw): boolean {
   return canDeleteDrawByStatus(draw.status)
+}
+
+/** 筛选变更回第 1 页，避免页码卡在空页 */
+function reloadFromFirstPage() {
+  pagination.setPage(1)
+  void loadData()
+}
+
+/** 清空搜索/类型/时间，状态回到默认「进行中」 */
+function clearListFilters() {
+  statusFilter.value = 'active'
+  listQuery.value = ''
+  activityKindFilter.value = ''
+  createdFromFilter.value = ''
+  createdToFilter.value = ''
+  clearSelection()
+  reloadFromFirstPage()
+}
+
+/** 空态：查看含已结束的全部状态 */
+function showAllStatuses() {
+  statusFilter.value = ''
+  reloadFromFirstPage()
 }
 
 function emailStatusLabel(w: LotteryWinner): string {
@@ -2637,7 +2694,7 @@ async function handleCancel(id: string) {
 async function handleDelete(id: string) {
   const draw = draws.value.find((item) => item.id === id)
   if (!draw || !canDeleteDraw(draw)) return
-  if (!(await askConfirm(t('lottery.adminConfirmDelete', { name: draw.name, status: statusLabel(draw.status) })))) return
+  if (!(await askConfirm(t('lottery.adminConfirmDelete', { name: drawDisplayName(draw), status: statusLabel(draw.status) })))) return
   operatingId.value = id
   try {
     await deleteLotteryDraw(id)
@@ -2661,7 +2718,9 @@ async function batchDeleteDraws() {
     await deleteLotteryDraw(id)
   })
   if (!result) return
-  if (result.failed > 0) {
+  if (result.success === 0 && result.failed === 0) {
+    showToast(t('lottery.adminBatchNothingDone'), 'info')
+  } else if (result.failed > 0) {
     showToast(t('lottery.adminBatchDeleteResult', { success: result.success, failed: result.failed }), 'error')
   } else {
     showToast(t('lottery.adminBatchDeleteSuccess', { count: result.success }), 'success')
@@ -2682,7 +2741,9 @@ async function batchHideDrawn() {
     await updateLotteryDraw(id, { visible: 0 })
   })
   if (!result) return
-  if (result.failed > 0) {
+  if (result.success === 0 && result.failed === 0) {
+    showToast(t('lottery.adminBatchNothingDone'), 'info')
+  } else if (result.failed > 0) {
     showToast(t('lottery.adminBatchHideResult', { success: result.success, failed: result.failed }), 'error')
   } else {
     showToast(t('lottery.adminBatchHideSuccess', { count: result.success }), 'success')
@@ -2771,8 +2832,8 @@ async function handleEdit(draw: LotteryDraw) {
 }
 
 async function handleToggleVisibility(id: string, visible: number | undefined) {
-  // docs/083：仅 drawn 可切换；默认 visible 缺省视为 1（用户可见）
-  const currentlyVisible = visible === undefined || visible === null ? 1 : Number(visible)
+  // docs/083：仅 drawn 可切换；缺省 visible 视为用户可见（与 isLotteryUserVisible 一致）
+  const currentlyVisible = isLotteryUserVisible(visible)
   const action = currentlyVisible ? t('lottery.adminHide') : t('lottery.adminShow')
   if (!(await askConfirm(t('lottery.adminConfirmToggleVisibility', { action })))) return
   operatingId.value = id

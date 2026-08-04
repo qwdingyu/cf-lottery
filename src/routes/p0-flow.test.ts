@@ -1017,5 +1017,11 @@ describe("P0 活动可见性 visible", () => {
     const allIds = new Set(allBody.draws.map((d) => d.id));
     expect(allIds.has(open.id)).toBe(true);
     expect(allIds.has(cancelled.id)).toBe(true);
+
+    // 未知 status 不应用错误 eq，应等同「全部」以免运营拼错 query 看到空表
+    const junkRes = await app.request("/api/admin/draws?status=not-a-status&limit=50&offset=0", { headers }, TEST_ENV);
+    expect(junkRes.status).toBe(200);
+    const junkBody = await junkRes.json() as { draws: Array<{ id: string }> };
+    expect(junkBody.draws.some((d) => d.id === open.id)).toBe(true);
   });
 });

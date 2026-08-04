@@ -255,9 +255,19 @@ adminLotteryRoute.get("/draws", async (c) => {
 
   const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
   // docs/083 P1：status=active 虚拟筛 = 进行中视角（draft/open/paused/drawing），排除 drawn/cancelled
+  // 未知 status 忽略，避免拼错 query 得到空列表误以为无活动
+  const ALLOWED_DRAW_STATUS = new Set([
+    "active",
+    "draft",
+    "open",
+    "paused",
+    "drawing",
+    "drawn",
+    "cancelled",
+  ]);
   if (status === "active") {
     conditions.push(inArray(lotteryDraws.status, ["draft", "open", "paused", "drawing"]));
-  } else if (status) {
+  } else if (status && ALLOWED_DRAW_STATUS.has(status)) {
     conditions.push(eq(lotteryDraws.status, status));
   }
   if (query) conditions.push(sql`${lotteryDraws.title} LIKE ${'%' + escapeLike(query) + '%'}`);

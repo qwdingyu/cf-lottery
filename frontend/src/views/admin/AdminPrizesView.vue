@@ -312,6 +312,7 @@ import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { adminRequest } from '@/composables/useAdminRequest'
 import AdminModal from '@/components/AdminModal.vue'
+import { prizeCodePoolLeft } from './lottery/ops-utils'
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -430,8 +431,9 @@ async function handleCreate() {
   }
 }
 
+/** 码池剩余；与 ops 无关的行内展示，保持与 used/total 一致 */
 function codePoolLeft(prize: { totalCount?: number; usedCount?: number }) {
-  return Math.max(0, (prize.totalCount || 0) - (prize.usedCount || 0))
+  return prizeCodePoolLeft(prize)
 }
 
 /** 打开导入弹窗（粘贴 Tab） */

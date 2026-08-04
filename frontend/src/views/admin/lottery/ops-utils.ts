@@ -100,10 +100,20 @@ export function winnersPollSettleKind(input: {
 export const formatLotteryEntryProgress = (count?: number | null, max?: number | null) =>
   max ? `${count ?? 0} / ${max}` : `${count ?? 0}`
 
+/**
+ * 用户侧是否展示该活动。
+ * 缺省 / null / undefined 视为可见（与 DB DEFAULT 1 及旧行无字段一致）。
+ * 注意：`visible ?` 会把 undefined 当成 hidden，菜单会误显「展示」。
+ */
+export function isLotteryUserVisible(visible?: number | null): boolean {
+  if (visible === undefined || visible === null) return true
+  return Number(visible) !== 0
+}
+
 export const formatLotteryVisibilityLabel = (
   visible: number | undefined | null,
   labels: { public: string; hidden: string },
-) => (visible ? labels.public : labels.hidden)
+) => (isLotteryUserVisible(visible) ? labels.public : labels.hidden)
 
 export const buildLotteryWinnersCsvRows = (
   winners: LotteryWinner[],
@@ -195,6 +205,57 @@ export function formatPublishCheckItems(items: PublishCheckItem[], prefix: strin
 
 export function canDeleteDraw(status: string): boolean {
   return status === 'draft' || status === 'paused' || status === 'drawn' || status === 'cancelled'
+}
+
+/**
+ * drawn 且当前对用户可见（缺省 visible=1）→ 可批量隐藏。
+ * 为什么：清用户视野优先于删；已 hidden 的不必再进 hide 队列。
+ */
+export function canBatchHideDraw(status: string, visible?: number | null): boolean {
+  if (status !== 'drawn') return false
+  return isLotteryUserVisible(visible)
+}
+
+/** 多选可选：可删或可隐藏（与 bulk 条动作对齐） */
+export function canSelectDrawForBulk(status: string, visible?: number | null): boolean {
+  return canDeleteDraw(status) || canBatchHideDraw(status, visible)
+}
+
+/** 列表状态筛：是否算「非默认」从而走筛选空态文案（默认 active 不算） */
+export function isNonDefaultDrawStatusFilter(
+  statusFilter: string,
+  defaultStatus = 'active',
+): boolean {
+  const s = String(statusFilter || '').trim()
+  return Boolean(s) && s !== defaultStatus
+}
+
+/** 管理列表是否处于「有筛选」——默认进行中不算，避免空库误显「无匹配」 */
+export function hasActiveDrawListFilter(opts: {
+  statusFilter: string
+  listQuery?: string
+  activityKindFilter?: string
+  createdFromFilter?: string
+  createdToFilter?: string
+  defaultStatus?: string
+}): boolean {
+  const def = opts.defaultStatus ?? 'active'
+  if (isNonDefaultDrawStatusFilter(opts.statusFilter, def)) return true
+  if (String(opts.listQuery || '').trim()) return true
+  if (String(opts.activityKindFilter || '').trim()) return true
+  if (String(opts.createdFromFilter || '').trim()) return true
+  if (String(opts.createdToFilter || '').trim()) return true
+  return false
+}
+
+/** 展示名：API 主字段 title，兼容旧 name */
+export function drawDisplayName(draw: { title?: string; name?: string }): string {
+  return String(draw.title || draw.name || '').trim() || '—'
+}
+
+/** 卡密奖码池剩余（total - used，下限 0） */
+export function prizeCodePoolLeft(prize: { totalCount?: number; usedCount?: number }): number {
+  return Math.max(0, (Number(prize.totalCount) || 0) - (Number(prize.usedCount) || 0))
 }
 
 /** 状态 → 共享 .tag* class（禁止自造 chip） */
