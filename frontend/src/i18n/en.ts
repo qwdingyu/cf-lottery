@@ -550,7 +550,8 @@ export default {
   lottery: {
     title: "Lottery",
     /** Page intro: no e-commerce “order lookup” (docs/102/104) */
-    pageHint: "Verify your email to join. Check results on this page; winners are also notified.",
+    /** Legacy key: public main path unused; keep for old refs. Neutral, no “winners notified” (docs/107) */
+    pageHint: "Verify your email to join. Check results on this page.",
     drawCount: "{count} participants",
     join: "Join Now",
     joined: "Joined",
@@ -600,7 +601,8 @@ export default {
     statusDrawing: "Drawing",
     full: "Full",
     joinSuccess: "Successfully joined",
-    joinResultHintPending: "You're registered. After the draw, check this page for results; winners are also notified.",
+    /** Missing result_mode: conservative; lottery-leaning but no win promise (docs/107) */
+    joinResultHintPending: "You're registered. After results are out, check this page; prizes are notified if any.",
     joinResultHintScheduled: "You're registered. The draw runs at the scheduled time—then check results here.",
     joinResultHintManual: "You're registered. After the host draws, check this page for your result.",
     joinResultHintInstant: "Submitted. If this draw is instant, your result will show next or on this page.",
@@ -702,14 +704,15 @@ export default {
     joinSuccessWithOutcome: "Joined: {outcome}",
     prizeCodeLabel: "Prize code:",
     clickToCopy: "Click to copy",
-    shareYourLuck: "Share your luck and invite more!",
+    /** After win share: CTA gated separately; neutral invite wording (docs/107) */
+    shareYourLuck: "Share this activity and invite more friends to join",
     shareActivityBtn: "Share",
     gotConsolation: "Consolation prize!",
     couponLabel: "Coupon:",
     /** Only after draw + not won; not for manual-fulfillment wins without a code */
     thanksForParticipating: "Thanks for joining — you didn’t win a prize this time",
     resultPendingDraw: "You’re in — results aren’t out yet",
-    resultPendingDrawHint: "After the host draws, check again to see if you won.",
+    resultPendingDrawHint: "When results are published, check again on this page.",
     wonPrizeLabel: "Prize: ",
     wonTierLabel: "Tier: ",
     wonManualFulfillmentHint: "This prize is fulfilled manually. The host will contact you or deliver offline — no digital code.",

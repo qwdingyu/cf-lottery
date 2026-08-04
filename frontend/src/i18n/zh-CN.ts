@@ -509,7 +509,8 @@ export default {
   lottery: {
     title: "抽奖活动",
     /** 页顶说明：不提「查单/订单」（本系统无电商订单，docs/102/104） */
-    pageHint: "验证邮箱后即可参与；结果与奖品说明可在本页查询，中奖将另行通知。",
+    /** 遗留键：公开页主路径已不用；保留防旧引用。中性表述，不绑「中奖通知」（docs/107） */
+    pageHint: "验证邮箱后即可参与；结果说明可在本页查询。",
     drawCount: "已参与 {count} 人",
     join: "立即参与",
     joined: "已参与",
@@ -560,7 +561,8 @@ export default {
     full: "已满员",
     joinSuccess: "参与成功",
     // 参与成功弹窗说明（按 result_mode；勿复用 pageHint）
-    joinResultHintPending: "你已成功登记。开奖后可在本页查询是否中奖；中奖将另行通知。",
+    /** 缺 result_mode 时的保守句：偏抽奖缺省，仍避免「一定中奖」承诺（docs/107） */
+    joinResultHintPending: "你已成功登记。结果公布后可在本页查询；如有奖品将另行通知。",
     joinResultHintScheduled: "你已成功登记。活动将按设定时间自动开奖，届时可在本页查询结果。",
     joinResultHintManual: "你已成功登记。主办方开奖后，可在本页查询是否中奖。",
     joinResultHintInstant: "你已成功提交。若本场为即时开奖，结果将随后展示或可在本页查询。",
@@ -665,14 +667,15 @@ export default {
     // 结果
     prizeCodeLabel: "奖品码：",
     clickToCopy: "点击复制",
-    shareYourLuck: "分享你的好运，让更多人来参与！",
+    /** 中奖后分享：邀请门禁另控；文案中性，不绑「好运/抽奖」（docs/107） */
+    shareYourLuck: "把活动分享给好友，邀请更多人一起参与",
     shareActivityBtn: "分享活动",
     gotConsolation: "获得安慰奖！",
     couponLabel: "优惠券：",
     /** 仅「已开奖 + 未中奖」使用；勿用于人工履约中奖无码 */
     thanksForParticipating: "感谢参与，本次未抽中奖品",
     resultPendingDraw: "你已参与，结果尚未公布",
-    resultPendingDrawHint: "主办方开奖后，可再次查询是否中奖。",
+    resultPendingDrawHint: "结果公布后，可再次在本页查询。",
     wonPrizeLabel: "奖品：",
     wonTierLabel: "奖项：",
     wonManualFulfillmentHint: "本奖品为人工发放：主办方将按登记信息联系你或线下履约，无需卡密。",

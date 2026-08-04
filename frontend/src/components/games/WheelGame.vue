@@ -21,8 +21,8 @@
       </div>
       <div class="wheel-btn" :class="{ disabled: disabled || spinning || loading, loading }">
         <!--
-          语义诚实（docs/055a / 093）：join 路径只提交参与；随机旋转是成功后的氛围，不是开奖。
-          空闲=参与抽奖；loading=提交中（慢速 idle 旋转，避免「点了没反应」）；spinning=参与成功氛围。
+          语义诚实（docs/055a / 093 / 107）：join 只提交参与；随机旋转是成功后氛围，不是开奖。
+          空闲=立即参与；loading=提交中（慢速 idle）；spinning=参与成功氛围。
         -->
         <span v-if="loading" class="wheel-btn-label">{{ $t('lottery.gameWheelSubmitting') }}</span>
         <span v-else-if="spinning" class="wheel-btn-label">{{ $t('lottery.gameWheelCelebrating') }}</span>

@@ -17,9 +17,9 @@
         <button type="button" class="result-close" :aria-label="$t('lottery.gotIt')" @click="emit('close')">✕</button>
 
         <!--
-          语义分支（docs/055a）：本弹窗表示「参与已提交」的状态，不是默认「已开奖中奖」。
+          语义分支（docs/055a / 107）：本弹窗表示「参与已提交」，不是默认「已开奖中奖」。
           - instant + 有 outcome：展示结果标签
-          - scheduled / manual / 默认：参与成功 + 等待开奖说明
+          - scheduled / manual / 其它 result_mode：参与成功 + 按 mode 诚实下一步
         -->
         <div class="result-icon" aria-hidden="true">{{ statusIcon }}</div>
         <h2 :id="titleId" class="result-title">{{ statusTitle }}</h2>
@@ -112,7 +112,7 @@ const props = defineProps<{
   show: boolean
   drawSlug?: string
   entryId?: string
-  /** 结果何时产生：instant | scheduled | manual 等；缺省按「待开奖参与成功」 */
+  /** 结果何时产生：instant | scheduled | manual 等；缺省按「已登记、待结果」 */
   resultMode?: string | null
   /** 即时结果标签（若有）；不表示转盘停扇结果 */
   outcomeLabel?: string | null
@@ -182,7 +182,7 @@ const statusHint = computed(() => {
   if (mode === 'review_decision') {
     return t('lottery.joinResultHintReview')
   }
-  // 未知或未传：保守为「已登记，等待开奖」（仅抽奖缺省）
+  // 未知或未传：保守「已登记，待结果」（joinResultHintPending 已中性化，docs/107）
   return t('lottery.joinResultHintPending')
 })
 

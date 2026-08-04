@@ -3,7 +3,7 @@
  *
  * ## 架构
  * ```
- * LotteryView（抽奖页）
+ * LotteryView（公开活动页；抽奖是默认玩法）
  *   └── component :is="getGameComponent(experienceType)"  ← 动态渲染
  *         ├── WheelGame   ← wheel 体验（大转盘）
  *         ├── SlotGame    ← slot 体验（老虎机）
@@ -37,12 +37,12 @@ export type { GameProps, PrizeItem, GameEmits } from './types'
 
 /** 体验类型 → 游戏组件的映射 */
 const GAME_MAP: Record<string, () => Promise<Component>> = {
-  'wheel':   () => import('./WheelGame.vue'),      // 大转盘（抽奖）
-  'slot':    () => import('./SlotGame.vue'),       // 老虎机（抽奖）
-  'scratch': () => import('./ScratchGame.vue'),    // 刮刮卡（抽奖/即时开奖）
-  'card':    () => import('./CardGame.vue'),       // 卡片翻转（抽奖/翻牌）
-  'grid':    () => import('./GridGame.vue'),       // 九宫格（抽奖/盲盒）
-  'submit':  () => import('./SubmitGame.vue'),     // 通用提交按钮（抽奖/接龙）
+  'wheel':   () => import('./WheelGame.vue'),      // 大转盘（体验壳，不决定结果）
+  'slot':    () => import('./SlotGame.vue'),       // 老虎机（体验壳）
+  'scratch': () => import('./ScratchGame.vue'),    // 刮刮卡（体验壳）
+  'card':    () => import('./CardGame.vue'),       // 卡片翻转（体验壳）
+  'grid':    () => import('./GridGame.vue'),       // 九宫格（体验壳）
+  'submit':  () => import('./SubmitGame.vue'),     // 通用提交（多玩法共用）
   'reveal':  () => import('./RevealGame.vue'),     // 领取/揭晓（资料领取/盲盒）
   'form':    () => import('./FormGame.vue'),       // 表单提交（问卷/调研/审核申请）
   // ── 非抽奖语义的体验别名：后台可选 list/queue 等，公开页必须有主 CTA 壳 ──
