@@ -245,7 +245,7 @@
                 delayed：查结果为主按钮（docs/115）。
               -->
               <button
-                v-if="isInstantLottery(draw) && (spinsLeftById[draw.id] ?? 0) > 0"
+                v-if="joinedPrimaryCta({ isInstant: isInstantLottery(draw), spinsLeft: spinsLeftById[draw.id] }) === 'spin_again'"
                 type="button"
                 class="lottery-result-btn lottery-result-btn--primary"
                 :disabled="spinningId === draw.id || joiningId === draw.id"
@@ -254,7 +254,7 @@
               <button
                 type="button"
                 class="lottery-result-btn"
-                :class="{ 'lottery-result-btn--primary': !(isInstantLottery(draw) && (spinsLeftById[draw.id] ?? 0) > 0) }"
+                :class="{ 'lottery-result-btn--primary': isQueryResultPrimaryCta({ isInstant: isInstantLottery(draw), spinsLeft: spinsLeftById[draw.id] }) }"
                 @click="openMyResult(draw)"
               >{{ $t('lottery.queryResult') }}</button>
             </template>
@@ -878,6 +878,17 @@ import {
   resolvePublicDrawPathKey,
   upsertJoinedHint,
 } from './lottery/joined-session'
+import {
+  accessCodePurposeForIntent,
+  isInstantLottery as isInstantLotteryDraw,
+  isPublicGameDisabled,
+  isQueryResultPrimaryCta,
+  isSpinAuthModal,
+  joinedPrimaryCta,
+  resolveInstantSpinClientGate,
+  shouldVerifyCodeGoToSpin,
+  type LoginModalIntent,
+} from './lottery/instant-spin-ux'
 import type { ActivityEventType, ActivityOutcome, LotteryDraw, MyEntry } from './lottery/types'
 import './lottery/lottery-page.css'
 
@@ -988,7 +999,7 @@ const joinInviteCode = ref('')
  * - spin：已参与 instant 弱会话补 OTP，验证后直接 spin（不走 join）
  * - login：仅登录看记录
  */
-const loginModalIntent = ref<'join' | 'spin' | 'login'>('join')
+const loginModalIntent = ref<LoginModalIntent>('join')
 
 /** 当前登录弹窗对应的活动是否是 registered 模式 */
 const isRegisteredJoin = computed(() => {
@@ -997,7 +1008,7 @@ const isRegisteredJoin = computed(() => {
   return draw?.participationMode === 'registered'
 })
 /** instant 弱会话补码：标题/主按钮与 join 分流 */
-const isSpinAuth = computed(() => loginModalIntent.value === 'spin' && Boolean(pendingJoinDrawId.value))
+const isSpinAuth = computed(() => isSpinAuthModal(loginModalIntent.value, Boolean(pendingJoinDrawId.value)))
 const pendingJoinDraw = computed(() => {
   if (!pendingJoinDrawId.value) return null
   return draws.value.find(d => d.id === pendingJoinDrawId.value) || null
@@ -1224,13 +1235,37 @@ function completeJoinSuccess(
 /**
  * instant spin：先请求服务端，成功后再 celebrate + 停扇（docs/116）。
  * 身份：业务 JWT 免 OTP；弱会话需 email+OTP（intent=spin 弹窗，不走 join）。
+ * 门禁纯函数：resolveInstantSpinClientGate（禁止假一键）。
  */
 async function handleInstantSpin(draw: LotteryDraw, opts?: { codeOverride?: string }) {
   if (spinningId.value || joiningId.value) return
-  if (!isInstantLottery(draw) || draw.status !== 'open') return
-  if ((spinsLeftById.value[draw.id] ?? 1) <= 0) {
+
+  const token = registeredToken.value
+  const email = String(sessionEmail.value || loginEmail.value || '').trim().toLowerCase()
+  const codeOverride = String(opts?.codeOverride || '').trim()
+  const otpCode =
+    codeOverride ||
+    (!token && draw.participationMode !== 'registered' ? loginCode.value.trim() : '')
+
+  const gate = resolveInstantSpinClientGate({
+    isInstant: isInstantLottery(draw),
+    status: draw.status,
+    spinsLeft: spinsLeftById.value[draw.id],
+    participationMode: draw.participationMode,
+    hasBearer: Boolean(token),
+    sessionEmail: email,
+    otpCode,
+  })
+  if (gate.action === 'noop') return
+  if (gate.action === 'exhausted') {
     showToast(t('lottery.spinsExhausted'), 'error')
     openMyResult(draw)
+    return
+  }
+  if (gate.action === 'open_login') {
+    openLogin(draw.id, gate.intent)
+    if (gate.reason === 'no_session') showToast(t('lottery.spinNeedSession'), 'error')
+    if (gate.reason === 'need_otp') showToast(t('lottery.spinNeedCode'), 'error')
     return
   }
 
@@ -1240,44 +1275,15 @@ async function handleInstantSpin(draw: LotteryDraw, opts?: { codeOverride?: stri
     return
   }
 
-  const token = registeredToken.value
-  const email = String(sessionEmail.value || loginEmail.value || '').trim().toLowerCase()
-  const isReg = draw.participationMode === 'registered'
-  const codeOverride = String(opts?.codeOverride || '').trim()
-
-  // registered：必须强会话
-  if (isReg && !token) {
-    openLogin(draw.id, 'join')
-    return
-  }
-  if (!isReg && !token && !email) {
-    openLogin(draw.id, 'spin')
-    showToast(t('lottery.spinNeedSession'), 'error')
-    return
-  }
-
-  const otpCode = codeOverride || (!token && !isReg ? loginCode.value.trim() : '')
-
-  // 无 Bearer 且无 code：打开 spin 意图弹窗（purpose=query 发码，验证后直接 spin）
-  if (!isReg && !token && !otpCode) {
-    openLogin(draw.id, 'spin')
-    showToast(t('lottery.spinNeedCode'), 'error')
-    return
-  }
-
   spinningId.value = draw.id
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Idempotency-Key': crypto.randomUUID(),
     }
-    if (token) headers.Authorization = `Bearer ${token}`
+    if (gate.withBearer && token) headers.Authorization = `Bearer ${token}`
 
-    const body: Record<string, string> = {}
-    if (!isReg) {
-      body.email = email
-      if (!token && otpCode) body.code = otpCode
-    }
+    const body: Record<string, string> = { ...gate.body }
 
     const res = await fetch(`${API_BASE}/public/draws/${encodeURIComponent(slug)}/spin`, {
       method: 'POST',
@@ -1497,25 +1503,20 @@ const lastJoinResult = ref<{
   drawStatus?: string
 } | null>(null)
 
-/** lottery + resultMode=instant */
+/** lottery + resultMode=instant（实现见 instant-spin-ux） */
 function isInstantLottery(draw: { activityKind?: string; resultMode?: string } | null | undefined): boolean {
-  if (!draw) return false
-  const kind = String(draw.activityKind || 'lottery')
-  return kind === 'lottery' && String(draw.resultMode || '') === 'instant'
+  return isInstantLotteryDraw(draw)
 }
 
 /** 游戏区禁用：instant 已参与仍可 spin（有次数时） */
 function gameDisabled(draw: LotteryDraw): boolean {
-  if (joiningId.value === draw.id || spinningId.value === draw.id) return true
-  if (draw.status !== 'open') return true
-  if (!isDrawJoined(draw)) return false
-  if (isInstantLottery(draw)) {
-    const left = spinsLeftById.value[draw.id]
-    // 未知次数时仍允许点（spin 接口会 409）；已知 0 则禁用
-    if (left === 0) return true
-    return false
-  }
-  return true
+  return isPublicGameDisabled({
+    status: draw.status,
+    joined: isDrawJoined(draw),
+    isInstant: isInstantLottery(draw),
+    spinsLeft: spinsLeftById.value[draw.id],
+    busy: joiningId.value === draw.id || spinningId.value === draw.id,
+  })
 }
 
 function handleGamePlay(draw: LotteryDraw) {
@@ -2155,7 +2156,7 @@ function trackPageView(draw: LotteryDraw) {
 
 const loginModalRef = ref<HTMLElement | null>(null)
 
-function openLogin(drawId?: string, intent: 'join' | 'spin' | 'login' = 'join') {
+function openLogin(drawId?: string, intent: LoginModalIntent = 'join') {
   pendingJoinDrawId.value = drawId || null
   loginModalIntent.value = drawId ? intent : 'login'
   // 仅参与意图记 participation_started；spin 补码不算新参与
@@ -2886,7 +2887,7 @@ async function handleSendCode() {
     loginError.value = t('lottery.drawNotLoaded')
     return
   }
-  const isSpin = loginModalIntent.value === 'spin'
+  const isSpin = accessCodePurposeForIntent(loginModalIntent.value) === 'query'
   // spin 补码不需要活动密码/问卷草稿；join 仍校验
   if (!isSpin) {
     const credErr = validateJoinCredentials()
@@ -2961,7 +2962,7 @@ async function handleVerifyCode() {
   loginEmail.value = email
 
   // spin 意图：验证码留给 /spin，不走 verify-join（避免「已参与」与二次 join 纠缠）
-  if (loginModalIntent.value === 'spin') {
+  if (shouldVerifyCodeGoToSpin(loginModalIntent.value)) {
     const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
     if (!draw || !isInstantLottery(draw)) {
       loginError.value = t('lottery.spinFailed')

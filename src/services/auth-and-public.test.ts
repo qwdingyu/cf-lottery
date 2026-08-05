@@ -2443,6 +2443,92 @@ describe("公开 instant spin 路由", () => {
     expect(body.won).toBe(true);
   });
 
+  it("弱会话闭环：已参与 access-code purpose=query 发码后可 spin；join 意图仍 409", async () => {
+    const app = createPublicTestApp();
+    const { drawId, slug } = await seedOpenInstant({ slug: "spin-query-otp-loop", maxSpins: 2, codes: 2 });
+    const email = "query-loop@test.com";
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: email,
+      joinedAt: new Date().toISOString(),
+      spinsLeft: 2,
+      spinsTotalGranted: 2,
+      spinsViralEarned: 0,
+    });
+
+    // 已参与再走 join 意图 access-code → 409
+    const joinIntent = await app.request(
+      `/public/draws/${slug}/access-code`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.7.1" },
+        body: JSON.stringify({ email }),
+      },
+      SPIN_ENV,
+    );
+    expect(joinIntent.status).toBe(409);
+
+    // purpose=query：已参与仍可发码（与前端 spin 弹窗一致）；明文不回包，只断言落库
+    const queryIntent = await app.request(
+      `/public/draws/${slug}/access-code`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.7.2" },
+        body: JSON.stringify({ email, purpose: "query" }),
+      },
+      SPIN_ENV,
+    );
+    const queryBody = (await queryIntent.json()) as {
+      ok?: boolean;
+      sent?: boolean;
+      purpose?: string;
+      message?: string;
+    };
+    expect(queryIntent.status, queryBody.message).toBe(200);
+    expect(queryBody.ok).toBe(true);
+    expect(queryBody.purpose).toBe("query");
+    expect(queryBody.sent === true || queryBody.sent === false).toBe(true);
+    const pendingCodes = await db
+      .select()
+      .from(emailAccessCodes)
+      .where(and(
+        eq(emailAccessCodes.email, email),
+        eq(emailAccessCodes.drawId, drawId),
+        eq(emailAccessCodes.used, 0),
+      ));
+    expect(pendingCodes.length).toBeGreaterThanOrEqual(1);
+
+    // 用已知明文 OTP 完成 spin（与前端「验证并抽奖」同一路径）
+    const plain = await insertOtp(email, drawId, "778899");
+
+    const spinRes = await app.request(
+      `/public/draws/${slug}/spin`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "10.0.7.3",
+          "Idempotency-Key": "query-loop-spin-1",
+        },
+        body: JSON.stringify({ email, code: plain }),
+      },
+      SPIN_ENV,
+    );
+    const spinBody = (await spinRes.json()) as {
+      ok?: boolean;
+      won?: boolean;
+      spinsLeft?: number;
+      message?: string;
+    };
+    expect(spinRes.status, spinBody.message).toBe(200);
+    expect(spinBody.ok).toBe(true);
+    expect(spinBody.won).toBe(true);
+    expect(spinBody.spinsLeft).toBe(1);
+  });
+
   it("非 instant / 次数用尽 / 缺幂等键 正确拒绝", async () => {
     const app = createPublicTestApp();
     const manualId = crypto.randomUUID();

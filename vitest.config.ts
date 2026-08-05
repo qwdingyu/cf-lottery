@@ -45,6 +45,10 @@ export default defineConfig({
       // docs/115：drawAt ↔ drawTrigger 推断（定时开奖接线）
       "frontend/src/lib/activity-defaults.test.ts",
       "frontend/src/views/admin/lottery/ops-utils.schedule.test.ts",
+      // docs/120/121：instant 弱会话 OTP / 主 CTA / 客户端 spin 门禁
+      "frontend/src/views/lottery/instant-spin-ux.test.ts",
+      // docs/121：管理端列表即时标签与「立即开奖」互斥
+      "frontend/src/views/admin/lottery/ops-utils.instant-list.test.ts",
       // docs/115 skeptic：裂变 i18n 加权票诚实性
       "frontend/src/i18n/viral-copy-honesty.test.ts",
     ],

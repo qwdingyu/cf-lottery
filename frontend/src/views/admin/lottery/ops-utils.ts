@@ -258,6 +258,37 @@ export function canDeleteDraw(status: string): boolean {
 }
 
 /**
+ * 列表「即时出结果」标签：resultMode=instant 一眼可辨（docs/118/119）。
+ * 与 AdminLotteryView 模板一致：不限 activityKind（非 lottery 极少 instant）。
+ */
+export function shouldShowAdminInstantResultTag(resultMode: string | null | undefined): boolean {
+  return String(resultMode || '') === 'instant'
+}
+
+/**
+ * open 抽奖行次按钮：instant 隐藏「立即开奖」改暂停；delayed 才允许 performDraw。
+ */
+export function adminOpenLotterySecondaryAction(input: {
+  status?: string | null
+  activityKind?: string | null
+  resultMode?: string | null
+}): 'draw_now' | 'pause' | 'none' {
+  if (String(input.status || '') !== 'open') return 'none'
+  if (String(input.activityKind || '') !== 'lottery') return 'none'
+  if (String(input.resultMode || '') === 'instant') return 'pause'
+  return 'draw_now'
+}
+
+/** 是否展示「立即开奖」按钮（instant 恒 false） */
+export function shouldShowAdminDrawNowButton(input: {
+  status?: string | null
+  activityKind?: string | null
+  resultMode?: string | null
+}): boolean {
+  return adminOpenLotterySecondaryAction(input) === 'draw_now'
+}
+
+/**
  * drawn 且当前对用户可见（缺省 visible=1）→ 可批量隐藏。
  * 为什么：清用户视野优先于删；已 hidden 的不必再进 hide 队列。
  */

@@ -214,7 +214,7 @@
                 <small class="muted-text">{{ experienceTypeLabel(draw.experienceType) }}</small>
                 <!-- instant 与 delayed 结果机互斥，列表一眼可辨（docs/118 后续） -->
                 <small
-                  v-if="String(draw.resultMode || '') === 'instant'"
+                  v-if="shouldShowAdminInstantResultTag(draw.resultMode)"
                   class="tag tag-info"
                 >{{ $t('lottery.adminResultInstantTag') }}</small>
                 <small
@@ -293,7 +293,7 @@
                     @click="handleCopyShareLink(draw)"
                   >{{ $t('lottery.adminCopyLink') }}</button>
                   <button
-                    v-if="String(draw.resultMode || '') !== 'instant'"
+                    v-if="shouldShowAdminDrawNowButton({ status: draw.status, activityKind: draw.activityKind, resultMode: draw.resultMode })"
                     type="button"
                     class="btn btn-ghost btn-xs"
                     :disabled="operatingId === draw.id || !canEnableDrawNow(draw.entryCount)"
@@ -1474,7 +1474,7 @@ import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
-import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue } from '@/composables/useFormat'
+import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue, toErrorMessage } from '@/composables/useFormat'
 import { writeClipboardText } from '@/composables/useClipboard'
 import {
   canEnableDrawNow,
@@ -1532,6 +1532,8 @@ import {
   buildSelectedDrawsCsvRows,
   canBatchHideDraw as canBatchHideDrawByFields,
   canDeleteDraw as canDeleteDrawByStatus,
+  shouldShowAdminDrawNowButton,
+  shouldShowAdminInstantResultTag,
   canGuidePublishFixInEditor as canGuidePublishFixInEditorRaw,
   canCancelDraw as canCancelDrawByStatus,
   canPauseDraw as canPauseDrawByStatus,
@@ -2081,8 +2083,8 @@ async function quickCreatePrize() {
       if (tierTotal > 0) form.value.winnerCount = tierTotal
     }
     showToast(t('lottery.adminPrizeCreatedManual', { name: prizeName }), 'success')
-  } catch (err: any) {
-    showToast(err?.message || t('lottery.adminQuickPrizeFailed'), 'error')
+  } catch (err) {
+    showToast(toErrorMessage(err, t('lottery.adminQuickPrizeFailed')), 'error')
   } finally {
     quickPrizeLoading.value = false
   }
@@ -2761,7 +2763,7 @@ async function loadData() {
     },
     {
       onError: (err) =>
-        (err instanceof Error ? err.message : t('lottery.adminLoadFailed')) || t('lottery.adminLoadFailed'),
+        toErrorMessage(err, t('lottery.adminLoadFailed')),
     },
   )
   if (!ok && loadError.value) {
@@ -2810,8 +2812,8 @@ async function handleOpen(draw: LotteryDraw) {
       showToast(t('lottery.adminDrawOpened'), 'success')
     }
     await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
   } finally {
     operatingId.value = ''
   }
@@ -2836,8 +2838,8 @@ async function handleDraw(draw: LotteryDraw) {
     await performLotteryDraw(draw.id)
     drawOk = true
     await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
   } finally {
     operatingId.value = ''
   }
@@ -2873,8 +2875,8 @@ async function viewWinners(id: string) {
     winners.value = data.winners || []
     rememberDrawEmailFails(id, winners.value)
     startWinnersStatusPolling(id)
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
     showWinnersModal.value = false
     winnersModalDrawId.value = ''
   } finally {
@@ -2896,8 +2898,8 @@ async function handleCancel(id: string) {
     await cancelLotteryDraw(id)
     showToast(t('lottery.adminDrawCancelled'), 'success')
     await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
     await loadData()
   } finally {
     operatingId.value = ''
@@ -2913,8 +2915,8 @@ async function handleDelete(id: string) {
     await deleteLotteryDraw(id)
     showToast(t('lottery.adminDrawDeleted'), 'success')
     await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
   } finally {
     operatingId.value = ''
   }
@@ -3070,8 +3072,8 @@ async function handlePause(id: string) {
     await pauseLotteryDraw(id)
     showToast(t('lottery.adminPaused'), 'success')
     await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
     await loadData()
   } finally {
     operatingId.value = ''
@@ -3084,8 +3086,8 @@ async function handleResume(id: string) {
     await resumeLotteryDraw(id)
     showToast(t('lottery.adminResumed'), 'success')
     await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
     await loadData()
   } finally {
     operatingId.value = ''
@@ -3175,8 +3177,8 @@ async function handleToggleVisibility(id: string, visible: number | undefined) {
     await updateLotteryDraw(id, { visible: currentlyVisible ? 0 : 1 })
     showToast(currentlyVisible ? t('lottery.adminHidden') : t('lottery.adminShown'), 'success')
     await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
   } finally {
     operatingId.value = ''
   }
@@ -3202,8 +3204,8 @@ async function handleRetryEmail(id: string) {
       /* 列表刷新失败不阻断主提示 */
     }
     await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
   } finally {
     operatingId.value = ''
   }
@@ -3224,8 +3226,8 @@ async function handleRecover(id: string) {
       showToast(t('lottery.adminRecoverDoneOpen'), 'success')
     }
     await loadData()
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
   } finally {
     operatingId.value = ''
   }
@@ -3348,8 +3350,8 @@ async function handleCreate() {
         await loadData()
       }
     }
-  } catch (e: any) {
-    showToast(e?.message || t('lottery.adminCreateFailed'), 'error')
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminCreateFailed')), 'error')
   } finally {
     creating.value = false
   }
