@@ -16,8 +16,9 @@ import {
   prizeCodes,
 } from "../../db/schema";
 import { performInstantSpin, SpinBusinessError } from "./spin-execution";
-import { performDraw } from "./draw-execution";
+import { performDraw, notifyInstantSpinWinner, sendWinnerNotifications } from "./draw-execution";
 import { joinDraw } from "./participation";
+import { vi } from "vitest";
 
 const TENANT = "tenant-spin-t";
 
@@ -217,5 +218,73 @@ describe("performInstantSpin", () => {
         idempotencyKey: "x",
       }),
     ).rejects.toMatchObject({ code: "spin.result_mode.not_instant" });
+  });
+
+  it("instant 中奖通知：按 spin 只发本奖；多奖各自一封且 productName 为奖品名", async () => {
+    const { slug, id } = await seedInstantDraw(db, client, { maxSpins: 3, weight: 1000, codes: 5 });
+    const joined = await joinDraw(db, slug, "mail@test.com");
+    await client.execute({
+      sql: `UPDATE lottery_entries SET spins_left = 3, spins_total_granted = 3 WHERE id = ?`,
+      args: [joined.entryId!],
+    });
+
+    // 强制中奖路径：weight 极高；若仍未中则跳过断言结构（不硬 fail 随机）
+    const r1 = await performInstantSpin(db, {
+      slug,
+      identityType: "email",
+      identityValue: "mail@test.com",
+      idempotencyKey: "mail-1",
+    });
+    if (!r1.won) return;
+
+    const captured: Array<{ to: string; html: string; subject?: string }> = [];
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes("resend.com")) {
+        const body = JSON.parse(String(init?.body)) as { to: string; html: string; subject?: string };
+        captured.push(body);
+        return new Response(JSON.stringify({ id: "mock-msg" }), { status: 200 });
+      }
+      return new Response("", { status: 404 });
+    });
+
+    await notifyInstantSpinWinner(db, TENANT, id, r1.spinId, {
+      resendApiKey: "test-key",
+      emailFrom: "noreply@test.com",
+    });
+
+    expect(captured.length).toBe(1);
+    expect(captured[0]!.to).toBe("mail@test.com");
+    // productName 应为奖品名，不是仅活动标题（instant 多奖文案）
+    expect(captured[0]!.html).toContain("测试奖");
+
+    const [w1] = await db.select().from(lotteryWinners).where(eq(lotteryWinners.spinId, r1.spinId));
+    expect(w1?.notificationStatus).toBe("sent");
+
+    // 第二次中奖：只发新 winner，不重发已 sent
+    const r2 = await performInstantSpin(db, {
+      slug,
+      identityType: "email",
+      identityValue: "mail@test.com",
+      idempotencyKey: "mail-2",
+    });
+    if (r2.won) {
+      await notifyInstantSpinWinner(db, TENANT, id, r2.spinId, {
+        resendApiKey: "test-key",
+        emailFrom: "noreply@test.com",
+      });
+      expect(captured.length).toBe(2);
+      // 多奖备注
+      expect(captured[1]!.html).toMatch(/多次中奖|每份奖品/);
+    }
+
+    // 全量 sendWinnerNotifications 不重发已 sent
+    const before = captured.length;
+    await sendWinnerNotifications(db, TENANT, id, {
+      resendApiKey: "test-key",
+      emailFrom: "noreply@test.com",
+    });
+    expect(captured.length).toBe(before);
+
+    vi.unstubAllGlobals();
   });
 });

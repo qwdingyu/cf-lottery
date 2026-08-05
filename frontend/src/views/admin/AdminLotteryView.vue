@@ -212,6 +212,15 @@
               <div class="relation-cell">
                 <span>{{ activityKindLabel(draw.activityKind) }}</span>
                 <small class="muted-text">{{ experienceTypeLabel(draw.experienceType) }}</small>
+                <!-- instant 与 delayed 结果机互斥，列表一眼可辨（docs/118 后续） -->
+                <small
+                  v-if="String(draw.resultMode || '') === 'instant'"
+                  class="tag tag-info"
+                >{{ $t('lottery.adminResultInstantTag') }}</small>
+                <small
+                  v-else-if="draw.activityKind === 'lottery' && draw.resultMode"
+                  class="muted-text"
+                >{{ resultModeLabel(draw.resultMode) }}</small>
               </div>
             </td>
             <td class="col-status">

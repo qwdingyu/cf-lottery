@@ -317,8 +317,8 @@
 
     <div v-if="showLoginModal" class="modal-overlay" @click.self="closeLogin" @keydown.escape="closeLogin">
       <div class="modal-content" role="dialog" aria-modal="true" tabindex="-1" ref="loginModalRef" :aria-label="$t('lottery.emailVerify')">
-        <h3 class="modal-title">{{ isRegisteredJoin ? $t('lottery.loginAndJoin') : $t('lottery.emailVerify') }}</h3>
-        <p class="modal-hint">{{ isRegisteredJoin ? $t('lottery.registeredRequired') : isLoginOnly ? $t('lottery.loginToViewRecords') : $t('lottery.emailVerifyHint') }}</p>
+        <h3 class="modal-title">{{ loginModalTitle }}</h3>
+        <p class="modal-hint">{{ loginModalHint }}</p>
 
         <!--
           仅登录（无具体活动）：优先本页 cf-auth / 邮箱会话，避免硬跳 /admin/login 打断参与心智（docs/096）。
@@ -511,10 +511,10 @@
                 <button
                   type="button"
                   class="btn btn-primary join-modal-primary"
-                  :disabled="verifyingCode"
+                  :disabled="verifyingCode || Boolean(spinningId)"
                   @click="handleVerifyCode"
                 >
-                  {{ verifyingCode ? $t('lottery.loadingText') : $t('lottery.verifyAndJoin') }}
+                  {{ verifyingCode || spinningId ? $t('lottery.loadingText') : (isSpinAuth ? $t('lottery.spinVerifyAndGo') : $t('lottery.verifyAndJoin')) }}
                 </button>
                 <button
                   type="button"
@@ -982,28 +982,55 @@ const regLoginLoading = ref(false)
 const joinAccessPassword = ref('')
 /** 邀请码模式：活动邀请码 */
 const joinInviteCode = ref('')
+/**
+ * 登录弹窗意图：
+ * - join：参与发码 / verify-join
+ * - spin：已参与 instant 弱会话补 OTP，验证后直接 spin（不走 join）
+ * - login：仅登录看记录
+ */
+const loginModalIntent = ref<'join' | 'spin' | 'login'>('join')
+
 /** 当前登录弹窗对应的活动是否是 registered 模式 */
 const isRegisteredJoin = computed(() => {
-  if (!pendingJoinDrawId.value) return false
+  if (!pendingJoinDrawId.value || loginModalIntent.value === 'spin') return false
   const draw = draws.value.find(d => d.id === pendingJoinDrawId.value)
   return draw?.participationMode === 'registered'
 })
+/** instant 弱会话补码：标题/主按钮与 join 分流 */
+const isSpinAuth = computed(() => loginModalIntent.value === 'spin' && Boolean(pendingJoinDrawId.value))
 const pendingJoinDraw = computed(() => {
   if (!pendingJoinDrawId.value) return null
   return draws.value.find(d => d.id === pendingJoinDrawId.value) || null
 })
-const pendingJoinNeedsPassword = computed(() => pendingJoinDraw.value?.participationMode === 'password')
-const pendingJoinNeedsInvite = computed(() => pendingJoinDraw.value?.participationMode === 'invite_code')
+const pendingJoinNeedsPassword = computed(() =>
+  loginModalIntent.value === 'join' && pendingJoinDraw.value?.participationMode === 'password',
+)
+const pendingJoinNeedsInvite = computed(() =>
+  loginModalIntent.value === 'join' && pendingJoinDraw.value?.participationMode === 'invite_code',
+)
 /**
  * 已有参与 JWT，只差活动密码/邀请码：弹窗不走邮箱 OTP（docs/096）。
  * roster/open 有 JWT 时通常不会进弹窗（直参）。
  */
 const pendingJoinCredentialOnly = computed(() => {
+  if (loginModalIntent.value !== 'join') return false
   if (!pendingJoinDrawId.value || !registeredToken.value) return false
   return pendingJoinNeedsPassword.value || pendingJoinNeedsInvite.value
 })
 /** 仅登录查看记录（无具体活动，不需要验证码） */
-const isLoginOnly = computed(() => !pendingJoinDrawId.value)
+const isLoginOnly = computed(() => !pendingJoinDrawId.value || loginModalIntent.value === 'login')
+
+const loginModalTitle = computed(() => {
+  if (isRegisteredJoin.value) return t('lottery.loginAndJoin')
+  if (isSpinAuth.value) return t('lottery.spinVerifyTitle')
+  return t('lottery.emailVerify')
+})
+const loginModalHint = computed(() => {
+  if (isRegisteredJoin.value) return t('lottery.registeredRequired')
+  if (isSpinAuth.value) return t('lottery.spinVerifyHint')
+  if (isLoginOnly.value) return t('lottery.loginToViewRecords')
+  return t('lottery.emailVerifyHint')
+})
 
 function persistSessionEmail(email: string) {
   sessionEmail.value = email
@@ -1196,9 +1223,9 @@ function completeJoinSuccess(
 
 /**
  * instant spin：先请求服务端，成功后再 celebrate + 停扇（docs/116）。
- * 身份：业务 JWT 免 OTP；否则需已有 sessionEmail + 可能需 OTP（复用 login 弹窗）。
+ * 身份：业务 JWT 免 OTP；弱会话需 email+OTP（intent=spin 弹窗，不走 join）。
  */
-async function handleInstantSpin(draw: LotteryDraw) {
+async function handleInstantSpin(draw: LotteryDraw, opts?: { codeOverride?: string }) {
   if (spinningId.value || joiningId.value) return
   if (!isInstantLottery(draw) || draw.status !== 'open') return
   if ((spinsLeftById.value[draw.id] ?? 1) <= 0) {
@@ -1214,18 +1241,27 @@ async function handleInstantSpin(draw: LotteryDraw) {
   }
 
   const token = registeredToken.value
-  const email = String(sessionEmail.value || '').trim().toLowerCase()
+  const email = String(sessionEmail.value || loginEmail.value || '').trim().toLowerCase()
   const isReg = draw.participationMode === 'registered'
+  const codeOverride = String(opts?.codeOverride || '').trim()
 
-  // 无强会话且无邮箱：引导登录/发码
+  // registered：必须强会话
   if (isReg && !token) {
-    openLogin(draw.id)
+    openLogin(draw.id, 'join')
     return
   }
   if (!isReg && !token && !email) {
-    // 已参与但会话丢了：打开查结果/登录补身份
-    openLogin(draw.id)
+    openLogin(draw.id, 'spin')
     showToast(t('lottery.spinNeedSession'), 'error')
+    return
+  }
+
+  const otpCode = codeOverride || (!token && !isReg ? loginCode.value.trim() : '')
+
+  // 无 Bearer 且无 code：打开 spin 意图弹窗（purpose=query 发码，验证后直接 spin）
+  if (!isReg && !token && !otpCode) {
+    openLogin(draw.id, 'spin')
+    showToast(t('lottery.spinNeedCode'), 'error')
     return
   }
 
@@ -1240,17 +1276,7 @@ async function handleInstantSpin(draw: LotteryDraw) {
     const body: Record<string, string> = {}
     if (!isReg) {
       body.email = email
-      // 无 Bearer 时需要 OTP；有 Bearer 后端免码
-      if (!token && loginCode.value.trim()) {
-        body.code = loginCode.value.trim()
-      }
-    }
-
-    // 无 Bearer 且无 code：先打开登录让用户发码（不假装 spin）
-    if (!isReg && !token && !body.code) {
-      openLogin(draw.id)
-      showToast(t('lottery.spinNeedCode'), 'error')
-      return
+      if (!token && otpCode) body.code = otpCode
     }
 
     const res = await fetch(`${API_BASE}/public/draws/${encodeURIComponent(slug)}/spin`, {
@@ -1264,8 +1290,21 @@ async function handleInstantSpin(draw: LotteryDraw) {
       if (res.status === 409) {
         spinsLeftById.value = { ...spinsLeftById.value, [draw.id]: 0 }
       }
+      // 验证码失效：保持 spin 弹窗，让用户重发
+      if (res.status === 400 && !token) {
+        loginError.value = data.message || t('lottery.spinFailed')
+        if (!showLoginModal.value) openLogin(draw.id, 'spin')
+      }
       return
     }
+
+    // spin 成功：清 OTP、关弹窗，保留邮箱会话
+    if (otpCode) {
+      loginCode.value = ''
+      codeSent.value = false
+    }
+    if (email && email.includes('@')) persistSessionEmail(email)
+    if (showLoginModal.value && loginModalIntent.value === 'spin') closeLogin()
 
     const prizeIndex = Number(data.prizeIndex)
     const won = Boolean(data.won)
@@ -1304,7 +1343,6 @@ async function handleInstantSpin(draw: LotteryDraw) {
     resultModalTimer = setTimeout(() => {
       resultModalTimer = null
       openMyResult(draw)
-      // 若已有强会话，自动再查一次以刷新 wins
       if (registeredToken.value || sessionEmail.value) {
         void queryMyResult()
       }
@@ -2117,13 +2155,15 @@ function trackPageView(draw: LotteryDraw) {
 
 const loginModalRef = ref<HTMLElement | null>(null)
 
-function openLogin(drawId?: string) {
+function openLogin(drawId?: string, intent: 'join' | 'spin' | 'login' = 'join') {
   pendingJoinDrawId.value = drawId || null
-  if (drawId) void recordActivityEvent(drawId, 'participation_started')
+  loginModalIntent.value = drawId ? intent : 'login'
+  // 仅参与意图记 participation_started；spin 补码不算新参与
+  if (drawId && intent === 'join') void recordActivityEvent(drawId, 'participation_started')
   loginError.value = ''
   codeSent.value = false
   loginCode.value = ''
-  // 预填会话邮箱，减少二次参与摩擦
+  // 预填会话邮箱，减少二次参与 / spin 摩擦
   if (sessionEmail.value && !loginEmail.value) loginEmail.value = sessionEmail.value
   showLoginModal.value = true
   nextTick(() => loginModalRef.value?.focus())
@@ -2190,6 +2230,7 @@ async function handleCredentialJoinWithBearer() {
 function closeLogin() {
   showLoginModal.value = false
   pendingJoinDrawId.value = null
+  loginModalIntent.value = 'join'
   loginError.value = ''
   // 保留 loginEmail / 访问凭证不在关闭时强制清空，避免用户误关后重填；成功路径会清凭证
 }
@@ -2845,13 +2886,17 @@ async function handleSendCode() {
     loginError.value = t('lottery.drawNotLoaded')
     return
   }
-  const credErr = validateJoinCredentials()
-  if (credErr) {
-    loginError.value = credErr
-    return
+  const isSpin = loginModalIntent.value === 'spin'
+  // spin 补码不需要活动密码/问卷草稿；join 仍校验
+  if (!isSpin) {
+    const credErr = validateJoinCredentials()
+    if (credErr) {
+      loginError.value = credErr
+      return
+    }
   }
   const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
-  if (draw) {
+  if (!isSpin && draw) {
     const message = validateSubmissionDraft(draw)
     if (message) {
       loginError.value = message
@@ -2862,20 +2907,23 @@ async function handleSendCode() {
   loginError.value = ''
   try {
     const pathKey = publicDrawPathKey(pendingJoinDrawId.value)
+    // spin / my-result：purpose=query，已参与也可发码，不走 join 409
+    const body: Record<string, unknown> = isSpin
+      ? { email, purpose: 'query' }
+      : {
+          email,
+          accessPassword: joinAccessPassword.value.trim() || undefined,
+          inviteCode: joinInviteCode.value.trim() || undefined,
+          refCode: routeParam('ref'),
+          submission: draw ? buildSubmissionPayload(draw) : undefined,
+        }
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(pathKey) + '/access-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email,
-        // 免码直参时后端 joinDraw 需要凭证；发码路径忽略多余字段
-        accessPassword: joinAccessPassword.value.trim() || undefined,
-        inviteCode: joinInviteCode.value.trim() || undefined,
-        refCode: routeParam('ref'),
-        submission: draw ? buildSubmissionPayload(draw) : undefined,
-      }),
+      body: JSON.stringify(body),
     })
     const data = await res.json() as any
-    if (data.ok && data.joined) {
+    if (data.ok && data.joined && !isSpin) {
       // 邮箱验证码关闭：直接参与成功（完整收尾 + celebrateKey 氛围）
       joiningId.value = pendingJoinDrawId.value!
       completeJoinSuccess(pendingJoinDrawId.value!, data, { email })
@@ -2885,7 +2933,9 @@ async function handleSendCode() {
     } else if (data.ok && data.sent) {
       codeSent.value = true
       startCooldown(data.expiresInSeconds || 60)
-    } else if (isAlreadyJoinedResponse(data, res.status)) {
+      if (isSpin) showToast(t('lottery.spinCodeSent'), 'success')
+    } else if (!isSpin && isAlreadyJoinedResponse(data, res.status)) {
+      // join 路径已参与：标已参与；若是 instant 可引导再 spin
       handleAlreadyJoined(pendingJoinDrawId.value!, { entryId: entryIdFromAlreadyJoined(data) })
     } else {
       loginError.value = data.message || t('lottery.sendFailed')
@@ -2909,6 +2959,26 @@ async function handleVerifyCode() {
     return
   }
   loginEmail.value = email
+
+  // spin 意图：验证码留给 /spin，不走 verify-join（避免「已参与」与二次 join 纠缠）
+  if (loginModalIntent.value === 'spin') {
+    const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
+    if (!draw || !isInstantLottery(draw)) {
+      loginError.value = t('lottery.spinFailed')
+      return
+    }
+    persistSessionEmail(email)
+    verifyingCode.value = true
+    loginError.value = ''
+    try {
+      const code = loginCode.value.trim()
+      await handleInstantSpin(draw, { codeOverride: code })
+    } finally {
+      verifyingCode.value = false
+    }
+    return
+  }
+
   const credErr = validateJoinCredentials()
   if (credErr) {
     loginError.value = credErr

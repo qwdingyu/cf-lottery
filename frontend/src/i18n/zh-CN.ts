@@ -496,6 +496,11 @@ export default {
     spinFailed: "抽奖失败，请稍后重试",
     spinWon: "恭喜中奖！{prize}",
     spinMiss: "未中奖，感谢参与",
+    /** 弱会话 spin：弹窗标题/说明（与 join 分流，docs/118 后续） */
+    spinVerifyTitle: "验证后抽奖",
+    spinVerifyHint: "你已参与本活动。填写邮箱验证码后即可继续抽奖，不会重复报名。",
+    spinVerifyAndGo: "验证并抽奖",
+    spinCodeSent: "验证码已发送，填写后即可抽奖",
     resultInstantCanSpin: "你还有抽奖次数，可继续抽奖",
     gameWheelDrawing: "抽奖中",
     // 参与成功弹窗说明（按 result_mode；勿复用 pageHint）
@@ -1083,6 +1088,8 @@ export default {
     adminResultManual: "手动开奖",
     adminResultScheduled: "定时开奖",
     adminResultInstant: "即时结果",
+    /** 列表行内短标签：与 delayed 开奖区分 */
+    adminResultInstantTag: "即时抽",
     adminResultOrdered: "按顺序分配",
     adminResultCapacity: "按容量确认",
     adminResultVoteTally: "投票统计",

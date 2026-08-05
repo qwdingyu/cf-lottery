@@ -538,6 +538,11 @@ export default {
     spinFailed: "Spin failed — try again later",
     spinWon: "You won! {prize}",
     spinMiss: "No prize this time — thanks for playing",
+    /** Weak-session spin OTP (separate from join, docs/118 follow-up) */
+    spinVerifyTitle: "Verify to spin",
+    spinVerifyHint: "You're already in. Enter the email code to spin — this won't re-join.",
+    spinVerifyAndGo: "Verify & spin",
+    spinCodeSent: "Code sent — enter it to spin",
     resultInstantCanSpin: "You still have spins — keep going",
     gameWheelDrawing: "Drawing",
     /** Missing result_mode: conservative; lottery-leaning but no win promise (docs/107) */
@@ -1111,6 +1116,8 @@ export default {
     adminResultManual: "Manual draw",
     adminResultScheduled: "Scheduled draw",
     adminResultInstant: "Instant result",
+    /** List row chip: distinct from delayed draw */
+    adminResultInstantTag: "Instant",
     adminResultOrdered: "By join order",
     adminResultCapacity: "By capacity",
     adminResultVoteTally: "Vote tally",

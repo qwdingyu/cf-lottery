@@ -18,6 +18,7 @@ import {
   recordActivityEvent,
   performInstantSpin,
   SpinBusinessError,
+  notifyInstantSpinWinner,
   type ActivityEventType,
 } from "../services/lottery-service";
 import { verifyJwt } from "../middleware/auth";
@@ -1069,6 +1070,19 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
       idempotencyKey,
       ipHash,
     });
+
+    // 中奖邮件：fire-and-forget，失败不回滚 spin；回放不重发（notificationStatus=sent 跳过）
+    if (result.won && !result.replayed) {
+      const emailEnv = {
+        resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+        emailFrom: getEnv(c, "EMAIL_FROM") || "",
+        emailFromName: getEnv(c, "EMAIL_FROM_NAME") || "",
+      };
+      void notifyInstantSpinWinner(db, draw.tenantId, draw.id, result.spinId, emailEnv).catch((err) => {
+        console.error(`[public] notifyInstantSpinWinner failed for ${result.spinId}:`, err);
+      });
+    }
+
     return ok(c, result);
   } catch (err) {
     if (err instanceof SpinBusinessError) {

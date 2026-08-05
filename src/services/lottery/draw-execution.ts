@@ -412,14 +412,16 @@ export async function performDraw(
  * 发送中奖通知邮件（开奖后 fire-and-forget，也可被管理端 retry-email 同步调用）。
  *
  * - 跳过已 sent；处理 pending / failed（及空状态）
- * - 每人独立发送，一人失败不影响其他人
+ * - 每人/每奖独立发送，一人失败不影响其他人（instant 多奖 = 多封，每封一码）
+ * - winnerIds：只发指定 winner 行（instant spin 后按本 spin 的 winner 触发，避免扫全表）
  * - 返回 sent/failed 计数供运营台 toast（docs/078 闭环）
  */
 export async function sendWinnerNotifications(
   db: DbType,
   tenantId: string,
   drawId: string,
-  emailEnv: { resendApiKey?: string; emailFrom?: string },
+  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string },
+  options?: { winnerIds?: string[] },
 ): Promise<{ sent: number; failed: number }> {
   const [draw] = await db
     .select()
@@ -428,16 +430,30 @@ export async function sendWinnerNotifications(
     .limit(1);
   if (!draw) return { sent: 0, failed: 0 };
 
+  const winnerIdFilter = (options?.winnerIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+
   const winners = await db
     .select({
       winnerId: lotteryWinners.id,
+      entryId: lotteryWinners.entryId,
+      tierId: lotteryWinners.tierId,
       email: lotteryWinners.identityValue,
       identityType: lotteryWinners.identityType,
       prizeCodeId: lotteryWinners.prizeCodeId,
       notificationStatus: lotteryWinners.notificationStatus,
     })
     .from(lotteryWinners)
-    .where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
+    .where(
+      winnerIdFilter.length > 0
+        ? and(
+            eq(lotteryWinners.drawId, drawId),
+            eq(lotteryWinners.tenantId, tenantId),
+            inArray(lotteryWinners.id, winnerIdFilter),
+          )
+        : and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)),
+    );
 
   // registered 模式（identity_type = user_id）中奖者：identity_value 是 userId（UUID），
   // 不是可投递邮箱，必须从 users 表关联注册时填写的真实邮箱（users.email 注册时必填）。
@@ -462,6 +478,48 @@ export async function sendWinnerNotifications(
     for (const c of codes) codeMap.set(c.id, { code: c.code, secret: c.secret });
   }
 
+  // 奖项名 / 奖品名：instant 多奖时 productName 必须是「这一档」而非活动标题
+  const tierIds = [...new Set(winners.map((w) => w.tierId).filter(Boolean))];
+  const prizeLabelMap = new Map<string, { tierName: string; prizeName: string }>();
+  if (tierIds.length > 0) {
+    const tierRows = await db
+      .select({
+        tierId: lotteryPrizeTiers.id,
+        tierName: lotteryPrizeTiers.tierName,
+        prizeName: prizes.name,
+      })
+      .from(lotteryPrizeTiers)
+      .leftJoin(prizes, eq(prizes.id, lotteryPrizeTiers.prizeId))
+      .where(inArray(lotteryPrizeTiers.id, tierIds));
+    for (const row of tierRows) {
+      prizeLabelMap.set(row.tierId, {
+        tierName: row.tierName || "",
+        prizeName: row.prizeName || row.tierName || "",
+      });
+    }
+  }
+
+  // 同 entry 多奖：在备注里提示「本活动可多次中奖，每奖单独一封邮件」
+  const entryIds = [...new Set(winners.map((w) => w.entryId).filter(Boolean))];
+  const multiWinEntryIds = new Set<string>();
+  if (entryIds.length > 0) {
+    const entryWinCounts = await db
+      .select({
+        entryId: lotteryWinners.entryId,
+        cnt: count(),
+      })
+      .from(lotteryWinners)
+      .where(and(
+        eq(lotteryWinners.drawId, drawId),
+        eq(lotteryWinners.tenantId, tenantId),
+        inArray(lotteryWinners.entryId, entryIds),
+      ))
+      .groupBy(lotteryWinners.entryId);
+    for (const row of entryWinCounts) {
+      if (Number(row.cnt) > 1 && row.entryId) multiWinEntryIds.add(row.entryId);
+    }
+  }
+
   let sent = 0;
   let failed = 0;
 
@@ -476,6 +534,12 @@ export async function sendWinnerNotifications(
       if (code) { accountLabel = code.code; deliverySecret = code.secret; }
     }
 
+    const labels = prizeLabelMap.get(winner.tierId);
+    const productName = labels?.prizeName || labels?.tierName || draw.title;
+    const deliveryNote = multiWinEntryIds.has(winner.entryId)
+      ? "本活动支持多次中奖：每份奖品单独一封邮件，请注意查收其它中奖通知。"
+      : "";
+
     // 收件人解析：user_id 身份的 winner 用 users 表关联的真实邮箱（见上方 userEmailMap）
     const toEmail = winner.identityType === "user_id" ? (userEmailMap.get(winner.email) || "") : winner.email;
 
@@ -485,9 +549,10 @@ export async function sendWinnerNotifications(
         template: "lottery_winner",
         templateData: buildLotteryWinnerTemplateData({
           drawName: draw.title,
-          productName: draw.title,
+          productName,
           accountLabel,
           deliverySecret,
+          deliveryNote,
         }),
       });
 
@@ -513,6 +578,42 @@ export async function sendWinnerNotifications(
   }
 
   return { sent, failed };
+}
+
+/**
+ * instant spin 中奖后异步通知：只发本 spin 对应 winner 行（多奖不重发历史奖）。
+ * 失败只打日志，不回滚 spin。
+ */
+export async function notifyInstantSpinWinner(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  spinId: string,
+  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string },
+): Promise<void> {
+  if (!emailEnv?.resendApiKey || !spinId) return;
+
+  const [notifyCfg] = await db
+    .select({ value: systemConfig.value })
+    .from(systemConfig)
+    .where(eq(systemConfig.key, "notify_winner_email_enabled"))
+    .limit(1);
+  if (notifyCfg?.value === "false") return;
+
+  const [winner] = await db
+    .select({ id: lotteryWinners.id })
+    .from(lotteryWinners)
+    .where(and(
+      eq(lotteryWinners.tenantId, tenantId),
+      eq(lotteryWinners.drawId, drawId),
+      eq(lotteryWinners.spinId, spinId),
+    ))
+    .limit(1);
+  if (!winner) return;
+
+  await sendWinnerNotifications(db, tenantId, drawId, emailEnv, {
+    winnerIds: [winner.id],
+  });
 }
 
 /**
