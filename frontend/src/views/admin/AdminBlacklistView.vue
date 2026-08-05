@@ -111,13 +111,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '@/composables/useToast'
-import { useConfirmDialog } from '@/composables/useConfirmDialog'
-import { useTableSelection } from '@/composables/useTableSelection'
-import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
+import { useToast } from '@usethink/cf-admin-fe/composables'
+import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
+import { useTableSelection } from '@usethink/cf-admin-fe/composables'
+import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 import { formatDate } from '@/composables/useFormat'
-import AdminModal from '@/components/AdminModal'
-import ConfirmDialog from '@/components/ConfirmDialog'
+import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
+import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
 
 const { t } = useI18n()

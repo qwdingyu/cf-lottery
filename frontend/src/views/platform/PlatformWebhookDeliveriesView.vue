@@ -123,14 +123,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AdminPagination from '@/components/AdminPagination'
-import ConfirmDialog from '@/components/ConfirmDialog'
-import { useTablePagination } from '@/composables/useTablePagination'
-import { useTableSelection } from '@/composables/useTableSelection'
-import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
-import { useConfirmDialog } from '@/composables/useConfirmDialog'
+import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
+import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
+import { useTablePagination } from '@usethink/cf-admin-fe/composables'
+import { useTableSelection } from '@usethink/cf-admin-fe/composables'
+import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
+import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { adminRequest } from '@/composables/useAdminRequest'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import { canRetryWebhookDelivery } from '@/views/admin/lottery/ops-utils'
 
 type WebhookDelivery = {

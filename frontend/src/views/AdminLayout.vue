@@ -84,7 +84,7 @@ import { useI18n } from 'vue-i18n'
 import { switchLanguage } from '@/i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { readPlatformRole, isImpersonating, clearImpersonation } from '@/composables/useAdminAuth'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 
 const route = useRoute()
 const router = useRouter()

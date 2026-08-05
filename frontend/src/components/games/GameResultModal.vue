@@ -109,9 +109,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, useId } from 'vue'
-import { writeClipboardText } from '@/composables/useClipboard'
+import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import { shouldShowInviteShareCta } from '@/views/lottery/public-helpers'
 import {
   joinSuccessModalHintI18nKey,

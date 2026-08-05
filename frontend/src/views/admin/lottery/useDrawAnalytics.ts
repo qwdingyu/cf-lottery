@@ -6,7 +6,7 @@
  */
 import { computed, ref, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import type { DrawAnalyticsStats, ExternalConversion, LotteryDraw } from './types'
 import { fetchDrawAnalyticsStats, fetchDrawConversions } from './api'
 import { downloadCsv, percent } from './ops-utils'

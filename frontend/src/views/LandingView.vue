@@ -236,7 +236,7 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 
 const router = useRouter()
 const { t } = useI18n()

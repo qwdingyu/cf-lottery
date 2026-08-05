@@ -188,9 +188,9 @@
  * 4. 终态弱化邀请，榜与历史统计仍可读
  */
 import { ref, computed, watch, onMounted } from 'vue'
-import { writeClipboardText } from '@/composables/useClipboard'
+import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import { shouldShowInviteShareCta } from '@/views/lottery/public-helpers'
 import {
   isMeVisibleInViralTop,

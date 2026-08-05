@@ -127,7 +127,7 @@ import { ref, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
 import { isOtpComplete, normalizeOtpDigits } from '@/composables/otp-input'
 

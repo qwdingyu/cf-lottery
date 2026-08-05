@@ -69,9 +69,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AdminPagination from '@/components/AdminPagination'
+import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
-import { useTablePagination } from '@/composables/useTablePagination'
+import { useTablePagination } from '@usethink/cf-admin-fe/composables'
 
 const { t } = useI18n()
 const loading = ref(false)

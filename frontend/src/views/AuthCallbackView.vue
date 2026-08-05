@@ -24,7 +24,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import {
   CF_AUTH_PKCE_KEY,

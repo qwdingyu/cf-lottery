@@ -129,7 +129,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import { formatDate } from '@/composables/useFormat'
 import { adminRequest } from '@/composables/useAdminRequest'
 

@@ -1469,24 +1469,24 @@
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useAdminAuth } from '@/composables/useAdminAuth'
-import { useConfirmDialog } from '@/composables/useConfirmDialog'
-import { useTableSelection } from '@/composables/useTableSelection'
-import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
+import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
+import { useTableSelection } from '@usethink/cf-admin-fe/composables'
+import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue, toErrorMessage, resolveBatchToastType } from '@/composables/useFormat'
-import { writeClipboardText } from '@/composables/useClipboard'
+import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
 import {
   canEnableDrawNow,
   draftPublishBlockerSnippet,
   OPEN_PUBLIC_PREVIEW_OPTION_KEY,
   shouldOpenPublicPreview,
 } from '@/composables/admin-list-ux'
-import AdminModal from '@/components/AdminModal'
-import AdminPagination from '@/components/AdminPagination'
-import { useTablePagination } from '@/composables/useTablePagination'
+import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
+import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
+import { useTablePagination } from '@usethink/cf-admin-fe/composables'
 import { useAdminListLoader } from '@usethink/cf-admin-fe/composables'
-import ConfirmDialog from '@/components/ConfirmDialog'
+import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
 import {
   defaultExperienceForActivity,

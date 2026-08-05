@@ -9,8 +9,8 @@ import { useI18n } from 'vue-i18n'
 import { toPng } from 'html-to-image'
 import QRCode from 'qrcode'
 import { formatDate } from '@/composables/useFormat'
-import { writeClipboardText } from '@/composables/useClipboard'
-import { useToast } from '@/composables/useToast'
+import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import type { LotteryDraw } from './types'
 
 const POSTER_CACHE_LIMIT = 30

@@ -168,11 +168,11 @@ import { reactive, ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import i18n from '@/i18n'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useAdminAuth } from '@/composables/useAdminAuth'
-import ConfirmDialog from '@/components/ConfirmDialog'
-import { useConfirmDialog } from '@/composables/useConfirmDialog'
-import ConfigField from '@/components/admin/ConfigField.vue'
+import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
+import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
+import ConfigField from '@usethink/cf-admin-fe/components/ConfigField.vue'
 import {
   SYSTEM_CONFIG_SECTIONS,
   getSystemConfigSection,

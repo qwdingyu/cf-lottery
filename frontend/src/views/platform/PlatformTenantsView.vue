@@ -254,11 +254,11 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AdminModal from '@/components/AdminModal'
-import AdminPagination from '@/components/AdminPagination'
+import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
+import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
-import { useTablePagination } from '@/composables/useTablePagination'
-import { useToast } from '@/composables/useToast'
+import { useTablePagination } from '@usethink/cf-admin-fe/composables'
+import { useToast } from '@usethink/cf-admin-fe/composables'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()

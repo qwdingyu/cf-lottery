@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { useAdminBatchOperation } from './useAdminBatchOperation'
+import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 
 describe('useAdminBatchOperation', () => {
   it('tracks progress and returns failed items for a focused retry', async () => {
