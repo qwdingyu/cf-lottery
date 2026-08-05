@@ -130,6 +130,7 @@ if [ "$DO_PACKAGE" = true ]; then
   tar -czf "$PACKAGE" \
     dist/server.js \
     public/ \
+    ecosystem.config.json \
     package.json \
     package-lock.json
   PACKAGE_SIZE=$(du -h "$PACKAGE" | cut -f1)
@@ -150,7 +151,8 @@ else
   echo "   部署:  将 dist/server.js + public/ + package.json + package-lock.json 上传到 VPS"
 fi
 echo "   运行:  PORT=8787 node dist/server.js"
-echo "   守护:  pm2 start dist/server.js --name lottery -- --port 8787"
+echo "   守护:  pm2 start ecosystem.config.json"
+echo "   重启:  pm2 restart lottery"
 echo ""
 if [ "$DO_OBFUSCATE" = false ]; then
   echo "   💡 如需启用代码混淆，重新运行: bash scripts/build-for-vps.sh --obfuscate"

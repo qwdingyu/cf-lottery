@@ -62,4 +62,27 @@ app.use("/*", async (c, next) => {
 
 console.log(`[server] cf-lottery on http://localhost:${PORT}`);
 console.log(`[server] platform: ${process.env.PLATFORM || "local"}`);
-serve({ fetch: app.fetch, port: PORT });
+
+// PM2 / systemd 优雅关闭：SIGINT 时停止接收新连接，等待现有请求完成（最多 20 秒）
+const httpServer = serve({ fetch: app.fetch, port: PORT });
+
+process.on("SIGTERM", () => {
+  console.log("[server] SIGTERM — graceful shutdown");
+  httpServer.close(() => { console.log("[server] closed"); process.exit(0); });
+  setTimeout(() => process.exit(1), 20000);  // 20s 超时强制退出
+});
+
+process.on("SIGINT", () => {
+  console.log("[server] SIGINT — graceful shutdown");
+  httpServer.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 20000);
+});
+
+// 未捕获异常兜底：记录日志后退出（PM2/systemd 自动重启）
+process.on("uncaughtException", (err) => {
+  console.error("[server] uncaughtException:", err);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] unhandledRejection:", reason);
+});
