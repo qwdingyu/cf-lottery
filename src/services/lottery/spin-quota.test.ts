@@ -109,6 +109,13 @@ describe("weightedPickTier", () => {
     expect(weightedPickTier([{ id: "a", weight: 0 }], () => 0.5)).toBeNull();
   });
 
+  it("空池 / 非法 random 仍安全", () => {
+    expect(weightedPickTier([], () => 0.5)).toBeNull();
+    // random 越界夹到 0 → 第一档
+    expect(weightedPickTier([{ id: "a", weight: 3 }], () => 1.5)?.id).toBe("a");
+    expect(weightedPickTier([{ id: "a", weight: 3 }], () => -0.1)?.id).toBe("a");
+  });
+
   it("按权重命中", () => {
     const tiers = [
       { id: "a", weight: 1 },
@@ -117,5 +124,17 @@ describe("weightedPickTier", () => {
     expect(weightedPickTier(tiers, () => 0)?.id).toBe("a");
     expect(weightedPickTier(tiers, () => 0.49)?.id).toBe("a");
     expect(weightedPickTier(tiers, () => 0.5)?.id).toBe("b");
+    // 接近 1 落在最后一档（cursor 耗尽兜底）
+    expect(weightedPickTier(tiers, () => 0.999999)?.id).toBe("b");
+  });
+
+  it("权重比例 1:3 边界", () => {
+    const tiers = [
+      { id: "a", weight: 1 },
+      { id: "b", weight: 3 },
+    ];
+    // total=4；u=0.24 → cursor=0.96 → a；u=0.25 → cursor=1 → 扣 a 后 0 不 <0 → b
+    expect(weightedPickTier(tiers, () => 0.24)?.id).toBe("a");
+    expect(weightedPickTier(tiers, () => 0.25)?.id).toBe("b");
   });
 });
