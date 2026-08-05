@@ -1,0 +1,22 @@
+[Unit]
+Description=cf-lottery 活动引擎
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/cf-lottery
+EnvironmentFile=/opt/cf-lottery/.env
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=3
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cf-lottery
+
+[Install]
+WantedBy=multi-user.target
