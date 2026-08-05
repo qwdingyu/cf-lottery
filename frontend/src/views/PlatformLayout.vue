@@ -8,13 +8,6 @@
           <span class="nav-label">{{ item.label }}</span>
         </a>
       </nav>
-      <div class="sidebar-footer">
-        <div class="sidebar-user">
-          <span class="sidebar-user-avatar">P</span>
-          <span class="sidebar-user-name">{{ $t('adminLayout.admin') }}</span>
-        </div>
-        <button class="btn btn-ghost btn-xs sidebar-logout" @click="handleLogout">{{ $t('adminLayout.logout') }}</button>
-      </div>
     </aside>
     <div class="admin-main">
       <header class="admin-header">
@@ -22,6 +15,10 @@
           <h1 class="admin-header-title">{{ pageTitle }}</h1>
         </div>
         <div class="admin-header-actions">
+          <div class="header-user" :title="$t('adminLayout.admin')">
+            <span class="header-user-avatar" aria-hidden="true">P</span>
+            <span class="header-user-name">{{ $t('adminLayout.admin') }}</span>
+          </div>
           <button class="btn btn-ghost header-logout" type="button" @click="handleLogout">{{ $t('adminLayout.logout') }}</button>
         </div>
       </header>
@@ -184,15 +181,21 @@ function handleLogout() {
 }
 
 .header-logout {
-  padding: 2px 6px;
-  font-size: 11px;
-  border-radius: var(--r-sm, 6px);
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
   color: var(--tg-hint, #9aa4b2);
+  background: transparent;
+  cursor: pointer;
 }
 
 .header-logout:hover {
   color: var(--tg-text, #f0f2f5);
-  background: var(--surface-hover, rgba(255, 255, 255, 0.1));
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .admin-header-actions {
@@ -202,58 +205,47 @@ function handleLogout() {
   flex-shrink: 0;
 }
 
+.header-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 160px;
+  min-width: 0;
+}
+
+.header-user-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--admin-accent, #f59e0b);
+  color: #111;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.header-user-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tg-text, #f0f2f5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .admin-header-left {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.sidebar-footer {
-  padding: 10px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.sidebar-user {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sidebar-user-avatar {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.sidebar-user-name {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.84);
-}
-
-.sidebar-logout {
-  padding: 3px 8px;
-  font-size: 12px;
-  border-radius: 6px;
-  color: rgba(255, 255, 255, 0.64);
-}
-
-.sidebar-logout:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
-}
-
 @media (max-width: 1023px) {
+  .header-user-name {
+    display: none;
+  }
   .admin-sidebar {
     width: 260px;
     transform: translateX(-100%);

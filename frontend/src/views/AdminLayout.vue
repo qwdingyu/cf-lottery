@@ -25,14 +25,6 @@
           <span class="nav-label">{{ $t('adminLayout.menuPlatform') }}</span>
         </RouterLink>
       </nav>
-
-      <div class="sidebar-footer">
-        <div class="sidebar-user">
-          <span class="sidebar-user-avatar">A</span>
-          <span class="sidebar-user-name">{{ $t('adminLayout.admin') }}</span>
-        </div>
-        <button class="btn btn-ghost btn-xs sidebar-logout" @click="handleLogout">{{ $t('adminLayout.logout') }}</button>
-      </div>
     </aside>
 
     <div class="admin-main" :class="{ 'sidebar-open': sidebarOpen }">
@@ -51,6 +43,10 @@
             <option value="zh-CN">{{ $t('adminLayout.langZh') }}</option>
             <option value="en">{{ $t('adminLayout.langEn') }}</option>
           </select>
+          <div class="header-user" :title="$t('adminLayout.admin')">
+            <span class="header-user-avatar" aria-hidden="true">A</span>
+            <span class="header-user-name">{{ $t('adminLayout.admin') }}</span>
+          </div>
           <button
             class="btn btn-ghost header-logout"
             type="button"
@@ -294,23 +290,60 @@ function handleLogout() {
 .lang-select option { background: #1a1a2e; color: #fff; }
 
 .header-logout {
-  padding: 2px 6px;
-  font-size: 11px;
-  border-radius: var(--r-sm, 6px);
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
   color: var(--tg-hint, #9aa4b2);
+  background: transparent;
+  cursor: pointer;
 }
 
 .header-logout:hover {
   color: var(--tg-text, #f0f2f5);
-  background: var(--surface-hover, rgba(255, 255, 255, 0.1));
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
 }
 
-/* ── 右上角操作区（语言切换 + 退出） ── */
+/* ── 右上角操作区（语言 + 用户 + 退出） ── */
 .admin-header-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.header-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 160px;
+  min-width: 0;
+}
+
+.header-user-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--admin-accent, #f59e0b);
+  color: #111;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.header-user-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tg-text, #f0f2f5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lang-select {
@@ -408,54 +441,11 @@ function handleLogout() {
   z-index: 99;
 }
 
-/* ── 侧边栏底部用户区 ── */
-.sidebar-footer {
-  padding: 10px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.sidebar-user {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sidebar-user-avatar {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.sidebar-user-name {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.84);
-}
-
-.sidebar-logout {
-  padding: 3px 8px;
-  font-size: 12px;
-  border-radius: 6px;
-  color: rgba(255, 255, 255, 0.64);
-}
-
-.sidebar-logout:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
-}
-
 /* ── 小屏响应式（< 1024px） ── */
 @media (max-width: 1023px) {
+  .header-user-name {
+    display: none;
+  }
   .admin-sidebar {
     width: 260px;
     transform: translateX(-100%);
