@@ -1474,7 +1474,7 @@ import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useAdminBatchOperation } from '@/composables/useAdminBatchOperation'
-import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue, toErrorMessage } from '@/composables/useFormat'
+import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue, toErrorMessage, resolveBatchToastType } from '@/composables/useFormat'
 import { writeClipboardText } from '@/composables/useClipboard'
 import {
   canEnableDrawNow,
@@ -2944,10 +2944,13 @@ async function batchDeleteDraws() {
     batchCompleted.value = targetIds.length
     if (data.deleted === 0 && data.failed === 0) {
       showToast(t('lottery.adminBatchNothingDone'), 'info')
-    } else if (data.failed > 0) {
-      showToast(t('lottery.adminBatchDeleteResult', { success: data.deleted, failed: data.failed }), 'error')
     } else {
-      showToast(t('lottery.adminBatchDeleteSuccess', { count: data.deleted }), 'success')
+      const batchType = resolveBatchToastType({ success: data.deleted, failed: data.failed })
+      if (batchType === 'error') {
+        showToast(t('lottery.adminBatchDeleteResult', { success: data.deleted, failed: data.failed }), batchType)
+      } else {
+        showToast(t('lottery.adminBatchDeleteSuccess', { count: data.deleted }), batchType)
+      }
     }
   } catch {
     // 旧后端或网络异常：释放 busy 后降级顺序 DELETE（runSequential 自己管 operating）
@@ -2958,10 +2961,13 @@ async function batchDeleteDraws() {
     if (!result) return
     if (result.success === 0 && result.failed === 0) {
       showToast(t('lottery.adminBatchNothingDone'), 'info')
-    } else if (result.failed > 0) {
-      showToast(t('lottery.adminBatchDeleteResult', { success: result.success, failed: result.failed }), 'error')
     } else {
-      showToast(t('lottery.adminBatchDeleteSuccess', { count: result.success }), 'success')
+      const batchType = resolveBatchToastType(result)
+      if (batchType === 'error') {
+        showToast(t('lottery.adminBatchDeleteResult', { success: result.success, failed: result.failed }), batchType)
+      } else {
+        showToast(t('lottery.adminBatchDeleteSuccess', { count: result.success }), batchType)
+      }
     }
   } finally {
     batchOperating.value = false
@@ -3058,10 +3064,11 @@ function toastBatchLifecycle(
     cancel: { ok: 'lottery.adminBatchCancelSuccess', fail: 'lottery.adminBatchCancelResult' },
   } as const
   const keys = map[kind]
-  if (result.failed > 0) {
-    showToast(t(keys.fail, { success: result.success, failed: result.failed }), 'error')
+  const batchType = resolveBatchToastType(result)
+  if (batchType === 'error') {
+    showToast(t(keys.fail, { success: result.success, failed: result.failed }), batchType)
   } else {
-    showToast(t(keys.ok, { count: result.success }), 'success')
+    showToast(t(keys.ok, { count: result.success }), batchType)
   }
 }
 
@@ -3296,7 +3303,11 @@ async function handleCreate() {
         ? form.value.productLink
         : (isEditing.value ? null : undefined),
       // 导流与裂变：buildPromotionConfigPayload 单一真相（docs/114，可单测）
-      promotionConfig: buildPromotionConfigPayload(form.value, { isEditing: isEditing.value }),
+      // instant 时双写 extraSpins*（docs/122）
+      promotionConfig: buildPromotionConfigPayload(
+        { ...form.value, resultMode: form.value.resultMode },
+        { isEditing: isEditing.value },
+      ),
     }
     if (isEditing.value && form.value.id) {
       const current = draws.value.find((d) => d.id === form.value.id)

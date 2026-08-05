@@ -94,12 +94,21 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
       price: String(productSrc?.price || productSrc?.priceText || ''),
     },
     enableViral,
-    viralExtraEntriesPerInvite: Number(viral?.extraEntriesPerInvite) > 0
-      ? Math.floor(Number(viral!.extraEntriesPerInvite))
-      : 1,
-    viralMaxExtraEntries: Number(viral?.maxExtraEntries) > 0
-      ? Math.floor(Number(viral!.maxExtraEntries))
-      : 10,
+    // instant 可能只存 extraSpins*：回填优先 entries，缺省用 spins（docs/122）
+    viralExtraEntriesPerInvite: (() => {
+      const entries = Number(viral?.extraEntriesPerInvite)
+      const spins = Number(viral?.extraSpinsPerInvite)
+      if (Number.isFinite(entries) && entries > 0) return Math.floor(entries)
+      if (Number.isFinite(spins) && spins > 0) return Math.floor(spins)
+      return 1
+    })(),
+    viralMaxExtraEntries: (() => {
+      const entries = Number(viral?.maxExtraEntries)
+      const spins = Number(viral?.maxExtraSpins)
+      if (Number.isFinite(entries) && entries > 0) return Math.floor(entries)
+      if (Number.isFinite(spins) && spins > 0) return Math.floor(spins)
+      return 10
+    })(),
     viralLeaderboardEnabled: viral?.leaderboardEnabled !== false,
     enableAfterWinCta,
     afterWinCtaUrl: String(afterWin?.url || ''),
@@ -130,6 +139,8 @@ export function buildPromotionConfigPayload(form: {
   enableAfterLossCta?: boolean
   afterLossCtaUrl?: string
   afterLossCtaTitle?: string
+  /** instant 时双写 extraSpins*，与 runtime grant 对齐（docs/122） */
+  resultMode?: string | null
 }, opts: { isEditing: boolean }): Record<string, unknown> | undefined {
   const hasProduct = Boolean(form.enableProductLink && form.productLink?.url)
   const hasViral = Boolean(form.enableViral)
@@ -142,6 +153,10 @@ export function buildPromotionConfigPayload(form: {
       ? { version: 1, enabled: false, kind: 'destination', placement: 'after_join' }
       : undefined
   }
+
+  const perInvite = form.viralExtraEntriesPerInvite || 1
+  const maxExtra = form.viralMaxExtraEntries || 10
+  const isInstant = String(form.resultMode || '').trim() === 'instant'
 
   return {
     version: 1,
@@ -163,8 +178,15 @@ export function buildPromotionConfigPayload(form: {
       ? {
           viral: {
             enabled: true,
-            extraEntriesPerInvite: form.viralExtraEntriesPerInvite || 1,
-            maxExtraEntries: form.viralMaxExtraEntries || 10,
+            // 发布预检仍读 extraEntries*；instant runtime 优先 extraSpins*（缺省回退 entries）
+            extraEntriesPerInvite: perInvite,
+            maxExtraEntries: maxExtra,
+            ...(isInstant
+              ? {
+                  extraSpinsPerInvite: perInvite,
+                  maxExtraSpins: maxExtra,
+                }
+              : {}),
             leaderboardEnabled: form.viralLeaderboardEnabled ?? true,
           },
         }

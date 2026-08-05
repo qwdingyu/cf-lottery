@@ -79,8 +79,33 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
         leaderboardEnabled: true,
       },
     })
+    // delayed：不写 extraSpins*（避免误导加权语义）
+    expect((payload as any).viral?.extraSpinsPerInvite).toBeUndefined()
     // 未开商品时不应带 destination
     expect(payload).not.toHaveProperty('destination')
+  })
+
+  it('buildPromotionConfigPayload：instant 裂变双写 extraSpins* 与 extraEntries*', () => {
+    const payload = buildPromotionConfigPayload(
+      {
+        enableViral: true,
+        viralExtraEntriesPerInvite: 2,
+        viralMaxExtraEntries: 5,
+        viralLeaderboardEnabled: true,
+        resultMode: 'instant',
+      },
+      { isEditing: false },
+    )
+    expect(payload).toMatchObject({
+      viral: {
+        enabled: true,
+        extraEntriesPerInvite: 2,
+        maxExtraEntries: 5,
+        extraSpinsPerInvite: 2,
+        maxExtraSpins: 5,
+        leaderboardEnabled: true,
+      },
+    })
   })
 
   it('回填后再提交：只改标题场景等价于 enableViral 仍 true → viral 不丢', () => {

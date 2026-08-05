@@ -740,6 +740,7 @@
                 <div v-if="w.prizeCode" class="result-code-block">
                   <span class="result-code-label">{{ $t('lottery.prizeCodeLabel') }}</span>
                   <code class="result-code" @click="copyMyResult(w.prizeCode!)">{{ w.prizeCode }}</code>
+                  <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
                 </div>
               </div>
             </template>

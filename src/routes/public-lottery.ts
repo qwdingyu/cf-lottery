@@ -9,7 +9,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins } from "../db/schema";
 import { eq, and, count, asc } from "drizzle-orm";
 import {
   getActivityOutcome,
@@ -33,6 +33,7 @@ import {
   hashCode,
   maskIdentity,
   verifyEmailAccessCode,
+  consumeEmailAccessCode,
   tryParseJson,
   escapeHtml,
   hashEventValue,
@@ -1045,18 +1046,57 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
   const identity = await resolveParticipantIdentity(c, draw.participationMode, email);
   if (!identity) return fail(c, "此活动需要登录后抽奖", 401);
 
-  if (identity.identityType === "email" && !bearerEmailVerified) {
-    if (!email || !code) return fail(c, "请输入邮箱和验证码", 400);
-  }
+  // 邮箱身份必须有 email（OTP 可在幂等回放时省略）
   if (identity.identityType === "email" && !email) {
     return fail(c, "请输入邮箱和验证码", 400);
   }
   if (identity.identityType === "email" && !(await checkPublicIdentityRateLimit(db, "spin", draw.id, email, 20, 60000))) {
     return fail(c, "抽奖过于频繁，请稍后再试", 429);
   }
+
+  /**
+   * 幂等回放提前：同 Idempotency-Key 已有 spin 时免 OTP。
+   * 避免「首次成功已核销码 → 弱网重试带同 key 却 400」；新 key 仍须 OTP。
+   */
+  if (idempotencyKey) {
+    const [priorSpin] = await db
+      .select({ id: lotterySpins.id })
+      .from(lotterySpins)
+      .where(and(
+        eq(lotterySpins.tenantId, draw.tenantId),
+        eq(lotterySpins.drawId, draw.id),
+        eq(lotterySpins.idempotencyKey, idempotencyKey),
+      ))
+      .limit(1);
+    if (priorSpin) {
+      // 走 performInstantSpin 统一回放载荷（含码/次数），不再验 OTP、不核销
+      try {
+        const identityValueEarly =
+          identity.identityType === "email" ? email : identity.identityValue;
+        const result = await performInstantSpin(db, {
+          slug,
+          identityType: identity.identityType,
+          identityValue: identityValueEarly,
+          idempotencyKey,
+          ipHash: await hashEventValue(ip),
+        });
+        return ok(c, result);
+      } catch (err) {
+        if (err instanceof SpinBusinessError) {
+          return fail(c, err.message, err.httpStatus);
+        }
+        return fail(c, err instanceof Error ? err.message : "抽奖失败", 400);
+      }
+    }
+  }
+
+  // 弱会话首次 spin：必须 OTP（成功后核销；失败不核销以便改网重试）
+  let otpToConsumeId: string | null = null;
   if (identity.identityType === "email" && !bearerEmailVerified) {
+    if (!code) return fail(c, "请输入邮箱和验证码", 400);
     const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
     if (!validCode) return fail(c, "验证码无效或已过期", 400);
+    otpToConsumeId = validCode.id;
   }
 
   const identityValue = identity.identityType === "email" ? email : identity.identityValue;
@@ -1070,6 +1110,11 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
       idempotencyKey,
       ipHash,
     });
+
+    // 首次成功（含未中）核销 OTP；回放不核销（通常已在上方 early-return）
+    if (otpToConsumeId && !result.replayed) {
+      await consumeEmailAccessCode(db, otpToConsumeId);
+    }
 
     // 中奖邮件：fire-and-forget，失败不回滚 spin；回放不重发（notificationStatus=sent 跳过）
     if (result.won && !result.replayed) {

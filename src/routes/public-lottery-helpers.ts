@@ -153,6 +153,23 @@ export async function verifyEmailAccessCode(
   return validCode || null;
 }
 
+/**
+ * 核销邮箱 OTP（join / spin 成功路径）。
+ * CAS used=0→1，避免并发双核销竞态；幂等回放不应再调用。
+ */
+export async function consumeEmailAccessCode(
+  db: DbType,
+  codeId: string,
+): Promise<boolean> {
+  const id = String(codeId || "").trim();
+  if (!id) return false;
+  const result = await db
+    .update(emailAccessCodes)
+    .set({ used: 1 })
+    .where(and(eq(emailAccessCodes.id, id), eq(emailAccessCodes.used, 0)));
+  return (result.rowsAffected ?? 0) > 0;
+}
+
 /** 安全解析 JSON 字符串 */
 export function tryParseJson(s: string): any {
   try {

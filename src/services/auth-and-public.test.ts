@@ -2308,6 +2308,115 @@ describe("公开 instant spin 路由", () => {
     expect(body.won).toBe(true);
     expect(body.spinsLeft).toBe(1);
     expect(body.spinId).toBeTruthy();
+
+    // 成功后 OTP 已核销：同码再 spin（新幂等键）应 400
+    const reuse = await app.request(
+      `/public/draws/${slug}/spin`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.1.4", "Idempotency-Key": "otp-reuse" },
+        body: JSON.stringify({ email, code: plain }),
+      },
+      SPIN_ENV,
+    );
+    expect(reuse.status).toBe(400);
+    const pending = await db
+      .select()
+      .from(emailAccessCodes)
+      .where(and(
+        eq(emailAccessCodes.email, email),
+        eq(emailAccessCodes.drawId, drawId),
+        eq(emailAccessCodes.used, 0),
+      ));
+    expect(pending.length).toBe(0);
+  });
+
+  it("spin OTP 核销后：同幂等键回放免 OTP；失败不核销可重试", async () => {
+    const app = createPublicTestApp();
+    const { drawId, slug } = await seedOpenInstant({ slug: "spin-otp-consume", maxSpins: 3, codes: 3 });
+    const email = "spin-consume@test.com";
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: email,
+      joinedAt: new Date().toISOString(),
+      spinsLeft: 2,
+      spinsTotalGranted: 2,
+      spinsViralEarned: 0,
+    });
+
+    const plain = await insertOtp(email, drawId, "556677");
+    const first = await app.request(
+      `/public/draws/${slug}/spin`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "10.0.8.1",
+          "Idempotency-Key": "consume-idem-1",
+        },
+        body: JSON.stringify({ email, code: plain }),
+      },
+      SPIN_ENV,
+    );
+    const firstBody = (await first.json()) as { ok?: boolean; spinId?: string; replayed?: boolean };
+    expect(first.status).toBe(200);
+    expect(firstBody.ok).toBe(true);
+    expect(firstBody.spinId).toBeTruthy();
+
+    // 同 key 回放：不需 OTP（码已 used）
+    const replay = await app.request(
+      `/public/draws/${slug}/spin`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "10.0.8.2",
+          "Idempotency-Key": "consume-idem-1",
+        },
+        body: JSON.stringify({ email }),
+      },
+      SPIN_ENV,
+    );
+    const replayBody = (await replay.json()) as {
+      ok?: boolean;
+      spinId?: string;
+      replayed?: boolean;
+      message?: string;
+    };
+    expect(replay.status, replayBody.message).toBe(200);
+    expect(replayBody.ok).toBe(true);
+    expect(replayBody.spinId).toBe(firstBody.spinId);
+    expect(replayBody.replayed).toBe(true);
+
+    // 失败路径不核销：缺幂等键 → 400，OTP 仍可用
+    const plain2 = await insertOtp(email, drawId, "667788");
+    const noKey = await app.request(
+      `/public/draws/${slug}/spin`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.8.3" },
+        body: JSON.stringify({ email, code: plain2 }),
+      },
+      SPIN_ENV,
+    );
+    expect(noKey.status).toBe(400);
+    const stillValid = await app.request(
+      `/public/draws/${slug}/spin`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "10.0.8.4",
+          "Idempotency-Key": "consume-after-fail",
+        },
+        body: JSON.stringify({ email, code: plain2 }),
+      },
+      SPIN_ENV,
+    );
+    expect(stillValid.status).toBe(200);
   });
 
   it("中奖后异步发邮件；同幂等键回放不二次触发新 winner/码", async () => {
