@@ -1,11 +1,12 @@
 /**
  * 格式化工具：日期时间 + 管理端错误/批量 toast 兼容 re-export。
  *
- * docs/123：AdminLotteryView 从本模块 import toErrorMessage / resolveBatchToastType，
- * 实现在 @usethink/cf-admin-fe；此处 re-export 降低 import 噪音并保证 frontend:build 可解析。
+ * docs/123：AdminLotteryView 从本模块 import toErrorMessage / resolveBatchToastType。
+ * 必须从 `@usethink/cf-admin-fe/utils` re-export（纯 TS），勿从包根入口引入——
+ * 根入口会连带 export .vue 组件，vitest 无 plugin-vue 时 ops-utils 等纯函数测试会炸。
  * 勿在本文件复制实现，避免与 kit 分叉。
  */
-export { toErrorMessage, resolveBatchToastType } from '@usethink/cf-admin-fe'
+export { toErrorMessage, resolveBatchToastType } from '@usethink/cf-admin-fe/utils'
 
 /** 格式化 ISO 时间为本地可读字符串 */
 export function formatDate(iso?: string | null): string {
