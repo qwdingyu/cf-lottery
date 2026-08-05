@@ -56,6 +56,11 @@
       </header>
 
       <main class="admin-content">
+        <!-- 非 L3 手输 /platform 被拒后带回：一次说明，不渲染平台空壳 -->
+        <div v-if="notPlatformBanner" class="access-denied-banner" role="status">
+          <span>{{ $t('adminLayout.notPlatformMember') }}</span>
+          <button class="btn btn-ghost btn-xs" type="button" @click="dismissNotPlatformBanner">{{ $t('adminLayout.dismiss') }}</button>
+        </div>
         <RouterView v-slot="{ Component }">
           <transition name="admin-fade" mode="out-in">
             <component :is="Component" />
@@ -74,12 +79,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { switchLanguage } from '@/i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
-import { readPlatformRole, isImpersonating, clearImpersonation } from '@/composables/useAdminAuth'
+import {
+  ensurePlatformRole,
+  isImpersonating,
+  clearImpersonation,
+  readAdminToken,
+  readPlatformRole,
+} from '@/composables/useAdminAuth'
+import { isActivePlatformRole } from '@/composables/platform-access'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 
 const route = useRoute()
@@ -87,9 +99,28 @@ const router = useRouter()
 const { t, locale } = useI18n()
 const { clearToken } = useAdminAuth()
 const { showToast } = useToast()
-const isPlatformMember = ref(!!readPlatformRole())
+/** L3 入口：缓存 + 挂载时 ensure；仅活跃角色显示 */
+const isPlatformMember = ref(isActivePlatformRole(readPlatformRole()))
 // 模拟登录态（L3→L2 路径）：挂载时读取；模拟会话存在时显示横幅 + 返回平台按钮
 const impersonating = ref(isImpersonating())
+const notPlatformBanner = ref(false)
+
+function dismissNotPlatformBanner() {
+  notPlatformBanner.value = false
+  if (route.query.reason === 'not_platform') {
+    const q = { ...route.query }
+    delete q.reason
+    void router.replace({ path: route.path, query: q })
+  }
+}
+
+watch(
+  () => route.query.reason,
+  (reason) => {
+    if (reason === 'not_platform') notPlatformBanner.value = true
+  },
+  { immediate: true },
+)
 
 /** 语言切换：模板内 $event.target 在 vue-tsc 下可能为 null，收口到 handler */
 function onLanguageChange(event: Event) {
@@ -123,6 +154,16 @@ onMounted(() => {
   mql = window.matchMedia('(max-width: 1023px)')
   onMqChange(mql)
   mql.addEventListener('change', onMqChange)
+  // 会话恢复 / 旧登录未写 platform_role：补一次 resolve，再决定「平台运营」入口
+  void (async () => {
+    const token = readAdminToken()
+    if (!token) {
+      isPlatformMember.value = false
+      return
+    }
+    const role = await ensurePlatformRole(token)
+    isPlatformMember.value = isActivePlatformRole(role ?? readPlatformRole())
+  })()
 })
 
 onUnmounted(() => {

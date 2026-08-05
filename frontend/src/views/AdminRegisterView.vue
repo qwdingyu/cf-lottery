@@ -125,11 +125,10 @@ async function handleVerify() {
     const data = await res.json() as any
     if (data.ok) {
       setToken(data.token)
-      // 注册成功后获取平台角色缓存
-      fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${data.token}` } })
-        .then(r => r.json())
-        .then(d => { if (d.ok) setPlatformRole(d.platformRole ?? null, data.token) })
-        .catch(() => {})
+      // docs/125：用 /api/auth/me 解析 L3（不绑租户）；失败不阻塞 onboarding
+      const { ensurePlatformRole } = await import('@/composables/useAdminAuth')
+      const role = await ensurePlatformRole(data.token, { force: true })
+      if (role !== undefined) setPlatformRole(role, data.token)
       // ★ 045 方案 C：新注册用户无租户（needsTenant=true），引导 onboarding 创建租户
       if (data.needsTenant) {
         router.replace({ name: 'Onboarding' })

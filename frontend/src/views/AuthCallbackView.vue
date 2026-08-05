@@ -41,7 +41,7 @@ const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const { showToast } = useToast()
-const { setToken } = useAdminAuth()
+const { setToken, setPlatformRole } = useAdminAuth()
 
 const status = ref<'working' | 'ok' | 'error'>('working')
 const error = ref('')
@@ -100,6 +100,10 @@ onMounted(async () => {
     }
     // 1) 管理端 localStorage admin_token（JWT.sub 已是本地 users.id，create-tenant 可用）
     setToken(data.token)
+    // 1b) docs/125：解析 L3 角色（/api/auth/me）；失败不阻塞回跳，守卫 fail-closed
+    const { ensurePlatformRole } = await import('@/composables/useAdminAuth')
+    const platformRole = await ensurePlatformRole(data.token, { force: true })
+    if (platformRole !== undefined) setPlatformRole(platformRole, data.token)
     // 2) 参与端 sessionStorage：registered_token + session email（公开 Bearer 路径）
     applyCfAuthSessionToLottery(sessionStorage, {
       token: data.token,

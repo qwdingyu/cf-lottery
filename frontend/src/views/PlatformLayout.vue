@@ -1,43 +1,64 @@
 <template>
+  <!--
+    docs/125：壳仅在路由守卫已 allow 后挂载。
+    仍做纵深：未知/非 L3 不渲染菜单与 RouterView，只显示门禁态。
+  -->
   <div class="admin-layout">
-    <aside class="admin-sidebar sidebar-open">
-      <div class="sidebar-brand">{{ $t('platformLayout.title') }}</div>
-      <nav class="sidebar-nav">
-        <a v-for="item in menuItems" :key="item.to" class="nav-item" :class="{ active: currentName === item.name }" :href="item.to" @click.prevent="onNavClick(item.to)">
-          <span class="nav-icon">{{ item.icon }}</span>
-          <span class="nav-label">{{ item.label }}</span>
-        </a>
-      </nav>
-    </aside>
-    <div class="admin-main">
-      <header class="admin-header">
-        <div class="admin-header-left">
-          <h1 class="admin-header-title">{{ pageTitle }}</h1>
-        </div>
-        <div class="admin-header-actions">
-          <div class="header-user" :title="$t('adminLayout.admin')">
-            <span class="header-user-avatar" aria-hidden="true">P</span>
-            <span class="header-user-name">{{ $t('adminLayout.admin') }}</span>
+    <template v-if="gateState === 'ready'">
+      <aside class="admin-sidebar sidebar-open">
+        <div class="sidebar-brand">{{ $t('platformLayout.title') }}</div>
+        <nav class="sidebar-nav">
+          <a v-for="item in menuItems" :key="item.to" class="nav-item" :class="{ active: currentName === item.name }" :href="item.to" @click.prevent="onNavClick(item.to)">
+            <span class="nav-icon">{{ item.icon }}</span>
+            <span class="nav-label">{{ item.label }}</span>
+          </a>
+        </nav>
+      </aside>
+      <div class="admin-main">
+        <header class="admin-header">
+          <div class="admin-header-left">
+            <h1 class="admin-header-title">{{ pageTitle }}</h1>
           </div>
-          <button class="btn btn-ghost header-logout" type="button" @click="handleLogout">{{ $t('adminLayout.logout') }}</button>
-        </div>
-      </header>
-      <main class="admin-content">
-        <RouterView v-slot="{ Component }">
-          <transition name="admin-fade" mode="out-in">
-            <component :is="Component" />
-          </transition>
-        </RouterView>
-      </main>
+          <div class="admin-header-actions">
+            <RouterLink class="btn btn-ghost header-logout" to="/admin">{{ $t('platformLayout.backToTenant') }}</RouterLink>
+            <div class="header-user" :title="$t('adminLayout.admin')">
+              <span class="header-user-avatar" aria-hidden="true">P</span>
+              <span class="header-user-name">{{ $t('adminLayout.admin') }}</span>
+            </div>
+            <button class="btn btn-ghost header-logout" type="button" @click="handleLogout">{{ $t('adminLayout.logout') }}</button>
+          </div>
+        </header>
+        <main class="admin-content">
+          <RouterView v-slot="{ Component }">
+            <transition name="admin-fade" mode="out-in">
+              <component :is="Component" />
+            </transition>
+          </RouterView>
+        </main>
+      </div>
+    </template>
+    <div v-else class="platform-gate" role="status" aria-live="polite">
+      <p v-if="gateState === 'checking'">{{ $t('platformLayout.checkingAccess') }}</p>
+      <p v-else>{{ $t('platformLayout.accessDenied') }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useAdminAuth } from '@/composables/useAdminAuth'
+import {
+  ensurePlatformRole,
+  readAdminToken,
+  readPlatformRole,
+  useAdminAuth,
+} from '@/composables/useAdminAuth'
+import {
+  isActivePlatformRole,
+  platformAccessDeniedTarget,
+  resolvePlatformRouteGate,
+} from '@/composables/platform-access'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 
 const route = useRoute()
@@ -45,6 +66,9 @@ const router = useRouter()
 const { t } = useI18n()
 const { clearToken } = useAdminAuth()
 const { showToast } = useToast()
+
+/** checking | ready | denied — 默认 checking，避免闪一下完整菜单 */
+const gateState = ref<'checking' | 'ready' | 'denied'>('checking')
 
 /** 平台运营后台菜单（仅 L3 功能） */
 const menuItems = computed(() => [
@@ -73,6 +97,45 @@ function handleLogout() {
   showToast(t('adminLayout.loggedOut'), 'success')
   router.replace('/admin/login')
 }
+
+function jwtHasTenant(token: string): boolean {
+  try {
+    const payloadB64 = token.split('.')[1]
+    if (!payloadB64) return false
+    const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof payload.tenantId === 'string' && payload.tenantId.length > 0
+  } catch {
+    return false
+  }
+}
+
+onMounted(() => {
+  void (async () => {
+    const token = readAdminToken()
+    if (!token) {
+      gateState.value = 'denied'
+      void router.replace({ name: 'AdminLogin', query: { redirect: route.fullPath } })
+      return
+    }
+    let cached = readPlatformRole()
+    let gate = resolvePlatformRouteGate(cached)
+    if (gate.action === 'resolve') {
+      const resolved = await ensurePlatformRole(token)
+      cached = resolved === undefined ? readPlatformRole() : resolved
+      gate = resolvePlatformRouteGate(
+        isActivePlatformRole(cached) ? cached : cached === undefined ? null : cached,
+      )
+      if (resolved === undefined && cached === undefined) gate = { action: 'deny' }
+    }
+    if (gate.action === 'allow') {
+      gateState.value = 'ready'
+      return
+    }
+    gateState.value = 'denied'
+    const denied = platformAccessDeniedTarget(jwtHasTenant(token))
+    void router.replace({ name: denied.name, query: denied.query })
+  })()
+})
 </script>
 
 <style scoped>
@@ -240,6 +303,16 @@ function handleLogout() {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.platform-gate {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 14px;
 }
 
 @media (max-width: 1023px) {

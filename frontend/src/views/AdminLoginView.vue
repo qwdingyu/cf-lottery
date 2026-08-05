@@ -198,25 +198,14 @@ function redirectAfterLogin() {
 }
 
 /**
- * 登录/注册成功后，异步获取平台角色信息并缓存到 localStorage。
- * 这个调用不阻塞页面跳转——如果失败（非平台成员），platformRole 被设为 null，
- * 下次访问 /platform/* 路由时守卫会拦住。
+ * 登录/注册成功后解析 L3 角色并缓存（docs/125）。
+ * 使用 /api/auth/me（仅 requireAuth），无租户的平台成员也能写缓存；
+ * 网络未决不固化 null，由路由守卫 fail-closed 拒壳。
  */
 async function fetchPlatformRole(token: string) {
-  try {
-    const res = await fetch('/api/admin/me', {
-      headers: { 'Authorization': `Bearer ${token}` },
-    })
-    const data = await res.json()
-    if (data.ok) {
-      setPlatformRole(data.platformRole ?? null, token)
-    } else {
-      setPlatformRole(null, token)
-    }
-  } catch {
-    // 网络异常时不写入 null，保留 undefined 状态让路由守卫放行
-    // （PlatformLayout 内部会展示错误提示）
-  }
+  const { ensurePlatformRole } = await import('@/composables/useAdminAuth')
+  const role = await ensurePlatformRole(token, { force: true })
+  if (role !== undefined) setPlatformRole(role, token)
 }
 
 async function handleLogin() {

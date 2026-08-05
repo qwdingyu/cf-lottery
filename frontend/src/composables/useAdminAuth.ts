@@ -5,6 +5,7 @@ import {
   PLATFORM_ROLE_KEY,
   clearFullBusinessBrowserSession,
 } from './business-session'
+import { normalizePlatformRoleFromApi } from './platform-access'
 
 const TOKEN_KEY = ADMIN_TOKEN_KEY
 // 模拟登录会话独立 key（L3→L2 路径）：
@@ -92,6 +93,64 @@ export function readPlatformRole(): string | null | undefined {
   return undefined
 }
 
+/**
+ * 写入平台角色缓存（与当前 admin token 绑定）。
+ * 供登录流、路由守卫、布局共用，避免各处手写 localStorage 分叉。
+ */
+export function writePlatformRole(role: string | null, tokenRef: string): void {
+  try {
+    localStorage.setItem(PLATFORM_ROLE_KEY, JSON.stringify({ value: role, tokenRef }))
+  } catch { /* 隐私模式等 */ }
+}
+
+/**
+ * 向服务端解析当前用户是否为活跃 L3，并写入缓存。
+ *
+ * 为何用 /api/auth/me 而非 /api/admin/me：
+ * - admin/me 挂 requireTenantMember，无租户的 L3 会 403，角色永远写不进缓存
+ * - auth/me 仅 requireAuth，L3/L2 均可解析 platformRole
+ *
+ * @returns 活跃角色字符串 | null（确认非 L3）| undefined（网络等未决，不写死 null）
+ */
+export async function ensurePlatformRole(
+  token: string,
+  options?: { fetchImpl?: typeof fetch; force?: boolean },
+): Promise<string | null | undefined> {
+  if (!token) return null
+  if (!options?.force) {
+    const cached = readPlatformRole()
+    // 已与 token 绑定的缓存（含 null）直接返回，避免重复打 me
+    if (cached !== undefined) return cached
+  }
+
+  const fetchImpl = options?.fetchImpl ?? fetch
+  try {
+    const res = await fetchImpl('/api/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const data = (await res.json().catch(() => (null))) as {
+      ok?: boolean
+      platformRole?: string | null
+      message?: string
+    } | null
+
+    if (res.status === 401) {
+      writePlatformRole(null, token)
+      return null
+    }
+    if (!res.ok || !data?.ok) {
+      // 非 401 失败：不固化 null，允许重试；平台路由仍按 fail-closed 拒壳
+      return undefined
+    }
+
+    const role = normalizePlatformRoleFromApi(data.platformRole)
+    writePlatformRole(role, token)
+    return role
+  } catch {
+    return undefined
+  }
+}
+
 /** 管理端登录态：基于 localStorage 的轻量实现，session token 含8小时过期 */
 export function useAdminAuth() {
   const token = ref<string>(readAdminToken())
@@ -107,11 +166,13 @@ export function useAdminAuth() {
     localStorage.setItem(TOKEN_KEY, JSON.stringify(stored))
     // 新登录/切换身份后清除残留的模拟态，避免旧模拟会话影响新会话
     clearImpersonation()
+    // token 已变：旧 platform_role 的 tokenRef 失效；ref 置 unknown，等 ensure 再填
+    platformRole.value = undefined
   }
 
   function setPlatformRole(role: string | null, tokenRef: string) {
     platformRole.value = role
-    localStorage.setItem(PLATFORM_ROLE_KEY, JSON.stringify({ value: role, tokenRef }))
+    writePlatformRole(role, tokenRef)
   }
 
   /**
@@ -147,5 +208,17 @@ export function useAdminAuth() {
     clearToken,
     isImpersonating,
     clearImpersonation,
+    /** 布局/登录后刷新 L3 缓存并同步本实例 ref */
+    async refreshPlatformRole(opts?: { force?: boolean }) {
+      const t = token.value || readAdminToken()
+      if (!t) {
+        platformRole.value = null
+        return null
+      }
+      const role = await ensurePlatformRole(t, { force: opts?.force })
+      if (role !== undefined) platformRole.value = role
+      else platformRole.value = readPlatformRole()
+      return role
+    },
   }
 }

@@ -13,7 +13,7 @@ import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, isValidEmail } from "../lib/http";
 import { withDbTransaction } from "../db/client";
-import { users, tenantMembers, tenants, emailAccessCodes, systemConfig } from "../db/schema";
+import { users, tenantMembers, tenants, emailAccessCodes, systemConfig, platformMembers } from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
 import { signJwt } from "../middleware/auth";
@@ -456,6 +456,56 @@ authRoute.post("/create-tenant", requireAuth, async (c) => {
 /** 注销 */
 authRoute.post("/logout", async (c) => {
   return c.json({ ok: true, message: "已注销" });
+});
+
+/**
+ * 当前登录用户身份（仅 requireAuth，不要求租户成员）。
+ *
+ * 用途：
+ * - 前端 L3 门禁 resolve（docs/125）：无租户的平台成员也能读到 platformRole
+ * - 与 /api/admin/me 分工：admin/me 仍绑租户上下文与用量；本接口只回答「谁 + 是否 L3」
+ *
+ * platformRole：活跃 platform_members.role；非成员或 disabled → null
+ */
+authRoute.get("/me", requireAuth, async (c) => {
+  const db = getDb(c);
+  const userId = c.get("userId") as string;
+  const jwtTenantId = (c.get("tenantId") as string) || "";
+
+  const [user] = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+      status: users.status,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!user) {
+    return c.json({ ok: false, message: "用户不存在" }, 404);
+  }
+
+  const [platformMember] = await db
+    .select({ role: platformMembers.role, status: platformMembers.status })
+    .from(platformMembers)
+    .where(eq(platformMembers.userId, userId))
+    .limit(1);
+
+  const platformRole =
+    platformMember?.status === "active" ? platformMember.role : null;
+
+  return c.json({
+    ok: true,
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+    },
+    tenantId: jwtTenantId || null,
+    platformRole,
+  });
 });
 
 /**

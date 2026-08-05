@@ -9,8 +9,15 @@ import AdminRegisterView from '@/views/AdminRegisterView.vue'
 import AdminLayout from '@/views/AdminLayout.vue'
 import PlatformLayout from '@/views/PlatformLayout.vue'
 import LandingView from '@/views/LandingView.vue'
-import { readAdminToken } from '@/composables/useAdminAuth'
-import { readPlatformRole } from '@/composables/useAdminAuth'
+import {
+  ensurePlatformRole,
+  readAdminToken,
+  readPlatformRole,
+} from '@/composables/useAdminAuth'
+import {
+  platformAccessDeniedTarget,
+  resolvePlatformRouteGate,
+} from '@/composables/platform-access'
 
 /**
  * 从 JWT payload 解析 tenantId。
@@ -223,16 +230,26 @@ router.beforeEach((to) => {
     return { name: 'Onboarding', replace: true }
   }
 
-  // 平台路由额外要求平台成员身份。readPlatformRole() 返回 undefined 表示
-  // 尚未从 API 获取（登录流程中会异步填充），此时允许通过但不渲染内容，
-  // 由 PlatformLayout 自行处理 loading 状态。
+  // 平台路由：fail-closed（docs/125）。
+  // 旧逻辑在 platformRole===undefined 时放行 → 非 L3 手输 URL 能看到完整壳+菜单+空表，仅 API 403。
+  // 现：未知必须先 ensure；非活跃角色硬拒；未决网络错误也拒壳（避免「看得见菜单」）。
   if (isPlatformRoute && adminToken) {
-    const platRole = readPlatformRole()
-    if (platRole === null) {
-      // 已确认非平台成员，跳回租户后台首页
-      return { name: 'AdminDashboard', replace: true }
-    }
-    // platRole === undefined 或 platRole === string 都放行
+    return (async () => {
+      let cached = readPlatformRole()
+      let gate = resolvePlatformRouteGate(cached)
+      if (gate.action === 'resolve') {
+        const resolved = await ensurePlatformRole(adminToken)
+        cached = resolved === undefined ? readPlatformRole() : resolved
+        gate = resolvePlatformRouteGate(cached === undefined ? null : cached)
+        // 网络未决：仍按 deny 处理壳（fail-closed）；不写死 null 缓存，下次可重试
+        if (resolved === undefined && cached === undefined) {
+          gate = { action: 'deny' }
+        }
+      }
+      if (gate.action === 'allow') return true
+      const denied = platformAccessDeniedTarget(!!jwtTenantId(adminToken))
+      return { name: denied.name, query: denied.query, replace: true }
+    })()
   }
 
   if (requiresGuest && adminToken) {
