@@ -1475,7 +1475,7 @@ import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue, toErrorMessage, resolveBatchToastType } from '@/composables/useFormat'
-import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
+import { copyWithToast, writeClipboardText } from '@usethink/cf-admin-fe/composables'
 import {
   canEnableDrawNow,
   draftPublishBlockerSnippet,
@@ -2443,12 +2443,10 @@ function publicShareUrl(drawId: string): string {
 }
 
 async function handleCopyShareLink(draw: LotteryDraw) {
-  try {
-    await writeClipboardText(publicShareUrl(draw.publicSlug))
-    showToast(t('lottery.adminLinkCopied'), 'success')
-  } catch {
-    showToast(t('lottery.adminLinkCopyFailed'), 'error')
-  }
+  await copyWithToast(publicShareUrl(draw.publicSlug), {
+    successMessage: t('lottery.adminLinkCopied'),
+    errorMessage: t('lottery.adminLinkCopyFailed'),
+  })
 }
 
 /** 新标签打开用户端活动页，便于运营自检 */
@@ -2466,12 +2464,10 @@ function isManualWinnerPrize(w: LotteryWinner): boolean {
 async function copyWinnerCode(w: LotteryWinner) {
   const text = String(w.prizeCode || w.cardAccountLabel || '').trim()
   if (!text) return
-  try {
-    await writeClipboardText(text)
-    showToast(t('lottery.copied'), 'success')
-  } catch {
-    showToast(t('lottery.networkError'), 'error')
-  }
+  await copyWithToast(text, {
+    successMessage: t('lottery.copied'),
+    errorMessage: t('lottery.networkError'),
+  })
 }
 
 function handleExportWinners() {
