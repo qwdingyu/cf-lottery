@@ -26,6 +26,8 @@
     "verify:delivery": "npm run type-check && npm run test && npm run frontend:build",
     "build:vps": "bash scripts/build-for-vps.sh",
     "build:vps:obfuscate": "bash scripts/build-for-vps.sh --obfuscate",
+    "build:vps:package": "bash scripts/build-for-vps.sh --package",
+    "build:vps:all": "bash scripts/build-for-vps.sh --obfuscate --package",
     "deploy:vps": "bash scripts/deploy-to-vps.sh"
   },
   "dependencies": {
@@ -42,6 +44,7 @@
     "@cloudflare/workers-types": "5.20260726.1",
     "@vitest/coverage-v8": "4.1.7",
     "drizzle-kit": "^0.31.10",
+    "javascript-obfuscator": "^5.5.0",
     "typescript": "5.7.3",
     "vite": "6.4.3",
     "vitest": "4.1.7",

@@ -28,16 +28,28 @@
 #   标记为 external 后，VPS 上通过 npm ci --omit=dev 安装。
 #
 # 用法：
-#   bash scripts/build-for-vps.sh              # 编译 + minify
-#   bash scripts/build-for-vps.sh --obfuscate  # 编译 + minify + 混淆
+#   bash scripts/build-for-vps.sh                # 编译 + minify
+#   bash scripts/build-for-vps.sh --obfuscate    # 编译 + minify + 混淆
+#   bash scripts/build-for-vps.sh --package      # 编译 + 打包 tar.gz
+#   bash scripts/build-for-vps.sh --obfuscate --package  # 全部
+#
+# 产出物：
+#   dist/server.js         后端单文件 bundle（esbuild 编译+minify）
+#   public/                前端静态资源（npm run frontend:build）
+#   deploy-YYYYMMDD-HHMMSS.tar.gz  VPS 部署包（--package）
+#     内含：dist/server.js  public/  package.json  package-lock.json
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 DO_OBFUSCATE=false
+DO_PACKAGE=false
 for arg in "$@"; do
-  case "$arg" in --obfuscate) DO_OBFUSCATE=true ;; esac
+  case "$arg" in
+    --obfuscate) DO_OBFUSCATE=true ;;
+    --package)   DO_PACKAGE=true ;;
+  esac
 done
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -111,16 +123,38 @@ else
   warn "跳过混淆（使用 --obfuscate 启用）"
 fi
 
+# ── 步骤 5：（可选）打包 tar.gz ──
+if [ "$DO_PACKAGE" = true ]; then
+  info "步骤 5/5：打包部署包..."
+  PACKAGE="deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
+  tar -czf "$PACKAGE" \
+    dist/server.js \
+    public/ \
+    package.json \
+    package-lock.json
+  PACKAGE_SIZE=$(du -h "$PACKAGE" | cut -f1)
+  info "打包完成 → $PACKAGE ($PACKAGE_SIZE)"
+else
+  warn "跳过打包（使用 --package 生成 tar.gz）"
+fi
+
 # ── 产出物清单 ──
 echo ""
 info "✅ VPS 构建完成"
 echo "   后端:  dist/server.js"
 echo "   前端:  public/"
-echo "   部署:  将 dist/server.js + public/ + package.json + package-lock.json 上传到 VPS"
-echo "   安装:  npm ci --omit=dev"
+if [ "$DO_PACKAGE" = true ]; then
+  echo "   部署包: $PACKAGE"
+  echo "   部署:  scp $PACKAGE user@vps:/opt/lottery/ && ssh user@vps 'cd /opt/lottery && tar -xzf $PACKAGE && npm ci --omit=dev'"
+else
+  echo "   部署:  将 dist/server.js + public/ + package.json + package-lock.json 上传到 VPS"
+fi
 echo "   运行:  PORT=8787 node dist/server.js"
 echo "   守护:  pm2 start dist/server.js --name lottery -- --port 8787"
 echo ""
 if [ "$DO_OBFUSCATE" = false ]; then
   echo "   💡 如需启用代码混淆，重新运行: bash scripts/build-for-vps.sh --obfuscate"
+fi
+if [ "$DO_PACKAGE" = false ]; then
+  echo "   💡 如需打包 tar.gz，重新运行: bash scripts/build-for-vps.sh --package"
 fi
