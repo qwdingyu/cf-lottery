@@ -54,7 +54,9 @@ npx tsc --noEmit
 info "tsc 通过"
 
 # ── 步骤 2：前端构建 ──
-info "步骤 2/4：构建前端..."
+# 清理上次构建累积的旧产物（Vite 未启用 emptyOutDir，每次都累加）
+info "步骤 2/4：构建前端（先清理旧产物）..."
+rm -rf public/assets
 npm run frontend:build
 info "前端构建完成 → public/"
 
