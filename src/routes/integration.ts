@@ -140,10 +140,6 @@ integrationRoute.post("/events", async (c) => {
   const apiKey = await authenticateApiKey(db, readApiKey(c));
   if (!apiKey) return fail(c, "API Key 无效", 401);
 
-  if (!(await checkDbRateLimit(db, `integration:${apiKey.id}`, INTEGRATION_EVENT_LIMIT, INTEGRATION_EVENT_WINDOW_MS))) {
-    return fail(c, "调用过于频繁，请稍后再试", 429);
-  }
-
   const body = await c.req.json<{
     event?: string;
     payload?: Record<string, unknown>;
@@ -160,7 +156,8 @@ integrationRoute.post("/events", async (c) => {
   if (!idempotencyKey) return fail(c, "请提供 idempotencyKey", 400);
   const payload = body.payload || {};
 
-  // ── 幂等：同一 API key 的同一 idempotencyKey 只处理一次 ──
+  // ── 幂等检查（先于限流，避免 Webhook 重试请求被误限流） ──
+  // 机器人重报、中转站 Webhook 投递重试、事件回传重试都不应消耗限流配额。
   const existing = await db
     .select({ id: activityEvents.id })
     .from(activityEvents)
@@ -172,6 +169,11 @@ integrationRoute.post("/events", async (c) => {
     .limit(1);
   if (existing.length > 0) {
     return ok(c, { handled: false, reason: "idempotencyKey 已处理" });
+  }
+
+  // ── 限流（幂等之后，只消耗"新事件"的配额） ──
+  if (!(await checkDbRateLimit(db, `integration:${apiKey.id}`, INTEGRATION_EVENT_LIMIT, INTEGRATION_EVENT_WINDOW_MS))) {
+    return fail(c, "调用过于频繁，请稍后再试", 429);
   }
 
   // ── 处理 member.left_group ──

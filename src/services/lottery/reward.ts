@@ -75,10 +75,13 @@ export async function triggerRewardEarned(
     return { triggered: false, reason: "no_reward_config", sharerEntryId, deliveryIds: [] };
   }
 
-  // 每个配额门槛用 Math.max(1, ...) 防御：配置为 0 或负数时降级为 1（至少允许 1 次），
-  // 避免"配置了 reward 但因为配额为 0 永远不触发"的静默故障。
-  const perUserPerDay = Math.max(1, Number(config?.quota?.perUserPerDay || 1));
-  const globalPerDay = Math.max(1, Number(config?.quota?.globalPerDay || 100));
+  // 每个配额门槛单独提取，与活动配置的 JSON 字段一一对应，
+  // 避免 `x || default` 将配置值 0（关闭限制）误当作 falsy 跳过。
+  // 关闭限制用 -1 或 0 表示"无限"，通过 Math.max(1, ...) 防御非正值。
+  const rawPerUserDay = config?.quota?.perUserPerDay;
+  const rawGlobalDay = config?.quota?.globalPerDay;
+  const perUserPerDay = rawPerUserDay != null ? Math.max(1, Number(rawPerUserDay)) : 1;
+  const globalPerDay = rawGlobalDay != null ? Math.max(1, Number(rawGlobalDay)) : 1;
 
   // 配额校验 1：邀请人（奖励受益人）每天最多 perUserPerDay 次。
   //
