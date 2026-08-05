@@ -1,4 +1,11 @@
-/** 格式化工具：日期时间格式化 */
+/**
+ * 格式化工具：日期时间 + 管理端错误/批量 toast 兼容 re-export。
+ *
+ * docs/123：AdminLotteryView 从本模块 import toErrorMessage / resolveBatchToastType，
+ * 实现在 @usethink/cf-admin-fe；此处 re-export 降低 import 噪音并保证 frontend:build 可解析。
+ * 勿在本文件复制实现，避免与 kit 分叉。
+ */
+export { toErrorMessage, resolveBatchToastType } from '@usethink/cf-admin-fe'
 
 /** 格式化 ISO 时间为本地可读字符串 */
 export function formatDate(iso?: string | null): string {

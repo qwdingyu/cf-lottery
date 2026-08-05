@@ -8,6 +8,7 @@ import {
   createDraw,
   publishDraw,
   performDraw,
+  processDueDraws,
   joinDraw,
   getDraw,
   getDrawWinners,
@@ -381,6 +382,130 @@ describe("开奖核心流程", () => {
     // 已开奖活动再次开奖，返回实际中奖人数
     expect(result.winnerCount).toBeGreaterThanOrEqual(0);
     expect(result.candidateCount).toBeGreaterThanOrEqual(0);
+  });
+
+  /**
+   * docs/117 P0-2 / docs/123：Cron 纵深过滤 resultMode=instant。
+   * 即使库内误配 draw_trigger=scheduled 且 draw_at 已到期，processDueDraws 也不得 performDraw。
+   * performDraw 自身仍硬拒绝（双保险）。
+   */
+  it("processDueDraws 排除 resultMode=instant（误配 scheduled+到期也不抽）", async () => {
+    const now = Date.now();
+    const startAt = new Date(now - 3 * 3600000).toISOString();
+    const endAt = new Date(now - 2 * 3600000).toISOString();
+    const drawAtPast = new Date(now - 60000).toISOString();
+
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "instant 误配 scheduled",
+      startAt,
+      endAt: new Date(now + 3600000).toISOString(), // 创建时 end 须在未来；发布后再改时间窗
+      participationMode: "open",
+      activityKind: "lottery",
+      experienceType: "wheel",
+      resultMode: "instant",
+      maxSpinsPerEntry: 1,
+      winnerCount: 1,
+    });
+
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeId, TENANT, "Cron拒instant奖", "code", 3, 1],
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      prizeId,
+      tierName: "一等奖",
+      winnerCount: 1,
+      sortOrder: 1,
+      weight: 100,
+    });
+    for (let i = 0; i < 3; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeId, `CRON-INST-${i}`, "available"],
+      });
+    }
+    await publishDraw(db, TENANT, id);
+
+    // 模拟脏数据/历史误配：instant 活动被写成 scheduled 且 draw_at 已过
+    await client.execute({
+      sql: `UPDATE lottery_draws
+            SET draw_trigger = 'scheduled', draw_at = ?, start_at = ?, end_at = ?, status = 'open'
+            WHERE id = ? AND tenant_id = ?`,
+      args: [drawAtPast, startAt, endAt, id, TENANT],
+    });
+
+    const joined = await joinDraw(db, publicSlug, "cron-instant@test.com");
+    // end_at 已过：join 可能失败；若失败则直接插 entry，保证候选池非空（测 Cron 而非 join 闸门）
+    if (!joined.joined) {
+      await client.execute({
+        sql: `INSERT INTO lottery_entries (
+          id, tenant_id, draw_id, identity_type, identity_value,
+          spins_left, spins_total_granted, spins_viral_earned, joined_at
+        ) VALUES (?, ?, ?, 'email', ?, 1, 1, 0, ?)`,
+        args: [crypto.randomUUID(), TENANT, id, "cron-instant@test.com", new Date().toISOString()],
+      });
+    }
+
+    const cron = await processDueDraws(db, { limit: 20 });
+    expect(cron.processed).toBe(0);
+    expect(cron.failed).toBe(0);
+    expect(cron.errors).toHaveLength(0);
+
+    const drawAfter = await getDraw(db, id, TENANT);
+    expect(drawAfter?.status).toBe("open");
+    expect(drawAfter?.resultMode).toBe("instant");
+
+    // 纵深第二层：直接 performDraw 仍拒绝
+    await expect(performDraw(db, TENANT, id, USER)).rejects.toThrow(/即时开奖|spin/);
+    expect((await getDraw(db, id, TENANT))?.status).toBe("open");
+  });
+
+  it("processDueDraws 仍处理到期的 scheduled 非 instant 活动", async () => {
+    const now = Date.now();
+    const startAt = new Date(now - 3 * 3600000).toISOString();
+    const endAt = new Date(now - 2 * 3600000).toISOString();
+    const drawAtPast = new Date(now - 60000).toISOString();
+
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "scheduled 到期应开奖",
+      startAt: new Date(now - 1000).toISOString(),
+      endAt: new Date(now + 3600000).toISOString(),
+      drawAt: new Date(now + 7200000).toISOString(),
+      drawTrigger: "scheduled",
+      resultMode: "scheduled",
+      participationMode: "open",
+      activityKind: "lottery",
+      winnerCount: 1,
+    });
+    await configureManualTier(id, 1);
+    await publishDraw(db, TENANT, id);
+
+    // 把时间窗与 draw_at 拨到「已到期」
+    await client.execute({
+      sql: `UPDATE lottery_draws
+            SET start_at = ?, end_at = ?, draw_at = ?, draw_trigger = 'scheduled', status = 'open'
+            WHERE id = ? AND tenant_id = ?`,
+      args: [startAt, endAt, drawAtPast, id, TENANT],
+    });
+
+    const joinRes = await joinDraw(db, publicSlug, "cron-sched@test.com");
+    if (!joinRes.joined) {
+      await client.execute({
+        sql: `INSERT INTO lottery_entries (
+          id, tenant_id, draw_id, identity_type, identity_value, joined_at
+        ) VALUES (?, ?, ?, 'email', ?, ?)`,
+        args: [crypto.randomUUID(), TENANT, id, "cron-sched@test.com", new Date().toISOString()],
+      });
+    }
+
+    const cron = await processDueDraws(db, { limit: 20 });
+    expect(cron.processed).toBe(1);
+    expect(cron.failed).toBe(0);
+    expect((await getDraw(db, id, TENANT))?.status).toBe("drawn");
   });
 
   it("奖品码不足时仅中奖可用数量", async () => {
