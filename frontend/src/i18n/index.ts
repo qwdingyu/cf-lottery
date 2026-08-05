@@ -7,6 +7,7 @@
  * 3. 回退 zh-CN
  */
 import { createI18n } from "vue-i18n";
+import { mergeAdminKitMessages } from "@usethink/cf-admin-fe/i18n";
 import zhCN from "./zh-CN";
 import en from "./en";
 
@@ -33,7 +34,10 @@ const i18n = createI18n({
   legacy: false,
   locale: initialLocale,
   fallbackLocale: "zh-CN",
-  messages: { "zh-CN": zhCN, en },
+  messages: {
+    "zh-CN": mergeAdminKitMessages(zhCN, "zh-CN"),
+    en: mergeAdminKitMessages(en, "en"),
+  },
 });
 
 export default i18n;

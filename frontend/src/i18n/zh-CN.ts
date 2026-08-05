@@ -92,6 +92,9 @@ export default {
   // ── 平台运营后台布局（PlatformLayout） ─────────
   platformLayout: {
     title: "平台运营",
+    backToTenant: "返回管理后台",
+    checkingAccess: "正在验证权限…",
+    accessDenied: "无平台管理权限",
     menuTenants: "租户管理",
     menuMembers: "成员管理",
     menuConfig: "系统配置",

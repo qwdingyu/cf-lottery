@@ -90,6 +90,9 @@ export default {
   // ── Platform Layout ────────────────────
   platformLayout: {
     title: "Platform",
+    backToTenant: "Back to Admin",
+    checkingAccess: "Checking access…",
+    accessDenied: "Access Denied",
     menuTenants: "Tenants",
     menuMembers: "Members",
     menuConfig: "Config",
