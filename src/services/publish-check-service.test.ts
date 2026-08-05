@@ -187,6 +187,71 @@ describe("发布预检 — 奖项与码池", () => {
   });
 });
 
+describe("发布预检 — instant 结果机闸门", () => {
+  it("instant 缺 maxSpinsPerEntry 阻断", async () => {
+    const draw = makeDraw({
+      resultMode: "instant",
+      drawTrigger: "manual",
+      maxSpinsPerEntry: 0,
+    });
+    await addManualTier(draw.id);
+    // manual 档默认 weight 可能为 0/null，先保证奖项存在；本用例只断言 max_spins
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "basic.max_spins.required")).toBe(true);
+  });
+
+  it("instant + scheduled 触发器阻断", async () => {
+    const draw = makeDraw({
+      resultMode: "instant",
+      drawTrigger: "scheduled",
+      maxSpinsPerEntry: 3,
+      drawAt: new Date(Date.now() + 2 * 86400000).toISOString(),
+    });
+    await addCodeTier(draw.id, 1, 1);
+    // 给档位 weight（addCodeTier 未写 weight 列时库默认可能 0）
+    await client.execute({
+      sql: "UPDATE lottery_prize_tiers SET weight = 100 WHERE draw_id = ?",
+      args: [draw.id],
+    });
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.errors.some((item) => item.code === "basic.instant.scheduled_forbidden")).toBe(true);
+    expect(result.canPublish).toBe(false);
+  });
+
+  it("instant 全档 weight=0 阻断；有 weight 且码足可通过", async () => {
+    const bad = makeDraw({
+      resultMode: "instant",
+      drawTrigger: "manual",
+      maxSpinsPerEntry: 3,
+    });
+    await addCodeTier(bad.id, 2, 2);
+    await client.execute({
+      sql: "UPDATE lottery_prize_tiers SET weight = 0 WHERE draw_id = ?",
+      args: [bad.id],
+    });
+    const badResult = await buildPublishCheckForDraw(db, TENANT, bad as any);
+    expect(badResult.errors.some((item) => item.code === "prizes.instant.weight_required")).toBe(true);
+    expect(badResult.canPublish).toBe(false);
+
+    const good = makeDraw({
+      resultMode: "instant",
+      drawTrigger: "manual",
+      maxSpinsPerEntry: 3,
+    });
+    await addCodeTier(good.id, 2, 2);
+    await client.execute({
+      sql: "UPDATE lottery_prize_tiers SET weight = 50 WHERE draw_id = ?",
+      args: [good.id],
+    });
+    const goodResult = await buildPublishCheckForDraw(db, TENANT, good as any);
+    expect(goodResult.errors.some((item) => item.code === "basic.max_spins.required")).toBe(false);
+    expect(goodResult.errors.some((item) => item.code === "prizes.instant.weight_required")).toBe(false);
+    expect(goodResult.errors.some((item) => item.code === "basic.instant.scheduled_forbidden")).toBe(false);
+    expect(goodResult.canPublish).toBe(true);
+  });
+});
+
 describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
   it("危险导流链接和异常 Webhook 会阻断发布", async () => {
     const draw = makeDraw({

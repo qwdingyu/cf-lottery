@@ -701,6 +701,113 @@ describe("活动事件", () => {
     expect(summary.attributedJoins).toBe(1);
   });
 
+  it("instant 裂变：有效邀请给分享者 +spins（双封顶）；重复/自邀不加次", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "instant 裂变加次",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      participationMode: "open",
+      activityKind: "lottery",
+      experienceType: "wheel",
+      resultMode: "instant",
+      maxSpinsPerEntry: 5,
+      winnerCount: 3,
+      // 发布预检仍校验 extraEntries*；runtime 加次优先 extraSpins*（participation.grantViralSpinsToSharer）
+      promotionConfig: JSON.stringify({
+        viral: {
+          enabled: true,
+          extraSpinsPerInvite: 2,
+          maxExtraSpins: 3,
+          extraEntriesPerInvite: 2,
+          maxExtraEntries: 3,
+        },
+      }),
+    });
+    // 发布预检：instant 需要 weight + 码
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeId, TENANT, "裂变奖", "code", 5, 1],
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      prizeId,
+      tierName: "一等奖",
+      winnerCount: 3,
+      sortOrder: 1,
+      weight: 100,
+    });
+    for (let i = 0; i < 5; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeId, `VCODE-${i}`, "available"],
+      });
+    }
+    await publishDraw(db, TENANT, id);
+
+    const sharer = await joinDraw(db, publicSlug, "v-sharer@test.com");
+    expect(sharer.joined).toBe(true);
+    const sharerEntryId = String(sharer.entryId || "");
+    expect(sharerEntryId).toBeTruthy();
+
+    // join 默认 initial=1
+    const [before] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(before?.spinsLeft).toBe(1);
+    expect(before?.spinsTotalGranted).toBe(1);
+    expect(before?.spinsViralEarned).toBe(0);
+
+    await client.execute({
+      sql: `INSERT INTO share_records (id, tenant_id, draw_id, sharer_entry_id, share_code, clicked_count, joined_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ["share-viral-spins", TENANT, id, sharerEntryId, "vspin-ref", 0, 0],
+    });
+
+    const invitee1 = await joinDraw(db, publicSlug, "v-invitee1@test.com", "email", { refCode: "vspin-ref" });
+    expect(invitee1.joined).toBe(true);
+
+    const [after1] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    // +min(2, 5-1, 3-0)=2
+    expect(after1?.spinsTotalGranted).toBe(3);
+    expect(after1?.spinsViralEarned).toBe(2);
+    expect(after1?.spinsLeft).toBe(3);
+
+    // 第二次有效邀请：roomViral=1 → actual=1；total granted=4
+    const invitee2 = await joinDraw(db, publicSlug, "v-invitee2@test.com", "email", { refCode: "vspin-ref" });
+    expect(invitee2.joined).toBe(true);
+    const [after2] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(after2?.spinsTotalGranted).toBe(4);
+    expect(after2?.spinsViralEarned).toBe(3);
+    expect(after2?.spinsLeft).toBe(4);
+
+    // 第三次：maxExtra 已满 → 榜可涨但 spins 不加
+    const invitee3 = await joinDraw(db, publicSlug, "v-invitee3@test.com", "email", { refCode: "vspin-ref" });
+    expect(invitee3.joined).toBe(true);
+    const [after3] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(after3?.spinsTotalGranted).toBe(4);
+    expect(after3?.spinsViralEarned).toBe(3);
+    expect(after3?.spinsLeft).toBe(4);
+
+    const shareRows = await client.execute(
+      "SELECT joined_count FROM share_records WHERE id = 'share-viral-spins'",
+    );
+    expect(Number(shareRows.rows[0]?.joined_count)).toBe(3);
+
+    // 重复参与不加次
+    const dup = await joinDraw(db, publicSlug, "v-invitee1@test.com", "email", { refCode: "vspin-ref" });
+    expect(dup.joined).toBe(false);
+    const [afterDup] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(afterDup?.spinsTotalGranted).toBe(4);
+
+    // 自邀请：同 identity 不归因、不加次（open 模式同邮箱无法二次 join，用已存在 sharer 再带自己的 ref 应 alreadyJoined）
+    const self = await joinDraw(db, publicSlug, "v-sharer@test.com", "email", { refCode: "vspin-ref" });
+    expect(self.joined).toBe(false);
+    const [afterSelf] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(afterSelf?.spinsTotalGranted).toBe(4);
+  });
+
   it("自邀请：同 identity 用自己的 share 码参与（签到跨日）不计 joined_count", async () => {
     // 签到允许同邮箱跨日再参与；day2 仍带 day1 的 ?ref= 不得给自己涨邀请（docs/112）
     const { id, publicSlug } = await setupCheckinActivity();

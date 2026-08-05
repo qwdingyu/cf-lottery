@@ -509,4 +509,241 @@ describe("performInstantSpin", () => {
     const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.prizeId, prizeId));
     expect(codes.filter((c) => c.status === "issued").length).toBe(1);
   });
+
+  it("并发双 spin（left=1）：恰 1 成功 1 耗尽，不双扣、不双占码", async () => {
+    const { slug, id, prizeId } = await seedInstantDraw(db, client, {
+      maxSpins: 1,
+      weight: 100,
+      codes: 2,
+    });
+    await joinDraw(db, slug, "race@test.com");
+
+    const results = await Promise.allSettled([
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "race@test.com",
+        idempotencyKey: "race-a",
+      }),
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "race@test.com",
+        idempotencyKey: "race-b",
+      }),
+    ]);
+
+    const ok = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<
+      Awaited<ReturnType<typeof performInstantSpin>>
+    >[];
+    const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+    expect(ok.length).toBe(1);
+    expect(rejected.length).toBe(1);
+    expect(ok[0]!.value.won).toBe(true);
+    expect(ok[0]!.value.spinsLeft).toBe(0);
+    const err = rejected[0]!.reason as SpinBusinessError;
+    expect(err).toMatchObject({ httpStatus: 409, code: "spin.quota.exhausted" });
+
+    const spins = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, id));
+    expect(spins.length).toBe(1);
+    const winners = await db.select().from(lotteryWinners).where(eq(lotteryWinners.drawId, id));
+    expect(winners.length).toBe(1);
+    const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.prizeId, prizeId));
+    expect(codes.filter((c) => c.status === "issued").length).toBe(1);
+  });
+
+  it("两用户争抢仅 1 个 available 码：恰 1 中奖 1 未中，不双发同一码", async () => {
+    const { slug, id, prizeId } = await seedInstantDraw(db, client, {
+      maxSpins: 1,
+      weight: 100,
+      codes: 1,
+      winnerCount: 5,
+    });
+    await joinDraw(db, slug, "code-a@test.com");
+    await joinDraw(db, slug, "code-b@test.com");
+
+    const results = await Promise.all([
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "code-a@test.com",
+        idempotencyKey: "code-race-a",
+      }),
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "code-b@test.com",
+        idempotencyKey: "code-race-b",
+      }),
+    ]);
+
+    const won = results.filter((r) => r.won);
+    const miss = results.filter((r) => !r.won);
+    expect(won.length).toBe(1);
+    expect(miss.length).toBe(1);
+    // 双方都已扣次（各 left=0）
+    expect(results.every((r) => r.spinsLeft === 0)).toBe(true);
+
+    const winners = await db.select().from(lotteryWinners).where(eq(lotteryWinners.drawId, id));
+    expect(winners.length).toBe(1);
+    const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.prizeId, prizeId));
+    expect(codes.filter((c) => c.status === "issued").length).toBe(1);
+    expect(codes.filter((c) => c.status === "available").length).toBe(0);
+    // 两人各一条 spin（未中也记）
+    const spins = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, id));
+    expect(spins.length).toBe(2);
+    expect(spins.filter((s) => s.won === 1).length).toBe(1);
+  });
+
+  it("跨租户：同 slug 不可能；同邮箱不同 tenant 活动互不串码/串 winner", async () => {
+    const otherTenant = "tenant-spin-other";
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO tenants (id, name, plan, status) VALUES (?, 'O', 'free', 'active')`,
+      args: [otherTenant],
+    });
+
+    const a = await seedInstantDraw(db, client, { maxSpins: 1, weight: 100, codes: 2, prizeName: "租户A奖" });
+    // 手写 B 活动（不同 tenant）
+    const bId = crypto.randomUUID();
+    const bSlug = `ob${bId.slice(0, 6)}`;
+    const now = new Date();
+    await db.insert(lotteryDraws).values({
+      id: bId,
+      tenantId: otherTenant,
+      publicSlug: bSlug,
+      title: "other tenant instant",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "wheel",
+      resultMode: "instant",
+      startAt: new Date(now.getTime() - 3600_000).toISOString(),
+      endAt: new Date(now.getTime() + 86400_000).toISOString(),
+      winnerCount: 2,
+      maxSpinsPerEntry: 1,
+    });
+    const bPrize = crypto.randomUUID();
+    await db.insert(prizes).values({
+      id: bPrize,
+      tenantId: otherTenant,
+      name: "租户B奖",
+      prizeType: "code",
+      totalCount: 2,
+      active: 1,
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: otherTenant,
+      drawId: bId,
+      prizeId: bPrize,
+      tierName: "B档",
+      winnerCount: 2,
+      sortOrder: 1,
+      weight: 100,
+    });
+    for (let i = 0; i < 2; i++) {
+      await db.insert(prizeCodes).values({
+        id: crypto.randomUUID(),
+        tenantId: otherTenant,
+        prizeId: bPrize,
+        code: `BCODE-${i}`,
+        secret: `BSEC-${i}`,
+        status: "available",
+      });
+    }
+
+    // 同邮箱分别 join 两租户活动
+    await joinDraw(db, a.slug, "cross@test.com");
+    await joinDraw(db, bSlug, "cross@test.com");
+
+    const rA = await performInstantSpin(db, {
+      slug: a.slug,
+      identityType: "email",
+      identityValue: "cross@test.com",
+      idempotencyKey: "cross-a",
+    });
+    const rB = await performInstantSpin(db, {
+      slug: bSlug,
+      identityType: "email",
+      identityValue: "cross@test.com",
+      idempotencyKey: "cross-b",
+    });
+    expect(rA.won && rB.won).toBe(true);
+    expect(rA.prizeCode).toMatch(/CODE-/);
+    expect(rB.prizeCode).toMatch(/BCODE-/);
+    expect(rA.prizeCode).not.toBe(rB.prizeCode);
+
+    const wA = await db.select().from(lotteryWinners).where(eq(lotteryWinners.drawId, a.id));
+    const wB = await db.select().from(lotteryWinners).where(eq(lotteryWinners.drawId, bId));
+    expect(wA.length).toBe(1);
+    expect(wB.length).toBe(1);
+    expect(wA[0]!.tenantId).toBe(TENANT);
+    expect(wB[0]!.tenantId).toBe(otherTenant);
+
+    // A 活动码池不得出现 B 的 issued 串写
+    const aCodes = await db.select().from(prizeCodes).where(eq(prizeCodes.prizeId, a.prizeId));
+    expect(aCodes.every((c) => c.tenantId === TENANT)).toBe(true);
+    const bCodes = await db.select().from(prizeCodes).where(eq(prizeCodes.prizeId, bPrize));
+    expect(bCodes.every((c) => c.tenantId === otherTenant)).toBe(true);
+  });
+
+  it("未参与 / 活动非 open / 缺幂等键：硬拒且不写 spin", async () => {
+    const { slug, id } = await seedInstantDraw(db, client, { maxSpins: 2, weight: 100, codes: 2 });
+
+    await expect(
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "nojoin@test.com",
+        idempotencyKey: "nojoin-1",
+      }),
+    ).rejects.toMatchObject({ code: "spin.entry.required", httpStatus: 400 });
+
+    await expect(
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "x@test.com",
+        idempotencyKey: "",
+      }),
+    ).rejects.toMatchObject({ code: "spin.idempotency.required" });
+
+    await joinDraw(db, slug, "paused@test.com");
+    await db.update(lotteryDraws).set({ status: "paused" }).where(eq(lotteryDraws.id, id));
+    await expect(
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "paused@test.com",
+        idempotencyKey: "paused-1",
+      }),
+    ).rejects.toMatchObject({ code: "spin.draw.not_open" });
+
+    const spins = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, id));
+    expect(spins.length).toBe(0);
+  });
+
+  it("weight=0 全档：扣次、记未中 spin、不写 winner", async () => {
+    const { slug, id } = await seedInstantDraw(db, client, {
+      maxSpins: 1,
+      weight: 0,
+      codes: 3,
+      winnerCount: 3,
+    });
+    await joinDraw(db, slug, "zerow@test.com");
+    const r = await performInstantSpin(db, {
+      slug,
+      identityType: "email",
+      identityValue: "zerow@test.com",
+      idempotencyKey: "zerow-1",
+    });
+    expect(r.won).toBe(false);
+    expect(r.spinsLeft).toBe(0);
+    expect(r.prizeIndex).toBe(-1);
+    const winners = await db.select().from(lotteryWinners).where(eq(lotteryWinners.drawId, id));
+    expect(winners.length).toBe(0);
+    const spins = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, id));
+    expect(spins.length).toBe(1);
+    expect(spins[0]!.won).toBe(0);
+  });
 });

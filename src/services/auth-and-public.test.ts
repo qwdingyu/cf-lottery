@@ -2518,6 +2518,143 @@ describe("公开 instant spin 路由", () => {
     );
     expect(noKey.status).toBe(400);
   });
+
+  it("my-result：instant 多奖返回 wins[] + spins 字段；卡密完整", async () => {
+    const app = createPublicTestApp();
+    const { drawId, slug } = await seedOpenInstant({ slug: "spin-myresult-wins", maxSpins: 3, codes: 4 });
+    const email = "wins@test.com";
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: email,
+      joinedAt: new Date().toISOString(),
+      spinsLeft: 1,
+      spinsTotalGranted: 3,
+      spinsViralEarned: 0,
+    });
+
+    // 两次 spin 中奖
+    const c1 = await insertOtp(email, drawId, "101010");
+    const s1 = await app.request(
+      `/public/draws/${slug}/spin`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.5.1", "Idempotency-Key": "mr-s1" },
+        body: JSON.stringify({ email, code: c1 }),
+      },
+      SPIN_ENV,
+    );
+    expect(s1.status).toBe(200);
+    // 补额度再抽第二次（路由层 entry 可能已扣到 0，直接 SQL 抬）
+    await db
+      .update(lotteryEntries)
+      .set({ spinsLeft: 2, spinsTotalGranted: 3 })
+      .where(eq(lotteryEntries.id, entryId));
+    const c2 = await insertOtp(email, drawId, "202020");
+    const s2 = await app.request(
+      `/public/draws/${slug}/spin`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.5.2", "Idempotency-Key": "mr-s2" },
+        body: JSON.stringify({ email, code: c2 }),
+      },
+      SPIN_ENV,
+    );
+    expect(s2.status).toBe(200);
+
+    const cQ = await insertOtp(email, drawId, "303030");
+    const res = await app.request(
+      `/public/draws/${slug}/my-result`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.5.3" },
+        body: JSON.stringify({ email, code: cQ }),
+      },
+      SPIN_ENV,
+    );
+    const body = (await res.json()) as {
+      ok?: boolean;
+      joined?: boolean;
+      won?: boolean;
+      wins?: Array<{ spinId: string | null; prizeCode: string | null; prizeName: string | null }>;
+      spinsLeft?: number | null;
+      spinsUsed?: number | null;
+      maxSpinsPerEntry?: number | null;
+      resultMode?: string | null;
+      entryId?: string | null;
+      prizeCode?: string | null;
+    };
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.joined).toBe(true);
+    expect(body.won).toBe(true);
+    expect(body.resultMode).toBe("instant");
+    expect(body.entryId).toBe(entryId);
+    expect(body.wins?.length).toBe(2);
+    expect(body.wins![0]!.prizeCode).toBeTruthy();
+    expect(body.wins![1]!.prizeCode).toBeTruthy();
+    expect(body.wins![0]!.prizeCode).not.toBe(body.wins![1]!.prizeCode);
+    // 兼容字段：首条卡密
+    expect(body.prizeCode).toBe(body.wins![0]!.prizeCode);
+    expect(body.maxSpinsPerEntry).toBe(3);
+    expect(typeof body.spinsLeft).toBe("number");
+    expect(typeof body.spinsUsed).toBe("number");
+    expect((body.spinsUsed ?? 0) + (body.spinsLeft ?? 0)).toBe(3);
+  });
+
+  it("my-result：他邮箱 OTP 不能读到本 entry 多奖（身份隔离）", async () => {
+    const app = createPublicTestApp();
+    const { drawId, slug } = await seedOpenInstant({ slug: "spin-myresult-iso", maxSpins: 2, codes: 2 });
+    const owner = "owner-win@test.com";
+    const other = "other-peek@test.com";
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: owner,
+      joinedAt: new Date().toISOString(),
+      spinsLeft: 1,
+      spinsTotalGranted: 1,
+      spinsViralEarned: 0,
+    });
+    const cSpin = await insertOtp(owner, drawId, "404040");
+    const spinRes = await app.request(
+      `/public/draws/${slug}/spin`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.6.1", "Idempotency-Key": "iso-s1" },
+        body: JSON.stringify({ email: owner, code: cSpin }),
+      },
+      SPIN_ENV,
+    );
+    expect(spinRes.status).toBe(200);
+
+    // other 未参与：有 OTP 也只能看到 joined=false，无 wins
+    const cOther = await insertOtp(other, drawId, "505050");
+    const peek = await app.request(
+      `/public/draws/${slug}/my-result`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.6.2" },
+        body: JSON.stringify({ email: other, code: cOther }),
+      },
+      SPIN_ENV,
+    );
+    const body = (await peek.json()) as {
+      ok?: boolean;
+      joined?: boolean;
+      wins?: unknown[];
+      won?: boolean;
+    };
+    expect(peek.status).toBe(200);
+    expect(body.joined).toBe(false);
+    expect(body.won).toBe(false);
+    expect(body.wins?.length ?? 0).toBe(0);
+  });
 });
 
 /* ── 测试：审计日志 ──────────────────────────────────────── */
