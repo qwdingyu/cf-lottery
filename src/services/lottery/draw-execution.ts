@@ -58,6 +58,19 @@ export async function performDraw(
 ): Promise<DrawResult> {
   const now = new Date().toISOString();
 
+  // docs/116/117：instant 有独立 spin 结果机，禁止 performDraw 再抽一遍（双结果机）
+  {
+    const [modeRow] = await db
+      .select({ resultMode: lotteryDraws.resultMode, activityKind: lotteryDraws.activityKind })
+      .from(lotteryDraws)
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+      .limit(1);
+    if (!modeRow) throw new Error("活动不存在");
+    if (String(modeRow.resultMode || "") === "instant") {
+      throw new Error("即时开奖活动请使用 spin，不能统一开奖");
+    }
+  }
+
   // 1. CAS 原子夺取开奖权：仅当 status = 'open' 时才更新为 'drawing'
   //    使用 returning() 获取更新后的记录，确认 CAS 成功
   const claimResult = await db
@@ -282,6 +295,8 @@ export async function performDraw(
           }
 
           // 写入中奖记录
+          // spin_id：delayed 无 spin 行，用 winner 自身 id 占位，满足 UNIQUE(tenant,draw,spin_id)
+          // 且保持「一 entry 一奖」（应用层 seenEntryIds + 池抽样唯一）
           const winnerId = crypto.randomUUID();
           await tx.insert(lotteryWinners).values({
             id: winnerId,
@@ -289,6 +304,7 @@ export async function performDraw(
             drawId,
             tierId: tier.id,
             entryId: entry.id,
+            spinId: winnerId,
             identityType: entry.identityType,
             identityValue: entry.identityValue,
             prizeCodeId: prizeCodeId || "",

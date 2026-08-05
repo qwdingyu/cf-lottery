@@ -30,7 +30,9 @@ export function emptyLotteryEditorForm(t: ActivityConfigTranslate): LotteryEdito
     showWinners: false,
     /** 是否公开参与人数（0/1）；模板 defaults 可覆盖，创建时透传后端 */
     showParticipantCount: 1,
-    // 奖项配置（抽奖活动专用）：选择奖品库中的奖品，设置中奖名额
+    /** instant 默认 1 次；delayed 创建时后端会强制 0 */
+    maxSpinsPerEntry: 1,
+    // 奖项配置（抽奖活动专用）：选择奖品库中的奖品，设置中奖名额 + instant weight
     tiers: [],
     // 导流配置
     enableProductLink: false,

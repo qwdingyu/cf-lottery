@@ -24,6 +24,8 @@ export type LotteryDraw = {
   drawAt: string | null
   drawTime?: string | null
   winnerCount: number
+  /** instant：每人 spin 次数硬顶（公开详情返回） */
+  maxSpinsPerEntry?: number
   maxParticipants?: number | null
   showParticipantCount: number
   showWinnerCount: number
@@ -40,6 +42,9 @@ export type LotteryDraw = {
     imageUrl?: string
     valueText?: string
     winnerCount?: number
+    /** 与 spin.prizeIndex 对齐的扇区索引 */
+    prizeIndex?: number
+    weight?: number
   }>
   productId?: string
   productTitle?: string

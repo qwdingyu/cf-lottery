@@ -27,6 +27,8 @@ export type LotteryDraw = {
   drawAt: string | null
   drawTime?: string | null
   winnerCount: number
+  /** instant：每人累计 spin 次数硬顶（0=未配置/delayed） */
+  maxSpinsPerEntry?: number
   maxParticipants: number | null
   maxWinners?: number
   expectedParticipants?: number
@@ -170,7 +172,9 @@ export type LotteryEditorForm = {
   accessPassword: string
   showWinners: boolean
   showParticipantCount: 0 | 1
-  tiers: Array<{ prizeId: string; tierName: string; winnerCount: number }>
+  /** instant：每人最多 spin 次数（≥1）；delayed 忽略 */
+  maxSpinsPerEntry: number
+  tiers: Array<{ prizeId: string; tierName: string; winnerCount: number; weight?: number }>
   enableProductLink: boolean
   productLink: { url: string; title: string; imageUrl: string; price: string }
   enableViral: boolean

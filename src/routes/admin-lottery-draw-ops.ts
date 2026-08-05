@@ -421,11 +421,16 @@ route.post("/draws/:id/tiers", async (c) => {
   const tenantId = c.get("tenantId") as string;
   const drawId = c.req.param("id");
   const body = await c.req.json<{
-    tiers: Array<{ prizeId: string; tierName?: string; winnerCount?: number; sortOrder?: number }>;
+    tiers: Array<{ prizeId: string; tierName?: string; winnerCount?: number; sortOrder?: number; weight?: number }>;
   }>();
 
   const [draw] = await db
-    .select({ id: lotteryDraws.id, status: lotteryDraws.status, activityKind: lotteryDraws.activityKind })
+    .select({
+      id: lotteryDraws.id,
+      status: lotteryDraws.status,
+      activityKind: lotteryDraws.activityKind,
+      resultMode: lotteryDraws.resultMode,
+    })
     .from(lotteryDraws)
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
     .limit(1);
@@ -436,6 +441,7 @@ route.post("/draws/:id/tiers", async (c) => {
   if (!Array.isArray(body.tiers) || body.tiers.length === 0) return fail(c, "请至少配置一个奖项", 400);
   if (body.tiers.length > 10) return fail(c, "单个活动最多配置 10 个奖项", 400);
 
+  const isInstant = String(draw.resultMode || "") === "instant";
   const normalizedTiers: Array<{
     id: string;
     tenantId: string;
@@ -444,6 +450,7 @@ route.post("/draws/:id/tiers", async (c) => {
     tierName: string;
     winnerCount: number;
     sortOrder: number;
+    weight: number;
   }> = [];
   const seenPrizeIds = new Set<string>();
 
@@ -452,11 +459,15 @@ route.post("/draws/:id/tiers", async (c) => {
     const tierName = String(tier.tierName || `奖项 ${index + 1}`).trim().slice(0, 50);
     const winnerCount = Number(tier.winnerCount ?? 1);
     const sortOrder = Number(tier.sortOrder ?? (index + 1) * 100);
+    // instant：未传 weight 时默认 1，避免运营只配名额无法抽；delayed 忽略 weight
+    const weightRaw = tier.weight !== undefined && tier.weight !== null ? Number(tier.weight) : (isInstant ? 1 : 0);
+    const weight = Number.isFinite(weightRaw) ? Math.max(0, Math.floor(weightRaw)) : 0;
 
     if (!prizeId) return fail(c, "奖项必须选择奖品", 400);
     if (seenPrizeIds.has(prizeId)) return fail(c, "同一奖品不能重复配置为多个奖项", 400);
     if (!Number.isInteger(winnerCount) || winnerCount < 1 || winnerCount > 1000) return fail(c, "中奖名额必须是 1-1000 的整数", 400);
     if (!Number.isFinite(sortOrder)) return fail(c, "奖项排序值无效", 400);
+    if (weight > 100000) return fail(c, "奖项权重过大", 400);
 
     const [prize] = await db
       .select({ id: prizes.id })
@@ -474,6 +485,7 @@ route.post("/draws/:id/tiers", async (c) => {
       tierName,
       winnerCount,
       sortOrder: Math.trunc(sortOrder),
+      weight,
     });
   }
 

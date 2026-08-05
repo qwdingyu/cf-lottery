@@ -43,4 +43,14 @@ describe('resolveLotteryScheduleFields', () => {
       }),
     ).toEqual({ drawTrigger: 'manual', resultMode: 'manual' })
   })
+
+  it('lottery + instant 保留 instant，有 drawAt 也不变 scheduled（docs/116）', () => {
+    expect(
+      resolveLotteryScheduleFields({
+        activityKind: 'lottery',
+        drawAt: '2026-08-10T12:00:00.000Z',
+        resultMode: 'instant',
+      }),
+    ).toEqual({ drawTrigger: 'manual', resultMode: 'instant' })
+  })
 })

@@ -654,7 +654,7 @@ describe("L2 视角：registered 参与者身份可读", () => {
     });
     if (status === "drawn") {
       await db.insert(lotteryWinners).values({
-        id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, tierId: "tier-1", entryId,
+        id: crypto.randomUUID(), spinId: crypto.randomUUID(), tenantId: TENANT_ID, drawId, tierId: "tier-1", entryId,
         identityType: "user_id", identityValue: userId, prizeCodeId: null,
       });
     }
@@ -671,7 +671,7 @@ describe("L2 视角：registered 参与者身份可读", () => {
       identityType: "email", identityValue: "open@test.com", joinedAt: new Date().toISOString(),
     });
     await db.insert(lotteryWinners).values({
-      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, tierId: "tier-1", entryId: "e-open",
+      id: crypto.randomUUID(), spinId: crypto.randomUUID(), tenantId: TENANT_ID, drawId, tierId: "tier-1", entryId: "e-open",
       identityType: "email", identityValue: "open@test.com", prizeCodeId: null,
     });
 
@@ -769,7 +769,7 @@ describe("L2 运营闭环：retry-email 与 recover", () => {
       updatedAt: now,
     });
     await db.insert(lotteryWinners).values({
-      id: winnerId,
+      id: winnerId, spinId: winnerId,
       tenantId: TENANT_ID,
       drawId,
       tierId: "tier-retry",
@@ -860,7 +860,7 @@ describe("L2 运营闭环：retry-email 与 recover", () => {
       updatedAt: now,
     });
     await db.insert(lotteryWinners).values({
-      id: crypto.randomUUID(),
+      id: crypto.randomUUID(), spinId: crypto.randomUUID(),
       tenantId: TENANT_ID,
       drawId: drawnId,
       tierId: "t1",

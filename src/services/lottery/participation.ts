@@ -24,6 +24,7 @@ import {
 import { verifyAccessPassword } from "./utils";
 import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
 import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
+import { computeViralSpinGrant, initialSpinsForJoin } from "./spin-quota";
 
 /* ── 候选池 ───────────────────────────────────────────────── */
 
@@ -188,13 +189,22 @@ export async function joinDraw(
       const capacityClause = acceptsWaitlist
         ? sql`1 = 1`
         : sql`(SELECT COUNT(*) FROM lottery_entries WHERE tenant_id = ${draw.tenantId} AND draw_id = ${draw.id}) < ${effectiveMax}`;
+      // instant：join 发放 initial spins（默认 1），不抽奖（docs/116）
+      const spinInit = initialSpinsForJoin(
+        Number((draw as { maxSpinsPerEntry?: number }).maxSpinsPerEntry ?? 0),
+        1,
+      );
       // 写入参与记录。使用条件 INSERT 确保并发安全：
       // 1. 活动级容量检查（capacityClause）：防止同时写入超过 maxParticipants
       // 2. 签到活动使用 uniqueValue（含日期后缀）作为 identity_value，
       //    使 UNIQUE 约束允许每日签到但不允许同一天重复。
       const insertResult = await tx.run(sql`
-        INSERT INTO lottery_entries (id, tenant_id, draw_id, identity_type, identity_value, invite_code_id, ip_hash, joined_at)
-        SELECT ${entryId}, ${draw.tenantId}, ${draw.id}, ${identityType}, ${checkinDateSuffix ? uniqueValue : normalizedValue}, ${inviteCodeId}, ${options?.ipHash || ""}, ${nowIso}
+        INSERT INTO lottery_entries (
+          id, tenant_id, draw_id, identity_type, identity_value, invite_code_id, ip_hash, joined_at,
+          spins_left, spins_total_granted, spins_viral_earned
+        )
+        SELECT ${entryId}, ${draw.tenantId}, ${draw.id}, ${identityType}, ${checkinDateSuffix ? uniqueValue : normalizedValue}, ${inviteCodeId}, ${options?.ipHash || ""}, ${nowIso},
+          ${spinInit.spinsLeft}, ${spinInit.spinsTotalGranted}, ${spinInit.spinsViralEarned}
         WHERE ${capacityClause}
       `);
 
@@ -454,10 +464,20 @@ export async function cancelSignupChainEntry(
  */
 async function maybeTriggerReward(
   tx: DbType,
-  draw: { id: string; tenantId: string },
+  draw: { id: string; tenantId: string; resultMode?: string | null; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
   attribution: { attributed: boolean; sharerEntryId?: string; refCode?: string },
 ) {
   if (!attribution.attributed || !attribution.sharerEntryId) return;
+
+  // instant 裂变：有效 join → 邀请人 +spins（双封顶）；失败不回滚参与（docs/116）
+  if (String(draw.resultMode || "") === "instant") {
+    try {
+      await grantViralSpinsToSharer(tx, draw, attribution.sharerEntryId);
+    } catch (err) {
+      console.error(`[lottery] grantViralSpinsToSharer failed for ${draw.id}:`, err);
+    }
+  }
+
   try {
     const sharerIdentity = await getSharerIdentityValue(tx, draw.id, attribution.sharerEntryId);
     const result = await triggerRewardEarned(
@@ -476,6 +496,81 @@ async function maybeTriggerReward(
     // 奖励触发失败不影响参与成功（与 grantLoserRewards 的容错一致）
     console.error(`[lottery] triggerRewardEarned failed for ${draw.id}:`, err);
   }
+}
+
+/**
+ * 邀请人 instant +spins：actual = min(perInvite, maxSpins-granted, maxExtra-viral)。
+ * 配置优先 promotion_config.viral.extraSpinsPerInvite / maxExtraSpins；
+ * 缺省回退 extraEntriesPerInvite / maxExtraEntries 数字（文案仍须 instant 分键）。
+ */
+async function grantViralSpinsToSharer(
+  tx: DbType,
+  draw: { id: string; tenantId: string; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
+  sharerEntryId: string,
+) {
+  const maxSpins = Number(draw.maxSpinsPerEntry ?? 0);
+  if (maxSpins < 1) return;
+
+  let extra = 0;
+  let maxExtra = 0;
+  try {
+    const pc = JSON.parse(draw.promotionConfig || "{}") as {
+      viral?: {
+        enabled?: boolean;
+        extraSpinsPerInvite?: number;
+        maxExtraSpins?: number;
+        extraEntriesPerInvite?: number;
+        maxExtraEntries?: number;
+      };
+    };
+    const viral = pc?.viral;
+    if (!viral?.enabled) return;
+    extra = Number(viral.extraSpinsPerInvite ?? viral.extraEntriesPerInvite ?? 0);
+    maxExtra = Number(viral.maxExtraSpins ?? viral.maxExtraEntries ?? 0);
+  } catch {
+    return;
+  }
+  if (extra <= 0 || maxExtra <= 0) return;
+
+  const [sharer] = await tx
+    .select({
+      id: lotteryEntries.id,
+      spinsLeft: lotteryEntries.spinsLeft,
+      spinsTotalGranted: lotteryEntries.spinsTotalGranted,
+      spinsViralEarned: lotteryEntries.spinsViralEarned,
+    })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.id, sharerEntryId),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+    ))
+    .limit(1);
+  if (!sharer) return;
+
+  const grant = computeViralSpinGrant({
+    maxSpinsPerEntry: maxSpins,
+    extraSpinsPerInvite: extra,
+    maxExtraSpins: maxExtra,
+    spinsTotalGranted: Number(sharer.spinsTotalGranted || 0),
+    spinsViralEarned: Number(sharer.spinsViralEarned || 0),
+  });
+  if (grant.actual <= 0) return;
+
+  await tx
+    .update(lotteryEntries)
+    .set({
+      spinsTotalGranted: grant.nextGranted,
+      spinsViralEarned: grant.nextViralEarned,
+      spinsLeft: sql`${lotteryEntries.spinsLeft} + ${grant.nextLeftDelta}`,
+    })
+    .where(and(
+      eq(lotteryEntries.id, sharer.id),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+      // 乐观：granted 未在并发下被他人改到超过预期时再写（纵深）
+      eq(lotteryEntries.spinsTotalGranted, Number(sharer.spinsTotalGranted || 0)),
+    ));
 }
 
 async function recordAttributedJoin(

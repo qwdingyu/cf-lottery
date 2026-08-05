@@ -6,7 +6,7 @@
     </div>
     <!-- 转盘 -->
     <canvas ref="wheelCanvasRef" class="wheel-canvas" :width="canvasSize" :height="canvasSize" />
-    <!-- 指针按钮：点击只发 play；旋转仅在 celebrateKey 递增后（参与成功） -->
+    <!-- 指针按钮：点击只发 play；旋转仅在 celebrateKey 递增后 -->
     <div
       class="wheel-pointer-wrap"
       role="button"
@@ -21,11 +21,13 @@
       </div>
       <div class="wheel-btn" :class="{ disabled: disabled || spinning || loading, loading }">
         <!--
-          语义诚实（docs/055a / 093 / 107）：join 只提交参与；随机旋转是成功后氛围，不是开奖。
-          空闲=立即参与；loading=提交中（慢速 idle）；spinning=参与成功氛围。
+          delayed：join 氛围；instant：spin 成功后对准 prizeIndex 停扇（docs/116）。
+          空闲=立即参与/抽奖；loading=提交中；spinning=旋转中。
         -->
         <span v-if="loading" class="wheel-btn-label">{{ $t('lottery.gameWheelSubmitting') }}</span>
-        <span v-else-if="spinning" class="wheel-btn-label">{{ $t('lottery.gameWheelCelebrating') }}</span>
+        <span v-else-if="spinning" class="wheel-btn-label">{{
+          targetSectorIndex != null ? $t('lottery.gameWheelDrawing') : $t('lottery.gameWheelCelebrating')
+        }}</span>
         <span v-else class="wheel-btn-label wheel-btn-label--join">{{ $t('lottery.gameWheelJoin') }}</span>
       </div>
     </div>
@@ -40,6 +42,7 @@ const props = withDefaults(defineProps<GameProps>(), {
   disabled: false,
   loading: false,
   celebrateKey: 0,
+  targetSectorIndex: null,
 })
 const emit = defineEmits<GameEmits>()
 
@@ -139,21 +142,60 @@ function startIdleSpin() {
   idleRaf = requestAnimationFrame(tick)
 }
 
-/** 点击：只表达参与意图；不在此处开庆祝旋转（等 join 成功 celebrateKey） */
+/** 点击：只表达参与/抽奖意图；不在此处开庆祝旋转（等 celebrateKey） */
 function handleSpin() {
   if (spinning.value || props.disabled || props.loading) return
   emit('play')
 }
 
-/** 参与成功后的氛围旋转：随机停角，不对准中奖扇区 */
+/**
+ * 计算停角：指针在顶部（-π/2）。
+ * 扇区 i 中心相对 canvas 0° 为 i*slice + slice/2；
+ * 最终旋转使该中心落在指针下。
+ */
+function rotationDeltaForSector(sectorIndex: number, startRot: number): number {
+  const n = Math.max(props.prizes.length, 1)
+  const idx = ((Math.floor(sectorIndex) % n) + n) % n
+  const slice = (2 * Math.PI) / n
+  // 扇区中心角（未旋转时，从正 x 轴）
+  const centerAtZero = idx * slice + slice / 2
+  // 指针在 -π/2（顶部）；需要 rotation 使 centerAtZero + rot ≡ -π/2 (mod 2π)
+  const desired = -Math.PI / 2 - centerAtZero
+  // 从 startRot 正向多转至少 5 圈再落到 desired
+  const turns = 5 + Math.random() * 2
+  let delta = desired - (startRot % (Math.PI * 2))
+  while (delta < Math.PI * 2 * turns) delta += Math.PI * 2
+  return delta
+}
+
+/**
+ * 参与/spin 成功后的旋转。
+ * - 有 targetSectorIndex：对准服务端 prizeIndex（instant）
+ * - 无：随机停角（delayed 氛围，不代表中奖）
+ */
 async function runCelebrateSpin() {
   if (spinning.value) return
   stopIdleSpin()
   spinning.value = true
-  const targetAngle = Math.PI * 2 * (5 + Math.random())
   const startRot = currentRot()
-  const duration = 2800
+  const hasTarget =
+    props.targetSectorIndex != null &&
+    Number.isFinite(Number(props.targetSectorIndex)) &&
+    props.prizes.length > 0
+  const targetAngle = hasTarget
+    ? rotationDeltaForSector(Number(props.targetSectorIndex), startRot)
+    : Math.PI * 2 * (5 + Math.random())
+  const duration = hasTarget ? 3200 : 2800
   const start = performance.now()
+
+  if (prefersReducedMotion()) {
+    // 无障碍：直接跳到终态，不播长动画
+    const finalRot = (startRot + targetAngle) % (Math.PI * 2)
+    drawWheel(finalRot)
+    if (wheelCanvasRef.value) wheelCanvasRef.value.dataset.rot = String(finalRot)
+    spinning.value = false
+    return
+  }
 
   await new Promise<void>(resolve => {
     const tick = (now: number) => {

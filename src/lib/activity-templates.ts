@@ -26,8 +26,8 @@ export interface ActivityTemplate {
 }
 
 export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
-  // 大转盘：experience=wheel 只是参与壳；中奖由 performDraw（manual/scheduled）产生（docs/115）。
-  // 禁止 resultMode=instant：joinDraw 对 lottery 不写 winners，配 instant 只会文案误导。
+  // 延迟大转盘：experience=wheel 只是参与壳；中奖由 performDraw（manual/scheduled）产生（docs/115）。
+  // 即时出奖请用 lottery-wheel-instant（独立 spin 结果机，docs/116）。
   {
     id: "lottery-wheel",
     name: "大转盘抽奖",
@@ -38,7 +38,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     defaults: {
       activityKind: "lottery",
       experienceType: "wheel",
-      resultMode: "manual", // lottery 当前无 instant 结果机
+      resultMode: "manual", // 延迟开奖；即时请用 lottery-wheel-instant
       participationMode: "open",
       allocationPolicy: "capacity",
       winnerCount: 1,
@@ -74,6 +74,31 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       "建议关闭参与人数显示以保持悬念",
       "刮开后仍须点参与；结果以开奖后「查结果」为准",
       "可设置每人仅限一次",
+    ],
+  },
+  // 即时大转盘：独立 spin 结果机（docs/116）；与 lottery-wheel（延迟开奖）并存互斥
+  {
+    id: "lottery-wheel-instant",
+    name: "即时大转盘",
+    description:
+      "用户参与后当场 spin 出奖/未中；每人可配置抽奖次数（1=只抽一次）。适合现场互动、裂变加次。不走统一开奖。",
+    icon: "🎯",
+    category: "engagement",
+    defaults: {
+      activityKind: "lottery",
+      experienceType: "wheel",
+      resultMode: "instant",
+      participationMode: "open",
+      allocationPolicy: "capacity",
+      winnerCount: 1,
+      showParticipantCount: 1,
+      showWinnerCount: 1,
+    },
+    hints: [
+      "设置每人抽奖次数 maxSpinsPerEntry（≥1）",
+      "奖项须配置 weight>0 与档位名额；码类准备足够库存",
+      "勿使用「立即开奖/定时开奖」——结果由用户 spin 产生",
+      "裂变开启时邀请成功 +抽奖次数（受双封顶），排行榜仍按邀请人数",
     ],
   },
   {

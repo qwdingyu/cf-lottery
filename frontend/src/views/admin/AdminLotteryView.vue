@@ -273,6 +273,7 @@
                 <!--
                   open 抽奖：分享优先（运营主路径是「发链接」）；
                   立即开奖仅在有参与时作主按钮，避免空池误点开奖（docs/074）。
+                  instant：用户 spin 出结果，隐藏「立即开奖」（docs/116）。
                 -->
                 <template v-else-if="draw.status === 'open' && draw.activityKind === 'lottery'">
                   <button
@@ -283,12 +284,20 @@
                     @click="handleCopyShareLink(draw)"
                   >{{ $t('lottery.adminCopyLink') }}</button>
                   <button
+                    v-if="String(draw.resultMode || '') !== 'instant'"
                     type="button"
                     class="btn btn-ghost btn-xs"
                     :disabled="operatingId === draw.id || !canEnableDrawNow(draw.entryCount)"
                     :title="canEnableDrawNow(draw.entryCount) ? $t('lottery.adminDrawNow') : $t('lottery.adminDrawNowNeedEntries')"
                     @click="handleDraw(draw)"
                   >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminDrawNow') }}</button>
+                  <button
+                    v-else
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    @click="handlePause(draw.id)"
+                  >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminPause') }}</button>
                 </template>
                 <!-- open 非抽奖：分享（主）+ 暂停 -->
                 <template v-else-if="draw.status === 'open'">
@@ -734,14 +743,14 @@
                   </label>
                   <template v-if="form.enableViral">
                     <label>
-                      <span>{{ $t('lottery.adminViralPerInviteLabel') }}</span>
+                      <span>{{ form.resultMode === 'instant' ? $t('lottery.adminViralPerInviteSpinsLabel') : $t('lottery.adminViralPerInviteLabel') }}</span>
                       <input v-model.number="form.viralExtraEntriesPerInvite" type="number" min="1" max="10" />
-                      <small>{{ $t('lottery.adminViralPerInviteSuffix') }}</small>
+                      <small>{{ form.resultMode === 'instant' ? $t('lottery.adminViralPerInviteSpinsSuffix') : $t('lottery.adminViralPerInviteSuffix') }}</small>
                     </label>
                     <label>
-                      <span>{{ $t('lottery.adminViralMaxLabel') }}</span>
+                      <span>{{ form.resultMode === 'instant' ? $t('lottery.adminViralMaxSpinsLabel') : $t('lottery.adminViralMaxLabel') }}</span>
                       <input v-model.number="form.viralMaxExtraEntries" type="number" min="1" max="100" />
-                      <small>{{ $t('lottery.adminViralMaxSuffix') }}</small>
+                      <small>{{ form.resultMode === 'instant' ? $t('lottery.adminViralMaxSpinsSuffix') : $t('lottery.adminViralMaxSuffix') }}</small>
                     </label>
                     <label class="field-span-2">
                       <input v-model="form.viralLeaderboardEnabled" type="checkbox" class="checkbox-inline" />
@@ -933,6 +942,16 @@
                     </select>
                     <input v-model="tier.tierName" class="tier-name" :placeholder="$t('lottery.adminTierNamePlaceholder')" maxlength="50" />
                     <input v-model.number="tier.winnerCount" type="number" class="tier-count" min="1" max="1000" :placeholder="$t('lottery.adminTierSlotsPlaceholder')" />
+                    <input
+                      v-if="form.resultMode === 'instant'"
+                      v-model.number="tier.weight"
+                      type="number"
+                      class="tier-count"
+                      min="0"
+                      max="100000"
+                      :placeholder="$t('lottery.adminTierWeightPlaceholder')"
+                      :title="$t('lottery.adminTierWeightHint')"
+                    />
                     <button type="button" class="btn btn-ghost btn-xs" @click="removeTier(idx)">✕</button>
                   </div>
                   <div class="tier-actions">
@@ -963,7 +982,17 @@
                 <input v-model.number="form.winnerCount" type="number" min="1" max="9999" step="1" required />
                 <small class="field-hint">{{ $t('lottery.winnerCountHint') }}</small>
               </label>
-              <label v-else>
+              <label v-if="form.activityKind === 'lottery' && form.resultMode === 'instant'">
+                <span>{{ $t('lottery.adminMaxSpinsPerEntry') }}</span>
+                <input v-model.number="form.maxSpinsPerEntry" type="number" min="1" max="100" step="1" required />
+                <small class="field-hint">{{ $t('lottery.adminMaxSpinsPerEntryHint') }}</small>
+              </label>
+              <label v-if="form.activityKind === 'lottery' && form.resultMode === 'instant'">
+                <span>{{ $t('lottery.adminResultRule') }}</span>
+                <input :value="resultModeLabel(form.resultMode)" disabled />
+                <small class="field-hint">{{ $t('lottery.adminInstantResultHint') }}</small>
+              </label>
+              <label v-else-if="form.activityKind !== 'lottery'">
                 <span>{{ $t('lottery.adminResultRule') }}</span>
                 <input :value="resultModeLabel(form.resultMode)" disabled />
                 <small class="field-hint">{{ $t('lottery.adminResultRuleHint') }}</small>
@@ -1447,6 +1476,7 @@ import {
 import AdminModal from '@/components/AdminModal'
 import AdminPagination from '@/components/AdminPagination'
 import { useTablePagination } from '@/composables/useTablePagination'
+import { useAdminListLoader } from '@usethink/cf-admin-fe/composables'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { adminRequest } from '@/composables/useAdminRequest'
 import {
@@ -1635,8 +1665,7 @@ const activityKindFilter = ref('')
 /** 创建时间范围筛选（047 文档 🟡）：ISO 日期（date input 值） */
 const createdFromFilter = ref('')
 const createdToFilter = ref('')
-const loading = ref(false)
-const loadError = ref('')
+const { loading, loadError, runLoad } = useAdminListLoader()
 const showCreateModal = ref(false)
 /** 055a：创建表单「高级配置（导流/裂变/CTA）」默认收起，减少主路径压迫 */
 const showAdvancedGrowth = ref(false)
@@ -1808,7 +1837,6 @@ const {
   runSequential: runBatchSequential,
 } = useAdminBatchOperation()
 const pagination = useTablePagination({ initialLimit: 50 })
-let loadSequence = 0
 let winnersStatusTimer: ReturnType<typeof setInterval> | null = null
 let winnersStatusRefreshes = 0
 let winnersStatusInFlight = false
@@ -1925,12 +1953,17 @@ async function loadPrizeOptions() {
  * 抽奖活动必须配置奖项才能通过发布门禁，编辑时遗漏保存会导致「已更新但无奖项」。
  */
 async function saveDrawTiers(drawId: string) {
+  const isInstant = form.value.resultMode === 'instant'
   const validTiers = form.value.tiers
     .filter((tier) => tier.prizeId)
     .map((tier, i) => ({
       prizeId: tier.prizeId,
       tierName: tier.tierName || t('lottery.adminTierName', { n: i + 1 }),
       winnerCount: Math.max(1, Number(tier.winnerCount) || 1),
+      // instant：未填 weight 默认 1，避免发布预检权重和=0
+      ...(isInstant
+        ? { weight: Math.max(0, Math.floor(Number(tier.weight) || 1)) }
+        : {}),
     }))
   if (validTiers.length === 0) return
   try {
@@ -1980,7 +2013,12 @@ async function saveDrawInviteCodes(drawId: string) {
 /** 添加一个奖项（最多 10 个） */
 function addTier() {
   if (form.value.tiers.length >= 10) return
-  form.value.tiers.push({ prizeId: '', tierName: t('lottery.adminTierName', { n: form.value.tiers.length + 1 }), winnerCount: 1 })
+  form.value.tiers.push({
+    prizeId: '',
+    tierName: t('lottery.adminTierName', { n: form.value.tiers.length + 1 }),
+    winnerCount: 1,
+    weight: form.value.resultMode === 'instant' ? 1 : 0,
+  })
 }
 
 /** 移除一个奖项 */
@@ -2637,10 +2675,17 @@ function applyTemplate(tpl: any) {
     // 模板 defaults 含展示开关时带入（后端 create 支持 show* 字段）
     showWinners: Number(tpl.defaults?.showWinnerList ?? tpl.defaults?.showWinnerCount ?? 0) === 1,
     showParticipantCount: (Number(tpl.defaults?.showParticipantCount ?? 1) === 1 ? 1 : 0) as 0 | 1,
+    // instant 模板：默认 maxSpins=1（docs/116）
+    maxSpinsPerEntry: Math.max(1, Number(tpl.defaults?.maxSpinsPerEntry) || 1),
     activityConfig: defaultActivityConfigForKind(kind, t) as any,
-    // 抽奖：先占一行奖项，引导「选奖品 / 快速创建」；无 prizeId 时创建仍可存草稿，开启会被门禁拦住
+    // 抽奖：先占一行奖项，引导「选奖品 / 快速创建」；instant 预填 weight=1
     tiers: kind === 'lottery'
-      ? [{ prizeId: '', tierName: t('lottery.adminTierName', { n: 1 }), winnerCount: Math.max(1, winnerCount || 1) }]
+      ? [{
+          prizeId: '',
+          tierName: t('lottery.adminTierName', { n: 1 }),
+          winnerCount: Math.max(1, winnerCount || 1),
+          weight: String(tpl.defaults?.resultMode || '') === 'instant' ? 1 : 0,
+        }]
       : [],
   }
   // 模板智能增强：不同类型预设更合理的默认值，减少重复配置
@@ -2686,33 +2731,33 @@ function applyTemplate(tpl: any) {
 }
 
 async function loadData() {
-  const sequence = ++loadSequence
-  loading.value = true
-  loadError.value = ''
-  try {
-    const data = await fetchLotteryDraws({
-      limit: pagination.limit.value,
-      offset: (pagination.page.value - 1) * pagination.limit.value,
-      status: statusFilter.value || undefined,
-      query: listQuery.value || undefined,
-      activityKind: activityKindFilter.value || undefined,
-      createdFrom: createdFromFilter.value ? `${createdFromFilter.value}T00:00:00.000Z` : undefined,
-      createdTo: createdToFilter.value ? `${createdToFilter.value}T23:59:59.999Z` : undefined,
-    })
-    if (sequence !== loadSequence) return
-    draws.value = data.draws || []
-    // 预填公开链接缓存，打开二维码/海报弹窗时再本地生成图
-    for (const d of draws.value) {
-      prefetchPublicUrl(d)
-    }
-    pagination.setTotal(data.total || 0)
-  } catch (e: any) {
-    if (sequence !== loadSequence) return
+  const ok = await runLoad(
+    async ({ isStale }) => {
+      const data = await fetchLotteryDraws({
+        limit: pagination.limit.value,
+        offset: (pagination.page.value - 1) * pagination.limit.value,
+        status: statusFilter.value || undefined,
+        query: listQuery.value || undefined,
+        activityKind: activityKindFilter.value || undefined,
+        createdFrom: createdFromFilter.value ? `${createdFromFilter.value}T00:00:00.000Z` : undefined,
+        createdTo: createdToFilter.value ? `${createdToFilter.value}T23:59:59.999Z` : undefined,
+      })
+      if (isStale()) return
+      draws.value = data.draws || []
+      // 预填公开链接缓存，打开二维码/海报弹窗时再本地生成图
+      for (const d of draws.value) {
+        prefetchPublicUrl(d)
+      }
+      pagination.setTotal(data.total || 0)
+    },
+    {
+      onError: (err) =>
+        (err instanceof Error ? err.message : t('lottery.adminLoadFailed')) || t('lottery.adminLoadFailed'),
+    },
+  )
+  if (!ok && loadError.value) {
     draws.value = []
-    loadError.value = e?.message || t('lottery.adminLoadFailed')
     showToast(loadError.value, 'error')
-  } finally {
-    if (sequence === loadSequence) loading.value = false
   }
 }
 
@@ -3045,12 +3090,17 @@ async function handleEdit(draw: LotteryDraw) {
     return
   }
   // 调详情 API 获取完整活动数据（含奖项配置 tiers + promotionConfig）
-  let tiers: Array<{ prizeId: string; tierName: string; winnerCount: number }> = []
+  let tiers: Array<{ prizeId: string; tierName: string; winnerCount: number; weight?: number }> = []
   let detailDraw: Record<string, any> | null = null
   try {
-    const detail = await adminRequest<{ draw: any; tiers: Array<{ prizeId: string; tierName: string; winnerCount: number }> }>(`/api/admin/draws/${draw.id}`)
+    const detail = await adminRequest<{ draw: any; tiers: Array<{ prizeId: string; tierName: string; winnerCount: number; weight?: number }> }>(`/api/admin/draws/${draw.id}`)
     if (detail.tiers) {
-      tiers = detail.tiers.map(t => ({ prizeId: t.prizeId || '', tierName: t.tierName || '', winnerCount: t.winnerCount || 1 }))
+      tiers = detail.tiers.map(t => ({
+        prizeId: t.prizeId || '',
+        tierName: t.tierName || '',
+        winnerCount: t.winnerCount || 1,
+        weight: Number(t.weight) || 0,
+      }))
     }
     if (detail.draw) detailDraw = detail.draw
   } catch { /* 详情加载失败时使用空奖项 + 列表行上的字段 */ }
@@ -3066,6 +3116,7 @@ async function handleEdit(draw: LotteryDraw) {
     endTime: toDateTimeLocalValue(draw.endAt),
     drawTime: toDateTimeLocalValue(draw.drawAt || ''),
     winnerCount: draw.winnerCount,
+    maxSpinsPerEntry: Math.max(1, Number(source.maxSpinsPerEntry || draw.maxSpinsPerEntry || 1)),
     maxParticipants: draw.maxParticipants ?? null,
     participationMode: draw.participationMode || 'open',
     activityKind: draw.activityKind || 'lottery',
@@ -3197,15 +3248,20 @@ async function handleCreate() {
       description: form.value.description,
       startAt: dateTimeLocalToIso(form.value.startTime),
       endAt: dateTimeLocalToIso(form.value.endTime),
-      drawAt: drawAtIso,
+      // instant 不写 drawAt，避免运营误以为定时开奖
+      drawAt: schedule.resultMode === 'instant' ? undefined : drawAtIso,
       drawTrigger: schedule.drawTrigger,
       winnerCount: activityKind === 'lottery' ? Number(form.value.winnerCount) || 1 : 0,
       maxParticipants: form.value.maxParticipants ? Number(form.value.maxParticipants) : undefined,
       participationMode: form.value.participationMode || 'open',
       experienceType: form.value.experienceType || defaultExperienceForActivity(activityKind, form.value.participationMode || 'open'),
       activityKind,
-      // lottery：resultMode 跟 drawTrigger；非 lottery：保留表单/类型默认（问卷等禁止被抽奖覆盖）
+      // lottery delayed：resultMode 跟 drawTrigger；instant 由 schedule 保留；非 lottery 保留表单默认
       resultMode: schedule.resultMode,
+      // instant：每人 spin 次数硬顶（后端 create 仅 lottery+instant 写入）
+      ...(schedule.resultMode === 'instant'
+        ? { maxSpinsPerEntry: Math.max(1, Math.min(100, Math.floor(Number(form.value.maxSpinsPerEntry) || 1))) }
+        : {}),
       allocationPolicy: form.value.allocationPolicy || 'capacity',
       // 表单「展示中奖名单」对应后端 showWinnerList；模板 defaults 也可经此写入
       showWinnerList: form.value.showWinners ? 1 : 0,

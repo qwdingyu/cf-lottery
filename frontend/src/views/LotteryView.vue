@@ -186,11 +186,22 @@
               :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
               :key="draw.id"
               :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || $t('lottery.productPlaceholder'), color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
-              :disabled="joiningId === draw.id || isDrawJoined(draw) || draw.status !== 'open'"
-              :loading="joiningId === draw.id"
+              :disabled="gameDisabled(draw)"
+              :loading="joiningId === draw.id || spinningId === draw.id"
               :celebrate-key="celebrateKeyById[draw.id] || 0"
-              @play="handleJoin(draw.id)"
+              :target-sector-index="targetSectorById[draw.id] ?? null"
+              @play="handleGamePlay(draw)"
             />
+            <!-- instant：剩余次数提示（docs/116） -->
+            <p
+              v-if="isInstantLottery(draw) && isDrawJoined(draw) && spinsLeftById[draw.id] != null"
+              class="lottery-spins-hint"
+            >
+              {{ $t('lottery.spinsLeftHint', {
+                left: spinsLeftById[draw.id],
+                max: draw.maxSpinsPerEntry || spinsLeftById[draw.id],
+              }) }}
+            </p>
           </div>
           <!--
             055a P1：有游戏壳时，游戏区即主 CTA（@play → handleJoin），底部不再放第二颗「参与」避免双入口。
@@ -230,12 +241,20 @@
             <template v-else-if="isDrawJoined(draw)">
               <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
               <!--
-                已参与主路径：查结果必须是主按钮（docs/115）。
-                showWinnerList 只控制公开名单，不挡个人查询；样式与 non-open 主 CTA 对齐。
+                instant 且仍有次数：主 CTA 再抽一次；否则查结果（docs/116）。
+                delayed：查结果为主按钮（docs/115）。
               -->
               <button
+                v-if="isInstantLottery(draw) && (spinsLeftById[draw.id] ?? 0) > 0"
                 type="button"
                 class="lottery-result-btn lottery-result-btn--primary"
+                :disabled="spinningId === draw.id || joiningId === draw.id"
+                @click="handleInstantSpin(draw)"
+              >{{ spinningId === draw.id ? $t('lottery.loadingText') : $t('lottery.spinAgain') }}</button>
+              <button
+                type="button"
+                class="lottery-result-btn"
+                :class="{ 'lottery-result-btn--primary': !(isInstantLottery(draw) && (spinsLeftById[draw.id] ?? 0) > 0) }"
                 @click="openMyResult(draw)"
               >{{ $t('lottery.queryResult') }}</button>
             </template>
@@ -693,35 +712,68 @@
             <p class="result-hint">{{ $t('lottery.resultParticipationHint') }}</p>
           </template>
 
-          <!-- 以下仅 lottery / claim 抽奖族 -->
-          <template v-else-if="!myResultData.won && !isMyResultDrawFinal">
+          <!-- instant：次数用完前未中 → 可再抽；非终态 delayed 等开奖 -->
+          <template v-else-if="!myResultData.won && isMyResultInstant && (myResultData.spinsLeft ?? 0) > 0">
+            <div class="result-line">🎯 {{ $t('lottery.resultInstantCanSpin') }}</div>
+            <p class="result-hint">{{ $t('lottery.spinsLeftHint', {
+              left: myResultData.spinsLeft,
+              max: myResultData.maxSpinsPerEntry || myResultData.spinsLeft,
+            }) }}</p>
+          </template>
+          <template v-else-if="!myResultData.won && !isMyResultDrawFinal && !isMyResultInstant">
             <div class="result-line">⏳ {{ $t('lottery.resultPendingDraw') }}</div>
             <p class="result-hint">{{ $t('lottery.resultPendingDrawHint') }}</p>
           </template>
           <template v-else-if="myResultData.won">
             <div class="result-line">🎉 <strong>{{ $t('lottery.won') }}</strong></div>
-            <div v-if="myResultData.prizeName || myResultData.tierName" class="result-prize-meta">
-              <div class="result-line">
-                {{ $t('lottery.wonPrizeLabel') }}
-                <strong>{{ myResultData.prizeName || myResultData.tierName }}</strong>
+            <!-- instant 多奖：wins[] 全量展示（docs/116） -->
+            <template v-if="myResultData.wins && myResultData.wins.length > 1">
+              <div
+                v-for="(w, wi) in myResultData.wins"
+                :key="w.winnerId || wi"
+                class="result-prize-meta"
+              >
+                <div class="result-line">
+                  {{ $t('lottery.wonPrizeLabel') }}
+                  <strong>{{ w.prizeName || w.tierName || '—' }}</strong>
+                </div>
+                <div v-if="w.prizeCode" class="result-code-block">
+                  <span class="result-code-label">{{ $t('lottery.prizeCodeLabel') }}</span>
+                  <code class="result-code" @click="copyMyResult(w.prizeCode!)">{{ w.prizeCode }}</code>
+                </div>
               </div>
-              <div v-if="myResultData.tierName && myResultData.prizeName && myResultData.tierName !== myResultData.prizeName" class="result-hint">
-                {{ $t('lottery.wonTierLabel') }}{{ myResultData.tierName }}
+            </template>
+            <template v-else>
+              <div v-if="myResultData.prizeName || myResultData.tierName" class="result-prize-meta">
+                <div class="result-line">
+                  {{ $t('lottery.wonPrizeLabel') }}
+                  <strong>{{ myResultData.prizeName || myResultData.tierName }}</strong>
+                </div>
+                <div v-if="myResultData.tierName && myResultData.prizeName && myResultData.tierName !== myResultData.prizeName" class="result-hint">
+                  {{ $t('lottery.wonTierLabel') }}{{ myResultData.tierName }}
+                </div>
+                <div v-if="myResultData.prizeValueText" class="result-hint">{{ myResultData.prizeValueText }}</div>
               </div>
-              <div v-if="myResultData.prizeValueText" class="result-hint">{{ myResultData.prizeValueText }}</div>
-            </div>
-            <div v-if="myResultData.prizeCode" class="result-code-block">
-              <span class="result-code-label">{{ $t('lottery.prizeCodeLabel') }}</span>
-              <code class="result-code" @click="copyMyResult(myResultData.prizeCode)">{{ myResultData.prizeCode }}</code>
-              <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
-            </div>
-            <template v-else-if="isManualFulfillmentPrize(myResultData.prizeType)">
-              <p class="result-hint result-fulfill-hint">{{ $t('lottery.wonManualFulfillmentHint') }}</p>
-              <p v-if="myResultData.fulfillmentNote" class="result-hint">{{ myResultData.fulfillmentNote }}</p>
+              <div v-if="myResultData.prizeCode" class="result-code-block">
+                <span class="result-code-label">{{ $t('lottery.prizeCodeLabel') }}</span>
+                <code class="result-code" @click="copyMyResult(myResultData.prizeCode)">{{ myResultData.prizeCode }}</code>
+                <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
+              </div>
+              <template v-else-if="isManualFulfillmentPrize(myResultData.prizeType)">
+                <p class="result-hint result-fulfill-hint">{{ $t('lottery.wonManualFulfillmentHint') }}</p>
+                <p v-if="myResultData.fulfillmentNote" class="result-hint">{{ myResultData.fulfillmentNote }}</p>
+              </template>
+              <template v-else-if="!myResultData.prizeCode">
+                <p class="result-hint">{{ $t('lottery.wonNoCodeHint') }}</p>
+              </template>
             </template>
-            <template v-else-if="!myResultData.prizeCode">
-              <p class="result-hint">{{ $t('lottery.wonNoCodeHint') }}</p>
-            </template>
+            <p
+              v-if="isMyResultInstant && myResultData.spinsLeft != null"
+              class="result-hint"
+            >{{ $t('lottery.spinsLeftHint', {
+              left: myResultData.spinsLeft,
+              max: myResultData.maxSpinsPerEntry || myResultData.spinsLeft,
+            }) }}</p>
             <!-- 仅活动未终态时推邀请；已开奖再「让更多人参与」无意义（docs/103） -->
             <div v-if="showMyResultInviteShare" class="result-share-win">
               <p class="result-share-hint">🎁 {{ $t('lottery.shareYourLuck') }}</p>
@@ -1068,6 +1120,8 @@ function completeJoinSuccess(
     outcome?: ActivityOutcome
     activityKind?: string
     resultMode?: string
+    spinsLeft?: number
+    maxSpinsPerEntry?: number
   },
   opts?: { email?: string },
 ) {
@@ -1081,6 +1135,30 @@ function completeJoinSuccess(
   if (data.outcome) {
     myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
   }
+  // instant：join 只发次数，不抽奖；记录 left 供再抽 CTA
+  const draw = draws.value.find((d) => d.id === joinedDrawId || d.publicSlug === joinedDrawId)
+  if (isInstantLottery({ activityKind: data.activityKind || draw?.activityKind, resultMode: data.resultMode || draw?.resultMode })) {
+    const left =
+      data.spinsLeft != null
+        ? Number(data.spinsLeft)
+        : Math.max(1, Number(data.maxSpinsPerEntry || draw?.maxSpinsPerEntry || 1))
+    // 产品默认 initial=1：join 后至少 1 次可 spin（若后端未回传 spinsLeft）
+    spinsLeftById.value = { ...spinsLeftById.value, [joinedDrawId]: left }
+    // instant：join 成功不播随机氛围（避免「转完却没结果」）；直接 toast 引导 spin
+    showToast(t('lottery.joinSuccessInstant'), 'success')
+    closeLogin()
+    joinAccessPassword.value = ''
+    joinInviteCode.value = ''
+    void recordActivityEvent(joinedDrawId, 'participation_completed', {
+      activityKind: data.activityKind || '',
+      outcomeStatus: data.outcome?.status || '',
+    })
+    rememberJoinSuccess(joinedDrawId, data.entryId, {
+      outcomeLabel: data.outcome?.resultLabel,
+      resultMode: data.resultMode || 'instant',
+    })
+    return
+  }
   void recordActivityEvent(joinedDrawId, 'participation_completed', {
     activityKind: data.activityKind || '',
     outcomeStatus: data.outcome?.status || '',
@@ -1089,7 +1167,8 @@ function completeJoinSuccess(
     outcomeLabel: data.outcome?.resultLabel,
     resultMode: data.resultMode,
   })
-  // 先触发氛围（转盘/老虎机等），再延迟结果弹窗；动画不表示开奖结果
+  // delayed：先触发氛围（转盘/老虎机等），再延迟结果弹窗；动画不表示开奖结果
+  targetSectorById.value = { ...targetSectorById.value, [joinedDrawId]: null }
   celebrateKeyById.value = {
     ...celebrateKeyById.value,
     [joinedDrawId]: (celebrateKeyById.value[joinedDrawId] || 0) + 1,
@@ -1112,6 +1191,128 @@ function completeJoinSuccess(
       resultModalTimer = null
       showResult.value = true
     }, delayMs)
+  }
+}
+
+/**
+ * instant spin：先请求服务端，成功后再 celebrate + 停扇（docs/116）。
+ * 身份：业务 JWT 免 OTP；否则需已有 sessionEmail + 可能需 OTP（复用 login 弹窗）。
+ */
+async function handleInstantSpin(draw: LotteryDraw) {
+  if (spinningId.value || joiningId.value) return
+  if (!isInstantLottery(draw) || draw.status !== 'open') return
+  if ((spinsLeftById.value[draw.id] ?? 1) <= 0) {
+    showToast(t('lottery.spinsExhausted'), 'error')
+    openMyResult(draw)
+    return
+  }
+
+  const slug = publicDrawPathKey(draw.id)
+  if (!slug) {
+    showToast(t('lottery.drawNotLoaded'), 'error')
+    return
+  }
+
+  const token = registeredToken.value
+  const email = String(sessionEmail.value || '').trim().toLowerCase()
+  const isReg = draw.participationMode === 'registered'
+
+  // 无强会话且无邮箱：引导登录/发码
+  if (isReg && !token) {
+    openLogin(draw.id)
+    return
+  }
+  if (!isReg && !token && !email) {
+    // 已参与但会话丢了：打开查结果/登录补身份
+    openLogin(draw.id)
+    showToast(t('lottery.spinNeedSession'), 'error')
+    return
+  }
+
+  spinningId.value = draw.id
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': crypto.randomUUID(),
+    }
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const body: Record<string, string> = {}
+    if (!isReg) {
+      body.email = email
+      // 无 Bearer 时需要 OTP；有 Bearer 后端免码
+      if (!token && loginCode.value.trim()) {
+        body.code = loginCode.value.trim()
+      }
+    }
+
+    // 无 Bearer 且无 code：先打开登录让用户发码（不假装 spin）
+    if (!isReg && !token && !body.code) {
+      openLogin(draw.id)
+      showToast(t('lottery.spinNeedCode'), 'error')
+      return
+    }
+
+    const res = await fetch(`${API_BASE}/public/draws/${encodeURIComponent(slug)}/spin`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    })
+    const data = (await res.json()) as any
+    if (!data.ok) {
+      showToast(data.message || t('lottery.spinFailed'), 'error')
+      if (res.status === 409) {
+        spinsLeftById.value = { ...spinsLeftById.value, [draw.id]: 0 }
+      }
+      return
+    }
+
+    const prizeIndex = Number(data.prizeIndex)
+    const won = Boolean(data.won)
+    const left = Number(data.spinsLeft)
+    if (Number.isFinite(left)) {
+      spinsLeftById.value = { ...spinsLeftById.value, [draw.id]: left }
+    }
+    if (won) {
+      myWonById.value = { ...myWonById.value, [draw.id]: true }
+    }
+
+    // 先 spin 成功 → 再停扇（有 prizeIndex 时对准）
+    targetSectorById.value = {
+      ...targetSectorById.value,
+      [draw.id]: Number.isFinite(prizeIndex) ? prizeIndex : null,
+    }
+    celebrateKeyById.value = {
+      ...celebrateKeyById.value,
+      [draw.id]: (celebrateKeyById.value[draw.id] || 0) + 1,
+    }
+
+    rememberJoinSuccess(draw.id, data.entryId, {
+      resultMode: 'instant',
+      outcomeLabel: won ? (data.prizeName || data.tierName || t('lottery.won')) : t('lottery.thanksForParticipating'),
+    })
+
+    showToast(
+      won
+        ? t('lottery.spinWon', { prize: data.prizeName || data.tierName || '' })
+        : t('lottery.spinMiss'),
+      won ? 'success' : 'info',
+    )
+
+    // 延迟打开查结果弹窗（带 spins/wins）
+    clearResultModalTimer()
+    resultModalTimer = setTimeout(() => {
+      resultModalTimer = null
+      openMyResult(draw)
+      // 若已有强会话，自动再查一次以刷新 wins
+      if (registeredToken.value || sessionEmail.value) {
+        void queryMyResult()
+      }
+    }, 2800)
+  } catch {
+    showToast(t('lottery.networkError'), 'error')
+  } finally {
+    if (spinningId.value === draw.id) spinningId.value = ''
   }
 }
 /**
@@ -1234,11 +1435,17 @@ const sortedMyEntries = computed(() => {
 });
 
 const joiningId = ref('')
+/** instant spin 请求中（与 join 锁分离，避免互相覆盖） */
+const spinningId = ref('')
 /**
- * 游戏氛围触发器：参与成功后对该 drawId 递增。
+ * 游戏氛围触发器：参与/spin 成功后对该 drawId 递增。
  * Wheel/Slot/Grid 等 watch celebrateKey 再播动画，避免「未验证先转盘」。
  */
 const celebrateKeyById = ref<Record<string, number>>({})
+/** instant：spin 成功后的停扇索引（与 celebrateKey 同步） */
+const targetSectorById = ref<Record<string, number | null>>({})
+/** instant：各活动剩余可抽次数（join/spin/my-result 回填） */
+const spinsLeftById = ref<Record<string, number>>({})
 /** 结果弹窗延迟展示定时器（先氛围后遮罩） */
 let resultModalTimer: ReturnType<typeof setTimeout> | null = null
 const showResult = ref(false)
@@ -1251,6 +1458,35 @@ const lastJoinResult = ref<{
   /** 参与时活动 status，用于开奖后隐藏邀请（docs/103） */
   drawStatus?: string
 } | null>(null)
+
+/** lottery + resultMode=instant */
+function isInstantLottery(draw: { activityKind?: string; resultMode?: string } | null | undefined): boolean {
+  if (!draw) return false
+  const kind = String(draw.activityKind || 'lottery')
+  return kind === 'lottery' && String(draw.resultMode || '') === 'instant'
+}
+
+/** 游戏区禁用：instant 已参与仍可 spin（有次数时） */
+function gameDisabled(draw: LotteryDraw): boolean {
+  if (joiningId.value === draw.id || spinningId.value === draw.id) return true
+  if (draw.status !== 'open') return true
+  if (!isDrawJoined(draw)) return false
+  if (isInstantLottery(draw)) {
+    const left = spinsLeftById.value[draw.id]
+    // 未知次数时仍允许点（spin 接口会 409）；已知 0 则禁用
+    if (left === 0) return true
+    return false
+  }
+  return true
+}
+
+function handleGamePlay(draw: LotteryDraw) {
+  if (isDrawJoined(draw) && isInstantLottery(draw)) {
+    void handleInstantSpin(draw)
+    return
+  }
+  void handleJoin(draw.id)
+}
 
 // ── 查询我的结果（中奖卡密/安慰奖券） ──
 const showMyResultModal = ref(false)
@@ -1278,6 +1514,20 @@ type MyResultPayload = {
   fulfillmentNote?: string | null
   tierName?: string | null
   consolationCoupon: string | null
+  /** instant 多奖 */
+  wins?: Array<{
+    winnerId?: string
+    spinId?: string | null
+    tierName?: string | null
+    prizeName?: string | null
+    prizeCode?: string | null
+    prizeType?: string | null
+    prizeValueText?: string | null
+    fulfillmentNote?: string | null
+  }>
+  spinsLeft?: number | null
+  spinsUsed?: number | null
+  maxSpinsPerEntry?: number | null
   outcome?: {
     id?: string
     outcomeType?: string
@@ -1290,6 +1540,13 @@ type MyResultPayload = {
 }
 const myResultData = ref<MyResultPayload | null>(null)
 const myResultError = ref('')
+/** my-result 当前是否 instant 活动 */
+const isMyResultInstant = computed(() =>
+  isInstantLottery({
+    activityKind: myResultData.value?.activityKind || myResultDraw.value?.activityKind,
+    resultMode: myResultData.value?.resultMode || myResultDraw.value?.resultMode,
+  }),
+)
 
 /**
  * 结果族：优先 API resultFamily；缺省时用活动 activityKind 推断（兼容旧后端）。
@@ -1564,6 +1821,13 @@ async function queryMyResult() {
         }
         if (data.won) {
           myWonById.value = { ...myWonById.value, [drawKey]: true }
+        }
+        // instant 次数字段回填
+        if (data.spinsLeft != null && Number.isFinite(Number(data.spinsLeft))) {
+          spinsLeftById.value = {
+            ...spinsLeftById.value,
+            [drawKey]: Number(data.spinsLeft),
+          }
         }
       }
     } else {

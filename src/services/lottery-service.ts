@@ -42,6 +42,8 @@ export * from "./lottery/integration";
 export * from "./lottery/draws";
 export * from "./lottery/participation";
 export * from "./lottery/draw-execution";
+export * from "./lottery/spin-execution";
+export * from "./lottery/spin-quota";
 export * from "./lottery/penalty";
 export * from "./lottery/reward";
 
@@ -161,6 +163,8 @@ export async function processDueDraws(
       eq(lotteryDraws.status, "open"),
       eq(lotteryDraws.activityKind, "lottery"), // 纵深：仅抽奖可 performDraw；防误配 scheduled 的非 lottery
       eq(lotteryDraws.drawTrigger, "scheduled"),
+      // docs/117 P0-2：instant 走 spin，Cron 不得再 performDraw
+      sql`${lotteryDraws.resultMode} != 'instant'`,
       sql`${lotteryDraws.drawAt} <= ${now}`,  // 开奖时间已到
     ))
     .orderBy(lotteryDraws.drawAt)  // 按开奖时间排序，先到期的先处理

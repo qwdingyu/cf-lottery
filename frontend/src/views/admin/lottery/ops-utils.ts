@@ -186,6 +186,7 @@ export function buildLotteryDuplicateDraft(
 /**
  * 创建/编辑活动时：drawAt ↔ drawTrigger ↔ lottery resultMode 单一真相。
  * 禁止只写 drawAt 却保持 manual（Cron 永远扫不到）。
+ * instant（docs/116）：独立 spin 结果机，不得被 drawAt→scheduled 覆盖。
  */
 export function resolveLotteryScheduleFields(input: {
   activityKind?: string | null
@@ -197,13 +198,18 @@ export function resolveLotteryScheduleFields(input: {
   resultMode: string
 } {
   const activityKind = String(input.activityKind || 'lottery')
+  const requestedMode = String(input.resultMode || '').trim()
+  // instant 不走 performDraw/Cron：强制 manual trigger，保留 resultMode=instant
+  if (activityKind === 'lottery' && requestedMode === 'instant') {
+    return { drawTrigger: 'manual', resultMode: 'instant' }
+  }
   const drawTrigger = resolveDrawTrigger({
     activityKind,
     drawAt: input.drawAt,
     drawTrigger: input.drawTrigger,
   })
   if (activityKind === 'lottery') {
-    // lottery：resultMode 跟 trigger；勿让表单默认 manual 覆盖 scheduled
+    // delayed lottery：resultMode 跟 trigger；勿让表单默认 manual 覆盖 scheduled
     return {
       drawTrigger,
       resultMode: resultModeForLotteryDrawTrigger(drawTrigger),

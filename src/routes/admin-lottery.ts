@@ -314,6 +314,7 @@ adminLotteryRoute.get("/draws/:id", async (c) => {
       tierName: lotteryPrizeTiers.tierName,
       winnerCount: lotteryPrizeTiers.winnerCount,
       sortOrder: lotteryPrizeTiers.sortOrder,
+      weight: lotteryPrizeTiers.weight,
       prizeName: prizes.name,
       prizeType: prizes.prizeType,
     })
@@ -385,6 +386,7 @@ adminLotteryRoute.post("/draws/:id/copy", async (c) => {
     promotionConfig: draw.promotionConfig,
     activityConfig: draw.activityConfig,
     productLink: draw.productLink,  // 复制导流商品链接（参与后展示的 CTA）
+    maxSpinsPerEntry: Number(draw.maxSpinsPerEntry || 0),
     status: "draft",
     createdAt: now,
     updatedAt: now,
@@ -405,6 +407,7 @@ adminLotteryRoute.post("/draws/:id/copy", async (c) => {
         tierName: tier.tierName,
         winnerCount: tier.winnerCount,
         sortOrder: tier.sortOrder,
+        weight: Number(tier.weight || 0),
       });
     }
   }
@@ -471,16 +474,30 @@ adminLotteryRoute.post("/draws", async (c) => {
     }
 
     // lottery + scheduled：若客户端仍传 resultMode=manual，与 drawTrigger 对齐，避免公开页文案说谎
+    // lottery + instant：不因 drawAt 误推 scheduled（instant 无 performDraw）
     let resultModeInput = body.resultMode;
+    const resolvedResultPeek = resultModeInput !== undefined
+      ? coerceEnum(resultModeInput, RESULT_MODES, defaultResultModeForActivity(activityKind, drawTrigger))
+      : defaultResultModeForActivity(activityKind, drawTrigger);
     if (
       activityKind === "lottery" &&
       drawTrigger === "scheduled" &&
+      resolvedResultPeek !== "instant" &&
       (resultModeInput === undefined ||
         resultModeInput === null ||
         String(resultModeInput).trim() === "" ||
         String(resultModeInput).trim().toLowerCase() === "manual")
     ) {
       resultModeInput = "scheduled";
+    }
+
+    let maxSpinsPerEntry: number | undefined;
+    if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
+      const n = Number(body.maxSpinsPerEntry);
+      if (!Number.isFinite(n) || n < 1 || n > 100) {
+        return fail(c, "每人抽奖次数须为 1–100 的整数", 400);
+      }
+      maxSpinsPerEntry = Math.floor(n);
     }
 
     const { id, publicSlug } = await createDraw(db, tenantId, {
@@ -514,6 +531,7 @@ adminLotteryRoute.post("/draws", async (c) => {
       activityConfig: body.activityConfig !== undefined
         ? (typeof body.activityConfig === "string" ? body.activityConfig : JSON.stringify(body.activityConfig))
         : "{}",
+      ...(maxSpinsPerEntry !== undefined ? { maxSpinsPerEntry } : {}),
     });
     await recordTenantAudit(c, "draw.create", "lottery_draw", id, { title: String(body.title || "") });
     return ok(c, { id, publicSlug });
@@ -558,6 +576,15 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
   }
 
   if (draw.status !== "draft") return fail(c, "只有草稿状态的活动可以编辑", 400);
+
+  let maxSpinsUpdate: number | undefined;
+  if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
+    const n = Number(body.maxSpinsPerEntry);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      return fail(c, "每人抽奖次数须为 0–100 的整数", 400);
+    }
+    maxSpinsUpdate = Math.floor(n);
+  }
 
   // 校验时间顺序（如果一起修改了时间）
   const startAt = body.startAt ?? draw.startAt;
@@ -615,6 +642,7 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       ...(body.endAt !== undefined ? { endAt: body.endAt } : {}),
       ...(body.drawAt !== undefined ? { drawAt: body.drawAt } : {}),
       ...(body.winnerCount !== undefined ? { winnerCount: Number(body.winnerCount) } : {}),
+      ...(maxSpinsUpdate !== undefined ? { maxSpinsPerEntry: maxSpinsUpdate } : {}),
       ...(maxParticipantsUpdate !== undefined ? { maxParticipants: maxParticipantsUpdate } : {}),
       ...(body.accessPassword !== undefined ? { accessPassword: body.accessPassword ? await hashAccessPassword(String(body.accessPassword)) : "" } : {}),
       ...(body.showParticipantCount !== undefined ? { showParticipantCount: body.showParticipantCount ? 1 : 0 } : {}),
@@ -731,6 +759,9 @@ adminLotteryRoute.post("/draws/:id/draw", async (c) => {
     if (!draw) return fail(c, "活动不存在", 404);
     if (draw.activityKind !== "lottery") {
       return fail(c, "该活动类型不需要开奖", 400);
+    }
+    if (String(draw.resultMode || "") === "instant") {
+      return fail(c, "即时开奖活动请由用户 spin，不能统一开奖", 400);
     }
     const result = await performDraw(db, tenantId, drawId, userId, {
       resendApiKey: getEnv(c, "RESEND_API_KEY") || "",

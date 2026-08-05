@@ -232,6 +232,11 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   // 活动玩法配置（版本化 JSON）。问卷字段、投票选项等低成本玩法的规则源统一放这里，
   // 提交时由后端按该配置做白名单校验，避免把选项塞进 identity_value 或让前端自说自话。
   activityConfig: text("activity_config").notNull().default("{}"),
+  /**
+   * instant 同一 entry 累计成功 spin 次数硬顶（docs/116）。
+   * 0 = 未配置（delayed 默认）；result_mode=instant 发布预检要求 ≥1。
+   */
+  maxSpinsPerEntry: integer("max_spins_per_entry").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
@@ -249,6 +254,8 @@ export const lotteryPrizeTiers = sqliteTable("lottery_prize_tiers", {
   tierName: text("tier_name").notNull().default("中奖"),
   winnerCount: integer("winner_count").notNull().default(1),
   sortOrder: integer("sort_order").notNull().default(100),
+  /** instant 加权抽样权重；0=不参与即时抽（delayed performDraw 忽略本列） */
+  weight: integer("weight").notNull().default(0),
 });
 
 // ── 参与资格 ──
@@ -288,9 +295,38 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
   inviteCodeId: text("invite_code_id").default(""),
   ipHash: text("ip_hash").notNull().default(""),
   joinedAt: text("joined_at").notNull().default(sql`(datetime('now'))`),
+  /** instant：当前剩余可抽次数（docs/116 不变量 left = granted - used） */
+  spinsLeft: integer("spins_left").notNull().default(0),
+  /** instant：累计已发放额度（含 join 初值 + 裂变） */
+  spinsTotalGranted: integer("spins_total_granted").notNull().default(0),
+  /** instant：因有效邀请累计加到 granted 的部分（≤ maxExtraSpins） */
+  spinsViralEarned: integer("spins_viral_earned").notNull().default(0),
 }, (t) => ({
   unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
   identityIdx: index("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),
+}));
+
+/**
+ * 即时开奖每次 spin 审计行（含未中）。
+ * 幂等：UNIQUE(tenant, draw, idempotency_key)；多奖靠 winners.spin_id 1:1。
+ */
+export const lotterySpins = sqliteTable("lottery_spins", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  entryId: text("entry_id").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  won: integer("won").notNull().default(0),
+  tierId: text("tier_id").notNull().default(""),
+  prizeCodeId: text("prize_code_id").notNull().default(""),
+  prizeIndex: integer("prize_index").notNull().default(-1),
+  algorithmVersion: text("algorithm_version").notNull().default("instant_weight_v1"),
+  ipHash: text("ip_hash").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  idempotencyUnique: uniqueIndex("idx_spins_idempotency").on(t.tenantId, t.drawId, t.idempotencyKey),
+  entryIdx: index("idx_spins_entry").on(t.tenantId, t.drawId, t.entryId, t.createdAt),
+  drawIdx: index("idx_spins_draw").on(t.tenantId, t.drawId, t.createdAt),
 }));
 
 export const lotteryWinners = sqliteTable("lottery_winners", {
@@ -299,6 +335,11 @@ export const lotteryWinners = sqliteTable("lottery_winners", {
   drawId: text("draw_id").notNull(),
   tierId: text("tier_id").notNull(),
   entryId: text("entry_id").notNull(),
+  /**
+   * 关联 lottery_spins.id（instant 多奖）；delayed performDraw 写入 winner 自身 id 作占位，
+   * 保证 UNIQUE(tenant, draw, spin_id) 下每 entry 仍可落一行。
+   */
+  spinId: text("spin_id").notNull().default(""),
   identityType: text("identity_type").notNull(),
   identityValue: text("identity_value").notNull(),
   prizeCodeId: text("prize_code_id").default(""),
@@ -306,7 +347,9 @@ export const lotteryWinners = sqliteTable("lottery_winners", {
   notificationStatus: text("notification_status").notNull().default("pending"),
   notificationError: text("notification_error").notNull().default(""),
 }, (t) => ({
-  unique: uniqueIndex("idx_winners_unique").on(t.tenantId, t.drawId, t.entryId),
+  spinUnique: uniqueIndex("idx_winners_spin_unique").on(t.tenantId, t.drawId, t.spinId),
+  entryIdx: index("idx_winners_entry").on(t.tenantId, t.drawId, t.entryId),
+  drawIdx: index("idx_winners_draw").on(t.tenantId, t.drawId, t.drawnAt),
 }));
 
 // ── 审计日志 ──

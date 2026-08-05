@@ -1207,7 +1207,7 @@ describe("公开参与流程", () => {
       identityType: "email", identityValue: email, joinedAt: new Date().toISOString(),
     });
     await db.insert(lotteryWinners).values({
-      id: crypto.randomUUID(),
+      id: crypto.randomUUID(), spinId: crypto.randomUUID(),
       tenantId: TENANT,
       drawId,
       tierId,
@@ -2135,7 +2135,7 @@ describe("公开参与流程", () => {
       emailVerified: 1, passwordHash: "h",
     });
     await db.insert(lotteryWinners).values({
-      id: crypto.randomUUID(), tenantId, drawId, tierId: "tier-1", entryId: "notify-entry-1",
+      id: crypto.randomUUID(), spinId: crypto.randomUUID(), tenantId, drawId, tierId: "tier-1", entryId: "notify-entry-1",
       identityType: "user_id", identityValue: userId,
       prizeCodeId: null, notificationStatus: "pending",
     });

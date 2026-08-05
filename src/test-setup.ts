@@ -187,6 +187,7 @@ export async function clearTestData(client: Client) {
     "lottery_invite_codes",
     "lottery_roster_members",
     "lottery_prize_tiers",
+    "lottery_spins",
     "lottery_winners",
     "lottery_entries",
     "email_access_codes",

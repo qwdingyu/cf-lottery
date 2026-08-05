@@ -158,11 +158,30 @@ async function validateParticipation(db: DbType, tenantId: string, draw: Lottery
 async function validateLotteryPrizes(db: DbType, tenantId: string, draw: LotteryDraw, result: PublishCheckResult) {
   if (draw.activityKind !== "lottery") return;
 
+  const isInstant = String(draw.resultMode || "") === "instant";
+  const maxSpins = Number((draw as { maxSpinsPerEntry?: number }).maxSpinsPerEntry ?? 0);
+
+  // docs/116：instant 必须配置每人抽奖次数；禁止依赖 scheduled 自动 performDraw
+  if (isInstant) {
+    if (!Number.isFinite(maxSpins) || maxSpins < 1) {
+      add(result.errors, "basic", "basic.max_spins.required", "即时开奖必须设置每人抽奖次数（≥1）");
+    }
+    if (draw.drawTrigger === "scheduled") {
+      add(
+        result.errors,
+        "basic",
+        "basic.instant.scheduled_forbidden",
+        "即时开奖活动不能使用定时统一开奖；请改为手动触发关闭，由用户 spin 出结果",
+      );
+    }
+  }
+
   const tiers = await db
     .select({
       id: lotteryPrizeTiers.id,
       tierName: lotteryPrizeTiers.tierName,
       winnerCount: lotteryPrizeTiers.winnerCount,
+      weight: lotteryPrizeTiers.weight,
       prizeId: lotteryPrizeTiers.prizeId,
       prizeName: prizes.name,
       prizeType: prizes.prizeType,
@@ -180,9 +199,11 @@ async function validateLotteryPrizes(db: DbType, tenantId: string, draw: Lottery
   }
 
   let tierWinnerTotal = 0;
+  let weightSum = 0;
   for (const tier of tiers) {
     const tierName = tier.tierName || "未命名奖项";
     tierWinnerTotal += Math.max(0, Number(tier.winnerCount || 0));
+    weightSum += Math.max(0, Number((tier as { weight?: number }).weight || 0));
 
     if (!tier.prizeId || !tier.prizeName || tier.active !== 1) {
       add(result.errors, "prizes", "prizes.tier.prize_missing", `奖项"${tierName}"未选择可用奖品`);
@@ -215,6 +236,15 @@ async function validateLotteryPrizes(db: DbType, tenantId: string, draw: Lottery
         add(result.errors, "prizes", "prizes.codes.insufficient", `奖项"${tierName}"可用码 ${available} 个，中奖名额 ${tier.winnerCount} 个，发布后会发放失败`);
       }
     }
+  }
+
+  if (isInstant && weightSum <= 0) {
+    add(
+      result.errors,
+      "prizes",
+      "prizes.instant.weight_required",
+      "即时开奖至少需要一个奖项配置 weight>0，否则无法抽奖",
+    );
   }
 
   if (draw.winnerCount !== tierWinnerTotal) {

@@ -38,9 +38,19 @@ describe("ACTIVITY_TEMPLATES 抽奖体验诚实性（docs/115）", () => {
     }
   });
 
-  it("claim 模板才默认 instant（与 lottery 对照，防误改全局）", () => {
+  it("claim 与 lottery-wheel-instant 可默认 instant；延迟大转盘/刮刮仍禁止", () => {
     const claim = ACTIVITY_TEMPLATES.find((t) => t.id === "claim-download");
     expect(claim?.defaults.resultMode).toBe("instant");
     expect(claim?.defaults.activityKind).toBe("claim");
+
+    const instantWheel = ACTIVITY_TEMPLATES.find((t) => t.id === "lottery-wheel-instant");
+    expect(instantWheel?.defaults).toMatchObject({
+      activityKind: "lottery",
+      experienceType: "wheel",
+      resultMode: "instant",
+    });
+    // 旧模板不得被改成 instant（防运营误选）
+    expect(wheel!.defaults.resultMode).toBe("manual");
+    expect(scratch!.defaults.resultMode).toBe("manual");
   });
 });

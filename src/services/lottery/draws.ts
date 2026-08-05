@@ -190,6 +190,8 @@ export async function createDraw(
     productLink?: string;          // 旧导流配置，JSON 字符串
     promotionConfig?: string;      // 活动引擎导流配置，JSON 字符串
     activityConfig?: string;       // 活动玩法配置，JSON 字符串
+    /** instant：同一用户最多 spin 次数；0=未配置（delayed） */
+    maxSpinsPerEntry?: number;
   },
 ) {
   const requestedMaxParticipants = normalizeRequestedMaxParticipants(data.maxParticipants);
@@ -236,6 +238,15 @@ export async function createDraw(
   const now = new Date().toISOString();
   const experienceType = data.experienceType || defaultExperienceForActivity(activityKind, data.participationMode || "open");
   const resultMode = data.resultMode || defaultResultModeForActivity(activityKind, drawTrigger);
+  // instant 次数硬顶：仅 lottery+instant 写入；其它模式强制 0，避免脏配置
+  let maxSpinsPerEntry = 0;
+  if (activityKind === "lottery" && resultMode === "instant") {
+    const raw = Number(data.maxSpinsPerEntry);
+    if (!Number.isFinite(raw) || raw < 1) {
+      throw new Error("即时开奖必须设置每人抽奖次数（≥1）");
+    }
+    maxSpinsPerEntry = Math.min(100, Math.floor(raw));
+  }
   // 访问密码哈希移到循环外，避免 slug 冲突重试时重复计算（单次 SHA-256，成本低但没必要重复）
   const accessPasswordHash = data.accessPassword ? await hashAccessPassword(data.accessPassword) : "";
 
@@ -274,6 +285,7 @@ export async function createDraw(
         productLink: data.productLink || "{}",
         promotionConfig: data.promotionConfig || "{}",
         activityConfig: data.activityConfig || "{}",
+        maxSpinsPerEntry,
         status: "draft",
         createdAt: now,
         updatedAt: now,

@@ -11,7 +11,15 @@ import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes } from "../db/schema";
 import { eq, and, count, asc } from "drizzle-orm";
-import { getActivityOutcome, joinDraw, cancelSignupChainEntry, recordActivityEvent, type ActivityEventType } from "../services/lottery-service";
+import {
+  getActivityOutcome,
+  joinDraw,
+  cancelSignupChainEntry,
+  recordActivityEvent,
+  performInstantSpin,
+  SpinBusinessError,
+  type ActivityEventType,
+} from "../services/lottery-service";
 import { verifyJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 import { parseActivityConfig, validateSubmissionPayload } from "../lib/activity-config";
@@ -36,6 +44,38 @@ export const publicLotteryRoute = new Hono<AppEnv>();
 
 // 裂变 / 接龙 / 分享码子域
 setupPublicShareRoutes(publicLotteryRoute);
+
+/**
+ * join 成功响应附加 instant 次数字段（docs/116）。
+ * delayed / 无 entry → 空对象，不污染 payload。
+ */
+async function instantJoinSpinFields(
+  db: ReturnType<typeof getDb>,
+  draw: { id: string; tenantId: string; resultMode?: string | null; maxSpinsPerEntry?: number | null },
+  entryId: string | undefined,
+): Promise<Record<string, number | undefined>> {
+  if (String(draw.resultMode || "") !== "instant" || !entryId) return {};
+  const [row] = await db
+    .select({
+      spinsLeft: lotteryEntries.spinsLeft,
+      spinsTotalGranted: lotteryEntries.spinsTotalGranted,
+    })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.id, entryId),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+    ))
+    .limit(1);
+  if (!row) return {};
+  const left = Number(row.spinsLeft ?? 0);
+  const granted = Number(row.spinsTotalGranted ?? 0);
+  return {
+    spinsLeft: left,
+    spinsUsed: Math.max(0, granted - left),
+    maxSpinsPerEntry: Number(draw.maxSpinsPerEntry || 0) || undefined,
+  };
+}
 
 // ═════════════════════════════════════════════════════════
 // 公开活动详情
@@ -86,6 +126,8 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     promotionConfig: draw.promotionConfig && draw.promotionConfig !== "{}" ? tryParseJson(draw.promotionConfig) : undefined,
     // 公开端只接收经过后端白名单解析的配置；无效配置会由发布闸门阻断，不在这里暴露半成品。
     activityConfig: parseActivityConfig(draw.activityConfig) || undefined,
+    // instant：每人抽奖次数硬顶（0=未配置/非 instant）
+    maxSpinsPerEntry: Number(draw.maxSpinsPerEntry || 0) || undefined,
   };
 
   if (draw.activityKind === "lottery") {
@@ -93,6 +135,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
       .select({
         tierName: lotteryPrizeTiers.tierName,
         winnerCount: lotteryPrizeTiers.winnerCount,
+        weight: lotteryPrizeTiers.weight,
         name: prizes.name,
         description: prizes.description,
         imageUrl: prizes.imageUrl,
@@ -109,9 +152,12 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
       ))
       .orderBy(asc(lotteryPrizeTiers.sortOrder));
 
-    result.prizes = prizeRows.map((row) => ({
+    result.prizes = prizeRows.map((row, index) => ({
       tierName: row.tierName,
       winnerCount: row.winnerCount,
+      /** instant 停扇索引：与 spin.prizeIndex 对齐（按 sortOrder） */
+      prizeIndex: index,
+      weight: Number(row.weight || 0) || undefined,
       name: row.name || row.tierName,
       description: row.description || "",
       imageUrl: row.imageUrl || "",
@@ -378,13 +424,15 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
       }
       // 返回 entryId/outcome/resultMode（与 verify-join 对齐）：前端依赖它们弹出结果弹窗、
       // 生成归因分享链接（GameResultModal 的 :entry-id 与 share API 均需要）。
+      const entryIdJoined = "entryId" in result ? result.entryId : undefined;
       return ok(c, {
         joined: true,
-        entryId: "entryId" in result ? result.entryId : undefined,
+        entryId: entryIdJoined,
         activityKind: draw.activityKind,
         resultMode: draw.resultMode || draw.drawTrigger,
         outcome: "outcome" in result ? result.outcome : undefined,
         submissionId: "submissionId" in result ? result.submissionId : undefined,
+        ...(await instantJoinSpinFields(db, draw, entryIdJoined)),
       });
     } catch (err: any) {
       if (err.message?.includes("UNIQUE constraint")) return fail(c, "您已参与此活动", 409);
@@ -425,13 +473,15 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
         }
         return fail(c, result.message || "参与失败", 400);
       }
+      const entryIdBypass = "entryId" in result ? result.entryId : undefined;
       return ok(c, {
         joined: true,
-        entryId: "entryId" in result ? result.entryId : undefined,
+        entryId: entryIdBypass,
         activityKind: draw.activityKind,
         resultMode: draw.resultMode || draw.drawTrigger,
         outcome: "outcome" in result ? result.outcome : undefined,
         submissionId: "submissionId" in result ? result.submissionId : undefined,
+        ...(await instantJoinSpinFields(db, draw, entryIdBypass)),
       });
     } catch (err: any) {
       if (err.message?.includes("UNIQUE constraint")) return fail(c, "您已参与此活动", 409);
@@ -597,14 +647,16 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
       }
       return fail(c, result.message || "参与失败", 400);
     }
+    const entryIdVerify = "entryId" in result ? result.entryId : undefined;
     return ok(c, {
       joined: true,
-      entryId: "entryId" in result ? result.entryId : undefined,
+      entryId: entryIdVerify,
       activityKind: draw.activityKind || "lottery",
       // 前端结果弹窗按 result_mode 分支文案（instant / scheduled / manual）
       resultMode: draw.resultMode || draw.drawTrigger,
       outcome: "outcome" in result ? result.outcome : undefined,
       submissionId: "submissionId" in result ? result.submissionId : undefined,
+      ...(await instantJoinSpinFields(db, draw, entryIdVerify)),
     });
   } catch (err: any) {
     if (err.message?.includes("UNIQUE constraint")) return fail(c, "您已参与此活动", 409);
@@ -635,6 +687,7 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
       status: lotteryDraws.status,
       resultMode: lotteryDraws.resultMode,
       activityKind: lotteryDraws.activityKind,
+      maxSpinsPerEntry: lotteryDraws.maxSpinsPerEntry,
     })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
@@ -740,21 +793,46 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     decidedAt: string | null;
   } | null = null;
 
+  /** instant 多奖：wins[]；兼容旧客户端保留首条到 won/prizeCode */
+  const wins: Array<{
+    winnerId: string;
+    spinId: string | null;
+    tierName: string | null;
+    prizeName: string | null;
+    prizeType: string | null;
+    prizeCode: string | null;
+    prizeValueText: string | null;
+    fulfillmentNote: string | null;
+    drawnAt: string | null;
+  }> = [];
+
+  let spinsLeft: number | null = null;
+  let spinsUsed: number | null = null;
+  let maxSpinsPerEntry: number | null = null;
+
   if (entry && resultFamily === "lottery") {
-    const [winner] = await db
+    const winnerRows = await db
       .select({
+        id: lotteryWinners.id,
+        spinId: lotteryWinners.spinId,
         prizeCodeId: lotteryWinners.prizeCodeId,
         tierId: lotteryWinners.tierId,
+        drawnAt: lotteryWinners.drawnAt,
       })
       .from(lotteryWinners)
       .where(and(
         eq(lotteryWinners.tenantId, draw.tenantId),
         eq(lotteryWinners.drawId, draw.id),
         eq(lotteryWinners.entryId, entry.id),
-      ))
-      .limit(1);
-    if (winner) {
-      won = true;
+      ));
+
+    for (const winner of winnerRows) {
+      let wTierName: string | null = null;
+      let wPrizeName: string | null = null;
+      let wPrizeType: string | null = null;
+      let wPrizeValueText: string | null = null;
+      let wFulfillmentNote: string | null = null;
+      let wPrizeCode: string | null = null;
       if (winner.tierId) {
         const [tierRow] = await db
           .select({
@@ -773,11 +851,11 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
           ))
           .limit(1);
         if (tierRow) {
-          tierName = tierRow.tierName || null;
-          prizeName = tierRow.prizeName || tierRow.tierName || null;
-          prizeType = tierRow.prizeType || null;
-          prizeValueText = tierRow.valueText || null;
-          fulfillmentNote = tierRow.fulfillmentNote || null;
+          wTierName = tierRow.tierName || null;
+          wPrizeName = tierRow.prizeName || tierRow.tierName || null;
+          wPrizeType = tierRow.prizeType || null;
+          wPrizeValueText = tierRow.valueText || null;
+          wFulfillmentNote = tierRow.fulfillmentNote || null;
         }
       }
       if (winner.prizeCodeId) {
@@ -786,8 +864,48 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
           .from(prizeCodes)
           .where(eq(prizeCodes.id, winner.prizeCodeId))
           .limit(1);
-        if (pc) prizeCode = pc.secret ? `${pc.code}:${pc.secret}` : pc.code;
+        if (pc) wPrizeCode = pc.secret ? `${pc.code}:${pc.secret}` : pc.code;
       }
+      wins.push({
+        winnerId: winner.id,
+        spinId: winner.spinId || null,
+        tierName: wTierName,
+        prizeName: wPrizeName,
+        prizeType: wPrizeType,
+        prizeCode: wPrizeCode,
+        prizeValueText: wPrizeValueText,
+        fulfillmentNote: wFulfillmentNote,
+        drawnAt: winner.drawnAt || null,
+      });
+    }
+
+    if (wins.length > 0) {
+      won = true;
+      const first = wins[0]!;
+      prizeCode = first.prizeCode;
+      prizeName = first.prizeName;
+      prizeType = first.prizeType;
+      prizeValueText = first.prizeValueText;
+      fulfillmentNote = first.fulfillmentNote;
+      tierName = first.tierName;
+    }
+
+    // instant 次数字段（delayed entry 上为 0，仍可回传便于前端统一）
+    const [entrySpins] = await db
+      .select({
+        spinsLeft: lotteryEntries.spinsLeft,
+        spinsTotalGranted: lotteryEntries.spinsTotalGranted,
+      })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, entry.id))
+      .limit(1);
+    if (entrySpins) {
+      spinsLeft = Number(entrySpins.spinsLeft ?? 0);
+      const granted = Number(entrySpins.spinsTotalGranted ?? 0);
+      spinsUsed = Math.max(0, granted - spinsLeft);
+    }
+    if (String(draw.resultMode || "") === "instant") {
+      maxSpinsPerEntry = Number(draw.maxSpinsPerEntry || 0) || null;
     }
   } else if (entry && (resultFamily === "assignment" || resultFamily === "review")) {
     // 接龙在 join 时已写 activity_outcomes；审批在后台写入。
@@ -837,6 +955,8 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     entryId: entry?.id || null,
     joinedAt: entry?.joinedAt || null,
     won,
+    /** instant 多奖列表；无中奖时 []。旧客户端可只看 won/prizeCode（首条） */
+    wins,
     activityKind,
     /** lottery | assignment | review | participation — 前端分支用，勿再默认「未抽中」 */
     resultFamily,
@@ -851,7 +971,112 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     tierName,
     consolationCoupon,
     outcome,
+    spinsLeft,
+    spinsUsed,
+    maxSpinsPerEntry,
   });
+});
+
+// ═════════════════════════════════════════════════════════
+// instant spin（docs/116）：独立结果机，与 performDraw 互斥
+// ═════════════════════════════════════════════════════════
+
+publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
+  const db = getDb(c);
+  const ip = getClientIp(c);
+  if (!(await checkPublicRateLimit(db, `spin:${ip}`, 20, 60000))) {
+    return fail(c, "抽奖过于频繁，请稍后再试", 429);
+  }
+
+  const slug = c.req.param("slug");
+  const body = await c.req.json<{
+    email?: string;
+    code?: string;
+    idempotencyKey?: string;
+  }>().catch(() => ({} as { email?: string; code?: string; idempotencyKey?: string }));
+
+  let email = String(body.email || "").trim().toLowerCase();
+  const code = String(body.code || "").trim();
+  const idempotencyKey =
+    String(body.idempotencyKey || c.req.header("Idempotency-Key") || "").trim();
+
+  const [draw] = await db
+    .select({
+      id: lotteryDraws.id,
+      tenantId: lotteryDraws.tenantId,
+      participationMode: lotteryDraws.participationMode,
+      resultMode: lotteryDraws.resultMode,
+      activityKind: lotteryDraws.activityKind,
+    })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.activityKind !== "lottery" || String(draw.resultMode || "") !== "instant") {
+    return fail(c, "该活动不支持即时抽奖", 400);
+  }
+
+  // 与 my-result 同策略：业务 JWT 可免 OTP
+  let bearerEmailVerified = false;
+  if (draw.participationMode !== "registered") {
+    const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    if (bearerToken) {
+      const jwtSecret = getEnv(c, "JWT_SECRET");
+      if (jwtSecret) {
+        try {
+          const payload = await verifyJwt(bearerToken, jwtSecret);
+          const tokenEmail = String(payload?.email || "").trim().toLowerCase();
+          if (tokenEmail && isValidEmail(tokenEmail)) {
+            if (!email) {
+              email = tokenEmail;
+              bearerEmailVerified = true;
+            } else if (tokenEmail === email) {
+              bearerEmailVerified = true;
+            }
+          }
+        } catch {
+          /* 继续 OTP */
+        }
+      }
+    }
+  }
+
+  const identity = await resolveParticipantIdentity(c, draw.participationMode, email);
+  if (!identity) return fail(c, "此活动需要登录后抽奖", 401);
+
+  if (identity.identityType === "email" && !bearerEmailVerified) {
+    if (!email || !code) return fail(c, "请输入邮箱和验证码", 400);
+  }
+  if (identity.identityType === "email" && !email) {
+    return fail(c, "请输入邮箱和验证码", 400);
+  }
+  if (identity.identityType === "email" && !(await checkPublicIdentityRateLimit(db, "spin", draw.id, email, 20, 60000))) {
+    return fail(c, "抽奖过于频繁，请稍后再试", 429);
+  }
+  if (identity.identityType === "email" && !bearerEmailVerified) {
+    const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
+    if (!validCode) return fail(c, "验证码无效或已过期", 400);
+  }
+
+  const identityValue = identity.identityType === "email" ? email : identity.identityValue;
+  const ipHash = await hashEventValue(ip);
+
+  try {
+    const result = await performInstantSpin(db, {
+      slug,
+      identityType: identity.identityType,
+      identityValue,
+      idempotencyKey,
+      ipHash,
+    });
+    return ok(c, result);
+  } catch (err) {
+    if (err instanceof SpinBusinessError) {
+      return fail(c, err.message, err.httpStatus);
+    }
+    console.error("[public] spin failed:", err);
+    return fail(c, err instanceof Error ? err.message : "抽奖失败", 400);
+  }
 });
 
 // ═════════════════════════════════════════════════════════
@@ -933,7 +1158,15 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
 
   try {
     const [draw] = await db
-      .select({ id: lotteryDraws.id, activityKind: lotteryDraws.activityKind, activityConfig: lotteryDraws.activityConfig })
+      .select({
+        id: lotteryDraws.id,
+        tenantId: lotteryDraws.tenantId,
+        activityKind: lotteryDraws.activityKind,
+        activityConfig: lotteryDraws.activityConfig,
+        resultMode: lotteryDraws.resultMode,
+        drawTrigger: lotteryDraws.drawTrigger,
+        maxSpinsPerEntry: lotteryDraws.maxSpinsPerEntry,
+      })
       .from(lotteryDraws)
       .where(eq(lotteryDraws.publicSlug, c.req.param("slug")))
       .limit(1);
@@ -965,12 +1198,15 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
       }
       return fail(c, result.message || "参与失败", 400);
     }
+    const entryIdJoin = "entryId" in result ? result.entryId : undefined;
     return ok(c, {
       joined: true,
-      entryId: "entryId" in result ? result.entryId : undefined,
+      entryId: entryIdJoin,
       activityKind: "activityKind" in result ? result.activityKind : undefined,
+      resultMode: draw.resultMode || draw.drawTrigger,
       outcome: "outcome" in result ? result.outcome : undefined,
       submissionId: "submissionId" in result ? result.submissionId : undefined,
+      ...(await instantJoinSpinFields(db, draw, entryIdJoin)),
     });
   } catch (err) {
     if (err instanceof Error && err.message.includes("UNIQUE constraint")) {

@@ -60,7 +60,7 @@ async function main() {
     "platform_members", "platform_audit_logs",
     "prizes", "prize_codes",
     "lottery_draws", "lottery_prize_tiers", "lottery_entries",
-    "lottery_winners", "lottery_roster_members", "lottery_invite_codes",
+    "lottery_winners", "lottery_spins", "lottery_roster_members", "lottery_invite_codes",
     "email_access_codes", "audit_logs", "system_config",
     "activity_events", "webhook_deliveries", "redemption_codes", "redemption_records",
     "external_conversions", "rate_limit_log", "tenant_usage_snapshots", "activity_submissions",

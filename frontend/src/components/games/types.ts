@@ -48,6 +48,12 @@ export interface GameProps {
    * 有氛围动画的组件 watch 此值再播放；与 loading 解耦，避免未验证就转盘。
    */
   celebrateKey?: number
+  /**
+   * instant spin 成功后的停扇索引（docs/116）。
+   * 与 celebrateKey 同帧递增时：对准服务端 prizeIndex；未传则随机氛围（delayed）。
+   * 无服务端索引时禁止宣称中奖。
+   */
+  targetSectorIndex?: number | null
 }
 
 /** 游戏组件 Emits 接口 */

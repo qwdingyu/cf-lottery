@@ -14,7 +14,7 @@
  * 说明：这组测试是"验证审查结论"的正式测试，保留作为回归保护——
  * 未来任何一处改回缺陷实现，对应用例会立即失败。
  */
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { eq, and, count, like } from "drizzle-orm";
 import type { AppEnv } from "./bindings";
@@ -165,15 +165,18 @@ describe("开奖一致性：winners 写入与 status=drawn 同事务", () => {
 
     await joinDraw(db, publicSlug, "victim@test.com");
 
-    // 预置一条与参与者同 entry 的 winner 记录，制造 UNIQUE(tenantId, drawId, entryId) 冲突，
-    // 模拟开奖事务中途写入失败（并发残留或历史脏数据场景）。
+    // docs/116：winners 唯一键为 UNIQUE(tenant, draw, spin_id)；
+    // delayed performDraw 用 winner 自身 id 作 spinId 占位。
+    // 预置固定 spinId，并劫持 randomUUID，使事务内写入撞 UNIQUE → 全回滚。
     const [entry] = await db
       .select()
       .from(lotteryEntries)
       .where(eq(lotteryEntries.drawId, id))
       .limit(1);
+    const collisionSpinId = "sec-audit-collision-spin-id";
     await db.insert(lotteryWinners).values({
       id: crypto.randomUUID(),
+      spinId: collisionSpinId,
       tenantId: TENANT,
       drawId: id,
       tierId: "tier-preset",
@@ -185,8 +188,21 @@ describe("开奖一致性：winners 写入与 status=drawn 同事务", () => {
       notificationStatus: "pending",
     });
 
-    // 开奖：winners 插入必然 UNIQUE 冲突 → 整个事务（含 status=drawn 更新）回滚
-    await expect(performDraw(db, TENANT, id, USER)).rejects.toThrow();
+    // performDraw：第 1 次 randomUUID = seed；第 2 次 = winnerId/spinId → 撞冲突
+    const realRandomUUID = crypto.randomUUID.bind(crypto);
+    let uuidCalls = 0;
+    const uuidSpy = vi.spyOn(crypto, "randomUUID").mockImplementation(() => {
+      uuidCalls += 1;
+      if (uuidCalls === 1) return realRandomUUID();
+      return collisionSpinId;
+    });
+
+    try {
+      // 开奖：winners 插入必然 UNIQUE 冲突 → 整个事务（含 status=drawn 更新）回滚
+      await expect(performDraw(db, TENANT, id, USER)).rejects.toThrow();
+    } finally {
+      uuidSpy.mockRestore();
+    }
 
     // 状态回滚为 open（可重试）：修复前残留场景会因二次开奖再冲突而永久自锁，
     // 修复后事务失败不落任何新数据，catch 将状态回滚 open 让运营者可重新开奖。
