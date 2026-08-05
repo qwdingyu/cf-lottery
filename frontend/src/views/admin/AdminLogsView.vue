@@ -176,7 +176,7 @@ import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
-import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
+import { copyWithToast } from '@usethink/cf-admin-fe/composables'
 import { formatDate } from '@/composables/useFormat'
 import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
@@ -389,12 +389,10 @@ async function copySelectedLogs() {
   const logs = selectedLogs()
   if (logs.length === 0) return
   const lines = logRows(logs).map((row) => row.join('\t')).join('\n')
-  try {
-    await writeClipboardText(lines)
-    showToast(i18n.global.t('adminLogs.copySelectedSuccess', { count: logs.length }), 'success')
-  } catch {
-    showToast(i18n.global.t('adminLogs.copySelectedFailed'), 'error')
-  }
+  await copyWithToast(lines, {
+    successMessage: i18n.global.t('adminLogs.copySelectedSuccess', { count: logs.length }),
+    errorMessage: i18n.global.t('adminLogs.copySelectedFailed'),
+  })
 }
 
 function exportSelectedLogs() {

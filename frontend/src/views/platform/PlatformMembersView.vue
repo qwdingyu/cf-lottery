@@ -148,7 +148,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
-import { useToast } from '@usethink/cf-admin-fe/composables'
+import { copyWithToast, useToast } from '@usethink/cf-admin-fe/composables'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
@@ -203,8 +203,12 @@ function formatTime(iso: string): string {
   catch { return iso }
 }
 
-function copyText(text: string) {
-  if (text) navigator.clipboard.writeText(text).catch(() => {})
+async function copyText(text: string) {
+  if (!text) return
+  await copyWithToast(text, {
+    successMessage: t('lottery.copied'),
+    errorMessage: t('platformTenants.copyIdFailed'),
+  })
 }
 
 async function loadData() {

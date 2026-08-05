@@ -71,7 +71,8 @@ import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
-import { useTablePagination } from '@usethink/cf-admin-fe/composables'
+import { copyWithToast, useTablePagination } from '@usethink/cf-admin-fe/composables'
+import { buildAdminOffsetParams } from '@usethink/cf-admin-fe/utils'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -86,15 +87,19 @@ function formatTime(iso: string): string {
   catch { return iso }
 }
 
-function copyText(text: string) {
-  if (text) navigator.clipboard.writeText(text).catch(() => {})
+async function copyText(text: string) {
+  if (!text) return
+  await copyWithToast(text, {
+    successMessage: t('lottery.copied'),
+    errorMessage: t('platformTenants.copyIdFailed'),
+  })
 }
 
 async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const params = new URLSearchParams({ limit: String(pagination.limit.value), offset: String((pagination.page.value - 1) * pagination.limit.value) })
+    const params = new URLSearchParams(buildAdminOffsetParams(pagination.page.value, pagination.limit.value))
     if (filter.value.tenantId) params.set('tenantId', filter.value.tenantId)
     if (filter.value.action) params.set('action', filter.value.action)
     const data = await adminRequest<{ logs: any[] }>(`/api/platform/audit-logs?${params}`)

@@ -125,10 +125,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
 import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
-import { useTablePagination } from '@usethink/cf-admin-fe/composables'
+import { copyWithToast, useTablePagination } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
+import { buildAdminOffsetParams } from '@usethink/cf-admin-fe/utils'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import { canRetryWebhookDelivery } from '@/views/admin/lottery/ops-utils'
@@ -199,15 +200,19 @@ function truncate(text: string, len: number): string {
   return text.length > len ? text.slice(0, len) + '…' : text
 }
 
-function copyText(text: string) {
-  if (text) navigator.clipboard.writeText(text).catch(() => {})
+async function copyText(text: string) {
+  if (!text) return
+  await copyWithToast(text, {
+    successMessage: t('lottery.copied'),
+    errorMessage: t('platformTenants.copyIdFailed'),
+  })
 }
 
 async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const params = new URLSearchParams({ limit: String(pagination.limit.value), offset: String((pagination.page.value - 1) * pagination.limit.value) })
+    const params = new URLSearchParams(buildAdminOffsetParams(pagination.page.value, pagination.limit.value))
     if (filter.value.tenantId) params.set('tenantId', filter.value.tenantId)
     if (filter.value.status) params.set('status', filter.value.status)
     const data = await adminRequest<{ deliveries: WebhookDelivery[] }>(`/api/platform/webhook-deliveries?${params}`)

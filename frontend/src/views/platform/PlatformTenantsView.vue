@@ -257,8 +257,8 @@ import { useI18n } from 'vue-i18n'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
-import { useTablePagination } from '@usethink/cf-admin-fe/composables'
-import { useToast } from '@usethink/cf-admin-fe/composables'
+import { copyWithToast, useTablePagination, useToast } from '@usethink/cf-admin-fe/composables'
+import { buildAdminOffsetParams } from '@usethink/cf-admin-fe/utils'
 
 const { t, locale } = useI18n()
 const { showToast } = useToast()
@@ -316,22 +316,17 @@ function statusTagClass(status: string): string {
 }
 
 async function copyId(id: string) {
-  try {
-    await navigator.clipboard.writeText(id)
-    showToast(t('platformTenants.copyIdSuccess'), 'success')
-  } catch {
-    showToast(t('platformTenants.copyIdFailed'), 'error')
-  }
+  await copyWithToast(id, {
+    successMessage: t('platformTenants.copyIdSuccess'),
+    errorMessage: t('platformTenants.copyIdFailed'),
+  })
 }
 
 async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const params = new URLSearchParams({
-      limit: String(pagination.limit.value),
-      offset: String((pagination.page.value - 1) * pagination.limit.value),
-    })
+    const params = new URLSearchParams(buildAdminOffsetParams(pagination.page.value, pagination.limit.value))
     if (filter.value.status) params.set('status', filter.value.status)
     if (filter.value.plan) params.set('plan', filter.value.plan)
     const data = await adminRequest<{ tenants: any[] }>(`/api/platform/tenants?${params}`)

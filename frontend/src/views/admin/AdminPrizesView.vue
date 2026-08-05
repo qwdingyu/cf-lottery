@@ -388,7 +388,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '@usethink/cf-admin-fe/composables'
+import { copyWithToast, useToast } from '@usethink/cf-admin-fe/composables'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
@@ -637,12 +637,10 @@ async function loadCodes(resetPage = false) {
 
 async function copyCode(code: string, secret?: string) {
   const text = secret ? `${code}:${secret}` : code
-  try {
-    await navigator.clipboard.writeText(text)
-    showToast(t('adminPrizes.copySuccess'), 'success')
-  } catch {
-    showToast(t('adminPrizes.copyFailed'), 'error')
-  }
+  await copyWithToast(text, {
+    successMessage: t('adminPrizes.copySuccess'),
+    errorMessage: t('adminPrizes.copyFailed'),
+  })
 }
 
 async function deleteCode(code: any) {

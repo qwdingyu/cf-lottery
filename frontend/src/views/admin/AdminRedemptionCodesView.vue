@@ -193,11 +193,12 @@ import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 import { formatDate } from '@/composables/useFormat'
-import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
+import { copyWithToast } from '@usethink/cf-admin-fe/composables'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
 import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
 import { useTablePagination } from '@usethink/cf-admin-fe/composables'
+import { buildAdminOffsetParams } from '@usethink/cf-admin-fe/utils'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { canDisableRedemptionCode } from './lottery/ops-utils'
 
@@ -271,7 +272,7 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const params = new URLSearchParams({ limit: String(pagination.limit.value), offset: String((pagination.page.value - 1) * pagination.limit.value) })
+    const params = new URLSearchParams(buildAdminOffsetParams(pagination.page.value, pagination.limit.value))
     if (statusFilter.value) params.set('status', statusFilter.value)
     if (searchQuery.value) params.set('search', searchQuery.value)
     const [data, statsData] = await Promise.all([
@@ -309,12 +310,10 @@ async function handleBatch() {
 }
 
 async function copyCodes() {
-  try {
-    await writeClipboardText(generatedCodes.value.join('\n'))
-    showToast(t('adminRedemption.copied'), 'success')
-  } catch {
-    showToast(t('adminRedemption.copyFailed'), 'error')
-  }
+  await copyWithToast(generatedCodes.value.join('\n'), {
+    successMessage: t('adminRedemption.copied'),
+    errorMessage: t('adminRedemption.copyFailed'),
+  })
 }
 
 async function handleDisable(id: string) {
