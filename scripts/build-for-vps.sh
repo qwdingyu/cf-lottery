@@ -36,7 +36,7 @@
 # 产出物：
 #   dist/server.js         后端单文件 bundle（esbuild 编译+minify）
 #   public/                前端静态资源（npm run frontend:build）
-#   deploy-YYYYMMDD-HHMMSS.tar.gz  VPS 部署包（--package）
+#   cf-lottery-deploy-YYYYMMDD-HHMMSS.tar.gz  VPS 部署包（--package）
 #     内含：dist/server.js  public/  package.json  package-lock.json
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -126,7 +126,7 @@ fi
 # ── 步骤 5：（可选）打包 tar.gz ──
 if [ "$DO_PACKAGE" = true ]; then
   info "步骤 5/5：打包部署包..."
-  PACKAGE="deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
+  PACKAGE="cf-lottery-deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
   tar -czf "$PACKAGE" \
     dist/server.js \
     public/ \

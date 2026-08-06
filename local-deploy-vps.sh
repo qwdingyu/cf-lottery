@@ -71,9 +71,9 @@ info "步骤 1/2：构建 VPS 部署包..."
 # shellcheck disable=SC2086 # VPS_BUILD_FLAGS 允许传入 --obfuscate 等简单 flags。
 bash scripts/build-for-vps.sh $VPS_BUILD_FLAGS --package
 
-PACKAGE_FILE="$(ls -t deploy-*.tar.gz 2>/dev/null | head -1 || true)"
+PACKAGE_FILE="$(ls -t cf-lottery-deploy-*.tar.gz 2>/dev/null | head -1 || true)"
 if [ -z "$PACKAGE_FILE" ] || [ ! -f "$PACKAGE_FILE" ]; then
-  err "未找到 deploy-*.tar.gz 部署包"
+  err "未找到 cf-lottery-deploy-*.tar.gz 部署包"
   exit 1
 fi
 
