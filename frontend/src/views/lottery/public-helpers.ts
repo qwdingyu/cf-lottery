@@ -93,6 +93,20 @@ export function normalizePublicDraw(raw: any, routeSlug?: string): LotteryDraw {
 }
 
 /**
+ * 公开活动详情包含实时参与人数和开奖状态，请求侧也显式绕过浏览器缓存。
+ * 后端仍会返回 no-store；前端兜底是为了覆盖移动端返回上一页、Service Worker/代理等历史缓存场景。
+ */
+export function buildPublicDrawRequestInit(): RequestInit {
+  return {
+    cache: 'no-store',
+    headers: {
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    },
+  }
+}
+
+/**
  * 从活动 promotionConfig 中提取指定状态的 CTA 配置。
  *
  * 安全：只返回 http/https 协议的外部链接。

@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ambienceMsForExperience,
+  buildPublicDrawRequestInit,
   gamePrimaryCtaHintKey,
   isLotteryResultFamilyKind,
   resolveExperienceType,
@@ -123,5 +124,14 @@ describe("public-helpers experience UX", () => {
     expect(resultModeTagI18nKey("review_decision")).toBe("adminResultReview");
     expect(resultModeTagI18nKey("vote_tally")).toBe("adminResultVoteTally");
     expect(resultModeTagI18nKey("")).toBe("");
+  });
+
+  it("buildPublicDrawRequestInit 禁止缓存动态公开详情", () => {
+    const init = buildPublicDrawRequestInit();
+    expect(init.cache).toBe("no-store");
+    expect(init.headers).toEqual({
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    });
   });
 });

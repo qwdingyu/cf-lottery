@@ -592,6 +592,26 @@ async function joinByEmail(app: Hono<AppEnv>, slug: string, email: string) {
   expect(res.status).toBe(200);
 }
 
+it("公开详情：参与后立即返回最新人数并禁止缓存", async () => {
+  await seedOwner();
+  const app = createTestApp();
+  const { publicSlug } = await createAndPublish(app, "lottery");
+
+  const before = await app.request(`/api/public/draws/${publicSlug}`, {}, TEST_ENV);
+  expect(before.status).toBe(200);
+  expect(before.headers.get("Cache-Control")).toContain("no-store");
+  const beforeBody = await before.json() as { participantCount?: number };
+  expect(beforeBody.participantCount).toBe(0);
+
+  await joinByEmail(app, publicSlug, "realtime-count@test.com");
+
+  const after = await app.request(`/api/public/draws/${publicSlug}`, {}, TEST_ENV);
+  expect(after.status).toBe(200);
+  expect(after.headers.get("Cache-Control")).toContain("no-store");
+  const afterBody = await after.json() as { participantCount?: number };
+  expect(afterBody.participantCount).toBe(1);
+});
+
 /** 参与 IP 计数器（避免限流） */
 let joinIpCounter = 0
 

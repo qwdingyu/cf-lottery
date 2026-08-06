@@ -858,6 +858,7 @@ import {
 import {
   defaultExperienceForParticipation,
   ambienceMsForExperience,
+  buildPublicDrawRequestInit,
   gamePrimaryCtaHintKey,
   requiresActivitySubmission,
   normalizePublicDraw,
@@ -1132,6 +1133,7 @@ function handleAlreadyJoined(
   opts?: { openResult?: boolean; entryId?: string },
 ) {
   markDrawJoined(joinedDrawId, { entryId: opts?.entryId })
+  refreshDrawDetailFor(joinedDrawId)
   if (opts?.entryId) {
     rememberJoinSuccess(joinedDrawId, opts.entryId)
   }
@@ -1152,6 +1154,15 @@ function publicDrawPathKey(drawId: string): string {
   return resolvePublicDrawPathKey(drawId, draws.value)
 }
 
+function isDrawAlreadyMarkedJoined(drawId: string): boolean {
+  const draw = draws.value.find((d) => d.id === drawId || d.publicSlug === drawId)
+  return Boolean(
+    myJoinedById.value[drawId] ||
+    myJoinedById.value[draw?.id || ''] ||
+    myJoinedById.value[draw?.publicSlug || ''],
+  )
+}
+
 function completeJoinSuccess(
   joinedDrawId: string,
   data: {
@@ -1165,12 +1176,15 @@ function completeJoinSuccess(
   opts?: { email?: string },
 ) {
   if (opts?.email) persistSessionEmail(opts.email)
+  const wasJoined = isDrawAlreadyMarkedJoined(joinedDrawId)
   markDrawJoined(joinedDrawId, {
     entryId: data.entryId,
     activityKind: data.activityKind,
     // 抽奖中奖靠 my-result.won；outcome.status 多为 assigned/waitlisted，勿当「已中奖」
     won: data.outcome?.status === 'won',
   })
+  if (!wasJoined) bumpParticipantCount(joinedDrawId)
+  refreshDrawDetailFor(joinedDrawId)
   if (data.outcome) {
     myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
   }
@@ -1976,6 +1990,9 @@ let countdownTimer: ReturnType<typeof setInterval> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 const trackedPageViews = new Set<string>()
 
+/** 公开详情承载实时参与人数/开奖状态；请求侧也禁缓存，避免移动端返回旧数据。 */
+const PUBLIC_DRAW_FETCH_INIT = buildPublicDrawRequestInit()
+
 // 055a P1：只保留数字；满 6 位自动提交（短信/邮件 OTP 自动填充常见路径；规范化见 otp-input）
 watch(loginCode, (raw) => {
   const digits = normalizeOtpDigits(String(raw || ''))
@@ -2237,6 +2254,26 @@ function closeLogin() {
   // 保留 loginEmail / 访问凭证不在关闭时强制清空，避免用户误关后重填；成功路径会清凭证
 }
 
+/**
+ * 参与成功后的本地乐观计数：真实值仍以随后的 fetchDrawDetail 为准。
+ * 这样用户点击完成后角标立即从 0 变 1，不需要等 30 秒轮询。
+ */
+function bumpParticipantCount(drawId: string) {
+  const idx = draws.value.findIndex((d) => d.id === drawId || d.publicSlug === drawId)
+  if (idx === -1) return
+  const draw = draws.value[idx]!
+  if (draw.entryCount == null && draw.participantCount == null) return
+  const current = Number(draw.entryCount ?? draw.participantCount ?? 0)
+  const nextCount = Number.isFinite(current) ? current + 1 : 1
+  draws.value[idx] = { ...draw, entryCount: nextCount, participantCount: nextCount }
+}
+
+/** 重新读取指定活动详情，用服务端权威计数覆盖本地乐观值。 */
+function refreshDrawDetailFor(drawId: string) {
+  const draw = draws.value.find((d) => d.id === drawId || d.publicSlug === drawId)
+  void fetchDrawDetail(draw?.publicSlug || draw?.id || drawId)
+}
+
 /** 仅登录（无需验证码）：存入邮箱后关闭弹窗，加载参与记录 */
 function handleLogout() {
   clearSession()
@@ -2296,7 +2333,7 @@ async function handleCopyPublicLink(drawId: string) {
 
 async function fetchDrawDetail(id: string) {
   try {
-    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(id))
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(id), PUBLIC_DRAW_FETCH_INIT)
     const data = await res.json() as any
     if (data.ok) {
       const normalized = normalizePublicDraw(data, id)
@@ -2328,7 +2365,7 @@ async function fetchDraws(opts?: { silent?: boolean } | Event) {
       if (!silent) draws.value = []
       return
     }
-    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(props.id))
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(props.id), PUBLIC_DRAW_FETCH_INIT)
     const data = await res.json() as any
     if (data.ok) {
       const draw = normalizePublicDraw(data, props.id)
@@ -3030,6 +3067,16 @@ async function handleVerifyCode() {
   }
 }
 
+/** 页面从后台回到前台、网络恢复时，立即同步一次动态详情。 */
+function refreshWhenVisible() {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+  void fetchDraws({ silent: true })
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') refreshWhenVisible()
+}
+
 onMounted(async () => {
   void cfAuth.refresh()
   // 回调页可能刚写入 registered_token：同步到 ref（深链首屏）
@@ -3050,6 +3097,9 @@ onMounted(async () => {
   pollTimer = setInterval(() => {
     void fetchDraws({ silent: true })
   }, 30000)
+  window.addEventListener('focus', refreshWhenVisible)
+  window.addEventListener('online', refreshWhenVisible)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
   await fetchDraws()
   // 有业务 JWT 时静默回填已参与（刷新后恢复 UI）
   await hydrateJoinedStateFromSession()
@@ -3070,6 +3120,9 @@ onUnmounted(() => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  window.removeEventListener('focus', refreshWhenVisible)
+  window.removeEventListener('online', refreshWhenVisible)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   stopMyResultCooldown()
   clearResultModalTimer()
 })

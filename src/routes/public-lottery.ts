@@ -44,6 +44,17 @@ import { defaultExperienceForParticipation } from "./admin-lottery-helpers";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
+/**
+ * 公开参与页是动态数据入口，参与人数、个人结果、裂变榜都不能被浏览器或反代缓存。
+ * 这里统一加响应头，避免用户参与成功后页面仍拿到旧的「已参与 0 人」。
+ */
+publicLotteryRoute.use("*", async (c, next) => {
+  c.header("Cache-Control", "no-store, no-cache, must-revalidate");
+  c.header("Pragma", "no-cache");
+  c.header("Expires", "0");
+  await next();
+});
+
 // 裂变 / 接龙 / 分享码子域
 setupPublicShareRoutes(publicLotteryRoute);
 
@@ -1345,5 +1356,4 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
 
   return ok(c, result);
 });
-
 
