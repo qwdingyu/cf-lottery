@@ -747,7 +747,7 @@
                     </small>
                   </label>
                   <label
-                    v-if="form.resultMode !== 'instant' || form.prizePanelMode === 'shell_ritual_pool_full' || form.prizePanelMode === 'shell_ritual_pool_summary' || form.prizePanelMode === 'ritual_only'"
+                    v-if="form.prizePanelMode !== 'full_on_shell' && (form.resultMode !== 'instant' || form.prizePanelMode !== 'auto')"
                     class="field-span-2"
                   >
                     <span>{{ $t('lottery.adminRitualPhrases') }}</span>
