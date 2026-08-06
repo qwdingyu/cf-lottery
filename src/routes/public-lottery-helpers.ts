@@ -191,12 +191,5 @@ export function ogDescriptionFallback(status: string | null | undefined): string
   return "快来参与活动吧！";
 }
 
-/** HTML 转义（OG / 防 XSS） */
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+import { escapeHtml } from "../services/email-service";
+export { escapeHtml };
