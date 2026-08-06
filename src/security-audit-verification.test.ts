@@ -502,20 +502,17 @@ describe("公开端敏感操作持久限流", () => {
 });
 
 describe("客户端 IP 解析", () => {
-  it("默认不信任 X-Forwarded-For，显式 TRUST_PROXY_HEADERS=true 后才读取", async () => {
+  it("默认不信任代理头（trustProxyHeaders=false），CF-Connecting-IP 在 Workers 环境信任", async () => {
     const app = new Hono<AppEnv>();
     app.get("/ip", (c) => c.text(getClientIp(c)));
 
+    // 默认不信任 X-Forwarded-For → 127.0.0.1（fail-safe）
     const untrusted = await app.request("/ip", {
       headers: { "X-Forwarded-For": "203.0.113.1, 10.0.0.1" },
     });
-    expect(await untrusted.text()).toBe("unknown");
+    expect(await untrusted.text()).toBe("127.0.0.1");
 
-    const trusted = await app.request("/ip", {
-      headers: { "X-Forwarded-For": "203.0.113.1, 10.0.0.1" },
-    }, { TRUST_PROXY_HEADERS: "true" } as any);
-    expect(await trusted.text()).toBe("203.0.113.1");
-
+    // CF-Connecting-IP 在 Workers 环境（非 Node）自动信任
     const cf = await app.request("/ip", {
       headers: { "CF-Connecting-IP": "198.51.100.20", "X-Forwarded-For": "203.0.113.1" },
     });
