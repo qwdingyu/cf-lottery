@@ -30,7 +30,8 @@ export function getClientIp(c: Context<AppEnv>): string {
     if (cf) return cf.trim();
   }
   // XFF 即使测试开关打开也不信任（保持 fail-safe 语义，防测试掩盖 XFF 注入风险）
-  return coreGetClientIp(c);
+  // 类型断言安全：coreGetClientIp 只读 c.req.header，不依赖 Bindings 具体类型
+  return coreGetClientIp(c as unknown as Context<{ Bindings?: Record<string, string | undefined> }>);
 }
 
 /**

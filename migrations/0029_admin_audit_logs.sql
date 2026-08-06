@@ -30,5 +30,13 @@ SELECT
   '', p.created_at, p.tenant_id, p.actor_user_id
 FROM platform_audit_logs p;
 
+-- 查询索引（与旧表 platform_audit_logs 的 5 个索引对齐，去掉了 target 索引——平台审计
+-- 按 target 筛选场景少，索引维护成本高过收益）。
+-- CREATE INDEX IF NOT EXISTS 确保幂等（libSQL 支持）。
+CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_tenant ON admin_audit_logs(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_logs(action, created_at);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_actor ON admin_audit_logs(actor_user_id, created_at);
+
 -- DOWN
 DROP TABLE IF EXISTS admin_audit_logs;
