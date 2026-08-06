@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPromotionConfigPayload,
   growthFieldsFromDraw,
+  normalizePrizePanelMode,
   parseJsonObjectField,
+  sanitizeRitualPhrasesForSave,
 } from './growth-config'
 
 describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () => {
@@ -12,6 +14,30 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
     expect(parseJsonObjectField('{}')).toBeNull()
     expect(parseJsonObjectField('')).toBeNull()
     expect(parseJsonObjectField('not-json')).toBeNull()
+  })
+
+  it('normalizePrizePanelMode：合法值 trim/大小写保留，非法与空回退 auto', () => {
+    expect(normalizePrizePanelMode('full_on_shell')).toBe('full_on_shell')
+    expect(normalizePrizePanelMode(' SHELL_RITUAL_POOL_SUMMARY ')).toBe('shell_ritual_pool_summary')
+    expect(normalizePrizePanelMode('ritual_only')).toBe('ritual_only')
+    expect(normalizePrizePanelMode('bogus_mode')).toBe('auto')
+    expect(normalizePrizePanelMode('')).toBe('auto')
+    expect(normalizePrizePanelMode(undefined)).toBe('auto')
+    expect(normalizePrizePanelMode(null)).toBe('auto')
+  })
+
+  it('sanitizeRitualPhrasesForSave：分行/去重/截断/拒收中奖词/上限', () => {
+    // 换行分隔 + 去重
+    expect(sanitizeRitualPhrasesForSave('好运连连\n好运连连\n期待开奖')).toEqual(['好运连连', '期待开奖'])
+    // 拒收「一等奖」与含「中奖」的词；超 8 字截断
+    expect(sanitizeRitualPhrasesForSave('一等奖\n恭喜中奖\n参与有礼呀呀呀呀呀')).toEqual(['参与有礼呀呀呀呀'])
+    // 数组输入 + 去空白
+    expect(sanitizeRitualPhrasesForSave(['好运', ' 感谢参与 ', ''])).toEqual(['好运', '感谢参与'])
+    // 逗号/分号分隔符
+    expect(sanitizeRitualPhrasesForSave('好运,感谢；期待开奖')).toEqual(['好运', '感谢', '期待开奖'])
+    // 空输入
+    expect(sanitizeRitualPhrasesForSave(null)).toEqual([])
+    expect(sanitizeRitualPhrasesForSave(undefined)).toEqual([])
   })
 
   it('growthFieldsFromDraw：字符串 promotionConfig 回填裂变与排行榜缺省 true', () => {

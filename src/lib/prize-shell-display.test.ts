@@ -3,7 +3,6 @@ import {
   DEFAULT_RITUAL_PHRASES,
   buildPublicPrizeShellPayload,
   buildShellLabels,
-  isDelayedLotteryResultMode,
   isInstantLotteryResultMode,
   parseExperienceShellConfig,
   resolvePrizePanelMode,
@@ -13,13 +12,12 @@ import {
 } from "./prize-shell-display";
 
 describe("prize-shell-display", () => {
-  it("result_mode 判定：instant vs delayed", () => {
+  it("result_mode 判定：instant 识别（其余为 delayed 语义）", () => {
     expect(isInstantLotteryResultMode("instant")).toBe(true);
     expect(isInstantLotteryResultMode("INSTANT")).toBe(true);
-    expect(isDelayedLotteryResultMode("manual")).toBe(true);
-    expect(isDelayedLotteryResultMode("scheduled")).toBe(true);
-    expect(isDelayedLotteryResultMode("")).toBe(true);
-    expect(isDelayedLotteryResultMode("instant")).toBe(false);
+    expect(isInstantLotteryResultMode("manual")).toBe(false);
+    expect(isInstantLotteryResultMode("scheduled")).toBe(false);
+    expect(isInstantLotteryResultMode("")).toBe(false);
   });
 
   it("auto：instant→full_on_shell；manual/scheduled→shell_ritual_pool_full", () => {

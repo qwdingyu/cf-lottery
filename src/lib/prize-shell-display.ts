@@ -58,13 +58,6 @@ const FORBIDDEN_RITUAL_SUBSTRINGS = [
   "恭喜获得",
 ];
 
-export function isDelayedLotteryResultMode(resultMode: string | null | undefined): boolean {
-  const m = String(resultMode || "")
-    .trim()
-    .toLowerCase();
-  return m === "manual" || m === "scheduled" || m === "";
-}
-
 export function isInstantLotteryResultMode(resultMode: string | null | undefined): boolean {
   return (
     String(resultMode || "")
