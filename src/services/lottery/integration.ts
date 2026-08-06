@@ -83,8 +83,18 @@ export async function getActivityEventSummary(db: DbType, tenantId: string, draw
  * 为什么哈希：API Key 以明文存储时，数据库泄漏即密钥全量暴露。
  * 改为存储哈希后，即使数据库泄漏，攻击者也无法直接使用密钥。
  * 创建时明文只返回一次（前端弹窗展示后即丢弃），库中只存哈希。
+ *
+ * 哈希算法（docs/091 P1-10）：统一为裸 sha256（cf-core 语义），消除 cf-lottery-apikey: salt 分叉。
+ * 存量 key 支持 legacy salt 哈希 + 明文匹配，命中后自动升级为裸 sha256 存储。
  */
 export async function hashApiKey(key: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(key));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Legacy salt 哈希（兼容存量 key，过渡期后移除） */
+async function legacyHashApiKey(key: string): Promise<string> {
   const encoder = new TextEncoder();
   const hash = await crypto.subtle.digest("SHA-256", encoder.encode(`cf-lottery-apikey:${key}`));
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -93,22 +103,22 @@ export async function hashApiKey(key: string): Promise<string> {
 export async function authenticateApiKey(db: DbType, rawKey: string) {
   const key = String(rawKey || "").trim();
   if (!key) return null;
-  // 双重匹配兼容：新 key 存哈希，旧 key 存明文（过渡期）
-  // 新创建的 key 一律哈希存储，旧明文 key 在过渡期仍可验证
+  // 三重匹配：裸 sha256（新格式）→ legacy salt 哈希（存量哈希）→ 明文（最早存量）
+  // 命中后自动升级为裸 sha256 存储（渐进式迁移，消除明文/双格式窗口）
   const keyHash = await hashApiKey(key);
+  const legacyHash = await legacyHashApiKey(key);
   const [row] = await db
     .select({ id: apiKeys.id, tenantId: apiKeys.tenantId, name: apiKeys.name, key: apiKeys.key })
     .from(apiKeys)
     .where(and(
       eq(apiKeys.active, 1),
-      or(eq(apiKeys.key, key), eq(apiKeys.key, keyHash)),
+      or(eq(apiKeys.key, key), eq(apiKeys.key, keyHash), eq(apiKeys.key, legacyHash)),
     ))
     .limit(1);
 
   if (!row) return null;
 
-  // #14 渐进式迁移：库中仍是明文的存量 key，验证通过后自动升级为哈希存储。
-  // 消除"数据库泄漏即明文 key 全量暴露"的窗口；下次验证只匹配哈希。
+  // 渐进式迁移：库中非裸 sha256 的存量 key（明文或 legacy 哈希）验证通过后升级为统一格式
   if (row.key !== keyHash) {
     await db
       .update(apiKeys)
