@@ -160,6 +160,11 @@ export function showPrizePoolStrip(mode: ResolvedPrizePanelMode): "full" | "summ
  * 生成壳上展示用标签（扇面/卷轴格）。
  * - full_on_shell：用奖品名
  * - 其余：仪式短语（配置优先，否则默认）
+ *
+ * 索引对齐不变量（docs/128）：调用方保证 prizeNames 与 prizes 数组一一对应——
+ * tierName 保存时三级兜底（`奖项 N` → 公开 API `name || tierName`）恒非空，
+ * full_on_shell 标签第 i 项 ↔ prizes[i]，与 instant spin.prizeIndex 停扇对齐（docs/116）。
+ * 不要在此过滤空名后重新索引（会破坏扇区与奖的对应）。
  */
 export function buildShellLabels(input: {
   mode: ResolvedPrizePanelMode;

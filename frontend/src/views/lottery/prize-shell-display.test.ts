@@ -3,6 +3,7 @@ import {
   DEFAULT_RITUAL_PHRASES,
   buildPublicPrizeShellPayload,
   buildShellLabels,
+  parseExperienceShellConfig,
   resolvePrizePanelMode,
   sanitizeRitualPhrases,
 } from './prize-shell-display'
@@ -87,5 +88,42 @@ describe('prize-shell-display (frontend)', () => {
     expect(p.prizePanelMode).toBe('shell_ritual_pool_full')
     expect(p.shellUsesRealPrizes).toBe(false)
     expect(p.shellLabels.some((l) => l.includes('耳机'))).toBe(false)
+  })
+
+  it('full_on_shell 拿到仪式短语 labels 时重建为真奖名（防「仪式词+真奖图」错配）', () => {
+    const p = buildPublicPrizeShellPayload({
+      resultMode: 'instant',
+      promotionConfig: {},
+      serverShell: {
+        prizePanelMode: 'full_on_shell',
+        // 中间层篡改/旧缓存：labels 是默认仪式短语，与模式不配套
+        shellLabels: [...DEFAULT_RITUAL_PHRASES],
+      },
+      prizes: [{ name: '蓝牙耳机', imageUrl: 'https://x/a.png' }],
+    })
+    expect(p.shellLabels[0]).toBe('蓝牙耳机')
+    expect(p.shellPrizeItems[0]?.imageUrl).toBe('https://x/a.png')
+  })
+
+  it('奖名恰好为默认仪式词时不误伤（如奖品真的叫「好运连连」）', () => {
+    const p = buildPublicPrizeShellPayload({
+      resultMode: 'instant',
+      promotionConfig: {},
+      serverShell: {
+        prizePanelMode: 'full_on_shell',
+        shellLabels: ['好运连连', '蓝牙耳机'],
+      },
+      prizes: [{ name: '好运连连', imageUrl: '' }, { name: '蓝牙耳机', imageUrl: '' }],
+    })
+    // labels 含真奖名 → 不触发重建，保持服务端原样
+    expect(p.shellLabels).toEqual(['好运连连', '蓝牙耳机'])
+  })
+
+  it('parseExperienceShellConfig 兼容 JSON 字符串配置（中间层序列化兜底）', () => {
+    const cfg = parseExperienceShellConfig(
+      '{"experience":{"prizePanelMode":"ritual_only","ritualPhrases":["好运"]}}',
+    )
+    expect(cfg.prizePanelMode).toBe('ritual_only')
+    expect(cfg.ritualPhrases).toEqual(['好运'])
   })
 })

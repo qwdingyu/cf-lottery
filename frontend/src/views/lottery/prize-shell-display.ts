@@ -149,6 +149,16 @@ function padLabels(source: string[], minSlots: number): string[] {
   return out
 }
 
+/**
+ * 生成壳上展示用标签（扇面/卷轴格）。
+ * - full_on_shell：用奖品名
+ * - 其余：仪式短语（配置优先，否则默认）
+ *
+ * 索引对齐不变量（docs/128）：调用方保证 prizeNames 与 prizes 数组一一对应——
+ * tierName 保存时三级兜底（`奖项 N` → 公开 API `name || tierName`）恒非空，
+ * full_on_shell 标签第 i 项 ↔ prizes[i]，与 instant spin.prizeIndex 停扇对齐（docs/116）。
+ * 不要在此过滤空名后重新索引（会破坏扇区与奖的对应）。
+ */
 export function buildShellLabels(input: {
   mode: ResolvedPrizePanelMode
   prizeNames: Array<string | null | undefined>
@@ -236,7 +246,7 @@ export function buildPublicPrizeShellPayload(input: {
     })
   }
 
-  // 灾难：非 full 模式却拿到与奖品名完全相同的 labels → 重建仪式短语
+  // 灾难（方向一）：非 full 模式却拿到与奖品名完全相同的 labels → 重建仪式短语
   if (!useRealOnShell) {
     const realNameSet = new Set(prizeNames.map((n) => String(n || '').trim()).filter(Boolean))
     const allLookLikePrizes =
@@ -246,6 +256,25 @@ export function buildPublicPrizeShellPayload(input: {
     if (allLookLikePrizes) {
       shellLabels = buildShellLabels({
         mode: 'shell_ritual_pool_full',
+        prizeNames,
+        ritualPhrases: cfg.ritualPhrases,
+        minSlots: Math.max(shellLabels.length, prizeNames.filter(Boolean).length),
+      })
+    }
+  } else {
+    // 灾难（方向二，对称）：full_on_shell 却拿到全是仪式短语的 labels →
+    // 重建为真奖名。否则会渲染「仪式词 + 真奖图」的组合（docs/115 语义红线）。
+    // 用「全部不是奖名」而非「全部等于默认词」，避免奖名真叫「好运连连」时误伤。
+    const realNameSet = new Set(prizeNames.map((n) => String(n || '').trim()).filter(Boolean))
+    const ritualSet = new Set([
+      ...DEFAULT_RITUAL_PHRASES,
+      ...(cfg.ritualPhrases || []),
+    ])
+    const allNotReal = shellLabels.length > 0 && shellLabels.every((l) => !realNameSet.has(l))
+    const allRitual = shellLabels.every((l) => ritualSet.has(l))
+    if (allNotReal && allRitual && realNameSet.size > 0) {
+      shellLabels = buildShellLabels({
+        mode: 'full_on_shell',
         prizeNames,
         ritualPhrases: cfg.ritualPhrases,
         minSlots: Math.max(shellLabels.length, prizeNames.filter(Boolean).length),
