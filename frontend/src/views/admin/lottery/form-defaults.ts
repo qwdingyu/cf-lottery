@@ -49,6 +49,9 @@ export function emptyLotteryEditorForm(t: ActivityConfigTranslate): LotteryEdito
     enableAfterLossCta: false,
     afterLossCtaUrl: '',
     afterLossCtaTitle: '',
+    // docs/128：壳展示默认 auto（delayed=仪式短语，instant=真奖名）
+    prizePanelMode: 'auto',
+    ritualPhrasesText: '',
     // 玩法配置：问卷/投票共用 activity_config，避免再拆 forms/votes 重表。
     activityConfig: defaultActivityConfigForKind('lottery', t),
   }

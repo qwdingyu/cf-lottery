@@ -51,6 +51,8 @@ export default defineConfig({
       "frontend/src/views/admin/lottery/ops-utils.instant-list.test.ts",
       // docs/115 skeptic：裂变 i18n 加权票诚实性
       "frontend/src/i18n/viral-copy-honesty.test.ts",
+      // docs/128：delayed 仪式壳 / instant 真奖上壳
+      "frontend/src/views/lottery/prize-shell-display.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

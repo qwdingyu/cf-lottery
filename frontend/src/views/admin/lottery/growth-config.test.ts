@@ -50,13 +50,51 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
     expect(g.viralLeaderboardEnabled).toBe(true) // 表单缺省，与 emptyForm 一致
   })
 
-  it('buildPromotionConfigPayload：创建无增长 → undefined；编辑无增长 → 关闭包', () => {
+  it('buildPromotionConfigPayload：创建无增长 → undefined；编辑无增长 → 关闭包（含壳策略回退 auto）', () => {
     expect(buildPromotionConfigPayload({}, { isEditing: false })).toBeUndefined()
     expect(buildPromotionConfigPayload({}, { isEditing: true })).toEqual({
       version: 1,
       enabled: false,
       kind: 'destination',
       placement: 'after_join',
+      // docs/128：编辑态始终带 experience.auto，防止二次保存把壳配置静默擦掉
+      experience: { prizePanelMode: 'auto' },
+    })
+  })
+
+  it('编辑态提交必须始终携带 experience 块（防二次保存擦壳配置）', () => {
+    // 只开商品、壳字段保持表单默认 auto：experience 仍必须存在
+    const payload = buildPromotionConfigPayload(
+      {
+        enableProductLink: true,
+        productLink: { url: 'https://shop.example.com/p/1', title: 'T' },
+        prizePanelMode: 'auto',
+        ritualPhrasesText: '',
+      },
+      { isEditing: true },
+    )
+    expect((payload as any).experience).toEqual({ prizePanelMode: 'auto' })
+  })
+
+  it('自定义壳配置写出 experience 且回填后二次保存不丢', () => {
+    const form = growthFieldsFromDraw({
+      promotionConfig: JSON.stringify({
+        version: 1,
+        experience: { prizePanelMode: 'shell_ritual_pool_summary', ritualPhrases: ['期待开奖', '好运连连'] },
+      }),
+    })
+    expect(form.prizePanelMode).toBe('shell_ritual_pool_summary')
+    expect(form.ritualPhrasesText).toBe('期待开奖\n好运连连')
+    const payload = buildPromotionConfigPayload(
+      {
+        prizePanelMode: form.prizePanelMode,
+        ritualPhrasesText: form.ritualPhrasesText,
+      },
+      { isEditing: true },
+    )
+    expect((payload as any).experience).toEqual({
+      prizePanelMode: 'shell_ritual_pool_summary',
+      ritualPhrases: ['期待开奖', '好运连连'],
     })
   })
 

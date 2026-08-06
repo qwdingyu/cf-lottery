@@ -79,6 +79,8 @@ export function requiresActivitySubmission(draw: LotteryDraw): boolean {
 export function normalizePublicDraw(raw: any, routeSlug?: string): LotteryDraw {
   const publicSlug = String(raw.publicSlug || routeSlug || raw.id || '').trim()
   const title = String(raw.title || raw.name || '').trim()
+  // docs/128：壳策略字段显式保留（...raw 已带上；再写一遍防被下游漏传）
+  const prizePoolDisplay = raw.prizePoolDisplay
   return {
     ...raw,
     id: publicSlug || String(raw.id || ''),
@@ -89,6 +91,16 @@ export function normalizePublicDraw(raw: any, routeSlug?: string): LotteryDraw {
     showWinners:
       raw.showWinners != null ? Boolean(raw.showWinners) : Number(raw.showWinnerList) === 1,
     entryCount: raw.entryCount != null ? raw.entryCount : raw.participantCount,
+    prizePanelMode: raw.prizePanelMode != null ? String(raw.prizePanelMode) : undefined,
+    shellLabels: Array.isArray(raw.shellLabels)
+      ? raw.shellLabels.map((s: unknown) => String(s || '').trim()).filter(Boolean)
+      : undefined,
+    shellUsesRealPrizes:
+      raw.shellUsesRealPrizes == null ? undefined : Boolean(raw.shellUsesRealPrizes),
+    prizePoolDisplay:
+      prizePoolDisplay === 'full' || prizePoolDisplay === 'summary' || prizePoolDisplay === 'hidden'
+        ? prizePoolDisplay
+        : undefined,
   } as LotteryDraw
 }
 

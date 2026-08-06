@@ -187,6 +187,13 @@ export type LotteryEditorForm = {
   enableAfterLossCta: boolean
   afterLossCtaUrl: string
   afterLossCtaTitle: string
+  /**
+   * 游戏壳展示（docs/128，写入 promotion.experience）
+   * auto：instant 真奖上壳 / delayed 仪式短语
+   */
+  prizePanelMode: string
+  /** 每行一条仪式短语；空则公开端用默认中性词 */
+  ritualPhrasesText: string
   /** 表单内按 kind 切换；模板直接读 fields/options，用 any 避免联合类型收窄失败 */
   activityConfig: any
 }

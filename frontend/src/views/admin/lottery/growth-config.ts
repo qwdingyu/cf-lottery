@@ -27,8 +27,55 @@ export type GrowthFieldsFromDraw = {
   enableAfterLossCta: boolean
   afterLossCtaUrl: string
   afterLossCtaTitle: string
+  /**
+   * 游戏壳展示（docs/128）：写入 promotion.experience
+   * prizePanelMode: auto | full_on_shell | shell_ritual_pool_full | …
+   * ritualPhrasesText: 每行一条中性短语（delayed 扇面）
+   */
+  prizePanelMode: string
+  ritualPhrasesText: string
   /** 是否已有增长配置：编辑时应用来展开高级区 */
   hasGrowthConfig: boolean
+}
+
+/** 与后端 sanitize 对齐的轻量清洗（管理端提交前） */
+const RITUAL_FORBIDDEN = ['中奖', '一等奖', '二等奖', '三等奖', '特等奖', '大奖', '奖品是', '已中', '恭喜获得']
+
+export function sanitizeRitualPhrasesForSave(raw: string | string[] | null | undefined): string[] {
+  const lines = Array.isArray(raw)
+    ? raw
+    : String(raw || '')
+        .split(/[\n,，;；]/)
+        .map((s) => s.trim())
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of lines) {
+    if (out.length >= 16) break
+    const s = String(item || '')
+      .replace(/\s+/g, '')
+      .trim()
+      .slice(0, 8)
+    if (!s || seen.has(s)) continue
+    if (RITUAL_FORBIDDEN.some((b) => s.includes(b))) continue
+    seen.add(s)
+    out.push(s)
+  }
+  return out
+}
+
+const PRIZE_PANEL_MODES = new Set([
+  'auto',
+  'full_on_shell',
+  'shell_ritual_pool_full',
+  'shell_ritual_pool_summary',
+  'ritual_only',
+])
+
+export function normalizePrizePanelMode(raw: unknown): string {
+  const m = String(raw || 'auto')
+    .trim()
+    .toLowerCase()
+  return PRIZE_PANEL_MODES.has(m) ? m : 'auto'
 }
 
 /** 解析活动上的 JSON 对象字段（字符串或对象）；空 / "{}" / 非法 → null */
@@ -79,11 +126,22 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
       ? (ctas.after_loss as Record<string, unknown>)
       : null
 
+  const experience =
+    promotion?.experience && typeof promotion.experience === 'object' && !Array.isArray(promotion.experience)
+      ? (promotion.experience as Record<string, unknown>)
+      : null
+  const prizePanelMode = normalizePrizePanelMode(experience?.prizePanelMode ?? experience?.prize_panel_mode)
+  const ritualPhrases = sanitizeRitualPhrasesForSave(
+    (experience?.ritualPhrases ?? experience?.ritual_phrases) as string[] | undefined,
+  )
+  const ritualPhrasesText = ritualPhrases.join('\n')
+
   const productUrl = String(productSrc?.url || '').trim()
   const enableProductLink = Boolean(productUrl)
   const enableViral = Boolean(viral?.enabled)
   const enableAfterWinCta = Boolean(String(afterWin?.url || '').trim())
   const enableAfterLossCta = Boolean(String(afterLoss?.url || '').trim())
+  const hasExperience = prizePanelMode !== 'auto' || ritualPhrases.length > 0
 
   return {
     enableProductLink,
@@ -116,7 +174,10 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
     enableAfterLossCta,
     afterLossCtaUrl: String(afterLoss?.url || ''),
     afterLossCtaTitle: String(afterLoss?.title || ''),
-    hasGrowthConfig: enableProductLink || enableViral || enableAfterWinCta || enableAfterLossCta,
+    prizePanelMode,
+    ritualPhrasesText,
+    hasGrowthConfig:
+      enableProductLink || enableViral || enableAfterWinCta || enableAfterLossCta || hasExperience,
   }
 }
 
@@ -141,6 +202,10 @@ export function buildPromotionConfigPayload(form: {
   afterLossCtaTitle?: string
   /** instant 时双写 extraSpins*，与 runtime grant 对齐（docs/122） */
   resultMode?: string | null
+  /** docs/128 游戏壳 */
+  prizePanelMode?: string | null
+  ritualPhrasesText?: string | null
+  ritualPhrases?: string[] | null
 }, opts: { isEditing: boolean }): Record<string, unknown> | undefined {
   const hasProduct = Boolean(form.enableProductLink && form.productLink?.url)
   const hasViral = Boolean(form.enableViral)
@@ -148,10 +213,44 @@ export function buildPromotionConfigPayload(form: {
   const hasLossCta = Boolean(form.enableAfterLossCta && form.afterLossCtaUrl)
   const hasGrowth = hasProduct || hasViral || hasWinCta || hasLossCta
 
-  if (!hasGrowth) {
+  const prizePanelMode = normalizePrizePanelMode(form.prizePanelMode)
+  const ritualPhrases = sanitizeRitualPhrasesForSave(
+    form.ritualPhrases ?? form.ritualPhrasesText ?? '',
+  )
+  // 非默认壳配置，或编辑态始终带 experience，避免二次保存把仪式短语/面板模式静默擦掉（docs/128）
+  const hasCustomExperience = prizePanelMode !== 'auto' || ritualPhrases.length > 0
+  const experienceBlock =
+    hasCustomExperience || opts.isEditing
+      ? {
+          experience: {
+            prizePanelMode,
+            ...(ritualPhrases.length > 0 ? { ritualPhrases } : {}),
+          },
+        }
+      : {}
+
+  if (!hasGrowth && !hasCustomExperience) {
     return opts.isEditing
-      ? { version: 1, enabled: false, kind: 'destination', placement: 'after_join' }
+      ? {
+          version: 1,
+          enabled: false,
+          kind: 'destination',
+          placement: 'after_join',
+          // 编辑清空增长时仍写 auto，明确回到默认壳策略
+          experience: { prizePanelMode: 'auto' },
+        }
       : undefined
+  }
+
+  // 仅有体验壳配置、无导流裂变：仍落 promotion 包，避免 experience 无处可存
+  if (!hasGrowth && hasCustomExperience) {
+    return {
+      version: 1,
+      enabled: true,
+      kind: 'destination',
+      placement: 'after_join',
+      ...experienceBlock,
+    }
   }
 
   const perInvite = form.viralExtraEntriesPerInvite || 1
@@ -199,5 +298,6 @@ export function buildPromotionConfigPayload(form: {
         ? { after_loss: { url: form.afterLossCtaUrl, title: form.afterLossCtaTitle || '' } }
         : {}),
     },
+    ...experienceBlock,
   }
 }

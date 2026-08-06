@@ -716,6 +716,9 @@ export default {
     gamePrimaryCtaHintReveal: "Tap the button below to claim / join",
     gamePrimaryCtaHintSubmit: "Tap the button above to join",
     prizeStripAria: "Prizes in this activity",
+    shellPlaceholder: "Join",
+    prizeShellRitualHint:
+      "Wheel labels are join ambience, not an instant win. Prizes follow the prize list and final draw.",
     loginOnlyHint: "Sign in to see your entries and results on this page. Prefer unified login so you stay on the activity.",
     loginViaAdmin: "Sign in with password (admin)",
     credentialOnlyHint: "You're signed in — enter this activity's access credentials to continue.",
@@ -1056,6 +1059,21 @@ export default {
     adminOptionDescPlaceholder: "Optional, extra info shown to participants",
     adminRemoveOption: "Remove option",
     adminAddVoteOption: "Add vote option",
+    adminPrizeShellSection: "Game shell prize display",
+    adminPrizeShellSectionDesc:
+      "Delayed draws default to neutral shell phrases (avoid stop-on-prize implying a win). Instant draws show real prize names on the shell. The prize strip can still list the pool.",
+    adminPrizePanelMode: "Shell display mode",
+    adminPrizePanelAuto: "Auto (recommended)",
+    adminPrizePanelFullShell: "Real names on shell (instant)",
+    adminPrizePanelRitualFull: "Ritual phrases + full prize strip",
+    adminPrizePanelRitualSummary: "Ritual phrases + tier summary strip",
+    adminPrizePanelRitualOnly: "Ritual only (hide prize strip)",
+    adminPrizePanelModeHint:
+      "Auto: instant = real prizes on shell; manual/scheduled = ritual phrases on shell with a public prize list. Never fake wins with random stop + real names.",
+    adminRitualPhrases: "Ritual phrases (one per line)",
+    adminRitualPhrasesPlaceholder: "Good luck\nThanks for joining\nSee you at the draw",
+    adminRitualPhrasesHint:
+      "About 2–8 characters; no win/tier wording. Empty = system defaults. Shell only — does not change draw results.",
     adminLoserRewardSection: "Post-activity follow-up",
     adminLoserRewardDesc: "Auto-issue coupons to losers, turning churned users into re-marketable leads",
     adminLoserRewardLabel: "Auto-coupon for losers",

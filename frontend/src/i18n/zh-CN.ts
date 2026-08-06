@@ -687,6 +687,10 @@ export default {
     gamePrimaryCtaHintReveal: "点击下方按钮领取 / 参与",
     gamePrimaryCtaHintSubmit: "点击上方按钮即可参与",
     prizeStripAria: "本活动奖品",
+    /** 游戏壳无奖池时的中性占位（勿写「奖品」以免 delayed 暗示中奖） */
+    shellPlaceholder: "参与",
+    /** 奖池条旁：delayed 壳=氛围，列表才是奖目录 */
+    prizeShellRitualHint: "转盘文案为参与氛围，不代表当场中奖；奖品以奖池与开奖结果为准。",
     loginOnlyHint: "登录后可查看本页参与记录与结果；推荐使用统一认证，无需离开活动页。",
     loginViaAdmin: "使用账号密码登录（管理端）",
     credentialOnlyHint: "你已登录，请补全本活动的访问凭证后继续参与。",
@@ -1028,6 +1032,21 @@ export default {
     adminOptionDescPlaceholder: "可选，展示给参与者的补充说明",
     adminRemoveOption: "删除选项",
     adminAddVoteOption: "添加投票选项",
+    adminPrizeShellSection: "游戏壳奖品展示",
+    adminPrizeShellSectionDesc:
+      "统一开奖默认扇面用中性短语（避免停格像中奖）；即时开奖扇面用真奖名。奖池列表可另作公示。",
+    adminPrizePanelMode: "壳展示策略",
+    adminPrizePanelAuto: "自动（推荐）",
+    adminPrizePanelFullShell: "扇面真奖名（适合即时开奖）",
+    adminPrizePanelRitualFull: "扇面仪式短语 + 奖池完整公示",
+    adminPrizePanelRitualSummary: "扇面仪式短语 + 奖池仅档位摘要",
+    adminPrizePanelRitualOnly: "仅仪式（隐藏奖池条，强悬念）",
+    adminPrizePanelModeHint:
+      "自动：即时=真奖上壳；手动/定时开奖=仪式短语上壳、奖池条仍公示目录。勿用真奖名+随机停格假装中奖。",
+    adminRitualPhrases: "仪式短语（每行一条）",
+    adminRitualPhrasesPlaceholder: "好运连连\n感谢参与\n期待开奖",
+    adminRitualPhrasesHint:
+      "2～8 字为宜；禁止「中奖/一等奖」等词。留空则用系统默认中性词。仅影响游戏壳，不影响真实开奖。",
     adminLoserRewardSection: "活动后承接",
     adminLoserRewardDesc: "未中奖用户自动发放优惠券，把流失用户转化为可再营销的潜在客户",
     adminLoserRewardLabel: "未中奖自动发券",

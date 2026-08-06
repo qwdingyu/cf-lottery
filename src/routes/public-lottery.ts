@@ -41,6 +41,7 @@ import {
 } from "./public-lottery-helpers";
 import { setupPublicShareRoutes } from "./public-lottery-share";
 import { defaultExperienceForParticipation } from "./admin-lottery-helpers";
+import { buildPublicPrizeShellPayload } from "../lib/prize-shell-display";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
@@ -176,6 +177,22 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
       imageUrl: row.imageUrl || "",
       valueText: row.valueText || "",
     }));
+
+    /**
+     * 游戏壳展示策略（docs/128）：
+     * - instant：壳用真奖名（+图由前端挂）
+     * - manual/scheduled：壳用仪式短语，避免随机停格=中奖；奖池条默认可 full 公示目录
+     * prizes 列表仍完整返回（信任/instant 索引）；壳文案以 shellLabels 为准。
+     */
+    const shell = buildPublicPrizeShellPayload({
+      resultMode: result.resultMode,
+      promotionConfig: draw.promotionConfig,
+      prizes: result.prizes,
+    });
+    result.prizePanelMode = shell.prizePanelMode;
+    result.shellLabels = shell.shellLabels;
+    result.shellUsesRealPrizes = shell.shellUsesRealPrizes;
+    result.prizePoolDisplay = shell.prizePoolDisplay;
   }
 
   // 开奖后展示中奖名单

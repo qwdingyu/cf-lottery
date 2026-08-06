@@ -93,8 +93,11 @@ function drawWheel(rotation: number) {
     ctx.save(); ctx.translate(tx, ty); ctx.rotate(mid + Math.PI / 2)
     ctx.fillStyle = '#fff'; ctx.font = 'bold 12px system-ui'
     ctx.textAlign = 'center'; ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 3
-    const name = props.prizes[i]?.name || '奖品'
-    ctx.fillText(name.length > 6 ? name.slice(0, 6) + '…' : name, 0, 0)
+    // 空名用中性「·」，禁止硬编码「奖品」——delayed 仪式壳与 i18n 语言无关（docs/128）
+    const name = String(props.prizes[i]?.name || '·').trim() || '·'
+    // 四字短语完整显示；更长截断（中文扇面可读上限约 6）
+    const label = name.length > 6 ? name.slice(0, 6) + '…' : name
+    ctx.fillText(label, 0, 0)
     ctx.restore()
   }
 

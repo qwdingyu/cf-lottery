@@ -94,17 +94,28 @@
           >
             <p class="lottery-status-path">{{ statusPathHint(draw) }}</p>
           </div>
-          <!-- 奖池陈列：诚实展示可赢什么，不宣称「你已中」 -->
+          <!--
+            奖池陈列（docs/128）：
+            - full/summary：公示「活动有什么奖」（信任），不宣称「你已中」
+            - ritual_only / hidden：不展示条（强悬念）
+            游戏壳扇面文案另走 shellPrizeItems，delayed 默认仪式短语。
+          -->
           <ul
-            v-if="(draw.prizes || []).length"
+            v-if="prizePoolStripFor(draw).length"
             class="lottery-prize-strip"
             :aria-label="$t('lottery.prizeStripAria')"
           >
-            <li v-for="(p, pi) in draw.prizes" :key="pi" class="lottery-prize-chip">
+            <li v-for="(p, pi) in prizePoolStripFor(draw)" :key="pi" class="lottery-prize-chip">
               <span class="lottery-prize-chip-name">{{ p.name || p.tierName || $t('lottery.productPlaceholder') }}</span>
               <span v-if="p.winnerCount" class="lottery-prize-chip-n">×{{ p.winnerCount }}</span>
             </li>
           </ul>
+          <!-- delayed 仪式壳：一行诚实说明，降低「停格=中奖」误读（docs/128） -->
+          <p
+            v-if="showPrizeShellRitualHint(draw)"
+            class="lottery-prize-shell-hint"
+            role="note"
+          >{{ $t('lottery.prizeShellRitualHint') }}</p>
           <!--
             问卷/投票：提交字段必须在参与前可见可填（此前仅有 draft 逻辑与 CSS，模板未挂载 → 永远校验失败）。
             与 experience 游戏壳解耦：先填内容，再点游戏/底部 CTA 触发 handleJoin。
@@ -185,7 +196,7 @@
             <component
               :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
               :key="draw.id"
-              :prizes="(draw.prizes || []).map((p: any) => ({ name: p.name || p.tierName || $t('lottery.productPlaceholder'), color: '', imageUrl: p.imageUrl || '', valueText: p.valueText || '' }))"
+              :prizes="shellPrizesFor(draw)"
               :disabled="gameDisabled(draw)"
               :loading="joiningId === draw.id || spinningId === draw.id"
               :celebrate-key="celebrateKeyById[draw.id] || 0"
@@ -870,6 +881,7 @@ import {
   publicStatusTagI18nKey,
   resultModeTagI18nKey,
 } from './lottery/public-helpers'
+import { buildPublicPrizeShellPayload } from './lottery/prize-shell-display'
 import {
   entryIdFromAlreadyJoined,
   isAlreadyJoinedResponse,
@@ -2099,6 +2111,63 @@ function hasInteractiveGame(draw: { experienceType?: string; participationMode?:
   const exp = draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open')
   // getGameComponent 对未知类型也回退 Submit，故几乎总有壳；用注册表/回退语义即可
   return hasRegisteredGameExperience(exp) || getGameComponent(exp) != null
+}
+
+/**
+ * 公开页壳/奖池展示（docs/128）：
+ * - 优先用公开 API 已算好的 prizePanelMode / shellLabels / prizePoolDisplay
+ * - delayed：壳=仪式短语（无奖品图）；instant：壳=真奖名+图
+ * - 奖池条与壳解耦：默认可 full 公示目录，不暗示「你已中」
+ *
+ * 按 draw 引用弱缓存，避免模板多次调用 prizePoolStripFor/shellPrizesFor 重复计算。
+ */
+const prizeShellCache = new WeakMap<LotteryDraw, ReturnType<typeof buildPublicPrizeShellPayload>>()
+
+function resolvePrizeShell(draw: LotteryDraw) {
+  const hit = prizeShellCache.get(draw)
+  if (hit) return hit
+  const built = buildPublicPrizeShellPayload({
+    resultMode: draw.resultMode,
+    promotionConfig: draw.promotionConfig,
+    serverShell: {
+      prizePanelMode: draw.prizePanelMode,
+      shellLabels: draw.shellLabels,
+      shellUsesRealPrizes: draw.shellUsesRealPrizes,
+      prizePoolDisplay: draw.prizePoolDisplay,
+    },
+    prizes: draw.prizes || [],
+  })
+  prizeShellCache.set(draw, built)
+  return built
+}
+
+/** 传给 Wheel/Slot 等：扇面/卷轴格文案 */
+function shellPrizesFor(draw: LotteryDraw) {
+  const shell = resolvePrizeShell(draw)
+  if (shell.shellPrizeItems.length > 0) return shell.shellPrizeItems
+  // 无 prizes 的非 lottery 壳：中性占位，避免空盘与「奖品」硬编码
+  return [{ name: t('lottery.shellPlaceholder'), color: '', imageUrl: '', valueText: '' }]
+}
+
+/** 奖池条条目；hidden 返回 [] */
+function prizePoolStripFor(draw: LotteryDraw) {
+  return resolvePrizeShell(draw).poolStripItems.filter((p) => Boolean(p.name || p.tierName))
+}
+
+/**
+ * 是否展示「扇面=氛围非中奖」提示。
+ * 仅 lottery + 壳未用真奖（delayed 默认）+ 有可交互转盘/老虎机类体验时，避免对 form/submit 噪音。
+ */
+function showPrizeShellRitualHint(draw: LotteryDraw): boolean {
+  if (String(draw.activityKind || 'lottery') !== 'lottery') return false
+  const shell = resolvePrizeShell(draw)
+  if (shell.shellUsesRealPrizes) return false
+  const exp = String(
+    draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'),
+  )
+    .trim()
+    .toLowerCase()
+  return exp === 'wheel' || exp === 'slot' || exp === 'grid'
 }
 
 function formatTime(iso: string): string {

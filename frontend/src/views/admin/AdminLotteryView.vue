@@ -707,6 +707,48 @@
                 </div>
               </section>
 
+              <!--
+                游戏壳奖品展示（docs/128）：
+                delayed 默认扇面=仪式短语；instant 默认真奖名。
+                与 experienceType 解耦：同一转盘可换「壳文案策略」。
+              -->
+              <section
+                v-if="form.activityKind === 'lottery'"
+                class="form-section form-section--nested"
+                aria-labelledby="lottery-prize-shell"
+              >
+                <header class="form-section-head">
+                  <h4 id="lottery-prize-shell" class="form-section-title">{{ $t('lottery.adminPrizeShellSection') }}</h4>
+                  <p class="form-section-desc">{{ $t('lottery.adminPrizeShellSectionDesc') }}</p>
+                </header>
+                <div class="form-grid two-cols">
+                  <label class="field-span-2">
+                    <span>{{ $t('lottery.adminPrizePanelMode') }}</span>
+                    <select v-model="form.prizePanelMode">
+                      <option value="auto">{{ $t('lottery.adminPrizePanelAuto') }}</option>
+                      <option value="full_on_shell">{{ $t('lottery.adminPrizePanelFullShell') }}</option>
+                      <option value="shell_ritual_pool_full">{{ $t('lottery.adminPrizePanelRitualFull') }}</option>
+                      <option value="shell_ritual_pool_summary">{{ $t('lottery.adminPrizePanelRitualSummary') }}</option>
+                      <option value="ritual_only">{{ $t('lottery.adminPrizePanelRitualOnly') }}</option>
+                    </select>
+                    <small class="field-hint">{{ $t('lottery.adminPrizePanelModeHint') }}</small>
+                  </label>
+                  <label
+                    v-if="form.resultMode !== 'instant' || form.prizePanelMode === 'shell_ritual_pool_full' || form.prizePanelMode === 'shell_ritual_pool_summary' || form.prizePanelMode === 'ritual_only'"
+                    class="field-span-2"
+                  >
+                    <span>{{ $t('lottery.adminRitualPhrases') }}</span>
+                    <textarea
+                      v-model="form.ritualPhrasesText"
+                      rows="4"
+                      maxlength="200"
+                      :placeholder="$t('lottery.adminRitualPhrasesPlaceholder')"
+                    />
+                    <small class="field-hint">{{ $t('lottery.adminRitualPhrasesHint') }}</small>
+                  </label>
+                </div>
+              </section>
+
               <!-- 导流配置：关联商品推广 -->
               <section class="form-section form-section--nested" aria-labelledby="lottery-traffic">
                 <header class="form-section-head">
@@ -3154,6 +3196,9 @@ async function handleEdit(draw: LotteryDraw) {
     enableAfterLossCta: growth.enableAfterLossCta,
     afterLossCtaUrl: growth.afterLossCtaUrl,
     afterLossCtaTitle: growth.afterLossCtaTitle,
+    // docs/128：壳展示必须回填，否则二次保存会擦掉 experience
+    prizePanelMode: growth.prizePanelMode || 'auto',
+    ritualPhrasesText: growth.ritualPhrasesText || '',
   }
   isEditing.value = true
   // 回填未中奖自动发券开关状态

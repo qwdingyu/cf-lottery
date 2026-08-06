@@ -111,13 +111,18 @@ function startIdleNudge() {
 
 async function spinReel(reel: HTMLDivElement, delay: number) {
   await new Promise(r => setTimeout(r, delay))
+  // 无动画复位到 0，再完整滚到停格，避免上一次停位导致行程过短
+  reel.style.transition = 'none'
+  reel.style.transform = 'translateY(0)'
+  void reel.offsetHeight
   const duration = 1200 + Math.random() * 400
-  const target = (5 + Math.floor(Math.random() * 8)) * 80
+  // 停在某一整格（80px），庆祝结束不弹回 0——避免「滚完又跳回」的廉价感（docs/128）
+  const steps = 5 + Math.floor(Math.random() * 8)
+  const target = steps * 80
   reel.style.transition = `transform ${duration}ms cubic-bezier(0.17, 0.67, 0.12, 0.99)`
   reel.style.transform = `translateY(-${target}px)`
   await new Promise(r => setTimeout(r, duration + 200))
   reel.style.transition = 'none'
-  reel.style.transform = 'translateY(0)'
 }
 
 function handlePull() {

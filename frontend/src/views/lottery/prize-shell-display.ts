@@ -1,0 +1,297 @@
+/**
+ * 公开页游戏壳奖品展示（与 src/lib/prize-shell-display.ts 算法对齐，docs/128）。
+ *
+ * 前端独立副本：避免 C 端打包拉入服务端树；单测锁契约防漂移。
+ */
+
+export type PrizePanelMode =
+  | 'auto'
+  | 'full_on_shell'
+  | 'shell_ritual_pool_full'
+  | 'shell_ritual_pool_summary'
+  | 'ritual_only'
+
+export type ResolvedPrizePanelMode =
+  | 'full_on_shell'
+  | 'shell_ritual_pool_full'
+  | 'shell_ritual_pool_summary'
+  | 'ritual_only'
+
+export const DEFAULT_RITUAL_PHRASES: readonly string[] = [
+  '好运连连',
+  '感谢参与',
+  '期待开奖',
+  '好运加持',
+  '参与有礼',
+  '开奖见分晓',
+  '幸运星',
+  '再接再厉',
+] as const
+
+const MAX_PHRASE_LEN = 8
+const MAX_PHRASE_COUNT = 16
+
+const FORBIDDEN_RITUAL_SUBSTRINGS = [
+  '中奖',
+  '一等奖',
+  '二等奖',
+  '三等奖',
+  '特等奖',
+  '大奖',
+  '奖品是',
+  '已中',
+  '恭喜获得',
+]
+
+const RESOLVED_MODES: ResolvedPrizePanelMode[] = [
+  'full_on_shell',
+  'shell_ritual_pool_full',
+  'shell_ritual_pool_summary',
+  'ritual_only',
+]
+
+export function isInstantLotteryResultMode(resultMode: string | null | undefined): boolean {
+  return (
+    String(resultMode || '')
+      .trim()
+      .toLowerCase() === 'instant'
+  )
+}
+
+export function sanitizeRitualPhrases(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    if (out.length >= MAX_PHRASE_COUNT) break
+    const s = String(item ?? '')
+      .replace(/\s+/g, '')
+      .trim()
+    if (!s) continue
+    const clipped = s.slice(0, MAX_PHRASE_LEN)
+    if (seen.has(clipped)) continue
+    if (FORBIDDEN_RITUAL_SUBSTRINGS.some((bad) => clipped.includes(bad))) continue
+    seen.add(clipped)
+    out.push(clipped)
+  }
+  return out
+}
+
+export function parseExperienceShellConfig(promotionConfig: unknown): {
+  prizePanelMode: PrizePanelMode
+  ritualPhrases: string[]
+} {
+  let root: Record<string, unknown> | null = null
+  if (promotionConfig && typeof promotionConfig === 'object' && !Array.isArray(promotionConfig)) {
+    root = promotionConfig as Record<string, unknown>
+  } else if (typeof promotionConfig === 'string' && promotionConfig.trim() && promotionConfig !== '{}') {
+    try {
+      const parsed = JSON.parse(promotionConfig) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        root = parsed as Record<string, unknown>
+      }
+    } catch {
+      root = null
+    }
+  }
+
+  const experience =
+    root?.experience && typeof root.experience === 'object' && !Array.isArray(root.experience)
+      ? (root.experience as Record<string, unknown>)
+      : null
+
+  const modeRaw = String(experience?.prizePanelMode || experience?.prize_panel_mode || 'auto')
+    .trim()
+    .toLowerCase()
+  const allowed: PrizePanelMode[] = [
+    'auto',
+    'full_on_shell',
+    'shell_ritual_pool_full',
+    'shell_ritual_pool_summary',
+    'ritual_only',
+  ]
+  const prizePanelMode = (allowed.includes(modeRaw as PrizePanelMode) ? modeRaw : 'auto') as PrizePanelMode
+
+  return {
+    prizePanelMode,
+    ritualPhrases: sanitizeRitualPhrases(experience?.ritualPhrases ?? experience?.ritual_phrases),
+  }
+}
+
+export function resolvePrizePanelMode(
+  resultMode: string | null | undefined,
+  configured: PrizePanelMode = 'auto',
+): ResolvedPrizePanelMode {
+  if (configured !== 'auto') return configured
+  if (isInstantLotteryResultMode(resultMode)) return 'full_on_shell'
+  return 'shell_ritual_pool_full'
+}
+
+export function shellUsesRealPrizes(mode: ResolvedPrizePanelMode): boolean {
+  return mode === 'full_on_shell'
+}
+
+export function showPrizePoolStrip(mode: ResolvedPrizePanelMode): 'full' | 'summary' | 'hidden' {
+  if (mode === 'ritual_only') return 'hidden'
+  if (mode === 'shell_ritual_pool_summary') return 'summary'
+  return 'full'
+}
+
+function padLabels(source: string[], minSlots: number): string[] {
+  if (source.length === 0) return [...DEFAULT_RITUAL_PHRASES].slice(0, Math.max(minSlots, 4))
+  if (minSlots <= source.length) return source.slice()
+  const out: string[] = []
+  for (let i = 0; i < minSlots; i++) out.push(source[i % source.length]!)
+  return out
+}
+
+export function buildShellLabels(input: {
+  mode: ResolvedPrizePanelMode
+  prizeNames: Array<string | null | undefined>
+  ritualPhrases?: string[]
+  minSlots?: number
+}): string[] {
+  const minSlots = Math.max(0, Math.floor(Number(input.minSlots) || 0))
+  if (shellUsesRealPrizes(input.mode)) {
+    const names = input.prizeNames.map((n) => String(n || '').trim()).filter(Boolean)
+    if (names.length === 0) return padLabels(['谢谢参与'], Math.max(minSlots, 4))
+    return padLabels(names, minSlots)
+  }
+  const phrases =
+    input.ritualPhrases && input.ritualPhrases.length > 0
+      ? input.ritualPhrases
+      : [...DEFAULT_RITUAL_PHRASES]
+  const slotCount = Math.max(
+    minSlots,
+    input.prizeNames.filter((n) => String(n || '').trim()).length,
+    phrases.length,
+    4,
+  )
+  return padLabels(phrases, slotCount)
+}
+
+export type PublicShellServerFields = {
+  prizePanelMode?: string | null
+  shellLabels?: string[] | null
+  shellUsesRealPrizes?: boolean | null
+  prizePoolDisplay?: string | null
+}
+
+/**
+ * 组装公开页壳/奖池展示。优先信任服务端已解析字段（单一真相），本地仅作兜底。
+ */
+export function buildPublicPrizeShellPayload(input: {
+  resultMode: string | null | undefined
+  promotionConfig: unknown
+  serverShell?: PublicShellServerFields | null
+  prizes: Array<{
+    name?: string | null
+    tierName?: string | null
+    winnerCount?: number | null
+    imageUrl?: string | null
+    valueText?: string | null
+  }>
+}): {
+  prizePanelMode: ResolvedPrizePanelMode
+  shellLabels: string[]
+  shellUsesRealPrizes: boolean
+  prizePoolDisplay: 'full' | 'summary' | 'hidden'
+  shellPrizeItems: Array<{
+    name: string
+    color: string
+    imageUrl: string
+    valueText: string
+  }>
+  poolStripItems: Array<{ name: string; tierName?: string; winnerCount?: number }>
+} {
+  const cfg = parseExperienceShellConfig(input.promotionConfig)
+  const serverMode = String(input.serverShell?.prizePanelMode || '').trim()
+  const mode: ResolvedPrizePanelMode = RESOLVED_MODES.includes(serverMode as ResolvedPrizePanelMode)
+    ? (serverMode as ResolvedPrizePanelMode)
+    : resolvePrizePanelMode(input.resultMode, cfg.prizePanelMode)
+
+  const useRealOnShell = shellUsesRealPrizes(mode)
+  const prizeNames = input.prizes.map((p) => p.name || p.tierName || '')
+
+  let shellLabels: string[]
+  if (
+    Array.isArray(input.serverShell?.shellLabels) &&
+    input.serverShell!.shellLabels!.length > 0 &&
+    // 仅当服务端模式与本地一致为「真奖上壳」或「仪式」时采用服务端 labels
+    true
+  ) {
+    shellLabels = input.serverShell!.shellLabels!.map((s) => String(s || '').trim()).filter(Boolean)
+  } else {
+    shellLabels = buildShellLabels({
+      mode,
+      prizeNames,
+      ritualPhrases: cfg.ritualPhrases,
+      minSlots: Math.max(prizeNames.filter(Boolean).length, 0),
+    })
+  }
+
+  // 灾难：非 full 模式却拿到与奖品名完全相同的 labels → 重建仪式短语
+  if (!useRealOnShell) {
+    const realNameSet = new Set(prizeNames.map((n) => String(n || '').trim()).filter(Boolean))
+    const allLookLikePrizes =
+      shellLabels.length > 0 &&
+      shellLabels.every((l) => realNameSet.has(l)) &&
+      realNameSet.size > 0
+    if (allLookLikePrizes) {
+      shellLabels = buildShellLabels({
+        mode: 'shell_ritual_pool_full',
+        prizeNames,
+        ritualPhrases: cfg.ritualPhrases,
+        minSlots: Math.max(shellLabels.length, prizeNames.filter(Boolean).length),
+      })
+    }
+  }
+
+  const serverPool = String(input.serverShell?.prizePoolDisplay || '').trim()
+  const prizePoolDisplay: 'full' | 'summary' | 'hidden' =
+    serverPool === 'full' || serverPool === 'summary' || serverPool === 'hidden'
+      ? serverPool
+      : showPrizePoolStrip(mode)
+
+  const shellPrizeItems = shellLabels.map((label, i) => {
+    if (useRealOnShell) {
+      const p = input.prizes[i]
+      return {
+        name: label,
+        color: '',
+        imageUrl: String(p?.imageUrl || ''),
+        valueText: String(p?.valueText || ''),
+      }
+    }
+    // delayed 仪式壳：绝不带奖品图，避免「图=奖」暗示
+    return { name: label, color: '', imageUrl: '', valueText: '' }
+  })
+
+  let poolStripItems: Array<{ name: string; tierName?: string; winnerCount?: number }> = []
+  if (prizePoolDisplay === 'full') {
+    poolStripItems = input.prizes.map((p) => ({
+      name: String(p.name || p.tierName || ''),
+      tierName: p.tierName ? String(p.tierName) : undefined,
+      winnerCount: p.winnerCount != null ? Number(p.winnerCount) : undefined,
+    }))
+  } else if (prizePoolDisplay === 'summary') {
+    poolStripItems = input.prizes.map((p, i) => {
+      const tier = String(p.tierName || '').trim()
+      const name = String(p.name || '').trim()
+      return {
+        name: tier || name || `奖项${i + 1}`,
+        tierName: tier || undefined,
+        winnerCount: p.winnerCount != null ? Number(p.winnerCount) : undefined,
+      }
+    })
+  }
+
+  return {
+    prizePanelMode: mode,
+    shellLabels,
+    shellUsesRealPrizes: useRealOnShell,
+    prizePoolDisplay,
+    shellPrizeItems,
+    poolStripItems,
+  }
+}

@@ -46,6 +46,14 @@ export type LotteryDraw = {
     prizeIndex?: number
     weight?: number
   }>
+  /**
+   * 游戏壳展示（docs/128，公开 API 计算）：
+   * delayed 默认仪式短语；instant 真奖名。
+   */
+  prizePanelMode?: string
+  shellLabels?: string[]
+  shellUsesRealPrizes?: boolean
+  prizePoolDisplay?: 'full' | 'summary' | 'hidden' | string
   productId?: string
   productTitle?: string
   productLink?: { url: string; title: string; imageUrl?: string; price?: string }
@@ -61,6 +69,11 @@ export type LotteryDraw = {
       extraEntriesPerInvite?: number
       maxExtraEntries?: number
       leaderboardEnabled?: boolean
+    }
+    /** 体验壳：仪式短语 / 面板模式（docs/128） */
+    experience?: {
+      prizePanelMode?: string
+      ritualPhrases?: string[]
     }
   }
 }
