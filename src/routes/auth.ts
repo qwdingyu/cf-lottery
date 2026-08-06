@@ -14,6 +14,7 @@ import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, isValidEmail } from "../lib/http";
 import { withDbTransaction } from "../db/client";
 import { users, tenantMembers, tenants, emailAccessCodes, systemConfig, platformMembers } from "../db/schema";
+import { generateCode, hashCode } from "./public-lottery-helpers";
 import { eq, and, sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
 import { signJwt } from "../middleware/auth";
@@ -62,21 +63,6 @@ function getPasswordPepper(c: any): string {
     throw new Error("PASSWORD_PEPPER 或 JWT_SECRET 未配置");
   }
   return String(pepper);
-}
-
-/** 生成 6 位验证码 */
-function generateCode(): string {
-  const bytes = new Uint8Array(4);
-  crypto.getRandomValues(bytes);
-  const num = new DataView(bytes.buffer).getUint32(0) % 1000000;
-  return String(num).padStart(6, "0");
-}
-
-/** 验证码 hash */
-async function hashCode(code: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(code));
-  return bytesToHex(new Uint8Array(hash));
 }
 
 // 数据库存储验证码（替代内存 Map，确保跨 Worker 实例可用）
