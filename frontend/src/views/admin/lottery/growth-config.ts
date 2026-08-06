@@ -38,7 +38,10 @@ export type GrowthFieldsFromDraw = {
   hasGrowthConfig: boolean
 }
 
-/** 与后端 sanitize 对齐的轻量清洗（管理端提交前） */
+/**
+ * 与 src/lib/prize-shell-display.ts FORBIDDEN_RITUAL_SUBSTRINGS 同步的禁用词副本
+ * （管理端提交前轻量清洗）。修改必须三处一起改防漂移。
+ */
 const RITUAL_FORBIDDEN = ['中奖', '一等奖', '二等奖', '三等奖', '特等奖', '大奖', '奖品是', '已中', '恭喜获得']
 
 export function sanitizeRitualPhrasesForSave(raw: string | string[] | null | undefined): string[] {

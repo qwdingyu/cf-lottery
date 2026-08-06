@@ -71,4 +71,21 @@ describe('prize-shell-display (frontend)', () => {
     })
     expect(labels[0]).toBe(DEFAULT_RITUAL_PHRASES[0])
   })
+
+  it('服务端缺模式时丢弃 labels 并本地重建（防旧版响应误用）', () => {
+    const p = buildPublicPrizeShellPayload({
+      resultMode: 'manual',
+      promotionConfig: {},
+      serverShell: {
+        // 无 prizePanelMode：模拟旧版响应/中间层漏传——labels 不可信
+        shellLabels: ['蓝牙耳机', 'iPhone'],
+        prizePoolDisplay: 'full',
+      },
+      prizes: [{ name: '蓝牙耳机', tierName: '一等奖', winnerCount: 1 }],
+    })
+    // 本地按 manual+auto 解析为仪式壳，labels 重建为默认仪式短语
+    expect(p.prizePanelMode).toBe('shell_ritual_pool_full')
+    expect(p.shellUsesRealPrizes).toBe(false)
+    expect(p.shellLabels.some((l) => l.includes('耳机'))).toBe(false)
+  })
 })

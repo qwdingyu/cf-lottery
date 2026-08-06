@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RITUAL_PHRASES,
-  buildPrizePoolSummaryItems,
   buildPublicPrizeShellPayload,
   buildShellLabels,
   isDelayedLotteryResultMode,
@@ -110,17 +109,5 @@ describe("prize-shell-display", () => {
     expect(payload.prizePanelMode).toBe("full_on_shell");
     expect(payload.shellUsesRealPrizes).toBe(true);
     expect(payload.shellLabels[0]).toBe("耳机");
-  });
-
-  it("buildPrizePoolSummaryItems：优先档位名", () => {
-    expect(
-      buildPrizePoolSummaryItems([
-        { name: "索尼耳机", tierName: "一等奖", winnerCount: 1 },
-        { name: "券", tierName: "", winnerCount: 0 },
-      ]),
-    ).toEqual([
-      { label: "一等奖", winnerCount: 1 },
-      { label: "券", winnerCount: undefined },
-    ]);
   });
 });

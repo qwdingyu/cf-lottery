@@ -41,7 +41,11 @@ export const DEFAULT_RITUAL_PHRASES: readonly string[] = [
 const MAX_PHRASE_LEN = 8;
 const MAX_PHRASE_COUNT = 16;
 
-/** 明显像「已中奖/奖档」的词，拒绝写入仪式短语（防运营误配造成语义灾难） */
+/**
+ * 明显像「已中奖/奖档」的词，拒绝写入仪式短语（防运营误配造成语义灾难）。
+ * 三份同步副本：src/lib（本文件）/ frontend/src/views/lottery 副本 /
+ * growth-config.ts 管理端保存前清洗。修改必须三处一起改——单测各自锁副本，无法发现漂移。
+ */
 const FORBIDDEN_RITUAL_SUBSTRINGS = [
   "中奖",
   "一等奖",
@@ -199,26 +203,6 @@ function padLabels(source: string[], minSlots: number): string[] {
     out.push(source[i % source.length]!);
   }
   return out;
-}
-
-/** 奖池条摘要：优先档位名 + 名额，避免把 SKU 细节塞满（summary 模式） */
-export function buildPrizePoolSummaryItems(
-  prizes: Array<{
-    name?: string | null;
-    tierName?: string | null;
-    winnerCount?: number | null;
-  }>,
-): Array<{ label: string; winnerCount?: number }> {
-  return prizes.map((p, i) => {
-    const tier = String(p.tierName || "").trim();
-    const name = String(p.name || "").trim();
-    const label = tier || name || `奖项${i + 1}`;
-    const n = Number(p.winnerCount);
-    return {
-      label,
-      winnerCount: Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined,
-    };
-  });
 }
 
 /**

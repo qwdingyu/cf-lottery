@@ -31,6 +31,10 @@ export const DEFAULT_RITUAL_PHRASES: readonly string[] = [
 const MAX_PHRASE_LEN = 8
 const MAX_PHRASE_COUNT = 16
 
+/**
+ * 与 src/lib/prize-shell-display.ts 同步的禁用词副本（docs/128 前后端双副本）。
+ * 修改必须同步服务端与 growth-config.ts 管理端清洗，三处一起改防漂移。
+ */
 const FORBIDDEN_RITUAL_SUBSTRINGS = [
   '中奖',
   '一等奖',
@@ -206,21 +210,23 @@ export function buildPublicPrizeShellPayload(input: {
 } {
   const cfg = parseExperienceShellConfig(input.promotionConfig)
   const serverMode = String(input.serverShell?.prizePanelMode || '').trim()
-  const mode: ResolvedPrizePanelMode = RESOLVED_MODES.includes(serverMode as ResolvedPrizePanelMode)
+  // 服务端明确给出模式 → 模式与 labels 同为一次 API 计算的产物（配套可信）
+  const hasServerMode = RESOLVED_MODES.includes(serverMode as ResolvedPrizePanelMode)
+  const mode: ResolvedPrizePanelMode = hasServerMode
     ? (serverMode as ResolvedPrizePanelMode)
     : resolvePrizePanelMode(input.resultMode, cfg.prizePanelMode)
 
   const useRealOnShell = shellUsesRealPrizes(mode)
   const prizeNames = input.prizes.map((p) => p.name || p.tierName || '')
 
+  // 服务端 labels 仅在 hasServerMode 时采用：缺失模式（旧版响应/中间层漏传）说明 labels 不可信，
+  // 必须本地重建，避免误用与最终模式不配套的旧 labels。
+  const serverLabels = Array.isArray(input.serverShell?.shellLabels)
+    ? input.serverShell!.shellLabels!.map((s) => String(s || '').trim()).filter(Boolean)
+    : []
   let shellLabels: string[]
-  if (
-    Array.isArray(input.serverShell?.shellLabels) &&
-    input.serverShell!.shellLabels!.length > 0 &&
-    // 仅当服务端模式与本地一致为「真奖上壳」或「仪式」时采用服务端 labels
-    true
-  ) {
-    shellLabels = input.serverShell!.shellLabels!.map((s) => String(s || '').trim()).filter(Boolean)
+  if (hasServerMode && serverLabels.length > 0) {
+    shellLabels = serverLabels
   } else {
     shellLabels = buildShellLabels({
       mode,
