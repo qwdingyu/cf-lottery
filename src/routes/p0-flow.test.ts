@@ -11,7 +11,7 @@ import type { DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
-import { activityEvents, activitySubmissions, activityOutcomes, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, lotteryBlacklist, systemConfig, webhookConfigs } from "../db/schema";
+import { activityEvents, activitySubmissions, activityOutcomes, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, lotteryBlacklist, lotteryPrizeTiers, systemConfig, webhookConfigs } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -610,6 +610,44 @@ it("公开详情：参与后立即返回最新人数并禁止缓存", async () =
   expect(after.headers.get("Cache-Control")).toContain("no-store");
   const afterBody = await after.json() as { participantCount?: number };
   expect(afterBody.participantCount).toBe(1);
+});
+
+it("公开详情壳字段契约：delayed 仪式短语 / instant 真奖名（docs/128）", async () => {
+  await seedOwner();
+  const app = createTestApp();
+
+  // delayed（默认 manual）：壳=仪式短语（不出现奖名），奖池条 full 公示
+  const { publicSlug: delayedSlug } = await createAndPublish(app, "lottery");
+  const delayedRes = await app.request(`/api/public/draws/${delayedSlug}`, {}, TEST_ENV);
+  expect(delayedRes.status).toBe(200);
+  const delayed = await delayedRes.json() as {
+    prizePanelMode?: string;
+    shellUsesRealPrizes?: boolean;
+    prizePoolDisplay?: string;
+    shellLabels?: string[];
+  };
+  expect(delayed.prizePanelMode).toBe("shell_ritual_pool_full");
+  expect(delayed.shellUsesRealPrizes).toBe(false);
+  expect(delayed.prizePoolDisplay).toBe("full");
+  expect(Array.isArray(delayed.shellLabels)).toBe(true);
+  expect(delayed.shellLabels!.join("")).not.toContain("测试奖品");
+
+  // instant：需 maxSpinsPerEntry + 奖项 weight 过发布闸门（docs/116）
+  const instant = await createDraft(app, "lottery", { resultMode: "instant", maxSpinsPerEntry: 3 });
+  await configureManualPrizeTier(app, instant.id);
+  await db.update(lotteryPrizeTiers).set({ weight: 100 }).where(eq(lotteryPrizeTiers.drawId, instant.id));
+  await publishDraft(app, instant.id);
+  const instantRes = await app.request(`/api/public/draws/${instant.publicSlug}`, {}, TEST_ENV);
+  expect(instantRes.status).toBe(200);
+  const instantBody = await instantRes.json() as {
+    prizePanelMode?: string;
+    shellUsesRealPrizes?: boolean;
+    shellLabels?: string[];
+  };
+  expect(instantBody.prizePanelMode).toBe("full_on_shell");
+  expect(instantBody.shellUsesRealPrizes).toBe(true);
+  expect(Array.isArray(instantBody.shellLabels)).toBe(true);
+  expect(instantBody.shellLabels!.some((l) => l.includes("测试奖品"))).toBe(true);
 });
 
 /** 参与 IP 计数器（避免限流） */

@@ -26,7 +26,10 @@ export type ResolvedPrizePanelMode =
   | "shell_ritual_pool_summary"
   | "ritual_only";
 
-/** 默认中性四字/短语：互动氛围，禁止默认成「中奖/一等奖」 */
+/**
+ * 默认中性四字/短语：互动氛围，禁止默认成「中奖/一等奖」。
+ * 与 frontend/src/views/lottery/prize-shell-display.ts 同步的副本——修改需两处一起改。
+ */
 export const DEFAULT_RITUAL_PHRASES: readonly string[] = [
   "好运连连",
   "感谢参与",
