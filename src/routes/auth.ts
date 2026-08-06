@@ -30,7 +30,7 @@ import {
   provisionIdpUser,
 } from "../services/idp-user-provision";
 import { timingSafeEqualHex, timingSafeEqualString } from "../lib/crypto-compare";
-import { MemoryRateLimiter } from "@usethink/cf-core";
+import { MemoryRateLimiter } from "@usethink/cf-core/rate-limit";
 
 export const authRoute = new Hono<AppEnv>();
 

@@ -1,4 +1,4 @@
-import { writeAdminAudit } from "@usethink/cf-core";
+import { writeAdminAudit } from "@usethink/cf-core/audit";
 import type { DbType, DbWriteScope } from "../../db/client";
 
 type PlatformAuditInput = {

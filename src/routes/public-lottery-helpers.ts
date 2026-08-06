@@ -12,7 +12,7 @@ import { emailAccessCodes } from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { verifyJwt } from "../middleware/auth";
 import { checkDbRateLimit } from "../lib/rate-limit";
-import { MemoryRateLimiter } from "@usethink/cf-core";
+import { MemoryRateLimiter } from "@usethink/cf-core/rate-limit";
 import type { ActivityEventType } from "../services/lottery-service";
 
 /** 内存固定窗口限流（docs/091 P0-5：统一到 cf-core MemoryRateLimiter，替代本地 Map 实现） */
