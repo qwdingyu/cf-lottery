@@ -12,25 +12,14 @@ import { emailAccessCodes } from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { verifyJwt } from "../middleware/auth";
 import { checkDbRateLimit } from "../lib/rate-limit";
+import { MemoryRateLimiter } from "@usethink/cf-core";
 import type { ActivityEventType } from "../services/lottery-service";
 
-/** 简单内存限流：同一 key 每窗口最多 N 次（单实例预过滤） */
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-
-export function checkRateLimit(ip: string, limit = 10, windowMs = 60000): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  if (entry.count >= limit) return false;
-  entry.count++;
-  return true;
-}
+/** 内存固定窗口限流（docs/091 P0-5：统一到 cf-core MemoryRateLimiter，替代本地 Map 实现） */
+const memoryLimiter = new MemoryRateLimiter();
 
 /**
- * 公开端统一限流：内存 Map 预过滤 + DB 跨实例闸门。
+ * 公开端统一限流：内存预过滤 + DB 跨实例闸门。
  */
 export async function checkPublicRateLimit(
   db: DbType,
@@ -38,7 +27,7 @@ export async function checkPublicRateLimit(
   limit = 10,
   windowMs = 60000,
 ): Promise<boolean> {
-  if (!checkRateLimit(key, limit, windowMs)) return false;
+  if (!(await memoryLimiter.check(key, limit, windowMs)).ok) return false;
   return checkDbRateLimit(db, key, limit, windowMs);
 }
 

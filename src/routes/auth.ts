@@ -29,22 +29,12 @@ import {
   provisionIdpUser,
 } from "../services/idp-user-provision";
 import { timingSafeEqualHex, timingSafeEqualString } from "../lib/crypto-compare";
+import { MemoryRateLimiter } from "@usethink/cf-core";
 
 export const authRoute = new Hono<AppEnv>();
 
-/** 简单内存限流 */
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-function checkRateLimit(ip: string, limit = 5, windowMs = 60000): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  if (entry.count >= limit) return false;
-  entry.count++;
-  return true;
-}
+/** 内存固定窗口限流（docs/091 P0-5：统一到 cf-core MemoryRateLimiter，替代两份本地 Map 实现） */
+const memoryLimiter = new MemoryRateLimiter();
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{2,40}$/;
 // 会话 token 有效期：24 小时（#7）。7 天过长——token 存 localStorage 且无服务端吊销机制，
@@ -99,7 +89,7 @@ async function hashCode(code: string): Promise<string> {
 authRoute.post("/register", async (c) => {
   try {
     const ip = getClientIp(c);
-    if (!checkRateLimit(`register:${ip}`, 3, 60000)) {
+    if (!(await memoryLimiter.check(`register:${ip}`, 3, 60000)).ok) {
       return c.json({ ok: false, message: "注册过于频繁，请稍后再试" }, 429);
     }
 
@@ -190,7 +180,7 @@ authRoute.post("/verify-email", async (c) => {
   // ★ P0 安全：邮箱验证码试错限流（10 次/15 分钟/IP），防暴力破解。
   // 双层限流与 register/login 一致：内存限流兜底 + DB 级限流（跨 Worker 实例一致，
   // 023 §6"登录失败限流持久化"落地；DB 层为单条原子条件 INSERT，CPU 成本低）。
-  if (!checkRateLimit(`verify-email:${ip}`, 10, 900000)) {
+  if (!(await memoryLimiter.check(`verify-email:${ip}`, 10, 900000)).ok) {
     return c.json({ ok: false, message: "尝试次数过多，请 15 分钟后再试" }, 429);
   }
   const db = getDb(c);
@@ -279,7 +269,7 @@ authRoute.post("/login", async (c) => {
   // 读取系统配置的登录限流值（闭环：L3 配置 → 登录限流生效）
   const [rlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_login")).limit(1);
   const loginLimit = Math.min(Math.max(parseInt(rlCfg?.value || "", 10) || 5, 1), 100);
-  if (!checkRateLimit(`login:${ip}`, loginLimit, 60000)) {
+  if (!(await memoryLimiter.check(`login:${ip}`, loginLimit, 60000)).ok) {
     return c.json({ ok: false, message: "登录过于频繁，请稍后再试" }, 429);
   }
 
