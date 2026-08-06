@@ -15,7 +15,7 @@ import { platformRedemptionCodesRoute } from "./platform-redemption-codes";
 import { platformRoute } from "./platform";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt, verifyJwt } from "../middleware/auth";
-import { lotteryDraws, platformAuditLogs, platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
+import { lotteryDraws, adminAuditLogs, platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -284,7 +284,7 @@ describe("RBAC-lite 路由分层", () => {
     const rows = await db.select().from(redemptionCodes).where(eq(redemptionCodes.createdBy, PLATFORM_ID));
     expect(rows).toHaveLength(2);
 
-    const [audit] = await db.select().from(platformAuditLogs).where(eq(platformAuditLogs.actorUserId, PLATFORM_ID)).limit(1);
+    const [audit] = await db.select().from(adminAuditLogs).where(eq(adminAuditLogs.actorUserId, PLATFORM_ID)).limit(1);
     expect(audit?.action).toBe("platform.redemption_codes.batch_create");
     expect(audit?.targetType).toBe("redemption_code_batch");
   });
@@ -343,7 +343,7 @@ describe("RBAC-lite 路由分层", () => {
     }, TEST_ENV);
     expect(conflict.status).toBe(409);
 
-    const audits = await db.select().from(platformAuditLogs).where(eq(platformAuditLogs.action, "platform.redemption_codes.disable"));
+    const audits = await db.select().from(adminAuditLogs).where(eq(adminAuditLogs.action, "platform.redemption_codes.disable"));
     expect(audits.some((a) => a.targetId === activeId)).toBe(true);
   });
 
@@ -404,8 +404,8 @@ describe("RBAC-lite 路由分层", () => {
 
     const audits = await db
       .select()
-      .from(platformAuditLogs)
-      .where(eq(platformAuditLogs.action, "platform.tenant.update"));
+      .from(adminAuditLogs)
+      .where(eq(adminAuditLogs.action, "platform.tenant.update"));
     expect(audits).toHaveLength(2);
     expect(audits[0]?.tenantId).toBe(TENANT_ID);
     expect(audits[0]?.targetType).toBe("tenant");
@@ -484,7 +484,7 @@ describe("RBAC-lite 路由分层", () => {
     expect(delivery.rows[0]?.status).toBe("sent");
     expect(Number(delivery.rows[0]?.attempt_count)).toBe(1);
 
-    const [audit] = await db.select().from(platformAuditLogs).where(eq(platformAuditLogs.action, "platform.webhook_delivery.retry")).limit(1);
+    const [audit] = await db.select().from(adminAuditLogs).where(eq(adminAuditLogs.action, "platform.webhook_delivery.retry")).limit(1);
     expect(audit?.tenantId).toBe(TENANT_ID);
     expect(audit?.targetId).toBe("delivery-1");
   });
@@ -609,8 +609,8 @@ describe("L3→L2 模拟登录路径（impersonate）", () => {
 
     const logs = await db
       .select()
-      .from(platformAuditLogs)
-      .where(eq(platformAuditLogs.action, "platform.tenant.impersonate"));
+      .from(adminAuditLogs)
+      .where(eq(adminAuditLogs.action, "platform.tenant.impersonate"));
     expect(logs.length).toBe(1);
     expect(logs[0]!.actorUserId).toBe(PLATFORM_ID);
     expect(logs[0]!.tenantId).toBe(TENANT_ID);

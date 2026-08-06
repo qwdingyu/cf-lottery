@@ -6,6 +6,9 @@
  */
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+// P1-13：cf-core 管理员审计日志表（统一审计入口，需迁移创建 admin_audit_logs）
+import { adminAuditLogs } from "@usethink/cf-core/db/schema";
+export { adminAuditLogs };
 
 // ── SaaS 多租户 ──
 export const tenants = sqliteTable("tenants", {

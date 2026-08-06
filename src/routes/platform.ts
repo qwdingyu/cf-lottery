@@ -10,7 +10,7 @@ import { withDbTransaction } from "../db/client";
 import { fail, getDb, ok } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { requireAuth, requirePlatformMember, signJwt } from "../middleware/auth";
-import { tenants, platformMembers, users, platformAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig } from "../db/schema";
+import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
 import { dispatchWebhookDelivery } from "../services/lottery-service";
@@ -387,15 +387,15 @@ platformRoute.get("/audit-logs", async (c) => {
   const actorUserId = c.req.query("actorUserId") || "";
 
   const conditions: SQL[] = [];
-  if (tenantId) conditions.push(eq(platformAuditLogs.tenantId, tenantId));
-  if (action) conditions.push(eq(platformAuditLogs.action, action));
-  if (actorUserId) conditions.push(eq(platformAuditLogs.actorUserId, actorUserId));
+  if (tenantId) conditions.push(eq(adminAuditLogs.tenantId, tenantId));
+  if (action) conditions.push(eq(adminAuditLogs.action, action));
+  if (actorUserId) conditions.push(eq(adminAuditLogs.actorUserId, actorUserId));
 
   const rows = await db
     .select()
-    .from(platformAuditLogs)
+    .from(adminAuditLogs)
     .where(combinedWhere(conditions))
-    .orderBy(desc(platformAuditLogs.createdAt))
+    .orderBy(desc(adminAuditLogs.createdAt))
     .limit(limit).offset(offset);
 
   return ok(c, { logs: rows });
@@ -497,7 +497,7 @@ const TABLE_MAP = {
   users, tenants, tenantMembers, platformMembers,
   lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers,
   prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes,
-  lotteryBlacklist, emailAccessCodes, auditLogs, platformAuditLogs,
+  lotteryBlacklist, emailAccessCodes, auditLogs, adminAuditLogs,
   activityEvents, activityOutcomes, activitySubmissions, shareRecords,
   externalConversions, apiKeys, webhookConfigs, webhookDeliveries,
   couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig,
@@ -541,14 +541,14 @@ platformRoute.post("/data/cleanup", requirePlatformMember(["platform_owner"]), a
     } catch { results[table] = -1; }
   }
 
-  // 数据清理是敏感破坏性操作，必须留审计痕迹
-  await db.insert(platformAuditLogs).values({
-    id: crypto.randomUUID(),
+  // 数据清理是敏感破坏性操作，必须留审计痕迹（统一到 cf-core admin_audit_logs，docs/091 P1-13）
+  await writePlatformAudit(db, {
     actorUserId,
+    actorRole: "platform_operator",
     action: "platform.data.cleanup",
     targetType: "data",
     targetId: targets.join(","),
-    metadataJson: JSON.stringify({ targets, results }),
+    metadata: { targets, results },
   });
 
   return ok(c, { results });
