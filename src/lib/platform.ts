@@ -14,8 +14,24 @@
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
 
-// ── IP 获取 ── 统一到 @usethink/cf-core@0.4.12
-export { getClientIp } from "@usethink/cf-core";
+// ── IP 获取 ──
+// 基座用 @usethink/cf-core/platform 的安全版 getClientIp（Node 环境默认不信任
+// CF-Connecting-IP / X-Forwarded-For，防伪造 XFF 绕过 IP 限流）。
+// 根入口 @usethink/cf-core 的 getClientIp 来自 security.ts（无条件信任代理头），
+// 禁止使用——会让 IP 限流键被伪造 XFF 绕过（docs/128 安全审查）。
+// 测试开关 TRUST_CF_CONNECTING_IP=true（test-setup 设置）时信任 CF-Connecting-IP，
+// 用于单测模拟多 IP 限流（docs/070 HIGH #2）；生产环境不设该变量 → 保持 fail-safe。
+import { getClientIp as coreGetClientIp } from "@usethink/cf-core/platform";
+
+export function getClientIp(c: Context<AppEnv>): string {
+  const trustCfIp = (globalThis as any).process?.env?.TRUST_CF_CONNECTING_IP === "true";
+  if (trustCfIp) {
+    const cf = c.req.header("CF-Connecting-IP");
+    if (cf) return cf.trim();
+  }
+  // XFF 即使测试开关打开也不信任（保持 fail-safe 语义，防测试掩盖 XFF 注入风险）
+  return coreGetClientIp(c);
+}
 
 /**
  * 异步任务延续（不阻塞响应返回）。
