@@ -28,6 +28,14 @@ describe("prize-shell-display", () => {
     expect(resolvePrizePanelMode("instant", "shell_ritual_pool_full")).toBe("shell_ritual_pool_full");
   });
 
+  it("docs/128 红线：delayed + 显式 full_on_shell 降级为仪式短语；instant 仍放行", () => {
+    expect(resolvePrizePanelMode("manual", "full_on_shell")).toBe("shell_ritual_pool_full");
+    expect(resolvePrizePanelMode("scheduled", "full_on_shell")).toBe("shell_ritual_pool_full");
+    expect(resolvePrizePanelMode("", "full_on_shell")).toBe("shell_ritual_pool_full");
+    expect(resolvePrizePanelMode(null, "full_on_shell")).toBe("shell_ritual_pool_full");
+    expect(resolvePrizePanelMode("instant", "full_on_shell")).toBe("full_on_shell");
+  });
+
   it("sanitizeRitualPhrases：截断、去重、拒绝中奖语义", () => {
     expect(sanitizeRitualPhrases([" 好运连连 ", "好运连连", "恭喜中奖", "一等奖", "参与有礼呀呀呀呀呀"])).toEqual([
       "好运连连",

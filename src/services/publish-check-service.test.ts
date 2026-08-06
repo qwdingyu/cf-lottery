@@ -270,6 +270,26 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.errors.some((item) => item.code === "webhook.events.invalid")).toBe(true);
   });
 
+  it("docs/128 红线：手动/定时开奖 + 扇面真奖名 阻断发布；instant 放行", async () => {
+    const delayed = await buildPublishCheckForDraw(db, TENANT, makeDraw({
+      resultMode: "manual",
+      promotionConfig: JSON.stringify({ experience: { prizePanelMode: "full_on_shell" } }),
+    }) as any);
+    expect(delayed.errors.some((item) => item.code === "promotion.experience.conflict")).toBe(true);
+
+    const scheduled = await buildPublishCheckForDraw(db, TENANT, makeDraw({
+      resultMode: "scheduled",
+      promotionConfig: JSON.stringify({ experience: { prizePanelMode: "full_on_shell" } }),
+    }) as any);
+    expect(scheduled.errors.some((item) => item.code === "promotion.experience.conflict")).toBe(true);
+
+    const instant = await buildPublishCheckForDraw(db, TENANT, makeDraw({
+      resultMode: "instant",
+      promotionConfig: JSON.stringify({ experience: { prizePanelMode: "full_on_shell" } }),
+    }) as any);
+    expect(instant.errors.some((item) => item.code === "promotion.experience.conflict")).toBe(false);
+  });
+
   it("问卷和投票缺少有效配置时禁止正式发布", async () => {
     const survey = await buildPublishCheckForDraw(db, TENANT, makeDraw({ activityKind: "survey", winnerCount: 0 }) as any);
     const vote = await buildPublishCheckForDraw(db, TENANT, makeDraw({ activityKind: "vote", winnerCount: 0 }) as any);

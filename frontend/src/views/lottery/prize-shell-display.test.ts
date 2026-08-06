@@ -15,6 +15,13 @@ describe('prize-shell-display (frontend)', () => {
     expect(resolvePrizePanelMode('scheduled', 'auto')).toBe('shell_ritual_pool_full')
   })
 
+  it('docs/128 红线：delayed + 显式 full_on_shell 降级（与服务端对称）', () => {
+    expect(resolvePrizePanelMode('manual', 'full_on_shell')).toBe('shell_ritual_pool_full')
+    expect(resolvePrizePanelMode('scheduled', 'full_on_shell')).toBe('shell_ritual_pool_full')
+    expect(resolvePrizePanelMode('', 'full_on_shell')).toBe('shell_ritual_pool_full')
+    expect(resolvePrizePanelMode('instant', 'full_on_shell')).toBe('full_on_shell')
+  })
+
   it('sanitize 拒绝中奖语义', () => {
     expect(sanitizeRitualPhrases(['好运', '恭喜中奖', '一等奖'])).toEqual(['好运'])
   })

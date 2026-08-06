@@ -143,7 +143,14 @@ export function resolvePrizePanelMode(
   resultMode: string | null | undefined,
   configured: PrizePanelMode = "auto",
 ): ResolvedPrizePanelMode {
-  if (configured !== "auto") return configured;
+  if (configured !== "auto") {
+    // docs/128 红线：真奖名只允许即时开奖上壳。delayed（手动/定时/空）随机停格
+    // 若扇面是真奖名会「停格=中奖」误读，强制降级为仪式短语 + 奖池公示。
+    if (configured === "full_on_shell" && !isInstantLotteryResultMode(resultMode)) {
+      return "shell_ritual_pool_full";
+    }
+    return configured;
+  }
   if (isInstantLotteryResultMode(resultMode)) return "full_on_shell";
   // delayed 与其它非 instant：壳仪式 + 奖池条完整公示（信任）
   return "shell_ritual_pool_full";

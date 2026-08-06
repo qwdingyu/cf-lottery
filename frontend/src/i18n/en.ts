@@ -1070,6 +1070,8 @@ export default {
     adminPrizePanelRitualOnly: "Ritual only (hide prize strip)",
     adminPrizePanelModeHint:
       "Auto: instant = real prizes on shell; manual/scheduled = ritual phrases on shell with a public prize list. Never fake wins with random stop + real names.",
+    adminPrizePanelModeConflict:
+      "⚠️ Manual/scheduled draw: real prize names on the shell make random stops look like wins. The public page will downgrade to ritual phrases; switch to Auto or a ritual mode.",
     adminRitualPhrases: "Ritual phrases (one per line)",
     adminRitualPhrasesPlaceholder: "Good luck\nThanks for joining\nSee you at the draw",
     adminRitualPhrasesHint:

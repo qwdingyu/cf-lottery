@@ -732,6 +732,14 @@
                       <option value="ritual_only">{{ $t('lottery.adminPrizePanelRitualOnly') }}</option>
                     </select>
                     <small class="field-hint">{{ $t('lottery.adminPrizePanelModeHint') }}</small>
+                    <small
+                      v-if="form.resultMode !== 'instant' && form.prizePanelMode === 'full_on_shell'"
+                      class="field-hint"
+                      style="color:#d64541;font-weight:600"
+                      role="alert"
+                    >
+                      {{ $t('lottery.adminPrizePanelModeConflict') }}
+                    </small>
                   </label>
                   <label
                     v-if="form.resultMode !== 'instant' || form.prizePanelMode === 'shell_ritual_pool_full' || form.prizePanelMode === 'shell_ritual_pool_summary' || form.prizePanelMode === 'ritual_only'"

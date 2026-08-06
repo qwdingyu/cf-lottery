@@ -292,6 +292,21 @@ function validatePromotion(draw: LotteryDraw, result: PublishCheckResult) {
     }
   }
 
+  // docs/128 红线：手动/定时开奖禁止「扇面真奖名」——随机停格停在真奖名会让人
+  // 误以为「停到即中」，属语义欺诈。公开端 resolvePrizePanelMode 已强制降级为
+  // 仪式短语，此处直接阻断发布，防止运营以为「真奖名」配置已生效。
+  const experience = promotionConfig?.experience as
+    | { prizePanelMode?: string }
+    | undefined;
+  if (draw.resultMode !== "instant" && experience?.prizePanelMode === "full_on_shell") {
+    add(
+      result.errors,
+      "promotion",
+      "promotion.experience.conflict",
+      "手动/定时开奖禁止「扇面真奖名」：随机停格=假装中奖；请改用自动或仪式短语模式",
+    );
+  }
+
   // 裂变配置校验
   if (viral?.enabled) {
     const perInvite = Number(viral.extraEntriesPerInvite ?? 0);

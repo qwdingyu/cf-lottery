@@ -109,8 +109,9 @@ VPS_SSH_KEY=~/.ssh/cf-lottery-vps.pem bash local-deploy-vps.sh
 
 ## 验收标准
 
-- TypeScript 类型检查: 0 errors
-- 单元测试: 全部通过
+- TypeScript 类型检查: 0 errors（`npx tsc --noEmit`）
+- 前端模板类型检查: 0 errors（`cd frontend && npx vue-tsc -b --pretty false`，能捕获 .vue 模板层错误）
+- 单元测试: 全部通过（`npx vitest run`）
 - 多租户隔离: 用户 A 看不到用户 B 的活动
 - 卡密: 不会跨租户、不会重复发放
 - 并发开奖: 不会重复中奖
