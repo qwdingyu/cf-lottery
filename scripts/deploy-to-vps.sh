@@ -50,7 +50,7 @@ fi
 #   package.json      依赖声明（VPS 上 npm ci --omit=dev）
 #   package-lock.json 锁定版本
 info "步骤 1/3：打包部署产物..."
-PACKAGE_FILE="deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
+PACKAGE_FILE="cf-lottery-deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
 tar -czf "$PACKAGE_FILE" \
   dist/server.js \
   public/ \

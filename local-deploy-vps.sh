@@ -25,7 +25,7 @@
 # 上传后的服务器侧操作（本脚本不自动执行）：
 #   ssh -i ~/.ssh/cf-lottery-vps.pem root@38.47.198.72
 #   cd /root
-#   tar -xzf deploy-YYYYMMDD-HHMMSS.tar.gz
+#   tar -xzf cf-lottery-deploy-YYYYMMDD-HHMMSS.tar.gz
 #   npm ci --omit=dev
 #   pm2 restart lottery --update-env
 # ═══════════════════════════════════════════════════════════════════════════════
