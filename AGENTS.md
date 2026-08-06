@@ -96,14 +96,15 @@ cf-lottery 是一个**多租户、可白标、可嵌入的活动引擎平台**�
 cp .env.example .env
 # 编辑 .env 填写 TURSO_URL、JWT_SECRET、RESEND_API_KEY 等
 
-# 2. 一键部署
-bash local-deploy.sh
+# 2. VPS 构建并上传部署包（当前默认发布模式）
+VPS_SSH_KEY=~/.ssh/cf-lottery-vps.pem bash local-deploy-vps.sh
 ```
 
-> ⚠️ **铁律：部署必须使用 `bash local-deploy.sh`**
-> - 该脚本会自动执行 `npm run db:migrate`（应用未执行的迁移，如 0026 visible 列）
-> - **禁止**直接用 `npx wrangler deploy` 部署——它会跳过迁移，导致 schema 与代码不一致（曾因此导致 /api/admin/draws 500 错误）
-> - 数据库迁移（新增列/表）只通过 `npm run db:migrate` 或 `local-deploy.sh` 应用
+> ⚠️ **铁律：当前生产部署默认使用 `bash local-deploy-vps.sh`**
+> - Cloudflare Workers 部署已暂停；仅在明确回退/测试时使用 `bash local-deploy-cloudeflare.sh`
+> - VPS 上传脚本会执行 `scripts/build-for-vps.sh --package`，生成部署包并通过私钥 `scp` 到 `root@38.47.198.72:/root/`
+> - 数据库迁移（新增列/表）仍必须显式运行 `npm run db:migrate`，不要用 `npx wrangler deploy` 绕过迁移流程
+> - 私钥只通过 `VPS_SSH_KEY` 环境变量传入，禁止写入仓库
 ```
 
 ## 验收标准

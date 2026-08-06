@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# local-deploy.sh — cf-lottery 本地部署到 Cloudflare Workers
+# local-deploy-cloudeflare.sh — cf-lottery 本地部署到 Cloudflare Workers
+#
+# 注意：当前生产部署已暂停 Cloudflare Workers，主部署入口改为 local-deploy-vps.sh。
+# 保留本脚本仅用于明确需要回退/测试 Cloudflare Workers 的场景。
 #
 # 前提：已通过 `npx wrangler login` 登录 Cloudflare
-# 用法：bash local-deploy.sh
+# 用法：bash local-deploy-cloudeflare.sh
 #
 # 流程：
 #   0. 安装依赖

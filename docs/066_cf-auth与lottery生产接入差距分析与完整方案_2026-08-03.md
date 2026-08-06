@@ -267,7 +267,7 @@ npx wrangler secret put CF_AUTH_CLIENT_SECRET  # 贴阶段 1 的 secret
 npm run frontend:build
 # 仅在明确授权后：
 npx wrangler deploy
-# 或 bash local-deploy.sh（若其会 put 全套 secret，先确认 .env 已是真实值）
+# 或 bash local-deploy-cloudeflare.sh（若其会 put 全套 secret，先确认 .env 已是真实值）
 ```
 
 **部署对象必须是阶段 0 已含 RP 的 commit。**

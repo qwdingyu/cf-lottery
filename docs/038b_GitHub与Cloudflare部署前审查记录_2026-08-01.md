@@ -22,7 +22,7 @@ Cloudflare 部署层面仍有两个环境前置条件必须完成：
 1. 删除公开 `/api/platform/bootstrap`。
 2. 删除 `PLATFORM_BOOTSTRAP_EMAIL` / `BOOTSTRAP_SECRET` Worker bindings。
 3. 保留 `scripts/bootstrap-platform-owner.mjs` 作为唯一首个平台 owner 初始化入口。
-4. `local-deploy.sh` 补写 `CREDENTIALS_ENCRYPTION_KEY` secret。
+4. `local-deploy-cloudeflare.sh` 补写 `CREDENTIALS_ENCRYPTION_KEY` secret。
 
 ## 三、部署前必须执行
 
@@ -51,4 +51,3 @@ node scripts/bootstrap-platform-owner.mjs --email owner@example.com --role platf
 ## 五、仍不建议立即正式开放的原因
 
 TODOLIST 中仍有若干 P1/P2 增强项，例如 CORS 更细粒度收紧、媒体资产治理、提交记录导出、投票结果公开开关、Webhook/UI 专项测试。这些不阻塞受控 Beta，但不适合直接作为大规模公开 SaaS 承诺。
-

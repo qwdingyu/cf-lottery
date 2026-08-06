@@ -198,7 +198,7 @@ PASSWORD_PEPPER || JWT_SECRET
 - 旧低迭代 PBKDF2 `salt:hash` 兼容验证并升级；不在默认登录热路径尝试 `PBKDF2 x 100000`。
 - 活动漏斗和外部转化查询均按单活动读取，不在公开页做实时重统计。
 - 后台 `/api/admin/stats` 允许低频展示租户累计参与人数；这是 Turso rows read/延迟成本，不是 Worker CPU 热点。
-- `PASSWORD_PEPPER` 已写入 `.env.example`、`README.md` 和 `local-deploy.sh`。
+- `PASSWORD_PEPPER` 已写入 `.env.example`、`README.md` 和 `local-deploy-cloudeflare.sh`。
 
 仍需补：
 

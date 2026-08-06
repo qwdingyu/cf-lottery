@@ -24,7 +24,7 @@
 ```bash
 npx tsc --noEmit
 npx vitest run   # 43 files / 469 passed
-bash local-deploy.sh
+bash local-deploy-cloudeflare.sh  # 当时的 Cloudflare 发版入口；当前默认已改 VPS
 ```
 
 ## 关联

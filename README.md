@@ -1,6 +1,6 @@
 # cf-lottery 项目索引
 
-> 最后更新：2026-08-01
+> 最后更新：2026-08-06
 > 项目：https://github.com/qwdingyu/cf-lottery
 > 线上：https://lucky.eforge.xyz
 
@@ -14,11 +14,11 @@
 
 | 层 | 技术 |
 |------|------|
-| 后端 | Cloudflare Workers + Hono + Drizzle ORM |
+| 后端 | Node.js VPS + Hono + Drizzle ORM（保留 Cloudflare Workers 兼容入口） |
 | 数据库 | Turso（libSQL） |
 | 前端 | Vue 3 + Vite + TypeScript |
 | 邮件 | Resend |
-| 部署 | Wrangler + Cloudflare Pages |
+| 部署 | VPS 构建包 + scp 上传（Cloudflare 部署已暂停） |
 
 ## 文档索引
 
@@ -41,9 +41,11 @@ npm install
 # 本地开发
 cd frontend && npx vite
 
-# 部署
-cd frontend && npx vite build && cd ..
-npx wrangler deploy
+# VPS 部署包上传（默认 root@38.47.198.72:/root）
+VPS_SSH_KEY=~/.ssh/cf-lottery-vps.pem npm run deploy
+
+# 如需显式回退 Cloudflare Workers
+npm run deploy:cloudflare
 ```
 
 ## 必需 Secrets

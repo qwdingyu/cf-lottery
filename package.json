@@ -10,7 +10,8 @@
     "dev": "wrangler dev --port 8787",
     "dev:local": "tsx src/server.ts",
     "db:export": "node scripts/export-turso-to-local.mjs",
-    "deploy": "npm run frontend:build && npx wrangler deploy",
+    "deploy": "bash local-deploy-vps.sh",
+    "deploy:cloudflare": "bash local-deploy-cloudeflare.sh",
     "deps:ci": "npm ci",
     "type-check": "tsc --noEmit",
     "type-check:frontend": "npm --workspace frontend run type-check",
@@ -28,7 +29,8 @@
     "build:vps:obfuscate": "bash scripts/build-for-vps.sh --obfuscate",
     "build:vps:package": "bash scripts/build-for-vps.sh --package",
     "build:vps:all": "bash scripts/build-for-vps.sh --obfuscate --package",
-    "deploy:vps": "bash scripts/deploy-to-vps.sh"
+    "deploy:vps": "bash local-deploy-vps.sh",
+    "deploy:vps:remote": "bash scripts/deploy-to-vps.sh"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.12",

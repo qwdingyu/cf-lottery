@@ -52,7 +52,7 @@
 - 生产 Turso 是否已执行 `0025_auth_identities`（无库只读查询则**未知**）  
 - 生产 auth 库里是否已有任意 lottery OAuth client 行  
 - 真人 Google/GitHub 在 auth 上是否对你账号可用（仅知 `ENABLED_SOCIAL_PROVIDERS` 配置存在）  
-- 本机未提交的 `local-deploy.sh` / `bindings.ts` 注释级 diff **不改变**上述生产结论
+- 本机未提交的 `local-deploy-cloudeflare.sh` / `bindings.ts` 注释级 diff **不改变**上述生产结论
 
 ### 架构边界（冻结，禁止改捷径）
 
