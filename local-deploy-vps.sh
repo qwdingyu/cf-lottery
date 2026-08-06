@@ -6,12 +6,28 @@
 # 本脚本只负责「构建 + 打包 + scp 上传」，不会在服务器上解压或重启服务，
 # 避免把上传与远端发布动作耦合在一起。
 #
-# 用法：
-#   VPS_SSH_KEY=~/.ssh/cf-lottery-vps.pem bash local-deploy-vps.sh
+# 必填：
+#   VPS_SSH_KEY  SSH 私钥路径。私钥只从环境变量读取，禁止写入仓库。
+#
+# 默认目标：
+#   VPS_HOST=38.47.198.72
+#   VPS_USER=root
+#   VPS_PATH=/root
+#   VPS_SSH_PORT=22
+#
+# 最常用用法：
+#   VPS_SSH_KEY=~/.ssh/jp_72_scp-key bash local-deploy-vps.sh
 #
 # 可选覆盖：
 #   VPS_HOST=38.47.198.72 VPS_USER=root VPS_PATH=/root VPS_SSH_KEY=~/.ssh/key bash local-deploy-vps.sh
 #   VPS_SSH_PORT=22 VPS_BUILD_FLAGS="--obfuscate" VPS_SSH_KEY=~/.ssh/key bash local-deploy-vps.sh
+#
+# 上传后的服务器侧操作（本脚本不自动执行）：
+#   ssh -i ~/.ssh/cf-lottery-vps.pem root@38.47.198.72
+#   cd /root
+#   tar -xzf deploy-YYYYMMDD-HHMMSS.tar.gz
+#   npm ci --omit=dev
+#   pm2 restart lottery --update-env
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
