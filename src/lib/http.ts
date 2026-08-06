@@ -17,10 +17,12 @@ export function ok(c: Context<AppEnv>, data: Record<string, unknown>) {
 }
 
 /**
- * 失败响应
+ * 失败响应 — 双字段兼容（docs/091 P0-7）
+ * 同时输出 message（历史契约，前端在用）与 error（与 cf-core 一致），
+ * 两端读取不受影响；后续可逐步收敛到单一字段。
  */
 export function fail(c: Context<AppEnv>, message: string, status = 400) {
-  return c.json({ ok: false, message }, status as any);
+  return c.json({ ok: false, message, error: message }, status as any);
 }
 
 /**
