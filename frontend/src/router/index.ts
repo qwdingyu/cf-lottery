@@ -12,7 +12,6 @@ import LandingView from '@/views/LandingView.vue'
 import {
   ensurePlatformRole,
   readAdminToken,
-  readPlatformRole,
 } from '@/composables/useAdminAuth'
 import {
   platformAccessDeniedTarget,
@@ -235,17 +234,11 @@ router.beforeEach((to) => {
   // 现：未知必须先 ensure；非活跃角色硬拒；未决网络错误也拒壳（避免「看得见菜单」）。
   if (isPlatformRoute && adminToken) {
     return (async () => {
-      let cached = readPlatformRole()
-      let gate = resolvePlatformRouteGate(cached)
-      if (gate.action === 'resolve') {
-        const resolved = await ensurePlatformRole(adminToken)
-        cached = resolved === undefined ? readPlatformRole() : resolved
-        gate = resolvePlatformRouteGate(cached === undefined ? null : cached)
-        // 网络未决：仍按 deny 处理壳（fail-closed）；不写死 null 缓存，下次可重试
-        if (resolved === undefined && cached === undefined) {
-          gate = { action: 'deny' }
-        }
-      }
+      // 每次导航强制解析平台角色：缓存可能过时（被降级/移除后缓存仍为旧角色，
+      // 会导致路由守卫放行而 API 403 的「看得见壳、看不见数」UX 违例，docs/129 §三）。
+      // 失败时 fail-closed 拒壳，网络恢复后下次导航重试。
+      const resolved = await ensurePlatformRole(adminToken, { force: true })
+      const gate = resolvePlatformRouteGate(resolved === undefined ? null : resolved)
       if (gate.action === 'allow') return true
       const denied = platformAccessDeniedTarget(!!jwtTenantId(adminToken))
       return { name: denied.name, query: denied.query, replace: true }
