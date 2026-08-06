@@ -732,6 +732,11 @@
                       <option value="ritual_only">{{ $t('lottery.adminPrizePanelRitualOnly') }}</option>
                     </select>
                     <small class="field-hint">{{ $t('lottery.adminPrizePanelModeHint') }}</small>
+                    <small v-if="form.prizePanelMode === 'auto'" class="field-hint">
+                      {{ form.resultMode === 'instant'
+                        ? $t('lottery.adminPrizePanelModeAutoInstant')
+                        : $t('lottery.adminPrizePanelModeAutoDelayed') }}
+                    </small>
                     <small
                       v-if="form.resultMode !== 'instant' && form.prizePanelMode === 'full_on_shell'"
                       class="field-hint"
@@ -1574,7 +1579,7 @@ import {
   normalizeSurveyFieldOptions as normalizeSurveyFieldOptionsRaw,
 } from './lottery/activity-config'
 import { emptyLotteryEditorForm } from './lottery/form-defaults'
-import { buildPromotionConfigPayload, growthFieldsFromDraw } from './lottery/growth-config'
+import { buildPromotionConfigPayload, growthFieldsFromDraw, sanitizeRitualPhrasesForSave } from './lottery/growth-config'
 import {
   buildLotteryDrawConfirmMessage,
   buildLotteryDuplicateDraft as buildLotteryDuplicateDraftRaw,
@@ -3371,6 +3376,11 @@ async function handleCreate() {
       await saveDrawRoster(form.value.id)
       await saveDrawInviteCodes(form.value.id)
       await saveDrawTiers(form.value.id)
+      // P1 体验：保存成功后回显清洗后的仪式短语，运营者立即看到哪些被保留/被拒。
+      // sanitizeRitualPhrasesForSave 与提交清洗同源（docs/128）；不回显会显得「填的短语丢了」。
+      form.value.ritualPhrasesText = sanitizeRitualPhrasesForSave(
+        form.value.ritualPhrasesText ?? '',
+      ).join('\n')
       showToast(t('lottery.adminDrawUpdated'), 'success')
     } else {
       const created = await createLotteryDraw(payload)

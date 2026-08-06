@@ -1045,6 +1045,8 @@ export default {
       "自动：即时=真奖上壳；手动/定时开奖=仪式短语上壳、奖池条仍公示目录。勿用真奖名+随机停格假装中奖。",
     adminPrizePanelModeConflict:
       "⚠️ 当前为手动/定时开奖：扇面真奖名会让随机停格被误读为「停到即中」。保存后公开端将自动降级为仪式短语，建议改为「自动」或「仪式短语」模式。",
+    adminPrizePanelModeAutoInstant: "当前自动展开为：扇面真奖名（即时开奖，停扇对准中奖奖名）",
+    adminPrizePanelModeAutoDelayed: "当前自动展开为：扇面仪式短语 + 奖池完整公示（手动/定时开奖，停格仅为氛围）",
     adminRitualPhrases: "仪式短语（每行一条）",
     adminRitualPhrasesPlaceholder: "好运连连\n感谢参与\n期待开奖",
     adminRitualPhrasesHint:
