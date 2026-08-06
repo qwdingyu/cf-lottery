@@ -4,6 +4,7 @@
  * 仅保留抽奖 SaaS 所需的配置项，移除了 cf-shop 电商相关配置。
  */
 import type { DbType } from "./db/client";
+import type { CloudflareEmailBinding } from "@usethink/cf-core/features/email/cloudflare";
 
 export type Bindings = {
   // 数据库连接（必填）
@@ -19,6 +20,8 @@ export type Bindings = {
   PASSWORD_PEPPER?: string;
   // Resend API Key，用于中奖邮件通知。通过 wrangler secret put 配置。
   RESEND_API_KEY?: string;
+  // Cloudflare Email Service binding（send_email；优先于 RESEND_API_KEY，零第三方依赖）
+  EMAIL?: CloudflareEmailBinding;
   // Resend 已验证的发件域名
   EMAIL_FROM?: string;
   EMAIL_FROM_NAME?: string;

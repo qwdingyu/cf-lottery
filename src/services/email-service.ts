@@ -1,10 +1,11 @@
 /**
- * 邮件通知服务 — Resend provider（cf-lottery 精简版）
+ * 邮件通知服务 — Cloudflare Email / Resend provider（cf-lottery 精简版）
  *
  * escapeHtml / interpolate 统一从 @usethink/cf-core/email 引入。
- * 配置通过 wrangler secret put 设置 RESEND_API_KEY / EMAIL_FROM。
+ * 配置通过 wrangler secret/binding 设置：EMAIL（send_email binding，优先）或 RESEND_API_KEY。
  */
 import { escapeHtml, interpolate } from "@usethink/cf-core/features/email";
+import { sendViaCloudflareEmail, type CloudflareEmailBinding } from "@usethink/cf-core/features/email/cloudflare";
 export { escapeHtml, interpolate };
 
 import lotteryWinnerHtml from "./templates/lottery_winner";
@@ -53,9 +54,23 @@ export interface SendEmailResult {
 }
 
 export async function sendEmail(
-  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string },
+  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string; email?: CloudflareEmailBinding },
   input: SendEmailInput,
 ): Promise<SendEmailResult> {
+  // Cloudflare Email Service 优先（send_email binding，零第三方依赖）
+  if (emailEnv.email) {
+    const from = emailEnv.emailFromName
+      ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
+      : (emailEnv.emailFrom || "noreply@eforge.xyz");
+    const tpl = templates[input.template];
+    if (!tpl) return { ok: false, message: `模板不存在: ${input.template}` };
+    const subject = templateSubjects[input.template] || "通知";
+    const html = interpolate(tpl, input.templateData);
+    const result = await sendViaCloudflareEmail(emailEnv.email, { from, to: input.to, subject, html });
+    return { ok: result.ok, message: result.error || result.messageId, id: result.messageId };
+  }
+
+  // Resend 兜底（向后兼容）
   const apiKey = emailEnv.resendApiKey;
   if (!apiKey) return { ok: false, message: "邮件服务未配置" };
   const tpl = templates[input.template];
@@ -79,10 +94,20 @@ export async function sendEmail(
 }
 
 export async function sendAccessCode(
-  emailEnv: { resendApiKey: string; emailFrom: string; emailFromName?: string },
+  emailEnv: { resendApiKey: string; emailFrom: string; emailFromName?: string; email?: CloudflareEmailBinding },
   to: string, drawName: string, code: string,
 ): Promise<{ ok: boolean; message: string }> {
   const html = interpolate(emailAccessCodeHtml, { drawName, code });
+  // Cloudflare Email Service 优先
+  if (emailEnv.email) {
+    const from = emailEnv.emailFromName
+      ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
+      : (emailEnv.emailFrom || "noreply@eforge.xyz");
+    return sendViaCloudflareEmail(emailEnv.email, { from, to, subject: "您的抽奖验证码", html }).then(r => ({
+      ok: r.ok, message: r.error || r.messageId || "发送成功",
+    }));
+  }
+  // Resend 兜底
   if (!emailEnv.resendApiKey) return { ok: false, message: "邮件服务未配置" };
   try {
     const res = await fetch("https://api.resend.com/emails", {
