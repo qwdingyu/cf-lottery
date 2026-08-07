@@ -195,8 +195,8 @@ export type LotteryEditorForm = {
   /** 每行一条仪式短语；空则公开端用默认中性词 */
   ritualPhrasesText: string
   /**
-   * 秒杀壳（docs/130，写入 promotion.flashSale）
-   * 支付/发卡在 cf-shop，此处只配展示与名额语义
+   * 秒杀壳（docs/130/131，写入 promotion.flashSale）
+   * paymentRequired=false 时为展示/导流壳；true 时进入 cf-lottery 直付发卡门禁。
    */
   enableFlashSale: boolean
   flashSaleSessionLabel: string
@@ -206,6 +206,10 @@ export type LotteryEditorForm = {
   flashSaleShowCountdown: boolean
   flashSaleShowProgress: boolean
   flashSaleShowStock: boolean
+  flashSalePaymentRequired: boolean
+  flashSalePriceCents: number | null
+  flashSaleCurrency: string
+  flashSaleTitle: string
   /** 表单内按 kind 切换；模板直接读 fields/options，用 any 避免联合类型收窄失败 */
   activityConfig: any
 }

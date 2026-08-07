@@ -35,8 +35,8 @@ export type GrowthFieldsFromDraw = {
   prizePanelMode: string
   ritualPhrasesText: string
   /**
-   * 秒杀壳配置（docs/130）：写入 promotion.flashSale
-   * 仅影响展示与发布预检；支付/发卡仍在 cf-shop
+   * 秒杀壳配置（docs/130/131）：写入 promotion.flashSale
+   * paymentRequired=false 是展示/导流壳；true 时进入 cf-lottery 直付发卡门禁。
    */
   enableFlashSale: boolean
   flashSaleSessionLabel: string
@@ -46,6 +46,10 @@ export type GrowthFieldsFromDraw = {
   flashSaleShowCountdown: boolean
   flashSaleShowProgress: boolean
   flashSaleShowStock: boolean
+  flashSalePaymentRequired: boolean
+  flashSalePriceCents: number | null
+  flashSaleCurrency: string
+  flashSaleTitle: string
   /** 是否已有增长配置：编辑时应用来展开高级区 */
   hasGrowthConfig: boolean
 }
@@ -170,6 +174,21 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
     Number.isFinite(flashMaxN) && Number.isInteger(flashMaxN) && flashMaxN >= 1 && flashMaxN <= 100
       ? flashMaxN
       : 1
+  const flashSalePaymentRequired =
+    flashSale?.paymentRequired === true ||
+    flashSale?.payment_required === true ||
+    flashSale?.paymentRequired === 1 ||
+    flashSale?.payment_required === 1 ||
+    flashSale?.paymentRequired === 'true' ||
+    flashSale?.payment_required === 'true'
+  const flashPriceRaw = flashSale?.priceCents ?? flashSale?.price_cents
+  let flashSalePriceCents: number | null = null
+  if (flashPriceRaw !== null && flashPriceRaw !== undefined && flashPriceRaw !== '') {
+    const n = Number(flashPriceRaw)
+    if (Number.isFinite(n) && Number.isInteger(n) && n >= 1) flashSalePriceCents = n
+  }
+  const flashSaleCurrency = String(flashSale?.currency || 'cny').trim().toLowerCase().slice(0, 8) || 'cny'
+  const flashSaleTitle = String(flashSale?.title || '').trim().slice(0, 100)
 
   const productUrl = String(productSrc?.url || '').trim()
   const enableProductLink = Boolean(productUrl)
@@ -219,6 +238,10 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
     flashSaleShowCountdown: flashSale?.showCountdown !== false && flashSale?.show_countdown !== false,
     flashSaleShowProgress: flashSale?.showProgress !== false && flashSale?.show_progress !== false,
     flashSaleShowStock: flashSale?.showStock !== false && flashSale?.show_stock !== false,
+    flashSalePaymentRequired,
+    flashSalePriceCents,
+    flashSaleCurrency,
+    flashSaleTitle,
     hasGrowthConfig:
       enableProductLink ||
       enableViral ||
@@ -263,6 +286,10 @@ export function buildPromotionConfigPayload(form: {
   flashSaleShowCountdown?: boolean
   flashSaleShowProgress?: boolean
   flashSaleShowStock?: boolean
+  flashSalePaymentRequired?: boolean
+  flashSalePriceCents?: number | null
+  flashSaleCurrency?: string | null
+  flashSaleTitle?: string | null
 }, opts: { isEditing: boolean }): Record<string, unknown> | undefined {
   const hasProduct = Boolean(form.enableProductLink && form.productLink?.url)
   const hasViral = Boolean(form.enableViral)
@@ -302,6 +329,17 @@ export function buildPromotionConfigPayload(form: {
     const maxPerUser =
       Number.isFinite(maxPer) && Number.isInteger(maxPer) && maxPer >= 1 && maxPer <= 100 ? maxPer : 1
     const cta = String(form.flashSaleCtaLabel || '').trim().slice(0, 12) || '抢'
+    const paymentRequired = form.flashSalePaymentRequired === true
+    const priceRaw = form.flashSalePriceCents
+    let priceCents: number | null = null
+    if (priceRaw !== null && priceRaw !== undefined && priceRaw !== ('' as unknown)) {
+      const n = Number(priceRaw)
+      if (Number.isFinite(n) && Number.isInteger(n) && n >= 1 && n <= 100_000_000) {
+        priceCents = n
+      }
+    }
+    const currency = String(form.flashSaleCurrency || 'cny').trim().toLowerCase().slice(0, 8) || 'cny'
+    const title = String(form.flashSaleTitle || '').trim().slice(0, 100)
     flashSaleBlock = {
       flashSale: {
         enabled: true,
@@ -312,6 +350,14 @@ export function buildPromotionConfigPayload(form: {
         showCountdown: form.flashSaleShowCountdown !== false,
         showProgress: form.flashSaleShowProgress !== false,
         showStock: form.flashSaleShowStock !== false,
+        ...(paymentRequired
+          ? {
+              paymentRequired: true,
+              ...(priceCents != null ? { priceCents } : {}),
+              currency,
+              ...(title ? { title } : {}),
+            }
+          : {}),
       },
     }
   }

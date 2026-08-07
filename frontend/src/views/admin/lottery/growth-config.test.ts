@@ -294,6 +294,56 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
       ctaLabel: '抢',
       showStock: false,
     })
+    expect((payload as any).flashSale).not.toHaveProperty('paymentRequired')
+  })
+
+  it('docs/131：直付秒杀字段回填与提交闭环，二次保存不丢', () => {
+    const g = growthFieldsFromDraw({
+      promotionConfig: JSON.stringify({
+        version: 1,
+        flashSale: {
+          enabled: true,
+          sessionLabel: '20:00场',
+          stockLimit: 50,
+          paymentRequired: true,
+          priceCents: 9900,
+          currency: 'cny',
+          title: '秒杀卡密',
+        },
+      }),
+    })
+    expect(g.enableFlashSale).toBe(true)
+    expect(g.flashSalePaymentRequired).toBe(true)
+    expect(g.flashSalePriceCents).toBe(9900)
+    expect(g.flashSaleCurrency).toBe('cny')
+    expect(g.flashSaleTitle).toBe('秒杀卡密')
+
+    const payload = buildPromotionConfigPayload(
+      {
+        enableFlashSale: g.enableFlashSale,
+        flashSaleSessionLabel: g.flashSaleSessionLabel,
+        flashSaleStockLimit: g.flashSaleStockLimit,
+        flashSaleMaxPerUser: g.flashSaleMaxPerUser,
+        flashSaleCtaLabel: g.flashSaleCtaLabel,
+        flashSaleShowCountdown: g.flashSaleShowCountdown,
+        flashSaleShowProgress: g.flashSaleShowProgress,
+        flashSaleShowStock: g.flashSaleShowStock,
+        flashSalePaymentRequired: g.flashSalePaymentRequired,
+        flashSalePriceCents: g.flashSalePriceCents,
+        flashSaleCurrency: g.flashSaleCurrency,
+        flashSaleTitle: g.flashSaleTitle,
+      },
+      { isEditing: true },
+    )
+    expect((payload as any).flashSale).toMatchObject({
+      enabled: true,
+      sessionLabel: '20:00场',
+      stockLimit: 50,
+      paymentRequired: true,
+      priceCents: 9900,
+      currency: 'cny',
+      title: '秒杀卡密',
+    })
   })
 
   it('docs/130：关闭秒杀后提交包无 flashSale 键', () => {

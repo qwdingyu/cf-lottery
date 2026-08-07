@@ -15,16 +15,19 @@ import {
   lotteryRosterMembers,
   prizeCodes,
   prizes,
+  tenantConfigs,
   webhookConfigs,
 } from "../db/schema";
 import { validateActivityConfigForPublish } from "../lib/activity-config";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../lib/flash-sale-config";
+import { PAYMENT_PROVIDER_CATALOG, type PaymentProviderCatalogItem } from "./payment/catalog";
 
 export type PublishCheckSection =
   | "basic"
   | "participation"
   | "prizes"
   | "promotion"
+  | "payment"
   | "webhook"
   | "activity_config";
 
@@ -74,6 +77,104 @@ function isSafeHttpUrl(value: unknown): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function providerConfigValue(config: Record<string, unknown>, key: string): string {
+  return String(config[key.toLowerCase()] ?? config[key] ?? "").trim();
+}
+
+function providerHasRequiredFields(meta: PaymentProviderCatalogItem, config: Record<string, unknown>): boolean {
+  return meta.fields.every((field) => !field.required || providerConfigValue(config, field.key) !== "");
+}
+
+function providerSupportsCurrency(meta: PaymentProviderCatalogItem, currency: string): boolean {
+  const normalized = currency.trim().toLowerCase();
+  return meta.supportedCurrencies.some((value) => value.toLowerCase() === normalized);
+}
+
+async function validateFlashSalePayment(
+  db: DbType,
+  tenantId: string,
+  draw: LotteryDraw,
+  flashSale: NonNullable<ReturnType<typeof parseFlashSaleConfig>["config"]>,
+  effectiveStockLimit: number | null,
+  result: PublishCheckResult,
+) {
+  if (!flashSale.paymentRequired) return;
+
+  if (!flashSale.priceCents || flashSale.priceCents <= 0) {
+    add(result.errors, "payment", "flash_sale.payment.price.required", "直付秒杀必须配置大于 0 的 priceCents");
+  }
+
+  const currency = String(flashSale.currency || "cny").trim().toLowerCase();
+  const currencyProviders = PAYMENT_PROVIDER_CATALOG.filter((meta) => providerSupportsCurrency(meta, currency));
+  if (currencyProviders.length === 0) {
+    add(result.errors, "payment", "payment.currency.unsupported", `当前支付目录没有支持 ${currency.toUpperCase()} 的 Provider`);
+  }
+
+  const [row] = await db
+    .select({ enabled: tenantConfigs.enabled, providers: tenantConfigs.providers })
+    .from(tenantConfigs)
+    .where(eq(tenantConfigs.tenantId, tenantId))
+    .limit(1);
+
+  if (!row || !row.enabled) {
+    add(result.errors, "payment", "payment.config.required", "直付秒杀必须先在租户支付设置中启用收款方式");
+  } else {
+    let providers: Record<string, Record<string, unknown>> = {};
+    try {
+      providers = JSON.parse(row.providers || "{}") as Record<string, Record<string, unknown>>;
+    } catch {
+      add(result.errors, "payment", "payment.config.invalid", "租户支付配置不是合法 JSON，无法发布直付秒杀");
+    }
+
+    const enabledSupported = currencyProviders
+      .map((meta) => ({ meta, config: providers[meta.name] }))
+      .filter((item) => item.config?.enabled === true);
+    if (currencyProviders.length > 0 && enabledSupported.length === 0) {
+      add(result.errors, "payment", "payment.provider.currency.required", `直付秒杀币种 ${currency.toUpperCase()} 没有已启用的可用收款方式`);
+    } else if (enabledSupported.length > 0 && !enabledSupported.some((item) => providerHasRequiredFields(item.meta, item.config))) {
+      add(result.errors, "payment", "payment.provider.incomplete", `支持 ${currency.toUpperCase()} 的已启用收款方式缺少必填凭据`);
+    }
+  }
+
+  const codePrizeRows = await db
+    .select({
+      prizeId: lotteryPrizeTiers.prizeId,
+      prizeName: prizes.name,
+    })
+    .from(lotteryPrizeTiers)
+    .innerJoin(prizes, and(
+      eq(prizes.id, lotteryPrizeTiers.prizeId),
+      eq(prizes.tenantId, tenantId),
+      eq(prizes.prizeType, "code"),
+      eq(prizes.active, 1),
+    ))
+    .where(and(eq(lotteryPrizeTiers.tenantId, tenantId), eq(lotteryPrizeTiers.drawId, draw.id)));
+
+  if (codePrizeRows.length === 0) {
+    add(result.errors, "payment", "payment.fulfillment.code_prize.required", "直付秒杀必须绑定且只绑定一个可用卡密奖品");
+    return;
+  }
+  if (codePrizeRows.length > 1) {
+    add(result.errors, "payment", "payment.fulfillment.code_prize.ambiguous", "直付秒杀只能绑定一个卡密奖品，避免支付成功后发卡目标不确定");
+    return;
+  }
+
+  if (effectiveStockLimit != null && effectiveStockLimit > 0) {
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(prizeCodes)
+      .where(and(
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.prizeId, codePrizeRows[0].prizeId),
+        eq(prizeCodes.status, "available"),
+      ));
+    const available = Number(total || 0);
+    if (available < effectiveStockLimit) {
+      add(result.errors, "payment", "payment.fulfillment.codes.insufficient", `直付秒杀可用卡密 ${available} 个，少于名额上限 ${effectiveStockLimit} 个`);
+    }
   }
 }
 
@@ -253,7 +354,7 @@ async function validateLotteryPrizes(db: DbType, tenantId: string, draw: Lottery
   }
 }
 
-function validatePromotion(draw: LotteryDraw, result: PublishCheckResult) {
+async function validatePromotion(db: DbType, tenantId: string, draw: LotteryDraw, result: PublishCheckResult) {
   const promotionConfig = parseJsonObject(draw.promotionConfig);
   const legacyProductLink = parseJsonObject(draw.productLink);
   const viral = promotionConfig?.viral as Record<string, unknown> | undefined;
@@ -363,12 +464,12 @@ function validatePromotion(draw: LotteryDraw, result: PublishCheckResult) {
       isSafeHttpUrl(destination?.url) ||
       (typeof afterWin?.url === "string" && isSafeHttpUrl(afterWin.url)) ||
       isSafeHttpUrl(legacyProductLink?.url);
-    if (!hasShopLink) {
+    if (!flashParsed.config.paymentRequired && !hasShopLink) {
       add(
         result.warnings,
         "promotion",
         "flash_sale.destination.missing",
-        "秒杀已启用但未配置安全的导流/购买链接（destination 或 after_win CTA）；参与后无法闭环到 cf-shop",
+        "展示型秒杀已启用但未配置安全的导流/购买链接（destination 或 after_win CTA）；参与后无法进入外部购买承接",
       );
     }
     if (draw.experienceType !== "flash_sale") {
@@ -379,6 +480,7 @@ function validatePromotion(draw: LotteryDraw, result: PublishCheckResult) {
         "已启用 flashSale 配置；建议 experience_type=flash_sale 以使用秒杀体验壳",
       );
     }
+    await validateFlashSalePayment(db, tenantId, draw, flashParsed.config, effective, result);
   }
 }
 
@@ -441,7 +543,7 @@ export async function buildPublishCheckForDraw(db: DbType, tenantId: string, dra
     add(result.warnings, "activity_config", "signup_chain.capacity.default", "接龙活动未显式设置名额上限，将使用系统默认容量");
   }
 
-  validatePromotion(draw, result);
+  await validatePromotion(db, tenantId, draw, result);
   await validateWebhooks(db, tenantId, result);
   validateActivityConfig(draw, result);
 

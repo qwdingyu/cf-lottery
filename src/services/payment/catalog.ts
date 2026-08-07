@@ -32,7 +32,7 @@ export const PAYMENT_PROVIDER_CATALOG = [
     name: "stripe",
     displayName: "Stripe",
     description: "国际信用卡/Apple Pay/Google Pay，API 简单，支持全球收款",
-    supportedCurrencies: ["usd", "eur", "cny"] as const,
+    supportedCurrencies: ["usd", "eur", "gbp", "cad", "aud", "jpy"] as const,
     factory: stripeFactory,
     fields: [
       { key: "STRIPE_SECRET_KEY", label: "Secret Key", type: "password", required: true, sensitive: true, placeholder: "sk_live_..." },

@@ -6,10 +6,11 @@ import {
   lotteryDraws,
   lotteryEntries,
   paymentOrders,
+  tenantConfigs,
   tenants,
 } from "../../db/schema";
 import type { PaymentProvider } from "@usethink/cf-core/features/payment";
-import { retryPaymentOrder } from "./payment-service";
+import { createTenantProvider, loadTenantConfig, retryPaymentOrder } from "./payment-service";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
@@ -138,5 +139,46 @@ describe("retryPaymentOrder", () => {
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
     expect(order?.status).toBe("cancelled");
     expect(entry?.paymentStatus).toBe("");
+  });
+});
+
+describe("tenant payment provider selection", () => {
+  it("loads the provider matching requested currency or provider name", async () => {
+    await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
+    await db.insert(tenantConfigs).values({
+      tenantId: TENANT_ID,
+      enabled: 1,
+      providers: JSON.stringify({
+        alipay: {
+          enabled: true,
+          alipay_app_id: "app",
+          alipay_private_key: "private",
+          alipay_public_key: "public",
+        },
+        usdt_trc20: {
+          enabled: true,
+          trc20_wallet_address: "TWallet",
+          trongrid_api_key: "key",
+        },
+      }),
+    });
+
+    await expect(loadTenantConfig(db, TENANT_ID, "", { currency: "cny" }))
+      .resolves.toMatchObject({ provider: "alipay" });
+    await expect(loadTenantConfig(db, TENANT_ID, "", { currency: "usdt" }))
+      .resolves.toMatchObject({ provider: "usdt_trc20" });
+    await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "alipay" }))
+      .resolves.toMatchObject({ provider: "alipay" });
+    await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "stripe" }))
+      .resolves.toBeNull();
+  });
+
+  it("createTenantProvider honours currency filtering from cf-core registry", () => {
+    const env = {
+      TRC20_WALLET_ADDRESS: "TWallet",
+      TRONGRID_API_KEY: "key",
+    };
+    expect(createTenantProvider(env, "usdt")?.name).toBe("usdt_trc20");
+    expect(createTenantProvider(env, "cny")).toBeNull();
   });
 });

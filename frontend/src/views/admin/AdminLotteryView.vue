@@ -762,7 +762,7 @@
                 </div>
               </section>
 
-              <!-- 秒杀壳配置（docs/130）：倒计时/进度/抢；支付在 cf-shop -->
+              <!-- 秒杀壳配置（docs/130/131）：默认展示/导流；paymentRequired=true 时走 cf-lottery 直付发卡 -->
               <section class="form-section form-section--nested" aria-labelledby="lottery-flash-sale">
                 <header class="form-section-head">
                   <h4 id="lottery-flash-sale" class="form-section-title">{{ $t('lottery.adminFlashSaleSection') }}</h4>
@@ -791,6 +791,29 @@
                       <span>{{ $t('lottery.adminFlashSaleMaxPerUser') }}</span>
                       <input v-model.number="form.flashSaleMaxPerUser" type="number" min="1" max="100" />
                     </label>
+                    <label class="field-span-2">
+                      <input v-model="form.flashSalePaymentRequired" type="checkbox" class="checkbox-inline" />
+                      <span>{{ $t('lottery.adminFlashSalePaymentRequired') }}</span>
+                    </label>
+                    <template v-if="form.flashSalePaymentRequired">
+                      <label>
+                        <span>{{ $t('lottery.adminFlashSalePriceCents') }}</span>
+                        <input v-model.number="form.flashSalePriceCents" type="number" min="1" max="100000000" />
+                      </label>
+                      <label>
+                        <span>{{ $t('lottery.adminFlashSaleCurrency') }}</span>
+                        <select v-model="form.flashSaleCurrency">
+                          <option value="cny">CNY</option>
+                          <option value="usd">USD</option>
+                          <option value="eur">EUR</option>
+                          <option value="usdt">USDT</option>
+                        </select>
+                      </label>
+                      <label class="field-span-2">
+                        <span>{{ $t('lottery.adminFlashSalePaymentTitle') }}</span>
+                        <input v-model="form.flashSaleTitle" maxlength="100" />
+                      </label>
+                    </template>
                     <label class="field-span-2">
                       <input v-model="form.flashSaleShowCountdown" type="checkbox" class="checkbox-inline" />
                       <span>{{ $t('lottery.adminFlashSaleShowCountdown') }}</span>
@@ -3267,6 +3290,10 @@ async function handleEdit(draw: LotteryDraw) {
     flashSaleShowCountdown: growth.flashSaleShowCountdown !== false,
     flashSaleShowProgress: growth.flashSaleShowProgress !== false,
     flashSaleShowStock: growth.flashSaleShowStock !== false,
+    flashSalePaymentRequired: growth.flashSalePaymentRequired === true,
+    flashSalePriceCents: growth.flashSalePriceCents,
+    flashSaleCurrency: growth.flashSaleCurrency || 'cny',
+    flashSaleTitle: growth.flashSaleTitle || '',
   }
   isEditing.value = true
   // 回填未中奖自动发券开关状态

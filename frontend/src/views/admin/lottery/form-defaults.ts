@@ -61,6 +61,10 @@ export function emptyLotteryEditorForm(t: ActivityConfigTranslate): LotteryEdito
     flashSaleShowCountdown: true,
     flashSaleShowProgress: true,
     flashSaleShowStock: true,
+    flashSalePaymentRequired: false,
+    flashSalePriceCents: null,
+    flashSaleCurrency: 'cny',
+    flashSaleTitle: '',
     // 玩法配置：问卷/投票共用 activity_config，避免再拆 forms/votes 重表。
     activityConfig: defaultActivityConfigForKind('lottery', t),
   }

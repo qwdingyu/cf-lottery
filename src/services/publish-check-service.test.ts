@@ -91,6 +91,20 @@ async function addCodeTier(drawId: string, winnerCount: number, availableCodes: 
   }
 }
 
+async function addAlipayConfig() {
+  await client.execute({
+    sql: "INSERT INTO tenant_configs (tenant_id, enabled, providers) VALUES (?, ?, ?)",
+    args: [TENANT, 1, JSON.stringify({
+      alipay: {
+        enabled: true,
+        alipay_app_id: "app",
+        alipay_private_key: "private",
+        alipay_public_key: "public",
+      },
+    })],
+  });
+}
+
 describe("发布预检 — 基础信息", () => {
   it("标题为空时返回结构化错误", async () => {
     const draw = makeDraw({ title: "" });
@@ -311,6 +325,52 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     await addManualTier(draw.id);
     const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
     expect(result.warnings.some((item) => item.code === "flash_sale.stock.mismatch")).toBe(true);
+  });
+
+  it("docs/131：直付秒杀缺价格、支付配置或卡密奖品时阻断发布", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+        },
+      }),
+    });
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.payment.price.required")).toBe(true);
+    expect(result.errors.some((item) => item.code === "payment.config.required")).toBe(true);
+    expect(result.errors.some((item) => item.code === "payment.fulfillment.code_prize.required")).toBe(true);
+  });
+
+  it("docs/131：直付秒杀价格、CNY 支付渠道和单一卡密池充足时可发布", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    });
+    await addAlipayConfig();
+    await addCodeTier(draw.id, 1, 10);
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.errors.filter((item) => item.section === "payment")).toEqual([]);
+    expect(result.canPublish).toBe(true);
   });
 
   it("docs/128 红线：手动/定时开奖 + 扇面真奖名 阻断发布；instant 放行", async () => {

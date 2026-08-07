@@ -104,6 +104,7 @@ export async function loadTenantConfig(
   db: DbType,
   tenantId: string,
   encryptionKey?: string,
+  options: { provider?: string; currency?: string } = {},
 ): Promise<{ provider: PaymentProviderName; env: Record<string, string> } | null> {
   const [row] = await db
     .select()
@@ -128,8 +129,17 @@ export async function loadTenantConfig(
   };
 
   // 按 catalog 顺序遍历，返回第一个已启用且凭据完整的渠道
+  const requestedProvider = String(options.provider || "").trim();
+  const requestedCurrency = String(options.currency || "").trim().toLowerCase();
   for (const item of PAYMENT_PROVIDER_CATALOG) {
     if (!isValidProviderName(item.name)) continue;
+    if (requestedProvider && item.name !== requestedProvider) continue;
+    if (
+      requestedCurrency &&
+      !item.supportedCurrencies.some((currency) => currency.toLowerCase() === requestedCurrency)
+    ) {
+      continue;
+    }
     const cfg = providers[item.name] as Record<string, unknown> | undefined;
     if (!cfg || cfg.enabled !== true) continue;
 
@@ -154,9 +164,9 @@ export async function loadTenantConfig(
 }
 
 /** 用租户配置创建 Provider 注册表并返回首选 Provider */
-export function createTenantProvider(env: Record<string, string>): PaymentProvider | null {
+export function createTenantProvider(env: Record<string, string>, currency?: string): PaymentProvider | null {
   const registry = createProviderRegistry(env, PAYMENT_PROVIDER_CATALOG.map((i) => i.factory));
-  return registry.selectOnline() ?? null;
+  return registry.selectOnline(currency) ?? null;
 }
 
 export interface CreateOrderInput {

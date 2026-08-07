@@ -92,6 +92,9 @@ export type LotteryDraw = {
     showProgress?: boolean
     showStock?: boolean
     ctaLabel?: string
+    paymentRequired?: boolean
+    priceCents?: number | null
+    currency?: string
     claimed?: number
     remaining?: number | null
     progressPercent?: number

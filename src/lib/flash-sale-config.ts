@@ -2,13 +2,13 @@
  * 秒杀（Flash Sale）配置解析与运行时展示计算。
  *
  * 为什么单独成库文件：
- * - 秒杀在 lottery 侧是「限时限量参与 + 导流购买」，不是支付下单。
+ * - 秒杀在 lottery 侧有两种模式：docs/130 的展示/导流壳，以及 docs/131 的 `paymentRequired=true` 直付发卡。
  * - 配置落在 promotion_config.flashSale，与 viral/experience 同层，避免新增表与迁移。
  * - 公开端、发布预检、前端壳共用同一套清洗规则，防止「后台能存、前台算炸」。
  *
  * 边界（docs/130）：
  * - stockLimit / maxParticipants 表示「活动名额」，不是 shop SKU 库存。
- * - 真实购买与库存锁在 cf-shop；此处只做进度展示与参与门禁的配置语义。
+ * - `paymentRequired=false` 时真实购买仍在外部承接；`paymentRequired=true` 时价格、收款渠道和卡密池必须由 cf-lottery 发布预检闭环。
  */
 
 export type FlashSaleConfig = {
@@ -28,6 +28,8 @@ export type FlashSaleConfig = {
   showStock: boolean;
   /** 主按钮文案，默认「抢」 */
   ctaLabel: string;
+  /** 是否启用 cf-lottery 内直付。false 时仍是 docs/130 的轻秒杀展示/导流壳。 */
+  paymentRequired: boolean;
   /** 秒杀价格（分，整数最小单位；docs/131 支付金额来源） */
   priceCents: number | null;
   /** 币种，默认 cny */
@@ -145,6 +147,13 @@ export function parseFlashSaleConfig(promotionConfig: unknown): FlashSaleParseRe
   const showCountdown = node.showCountdown !== false && node.show_countdown !== false;
   const showProgress = node.showProgress !== false && node.show_progress !== false;
   const showStock = node.showStock !== false && node.show_stock !== false;
+  const paymentRequired =
+    node.paymentRequired === true ||
+    node.payment_required === true ||
+    node.paymentRequired === 1 ||
+    node.payment_required === 1 ||
+    node.paymentRequired === "true" ||
+    node.payment_required === "true";
 
   // 秒杀价格（分）：整数校验，非法置 null（订单创建时校验）
   const priceRaw = node.priceCents ?? node.price_cents;
@@ -169,6 +178,7 @@ export function parseFlashSaleConfig(promotionConfig: unknown): FlashSaleParseRe
     showProgress,
     showStock,
     ctaLabel,
+    paymentRequired,
     priceCents,
     currency,
     title,

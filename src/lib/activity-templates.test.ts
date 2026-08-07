@@ -54,7 +54,7 @@ describe("ACTIVITY_TEMPLATES 抽奖体验诚实性（docs/115）", () => {
     expect(scratch!.defaults.resultMode).toBe("manual");
   });
 
-  it("docs/130：限时抢购模板为 claim + flash_sale + instant，不暗示本系统收款", () => {
+  it("docs/130/131：限时抢购模板为 claim + flash_sale + instant，区分导流和直付", () => {
     const flash = ACTIVITY_TEMPLATES.find((t) => t.id === "flash-sale-rush");
     expect(flash).toBeTruthy();
     expect(flash!.defaults).toMatchObject({
@@ -63,7 +63,8 @@ describe("ACTIVITY_TEMPLATES 抽奖体验诚实性（docs/115）", () => {
       resultMode: "instant",
       participationMode: "open",
     });
-    expect(flash!.description).toMatch(/不收款|cf-shop|导流/);
-    expect(flash!.description).not.toMatch(/在本系统完成支付/);
+    expect(flash!.description).toMatch(/导流链接/);
+    expect(flash!.description).toMatch(/直付发卡/);
+    expect(flash!.hints.join(" ")).toMatch(/paymentRequired|priceCents|卡密码池/);
   });
 });

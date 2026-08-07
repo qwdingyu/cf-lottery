@@ -34,9 +34,29 @@ describe("parseFlashSaleConfig", () => {
       stockLimit: 100,
       maxPerUser: 1,
       ctaLabel: "抢",
+      paymentRequired: false,
       showCountdown: true,
       showProgress: true,
       showStock: true,
+    });
+  });
+
+  it("解析 paymentRequired 与直付价格字段", () => {
+    const { config, issues } = parseFlashSaleConfig({
+      flashSale: {
+        enabled: true,
+        paymentRequired: true,
+        priceCents: 9900,
+        currency: "CNY",
+        title: "秒杀卡密",
+      },
+    });
+    expect(issues).toEqual([]);
+    expect(config).toMatchObject({
+      paymentRequired: true,
+      priceCents: 9900,
+      currency: "cny",
+      title: "秒杀卡密",
     });
   });
 

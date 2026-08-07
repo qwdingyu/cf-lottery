@@ -11,7 +11,7 @@ import {
   tenants,
 } from "../db/schema";
 import { clearTestData, getTestDb } from "../test-setup";
-import { paymentPublicRoute } from "./payment";
+import { buildPaymentCallbackUrl, buildPaymentReturnUrl, paymentCallbackRoute, paymentPublicRoute } from "./payment";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
@@ -39,6 +39,7 @@ function createTestApp() {
     await next();
   });
   app.route("/api/public", paymentPublicRoute);
+  app.route("/api/payments", paymentCallbackRoute);
   return app;
 }
 
@@ -96,6 +97,88 @@ async function seedOrder() {
 }
 
 describe("payment route", () => {
+  it("生成的支付回调和跳转 URL 与实际路由挂载一致", () => {
+    const requestUrl = "https://lottery.example.com/api/public/draws/payment-route/payment-orders";
+    expect(buildPaymentCallbackUrl(requestUrl, TENANT_ID, "alipay"))
+      .toBe("https://lottery.example.com/api/payments/tenant-payment-route/alipay/callback");
+    expect(buildPaymentReturnUrl(requestUrl))
+      .toBe("https://lottery.example.com/api/public/draws/payment-route");
+  });
+
+  it("Stripe webhook 使用原始 JSON body 提取 order_no，而不是按表单解析", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/payments/tenant-payment-route/stripe/callback", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Stripe-Signature": "t=123,v1=abc",
+      },
+      body: JSON.stringify({
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            metadata: { order_no: ORDER_ID },
+          },
+        },
+      }),
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("order not found");
+  });
+
+  it("创建直付订单时拒绝非 email 身份，避免支付后无法授权查卡", async () => {
+    await db.insert(tenants).values({ id: TENANT_ID, name: "payment-route" });
+    await db.insert(lotteryDraws).values({
+      id: DRAW_ID,
+      tenantId: TENANT_ID,
+      publicSlug: "payment-route",
+      title: "支付路由测试",
+      status: "open",
+      activityKind: "claim",
+      participationMode: "open",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 60_000).toISOString(),
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    });
+    await db.insert(lotteryEntries).values({
+      id: ENTRY_ID,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "phone",
+      identityValue: "13800138000",
+      displayName: "buyer",
+      paymentStatus: "",
+    });
+
+    const app = createTestApp();
+    const res = await app.request("/api/public/draws/payment-route/payment-orders", {
+      method: "POST",
+      body: JSON.stringify({ entryId: ENTRY_ID }),
+      headers: { "Content-Type": "application/json" },
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error?: string };
+    expect(body.error).toContain("email");
+  });
+
   it("查询订单时必须提供 email，避免卡密直接暴露", async () => {
     await seedOrder();
     const app = createTestApp();

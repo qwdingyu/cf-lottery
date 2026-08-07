@@ -2,8 +2,8 @@
  * 支付路由（秒杀卡密多租户直付，docs/131）
  *
  * 路由组织：
- * - /api/public/draws/:slug/payment/order — 创建/查询订单（公开，需参与）
- * - /api/payment/callback/:provider — 支付回调（支付平台调用，无鉴权）
+ * - /api/public/draws/:slug/payment-orders — 创建/查询订单（公开，需参与）
+ * - /api/payments/:tenantId/:provider/callback — 支付回调（支付平台调用，无鉴权）
  *
  * 照搬 cf-shop pay.ts 的回调处理模式（GET query / POST form → provider.verifyCallback → 发卡）。
  */
@@ -24,6 +24,22 @@ import type { AppEnv } from "../bindings";
 export const paymentPublicRoute = new Hono<AppEnv>();
 export const paymentCallbackRoute = new Hono<AppEnv>();
 
+export function buildPaymentCallbackUrl(requestUrl: string, tenantId: string, provider: string): string {
+  const url = new URL(requestUrl);
+  url.pathname = `/api/payments/${tenantId}/${provider}/callback`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+export function buildPaymentReturnUrl(requestUrl: string): string {
+  const url = new URL(requestUrl);
+  url.pathname = url.pathname.replace(/\/payment-orders$/, "");
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 公开：创建订单（参与成功后调用）docs/131 §10
 // ═══════════════════════════════════════════════════════════════
@@ -41,6 +57,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   // 解析 flashSale 配置（含 priceCents）
   const { parseFlashSaleConfig } = await import("../lib/flash-sale-config");
   const { config: flashSale } = parseFlashSaleConfig(draw.promotionConfig);
+  if (!flashSale?.paymentRequired) {
+    return fail(c, "秒杀活动未启用直付支付", 400);
+  }
   if (!flashSale || !flashSale.priceCents || flashSale.priceCents <= 0) {
     return fail(c, "秒杀活动未配置价格", 400);
   }
@@ -60,6 +79,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     .limit(1);
   if (!entry) return fail(c, "参与记录不存在", 404);
   if (entry.tenantId !== draw.tenantId) return fail(c, "参与记录不属于此活动", 403);
+  if (entry.identityType !== "email") {
+    return fail(c, "直付卡密仅支持 email 身份参与", 400);
+  }
 
   // 检查是否已有订单（一参与一订单）
   const [existing] = await db
@@ -73,22 +95,23 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
 
   // 加载租户支付配置
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
-  const config = await loadTenantConfig(db, entry.tenantId, encryptionKey);
+  const currency = flashSale.currency || "cny";
+  const config = await loadTenantConfig(db, entry.tenantId, encryptionKey, { currency });
   if (!config) return fail(c, "租户未配置支付方式", 400);
 
-  const provider = createTenantProvider(config.env);
+  const provider = createTenantProvider(config.env, currency);
   if (!provider) return fail(c, "支付服务暂不可用", 500);
 
   const retryable = existing?.status === "cancelled" || existing?.status === "expired";
-  const notifyUrl = `${c.req.url.replace(/\/draws\/.*/, "")}/payments/${draw.tenantId}/${config.provider}/callback`;
-  const returnUrl = `${c.req.url.replace(/\/payment-orders.*/, "")}`;
+  const notifyUrl = buildPaymentCallbackUrl(c.req.url, draw.tenantId, config.provider);
+  const returnUrl = buildPaymentReturnUrl(c.req.url);
 
   const orderInput = {
     tenantId: draw.tenantId,
     drawId: draw.id,
     entryId: entry.id,
     amountCents: flashSale.priceCents,
-    currency: flashSale.currency || "cny",
+    currency,
     provider: config.provider,
     notifyUrl,
     returnUrl,
@@ -175,7 +198,7 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
 // ═══════════════════════════════════════════════════════════════
 // 支付回调（docs/131 §10：/api/payments/:tenantId/:provider/callback）
 // ═══════════════════════════════════════════════════════════════
-paymentCallbackRoute.all("/payments/:tenantId/:provider/callback", async (c) => {
+paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
   const providerName = c.req.param("provider") || "";
   const pathTenantId = c.req.param("tenantId") || "";
   const db = getDb(c);
@@ -189,7 +212,24 @@ paymentCallbackRoute.all("/payments/:tenantId/:provider/callback", async (c) => 
       );
     } else {
       const bodyText = await c.req.text();
-      params = Object.fromEntries(new URLSearchParams(bodyText).entries());
+      if (providerName === "stripe") {
+        let orderNo = "";
+        try {
+          const event = JSON.parse(bodyText) as {
+            data?: { object?: { metadata?: Record<string, string> } };
+          };
+          orderNo = event.data?.object?.metadata?.order_no || event.data?.object?.metadata?.orderNo || "";
+        } catch {
+          orderNo = "";
+        }
+        params = {
+          _raw_body: bodyText,
+          _stripe_signature: c.req.header("stripe-signature") || "",
+          orderNo,
+        };
+      } else {
+        params = Object.fromEntries(new URLSearchParams(bodyText).entries());
+      }
     }
   } catch {
     return c.text("invalid request", 400);
@@ -210,10 +250,10 @@ paymentCallbackRoute.all("/payments/:tenantId/:provider/callback", async (c) => 
 
   // 加载租户支付配置（用于验签）
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
-  const config = await loadTenantConfig(db, order.tenantId, encryptionKey);
+  const config = await loadTenantConfig(db, order.tenantId, encryptionKey, { provider: providerName });
   if (!config) return c.text("tenant config not found", 500);
 
-  const provider = createTenantProvider(config.env);
+  const provider = createTenantProvider(config.env, order.currency);
   if (!provider) return c.text("provider not available", 500);
 
   const result = await handlePaymentCallback(db, order.tenantId, provider, params);
