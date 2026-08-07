@@ -11,12 +11,12 @@
  */
 import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Client } from "@libsql/client";
 
-// migrations 目录定位：src/db/apply-migrations.ts（tsx 开发）与 dist/db/apply-migrations.js
-// （VPS 生产）相对项目根的层级一致，均为 ../../migrations
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "migrations");
+// migrations 目录定位：使用 process.cwd()（部署 pm2 与开发 npm 均从项目根启动，
+// cwd 恒为项目根）。不能用 import.meta.url 链：esbuild 单文件 bundle 后
+// import.meta.url 指向 dist/server.js，相对路径会错误定位（模拟部署实测发现）。
+const MIGRATIONS_DIR = join(process.cwd(), "migrations");
 
 /** 确保 data/ 目录存在（本地 SQLite 文件模式所需，借鉴 cf-auth migrate.mjs）。 */
 export function ensureDataDir(dbUrl: string): void {
