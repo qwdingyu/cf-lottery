@@ -6,6 +6,7 @@
  */
 import { escapeHtml, interpolate } from "@usethink/cf-core/features/email";
 import { sendViaCloudflareEmail, type CloudflareEmailBinding } from "@usethink/cf-core/features/email/cloudflare";
+import { sendViaRemote } from "@usethink/cf-core/features/email/remote";
 export { escapeHtml, interpolate };
 
 import lotteryWinnerHtml from "./templates/lottery_winner";
@@ -53,11 +54,40 @@ export interface SendEmailResult {
   ok: boolean; message?: string; id?: string;
 }
 
+/** 邮件环境配置：cf-auth 网关（remote）优先，Cloudflare binding / Resend 兜底 */
+export type EmailEnv = {
+  resendApiKey?: string;
+  emailFrom?: string;
+  emailFromName?: string;
+  email?: CloudflareEmailBinding;
+  /** docs/093 邮件网关：cf-auth 集中发送（OAuth client 认证） */
+  remoteEmailUrl?: string;
+  remoteEmailClientId?: string;
+  remoteEmailClientSecret?: string;
+};
+
+function hasRemoteEmail(env: EmailEnv): boolean {
+  return Boolean(env.remoteEmailUrl && env.remoteEmailClientId && env.remoteEmailClientSecret);
+}
+
 export async function sendEmail(
-  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string; email?: CloudflareEmailBinding },
+  emailEnv: EmailEnv,
   input: SendEmailInput,
 ): Promise<SendEmailResult> {
-  // Cloudflare Email Service 优先（send_email binding，零第三方依赖）
+  // cf-auth 邮件网关优先（docs/093：OAuth client 认证，集中发送，零邮件配置）
+  if (hasRemoteEmail(emailEnv)) {
+    const tpl = templates[input.template];
+    if (!tpl) return { ok: false, message: `模板不存在: ${input.template}` };
+    const subject = templateSubjects[input.template] || "通知";
+    const html = interpolate(tpl, input.templateData);
+    const result = await sendViaRemote(
+      { url: emailEnv.remoteEmailUrl!, clientId: emailEnv.remoteEmailClientId!, clientSecret: emailEnv.remoteEmailClientSecret! },
+      { to: input.to, subject, html },
+    );
+    return { ok: result.ok, message: result.error || result.messageId, id: result.messageId };
+  }
+
+  // Cloudflare Email Service（send_email binding，零第三方依赖）
   if (emailEnv.email) {
     const from = emailEnv.emailFromName
       ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
@@ -94,11 +124,19 @@ export async function sendEmail(
 }
 
 export async function sendAccessCode(
-  emailEnv: { resendApiKey: string; emailFrom: string; emailFromName?: string; email?: CloudflareEmailBinding },
+  emailEnv: EmailEnv,
   to: string, drawName: string, code: string,
 ): Promise<{ ok: boolean; message: string }> {
   const html = interpolate(emailAccessCodeHtml, { drawName, code });
-  // Cloudflare Email Service 优先
+  // cf-auth 邮件网关优先（docs/093）
+  if (hasRemoteEmail(emailEnv)) {
+    const result = await sendViaRemote(
+      { url: emailEnv.remoteEmailUrl!, clientId: emailEnv.remoteEmailClientId!, clientSecret: emailEnv.remoteEmailClientSecret! },
+      { to, subject: "您的抽奖验证码", html },
+    );
+    return { ok: result.ok, message: result.error || result.messageId || "发送成功" };
+  }
+  // Cloudflare Email Service（send_email binding）
   if (emailEnv.email) {
     const from = emailEnv.emailFromName
       ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
