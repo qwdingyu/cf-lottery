@@ -312,6 +312,80 @@ describe("admin payment management", () => {
     expect(body.currencySupport.find((item) => item.currency === "cny")?.available).toBe(false);
   });
 
+  it("preserves encrypted sensitive fields when saving masked payment config placeholders", async () => {
+    await seedMembers();
+    const app = createTestApp();
+    const env = {
+      ...TEST_ENV,
+      CREDENTIALS_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    };
+
+    const firstSave = await app.request("/api/admin/payment-config", {
+      method: "PUT",
+      headers: { ...(await authHeader()), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providers: [{
+          name: "easypay",
+          enabled: true,
+          fields: {
+            EASYPAY_PID: "pid-1",
+            EASYPAY_KEY: "secret-1",
+            EASYPAY_API_BASE: "https://zpayz.cn",
+            EASYPAY_PAY_TYPE: "alipay",
+          },
+        }],
+      }),
+    }, env);
+    expect(firstSave.status).toBe(200);
+
+    const [afterFirstSave] = await db
+      .select({ providers: tenantConfigs.providers })
+      .from(tenantConfigs)
+      .where(eq(tenantConfigs.tenantId, TENANT_ID))
+      .limit(1);
+    const firstProviders = JSON.parse(afterFirstSave.providers) as Record<string, Record<string, string>>;
+    const encryptedKey = firstProviders.easypay.easypay_key;
+    expect(encryptedKey).toMatch(/^enc:/);
+
+    const getRes = await app.request("/api/admin/payment-config", {
+      headers: await authHeader(),
+    }, env);
+    expect(getRes.status).toBe(200);
+    const getBody = await getRes.json() as {
+      providers: Array<{ name: string; saved?: { fields: Record<string, string> } }>;
+    };
+    expect(getBody.providers.find((item) => item.name === "easypay")?.saved?.fields.EASYPAY_KEY)
+      .toBe("••••••••");
+
+    const secondSave = await app.request("/api/admin/payment-config", {
+      method: "PUT",
+      headers: { ...(await authHeader()), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providers: [{
+          name: "easypay",
+          enabled: true,
+          fields: {
+            EASYPAY_PID: "pid-2",
+            EASYPAY_KEY: "••••••••",
+            EASYPAY_API_BASE: "https://zpayz.cn",
+            EASYPAY_PAY_TYPE: "wxpay",
+          },
+        }],
+      }),
+    }, env);
+    expect(secondSave.status).toBe(200);
+
+    const [afterSecondSave] = await db
+      .select({ providers: tenantConfigs.providers })
+      .from(tenantConfigs)
+      .where(eq(tenantConfigs.tenantId, TENANT_ID))
+      .limit(1);
+    const secondProviders = JSON.parse(afterSecondSave.providers) as Record<string, Record<string, string>>;
+    expect(secondProviders.easypay.easypay_key).toBe(encryptedKey);
+    expect(secondProviders.easypay.easypay_pid).toBe("pid-2");
+    expect(secondProviders.easypay.easypay_pay_type).toBe("wxpay");
+  });
+
   it("checks EasyPay as the CNY direct fulfillment provider and ignores legacy blockchain config", async () => {
     await seedMembers();
     await db.insert(tenantConfigs).values({

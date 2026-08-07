@@ -538,6 +538,7 @@ export default {
     paymentFulfillmentFailedTitle: "支付成功，发卡失败",
     paymentFulfillmentFailedHint: "订单已付款，但卡密池暂时不足，请联系主办方处理。",
     paymentFulfillmentFailed: "支付已完成，但卡密发放失败",
+    paymentFulfillmentSupportHint: "订单号已保留，主办方补充码池后可在后台为你补发卡密；请截图保存订单号并联系主办方。",
     paymentStatusPending: "待支付",
     paymentStatusPaid: "已支付",
     paymentStatusFulfillmentFailed: "发卡失败",

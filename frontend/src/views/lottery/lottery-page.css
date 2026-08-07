@@ -1082,6 +1082,22 @@
   padding: 8px;
   box-sizing: border-box;
 }
+.lottery-payment-support {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 68, 68, .32);
+  border-radius: 8px;
+  background: rgba(239, 68, 68, .08);
+  text-align: left;
+}
+.lottery-payment-support .result-error,
+.lottery-payment-support .result-hint {
+  margin: 0;
+}
+.lottery-payment-support .result-hint {
+  margin-top: 6px;
+}
 
 /* ── 视觉增强（不改结构，仅美化） ── */
 .lottery-view { max-width: 860px; margin: 0 auto; }

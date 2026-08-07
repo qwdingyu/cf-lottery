@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   canRetryPaymentOrder,
+  buildPaymentSessionSnapshot,
   composePaymentCode,
   formatPaymentAmount,
   isDirectPaymentDraw,
+  parsePaymentSessionSnapshot,
   paymentStatusI18nKey,
   paymentStatusKind,
   shouldPollPaymentStatus,
@@ -49,5 +51,60 @@ describe('payment-ux', () => {
     expect(composePaymentCode({ code: 'CARD-1', secret: 'SECRET' })).toBe('CARD-1:SECRET')
     expect(composePaymentCode({ code: 'CARD-1' })).toBe('CARD-1')
     expect(composePaymentCode(null)).toBe('')
+  })
+
+  it('支付会话快照只保留恢复轮询所需字段，不持久化卡密明文', () => {
+    const snapshot = buildPaymentSessionSnapshot({
+      drawId: 'draw-1',
+      entryId: 'entry-1',
+      email: 'Buyer@Example.com',
+      orderNo: 'order-1',
+      status: 'pending',
+      amountCents: 9900,
+      currency: 'cny',
+      provider: 'easypay',
+      redirectUrl: 'https://pay.example.com',
+      qrCode: 'qr-content',
+      prizeCode: { code: 'CARD-1', secret: 'SECRET' },
+    } as any, 1000)
+
+    expect(snapshot).toMatchObject({
+      drawId: 'draw-1',
+      entryId: 'entry-1',
+      email: 'buyer@example.com',
+      orderNo: 'order-1',
+      savedAt: 1000,
+    })
+    expect(JSON.stringify(snapshot)).not.toContain('SECRET')
+  })
+
+  it('拒绝不完整或过期的支付会话快照', () => {
+    expect(buildPaymentSessionSnapshot({ drawId: 'draw-1', entryId: 'entry-1', email: '', orderNo: '' } as any)).toBeNull()
+    expect(parsePaymentSessionSnapshot('{bad json', 2000)).toBeNull()
+    expect(parsePaymentSessionSnapshot(JSON.stringify({
+      drawId: 'draw-1',
+      entryId: 'entry-1',
+      email: 'buyer@example.com',
+      orderNo: 'order-1',
+      status: 'pending',
+      amountCents: 9900,
+      currency: 'cny',
+      provider: 'easypay',
+      savedAt: 1000,
+    }), 2000)).toMatchObject({ orderNo: 'order-1' })
+    expect(parsePaymentSessionSnapshot(JSON.stringify({
+      drawId: 'draw-1',
+      entryId: 'entry-1',
+      email: 'buyer@example.com',
+      orderNo: 'order-1',
+      savedAt: 1000,
+    }), 10_000, 100)).toBeNull()
+    expect(parsePaymentSessionSnapshot(JSON.stringify({
+      drawId: 'draw-1',
+      entryId: 'entry-1',
+      email: 'buyer@example.com',
+      orderNo: 'order-1',
+      savedAt: 70_000,
+    }), 1000)).toBeNull()
   })
 })

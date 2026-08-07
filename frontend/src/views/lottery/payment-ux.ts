@@ -15,6 +15,26 @@ export type PaymentStatusKind =
   | 'refunded'
   | 'unknown'
 
+export interface PaymentSessionState {
+  drawId: string
+  entryId: string
+  email: string
+  orderNo: string
+  status: string
+  amountCents: number
+  currency: string
+  provider: string
+  redirectUrl?: string
+  qrCode?: string
+}
+
+export interface PaymentSessionSnapshot extends PaymentSessionState {
+  savedAt: number
+}
+
+const PAYMENT_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000
+const PAYMENT_SESSION_CLOCK_SKEW_MS = 60 * 1000
+
 export function isDirectPaymentDraw(draw: Pick<LotteryDraw, 'flashSale'> | null | undefined): boolean {
   return draw?.flashSale?.paymentRequired === true
 }
@@ -48,8 +68,9 @@ export function canRetryPaymentOrder(status: string | null | undefined): boolean
 }
 
 export function formatPaymentAmount(amountMinor: number | null | undefined, currency: string | null | undefined): string {
-  const n = Number(amountMinor)
   const normalized = String(currency || 'cny').trim().toUpperCase() || 'CNY'
+  if (amountMinor == null) return `-- ${normalized}`
+  const n = Number(amountMinor)
   if (!Number.isFinite(n) || n < 0) return `-- ${normalized}`
 
   if (normalized === 'JPY') return `¥${Math.round(n)}`
@@ -67,4 +88,54 @@ export function composePaymentCode(prizeCode: { code?: string | null; secret?: s
   const secret = String(prizeCode?.secret || '').trim()
   if (!code) return ''
   return secret ? `${code}:${secret}` : code
+}
+
+export function buildPaymentSessionSnapshot(
+  state: PaymentSessionState | null | undefined,
+  nowMs = Date.now(),
+): PaymentSessionSnapshot | null {
+  if (!state?.orderNo || !state.drawId || !state.entryId || !state.email) return null
+  return {
+    drawId: String(state.drawId),
+    entryId: String(state.entryId),
+    email: String(state.email).trim().toLowerCase(),
+    orderNo: String(state.orderNo),
+    status: String(state.status || 'pending'),
+    amountCents: Number(state.amountCents || 0),
+    currency: String(state.currency || 'cny'),
+    provider: String(state.provider || ''),
+    redirectUrl: state.redirectUrl ? String(state.redirectUrl) : undefined,
+    qrCode: state.qrCode ? String(state.qrCode) : undefined,
+    savedAt: nowMs,
+  }
+}
+
+export function parsePaymentSessionSnapshot(
+  raw: string | null | undefined,
+  nowMs = Date.now(),
+  maxAgeMs = PAYMENT_SESSION_MAX_AGE_MS,
+): PaymentSessionSnapshot | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<PaymentSessionSnapshot>
+    const savedAt = Number(parsed.savedAt || 0)
+    if (!Number.isFinite(savedAt) || savedAt <= 0 || nowMs - savedAt > maxAgeMs) return null
+    if (savedAt - nowMs > PAYMENT_SESSION_CLOCK_SKEW_MS) return null
+    const snapshot = buildPaymentSessionSnapshot({
+      drawId: String(parsed.drawId || ''),
+      entryId: String(parsed.entryId || ''),
+      email: String(parsed.email || ''),
+      orderNo: String(parsed.orderNo || ''),
+      status: String(parsed.status || 'pending'),
+      amountCents: Number(parsed.amountCents || 0),
+      currency: String(parsed.currency || 'cny'),
+      provider: String(parsed.provider || ''),
+      redirectUrl: parsed.redirectUrl ? String(parsed.redirectUrl) : undefined,
+      qrCode: parsed.qrCode ? String(parsed.qrCode) : undefined,
+    }, savedAt)
+    if (!snapshot) return null
+    return snapshot
+  } catch {
+    return null
+  }
 }

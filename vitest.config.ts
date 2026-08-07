@@ -26,6 +26,8 @@ export default defineConfig({
       "frontend/src/composables/admin-list-ux.test.ts",
       // 公开页 draft/paused CTA
       "frontend/src/composables/lottery-public-ux.test.ts",
+      // docs/131：直付支付状态/金额/会话恢复纯函数
+      "frontend/src/views/lottery/payment-ux.test.ts",
       // 公开页体验氛围时长 / 主 CTA 文案 key（docs/095）
       "frontend/src/views/lottery/public-helpers.test.ts",
       // docs/096：体验别名与未知→Submit 回退

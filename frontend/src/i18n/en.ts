@@ -579,6 +579,7 @@ export default {
     paymentFulfillmentFailedTitle: "Paid, but fulfillment failed",
     paymentFulfillmentFailedHint: "Payment succeeded, but the code pool is temporarily exhausted. Please contact the host.",
     paymentFulfillmentFailed: "Payment completed, but code fulfillment failed",
+    paymentFulfillmentSupportHint: "The order number is preserved. After the host replenishes the code pool, they can reissue the code from the admin console. Save the order number and contact the host.",
     paymentStatusPending: "Pending",
     paymentStatusPaid: "Paid",
     paymentStatusFulfillmentFailed: "Fulfillment failed",

@@ -15,8 +15,9 @@ import { readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
-const TEST_DB_PATH = join(tmpdir(), `cf-lottery-vitest-${process.pid}.db`);
+const TEST_DB_PATH = join(tmpdir(), `cf-lottery-vitest-${process.pid}-${randomUUID()}.db`);
 const TEST_DB_URL = process.env.CF_LOTTERY_TEST_DB_URL || `file:${TEST_DB_PATH}`;
 
 /**

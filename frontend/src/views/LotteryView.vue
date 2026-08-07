@@ -606,7 +606,10 @@
           <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
         </div>
 
-        <p v-if="paymentState?.status === 'paid_fulfillment_failed'" class="result-error">{{ $t('lottery.paymentFulfillmentFailed') }}</p>
+        <div v-if="paymentState?.status === 'paid_fulfillment_failed'" class="lottery-payment-support" role="alert">
+          <p class="result-error">{{ $t('lottery.paymentFulfillmentFailed') }}</p>
+          <p class="result-hint">{{ $t('lottery.paymentFulfillmentSupportHint') }}</p>
+        </div>
         <p v-if="paymentError" class="result-error">{{ paymentError }}</p>
 
         <div class="result-actions">
@@ -949,10 +952,13 @@ import {
   publicStatusBannerTone,
 } from '@/composables/lottery-public-ux'
 import {
+  buildPaymentSessionSnapshot,
   canRetryPaymentOrder,
   composePaymentCode,
   formatPaymentAmount,
   isDirectPaymentDraw,
+  parsePaymentSessionSnapshot,
+  type PaymentSessionState,
   paymentStatusI18nKey,
   shouldPollPaymentStatus,
 } from './lottery/payment-ux'
@@ -1061,6 +1067,7 @@ const route = useRoute()
 const isDeepLinked = computed(() => Boolean(props.id && String(props.id).trim()))
 
 const API_BASE = '/api'
+const LOTTERY_PAYMENT_SESSION_KEY = 'lottery_payment_session_v1'
 
 const loading = ref(true)
 const fetchError = ref('')
@@ -1643,25 +1650,17 @@ const lastJoinResult = ref<{
   drawStatus?: string
 } | null>(null)
 /** 直付秒杀支付弹窗状态 */
+type PaymentState = PaymentSessionState & {
+  prizeCode?: { code?: string | null; secret?: string | null } | null
+}
+
 const showPaymentModal = ref(false)
 const paymentLoading = ref(false)
 const paymentError = ref('')
 const paymentQrDataUrl = ref('')
 const paymentQrSeq = ref(0)
 let paymentPollTimer: ReturnType<typeof setInterval> | null = null
-const paymentState = ref<{
-  drawId: string
-  entryId: string
-  email: string
-  orderNo: string
-  status: string
-  amountCents: number
-  currency: string
-  provider: string
-  redirectUrl?: string
-  qrCode?: string
-  prizeCode?: { code?: string | null; secret?: string | null } | null
-} | null>(null)
+const paymentState = ref<PaymentState | null>(null)
 
 /** lottery + resultMode=instant（实现见 instant-spin-ux） */
 function isInstantLottery(draw: { activityKind?: string; resultMode?: string } | null | undefined): boolean {
@@ -1871,6 +1870,60 @@ const paymentHint = computed(() => {
   return t('lottery.paymentPendingHint')
 })
 
+function readPaymentSessionRaw(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.sessionStorage.getItem(LOTTERY_PAYMENT_SESSION_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writePaymentSessionRaw(raw: string | null) {
+  if (typeof window === 'undefined') return
+  try {
+    if (raw) {
+      window.sessionStorage.setItem(LOTTERY_PAYMENT_SESSION_KEY, raw)
+    } else {
+      window.sessionStorage.removeItem(LOTTERY_PAYMENT_SESSION_KEY)
+    }
+  } catch {
+    // 浏览器禁用存储时不影响支付主链路；用户仍可通过订单号和后台查询完成补发。
+  }
+}
+
+function persistPaymentSession(state: PaymentState | null = paymentState.value) {
+  const snapshot = buildPaymentSessionSnapshot(state)
+  writePaymentSessionRaw(snapshot ? JSON.stringify(snapshot) : null)
+}
+
+function clearPaymentSession() {
+  writePaymentSessionRaw(null)
+}
+
+async function restorePaymentSession() {
+  const snapshot = parsePaymentSessionSnapshot(readPaymentSessionRaw())
+  if (!snapshot) {
+    clearPaymentSession()
+    return
+  }
+  const draw = draws.value.find((item) => item.id === snapshot.drawId || item.publicSlug === snapshot.drawId)
+  if (!draw || !isDirectPaymentDraw(draw)) {
+    clearPaymentSession()
+    return
+  }
+  paymentState.value = {
+    ...snapshot,
+    prizeCode: null,
+  }
+  showPaymentModal.value = true
+  await syncPaymentQrCode(snapshot.qrCode)
+  await refreshPaymentOrderStatus({ silent: true })
+  if (shouldPollPaymentStatus(paymentState.value?.status)) {
+    startPaymentPolling()
+  }
+}
+
 /** 参与成功后写入弹窗所需快照（语义字段可选，缺省由 computed 回退到 draw） */
 function rememberJoinSuccess(
   drawId: string,
@@ -1987,6 +2040,7 @@ async function refreshPaymentOrderStatus(opts?: { silent?: boolean }) {
       provider: String(data.order.provider || state.provider),
       prizeCode: data.order.prizeCode || state.prizeCode || null,
     }
+    persistPaymentSession(paymentState.value)
 
     if (data.order.status === 'paid') {
       clearPaymentPollTimer()
@@ -2068,6 +2122,7 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       qrCode: data.qrCode || undefined,
       prizeCode: null,
     }
+    persistPaymentSession(paymentState.value)
     showPaymentModal.value = true
     await syncPaymentQrCode(data.qrCode)
 
@@ -2089,6 +2144,7 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       provider: '',
       prizeCode: null,
     }
+    clearPaymentSession()
     paymentError.value = err instanceof Error ? err.message : t('lottery.paymentCreateFailed')
     showPaymentModal.value = true
     clearPaymentPollTimer()
@@ -2582,6 +2638,12 @@ function clearSession() {
   // 仅清参与会话 + OAuth 临时键；保留 admin_token（运营预览活动页退出不应踢后台）
   myEntryList.value = []
   persistSessionEmail('')
+  clearPaymentSession()
+  paymentState.value = null
+  paymentError.value = ''
+  paymentQrDataUrl.value = ''
+  showPaymentModal.value = false
+  clearPaymentPollTimer()
   registeredToken.value = ''
   registeredUsername.value = ''
   clearLotteryBrowserSessionOnly(sessionStorage)
@@ -3600,6 +3662,8 @@ onMounted(async () => {
   await hydrateJoinedStateFromSession()
   // cf-auth OAuth 往返后：有 pendingJoin + 业务 JWT 则自动参与（docs/059）
   await resumeCfAuthJoinAfterCallback()
+  // 直付订单只保存非敏感快照；刷新后重新查状态并继续 pending 轮询，不在浏览器保存卡密明文。
+  await restorePaymentSession()
 })
 
 onUnmounted(() => {
