@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildLandingActivityCard, classifyLandingActivity } from './landing-activity-feed'
+import {
+  buildLandingActivityCard,
+  classifyLandingActivity,
+  paymentModeI18nKey,
+  resolveLandingPaymentMode,
+} from './landing-activity-feed'
 
 describe('landing-activity-feed', () => {
   it('直付秒杀卡片价格来自 flashSale.priceCents', () => {
@@ -22,6 +27,7 @@ describe('landing-activity-feed', () => {
 
     expect(card).toMatchObject({
       badge: 'flash',
+      paymentMode: 'direct',
       title: 'Token 日卡',
       priceText: '¥9.90',
       sessionLabel: '12:00场',
@@ -46,5 +52,17 @@ describe('landing-activity-feed', () => {
     })).toBe('free')
     expect(card.priceText).toBe('免费')
     expect(card.badge).toBe('free')
+    expect(card.paymentMode).toBe('free')
+    expect(paymentModeI18nKey(card.paymentMode)).toBe('marketPaymentFree')
+  })
+
+  it('外部承接活动只标识导流，不伪装成站内支付', () => {
+    const mode = resolveLandingPaymentMode({
+      product: { url: 'https://shop.example.com/p/1' },
+      flashSale: { enabled: true, paymentRequired: false },
+    })
+
+    expect(mode).toBe('external')
+    expect(paymentModeI18nKey(mode)).toBe('marketPaymentExternal')
   })
 })

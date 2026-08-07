@@ -295,9 +295,10 @@ describe("admin payment management", () => {
     });
 
     const app = createTestApp();
+    // 显式覆盖 CREDENTIALS_ENCRYPTION_KEY 为空，确保测试无密钥场景不被 process.env 污染
     const res = await app.request("/api/admin/payment-config/check", {
       headers: await authHeader(),
-    }, TEST_ENV);
+    }, Object.assign({}, TEST_ENV, { CREDENTIALS_ENCRYPTION_KEY: "" }));
 
     expect(res.status).toBe(200);
     const body = await res.json() as {
