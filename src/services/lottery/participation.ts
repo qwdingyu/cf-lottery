@@ -215,7 +215,7 @@ export async function joinDraw(
             SELECT COUNT(*) FROM lottery_entries
             WHERE tenant_id = ${draw.tenantId}
               AND draw_id = ${draw.id}
-              AND payment_status <> 'expired'
+              AND payment_status IN ('', 'pending', 'paid')
           ) < ${effectiveMax}`
         : sql`(
             SELECT COUNT(*) FROM lottery_entries

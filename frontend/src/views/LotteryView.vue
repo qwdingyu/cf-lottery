@@ -2161,7 +2161,8 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
     const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(slug) + '/payment-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entryId }),
+      // 后端必须把支付请求邮箱与 entry 身份绑定，不能只凭前端可恢复的 entryId 下单。
+      body: JSON.stringify({ entryId, email }),
     })
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean

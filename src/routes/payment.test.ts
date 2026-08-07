@@ -169,7 +169,7 @@ describe("payment route", () => {
     const app = createTestApp();
     const res = await app.request("/api/public/draws/payment-route/payment-orders", {
       method: "POST",
-      body: JSON.stringify({ entryId: ENTRY_ID }),
+      body: JSON.stringify({ entryId: ENTRY_ID, email: EMAIL }),
       headers: { "Content-Type": "application/json" },
     }, {
       TURSO_URL: "",
@@ -179,6 +179,57 @@ describe("payment route", () => {
     expect(res.status).toBe(400);
     const body = await res.json() as { error?: string };
     expect(body.error).toContain("email");
+  });
+
+  it("创建直付订单时必须把请求邮箱绑定到参与记录，不能只凭 entryId 下单", async () => {
+    await db.insert(tenants).values({ id: TENANT_ID, name: "payment-route" });
+    await db.insert(lotteryDraws).values({
+      id: DRAW_ID,
+      tenantId: TENANT_ID,
+      publicSlug: "payment-route",
+      title: "支付身份绑定测试",
+      status: "open",
+      activityKind: "claim",
+      participationMode: "open",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 60_000).toISOString(),
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 1,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    });
+    await db.insert(lotteryEntries).values({
+      id: ENTRY_ID,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "email",
+      identityValue: EMAIL,
+      displayName: "buyer",
+      paymentStatus: "",
+    });
+
+    const app = createTestApp();
+    const res = await app.request("/api/public/draws/payment-route/payment-orders", {
+      method: "POST",
+      body: JSON.stringify({ entryId: ENTRY_ID, email: "attacker@example.com" }),
+      headers: { "Content-Type": "application/json" },
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error?: string };
+    expect(body.error).toContain("参与身份");
+    expect(await db.select().from(paymentOrders)).toHaveLength(0);
   });
 
   it("区块链支付暂不进入当前目录，USDT 直付发卡订单被拒绝创建", async () => {
@@ -229,7 +280,7 @@ describe("payment route", () => {
     const app = createTestApp();
     const res = await app.request("/api/public/draws/payment-route/payment-orders", {
       method: "POST",
-      body: JSON.stringify({ entryId: ENTRY_ID }),
+      body: JSON.stringify({ entryId: ENTRY_ID, email: EMAIL }),
       headers: { "Content-Type": "application/json" },
     }, {
       TURSO_URL: "",

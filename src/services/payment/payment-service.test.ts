@@ -56,6 +56,17 @@ async function seedBaseRows(status: string) {
     publicSlug: "payment-service-draw",
     title: "支付测试活动",
     status: "open",
+    maxParticipants: 1,
+    experienceType: "flash_sale",
+    promotionConfig: JSON.stringify({
+      flashSale: {
+        enabled: true,
+        paymentRequired: true,
+        stockLimit: 1,
+        priceCents: 9900,
+        currency: "cny",
+      },
+    }),
     startAt: new Date(Date.now() - 60_000).toISOString(),
     endAt: new Date(Date.now() + 60_000).toISOString(),
   });
@@ -66,7 +77,7 @@ async function seedBaseRows(status: string) {
     identityType: "email",
     identityValue: "buyer@example.com",
     displayName: "buyer",
-    paymentStatus: "",
+    paymentStatus: status === "expired" ? "expired" : status === "pending" ? "pending" : "expired",
   });
   await db.insert(paymentOrders).values({
     id: ORDER_ID,
@@ -80,8 +91,8 @@ async function seedBaseRows(status: string) {
   });
 }
 
-async function seedCallbackRows() {
-  await seedBaseRows("pending");
+async function seedCallbackRows(status = "pending") {
+  await seedBaseRows(status);
   await db.insert(prizes).values({
     id: PRIZE_ID,
     tenantId: TENANT_ID,
@@ -170,6 +181,39 @@ describe("retryPaymentOrder", () => {
     expect(order?.status).toBe("cancelled");
     expect(entry?.paymentStatus).toBe("expired");
   });
+
+  it("expired order retry cannot reacquire a released slot after capacity is occupied", async () => {
+    await seedBaseRows("expired");
+    await db.insert(lotteryEntries).values({
+      id: "entry-payment-service-occupied",
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "email",
+      identityValue: "occupied@example.com",
+      displayName: "occupied",
+      paymentStatus: "pending",
+    });
+
+    await expect(retryPaymentOrder(
+      db,
+      {
+        tenantId: TENANT_ID,
+        drawId: DRAW_ID,
+        entryId: ENTRY_ID,
+        amountCents: 9900,
+        currency: "cny",
+        provider: "alipay",
+        notifyUrl: "https://example.com/payments/callback",
+      },
+      providerMock,
+    )).rejects.toThrow("名额");
+
+    const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, ORDER_ID));
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
+    expect(order?.status).toBe("expired");
+    expect(entry?.paymentStatus).toBe("expired");
+    expect(providerMock.createPayment).not.toHaveBeenCalled();
+  });
 });
 
 describe("tenant payment provider selection", () => {
@@ -251,5 +295,26 @@ describe("handlePaymentCallback", () => {
 
     await expect(handlePaymentCallback(db, TENANT_ID, callbackProvider, {}))
       .resolves.toMatchObject({ processed: false, error: "验签失败" });
+  });
+
+  it("ignores callbacks for expired orders without issuing a card code", async () => {
+    await seedCallbackRows("expired");
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: ORDER_ID,
+        providerTradeNo: "EP-LATE",
+        amountCents: 9900,
+        currency: "CNY",
+        paidAt: "2026-08-07T00:00:00.000Z",
+      })),
+    };
+
+    const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
+
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("expired");
+    const [code] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, PRIZE_CODE_ID));
+    expect(code?.status).toBe("available");
   });
 });

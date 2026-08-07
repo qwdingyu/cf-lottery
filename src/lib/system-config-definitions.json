@@ -288,7 +288,16 @@
     "order": 20,
     "difficulty": "basic",
     "enum": ["lottery","signup_chain","claim","survey","vote","checkin","approval","reservation"],
-    "enumLabels": {"lottery":"抽奖","signup_chain":"接龙/报名","claim":"资料领取","survey":"问卷调研","vote":"投票评选","checkin":"签到打卡","approval":"审核申请","reservation":"预约确认"}
+    "enumLabels": {
+      "lottery":"抽奖/大转盘",
+      "signup_chain":"接龙/报名",
+      "claim":"资料领取/限时抢购/兑付",
+      "survey":"问卷调研",
+      "vote":"投票评选",
+      "checkin":"签到打卡",
+      "approval":"审核申请",
+      "reservation":"预约确认"
+    }
   },
   {
     "key": "enabled_participation_modes",
@@ -430,6 +439,32 @@
     "defaultValue": "true",
     "group": "安全设置",
     "order": 31,
+    "difficulty": "advanced"
+  },
+  {
+    "key": "r2_public_url",
+    "label": "R2 图片公网域名",
+    "description": "奖品图片的 R2 公开访问基础 URL（如 https://pub-xxx.r2.dev）。配置后管理端可通过此域名上传/预览奖品图片。",
+    "effect": "前端奖品管理页读取此配置作为图片上传/预览的存储域名；空则降级为本地占位。",
+    "scope": "admin",
+    "type": "string",
+    "defaultValue": "",
+    "maxLength": 200,
+    "group": "平台运营",
+    "order": 27,
+    "difficulty": "advanced"
+  },
+  {
+    "key": "r2_prize_image_bucket",
+    "label": "R2 奖品牌名",
+    "description": "R2 中存储奖品图片的 bucket 名称。",
+    "effect": "前端上传奖品图片时使用的 bucket 名称；未配置时不启用 R2 直传，使用本地占位。",
+    "scope": "admin",
+    "type": "string",
+    "defaultValue": "",
+    "maxLength": 80,
+    "group": "平台运营",
+    "order": 28,
     "difficulty": "advanced"
   }
 ]

@@ -160,7 +160,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       .from(lotteryEntries)
       .where(and(
         inArray(lotteryEntries.drawId, drawIds),
-        ne(lotteryEntries.paymentStatus, "expired"),
+        inArray(lotteryEntries.paymentStatus, ["", "pending", "paid"]),
       ))
       .groupBy(lotteryEntries.drawId);
     for (const row of claimedRows) {
@@ -250,7 +250,10 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
   const [{ total }] = await db
     .select({ total: count() })
     .from(lotteryEntries)
-    .where(and(eq(lotteryEntries.drawId, draw.id), ne(lotteryEntries.paymentStatus, "expired")));
+    .where(and(
+      eq(lotteryEntries.drawId, draw.id),
+      inArray(lotteryEntries.paymentStatus, ["", "pending", "paid"]),
+    ));
 
   const result: any = {
     id: draw.publicSlug, // 公开页面使用 publicSlug 作为标识，不暴露内部 ID

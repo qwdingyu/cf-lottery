@@ -10,14 +10,16 @@
 import { Hono } from "hono";
 import { eq, and, sql } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
-import { getEnv } from "../lib/platform";
-import { getDb, fail, ok } from "../lib/http";
+import { getClientIp, getEnv } from "../lib/platform";
+import { getDb, fail, ok, isValidEmail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, paymentOrders } from "../db/schema";
+import { checkPublicRateLimit } from "./public-lottery-helpers";
 import {
   loadTenantConfig,
   createTenantProvider,
   handlePaymentCallback,
   createPaymentOrder,
+  expireOverdueOrders,
   retryPaymentOrder,
 } from "../services/payment/payment-service";
 import type { AppEnv } from "../bindings";
@@ -47,6 +49,10 @@ export function buildPaymentReturnUrl(requestUrl: string): string {
 paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
+  const ip = getClientIp(c);
+  if (!(await checkPublicRateLimit(db, `payment-create:${ip}`, 20, 60000))) {
+    return fail(c, "支付请求过于频繁，请稍后再试", 429);
+  }
 
   const [draw] = await db
     .select()
@@ -65,30 +71,42 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     return fail(c, "秒杀活动未配置价格", 400);
   }
 
-  // 查找参与者 entry（通过 entryId，docs/131 §10；支持 open/registered 所有身份类型）
-  const body = await c.req.json<{ entryId?: string }>().catch(() => ({} as { entryId?: string }));
+  // 先懒清理本租户超时订单，避免 stale pending 被重新生成支付入口。
+  await expireOverdueOrders(db, draw.tenantId);
+
+  // 查找参与者 entry（通过 entryId，docs/131 §10；邮箱必须与 entry 身份一致）
+  const body = await c.req.json<{ entryId?: string; email?: string }>().catch(() => ({} as { entryId?: string; email?: string }));
   const entryId = String(body.entryId || "").trim();
+  const email = String(body.email || "").trim().toLowerCase();
   if (!entryId) return fail(c, "缺少 entryId", 400);
+  if (!isValidEmail(email)) return fail(c, "缺少或无效的 email", 400);
 
   const [entry] = await db
     .select()
     .from(lotteryEntries)
     .where(and(
+      eq(lotteryEntries.tenantId, draw.tenantId),
       eq(lotteryEntries.drawId, draw.id),
       eq(lotteryEntries.id, entryId),
     ))
     .limit(1);
   if (!entry) return fail(c, "参与记录不存在", 404);
-  if (entry.tenantId !== draw.tenantId) return fail(c, "参与记录不属于此活动", 403);
   if (entry.identityType !== "email") {
     return fail(c, "直付卡密仅支持 email 身份参与", 400);
+  }
+  if (entry.identityValue.trim().toLowerCase() !== email) {
+    return fail(c, "支付请求与参与身份不匹配", 403);
   }
 
   // 检查是否已有订单（一参与一订单）
   const [existing] = await db
     .select()
     .from(paymentOrders)
-    .where(eq(paymentOrders.entryId, entry.id))
+    .where(and(
+      eq(paymentOrders.tenantId, draw.tenantId),
+      eq(paymentOrders.drawId, draw.id),
+      eq(paymentOrders.entryId, entry.id),
+    ))
     .limit(1);
   if (
     existing &&
@@ -180,7 +198,11 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
       : await createPaymentOrder(db, orderInput, provider);
     order = created.order;
     payResult = created.payResult;
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "";
+    if (message.includes("名额")) {
+      return fail(c, message, 409);
+    }
     return fail(c, "支付下单失败，请稍后重试", 502);
   }
 
@@ -203,6 +225,10 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
   const slug = c.req.param("slug");
   const orderId = c.req.param("orderId");
   const email = (c.req.query("email") || "").trim().toLowerCase();
+  const ip = getClientIp(c);
+  if (!(await checkPublicRateLimit(db, `payment-query:${ip}`, 30, 60000))) {
+    return fail(c, "支付查询过于频繁，请稍后再试", 429);
+  }
 
   const [draw] = await db
     .select()
@@ -223,6 +249,9 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
   if (order.drawId !== draw.id) return fail(c, "订单不属于此活动", 404);
   if (!email) {
     return fail(c, "缺少 email", 400);
+  }
+  if (!isValidEmail(email)) {
+    return fail(c, "email 无效", 400);
   }
   const [entry] = await db
     .select({ identityValue: lotteryEntries.identityValue })
