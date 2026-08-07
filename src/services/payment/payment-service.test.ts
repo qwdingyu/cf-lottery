@@ -25,6 +25,7 @@ const providerMock: PaymentProvider = {
   displayName: "支付宝当面付",
   supportedCurrencies: ["CNY"],
   createPayment: vi.fn(async () => ({
+    providerTradeNo: "checkout-123",
     redirectUrl: "https://pay.example.com/checkout",
     qrCode: "https://pay.example.com/qr",
   })),
@@ -107,7 +108,7 @@ describe("retryPaymentOrder", () => {
     const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, ORDER_ID));
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
     expect(order?.status).toBe("pending");
-    expect(order?.providerTradeNo).toBeNull();
+    expect(order?.providerTradeNo).toBe("checkout-123");
     expect(order?.prizeCodeId).toBeNull();
     expect(entry?.paymentStatus).toBe("pending");
   });

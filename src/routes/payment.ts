@@ -8,7 +8,8 @@
  * 照搬 cf-shop pay.ts 的回调处理模式（GET query / POST form → provider.verifyCallback → 发卡）。
  */
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
+import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { getEnv } from "../lib/platform";
 import { getDb, fail, ok } from "../lib/http";
 import { lotteryDraws, lotteryEntries, paymentOrders } from "../db/schema";
@@ -89,22 +90,73 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     .from(paymentOrders)
     .where(eq(paymentOrders.entryId, entry.id))
     .limit(1);
-  if (existing && existing.status !== "cancelled" && existing.status !== "expired") {
-    return ok(c, { orderNo: existing.id, status: existing.status, entryId: existing.entryId });
+  if (
+    existing &&
+    existing.status !== "cancelled" &&
+    existing.status !== "expired" &&
+    existing.status !== "pending"
+  ) {
+    return ok(c, {
+      orderNo: existing.id,
+      status: existing.status,
+      entryId: existing.entryId,
+      amountCents: existing.amountCents,
+      currency: existing.currency,
+      provider: existing.provider,
+    });
   }
 
   // 加载租户支付配置
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
   const currency = flashSale.currency || "cny";
-  const config = await loadTenantConfig(db, entry.tenantId, encryptionKey, { currency });
+  const resumingPending = existing?.status === "pending";
+  const config = await loadTenantConfig(
+    db,
+    entry.tenantId,
+    encryptionKey,
+    resumingPending ? { provider: existing.provider } : { currency },
+  );
   if (!config) return fail(c, "租户未配置支付方式", 400);
 
-  const provider = createTenantProvider(config.env, currency);
+  const provider = createTenantProvider(config.env, resumingPending ? existing.currency : currency);
   if (!provider) return fail(c, "支付服务暂不可用", 500);
 
   const retryable = existing?.status === "cancelled" || existing?.status === "expired";
   const notifyUrl = buildPaymentCallbackUrl(c.req.url, draw.tenantId, config.provider);
   const returnUrl = buildPaymentReturnUrl(c.req.url);
+
+  if (resumingPending) {
+    // 已有 pending 订单不新增 DB 行；只用同一 orderNo 重新生成支付入口，解决刷新后丢失支付链接/二维码。
+    let payResult: CreatePaymentResult;
+    try {
+      payResult = await provider.createPayment({
+        orderNo: existing.id,
+        amountCents: existing.amountCents,
+        currency: existing.currency,
+        notifyUrl,
+        returnUrl,
+        description: flashSale.title || draw.title || "秒杀",
+      });
+    } catch {
+      return fail(c, "支付入口生成失败，请稍后重试", 502);
+    }
+    if (payResult.providerTradeNo) {
+      await db
+        .update(paymentOrders)
+        .set({ providerTradeNo: payResult.providerTradeNo, updatedAt: sql`(datetime('now'))` })
+        .where(eq(paymentOrders.id, existing.id));
+    }
+    return ok(c, {
+      orderNo: existing.id,
+      status: existing.status,
+      entryId: existing.entryId,
+      amountCents: existing.amountCents,
+      currency: existing.currency,
+      provider: existing.provider,
+      redirectUrl: payResult.redirectUrl,
+      qrCode: payResult.qrCode,
+    });
+  }
 
   const orderInput = {
     tenantId: draw.tenantId,
@@ -118,9 +170,17 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     description: flashSale.title || draw.title || "秒杀",
   };
 
-  const { order, payResult } = retryable
-    ? await retryPaymentOrder(db, orderInput, provider)
-    : await createPaymentOrder(db, orderInput, provider);
+  let order: typeof paymentOrders.$inferSelect;
+  let payResult: CreatePaymentResult;
+  try {
+    const created = retryable
+      ? await retryPaymentOrder(db, orderInput, provider)
+      : await createPaymentOrder(db, orderInput, provider);
+    order = created.order;
+    payResult = created.payResult;
+  } catch {
+    return fail(c, "支付下单失败，请稍后重试", 502);
+  }
 
   return ok(c, {
     orderNo: order.id,

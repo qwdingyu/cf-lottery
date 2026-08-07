@@ -107,6 +107,15 @@ async function validateFlashSalePayment(
     add(result.errors, "payment", "flash_sale.payment.price.required", "直付秒杀必须配置大于 0 的 priceCents");
   }
 
+  if (draw.participationMode === "registered") {
+    add(
+      result.errors,
+      "payment",
+      "payment.identity.email_required",
+      "直付秒杀当前只支持 email 身份参与；registered 模式会导致已参与但无法下单",
+    );
+  }
+
   const currency = String(flashSale.currency || "cny").trim().toLowerCase();
   const currencyProviders = PAYMENT_PROVIDER_CATALOG.filter((meta) => providerSupportsCurrency(meta, currency));
   if (currencyProviders.length === 0) {

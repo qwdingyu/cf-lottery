@@ -252,6 +252,15 @@
                 >{{ $t('lottery.copyShareLink') }}</button>
               </div>
             </template>
+            <template v-else-if="isDrawJoined(draw) && isDirectPaymentDraw(draw)">
+              <span class="lottery-join-hint">✅ {{ $t('lottery.paymentSlotLocked') }} · {{ joinedTimeText(draw) }}</span>
+              <button
+                type="button"
+                class="lottery-result-btn lottery-result-btn--primary"
+                :disabled="paymentLoading"
+                @click="resumePaymentFromDraw(draw)"
+              >{{ paymentLoading ? $t('lottery.loadingText') : $t('lottery.paymentContinue') }}</button>
+            </template>
             <template v-else-if="isDrawJoined(draw)">
               <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
               <!--
@@ -562,6 +571,75 @@
     @query-result="onResultModalQuery"
   />
 
+  <!-- 直付秒杀支付弹窗 -->
+  <Teleport to="body">
+    <div v-if="showPaymentModal" class="game-result-overlay" @click.self="closePaymentModal">
+      <div class="game-result-modal lottery-payment-modal">
+        <button class="result-close" @click="closePaymentModal">✕</button>
+        <div class="result-icon" aria-hidden="true">💳</div>
+        <h2 class="result-title">{{ paymentTitle }}</h2>
+        <p class="result-hint">{{ paymentHint }}</p>
+
+        <div class="lottery-payment-summary">
+          <div class="lottery-payment-row">
+            <span class="lottery-payment-label">{{ $t('lottery.paymentAmount') }}</span>
+            <strong class="lottery-payment-value">{{ paymentAmountText }}</strong>
+          </div>
+          <div class="lottery-payment-row">
+            <span class="lottery-payment-label">{{ $t('lottery.paymentOrderNo') }}</span>
+            <code class="lottery-payment-code" @click="copyPaymentOrderNo">{{ paymentState?.orderNo }}</code>
+          </div>
+          <div class="lottery-payment-row">
+            <span class="lottery-payment-label">{{ $t('lottery.paymentStatusLabel') }}</span>
+            <strong class="lottery-payment-value">{{ paymentStatusText }}</strong>
+          </div>
+        </div>
+
+        <div v-if="paymentQrDataUrl" class="lottery-payment-qr">
+          <img :src="paymentQrDataUrl" :alt="$t('lottery.paymentQrAlt')" />
+          <p class="result-hint">{{ $t('lottery.paymentQrHint') }}</p>
+        </div>
+
+        <div v-if="paymentState?.prizeCode && paymentStatusIsPaid" class="result-code-block">
+          <span class="result-code-label">{{ $t('lottery.prizeCodeLabel') }}</span>
+          <code class="result-code" @click="copyPaymentCode">{{ paymentCodeText }}</code>
+          <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
+        </div>
+
+        <p v-if="paymentState?.status === 'paid_fulfillment_failed'" class="result-error">{{ $t('lottery.paymentFulfillmentFailed') }}</p>
+        <p v-if="paymentError" class="result-error">{{ paymentError }}</p>
+
+        <div class="result-actions">
+          <a
+            v-if="paymentState?.redirectUrl"
+            :href="paymentState.redirectUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn-primary"
+            @click="handleOpenPaymentLink"
+          >{{ $t('lottery.paymentOpen') }}</a>
+          <button
+            v-if="paymentCanRetry"
+            type="button"
+            class="btn btn-ghost"
+            :disabled="paymentLoading"
+            @click="restartPaymentOrder"
+          >{{ paymentLoading ? $t('lottery.loadingText') : $t('lottery.paymentRetry') }}</button>
+          <button
+            v-if="paymentCanRefresh"
+            type="button"
+            class="btn btn-ghost"
+            :disabled="paymentLoading"
+            @click="handleRefreshPaymentStatus"
+          >{{ paymentLoading ? $t('lottery.loadingText') : $t('lottery.paymentRefresh') }}</button>
+          <button type="button" class="btn" :class="paymentState?.redirectUrl ? 'btn-ghost' : 'btn-primary'" @click="closePaymentModal">
+            {{ $t('lottery.gotIt') }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- 查询我的结果弹窗 -->
   <Teleport to="body">
     <div v-if="showMyResultModal" class="game-result-overlay" @click.self="showMyResultModal = false">
@@ -841,6 +919,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import QRCode from 'qrcode'
 import { switchLanguage } from '@/i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
@@ -869,6 +948,14 @@ import {
   publicNonOpenSecondaryCta,
   publicStatusBannerTone,
 } from '@/composables/lottery-public-ux'
+import {
+  canRetryPaymentOrder,
+  composePaymentCode,
+  formatPaymentAmount,
+  isDirectPaymentDraw,
+  paymentStatusI18nKey,
+  shouldPollPaymentStatus,
+} from './lottery/payment-ux'
 import {
   defaultExperienceForParticipation,
   ambienceMsForExperience,
@@ -1147,6 +1234,8 @@ function handleAlreadyJoined(
   joinedDrawId: string,
   opts?: { openResult?: boolean; entryId?: string },
 ) {
+  const draw =
+    draws.value.find((d) => d.id === joinedDrawId || d.publicSlug === joinedDrawId) || null
   markDrawJoined(joinedDrawId, { entryId: opts?.entryId })
   refreshDrawDetailFor(joinedDrawId)
   if (opts?.entryId) {
@@ -1154,9 +1243,20 @@ function handleAlreadyJoined(
   }
   closeLogin()
   showToast(t('lottery.alreadyJoinedHint'), 'success')
+  if (draw && isDirectPaymentDraw(draw)) {
+    if (opts?.entryId) {
+      const email = String(sessionEmail.value || '').trim().toLowerCase()
+      if (email) {
+        void showPaymentOrder(draw, opts.entryId, email)
+      } else {
+        showPaymentResumeError(draw, opts.entryId, email)
+      }
+      return
+    }
+    resumePaymentFromDraw(draw)
+    return
+  }
   if (opts?.openResult !== false) {
-    const draw =
-      draws.value.find((d) => d.id === joinedDrawId || d.publicSlug === joinedDrawId) || null
     if (draw) openMyResult(draw)
   }
 }
@@ -1235,6 +1335,16 @@ function completeJoinSuccess(
     outcomeLabel: data.outcome?.resultLabel,
     resultMode: data.resultMode,
   })
+  if (draw && isDirectPaymentDraw(draw)) {
+    const entryId = data.entryId || resolveViralEntryId(draw)
+    const email = String(opts?.email || sessionEmail.value || '').trim().toLowerCase()
+    if (entryId && email) {
+      void showPaymentOrder(draw, entryId, email)
+      return
+    }
+    showPaymentResumeError(draw, entryId, email)
+    return
+  }
   // delayed：先触发氛围（转盘/老虎机等），再延迟结果弹窗；动画不表示开奖结果
   targetSectorById.value = { ...targetSectorById.value, [joinedDrawId]: null }
   celebrateKeyById.value = {
@@ -1532,6 +1642,26 @@ const lastJoinResult = ref<{
   /** 参与时活动 status，用于开奖后隐藏邀请（docs/103） */
   drawStatus?: string
 } | null>(null)
+/** 直付秒杀支付弹窗状态 */
+const showPaymentModal = ref(false)
+const paymentLoading = ref(false)
+const paymentError = ref('')
+const paymentQrDataUrl = ref('')
+const paymentQrSeq = ref(0)
+let paymentPollTimer: ReturnType<typeof setInterval> | null = null
+const paymentState = ref<{
+  drawId: string
+  entryId: string
+  email: string
+  orderNo: string
+  status: string
+  amountCents: number
+  currency: string
+  provider: string
+  redirectUrl?: string
+  qrCode?: string
+  prizeCode?: { code?: string | null; secret?: string | null } | null
+} | null>(null)
 
 /** lottery + resultMode=instant（实现见 instant-spin-ux） */
 function isInstantLottery(draw: { activityKind?: string; resultMode?: string } | null | undefined): boolean {
@@ -1716,6 +1846,31 @@ const lastJoinDrawStatus = computed(() => {
   return draw?.status
 })
 
+const paymentStatusText = computed(() => t(`lottery.${paymentStatusI18nKey(paymentState.value?.status)}`))
+const paymentStatusIsPaid = computed(() => paymentState.value?.status === 'paid')
+const paymentCanRetry = computed(() =>
+  canRetryPaymentOrder(paymentState.value?.status) || paymentState.value?.status === 'unknown' || Boolean(paymentError.value),
+)
+const paymentCanRefresh = computed(() => shouldPollPaymentStatus(paymentState.value?.status))
+const paymentAmountText = computed(() =>
+  formatPaymentAmount(paymentState.value?.amountCents, paymentState.value?.currency),
+)
+const paymentCodeText = computed(() =>
+  composePaymentCode(paymentState.value?.prizeCode || null),
+)
+const paymentTitle = computed(() => {
+  if (paymentState.value?.status === 'paid_fulfillment_failed') return t('lottery.paymentFulfillmentFailedTitle')
+  if (paymentState.value?.status === 'paid') return t('lottery.paymentPaidTitle')
+  return t('lottery.paymentPendingTitle')
+})
+const paymentHint = computed(() => {
+  if (!paymentState.value) return ''
+  if (paymentState.value.status === 'paid') return t('lottery.paymentPaidHint')
+  if (paymentState.value.status === 'paid_fulfillment_failed') return t('lottery.paymentFulfillmentFailedHint')
+  if (paymentState.value.status === 'expired' || paymentState.value.status === 'cancelled') return t('lottery.paymentRetryHint')
+  return t('lottery.paymentPendingHint')
+})
+
 /** 参与成功后写入弹窗所需快照（语义字段可选，缺省由 computed 回退到 draw） */
 function rememberJoinSuccess(
   drawId: string,
@@ -1731,6 +1886,245 @@ function rememberJoinSuccess(
     outcomeLabel: extra?.outcomeLabel || undefined,
     drawStatus: draw?.status,
   }
+}
+
+function clearPaymentPollTimer() {
+  if (paymentPollTimer) {
+    clearInterval(paymentPollTimer)
+    paymentPollTimer = null
+  }
+}
+
+function closePaymentModal() {
+  showPaymentModal.value = false
+  clearPaymentPollTimer()
+}
+
+async function syncPaymentQrCode(qrCode?: string) {
+  const raw = String(qrCode || '').trim()
+  const seq = ++paymentQrSeq.value
+  if (!raw) {
+    paymentQrDataUrl.value = ''
+    return
+  }
+  try {
+    const dataUrl = await QRCode.toDataURL(raw, {
+      width: 240,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+    })
+    if (seq === paymentQrSeq.value) paymentQrDataUrl.value = dataUrl
+  } catch {
+    if (seq === paymentQrSeq.value) paymentQrDataUrl.value = ''
+  }
+}
+
+function buildPaymentEntryId(draw: LotteryDraw): string | undefined {
+  return resolveViralEntryId(draw)
+}
+
+function showPaymentResumeError(draw: LotteryDraw, entryId: string | undefined, email: string) {
+  paymentError.value = entryId ? t('lottery.paymentEmailMissing') : t('lottery.paymentEntryMissing')
+  paymentState.value = {
+    drawId: draw.id,
+    entryId: entryId || '',
+    email,
+    orderNo: '',
+    status: 'unknown',
+    amountCents: Number(draw.flashSale?.priceCents || 0),
+    currency: String(draw.flashSale?.currency || 'cny'),
+    provider: '',
+    prizeCode: null,
+  }
+  showPaymentModal.value = true
+}
+
+function resumePaymentFromDraw(draw: LotteryDraw) {
+  const entryId = buildPaymentEntryId(draw)
+  const email = String(sessionEmail.value || '').trim().toLowerCase()
+  if (entryId && email) {
+    void showPaymentOrder(draw, entryId, email)
+    return
+  }
+  showPaymentResumeError(draw, entryId, email)
+}
+
+async function refreshPaymentOrderStatus(opts?: { silent?: boolean }) {
+  const state = paymentState.value
+  if (!state) return
+  const slug = publicDrawPathKey(state.drawId)
+  if (!slug) return
+  try {
+    const res = await fetch(
+      `${API_BASE}/public/draws/${encodeURIComponent(slug)}/payment-orders/${encodeURIComponent(state.orderNo)}?email=${encodeURIComponent(state.email)}`,
+      buildPublicDrawRequestInit(),
+    )
+    const data = await res.json().catch(() => null) as {
+      ok?: boolean
+      message?: string
+      order?: {
+        orderNo?: string
+        status?: string
+        amountCents?: number
+        currency?: string
+        provider?: string
+        paidAt?: string
+        prizeCode?: { code?: string | null; secret?: string | null } | null
+      } | null
+    } | null
+    if (!data?.ok || !data.order) {
+      if (!opts?.silent) {
+        paymentError.value = data?.message || t('lottery.paymentQueryFailed')
+      }
+      return
+    }
+
+    paymentState.value = {
+      ...state,
+      status: String(data.order.status || state.status),
+      amountCents: Number(data.order.amountCents || state.amountCents),
+      currency: String(data.order.currency || state.currency),
+      provider: String(data.order.provider || state.provider),
+      prizeCode: data.order.prizeCode || state.prizeCode || null,
+    }
+
+    if (data.order.status === 'paid') {
+      clearPaymentPollTimer()
+      showToast(t('lottery.paymentOrderPaid'), 'success')
+    } else if (data.order.status === 'paid_fulfillment_failed') {
+      clearPaymentPollTimer()
+      showToast(t('lottery.paymentFulfillmentFailed'), 'error')
+    } else if (!shouldPollPaymentStatus(data.order.status)) {
+      clearPaymentPollTimer()
+    }
+
+    await syncPaymentQrCode(state.qrCode)
+    paymentError.value = ''
+  } catch {
+    if (!opts?.silent) {
+      paymentError.value = t('lottery.networkError')
+    }
+  }
+}
+
+function handleRefreshPaymentStatus() {
+  void refreshPaymentOrderStatus()
+}
+
+function startPaymentPolling() {
+  clearPaymentPollTimer()
+  if (!paymentState.value || !shouldPollPaymentStatus(paymentState.value.status)) return
+  paymentPollTimer = setInterval(() => {
+    void refreshPaymentOrderStatus({ silent: true })
+  }, 3500)
+}
+
+async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: string) {
+  if (!isDirectPaymentDraw(draw) || !draw.flashSale) return
+  const flashSale = draw.flashSale
+  if (!entryId) {
+    paymentError.value = t('lottery.paymentEntryMissing')
+    showPaymentModal.value = true
+    return
+  }
+
+  paymentLoading.value = true
+  paymentError.value = ''
+  try {
+    const slug = publicDrawPathKey(draw.id)
+    if (!slug) {
+      throw new Error(t('lottery.drawNotLoaded'))
+    }
+    const res = await fetch(API_BASE + '/public/draws/' + encodeURIComponent(slug) + '/payment-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entryId }),
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      message?: string
+      orderNo?: string
+      status?: string
+      amountCents?: number
+      currency?: string
+      provider?: string
+      redirectUrl?: string
+      qrCode?: string
+    }
+    if (!data.ok || !data.orderNo) {
+      throw new Error(data.message || t('lottery.paymentCreateFailed'))
+    }
+
+    paymentState.value = {
+      drawId: draw.id,
+      entryId,
+      email,
+      orderNo: data.orderNo,
+      status: String(data.status || 'pending'),
+      amountCents: Number(data.amountCents || flashSale.priceCents || 0),
+      currency: String(data.currency || flashSale.currency || 'cny'),
+      provider: String(data.provider || ''),
+      redirectUrl: data.redirectUrl || undefined,
+      qrCode: data.qrCode || undefined,
+      prizeCode: null,
+    }
+    showPaymentModal.value = true
+    await syncPaymentQrCode(data.qrCode)
+
+    if (shouldPollPaymentStatus(paymentState.value.status)) {
+      startPaymentPolling()
+    } else {
+      clearPaymentPollTimer()
+      await refreshPaymentOrderStatus({ silent: true })
+    }
+  } catch (err) {
+    paymentState.value = {
+      drawId: draw.id,
+      entryId,
+      email,
+      orderNo: '',
+      status: 'unknown',
+      amountCents: Number(flashSale.priceCents || 0),
+      currency: String(flashSale.currency || 'cny'),
+      provider: '',
+      prizeCode: null,
+    }
+    paymentError.value = err instanceof Error ? err.message : t('lottery.paymentCreateFailed')
+    showPaymentModal.value = true
+    clearPaymentPollTimer()
+    paymentQrDataUrl.value = ''
+  } finally {
+    paymentLoading.value = false
+  }
+}
+
+async function restartPaymentOrder() {
+  const draw = draws.value.find((d) => d.id === paymentState.value?.drawId)
+  if (!draw || !paymentState.value) return
+  const entryId = paymentState.value.entryId || buildPaymentEntryId(draw)
+  const email = paymentState.value.email || sessionEmail.value || ''
+  if (!email) {
+    paymentError.value = t('lottery.paymentEmailMissing')
+    return
+  }
+  await showPaymentOrder(draw, entryId || '', email)
+}
+
+async function handleOpenPaymentLink() {
+  if (!paymentState.value?.redirectUrl) return
+  showToast(t('lottery.paymentLinkOpened'), 'success')
+}
+
+function copyPaymentOrderNo() {
+  if (!paymentState.value?.orderNo) return
+  void writeClipboardText(paymentState.value.orderNo)
+  showToast(t('lottery.copied'), 'success')
+}
+
+function copyPaymentCode() {
+  if (!paymentCodeText.value) return
+  void writeClipboardText(paymentCodeText.value)
+  showToast(t('lottery.copied'), 'success')
 }
 
 function stopMyResultCooldown() {
@@ -2939,6 +3333,10 @@ async function handleJoin(drawId: string) {
   // id 与 publicSlug 任一命中即视为已参与（hints / mark 双键，docs/098）
   if (myJoinedById.value[drawId] || myJoinedById.value[draw.publicSlug || '']) {
     showToast(t('lottery.alreadyJoinedHint'), 'success')
+    if (isDirectPaymentDraw(draw)) {
+      resumePaymentFromDraw(draw)
+      return
+    }
     openMyResult(draw)
     return
   }
@@ -3217,6 +3615,7 @@ onUnmounted(() => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  clearPaymentPollTimer()
   window.removeEventListener('focus', refreshWhenVisible)
   window.removeEventListener('online', refreshWhenVisible)
   document.removeEventListener('visibilitychange', handleVisibilityChange)

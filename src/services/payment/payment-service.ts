@@ -99,6 +99,20 @@ async function armPaymentOrderForRetry(
   });
 }
 
+/** Provider 创建支付后若返回平台侧单号，立即落库，便于后续查询、排障和未来 cf-pay 迁移。 */
+async function persistProviderTradeNo(
+  db: DbType,
+  orderId: string,
+  payResult: CreatePaymentResult,
+): Promise<void> {
+  const providerTradeNo = String(payResult.providerTradeNo || "").trim();
+  if (!providerTradeNo) return;
+  await db
+    .update(paymentOrders)
+    .set({ providerTradeNo, updatedAt: sql`(datetime('now'))` })
+    .where(eq(paymentOrders.id, orderId));
+}
+
 /** 从 DB 加载并解密租户支付配置；未配置或密钥缺失返回 null（照搬 cf-shop loadPaymentProviderConfigs） */
 export async function loadTenantConfig(
   db: DbType,
@@ -227,6 +241,7 @@ export async function createPaymentOrder(
     throw err;
   }
 
+  await persistProviderTradeNo(db, id, payResult);
   const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, id)).limit(1);
   return { order: order!, payResult };
 }
@@ -266,6 +281,7 @@ export async function retryPaymentOrder(
     throw err;
   }
 
+  await persistProviderTradeNo(db, existing.id, payResult);
   const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, existing.id)).limit(1);
   return { order: order!, payResult };
 }

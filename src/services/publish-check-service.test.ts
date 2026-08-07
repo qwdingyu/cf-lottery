@@ -349,6 +349,31 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.errors.some((item) => item.code === "payment.fulfillment.code_prize.required")).toBe(true);
   });
 
+  it("docs/131：直付秒杀必须使用 email 身份，registered 模式发布前阻断", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      participationMode: "registered",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    });
+    await addAlipayConfig();
+    await addCodeTier(draw.id, 1, 10);
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "payment.identity.email_required")).toBe(true);
+  });
+
   it("docs/131：直付秒杀价格、CNY 支付渠道和单一卡密池充足时可发布", async () => {
     const draw = makeDraw({
       maxParticipants: 10,
