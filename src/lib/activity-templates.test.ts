@@ -66,6 +66,9 @@ describe("ACTIVITY_TEMPLATES 抽奖体验诚实性（docs/115）", () => {
       enableProductLink: true,
       enableFlashSale: true,
       flashSaleStockLimit: 100,
+      flashSalePaymentRequired: true,
+      flashSalePriceCents: null,
+      flashSaleCurrency: "cny",
     });
     expect(flash!.description).toMatch(/商品图、价格/);
     expect(flash!.description).toMatch(/直付发卡/);
