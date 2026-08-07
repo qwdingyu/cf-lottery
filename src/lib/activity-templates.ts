@@ -28,6 +28,7 @@ export interface ActivityTemplate {
     flashSaleSessionLabel?: string;
     flashSaleStockLimit?: number | null;
     flashSalePaymentRequired?: boolean;
+    flashSalePriceCents?: number | null;
     flashSaleCurrency?: string;
     flashSaleTitle?: string;
   };
@@ -243,7 +244,8 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       enableFlashSale: true,
       flashSaleSessionLabel: "12:00场",
       flashSaleStockLimit: 100,
-      flashSalePaymentRequired: false,
+      flashSalePaymentRequired: true,
+      flashSalePriceCents: null,
       flashSaleCurrency: "cny",
       flashSaleTitle: "限时抢购商品",
     },
