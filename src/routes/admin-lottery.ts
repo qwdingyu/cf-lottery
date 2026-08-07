@@ -698,7 +698,9 @@ adminLotteryRoute.post("/draws/:id/publish", async (c) => {
   const drawId = c.req.param("id");
 
   try {
-    const result = await publishDraw(db, tenantId, drawId);
+    const result = await publishDraw(db, tenantId, drawId, {
+      credentialsEncryptionKey: getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "",
+    });
     if (!result) return fail(c, "活动不存在或已发布", 400);
     await recordTenantAudit(c, "draw.publish", "lottery_draw", drawId);
     return ok(c, { status: "open" });

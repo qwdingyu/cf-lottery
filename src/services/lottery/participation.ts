@@ -215,7 +215,7 @@ export async function joinDraw(
             SELECT COUNT(*) FROM lottery_entries
             WHERE tenant_id = ${draw.tenantId}
               AND draw_id = ${draw.id}
-              AND payment_status IN ('', 'pending', 'paid')
+              AND payment_status IN ('reserved', 'pending', 'paid')
           ) < ${effectiveMax}`
         : sql`(
             SELECT COUNT(*) FROM lottery_entries
@@ -239,10 +239,10 @@ export async function joinDraw(
       const insertResult = await tx.run(sql`
         INSERT INTO lottery_entries (
           id, tenant_id, draw_id, identity_type, identity_value, invite_code_id, ip_hash, joined_at,
-          spins_left, spins_total_granted, spins_viral_earned
+          spins_left, spins_total_granted, spins_viral_earned, payment_status
         )
         SELECT ${entryId}, ${draw.tenantId}, ${draw.id}, ${identityType}, ${checkinDateSuffix ? uniqueValue : normalizedValue}, ${inviteCodeId}, ${options?.ipHash || ""}, ${nowIso},
-          ${spinInit.spinsLeft}, ${spinInit.spinsTotalGranted}, ${spinInit.spinsViralEarned}
+          ${spinInit.spinsLeft}, ${spinInit.spinsTotalGranted}, ${spinInit.spinsViralEarned}, ${isDirectPaymentFlashSale ? "reserved" : ""}
         WHERE ${capacityClause}
       `);
 

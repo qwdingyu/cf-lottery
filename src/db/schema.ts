@@ -306,7 +306,8 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
   spinsViralEarned: integer("spins_viral_earned").notNull().default(0),
   /**
    * 支付状态（docs/131 §8 软释放）：秒杀直付专用。
-   * '' = 无支付需求（普通参与）；pending = 订单创建中；paid = 已支付；expired = 订单超时释放。
+   * '' = 无支付需求（普通参与）；reserved = 直付秒杀已预约待创建订单；
+   * pending = 订单创建中/待支付；paid = 已支付；expired = 超时释放。
    * 名额统计（claimed）排除 expired，实现软释放（不删 entry，保留审计链）。
    */
   paymentStatus: text("payment_status").notNull().default(""),

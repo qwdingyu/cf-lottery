@@ -169,8 +169,7 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
             env[field.key] = decrypted.value;
           }
         } else {
-          warnings.push(`${field.label} 未以 enc: 形式保存，建议重新保存配置`);
-          env[field.key] = value;
+          issues.push(`${field.label} 必须使用 cf-core v2 密文保存，请重新保存配置`);
         }
       } else if (value) {
         env[field.key] = value;

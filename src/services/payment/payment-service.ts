@@ -24,7 +24,7 @@ import {
   lotteryDraws,
 } from "../../db/schema";
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
-import { decryptPaymentConfigValue } from "./secret-config";
+import { decryptPaymentConfigValue, isEncryptedPaymentConfigValue } from "./secret-config";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../../lib/flash-sale-config";
 
 // systemConfig 表（用于读取运行时配置订单超时/价格上限等）
@@ -66,7 +66,20 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         eq(paymentOrders.status, "pending"),
         sql`${paymentOrders.createdAt} < ${cutoff}`,
       ));
-    if (overdue.length === 0) return 0;
+    const staleReservations = await tx
+      .select({ id: lotteryEntries.id })
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.tenantId, tenantId),
+        eq(lotteryEntries.paymentStatus, "reserved"),
+        sql`${lotteryEntries.joinedAt} < ${cutoff}`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM payment_orders
+          WHERE payment_orders.entry_id = ${lotteryEntries.id}
+            AND payment_orders.tenant_id = ${tenantId}
+        )`,
+      ));
+    if (overdue.length === 0 && staleReservations.length === 0) return 0;
 
     await tx
       .update(paymentOrders)
@@ -89,7 +102,18 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         ));
     }
 
-    return overdue.length;
+    if (staleReservations.length > 0) {
+      await tx
+        .update(lotteryEntries)
+        .set({ paymentStatus: "expired" })
+        .where(and(
+          eq(lotteryEntries.tenantId, tenantId),
+          inArray(lotteryEntries.id, staleReservations.map((entry) => entry.id)),
+          eq(lotteryEntries.paymentStatus, "reserved"),
+        ));
+    }
+
+    return overdue.length + staleReservations.length;
   });
 }
 
@@ -187,7 +211,7 @@ async function armPaymentOrderForRetry(
           SELECT COUNT(*) FROM lottery_entries
           WHERE tenant_id = ${input.tenantId}
             AND draw_id = ${input.drawId}
-            AND payment_status IN ('', 'pending', 'paid')
+            AND payment_status IN ('reserved', 'pending', 'paid')
         ) < ${capacity}`,
       ))
       .returning({ id: lotteryEntries.id });
@@ -297,6 +321,10 @@ export async function loadTenantConfig(
           if (field.required) { complete = false; break; }
           continue;
         }
+        if (field.sensitive && !isEncryptedPaymentConfigValue(raw)) {
+          complete = false;
+          break;
+        }
         env[field.key] = await decrypt(raw);
       }
     } catch {
@@ -345,7 +373,7 @@ export async function createPaymentOrder(
         eq(lotteryEntries.id, input.entryId),
         eq(lotteryEntries.tenantId, input.tenantId),
         eq(lotteryEntries.drawId, input.drawId),
-        eq(lotteryEntries.paymentStatus, ""),
+        eq(lotteryEntries.paymentStatus, "reserved"),
       ))
       .returning({ id: lotteryEntries.id });
     if (armedEntry.length === 0) {

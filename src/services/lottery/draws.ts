@@ -18,7 +18,7 @@ import {
 import { DEFAULT_ACTIVITY_PARTICIPANT_CAP } from "./types";
 import { enforceTenantActivityQuota } from "./plan";
 import { hashAccessPassword } from "./utils";
-import { buildPublishCheckForDraw } from "../publish-check-service";
+import { buildPublishCheckForDraw, type PublishCheckOptions } from "../publish-check-service";
 
 /* ── 查询函数 ────────────────────────────────────────────── */
 
@@ -385,7 +385,12 @@ function normalizeWinnerCount(activityKind: string, winnerCount?: number): numbe
  *
  * 使用 CAS 更新（WHERE status = 'draft'），防止并发发布。
  */
-export async function publishDraw(db: DbType, tenantId: string, drawId: string): Promise<boolean> {
+export async function publishDraw(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  options: PublishCheckOptions = {},
+): Promise<boolean> {
   const [draw] = await db
     .select()
     .from(lotteryDraws)
@@ -398,7 +403,7 @@ export async function publishDraw(db: DbType, tenantId: string, drawId: string):
 
   // 发布前二次校验集中交给 publish-check-service：
   // 真实发布路径必须和后台“发布前预检”使用同一套规则，否则前端清单和服务端行为会漂移。
-  const publishCheck = await buildPublishCheckForDraw(db, tenantId, draw);
+  const publishCheck = await buildPublishCheckForDraw(db, tenantId, draw, options);
   if (!publishCheck.canPublish) {
     throw new Error(publishCheck.errors[0]?.message || "活动未通过发布前校验");
   }

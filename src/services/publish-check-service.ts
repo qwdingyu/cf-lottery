@@ -22,6 +22,7 @@ import {
 import { validateActivityConfigForPublish } from "../lib/activity-config";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../lib/flash-sale-config";
 import { PAYMENT_PROVIDER_CATALOG, type PaymentProviderCatalogItem } from "./payment/catalog";
+import { decryptPaymentConfigValueResult, isEncryptedPaymentConfigValue } from "./payment/secret-config";
 
 export type PublishCheckSection =
   | "basic"
@@ -46,6 +47,10 @@ export type PublishCheckResult = {
 };
 
 type LotteryDraw = typeof lotteryDraws.$inferSelect;
+
+export type PublishCheckOptions = {
+  credentialsEncryptionKey?: string;
+};
 
 function add(target: PublishCheckItem[], section: PublishCheckSection, code: string, message: string) {
   target.push({ section, code, message });
@@ -85,10 +90,6 @@ function providerConfigValue(config: Record<string, unknown>, key: string): stri
   return String(config[key.toLowerCase()] ?? config[key] ?? "").trim();
 }
 
-function providerHasRequiredFields(meta: PaymentProviderCatalogItem, config: Record<string, unknown>): boolean {
-  return meta.fields.every((field) => !field.required || providerConfigValue(config, field.key) !== "");
-}
-
 function providerSupportsCurrency(meta: PaymentProviderCatalogItem, currency: string): boolean {
   const normalized = currency.trim().toLowerCase();
   return meta.supportedCurrencies.some((value) => value.toLowerCase() === normalized);
@@ -105,6 +106,7 @@ async function validateFlashSalePayment(
   flashSale: NonNullable<ReturnType<typeof parseFlashSaleConfig>["config"]>,
   effectiveStockLimit: number | null,
   result: PublishCheckResult,
+  options: PublishCheckOptions,
 ) {
   if (!flashSale.paymentRequired) return;
 
@@ -168,8 +170,25 @@ async function validateFlashSalePayment(
       .filter((item) => item.config?.enabled === true);
     if (currencyProviders.length > 0 && enabledSupported.length === 0) {
       add(result.errors, "payment", "payment.provider.currency.required", `直付秒杀币种 ${currency.toUpperCase()} 没有已启用的可用收款方式`);
-    } else if (enabledSupported.length > 0 && !enabledSupported.some((item) => providerHasRequiredFields(item.meta, item.config))) {
-      add(result.errors, "payment", "payment.provider.incomplete", `支持 ${currency.toUpperCase()} 的已启用收款方式缺少必填凭据`);
+    } else if (enabledSupported.length > 0) {
+      let usableProvider = false;
+      for (const item of enabledSupported) {
+        const env = await buildPublishProviderEnv(item.meta, item.config, result, options);
+        if (!env) continue;
+        if (item.meta.factory.isAvailable(env)) {
+          usableProvider = true;
+          continue;
+        }
+        add(
+          result.errors,
+          "payment",
+          `payment.provider.${item.meta.name}.unavailable`,
+          `${item.meta.displayName} 凭据不完整或接口地址不安全，无法创建支付 Provider`,
+        );
+      }
+      if (!usableProvider) {
+        add(result.errors, "payment", "payment.provider.incomplete", `支持 ${currency.toUpperCase()} 的已启用收款方式缺少可用凭据`);
+      }
     }
   }
 
@@ -210,6 +229,58 @@ async function validateFlashSalePayment(
       add(result.errors, "payment", "payment.fulfillment.codes.insufficient", `直付秒杀可用卡密 ${available} 个，少于名额上限 ${effectiveStockLimit} 个`);
     }
   }
+}
+
+async function buildPublishProviderEnv(
+  meta: PaymentProviderCatalogItem,
+  config: Record<string, unknown> | undefined,
+  result: PublishCheckResult,
+  options: PublishCheckOptions,
+): Promise<Record<string, string> | null> {
+  if (!config) return null;
+
+  const env: Record<string, string> = {};
+  let complete = true;
+  for (const field of meta.fields) {
+    const raw = providerConfigValue(config, field.key);
+    if (!raw) {
+      if (field.required) {
+        complete = false;
+        add(result.errors, "payment", `payment.provider.${meta.name}.${field.key.toLowerCase()}.required`, `${meta.displayName}: ${field.label} 未配置`);
+      }
+      continue;
+    }
+
+    if (field.sensitive && isEncryptedPaymentConfigValue(raw)) {
+      const decrypted = await decryptPaymentConfigValueResult(raw, options.credentialsEncryptionKey);
+      if (!decrypted.ok) {
+        complete = false;
+        add(
+          result.errors,
+          "payment",
+          `payment.provider.${meta.name}.${field.key.toLowerCase()}.decrypt_failed`,
+          `${meta.displayName}: ${field.label} 解密失败（${decrypted.reason}）`,
+        );
+        continue;
+      }
+      env[field.key] = decrypted.value;
+      continue;
+    }
+
+    if (field.sensitive) {
+      complete = false;
+      add(
+        result.errors,
+        "payment",
+        `payment.provider.${meta.name}.${field.key.toLowerCase()}.encrypted_required`,
+        `${meta.displayName}: ${field.label} 必须使用 cf-core v2 密文保存，请重新保存支付配置`,
+      );
+      continue;
+    }
+    env[field.key] = raw;
+  }
+
+  return complete ? env : null;
 }
 
 function validateBasic(draw: LotteryDraw, result: PublishCheckResult) {
@@ -388,7 +459,13 @@ async function validateLotteryPrizes(db: DbType, tenantId: string, draw: Lottery
   }
 }
 
-async function validatePromotion(db: DbType, tenantId: string, draw: LotteryDraw, result: PublishCheckResult) {
+async function validatePromotion(
+  db: DbType,
+  tenantId: string,
+  draw: LotteryDraw,
+  result: PublishCheckResult,
+  options: PublishCheckOptions,
+) {
   const promotionConfig = parseJsonObject(draw.promotionConfig);
   const legacyProductLink = parseJsonObject(draw.productLink);
   const viral = promotionConfig?.viral as Record<string, unknown> | undefined;
@@ -514,7 +591,7 @@ async function validatePromotion(db: DbType, tenantId: string, draw: LotteryDraw
         "已启用 flashSale 配置；建议 experience_type=flash_sale 以使用秒杀体验壳",
       );
     }
-    await validateFlashSalePayment(db, tenantId, draw, flashParsed.config, effective, result);
+    await validateFlashSalePayment(db, tenantId, draw, flashParsed.config, effective, result, options);
   }
 }
 
@@ -566,7 +643,12 @@ function validateActivityConfig(draw: LotteryDraw, result: PublishCheckResult) {
   }
 }
 
-export async function buildPublishCheckForDraw(db: DbType, tenantId: string, draw: LotteryDraw): Promise<PublishCheckResult> {
+export async function buildPublishCheckForDraw(
+  db: DbType,
+  tenantId: string,
+  draw: LotteryDraw,
+  options: PublishCheckOptions = {},
+): Promise<PublishCheckResult> {
   const result: PublishCheckResult = { canPublish: false, errors: [], warnings: [], infos: [] };
 
   validateBasic(draw, result);
@@ -577,7 +659,7 @@ export async function buildPublishCheckForDraw(db: DbType, tenantId: string, dra
     add(result.warnings, "activity_config", "signup_chain.capacity.default", "接龙活动未显式设置名额上限，将使用系统默认容量");
   }
 
-  await validatePromotion(db, tenantId, draw, result);
+  await validatePromotion(db, tenantId, draw, result, options);
   await validateWebhooks(db, tenantId, result);
   validateActivityConfig(draw, result);
 
@@ -585,7 +667,12 @@ export async function buildPublishCheckForDraw(db: DbType, tenantId: string, dra
   return result;
 }
 
-export async function buildPublishCheck(db: DbType, tenantId: string, drawId: string): Promise<PublishCheckResult | null> {
+export async function buildPublishCheck(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  options: PublishCheckOptions = {},
+): Promise<PublishCheckResult | null> {
   const [draw] = await db
     .select()
     .from(lotteryDraws)
@@ -593,7 +680,7 @@ export async function buildPublishCheck(db: DbType, tenantId: string, drawId: st
     .limit(1);
 
   if (!draw) return null;
-  return buildPublishCheckForDraw(db, tenantId, draw);
+  return buildPublishCheckForDraw(db, tenantId, draw, options);
 }
 
 /** 从 systemConfig 读整数值，无配置则默认 fallback */

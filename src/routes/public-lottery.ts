@@ -164,7 +164,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       .from(lotteryEntries)
       .where(and(
         inArray(lotteryEntries.drawId, drawIds),
-        inArray(lotteryEntries.paymentStatus, ["", "pending", "paid"]),
+        inArray(lotteryEntries.paymentStatus, ["", "reserved", "pending", "paid"]),
       ))
       .groupBy(lotteryEntries.drawId);
     for (const row of claimedRows) {
@@ -256,7 +256,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     .from(lotteryEntries)
     .where(and(
       eq(lotteryEntries.drawId, draw.id),
-      inArray(lotteryEntries.paymentStatus, ["", "pending", "paid"]),
+      inArray(lotteryEntries.paymentStatus, ["", "reserved", "pending", "paid"]),
     ));
 
   const result: any = {
