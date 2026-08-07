@@ -11,7 +11,7 @@
  */
 import { createProviderRegistry } from "@usethink/cf-core/features/payment";
 import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, isNull } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
 import {
@@ -26,15 +26,29 @@ import {
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../../lib/flash-sale-config";
 
+// systemConfig 表（用于读取运行时配置订单超时/价格上限等）
+import { systemConfig as systemConfigTable } from "../../db/schema";
+
 export type PaymentProviderName = "easypay" | "stripe" | "alipay";
+
 const RETRYABLE_PAYMENT_ORDER_STATUSES = new Set(["cancelled", "expired"]);
 
-/** 订单超时时间(分钟)：超过此时间未支付的 pending 订单标记 expired（docs/131 §8） */
-const ORDER_EXPIRE_MINUTES = 30;
-
-/** 懒清理：标记超过 30 分钟未支付的 pending 订单为 expired，并释放关联 entry 名额（docs/131 §8）。 */
+/** 懒清理：标记超时未支付的 pending 订单为 expired，并释放关联 entry 名额（docs/131 §8）。超时分钟数从 systemConfig 读取，未配则默认 30。 */
 export async function expireOverdueOrders(db: DbType, tenantId: string): Promise<number> {
-  const cutoff = sql`datetime('now', '-' || ${ORDER_EXPIRE_MINUTES} || ' minutes')`;
+  // 读取运行时配置（systemConfig 表）→ 闭环节拍
+  let timeoutMinutes = 30;
+  try {
+    const [row] = await db
+      .select({ value: systemConfigTable.value })
+      .from(systemConfigTable)
+      .where(eq(systemConfigTable.key, "payment_order_timeout_minutes"))
+      .limit(1);
+    if (row) {
+      const parsed = Number(row.value || "");
+      if (Number.isFinite(parsed) && parsed >= 1) timeoutMinutes = Math.floor(parsed);
+    }
+  } catch { /* 表不存在或未迁移 → 默认 30 */ }
+  const cutoff = sql`datetime('now', '-' || ${timeoutMinutes} || ' minutes')`;
   return withDbTransaction(db, async (tx) => {
     // 订单和 entry 必须在同一事务中软释放，否则回调或并发参与可能看到半完成状态。
     const overdue = await tx
@@ -72,7 +86,11 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
   });
 }
 
-async function cancelPaymentOrder(db: DbType, orderId: string, entryId: string): Promise<void> {
+async function cancelPaymentOrder(
+  db: DbType,
+  input: Pick<CreateOrderInput, "tenantId" | "drawId" | "entryId">,
+  orderId: string,
+): Promise<void> {
   await withDbTransaction(db, async (tx) => {
     // 只有仍处于 pending 的订单才允许因网关创建失败而取消。
     // 如果回调已经把订单置为 paid，不能被迟到的下单异常覆盖。
@@ -81,6 +99,9 @@ async function cancelPaymentOrder(db: DbType, orderId: string, entryId: string):
       .set({ status: "cancelled", updatedAt: sql`(datetime('now'))` })
       .where(and(
         eq(paymentOrders.id, orderId),
+        eq(paymentOrders.tenantId, input.tenantId),
+        eq(paymentOrders.drawId, input.drawId),
+        eq(paymentOrders.entryId, input.entryId),
         eq(paymentOrders.status, "pending"),
       ))
       .returning({ id: paymentOrders.id });
@@ -90,7 +111,9 @@ async function cancelPaymentOrder(db: DbType, orderId: string, entryId: string):
       .update(lotteryEntries)
       .set({ paymentStatus: "expired" })
       .where(and(
-        eq(lotteryEntries.id, entryId),
+        eq(lotteryEntries.id, input.entryId),
+        eq(lotteryEntries.tenantId, input.tenantId),
+        eq(lotteryEntries.drawId, input.drawId),
         eq(lotteryEntries.paymentStatus, "pending"),
       ));
   });
@@ -157,7 +180,7 @@ async function armPaymentOrderForRetry(
           SELECT COUNT(*) FROM lottery_entries
           WHERE tenant_id = ${input.tenantId}
             AND draw_id = ${input.drawId}
-            AND payment_status <> 'expired'
+            AND payment_status IN ('', 'pending', 'paid')
         ) < ${capacity}`,
       ))
       .returning({ id: lotteryEntries.id });
@@ -202,7 +225,11 @@ async function persistProviderTradeNo(
   await db
     .update(paymentOrders)
     .set({ providerTradeNo, updatedAt: sql`(datetime('now'))` })
-    .where(eq(paymentOrders.id, orderId));
+    .where(and(
+      eq(paymentOrders.id, orderId),
+      eq(paymentOrders.status, "pending"),
+      isNull(paymentOrders.providerTradeNo),
+    ));
 }
 
 /** 从 DB 加载并解密租户支付配置；未配置或密钥缺失返回 null（照搬 cf-shop loadPaymentProviderConfigs） */
@@ -210,14 +237,23 @@ export async function loadTenantConfig(
   db: DbType,
   tenantId: string,
   encryptionKey?: string,
-  options: { provider?: string; currency?: string; requireDirectFulfillment?: boolean } = {},
+  options: {
+    provider?: string;
+    currency?: string;
+    requireDirectFulfillment?: boolean;
+    /**
+     * 停用渠道只阻断新订单；在途订单仍必须能验签和接收回调。
+     * 该选项只能由已按 order.provider 精确锁定的恢复/回调路径使用。
+     */
+    allowDisabled?: boolean;
+  } = {},
 ): Promise<{ provider: PaymentProviderName; env: Record<string, string> } | null> {
   const [row] = await db
     .select()
     .from(tenantConfigs)
     .where(eq(tenantConfigs.tenantId, tenantId))
     .limit(1);
-  if (!row || !row.enabled) return null;
+  if (!row || (!row.enabled && !options.allowDisabled)) return null;
 
   let providers: Record<string, Record<string, unknown>> = {};
   try {
@@ -249,7 +285,7 @@ export async function loadTenantConfig(
       continue;
     }
     const cfg = providers[item.name] as Record<string, unknown> | undefined;
-    if (!cfg || cfg.enabled !== true) continue;
+    if (!cfg || (cfg.enabled !== true && !options.allowDisabled)) continue;
 
     const env: Record<string, string> = {};
     let complete = true;
@@ -339,7 +375,7 @@ export async function createPaymentOrder(
     });
   } catch (err) {
     // 支付下单失败 → 回滚订单为 cancelled（释放 entry 名额，避免占位）
-    await cancelPaymentOrder(db, id, input.entryId);
+    await cancelPaymentOrder(db, input, id);
     throw err;
   }
 
@@ -383,7 +419,7 @@ export async function retryPaymentOrder(
       description: input.description,
     });
   } catch (err) {
-    await cancelPaymentOrder(db, existing.id, input.entryId);
+    await cancelPaymentOrder(db, input, existing.id);
     throw err;
   }
 
@@ -456,8 +492,9 @@ export async function handlePaymentCallback(
         eq(lotteryEntries.drawId, current.drawId),
       ))
       .limit(1);
-    if (!entry || entry.paymentStatus === "expired") {
-      // 防御性兜底：即使订单状态尚未同步，已释放的 entry 也不能被迟到回调发卡。
+    if (!entry || entry.paymentStatus !== "pending") {
+      // 防御性兜底：订单只能消费自己创建时占用的 pending entry。
+      // 空值、paid 或其他漂移状态都不能让迟到回调再次取走卡密。
       return current;
     }
 
@@ -478,10 +515,19 @@ export async function handlePaymentCallback(
 
     // 支付成功 → entry 标记 paid（软释放状态机，docs/131 §8）
     if (newStatus === "paid") {
-      await tx
-        .update(lotteryEntries)
-        .set({ paymentStatus: "paid" })
-        .where(eq(lotteryEntries.id, pre.entryId));
+    const paidEntry = await tx
+      .update(lotteryEntries)
+      .set({ paymentStatus: "paid" })
+      .where(and(
+        eq(lotteryEntries.id, pre.entryId),
+        eq(lotteryEntries.tenantId, tenantId),
+        eq(lotteryEntries.drawId, current.drawId),
+        eq(lotteryEntries.paymentStatus, "pending"),
+      ))
+      .returning({ id: lotteryEntries.id });
+    if (paidEntry.length === 0) {
+      throw new Error("参与记录状态已变化，支付履约未提交");
+    }
     }
 
     const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, pre.id)).limit(1);
@@ -518,6 +564,20 @@ export async function retryPaymentFulfillment(
     const prizeCodeId = await acquirePrizeCode(tx, tenantId, current.drawId, current.entryId);
     if (!prizeCodeId) return { error: "没有可用卡密，请先补充码池" };
 
+    const paidEntry = await tx
+      .update(lotteryEntries)
+      .set({ paymentStatus: "paid" })
+      .where(and(
+        eq(lotteryEntries.id, current.entryId),
+        eq(lotteryEntries.tenantId, tenantId),
+        eq(lotteryEntries.drawId, current.drawId),
+        eq(lotteryEntries.paymentStatus, "pending"),
+      ))
+      .returning({ id: lotteryEntries.id });
+    if (paidEntry.length === 0) {
+      throw new Error("参与记录状态已变化，请刷新后重试");
+    }
+
     const updatedOrder = await tx
       .update(paymentOrders)
       .set({
@@ -533,11 +593,6 @@ export async function retryPaymentFulfillment(
     if (updatedOrder.length === 0) {
       throw new Error("订单状态已变化，请刷新后重试");
     }
-
-    await tx
-      .update(lotteryEntries)
-      .set({ paymentStatus: "paid" })
-      .where(eq(lotteryEntries.id, current.entryId));
 
     const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
     return { order: updated ?? current };

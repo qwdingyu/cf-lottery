@@ -124,6 +124,18 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     });
   }
 
+  // 活动关闭后不允许凭旧 entry 新建或重试订单；已有 pending 订单仍允许恢复支付，
+  // 避免用户已经付款途中因运营暂停活动而失去合法支付入口。
+  if (!existing && draw.status !== "open") {
+    return fail(c, "活动当前不可创建支付订单", 409);
+  }
+  if ((existing?.status === "cancelled" || existing?.status === "expired") && draw.status !== "open") {
+    return fail(c, "活动已关闭，不能重新创建支付订单", 409);
+  }
+  if (existing?.status === "pending" && entry.paymentStatus !== "pending") {
+    return fail(c, "订单与参与记录状态不一致，请联系客服处理", 409);
+  }
+
   // 加载租户支付配置
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
   const currency = flashSale.currency || "cny";
@@ -133,7 +145,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     entry.tenantId,
     encryptionKey,
     resumingPending
-      ? { provider: existing.provider, requireDirectFulfillment: true }
+      ? { provider: existing.provider, requireDirectFulfillment: true, allowDisabled: true }
       : { currency, requireDirectFulfillment: true },
   );
   if (!config) return fail(c, "租户未配置可自动发卡的支付方式", 400);
@@ -164,7 +176,11 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
       await db
         .update(paymentOrders)
         .set({ providerTradeNo: payResult.providerTradeNo, updatedAt: sql`(datetime('now'))` })
-        .where(eq(paymentOrders.id, existing.id));
+        .where(and(
+          eq(paymentOrders.id, existing.id),
+          eq(paymentOrders.status, "pending"),
+          sql`${paymentOrders.providerTradeNo} IS NULL`,
+        ));
     }
     return ok(c, {
       orderNo: existing.id,
@@ -262,7 +278,7 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
       eq(lotteryEntries.drawId, draw.id),
     ))
     .limit(1);
-  if (!entry || entry.identityValue !== email) {
+  if (!entry || entry.identityValue.trim().toLowerCase() !== email) {
     return fail(c, "无权查看该订单", 403);
   }
 
@@ -349,7 +365,10 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
 
   // 加载租户支付配置（用于验签）
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
-  const config = await loadTenantConfig(db, order.tenantId, encryptionKey, { provider: providerName });
+  const config = await loadTenantConfig(db, order.tenantId, encryptionKey, {
+    provider: providerName,
+    allowDisabled: true,
+  });
   if (!config) return c.text("tenant config not found", 500);
 
   const provider = createTenantProvider(config.env, order.currency);

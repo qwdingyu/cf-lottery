@@ -16,6 +16,7 @@ import {
   prizeCodes,
   prizes,
   tenantConfigs,
+  systemConfig,
   webhookConfigs,
 } from "../db/schema";
 import { validateActivityConfigForPublish } from "../lib/activity-config";
@@ -109,6 +110,17 @@ async function validateFlashSalePayment(
 
   if (!flashSale.priceCents || flashSale.priceCents <= 0) {
     add(result.errors, "payment", "flash_sale.payment.price.required", "直付秒杀必须配置大于 0 的 priceCents");
+  }
+
+  // 价格上限：从 systemConfig 读取，未配则以 parseFlashSaleConfig 的默认上限为准
+  const maxPriceCents = await readSystemConfigInteger(db, "flash_sale_max_price_cents", 1000000);
+  if (flashSale.priceCents && flashSale.priceCents > maxPriceCents) {
+    add(
+      result.errors,
+      "payment",
+      "flash_sale.payment.price.too_high",
+      `秒杀价格不能超过 ${formatPrice(maxPriceCents)} 元；当前配置为 ${formatPrice(flashSale.priceCents)} 元`,
+    );
   }
 
   if (draw.participationMode === "registered") {
@@ -582,4 +594,25 @@ export async function buildPublishCheck(db: DbType, tenantId: string, drawId: st
 
   if (!draw) return null;
   return buildPublishCheckForDraw(db, tenantId, draw);
+}
+
+/** 从 systemConfig 读整数值，无配置则默认 fallback */
+async function readSystemConfigInteger(db: DbType, key: string, fallback: number): Promise<number> {
+  try {
+    const [row] = await db
+      .select({ value: systemConfig.value })
+      .from(systemConfig)
+      .where(eq(systemConfig.key, key))
+      .limit(1);
+    if (row) {
+      const v = Number(row.value || "");
+      if (Number.isFinite(v) && v >= 0) return Math.floor(v);
+    }
+  } catch { /* 表不存在或未迁移 → 默认 */ }
+  return fallback;
+}
+
+
+function formatPrice(cents: number): string {
+  return (cents / 100).toFixed(2);
 }

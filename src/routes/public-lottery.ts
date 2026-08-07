@@ -60,12 +60,6 @@ publicLotteryRoute.use("*", async (c, next) => {
 // 裂变 / 接龙 / 分享码子域
 setupPublicShareRoutes(publicLotteryRoute);
 
-function parsePublicHomeLimit(raw: string | undefined): number {
-  const n = Number(raw);
-  if (!Number.isFinite(n) || !Number.isInteger(n)) return 12;
-  return Math.min(24, Math.max(1, n));
-}
-
 function publicHttpUrl(value: unknown): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -118,7 +112,17 @@ function productFromPublicConfig(draw: {
  */
 publicLotteryRoute.get("/home-activities", async (c) => {
   const db = getDb(c);
-  const limit = parsePublicHomeLimit(c.req.query("limit"));
+  // 从 systemConfig 读取首页活动矩阵最大展示数（闭环），未配则默认 24
+  let maxItems = 24;
+  try {
+    const [row] = await db
+      .select({ value: systemConfig.value })
+      .from(systemConfig)
+      .where(eq(systemConfig.key, "home_activities_max_items"))
+      .limit(1);
+    if (row) { const v = Number(row.value || ""); if (Number.isFinite(v) && v >= 1) maxItems = Math.floor(v); }
+  } catch { /* 表不存在 → 默认 */ }
+  const limit = Math.min(maxItems, Math.max(1, Number(c.req.query("limit")) || 12));
   const nowIso = new Date().toISOString();
 
   const rows = await db
