@@ -197,7 +197,7 @@ app.route("/api/admin", adminLotteryRoute);
 app.route("/api/admin", adminPaymentConfigRoute);
 app.route("/api/public", publicLotteryRoute);
 app.route("/api/public", paymentPublicRoute);
-app.route("/api/payment", paymentCallbackRoute);
+app.route("/api/payments", paymentCallbackRoute);
 app.route("/api/integration", integrationRoute);
 app.route("/api/system-config", systemConfigRoute);
 // 平台运营后台路由（L3）

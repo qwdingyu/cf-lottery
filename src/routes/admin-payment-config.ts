@@ -12,7 +12,7 @@ import { eq } from "drizzle-orm";
 import { getDb, ok, fail } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
-import { tenantConfigs } from "../db/schema";
+import { tenantConfigs, auditLogs } from "../db/schema";
 import { PAYMENT_PROVIDER_CATALOG, getProviderMeta } from "../services/payment/catalog";
 import type { AppEnv } from "../bindings";
 import { sql } from "drizzle-orm";
@@ -21,9 +21,9 @@ export const adminPaymentConfigRoute = new Hono<AppEnv>();
 adminPaymentConfigRoute.use("*", requireAuth, requireTenantMember());
 
 // ═══════════════════════════════════════════════════════════════
-// GET /admin/tenant-configs/payment
+// GET /admin/payment-config  docs/131 §10
 // ═══════════════════════════════════════════════════════════════
-adminPaymentConfigRoute.get("/", async (c) => {
+adminPaymentConfigRoute.get("/payment-config", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") || "";
 
@@ -82,11 +82,16 @@ adminPaymentConfigRoute.get("/", async (c) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// PUT /admin/tenant-configs/payment
+// PUT /admin/payment-config  docs/131 §10
 // ═══════════════════════════════════════════════════════════════
-adminPaymentConfigRoute.put("/", async (c) => {
+adminPaymentConfigRoute.put("/payment-config", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") || "";
+  const tenantRole = c.get("tenantRole") || "";
+  // docs/131 §9：支付配置只允许 owner/admin 写入（viewer 只读）
+  if (tenantRole !== "owner" && tenantRole !== "admin") {
+    return fail(c, "无权限：仅租户所有者/管理员可配置支付", 403);
+  }
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
 
   const body = await c.req.json<{
@@ -141,6 +146,23 @@ adminPaymentConfigRoute.put("/", async (c) => {
       target: tenantConfigs.tenantId,
       set: { providers: JSON.stringify(providers), enabled: 1, updatedAt: sql`(datetime('now'))` },
     });
+
+  // docs/131 §9：保存写租户审计（只记录渠道与启用状态摘要，不含密钥）
+  try {
+    await db.insert(auditLogs).values({
+      id: crypto.randomUUID(),
+      tenantId,
+      actorUserId: c.get("userId") as string,
+      action: "tenant.payment_config.update",
+      targetType: "payment_config",
+      targetId: tenantId,
+      metadataJson: JSON.stringify({
+        providers: body.providers.map((p) => ({ name: p.name, enabled: p.enabled })),
+      }),
+    });
+  } catch (err) {
+    console.error("[admin] payment config audit failed:", err);
+  }
 
   return ok(c, { ok: true });
 });

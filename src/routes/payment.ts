@@ -19,9 +19,9 @@ export const paymentPublicRoute = new Hono<AppEnv>();
 export const paymentCallbackRoute = new Hono<AppEnv>();
 
 // ═══════════════════════════════════════════════════════════════
-// 公开：创建订单（参与成功后调用）
+// 公开：创建订单（参与成功后调用）docs/131 §10
 // ═══════════════════════════════════════════════════════════════
-paymentPublicRoute.post("/draws/:slug/payment/order", async (c) => {
+paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
 
@@ -72,8 +72,8 @@ paymentPublicRoute.post("/draws/:slug/payment/order", async (c) => {
   const provider = createTenantProvider(config.env);
   if (!provider) return fail(c, "支付服务暂不可用", 500);
 
-  const notifyUrl = `${c.req.url.replace(/\/draws\/.*/, "")}/payment/callback/${config.provider}`;
-  const returnUrl = `${c.req.url.replace(/\/payment\/order.*/, "")}`;
+  const notifyUrl = `${c.req.url.replace(/\/draws\/.*/, "")}/payments/${draw.tenantId}/${config.provider}/callback`;
+  const returnUrl = `${c.req.url.replace(/\/payment-orders.*/, "")}`;
 
   const { order, payResult } = await createPaymentOrder(db, {
     tenantId: draw.tenantId,
@@ -98,11 +98,12 @@ paymentPublicRoute.post("/draws/:slug/payment/order", async (c) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// 公开：查询订单状态
+// 公开：查询订单状态 docs/131 §10
 // ═══════════════════════════════════════════════════════════════
-paymentPublicRoute.get("/draws/:slug/payment/order", async (c) => {
+paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
+  const orderId = c.req.param("orderId");
   const email = c.req.query("email") || "";
 
   const [draw] = await db
@@ -112,19 +113,26 @@ paymentPublicRoute.get("/draws/:slug/payment/order", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  const [entry] = await db
-    .select()
-    .from(lotteryEntries)
-    .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.identityValue, email)))
-    .limit(1);
-  if (!entry) return ok(c, { order: null });
-
+  // 用 orderId 查订单；验证 email 与订单关联的 entry 匹配（docs/131 §11 卡密防泄露）
   const [order] = await db
     .select()
     .from(paymentOrders)
-    .where(eq(paymentOrders.entryId, entry.id))
+    .where(eq(paymentOrders.id, orderId))
     .limit(1);
   if (!order) return ok(c, { order: null });
+
+  // 验证订单属于该活动，且 email 是订单关联的参与身份
+  if (order.drawId !== draw.id) return fail(c, "订单不属于此活动", 404);
+  if (email) {
+    const [entry] = await db
+      .select({ identityValue: lotteryEntries.identityValue })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, order.entryId))
+      .limit(1);
+    if (entry && entry.identityValue !== email) {
+      return fail(c, "无权查看该订单", 403);
+    }
+  }
 
   // 查卡密信息（支付后才有）
   let codeInfo: { code?: string; secret?: string } | null = null;
@@ -152,10 +160,11 @@ paymentPublicRoute.get("/draws/:slug/payment/order", async (c) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// 支付回调（照搬 cf-shop pay.ts 回调模式）
+// 支付回调（docs/131 §10：/api/payments/:tenantId/:provider/callback）
 // ═══════════════════════════════════════════════════════════════
-paymentCallbackRoute.all("/callback/:provider", async (c) => {
+paymentCallbackRoute.all("/payments/:tenantId/:provider/callback", async (c) => {
   const providerName = c.req.param("provider") || "";
+  const pathTenantId = c.req.param("tenantId") || "";
   const db = getDb(c);
 
   // 解析回调参数（GET query / POST form → Record<string, string>）
@@ -183,6 +192,8 @@ paymentCallbackRoute.all("/callback/:provider", async (c) => {
     .where(eq(paymentOrders.id, orderNo))
     .limit(1);
   if (!order || order.provider !== providerName) return c.text("order not found", 404);
+  // 路径 tenantId 必须与订单租户一致（防跨租户串单，docs/131 §11）
+  if (order.tenantId !== pathTenantId) return c.text("tenant mismatch", 403);
 
   // 加载租户支付配置（用于验签）
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";

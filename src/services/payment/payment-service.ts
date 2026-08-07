@@ -13,10 +13,28 @@ import { createProviderRegistry } from "@usethink/cf-core/features/payment";
 import type { PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { eq, and, sql } from "drizzle-orm";
 import type { DbType } from "../../db/client";
+import { withDbTransaction } from "../../db/client";
 import { tenantConfigs, paymentOrders, prizeCodes, lotteryPrizeTiers, prizes } from "../../db/schema";
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
 
 export type PaymentProviderName = "stripe" | "alipay" | "usdt_trc20";
+
+/** 订单超时时间(分钟)：超过此时间未支付的 pending 订单标记 expired（docs/131 §8） */
+const ORDER_EXPIRE_MINUTES = 30;
+
+/** 懒清理：标记超过 30 分钟未支付的 pending 订单为 expired */
+async function expireOverdueOrders(db: DbType, tenantId: string): Promise<number> {
+  const cutoff = sql`datetime('now', '-' || ${ORDER_EXPIRE_MINUTES} || ' minutes')`;
+  const result = await db
+    .update(paymentOrders)
+    .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
+    .where(and(
+      eq(paymentOrders.tenantId, tenantId),
+      eq(paymentOrders.status, "pending"),
+      sql`${paymentOrders.createdAt} < ${cutoff}`,
+    ));
+  return result.rowsAffected ?? 0;
+}
 
 /** 从 DB 加载并解密租户支付配置；未配置或密钥缺失返回 null（照搬 cf-shop loadPaymentProviderConfigs） */
 export async function loadTenantConfig(
@@ -96,6 +114,9 @@ export async function createPaymentOrder(
   input: CreateOrderInput,
   provider: PaymentProvider,
 ): Promise<{ order: typeof paymentOrders.$inferSelect; payResult: CreatePaymentResult }> {
+  // 懒清理本租户超时订单（避免定时任务，docs/131 §8）
+  await expireOverdueOrders(db, input.tenantId);
+
   const id = crypto.randomUUID();
   await db.insert(paymentOrders).values({
     id,
@@ -122,7 +143,8 @@ export async function createPaymentOrder(
 }
 
 /**
- * 支付回调处理：验签 → 幂等 → 标记 paid → 发卡密。
+ * 支付回调处理：验签 → 幂等 → 事务内（取卡密 + 标记 paid）→ 返回订单。
+ * 卡密不足时订单标记 paid_fulfillment_failed（不静默 paid+null，docs/131 §7）。
  * params 为支付平台回调的 searchParams（Record<string,string>，由 Provider verifyCallback 解析）。
  * 重复回调返回 { processed: false, order } 不重复发卡。
  */
@@ -135,49 +157,69 @@ export async function handlePaymentCallback(
   const callback = await provider.verifyCallback(params);
   if (!callback) return { processed: false, error: "验签失败" };
 
-  const [order] = await db
+  const [pre] = await db
     .select()
     .from(paymentOrders)
     .where(eq(paymentOrders.id, callback.orderNo))
     .limit(1);
-  if (!order) return { processed: false, error: "订单不存在" };
-  if (order.tenantId !== tenantId) return { processed: false, error: "租户不匹配" };
-  if (callback.amountCents !== order.amountCents || callback.currency !== order.currency) {
+  if (!pre) return { processed: false, error: "订单不存在" };
+  if (pre.tenantId !== tenantId) return { processed: false, error: "租户不匹配" };
+  if (callback.amountCents !== pre.amountCents || callback.currency !== pre.currency) {
     return { processed: false, error: "金额不匹配" };
   }
-  if (order.status === "paid") return { processed: false, order };
 
-  // 原子取卡密：查活动的卡密奖（prizeType=code）→ 从 prizeCodes available 池取一条
-  const tier = await findCodePrize(db, tenantId, order.drawId);
-  let prizeCodeId: string | null = null;
-  if (tier?.prizeId) {
-    const acquired = await db
-      .update(prizeCodes)
-      .set({ status: "issued", issuedAt: sql`(datetime('now'))`, winnerId: order.entryId })
-      .where(and(
-        eq(prizeCodes.tenantId, tenantId),
-        eq(prizeCodes.prizeId, tier.prizeId),
-        eq(prizeCodes.status, "available"),
-      ))
-      .orderBy(prizeCodes.id)
-      .limit(1)
-      .returning({ id: prizeCodes.id });
-    prizeCodeId = acquired[0]?.id ?? null;
-  }
+  // 事务内完成发卡与状态更新（docs/131 §7：读取→取卡密→更新订单，一次提交）
+  const order = await withDbTransaction(db, async (tx) => {
+    // 幂等：事务内重新读取，已 paid 的订单直接返回
+    const [current] = await tx
+      .select()
+      .from(paymentOrders)
+      .where(eq(paymentOrders.id, pre.id))
+      .limit(1);
+    if (!current) return null;
+    if (current.status === "paid" || current.status === "paid_fulfillment_failed") {
+      return current;
+    }
 
-  await db
-    .update(paymentOrders)
-    .set({
-      status: "paid",
-      providerTradeNo: callback.providerTradeNo,
-      prizeCodeId,
-      paidAt: callback.paidAt,
-      updatedAt: sql`(datetime('now'))`,
-    })
-    .where(eq(paymentOrders.id, order.id));
+    // 查活动的卡密奖（prizeType=code）
+    const tier = await findCodePrize(tx, tenantId, pre.drawId);
 
-  const [updated] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, order.id)).limit(1);
-  return { processed: true, order: updated };
+    // 原子取卡密：available → issued（winnerId=entryId）
+    let prizeCodeId: string | null = null;
+    if (tier?.prizeId) {
+      const acquired = await tx
+        .update(prizeCodes)
+        .set({ status: "issued", issuedAt: sql`(datetime('now'))`, winnerId: pre.entryId })
+        .where(and(
+          eq(prizeCodes.tenantId, tenantId),
+          eq(prizeCodes.prizeId, tier.prizeId),
+          eq(prizeCodes.status, "available"),
+        ))
+        .orderBy(prizeCodes.id)
+        .limit(1)
+        .returning({ id: prizeCodes.id });
+      prizeCodeId = acquired[0]?.id ?? null;
+    }
+
+    // 卡密不足：标记 paid_fulfillment_failed（运营后台可见，docs/131 §7），不静默 null
+    const newStatus = prizeCodeId ? "paid" : "paid_fulfillment_failed";
+    await tx
+      .update(paymentOrders)
+      .set({
+        status: newStatus,
+        providerTradeNo: callback.providerTradeNo,
+        prizeCodeId: prizeCodeId ?? null,
+        paidAt: callback.paidAt,
+        updatedAt: sql`(datetime('now'))`,
+      })
+      .where(eq(paymentOrders.id, pre.id));
+
+    const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, pre.id)).limit(1);
+    return updated ?? null;
+  });
+
+  if (!order) return { processed: false, error: "订单不存在" };
+  return { processed: order.status === "paid" || order.status === "paid_fulfillment_failed", order };
 }
 
 /** 查询活动的卡密奖品（prizeType=code）的 prizeId，用于发卡 */
