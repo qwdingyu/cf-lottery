@@ -23,6 +23,8 @@ export type PaymentProviderCatalogItem = {
   displayName: string;
   description: string;
   supportedCurrencies: readonly string[];
+  /** 是否已具备“支付确认后自动发卡”的闭环能力。TRC20 查询确认未闭环前必须为 false。 */
+  supportsDirectFulfillment: boolean;
   factory: ProviderFactory;
   fields: ProviderFieldMeta[];
 };
@@ -33,6 +35,7 @@ export const PAYMENT_PROVIDER_CATALOG = [
     displayName: "Stripe",
     description: "国际信用卡/Apple Pay/Google Pay，API 简单，支持全球收款",
     supportedCurrencies: ["usd", "eur", "gbp", "cad", "aud", "jpy"] as const,
+    supportsDirectFulfillment: true,
     factory: stripeFactory,
     fields: [
       { key: "STRIPE_SECRET_KEY", label: "Secret Key", type: "password", required: true, sensitive: true, placeholder: "sk_live_..." },
@@ -44,6 +47,7 @@ export const PAYMENT_PROVIDER_CATALOG = [
     displayName: "支付宝",
     description: "支付宝当面付/H5，国内主流支付",
     supportedCurrencies: ["cny"] as const,
+    supportsDirectFulfillment: true,
     factory: alipayFactory,
     fields: [
       { key: "ALIPAY_APP_ID", label: "App ID", required: true, sensitive: false },
@@ -54,8 +58,9 @@ export const PAYMENT_PROVIDER_CATALOG = [
   {
     name: "usdt_trc20",
     displayName: "USDT-TRC20",
-    description: "USDT-TRC20 加密货币收款（TronGrid API）",
+    description: "USDT-TRC20 加密货币收款（TronGrid API；当前未开放直付自动发卡）",
     supportedCurrencies: ["usdt"] as const,
+    supportsDirectFulfillment: false,
     factory: trc20Factory,
     fields: [
       { key: "TRC20_WALLET_ADDRESS", label: "钱包地址", required: true, sensitive: false, placeholder: "T..." },
@@ -68,6 +73,7 @@ export const PAYMENT_PROVIDER_CATALOG = [
   //   displayName: "易支付",
   //   description: "对接所有兼容易支付协议的聚合网关，包括 ZPay；支持支付宝、微信和 QQ 支付",
   //   supportedCurrencies: ["cny"] as const,
+  //   supportsDirectFulfillment: true,
   //   factory: easyPayFactory,
   //   fields: [
   //     { key: "EASYPAY_PID", label: "商户PID", required: true, sensitive: false },
@@ -91,4 +97,8 @@ export function getProviderMeta(name: string): PaymentProviderCatalogItem | unde
 
 export function isValidProviderName(name: string): name is ValidProviderName {
   return PAYMENT_PROVIDER_CATALOG.some((item) => item.name === name);
+}
+
+export function supportsDirectFulfillmentProvider(name: string): boolean {
+  return getProviderMeta(name)?.supportsDirectFulfillment === true;
 }

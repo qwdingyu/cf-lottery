@@ -5,7 +5,7 @@
  * - /api/public/draws/:slug/payment-orders — 创建/查询订单（公开，需参与）
  * - /api/payments/:tenantId/:provider/callback — 支付回调（支付平台调用，无鉴权）
  *
- * 照搬 cf-shop pay.ts 的回调处理模式（GET query / POST form → provider.verifyCallback → 发卡）。
+ * 回调处理模式：GET query / POST form → provider.verifyCallback → 发卡。
  */
 import { Hono } from "hono";
 import { eq, and, sql } from "drizzle-orm";
@@ -114,9 +114,11 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     db,
     entry.tenantId,
     encryptionKey,
-    resumingPending ? { provider: existing.provider } : { currency },
+    resumingPending
+      ? { provider: existing.provider, requireDirectFulfillment: true }
+      : { currency, requireDirectFulfillment: true },
   );
-  if (!config) return fail(c, "租户未配置支付方式", 400);
+  if (!config) return fail(c, "租户未配置可自动发卡的支付方式", 400);
 
   const provider = createTenantProvider(config.env, resumingPending ? existing.currency : currency);
   if (!provider) return fail(c, "支付服务暂不可用", 500);

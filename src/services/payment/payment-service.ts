@@ -118,7 +118,7 @@ export async function loadTenantConfig(
   db: DbType,
   tenantId: string,
   encryptionKey?: string,
-  options: { provider?: string; currency?: string } = {},
+  options: { provider?: string; currency?: string; requireDirectFulfillment?: boolean } = {},
 ): Promise<{ provider: PaymentProviderName; env: Record<string, string> } | null> {
   const [row] = await db
     .select()
@@ -147,6 +147,7 @@ export async function loadTenantConfig(
   const requestedCurrency = String(options.currency || "").trim().toLowerCase();
   for (const item of PAYMENT_PROVIDER_CATALOG) {
     if (!isValidProviderName(item.name)) continue;
+    if (options.requireDirectFulfillment && !item.supportsDirectFulfillment) continue;
     if (requestedProvider && item.name !== requestedProvider) continue;
     if (
       requestedCurrency &&

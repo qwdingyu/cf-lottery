@@ -689,6 +689,7 @@ export interface AdminPaymentConfigCheckProvider {
   displayName: string
   enabled: boolean
   configured: boolean
+  supportsDirectFulfillment: boolean
   supportedCurrencies: string[]
   issues: string[]
   warnings: string[]

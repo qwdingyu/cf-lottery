@@ -93,6 +93,10 @@ function providerSupportsCurrency(meta: PaymentProviderCatalogItem, currency: st
   return meta.supportedCurrencies.some((value) => value.toLowerCase() === normalized);
 }
 
+function providerSupportsDirectFulfillmentCurrency(meta: PaymentProviderCatalogItem, currency: string): boolean {
+  return meta.supportsDirectFulfillment && providerSupportsCurrency(meta, currency);
+}
+
 async function validateFlashSalePayment(
   db: DbType,
   tenantId: string,
@@ -117,8 +121,17 @@ async function validateFlashSalePayment(
   }
 
   const currency = String(flashSale.currency || "cny").trim().toLowerCase();
-  const currencyProviders = PAYMENT_PROVIDER_CATALOG.filter((meta) => providerSupportsCurrency(meta, currency));
-  if (currencyProviders.length === 0) {
+  const catalogCurrencyProviders = PAYMENT_PROVIDER_CATALOG.filter((meta) => providerSupportsCurrency(meta, currency));
+  const currencyProviders = PAYMENT_PROVIDER_CATALOG.filter((meta) => providerSupportsDirectFulfillmentCurrency(meta, currency));
+  if (catalogCurrencyProviders.length > 0 && currencyProviders.length === 0) {
+    add(
+      result.errors,
+      "payment",
+      "payment.provider.direct_fulfillment_unsupported",
+      `当前 ${currency.toUpperCase()} Provider 尚未支持直付自动发卡，不能发布直付秒杀`,
+    );
+  }
+  if (catalogCurrencyProviders.length === 0) {
     add(result.errors, "payment", "payment.currency.unsupported", `当前支付目录没有支持 ${currency.toUpperCase()} 的 Provider`);
   }
 

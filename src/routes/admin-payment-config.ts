@@ -130,6 +130,9 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
     if (!enabled) {
       issues.push("未启用");
     }
+    if (!meta.supportsDirectFulfillment) {
+      issues.push("当前未支持直付自动发卡");
+    }
     for (const field of meta.fields) {
       const value = savedProviderValue(config, field.key);
       if (field.required && !value) {
@@ -149,6 +152,7 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
       displayName: meta.displayName,
       enabled,
       configured: enabled && issues.length === 0,
+      supportsDirectFulfillment: meta.supportsDirectFulfillment,
       supportedCurrencies: meta.supportedCurrencies,
       issues,
       warnings,
@@ -159,6 +163,7 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
     const availableProviders = checks
       .filter((check) => (
         check.configured &&
+        check.supportsDirectFulfillment &&
         check.supportedCurrencies.some((item) => item.toLowerCase() === currency)
       ))
       .map((check) => check.name);
