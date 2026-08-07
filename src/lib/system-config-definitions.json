@@ -289,7 +289,7 @@
     "difficulty": "basic",
     "enum": ["lottery","signup_chain","claim","survey","vote","checkin","approval","reservation"],
     "enumLabels": {
-      "lottery":"抽奖/大转盘",
+      "lottery":"抽奖",
       "signup_chain":"接龙/报名",
       "claim":"资料领取/限时抢购/兑付",
       "survey":"问卷调研",

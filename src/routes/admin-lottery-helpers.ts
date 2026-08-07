@@ -22,11 +22,20 @@ import {
   shareRecords,
   emailAccessCodes,
   lotteryDraws,
+  paymentOrders,
 } from "../db/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray } from "drizzle-orm";
 
 /** 单次 batch-delete 上限：防误炸与 Turso 长事务（docs/082 P2） */
 export const ADMIN_BATCH_DELETE_MAX = 100;
+
+/** 有支付订单的活动不能物理删除，必须保留订单、回调与发卡审计链。 */
+export class DrawDeletionBlockedError extends Error {
+  constructor() {
+    super("活动存在支付订单，不能物理删除；请保留活动历史或先完成订单处置");
+    this.name = "DrawDeletionBlockedError";
+  }
+}
 
 export const TENANT_MEMBER_ROLES = new Set(["owner", "admin", "viewer"]);
 
@@ -123,6 +132,19 @@ export async function cascadeDeleteDraw(
   tenantId: string,
   drawId: string,
 ): Promise<void> {
+  const [{ total }] = await tx
+    .select({ total: count() })
+    .from(paymentOrders)
+    .where(and(
+      eq(paymentOrders.tenantId, tenantId),
+      eq(paymentOrders.drawId, drawId),
+    ));
+  if (Number(total || 0) > 0) {
+    // payment_orders 没有随活动删除而级联清理：它承载支付平台回调、退款/补发和客服排障所需的历史。
+    // 这里 fail closed，避免删除 entry 后留下无法完成回调的孤儿订单。
+    throw new DrawDeletionBlockedError();
+  }
+
   await tx.delete(lotteryPrizeTiers).where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)));
   await tx.delete(lotteryRosterMembers).where(and(eq(lotteryRosterMembers.drawId, drawId), eq(lotteryRosterMembers.tenantId, tenantId)));
   await tx.delete(lotteryInviteCodes).where(and(eq(lotteryInviteCodes.drawId, drawId), eq(lotteryInviteCodes.tenantId, tenantId)));

@@ -43,6 +43,7 @@ import {
   csvEscape,
   isUniqueConstraintError,
   cascadeDeleteDraw,
+  DrawDeletionBlockedError,
   isDrawStatusDeletable,
   parseBatchDeleteIds,
 } from "./admin-lottery-helpers";
@@ -340,9 +341,16 @@ route.delete("/draws/:id", async (c) => {
     return fail(c, "进行中的活动不可删除，请先暂停或取消", 400);
   }
 
-  await withDbTransaction(db, async (tx) => {
-    await cascadeDeleteDraw(tx, tenantId, drawId);
-  });
+  try {
+    await withDbTransaction(db, async (tx) => {
+      await cascadeDeleteDraw(tx, tenantId, drawId);
+    });
+  } catch (err) {
+    if (err instanceof DrawDeletionBlockedError) {
+      return fail(c, err.message, 409);
+    }
+    throw err;
+  }
 
   await recordTenantAudit(c, "draw.delete", "lottery_draw", drawId);
   return ok(c, { deleted: true });
@@ -391,7 +399,10 @@ route.post("/draws/batch-delete", async (c) => {
       deleted.push(drawId);
     } catch (err) {
       console.error("[admin] draw batch-delete item failed:", drawId, err);
-      failed.push({ id: drawId, reason: "删除失败" });
+      failed.push({
+        id: drawId,
+        reason: err instanceof DrawDeletionBlockedError ? err.message : "删除失败",
+      });
     }
   }
 

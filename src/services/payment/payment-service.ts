@@ -9,7 +9,7 @@
  *
  * 复用 @usethink/cf-core/features/payment（Provider 抽象已在共享库）。
  */
-import { createProviderRegistry } from "@usethink/cf-core/features/payment";
+import { createProviderRegistry, isAmbiguousEasyPayProviderError } from "@usethink/cf-core/features/payment";
 import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { eq, and, sql, inArray, isNull } from "drizzle-orm";
 import type { DbType } from "../../db/client";
@@ -24,6 +24,7 @@ import {
   lotteryDraws,
 } from "../../db/schema";
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
+import { decryptPaymentConfigValue } from "./secret-config";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../../lib/flash-sale-config";
 
 // systemConfig 表（用于读取运行时配置订单超时/价格上限等）
@@ -32,6 +33,12 @@ import { systemConfig as systemConfigTable } from "../../db/schema";
 export type PaymentProviderName = "easypay" | "stripe" | "alipay";
 
 const RETRYABLE_PAYMENT_ORDER_STATUSES = new Set(["cancelled", "expired"]);
+
+function shouldCancelOrderAfterCreateFailure(error: unknown): boolean {
+  // 易支付/ZPay 已在 cf-core 区分 deterministic / ambiguous。
+  // ambiguous 表示网关可能已经创建订单：本地必须保留 pending，允许迟到回调或用户刷新后恢复支付入口。
+  return !isAmbiguousEasyPayProviderError(error);
+}
 
 /** 懒清理：标记超时未支付的 pending 订单为 expired，并释放关联 entry 名额（docs/131 §8）。超时分钟数从 systemConfig 读取，未配则默认 30。 */
 export async function expireOverdueOrders(db: DbType, tenantId: string): Promise<number> {
@@ -262,13 +269,7 @@ export async function loadTenantConfig(
     return null;
   }
 
-  const decrypt = async (v: string): Promise<string> => {
-    if (!v.startsWith("enc:")) return v;
-    if (!encryptionKey) throw new Error("CREDENTIALS_ENCRYPTION_KEY 未配置");
-    const { decrypt: aesDecrypt } = await import("@usethink/cf-core");
-    const decrypted = await aesDecrypt(v.slice(4), encryptionKey);
-    return String(decrypted);
-  };
+  const decrypt = (v: string): Promise<string> => decryptPaymentConfigValue(v, encryptionKey);
 
   // 按 catalog 顺序遍历，返回第一个已启用且凭据完整的渠道。
   // 直付路由只拿到一个 Provider，未来迁移 cf-pay 时保持这里作为统一选路边界。
@@ -374,8 +375,10 @@ export async function createPaymentOrder(
       description: input.description,
     });
   } catch (err) {
-    // 支付下单失败 → 回滚订单为 cancelled（释放 entry 名额，避免占位）
-    await cancelPaymentOrder(db, input, id);
+    // 确定性失败才取消并释放名额；不确定失败保留 pending，防止“网关已收单/已支付，本地已取消”。
+    if (shouldCancelOrderAfterCreateFailure(err)) {
+      await cancelPaymentOrder(db, input, id);
+    }
     throw err;
   }
 
@@ -419,7 +422,9 @@ export async function retryPaymentOrder(
       description: input.description,
     });
   } catch (err) {
-    await cancelPaymentOrder(db, input, existing.id);
+    if (shouldCancelOrderAfterCreateFailure(err)) {
+      await cancelPaymentOrder(db, input, existing.id);
+    }
     throw err;
   }
 

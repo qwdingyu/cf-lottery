@@ -26,6 +26,12 @@ import {
 import { parseAdminPagination, recordTenantAudit } from "./admin-lottery-helpers";
 import { PAYMENT_PROVIDER_CATALOG, getProviderMeta } from "../services/payment/catalog";
 import { retryPaymentFulfillment } from "../services/payment/payment-service";
+import {
+  decryptPaymentConfigValueResult,
+  encryptPaymentConfigValue,
+  isEncryptedPaymentConfigValue,
+  isValidSecretEncryptionKey,
+} from "../services/payment/secret-config";
 import type { AppEnv } from "../bindings";
 import { sql } from "drizzle-orm";
 
@@ -125,7 +131,8 @@ adminPaymentConfigRoute.get("/payment-config", async (c) => {
 adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") || "";
-  const encryptionKeyConfigured = Boolean(getEnv(c, "CREDENTIALS_ENCRYPTION_KEY"));
+  const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
+  const encryptionKeyConfigured = isValidSecretEncryptionKey(encryptionKey);
 
   const [row] = await db
     .select()
@@ -134,11 +141,13 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
     .limit(1);
 
   const providers = parseSavedProviders(row?.providers || "{}");
-  const checks = PAYMENT_PROVIDER_CATALOG.map((meta) => {
+  const checks = [];
+  for (const meta of PAYMENT_PROVIDER_CATALOG) {
     const config = providers[meta.name];
     const enabled = config?.enabled === true;
     const issues: string[] = [];
     const warnings: string[] = [];
+    const env: Record<string, string> = {};
 
     if (!enabled) {
       issues.push("未启用");
@@ -152,15 +161,27 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
         issues.push(`${field.label} 未配置`);
       }
       if (field.sensitive && value) {
-        if (value.startsWith("enc:") && !encryptionKeyConfigured) {
-          issues.push(`${field.label} 已加密但 CREDENTIALS_ENCRYPTION_KEY 未配置`);
-        } else if (!value.startsWith("enc:")) {
+        if (isEncryptedPaymentConfigValue(value)) {
+          const decrypted = await decryptPaymentConfigValueResult(value, encryptionKey);
+          if (!decrypted.ok) {
+            issues.push(`${field.label} 解密失败：${decrypted.reason}`);
+          } else {
+            env[field.key] = decrypted.value;
+          }
+        } else {
           warnings.push(`${field.label} 未以 enc: 形式保存，建议重新保存配置`);
+          env[field.key] = value;
         }
+      } else if (value) {
+        env[field.key] = value;
       }
     }
 
-    return {
+    if (enabled && issues.length === 0 && !meta.factory.isAvailable(env)) {
+      issues.push(`${meta.displayName} 凭据不完整或接口地址不安全`);
+    }
+
+    checks.push({
       name: meta.name,
       displayName: meta.displayName,
       enabled,
@@ -169,8 +190,8 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
       supportedCurrencies: meta.supportedCurrencies,
       issues,
       warnings,
-    };
-  });
+    });
+  }
 
   const currencies = [...new Set(
     PAYMENT_PROVIDER_CATALOG.flatMap((meta) => meta.supportedCurrencies.map((currency) => currency.toLowerCase())),
@@ -211,17 +232,22 @@ adminPaymentConfigRoute.put("/payment-config", async (c) => {
     return fail(c, "无权限：仅租户所有者/管理员可配置支付", 403);
   }
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
-  if (!encryptionKey) {
-    return fail(c, "CREDENTIALS_ENCRYPTION_KEY 未配置，无法加密保存支付凭据", 400);
+  if (!isValidSecretEncryptionKey(encryptionKey)) {
+    return fail(c, "CREDENTIALS_ENCRYPTION_KEY 必须配置为 64 位 hex，才能加密保存支付凭据", 400);
   }
 
-  const body = await c.req.json<{
-    providers: Array<{
+  let body: {
+    providers?: Array<{
       name: string;
       enabled: boolean;
       fields: Record<string, string>;
     }>;
-  }>();
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return fail(c, "请求体无效", 400);
+  }
 
   if (!body.providers || !Array.isArray(body.providers)) {
     return fail(c, "缺少 providers 参数", 400);
@@ -239,8 +265,7 @@ adminPaymentConfigRoute.put("/payment-config", async (c) => {
   }
 
   // 加密敏感字段,构建存储对象
-  const { encrypt: aesEncrypt } = await import("@usethink/cf-core");
-  const providers: Record<string, Record<string, unknown>> = {};
+  const providers: Record<string, Record<string, unknown>> = { ...existingProviders };
   const issues: string[] = [];
 
   for (const item of body.providers) {
@@ -253,7 +278,7 @@ adminPaymentConfigRoute.put("/payment-config", async (c) => {
       // 占位符 → 保留原值，避免保存表单时把真实密钥覆盖为空。
       if (field.sensitive && raw === SENSITIVE_CONFIG_PLACEHOLDER) {
         const existing = existingProviders[item.name]?.[field.key.toLowerCase()] ?? existingProviders[item.name]?.[field.key];
-        if (existing && String(existing).startsWith("enc:")) {
+        if (existing && isEncryptedPaymentConfigValue(String(existing))) {
           cfg[field.key.toLowerCase()] = existing;
           continue;
         }
@@ -266,7 +291,7 @@ adminPaymentConfigRoute.put("/payment-config", async (c) => {
       }
       if (!raw) continue;
       cfg[field.key.toLowerCase()] = field.sensitive
-        ? "enc:" + (await aesEncrypt(raw as unknown as Record<string, unknown>, encryptionKey))
+        ? await encryptPaymentConfigValue(raw, encryptionKey)
         : raw;
     }
     providers[item.name] = cfg;
