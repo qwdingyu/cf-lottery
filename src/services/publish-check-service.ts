@@ -18,6 +18,7 @@ import {
   webhookConfigs,
 } from "../db/schema";
 import { validateActivityConfigForPublish } from "../lib/activity-config";
+import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../lib/flash-sale-config";
 
 export type PublishCheckSection =
   | "basic"
@@ -324,6 +325,59 @@ function validatePromotion(draw: LotteryDraw, result: PublishCheckResult) {
     // 与 isViralLeaderboardEnabled 一致：仅显式关闭才提示（缺省开启不误报 off）
     if (viral.enabled === true && viral.leaderboardEnabled === false) {
       add(result.infos, "promotion", "viral.leaderboard.off", "裂变传播：排行榜未开启，参与者无法看到排行对比");
+    }
+  }
+
+  // docs/130：秒杀壳配置。lottery 侧只校验「限时限量参与 + 导流」语义，不校验 shop 库存。
+  const flashParsed = parseFlashSaleConfig(promotionConfig || draw.promotionConfig);
+  for (const item of flashParsed.issues) {
+    add(result.errors, "promotion", item.code, item.message);
+  }
+  if (flashParsed.config) {
+    const effective = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
+    if (effective == null) {
+      add(
+        result.errors,
+        "promotion",
+        "flash_sale.stock.required",
+        "秒杀活动必须设置名额上限（flashSale.stockLimit 或活动 maxParticipants）",
+      );
+    }
+    // stockLimit 与 maxParticipants 同时存在且不一致：硬截单与进度均以 stockLimit 优先（join 与公开 runtime 同源）
+    if (
+      flashParsed.config.stockLimit != null &&
+      draw.maxParticipants != null &&
+      draw.maxParticipants > 0 &&
+      flashParsed.config.stockLimit !== draw.maxParticipants
+    ) {
+      add(
+        result.warnings,
+        "promotion",
+        "flash_sale.stock.mismatch",
+        `秒杀 stockLimit=${flashParsed.config.stockLimit} 与 maxParticipants=${draw.maxParticipants} 不一致：进度与截单均按 stockLimit；建议二者对齐以免运营误解`,
+      );
+    }
+    const destination = promotionConfig?.destination as Record<string, unknown> | undefined;
+    const afterWin = (promotionConfig?.ctas as Record<string, { url?: string }> | undefined)?.after_win;
+    const hasShopLink =
+      isSafeHttpUrl(destination?.url) ||
+      (typeof afterWin?.url === "string" && isSafeHttpUrl(afterWin.url)) ||
+      isSafeHttpUrl(legacyProductLink?.url);
+    if (!hasShopLink) {
+      add(
+        result.warnings,
+        "promotion",
+        "flash_sale.destination.missing",
+        "秒杀已启用但未配置安全的导流/购买链接（destination 或 after_win CTA）；参与后无法闭环到 cf-shop",
+      );
+    }
+    if (draw.experienceType !== "flash_sale") {
+      add(
+        result.infos,
+        "promotion",
+        "flash_sale.experience.hint",
+        "已启用 flashSale 配置；建议 experience_type=flash_sale 以使用秒杀体验壳",
+      );
     }
   }
 }

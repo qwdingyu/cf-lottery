@@ -194,6 +194,18 @@ export type LotteryEditorForm = {
   prizePanelMode: string
   /** 每行一条仪式短语；空则公开端用默认中性词 */
   ritualPhrasesText: string
+  /**
+   * 秒杀壳（docs/130，写入 promotion.flashSale）
+   * 支付/发卡在 cf-shop，此处只配展示与名额语义
+   */
+  enableFlashSale: boolean
+  flashSaleSessionLabel: string
+  flashSaleStockLimit: number | null
+  flashSaleMaxPerUser: number
+  flashSaleCtaLabel: string
+  flashSaleShowCountdown: boolean
+  flashSaleShowProgress: boolean
+  flashSaleShowStock: boolean
   /** 表单内按 kind 切换；模板直接读 fields/options，用 any 避免联合类型收窄失败 */
   activityConfig: any
 }

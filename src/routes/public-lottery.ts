@@ -42,6 +42,7 @@ import {
 import { setupPublicShareRoutes } from "./public-lottery-share";
 import { defaultExperienceForParticipation } from "./admin-lottery-helpers";
 import { buildPublicPrizeShellPayload } from "../lib/prize-shell-display";
+import { buildFlashSaleRuntime, parseFlashSaleConfig } from "../lib/flash-sale-config";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
@@ -143,6 +144,23 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     // instant：每人抽奖次数硬顶（0=未配置/非 instant）
     maxSpinsPerEntry: Number(draw.maxSpinsPerEntry || 0) || undefined,
   };
+
+  // docs/130：秒杀壳运行时快照（已抢/剩余/进度）。进度来自真实 entries，不造假。
+  // 为什么在公开详情计算：前端倒计时用 startAt/endAt；进度条不能只靠配置静态数。
+  {
+    const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
+    if (flashParsed.config) {
+      const claimedForFlash =
+        draw.showParticipantCount ? Number(total) : Number(total);
+      // 即使运营关闭了「展示参与人数」，秒杀进度仍需要真实 claimed 才能诚实；
+      // 仅返回聚合进度，不额外暴露明文名单。
+      result.flashSale = buildFlashSaleRuntime(
+        flashParsed.config,
+        claimedForFlash,
+        draw.maxParticipants,
+      );
+    }
+  }
 
   if (draw.activityKind === "lottery") {
     const prizeRows = await db
@@ -450,6 +468,19 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
             409,
           );
         }
+        // docs/130：秒杀售罄透传 soldOut，前端可刷新进度并映射 flashSoldOut
+        if ("soldOut" in result && result.soldOut) {
+          return c.json(
+            {
+              ok: false,
+              message: result.message || "已抢光",
+              error: result.message || "已抢光",
+              soldOut: true,
+              code: "code" in result ? result.code : "flash_sale.sold_out",
+            },
+            400,
+          );
+        }
         return fail(c, result.message || "参与失败", 400);
       }
       // 返回 entryId/outcome/resultMode（与 verify-join 对齐）：前端依赖它们弹出结果弹窗、
@@ -499,6 +530,19 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
               entryId: "entryId" in result ? result.entryId : undefined,
             },
             409,
+          );
+        }
+        // docs/130：秒杀售罄透传 soldOut
+        if ("soldOut" in result && result.soldOut) {
+          return c.json(
+            {
+              ok: false,
+              message: result.message || "已抢光",
+              error: result.message || "已抢光",
+              soldOut: true,
+              code: "code" in result ? result.code : "flash_sale.sold_out",
+            },
+            400,
           );
         }
         return fail(c, result.message || "参与失败", 400);
@@ -679,6 +723,19 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
             entryId: "entryId" in result ? result.entryId : undefined,
           },
           409,
+        );
+      }
+      // docs/130：秒杀售罄透传 soldOut
+      if ("soldOut" in result && result.soldOut) {
+        return c.json(
+          {
+            ok: false,
+            message: result.message || "已抢光",
+            error: result.message || "已抢光",
+            soldOut: true,
+            code: "code" in result ? result.code : "flash_sale.sold_out",
+          },
+          400,
         );
       }
       return fail(c, result.message || "参与失败", 400);
@@ -1290,6 +1347,19 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
             entryId: "entryId" in result ? result.entryId : undefined,
           },
           409,
+        );
+      }
+      // docs/130：秒杀售罄透传 soldOut
+      if ("soldOut" in result && result.soldOut) {
+        return c.json(
+          {
+            ok: false,
+            message: result.message || "已抢光",
+            error: result.message || "已抢光",
+            soldOut: true,
+            code: "code" in result ? result.code : "flash_sale.sold_out",
+          },
+          400,
         );
       }
       return fail(c, result.message || "参与失败", 400);

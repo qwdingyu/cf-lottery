@@ -75,6 +75,26 @@ export type LotteryDraw = {
       prizePanelMode?: string
       ritualPhrases?: string[]
     }
+    /** 秒杀配置节点（原始配置；运行时以 flashSale 顶层字段为准） */
+    flashSale?: Record<string, unknown>
+  }
+  /**
+   * 秒杀运行时快照（docs/130，公开 API 计算）。
+   * claimed/progress 来自真实 entries，不是运营手填假进度。
+   */
+  flashSale?: {
+    enabled?: boolean
+    sessionLabel?: string
+    stockLimit?: number | null
+    effectiveStockLimit?: number | null
+    maxPerUser?: number
+    showCountdown?: boolean
+    showProgress?: boolean
+    showStock?: boolean
+    ctaLabel?: string
+    claimed?: number
+    remaining?: number | null
+    progressPercent?: number
   }
 }
 

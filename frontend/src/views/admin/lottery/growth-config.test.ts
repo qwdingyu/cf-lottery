@@ -247,4 +247,64 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
     expect(g.enableViral).toBe(true)
     expect(g.viralMaxExtraEntries).toBe(5)
   })
+
+  it('docs/130：flashSale 回填与提交闭环，二次保存不丢', () => {
+    const g = growthFieldsFromDraw({
+      promotionConfig: JSON.stringify({
+        version: 1,
+        flashSale: {
+          enabled: true,
+          sessionLabel: '12:00场',
+          stockLimit: 100,
+          maxPerUser: 1,
+          ctaLabel: '抢',
+          showCountdown: true,
+          showProgress: true,
+          showStock: false,
+        },
+        destination: { url: 'https://shop.example.com/p/1', title: '去购买' },
+      }),
+    })
+    expect(g.enableFlashSale).toBe(true)
+    expect(g.flashSaleSessionLabel).toBe('12:00场')
+    expect(g.flashSaleStockLimit).toBe(100)
+    expect(g.flashSaleShowStock).toBe(false)
+    expect(g.hasGrowthConfig).toBe(true)
+
+    const payload = buildPromotionConfigPayload(
+      {
+        enableFlashSale: g.enableFlashSale,
+        flashSaleSessionLabel: g.flashSaleSessionLabel,
+        flashSaleStockLimit: g.flashSaleStockLimit,
+        flashSaleMaxPerUser: g.flashSaleMaxPerUser,
+        flashSaleCtaLabel: g.flashSaleCtaLabel,
+        flashSaleShowCountdown: g.flashSaleShowCountdown,
+        flashSaleShowProgress: g.flashSaleShowProgress,
+        flashSaleShowStock: g.flashSaleShowStock,
+        enableProductLink: true,
+        productLink: { url: 'https://shop.example.com/p/1', title: '去购买' },
+      },
+      { isEditing: true },
+    )
+    expect((payload as any).flashSale).toMatchObject({
+      enabled: true,
+      sessionLabel: '12:00场',
+      stockLimit: 100,
+      maxPerUser: 1,
+      ctaLabel: '抢',
+      showStock: false,
+    })
+  })
+
+  it('docs/130：关闭秒杀后提交包无 flashSale 键', () => {
+    const payload = buildPromotionConfigPayload(
+      {
+        enableFlashSale: false,
+        enableProductLink: true,
+        productLink: { url: 'https://shop.example.com/p/1', title: 'T' },
+      },
+      { isEditing: true },
+    )
+    expect(payload).not.toHaveProperty('flashSale')
+  })
 })

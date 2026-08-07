@@ -53,4 +53,17 @@ describe("ACTIVITY_TEMPLATES 抽奖体验诚实性（docs/115）", () => {
     expect(wheel!.defaults.resultMode).toBe("manual");
     expect(scratch!.defaults.resultMode).toBe("manual");
   });
+
+  it("docs/130：限时抢购模板为 claim + flash_sale + instant，不暗示本系统收款", () => {
+    const flash = ACTIVITY_TEMPLATES.find((t) => t.id === "flash-sale-rush");
+    expect(flash).toBeTruthy();
+    expect(flash!.defaults).toMatchObject({
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      participationMode: "open",
+    });
+    expect(flash!.description).toMatch(/不收款|cf-shop|导流/);
+    expect(flash!.description).not.toMatch(/在本系统完成支付/);
+  });
 });

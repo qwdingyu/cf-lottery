@@ -201,6 +201,9 @@
               :loading="joiningId === draw.id || spinningId === draw.id"
               :celebrate-key="celebrateKeyById[draw.id] || 0"
               :target-sector-index="targetSectorById[draw.id] ?? null"
+              :flash-sale="draw.flashSale || null"
+              :start-at="draw.startAt || draw.startTime || null"
+              :end-at="draw.endAt || draw.endTime || null"
               @play="handleGamePlay(draw)"
             />
             <!-- instant：剩余次数提示（docs/116） -->
@@ -2343,6 +2346,17 @@ function refreshDrawDetailFor(drawId: string) {
   void fetchDrawDetail(draw?.publicSlug || draw?.id || drawId)
 }
 
+/**
+ * docs/130：秒杀名额抢光。
+ * - toast「已抢光」
+ * - 刷新详情让 flashSale.remaining=0，按钮变灰
+ * - 不打开登录（不是身份问题）
+ */
+function handleFlashSaleSoldOut(drawId: string, message?: string) {
+  showToast(message || t('lottery.flashSoldOut'), 'error')
+  refreshDrawDetailFor(drawId)
+}
+
 /** 仅登录（无需验证码）：存入邮箱后关闭弹窗，加载参与记录 */
 function handleLogout() {
   clearSession()
@@ -2616,6 +2630,9 @@ async function joinWithRegisteredToken(drawId: string, token: string) {
       completeJoinSuccess(drawId, data)
     } else if (isAlreadyJoinedResponse(data, res.status)) {
       handleAlreadyJoined(drawId, { entryId: entryIdFromAlreadyJoined(data) })
+    } else if (data.soldOut || data.code === 'flash_sale.sold_out') {
+      // docs/130：秒杀售罄 — 刷新进度，不弹登录
+      handleFlashSaleSoldOut(drawId, data.message)
     } else {
       const msg = data.message || t('lottery.joinFailed')
       loginError.value = msg
@@ -2685,6 +2702,8 @@ async function joinOpenWithBearer(drawId: string, token: string, email: string) 
       completeJoinSuccess(drawId, data, { email })
     } else if (isAlreadyJoinedResponse(data, res.status)) {
       handleAlreadyJoined(drawId, { entryId: entryIdFromAlreadyJoined(data) })
+    } else if (data.soldOut || data.code === 'flash_sale.sold_out') {
+      handleFlashSaleSoldOut(drawId, data.message)
     } else {
       showToast(data.message || t('lottery.joinFailed'), 'error')
       // 后端拒绝（如 JWT 无 email claim）时降级弹窗，仍可 OTP
@@ -2822,6 +2841,9 @@ async function resumeCfAuthJoinAfterCallback() {
       } else if (isAlreadyJoinedResponse(data, res.status)) {
         finishPendingOk()
         handleAlreadyJoined(joinKey, { entryId: entryIdFromAlreadyJoined(data) })
+      } else if (data.soldOut || data.code === 'flash_sale.sold_out') {
+        finishPendingOk()
+        handleFlashSaleSoldOut(joinKey, data.message)
       } else {
         // 保留 pending；打开登录便于用户改凭证或看错误
         const msg = data.message || t('lottery.joinFailed')
@@ -2887,6 +2909,9 @@ async function resumeCfAuthJoinAfterCallback() {
     } else if (isAlreadyJoinedResponse(data, res.status)) {
       finishPendingOk()
       handleAlreadyJoined(joinKey, { entryId: entryIdFromAlreadyJoined(data) })
+    } else if (data.soldOut || data.code === 'flash_sale.sold_out') {
+      finishPendingOk()
+      handleFlashSaleSoldOut(joinKey, data.message)
     } else {
       // 失败不 consume；若用户刚在弹窗改了密码，写回 pending 供下次自动/手动
       saveCfAuthPendingJoin(sessionStorage, {
@@ -3125,6 +3150,9 @@ async function handleVerifyCode() {
       codeSent.value = false
     } else if (isAlreadyJoinedResponse(data, res.status)) {
       handleAlreadyJoined(pendingJoinDrawId.value!, { entryId: entryIdFromAlreadyJoined(data) })
+    } else if (data.soldOut || data.code === 'flash_sale.sold_out') {
+      handleFlashSaleSoldOut(pendingJoinDrawId.value!, data.message)
+      closeLogin()
     } else {
       loginError.value = data.message || t('lottery.verifyFailed')
     }

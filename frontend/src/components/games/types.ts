@@ -35,6 +35,25 @@ export interface PrizeItem {
   valueText?: string
 }
 
+/**
+ * 秒杀壳展示数据（docs/130）。
+ * 由公开 API `flashSale` 下发；进度必须来自真实参与计数。
+ */
+export interface FlashSaleDisplay {
+  enabled?: boolean
+  sessionLabel?: string
+  stockLimit?: number | null
+  effectiveStockLimit?: number | null
+  maxPerUser?: number
+  showCountdown?: boolean
+  showProgress?: boolean
+  showStock?: boolean
+  ctaLabel?: string
+  claimed?: number
+  remaining?: number | null
+  progressPercent?: number
+}
+
 /** 游戏组件 Props 接口 */
 export interface GameProps {
   /** 奖品列表，用于渲染游戏视觉元素 */
@@ -54,6 +73,10 @@ export interface GameProps {
    * 无服务端索引时禁止宣称中奖。
    */
   targetSectorIndex?: number | null
+  /** 秒杀运行时（仅 experience_type=flash_sale 时由父组件传入） */
+  flashSale?: FlashSaleDisplay | null
+  startAt?: string | null
+  endAt?: string | null
 }
 
 /** 游戏组件 Emits 接口 */

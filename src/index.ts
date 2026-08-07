@@ -14,6 +14,7 @@ import { systemConfig, auditLogs, lotteryDraws } from "./db/schema";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
+import { paymentPublicRoute, paymentCallbackRoute } from "./routes/payment";
 import { integrationRoute } from "./routes/integration";
 import { systemConfigRoute } from "./routes/system-config";
 import { platformSystemConfigRoute } from "./routes/platform-system-config";
@@ -193,6 +194,8 @@ app.route("/api", mediaRoute);
 app.route("/api/admin/media", adminMediaRoute);
 app.route("/api/admin", adminLotteryRoute);
 app.route("/api/public", publicLotteryRoute);
+app.route("/api/public", paymentPublicRoute);
+app.route("/api/payment", paymentCallbackRoute);
 app.route("/api/integration", integrationRoute);
 app.route("/api/system-config", systemConfigRoute);
 // 平台运营后台路由（L3）

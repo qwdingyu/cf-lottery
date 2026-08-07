@@ -45,6 +45,8 @@ const GAME_MAP: Record<string, () => Promise<Component>> = {
   'submit':  () => import('./SubmitGame.vue'),     // 通用提交（多玩法共用）
   'reveal':  () => import('./RevealGame.vue'),     // 领取/揭晓（资料领取/盲盒）
   'form':    () => import('./FormGame.vue'),       // 表单提交（问卷/调研/审核申请）
+  // docs/130：限时抢购壳（倒计时/进度/抢）；不决定支付，join 仍由父组件
+  'flash_sale': () => import('./FlashSaleGame.vue'),
   // ── 非抽奖语义的体验别名：后台可选 list/queue 等，公开页必须有主 CTA 壳 ──
   // 不另造重型组件：统一落到 Submit（一键参与）或 Form（问卷/投票已有字段区）
   'list':     () => import('./SubmitGame.vue'),    // 报名列表 → 主按钮参与

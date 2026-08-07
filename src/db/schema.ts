@@ -623,3 +623,34 @@ export const redemptionRecords = sqliteTable("redemption_records", {
   recordTenantIdx: index("idx_redemption_record_tenant").on(t.tenantId, t.redeemedAt),
   recordCodeIdx: index("idx_redemption_record_code").on(t.codeId, t.redeemedAt),
 }));
+
+// ── 租户配置（多租户隔离，通用配置表：支付/风控/其他，docs/131） ──
+// 一租户一行，按 JSON 字段承载各模块配置（providers 存支付渠道，未来可加其他）
+// 凭据加密存储（enc:base64），解密密钥 CREDENTIALS_ENCRYPTION_KEY
+export const tenantConfigs = sqliteTable("tenant_configs", {
+  tenantId: text("tenant_id").primaryKey(),
+  providers: text("providers").notNull().default("{}"),
+  enabled: integer("enabled").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+// ── 支付订单（秒杀卡密支付，一参与一订单） ──
+export const paymentOrders = sqliteTable("payment_orders", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  entryId: text("entry_id").notNull().unique(),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("cny"),
+  status: text("status").notNull().default("pending"), // pending/paid/refunded/expired/cancelled
+  provider: text("provider").notNull(),
+  providerTradeNo: text("provider_trade_no"),
+  prizeCodeId: text("prize_code_id"),
+  paidAt: text("paid_at"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  tenantOrderIdx: index("idx_payment_orders_tenant").on(t.tenantId, t.createdAt),
+  statusIdx: index("idx_payment_orders_status").on(t.status, t.createdAt),
+}));

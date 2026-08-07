@@ -25,6 +25,10 @@ import { verifyAccessPassword } from "./utils";
 import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
 import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
 import { computeViralSpinGrant, initialSpinsForJoin } from "./spin-quota";
+import {
+  parseFlashSaleConfig,
+  resolveEffectiveStockLimit,
+} from "../../lib/flash-sale-config";
 
 /* ── 候选池 ───────────────────────────────────────────────── */
 
@@ -180,22 +184,43 @@ export async function joinDraw(
       }
 
       const entryId = crypto.randomUUID();
-      const effectiveMax = draw.maxParticipants ?? 50000;
-      const acceptsWaitlist = draw.activityKind === "signup_chain" && draw.allocationPolicy === "waitlist";
+      // docs/130：秒杀硬截单以 flashSale.stockLimit 优先，再回退 maxParticipants。
+      // 为什么与展示同源：公开端进度条用 resolveEffectiveStockLimit；参与路径若只认 maxParticipants，
+      // 会出现「前端显示已抢光、后端仍可 join」或反过来——必须同一生效上限。
+      // 原子性：条件 INSERT ... WHERE COUNT(*) < cap，与邀请码 CAS 同事务，无独立库存表。
+      const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
+      const flashCap = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
+      // 仅 flashSale 启用或 experience_type=flash_sale 走秒杀截单语义；
+      // 普通 claim/reveal 仍按 maxParticipants（可无限软顶），避免误杀非秒杀领取。
+      const isFlashSaleJoin =
+        flashParsed.config != null || draw.experienceType === "flash_sale";
+      // 秒杀：禁止候补超卖；其它活动仍按 maxParticipants（无上限时 50000 软顶）
+      const effectiveMax =
+        flashCap != null && flashCap > 0
+          ? flashCap
+          : isFlashSaleJoin && (draw.maxParticipants == null || draw.maxParticipants <= 0)
+            ? 0 // 秒杀未配名额：条件永远不满足，拒绝超发（发布预检应已阻断）
+            : (draw.maxParticipants ?? 50000);
+      const acceptsWaitlist =
+        draw.activityKind === "signup_chain" &&
+        draw.allocationPolicy === "waitlist" &&
+        !isFlashSaleJoin; // 秒杀不做候补，满即拒
       // 容量检查：仅按活动维度（draw_id）校验，不做租户级累计参与人数 COUNT。
       // 原因：租户级 COUNT 会扩大 Turso rows read 和请求延迟，不适合放在用户参与热路径。
       // 租户级累计参与人数额度未来通过快照表（定时任务预聚合）实现。
       // 详见 docs/023_Cloudflare免费版与Turso约束下认证和运行安全方案_2026-08-01.md
       const capacityClause = acceptsWaitlist
         ? sql`1 = 1`
-        : sql`(SELECT COUNT(*) FROM lottery_entries WHERE tenant_id = ${draw.tenantId} AND draw_id = ${draw.id}) < ${effectiveMax}`;
+        : effectiveMax > 0
+          ? sql`(SELECT COUNT(*) FROM lottery_entries WHERE tenant_id = ${draw.tenantId} AND draw_id = ${draw.id}) < ${effectiveMax}`
+          : sql`1 = 0`; // 秒杀无名额：拒绝写入
       // instant：join 发放 initial spins（默认 1），不抽奖（docs/116）
       const spinInit = initialSpinsForJoin(
         Number((draw as { maxSpinsPerEntry?: number }).maxSpinsPerEntry ?? 0),
         1,
       );
       // 写入参与记录。使用条件 INSERT 确保并发安全：
-      // 1. 活动级容量检查（capacityClause）：防止同时写入超过 maxParticipants
+      // 1. 活动级容量检查（capacityClause）：防止同时写入超过生效名额（秒杀=stockLimit 优先）
       // 2. 签到活动使用 uniqueValue（含日期后缀）作为 identity_value，
       //    使 UNIQUE 约束允许每日签到但不允许同一天重复。
       const insertResult = await tx.run(sql`
@@ -209,6 +234,15 @@ export async function joinDraw(
       `);
 
       if ((insertResult.rowsAffected ?? 0) === 0) {
+        // 秒杀售罄文案与普通「名额已满」区分，便于前端映射 flashSoldOut
+        if (isFlashSaleJoin && !acceptsWaitlist) {
+          return {
+            joined: false,
+            message: "已抢光",
+            soldOut: true as const,
+            code: "flash_sale.sold_out" as const,
+          };
+        }
         return { joined: false, message: acceptsWaitlist ? "参与失败，请稍后重试" : "活动名额已满" };
       }
 

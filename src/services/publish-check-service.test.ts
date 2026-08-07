@@ -270,6 +270,49 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.errors.some((item) => item.code === "webhook.events.invalid")).toBe(true);
   });
 
+  it("docs/130：秒杀启用但无名额上限则阻断；有 stockLimit 可通过 flash 门禁", async () => {
+    const noStock = makeDraw({
+      maxParticipants: null,
+      experienceType: "flash_sale",
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true },
+        destination: { url: "https://shop.example.com/p/1", title: "去购买" },
+      }),
+    });
+    // claim 类可不配奖项；本 makeDraw 默认 lottery，仍需奖项才能过 prizes 门禁
+    await addManualTier(noStock.id);
+    const r1 = await buildPublishCheckForDraw(db, TENANT, noStock as any);
+    expect(r1.errors.some((item) => item.code === "flash_sale.stock.required")).toBe(true);
+
+    const withStock = makeDraw({
+      maxParticipants: 100,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, stockLimit: 100, sessionLabel: "12:00场" },
+        destination: { url: "https://shop.example.com/p/1", title: "去购买" },
+      }),
+    });
+    const r2 = await buildPublishCheckForDraw(db, TENANT, withStock as any);
+    expect(r2.errors.some((item) => item.code.startsWith("flash_sale."))).toBe(false);
+    expect(r2.canPublish).toBe(true);
+  });
+
+  it("docs/130：秒杀 stockLimit 与 maxParticipants 不一致时警告", async () => {
+    const draw = makeDraw({
+      maxParticipants: 50,
+      experienceType: "flash_sale",
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, stockLimit: 100 },
+        destination: { url: "https://shop.example.com/item", title: "买" },
+      }),
+    });
+    await addManualTier(draw.id);
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.warnings.some((item) => item.code === "flash_sale.stock.mismatch")).toBe(true);
+  });
+
   it("docs/128 红线：手动/定时开奖 + 扇面真奖名 阻断发布；instant 放行", async () => {
     const delayed = await buildPublishCheckForDraw(db, TENANT, makeDraw({
       resultMode: "manual",

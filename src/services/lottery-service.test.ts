@@ -1233,6 +1233,56 @@ describe("最大参与人数和参与时间", () => {
     expect(result.message).toContain("名额已满");
   });
 
+  it("docs/130：秒杀 stockLimit 原子截单，满额返回 soldOut", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    // maxParticipants 故意更大：硬截单必须认 flashSale.stockLimit=2，不能按 10 放行
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "秒杀截单",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      participationMode: "open",
+      winnerCount: 0,
+      maxParticipants: 10,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, stockLimit: 2, sessionLabel: "测试场" },
+        destination: { url: "https://shop.example.com/p/x", title: "去买" },
+      }),
+    });
+    await publishDraw(db, TENANT, id);
+    expect((await joinDraw(db, publicSlug, "fs1@t.com")).joined).toBe(true);
+    expect((await joinDraw(db, publicSlug, "fs2@t.com")).joined).toBe(true);
+    const full = await joinDraw(db, publicSlug, "fs3@t.com");
+    expect(full.joined).toBe(false);
+    expect(full.message).toBe("已抢光");
+    expect((full as { soldOut?: boolean }).soldOut).toBe(true);
+    expect((full as { code?: string }).code).toBe("flash_sale.sold_out");
+  });
+
+  it("docs/130：秒杀仅 maxParticipants、无 flashSale 节点时仍按 max 截单", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "秒杀仅 max",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      participationMode: "open",
+      winnerCount: 0,
+      maxParticipants: 1,
+    });
+    await publishDraw(db, TENANT, id);
+    expect((await joinDraw(db, publicSlug, "only1@t.com")).joined).toBe(true);
+    const full = await joinDraw(db, publicSlug, "only2@t.com");
+    expect(full.joined).toBe(false);
+    expect(full.message).toBe("已抢光");
+  });
+
   it("未开始的活动不能参与", async () => {
     const future = new Date(Date.now() + 3600000);
     const later = new Date(future.getTime() + 3600000);

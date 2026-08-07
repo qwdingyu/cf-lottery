@@ -52,6 +52,15 @@ export function emptyLotteryEditorForm(t: ActivityConfigTranslate): LotteryEdito
     // docs/128：壳展示默认 auto（delayed=仪式短语，instant=真奖名）
     prizePanelMode: 'auto',
     ritualPhrasesText: '',
+    // docs/130：秒杀壳默认关；开启后写入 promotion.flashSale
+    enableFlashSale: false,
+    flashSaleSessionLabel: '',
+    flashSaleStockLimit: null,
+    flashSaleMaxPerUser: 1,
+    flashSaleCtaLabel: '抢',
+    flashSaleShowCountdown: true,
+    flashSaleShowProgress: true,
+    flashSaleShowStock: true,
     // 玩法配置：问卷/投票共用 activity_config，避免再拆 forms/votes 重表。
     activityConfig: defaultActivityConfigForKind('lottery', t),
   }

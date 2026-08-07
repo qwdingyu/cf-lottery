@@ -14,6 +14,7 @@ describe("GameRegistry", () => {
     expect(hasRegisteredGameExperience("ballot")).toBe(true);
     expect(hasRegisteredGameExperience("form")).toBe(true);
     expect(hasRegisteredGameExperience("submit")).toBe(true);
+    expect(hasRegisteredGameExperience("flash_sale")).toBe(true);
     expect(hasRegisteredGameExperience("unknown_xyz")).toBe(false);
     expect(hasRegisteredGameExperience("")).toBe(false);
   });

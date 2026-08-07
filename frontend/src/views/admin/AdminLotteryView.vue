@@ -762,6 +762,52 @@
                 </div>
               </section>
 
+              <!-- 秒杀壳配置（docs/130）：倒计时/进度/抢；支付在 cf-shop -->
+              <section class="form-section form-section--nested" aria-labelledby="lottery-flash-sale">
+                <header class="form-section-head">
+                  <h4 id="lottery-flash-sale" class="form-section-title">{{ $t('lottery.adminFlashSaleSection') }}</h4>
+                  <p class="form-section-desc">{{ $t('lottery.adminFlashSaleSectionDesc') }}</p>
+                </header>
+                <div class="form-grid two-cols">
+                  <label class="field-span-2">
+                    <input v-model="form.enableFlashSale" type="checkbox" class="checkbox-inline" />
+                    <span>{{ $t('lottery.adminEnableFlashSale') }}</span>
+                  </label>
+                  <template v-if="form.enableFlashSale">
+                    <label>
+                      <span>{{ $t('lottery.adminFlashSaleSessionLabel') }}</span>
+                      <input v-model="form.flashSaleSessionLabel" maxlength="32" :placeholder="$t('lottery.adminFlashSaleSessionPlaceholder')" />
+                    </label>
+                    <label>
+                      <span>{{ $t('lottery.adminFlashSaleCtaLabel') }}</span>
+                      <input v-model="form.flashSaleCtaLabel" maxlength="12" placeholder="抢" />
+                    </label>
+                    <label>
+                      <span>{{ $t('lottery.adminFlashSaleStockLimit') }}</span>
+                      <input v-model.number="form.flashSaleStockLimit" type="number" min="1" max="1000000" :placeholder="$t('lottery.adminFlashSaleStockPlaceholder')" />
+                      <small class="field-hint">{{ $t('lottery.adminFlashSaleStockHint') }}</small>
+                    </label>
+                    <label>
+                      <span>{{ $t('lottery.adminFlashSaleMaxPerUser') }}</span>
+                      <input v-model.number="form.flashSaleMaxPerUser" type="number" min="1" max="100" />
+                    </label>
+                    <label class="field-span-2">
+                      <input v-model="form.flashSaleShowCountdown" type="checkbox" class="checkbox-inline" />
+                      <span>{{ $t('lottery.adminFlashSaleShowCountdown') }}</span>
+                    </label>
+                    <label class="field-span-2">
+                      <input v-model="form.flashSaleShowProgress" type="checkbox" class="checkbox-inline" />
+                      <span>{{ $t('lottery.adminFlashSaleShowProgress') }}</span>
+                    </label>
+                    <label class="field-span-2">
+                      <input v-model="form.flashSaleShowStock" type="checkbox" class="checkbox-inline" />
+                      <span>{{ $t('lottery.adminFlashSaleShowStock') }}</span>
+                    </label>
+                    <p class="field-span-2 field-hint">{{ $t('lottery.adminFlashSaleShopHint') }}</p>
+                  </template>
+                </div>
+              </section>
+
               <!-- 导流配置：关联商品推广 -->
               <section class="form-section form-section--nested" aria-labelledby="lottery-traffic">
                 <header class="form-section-head">
@@ -3212,6 +3258,15 @@ async function handleEdit(draw: LotteryDraw) {
     // docs/128：壳展示必须回填，否则二次保存会擦掉 experience
     prizePanelMode: growth.prizePanelMode || 'auto',
     ritualPhrasesText: growth.ritualPhrasesText || '',
+    // docs/130：秒杀壳回填
+    enableFlashSale: growth.enableFlashSale,
+    flashSaleSessionLabel: growth.flashSaleSessionLabel || '',
+    flashSaleStockLimit: growth.flashSaleStockLimit,
+    flashSaleMaxPerUser: growth.flashSaleMaxPerUser || 1,
+    flashSaleCtaLabel: growth.flashSaleCtaLabel || '抢',
+    flashSaleShowCountdown: growth.flashSaleShowCountdown !== false,
+    flashSaleShowProgress: growth.flashSaleShowProgress !== false,
+    flashSaleShowStock: growth.flashSaleShowStock !== false,
   }
   isEditing.value = true
   // 回填未中奖自动发券开关状态

@@ -34,6 +34,18 @@ export type GrowthFieldsFromDraw = {
    */
   prizePanelMode: string
   ritualPhrasesText: string
+  /**
+   * 秒杀壳配置（docs/130）：写入 promotion.flashSale
+   * 仅影响展示与发布预检；支付/发卡仍在 cf-shop
+   */
+  enableFlashSale: boolean
+  flashSaleSessionLabel: string
+  flashSaleStockLimit: number | null
+  flashSaleMaxPerUser: number
+  flashSaleCtaLabel: string
+  flashSaleShowCountdown: boolean
+  flashSaleShowProgress: boolean
+  flashSaleShowStock: boolean
   /** 是否已有增长配置：编辑时应用来展开高级区 */
   hasGrowthConfig: boolean
 }
@@ -139,6 +151,26 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
   )
   const ritualPhrasesText = ritualPhrases.join('\n')
 
+  // docs/130：flashSale / flash_sale 兼容
+  const flashRaw = promotion?.flashSale ?? promotion?.flash_sale
+  const flashSale =
+    flashRaw && typeof flashRaw === 'object' && !Array.isArray(flashRaw)
+      ? (flashRaw as Record<string, unknown>)
+      : null
+  const enableFlashSale = flashSale?.enabled === true || flashSale?.enabled === 1 || flashSale?.enabled === 'true'
+  const flashStockRaw = flashSale?.stockLimit ?? flashSale?.stock_limit
+  let flashSaleStockLimit: number | null = null
+  if (flashStockRaw !== null && flashStockRaw !== undefined && flashStockRaw !== '') {
+    const n = Number(flashStockRaw)
+    if (Number.isFinite(n) && Number.isInteger(n) && n >= 1) flashSaleStockLimit = n
+  }
+  const flashMaxRaw = flashSale?.maxPerUser ?? flashSale?.max_per_user ?? 1
+  const flashMaxN = Number(flashMaxRaw)
+  const flashSaleMaxPerUser =
+    Number.isFinite(flashMaxN) && Number.isInteger(flashMaxN) && flashMaxN >= 1 && flashMaxN <= 100
+      ? flashMaxN
+      : 1
+
   const productUrl = String(productSrc?.url || '').trim()
   const enableProductLink = Boolean(productUrl)
   const enableViral = Boolean(viral?.enabled)
@@ -179,8 +211,21 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
     afterLossCtaTitle: String(afterLoss?.title || ''),
     prizePanelMode,
     ritualPhrasesText,
+    enableFlashSale,
+    flashSaleSessionLabel: String(flashSale?.sessionLabel ?? flashSale?.session_label ?? '').trim().slice(0, 32),
+    flashSaleStockLimit,
+    flashSaleMaxPerUser,
+    flashSaleCtaLabel: String(flashSale?.ctaLabel ?? flashSale?.cta_label ?? '').trim().slice(0, 12) || '抢',
+    flashSaleShowCountdown: flashSale?.showCountdown !== false && flashSale?.show_countdown !== false,
+    flashSaleShowProgress: flashSale?.showProgress !== false && flashSale?.show_progress !== false,
+    flashSaleShowStock: flashSale?.showStock !== false && flashSale?.show_stock !== false,
     hasGrowthConfig:
-      enableProductLink || enableViral || enableAfterWinCta || enableAfterLossCta || hasExperience,
+      enableProductLink ||
+      enableViral ||
+      enableAfterWinCta ||
+      enableAfterLossCta ||
+      hasExperience ||
+      enableFlashSale,
   }
 }
 
@@ -209,12 +254,22 @@ export function buildPromotionConfigPayload(form: {
   prizePanelMode?: string | null
   ritualPhrasesText?: string | null
   ritualPhrases?: string[] | null
+  /** docs/130 秒杀壳 */
+  enableFlashSale?: boolean
+  flashSaleSessionLabel?: string | null
+  flashSaleStockLimit?: number | null
+  flashSaleMaxPerUser?: number | null
+  flashSaleCtaLabel?: string | null
+  flashSaleShowCountdown?: boolean
+  flashSaleShowProgress?: boolean
+  flashSaleShowStock?: boolean
 }, opts: { isEditing: boolean }): Record<string, unknown> | undefined {
   const hasProduct = Boolean(form.enableProductLink && form.productLink?.url)
   const hasViral = Boolean(form.enableViral)
   const hasWinCta = Boolean(form.enableAfterWinCta && form.afterWinCtaUrl)
   const hasLossCta = Boolean(form.enableAfterLossCta && form.afterLossCtaUrl)
-  const hasGrowth = hasProduct || hasViral || hasWinCta || hasLossCta
+  const hasFlashSale = Boolean(form.enableFlashSale)
+  const hasGrowth = hasProduct || hasViral || hasWinCta || hasLossCta || hasFlashSale
 
   const prizePanelMode = normalizePrizePanelMode(form.prizePanelMode)
   const ritualPhrases = sanitizeRitualPhrasesForSave(
@@ -232,6 +287,35 @@ export function buildPromotionConfigPayload(form: {
         }
       : {}
 
+  // 秒杀块：仅 enabled 时写出；编辑关闭则不写 flashSale，旧配置会被整包覆盖掉
+  let flashSaleBlock: Record<string, unknown> = {}
+  if (hasFlashSale) {
+    const stockRaw = form.flashSaleStockLimit
+    let stockLimit: number | undefined
+    if (stockRaw !== null && stockRaw !== undefined && stockRaw !== ('' as unknown)) {
+      const n = Number(stockRaw)
+      if (Number.isFinite(n) && Number.isInteger(n) && n >= 1 && n <= 1_000_000) {
+        stockLimit = n
+      }
+    }
+    const maxPer = Number(form.flashSaleMaxPerUser ?? 1)
+    const maxPerUser =
+      Number.isFinite(maxPer) && Number.isInteger(maxPer) && maxPer >= 1 && maxPer <= 100 ? maxPer : 1
+    const cta = String(form.flashSaleCtaLabel || '').trim().slice(0, 12) || '抢'
+    flashSaleBlock = {
+      flashSale: {
+        enabled: true,
+        sessionLabel: String(form.flashSaleSessionLabel || '').trim().slice(0, 32),
+        ...(stockLimit != null ? { stockLimit } : {}),
+        maxPerUser,
+        ctaLabel: cta,
+        showCountdown: form.flashSaleShowCountdown !== false,
+        showProgress: form.flashSaleShowProgress !== false,
+        showStock: form.flashSaleShowStock !== false,
+      },
+    }
+  }
+
   if (!hasGrowth && !hasCustomExperience) {
     return opts.isEditing
       ? {
@@ -245,7 +329,7 @@ export function buildPromotionConfigPayload(form: {
       : undefined
   }
 
-  // 仅有体验壳配置、无导流裂变：仍落 promotion 包，避免 experience 无处可存
+  // 仅有体验壳配置、无导流裂变秒杀：仍落 promotion 包，避免 experience 无处可存
   if (!hasGrowth && hasCustomExperience) {
     return {
       version: 1,
@@ -302,5 +386,6 @@ export function buildPromotionConfigPayload(form: {
         : {}),
     },
     ...experienceBlock,
+    ...flashSaleBlock,
   }
 }
