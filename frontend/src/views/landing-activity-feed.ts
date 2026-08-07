@@ -29,6 +29,7 @@ export interface LandingHomeActivity {
 
 export type LandingActivityKind = 'flash' | 'free'
 export type LandingPaymentMode = 'direct' | 'external' | 'free'
+export type LandingActivityPhase = 'upcoming' | 'running' | 'ended'
 
 export interface LandingActivityCard {
   publicSlug: string
@@ -38,6 +39,7 @@ export interface LandingActivityCard {
   priceText: string
   badge: LandingActivityKind
   paymentMode: LandingPaymentMode
+  phase: LandingActivityPhase
   sessionLabel: string
   remaining: number | null
   progressPercent: number
@@ -60,10 +62,28 @@ export function paymentModeI18nKey(mode: LandingPaymentMode): string {
   return 'marketPaymentFree'
 }
 
+export function resolveLandingActivityPhase(
+  activity: Pick<LandingHomeActivity, 'startAt' | 'endAt'>,
+  nowMs = Date.now(),
+): LandingActivityPhase {
+  const startMs = Date.parse(activity.startAt)
+  const endMs = Date.parse(activity.endAt)
+  if (Number.isFinite(startMs) && nowMs < startMs) return 'upcoming'
+  if (Number.isFinite(endMs) && nowMs >= endMs) return 'ended'
+  return 'running'
+}
+
+export function activityPhaseI18nKey(phase: LandingActivityPhase): string {
+  if (phase === 'upcoming') return 'marketPhaseUpcoming'
+  if (phase === 'ended') return 'marketPhaseEnded'
+  return 'marketPhaseRunning'
+}
+
 export function buildLandingActivityCard(activity: LandingHomeActivity, freeLabel: string): LandingActivityCard {
   const badge = classifyLandingActivity(activity)
   const flashSale = activity.flashSale || null
   const paymentMode = resolveLandingPaymentMode(activity)
+  const phase = resolveLandingActivityPhase(activity)
   const title = String(flashSale?.sessionLabel ? activity.product?.title || flashSale.sessionLabel : activity.product?.title || activity.title).trim()
   const priceText = flashSale?.paymentRequired
     ? formatPaymentAmount(flashSale.priceCents, flashSale.currency || 'cny')
@@ -77,6 +97,7 @@ export function buildLandingActivityCard(activity: LandingHomeActivity, freeLabe
     priceText,
     badge,
     paymentMode,
+    phase,
     sessionLabel: String(flashSale?.sessionLabel || '').trim(),
     remaining:
       flashSale?.remaining === null || flashSale?.remaining === undefined

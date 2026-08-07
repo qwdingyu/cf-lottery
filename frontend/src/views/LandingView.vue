@@ -63,6 +63,7 @@
                   <span class="card-tag" :class="'card-tag-' + card.badge">
                     {{ card.badge === 'flash' ? $t('landing.marketFlashTag') : $t('landing.marketFreeTag') }}
                   </span>
+                  <span class="card-tag card-tag-phase">{{ $t(activityPhaseI18nKey(card.phase)) }}</span>
                   <span class="card-tag card-tag-payment">{{ $t(paymentModeI18nKey(card.paymentMode)) }}</span>
                   <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
                 </div>
@@ -119,6 +120,7 @@
                 <span class="card-tag" :class="'card-tag-' + card.badge">
                   {{ card.badge === 'flash' ? $t('landing.marketFlashTag') : $t('landing.marketFreeTag') }}
                 </span>
+                <span class="card-tag card-tag-phase">{{ $t(activityPhaseI18nKey(card.phase)) }}</span>
                 <span class="card-tag card-tag-payment">{{ $t(paymentModeI18nKey(card.paymentMode)) }}</span>
                 <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
                 <span v-if="card.remaining != null" class="card-tag">{{ $t('landing.marketRemaining', { n: card.remaining }) }}</span>
@@ -182,6 +184,7 @@ import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import {
+  activityPhaseI18nKey,
   buildLandingActivityCard,
   paymentModeI18nKey,
   type LandingActivityCard,
@@ -469,6 +472,10 @@ onMounted(() => {
 .card-tag-payment {
   color: #fde68a;
   background: rgba(251,191,36,.14);
+}
+.card-tag-phase {
+  color: #bfdbfe;
+  background: rgba(59,130,246,.16);
 }
 .card-price {
   color: #fb7185;

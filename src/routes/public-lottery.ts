@@ -117,6 +117,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       participationMode: lotteryDraws.participationMode,
       startAt: lotteryDraws.startAt,
       endAt: lotteryDraws.endAt,
+      showParticipantCount: lotteryDraws.showParticipantCount,
       maxParticipants: lotteryDraws.maxParticipants,
       productLink: lotteryDraws.productLink,
       promotionConfig: lotteryDraws.promotionConfig,
@@ -127,6 +128,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
     .where(and(
       eq(lotteryDraws.visible, 1),
       eq(lotteryDraws.status, "open"),
+      ne(lotteryDraws.publicSlug, ""),
       gt(lotteryDraws.endAt, nowIso),
     ))
     .orderBy(asc(lotteryDraws.endAt), desc(lotteryDraws.createdAt))
@@ -158,6 +160,12 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       ? buildFlashSaleRuntime(flashParsed.config, claimed, draw.maxParticipants)
       : null;
     const product = productFromPublicConfig(draw);
+    // 直付秒杀补价格（docs/137 §2）：productLink 没设 price 时，从 flashSale.priceCents 补充
+    if (!product.priceText && flashSale?.priceCents && flashSale.priceCents > 0) {
+      const amount = (flashSale.priceCents / 100).toFixed(2);
+      const suffix = String(flashSale.currency || "cny").toUpperCase();
+      product.priceText = suffix === "CNY" ? `¥${amount}` : `${amount} ${suffix}`;
+    }
     return {
       publicSlug: draw.publicSlug,
       title: draw.title,
@@ -166,7 +174,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode),
       startAt: draw.startAt,
       endAt: draw.endAt,
-      claimed,
+      claimed: draw.showParticipantCount ? claimed : undefined,
       product,
       flashSale,
     };

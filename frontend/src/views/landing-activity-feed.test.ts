@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   buildLandingActivityCard,
   classifyLandingActivity,
+  activityPhaseI18nKey,
   paymentModeI18nKey,
+  resolveLandingActivityPhase,
   resolveLandingPaymentMode,
 } from './landing-activity-feed'
 
@@ -28,6 +30,7 @@ describe('landing-activity-feed', () => {
     expect(card).toMatchObject({
       badge: 'flash',
       paymentMode: 'direct',
+      phase: 'ended',
       title: 'Token 日卡',
       priceText: '¥9.90',
       sessionLabel: '12:00场',
@@ -64,5 +67,23 @@ describe('landing-activity-feed', () => {
 
     expect(mode).toBe('external')
     expect(paymentModeI18nKey(mode)).toBe('marketPaymentExternal')
+  })
+
+  it('按开始结束时间识别活动阶段标签', () => {
+    const now = Date.parse('2026-08-07T04:30:00.000Z')
+
+    expect(resolveLandingActivityPhase({
+      startAt: '2026-08-07T05:00:00.000Z',
+      endAt: '2026-08-07T06:00:00.000Z',
+    }, now)).toBe('upcoming')
+    expect(resolveLandingActivityPhase({
+      startAt: '2026-08-07T04:00:00.000Z',
+      endAt: '2026-08-07T05:00:00.000Z',
+    }, now)).toBe('running')
+    expect(resolveLandingActivityPhase({
+      startAt: '2026-08-07T03:00:00.000Z',
+      endAt: '2026-08-07T04:00:00.000Z',
+    }, now)).toBe('ended')
+    expect(activityPhaseI18nKey('upcoming')).toBe('marketPhaseUpcoming')
   })
 })

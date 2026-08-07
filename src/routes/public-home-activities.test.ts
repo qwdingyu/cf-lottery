@@ -48,6 +48,7 @@ async function seedDraw(input: {
   experienceType?: string;
   productLink?: unknown;
   promotionConfig?: unknown;
+  showParticipantCount?: number;
 }) {
   await db.insert(lotteryDraws).values({
     id: input.id,
@@ -64,6 +65,7 @@ async function seedDraw(input: {
     endAt: iso(input.endOffset ?? 60),
     maxParticipants: 10,
     winnerCount: 0,
+    showParticipantCount: input.showParticipantCount ?? 1,
     productLink: JSON.stringify(input.productLink || {}),
     promotionConfig: JSON.stringify(input.promotionConfig || {}),
   });
@@ -98,6 +100,7 @@ describe("GET /public/home-activities", () => {
       joinedAt: iso(-4),
     });
     await seedDraw({ id: "hidden", slug: "hidden-slug", title: "隐藏活动", visible: 0 });
+    await seedDraw({ id: "empty-slug", slug: "", title: "空公开标识活动" });
     await seedDraw({ id: "ended", slug: "ended-slug", title: "已结束活动", endOffset: -1 });
     await seedDraw({ id: "draft", slug: "draft-slug", title: "草稿活动", status: "draft" });
 
@@ -120,5 +123,33 @@ describe("GET /public/home-activities", () => {
     expect(body.activities[0]).not.toHaveProperty("tenantId");
     expect(body.activities[0]).not.toHaveProperty("id");
     expect(JSON.stringify(body.activities[0])).not.toContain("tenant-public-home");
+  });
+
+  it("未开启参与数展示时不泄露 claimed 原始人数，但秒杀进度仍可计算", async () => {
+    await db.insert(tenants).values({ id: TENANT, name: "Public Home Tenant" });
+    await seedDraw({
+      id: "private-count",
+      slug: "private-count-slug",
+      title: "隐藏人数秒杀",
+      showParticipantCount: 0,
+      promotionConfig: { flashSale: { enabled: true, paymentRequired: true, priceCents: 1990, currency: "cny", stockLimit: 5 } },
+    });
+    await db.insert(lotteryEntries).values({
+      id: "private-entry",
+      tenantId: TENANT,
+      drawId: "private-count",
+      identityType: "email",
+      identityValue: "buyer@example.com",
+      paymentStatus: "paid",
+      joinedAt: iso(-5),
+    });
+
+    const res = await app().request("/public/home-activities", {}, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; activities: any[] };
+
+    expect(body.activities[0]).not.toHaveProperty("claimed");
+    expect(body.activities[0].flashSale.progressPercent).toBe(20);
+    expect(body.activities[0].flashSale.remaining).toBe(4);
   });
 });
