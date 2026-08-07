@@ -391,6 +391,11 @@ platformRoute.get("/audit-logs", async (c) => {
   if (action) conditions.push(eq(adminAuditLogs.action, action));
   if (actorUserId) conditions.push(eq(adminAuditLogs.actorUserId, actorUserId));
 
+  // 平台 support 角色只读权限：必须指定租户(tenantId)，不传时返回空而非全部（docs/129 §五）
+  if (c.get("platformRole") === "platform_support" && !tenantId) {
+    return ok(c, { logs: [] });
+  }
+
   const rows = await db
     .select()
     .from(adminAuditLogs)
@@ -414,6 +419,11 @@ platformRoute.get("/usage-snapshots", async (c) => {
 
   const conditions: SQL[] = [];
   if (tenantId) conditions.push(eq(tenantUsageSnapshots.tenantId, tenantId));
+
+  // 平台 support 角色只读权限：必须指定租户(tenantId)，不传时返回空而非全部（docs/129 §五）
+  if (c.get("platformRole") === "platform_support" && !tenantId) {
+    return ok(c, { snapshots: [] });
+  }
 
   const rows = await db
     .select()
@@ -440,6 +450,11 @@ platformRoute.get("/webhook-deliveries", async (c) => {
   const conditions: SQL[] = [];
   if (tenantId) conditions.push(eq(webhookDeliveries.tenantId, tenantId));
   if (status) conditions.push(eq(webhookDeliveries.status, status));
+
+  // 平台 support 角色只读权限：必须指定租户(tenantId)，不传时返回空而非全部（docs/129 §五）
+  if (c.get("platformRole") === "platform_support" && !tenantId) {
+    return ok(c, { deliveries: [] });
+  }
 
   const rows = await db
     .select()

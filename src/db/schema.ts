@@ -76,7 +76,7 @@ export const tenantMembers = sqliteTable("tenant_members", {
  * 取值：platform_owner | platform_operator | platform_support
  *   - platform_owner: 管理平台成员、系统配置、套餐、兑换码、租户状态
  *   - platform_operator: 查看租户、生成兑换码、查看用量和失败投递
- *   - platform_support: 只读查看指定租户数据
+ *   - platform_support: 只读查看租户数据（必须通过 tenantId 指定租户，禁止全量拉取，docs/129 §五）
  */
 export const platformMembers = sqliteTable("platform_members", {
   userId: text("user_id").primaryKey(),

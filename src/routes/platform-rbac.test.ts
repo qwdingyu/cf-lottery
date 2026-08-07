@@ -428,6 +428,35 @@ describe("RBAC-lite 路由分层", () => {
     expect(tenant.extraActivityQuota).toBe(0);
   });
 
+  it("平台 support 读取审计/用量/投递必须指定租户，不传返回空（docs/129 §五）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_support" });
+    const app = createTestApp();
+
+    // 不传 tenantId → 返回空（而非全部租户数据，最小权限）
+    const res = await app.request("/api/platform/audit-logs", {
+      headers: { ...(await authHeader(PLATFORM_ID)) },
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { logs?: unknown[] }).logs).toEqual([]);
+
+    const usageRes = await app.request("/api/platform/usage-snapshots", {
+      headers: { ...(await authHeader(PLATFORM_ID)) },
+    }, TEST_ENV);
+    expect(((await usageRes.json()) as { snapshots?: unknown[] }).snapshots).toEqual([]);
+
+    const deliveryRes = await app.request("/api/platform/webhook-deliveries", {
+      headers: { ...(await authHeader(PLATFORM_ID)) },
+    }, TEST_ENV);
+    expect(((await deliveryRes.json()) as { deliveries?: unknown[] }).deliveries).toEqual([]);
+
+    // 传 tenantId → 允许查看该租户（指定租户只读）
+    const scopedRes = await app.request(`/api/platform/audit-logs?tenantId=${TENANT_ID}`, {
+      headers: { ...(await authHeader(PLATFORM_ID)) },
+    }, TEST_ENV);
+    expect(scopedRes.status).toBe(200);
+  });
+
   it("平台租户调整会拒绝非法套餐、状态、额度和日期", async () => {
     await seedUsers();
     await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
