@@ -39,20 +39,21 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     return fail(c, "秒杀活动未配置价格", 400);
   }
 
-  // 查找参与者 entry（通过 email 或 user_id）
-  const body = await c.req.json<{ email?: string; entryId?: string }>().catch(() => ({})) as { email?: string; entryId?: string };
-  const identityValue = body.email || "";
-  if (!identityValue) return fail(c, "缺少参与者身份", 400);
+  // 查找参与者 entry（通过 entryId，docs/131 §10；支持 open/registered 所有身份类型）
+  const body = await c.req.json<{ entryId?: string }>().catch(() => ({} as { entryId?: string }));
+  const entryId = String(body.entryId || "").trim();
+  if (!entryId) return fail(c, "缺少 entryId", 400);
 
   const [entry] = await db
     .select()
     .from(lotteryEntries)
     .where(and(
       eq(lotteryEntries.drawId, draw.id),
-      eq(lotteryEntries.identityValue, identityValue),
+      eq(lotteryEntries.id, entryId),
     ))
     .limit(1);
-  if (!entry) return fail(c, "未参与此活动", 400);
+  if (!entry) return fail(c, "参与记录不存在", 404);
+  if (entry.tenantId !== draw.tenantId) return fail(c, "参与记录不属于此活动", 403);
 
   // 检查是否已有订单（一参与一订单）
   const [existing] = await db

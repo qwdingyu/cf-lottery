@@ -93,6 +93,9 @@ adminPaymentConfigRoute.put("/payment-config", async (c) => {
     return fail(c, "无权限：仅租户所有者/管理员可配置支付", 403);
   }
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
+  if (!encryptionKey) {
+    return fail(c, "CREDENTIALS_ENCRYPTION_KEY 未配置，无法加密保存支付凭据", 400);
+  }
 
   const body = await c.req.json<{
     providers: Array<{

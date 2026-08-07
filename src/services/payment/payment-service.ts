@@ -130,7 +130,7 @@ export interface CreateOrderInput {
   description?: string;
 }
 
-/** 创建订单并请求支付，返回订单 + 支付入口 */
+/** 创建订单并请求支付，返回订单 + 支付入口（事务内写入订单 + 更新 entry 状态，docs/131 §7） */
 export async function createPaymentOrder(
   db: DbType,
   input: CreateOrderInput,
@@ -140,31 +140,48 @@ export async function createPaymentOrder(
   await expireOverdueOrders(db, input.tenantId);
 
   const id = crypto.randomUUID();
-  await db.insert(paymentOrders).values({
-    id,
-    tenantId: input.tenantId,
-    drawId: input.drawId,
-    entryId: input.entryId,
-    amountCents: input.amountCents,
-    currency: input.currency,
-    status: "pending",
-    provider: input.provider,
+  // 事务只含数据库写入；provider.createPayment 是网络调用，放事务外避免长时间占锁
+  await withDbTransaction(db, async (tx) => {
+    await tx.insert(paymentOrders).values({
+      id,
+      tenantId: input.tenantId,
+      drawId: input.drawId,
+      entryId: input.entryId,
+      amountCents: input.amountCents,
+      currency: input.currency,
+      status: "pending",
+      provider: input.provider,
+    });
+
+    // 标记关联 entry 支付状态为 pending（软释放，docs/131 §8）
+    await tx
+      .update(lotteryEntries)
+      .set({ paymentStatus: "pending" })
+      .where(eq(lotteryEntries.id, input.entryId));
   });
 
-  // 标记关联 entry 支付状态为 pending（软释放，docs/131 §8）
-  await db
-    .update(lotteryEntries)
-    .set({ paymentStatus: "pending" })
-    .where(eq(lotteryEntries.id, input.entryId));
-
-  const payResult = await provider.createPayment({
-    orderNo: id,
-    amountCents: input.amountCents,
-    currency: input.currency,
-    notifyUrl: input.notifyUrl,
-    returnUrl: input.returnUrl,
-    description: input.description,
-  });
+  let payResult: CreatePaymentResult;
+  try {
+    payResult = await provider.createPayment({
+      orderNo: id,
+      amountCents: input.amountCents,
+      currency: input.currency,
+      notifyUrl: input.notifyUrl,
+      returnUrl: input.returnUrl,
+      description: input.description,
+    });
+  } catch (err) {
+    // 支付下单失败 → 回滚订单为 cancelled（释放 entry 名额，避免占位）
+    await db
+      .update(paymentOrders)
+      .set({ status: "cancelled", updatedAt: sql`(datetime('now'))` })
+      .where(eq(paymentOrders.id, id));
+    await db
+      .update(lotteryEntries)
+      .set({ paymentStatus: "" })
+      .where(eq(lotteryEntries.id, input.entryId));
+    throw err;
+  }
 
   const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, id)).limit(1);
   return { order: order!, payResult };
