@@ -66,6 +66,17 @@ function parsePublicHomeLimit(raw: string | undefined): number {
   return Math.min(24, Math.max(1, n));
 }
 
+function publicHttpUrl(value: unknown): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 function productFromPublicConfig(draw: {
   title: string;
   productLink?: string | null;
@@ -78,9 +89,9 @@ function productFromPublicConfig(draw: {
     : null;
   return {
     title: String(productLink?.title || destination?.title || draw.title || "").trim(),
-    imageUrl: String(productLink?.imageUrl || destination?.imageUrl || "").trim(),
+    imageUrl: publicHttpUrl(productLink?.imageUrl || destination?.imageUrl),
     priceText: String(productLink?.price || productLink?.priceText || destination?.priceText || "").trim(),
-    url: String(productLink?.url || destination?.url || "").trim(),
+    url: publicHttpUrl(productLink?.url || destination?.url),
   };
 }
 
@@ -140,7 +151,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
     }
   }
 
-  const activities = await Promise.all(rows.map(async (draw) => {
+  const activities = rows.map((draw) => {
     const claimed = claimedByDrawId.get(draw.internalId) || 0;
     const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
     const flashSale = flashParsed.config
@@ -159,7 +170,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       product,
       flashSale,
     };
-  }));
+  });
 
   return ok(c, { activities });
 });

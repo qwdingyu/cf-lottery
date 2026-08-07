@@ -76,7 +76,7 @@ describe("GET /public/home-activities", () => {
       id: "flash-open",
       slug: "flash-open-slug",
       title: "Token 秒杀",
-      productLink: { title: "Token 日卡", imageUrl: "https://img.example.com/card.png", price: "¥9.90", url: "https://shop.example.com/p/1" },
+      productLink: { title: "Token 日卡", imageUrl: "data:text/html,<svg />", price: "¥9.90", url: "javascript:alert(1)" },
       promotionConfig: { flashSale: { enabled: true, paymentRequired: true, priceCents: 990, currency: "cny", stockLimit: 10, sessionLabel: "12:00场", title: "Token 日卡" } },
     });
     await db.insert(lotteryEntries).values({
@@ -109,7 +109,7 @@ describe("GET /public/home-activities", () => {
     expect(body.activities[0]).toMatchObject({
       publicSlug: "flash-open-slug",
       title: "Token 秒杀",
-      product: { title: "Token 日卡", priceText: "¥9.90" },
+      product: { title: "Token 日卡", imageUrl: "", priceText: "¥9.90", url: "" },
       flashSale: {
         paymentRequired: true,
         priceCents: 990,
