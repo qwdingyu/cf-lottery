@@ -30,7 +30,7 @@ import {
   randomSelect,
   triggerRewardEarned,
 } from "../services/lottery-service";
-import { lotteryPrizeTiers, shareRecords, lotteryEntries, apiKeys, activityEvents } from "../db/schema";
+import { lotteryPrizeTiers, shareRecords, lotteryEntries, apiKeys, activityEvents, tenantConfigs } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -1262,6 +1262,76 @@ describe("最大参与人数和参与时间", () => {
     expect((full as { code?: string }).code).toBe("flash_sale.sold_out");
   });
 
+  it("docs/134：直付秒杀截单排除已过期支付占位，避免软释放后仍被 COUNT 拒绝", async () => {
+    await db.insert(tenantConfigs).values({
+      tenantId: TENANT,
+      enabled: 1,
+      providers: JSON.stringify({
+        easypay: {
+          enabled: true,
+          easypay_pid: "pid",
+          easypay_key: "key",
+          easypay_api_base: "https://zpayz.cn",
+        },
+      }),
+    });
+    const { id: prizeId } = await createPrize(db, TENANT, { name: "直付卡密", prizeType: "code" });
+    await importPrizeCodes(db, TENANT, prizeId, [
+      { code: "PAY-1", secret: "S1" },
+      { code: "PAY-2", secret: "S2" },
+    ]);
+
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "直付软释放",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      participationMode: "open",
+      winnerCount: 0,
+      maxParticipants: 1,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 1,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      prizeId,
+      tierName: "直付卡密",
+      winnerCount: 1,
+      sortOrder: 1,
+    });
+    await publishDraw(db, TENANT, id);
+
+    const first = await joinDraw(db, publicSlug, "expired-slot@test.com");
+    expect(first.joined).toBe(true);
+    await db
+      .update(lotteryEntries)
+      .set({ paymentStatus: "expired" })
+      .where(and(
+        eq(lotteryEntries.tenantId, TENANT),
+        eq(lotteryEntries.drawId, id),
+        eq(lotteryEntries.identityValue, "expired-slot@test.com"),
+      ));
+
+    const released = await joinDraw(db, publicSlug, "new-buyer@test.com");
+    expect(released.joined).toBe(true);
+    const full = await joinDraw(db, publicSlug, "third-buyer@test.com");
+    expect(full.joined).toBe(false);
+    expect((full as { code?: string }).code).toBe("flash_sale.sold_out");
+  });
+
   it("docs/130：秒杀仅 maxParticipants、无 flashSale 节点时仍按 max 截单", async () => {
     const now = new Date();
     const future = new Date(now.getTime() + 3600000);
@@ -1693,4 +1763,3 @@ describe("prizeCode redeemed 状态流转", () => {
     expect(row.status).toBe("revoked");
   });
 });
-

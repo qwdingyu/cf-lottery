@@ -313,6 +313,8 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
 }, (t) => ({
   unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
   identityIdx: index("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),
+  /** 直付秒杀热路径：容量 COUNT 与公开进度都按活动和支付软释放状态过滤。 */
+  drawPaymentIdx: index("idx_entries_tenant_draw_payment_status").on(t.tenantId, t.drawId, t.paymentStatus),
 }));
 
 /**

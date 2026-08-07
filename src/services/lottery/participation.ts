@@ -194,6 +194,7 @@ export async function joinDraw(
       // 普通 claim/reveal 仍按 maxParticipants（可无限软顶），避免误杀非秒杀领取。
       const isFlashSaleJoin =
         flashParsed.config != null || draw.experienceType === "flash_sale";
+      const isDirectPaymentFlashSale = isFlashSaleJoin && flashParsed.config?.paymentRequired === true;
       // 秒杀：禁止候补超卖；其它活动仍按 maxParticipants（无上限时 50000 软顶）
       const effectiveMax =
         flashCap != null && flashCap > 0
@@ -209,10 +210,22 @@ export async function joinDraw(
       // 原因：租户级 COUNT 会扩大 Turso rows read 和请求延迟，不适合放在用户参与热路径。
       // 租户级累计参与人数额度未来通过快照表（定时任务预聚合）实现。
       // 详见 docs/023_Cloudflare免费版与Turso约束下认证和运行安全方案_2026-08-01.md
+      const activeCapacityCountClause = isDirectPaymentFlashSale
+        ? sql`(
+            SELECT COUNT(*) FROM lottery_entries
+            WHERE tenant_id = ${draw.tenantId}
+              AND draw_id = ${draw.id}
+              AND payment_status <> 'expired'
+          ) < ${effectiveMax}`
+        : sql`(
+            SELECT COUNT(*) FROM lottery_entries
+            WHERE tenant_id = ${draw.tenantId}
+              AND draw_id = ${draw.id}
+          ) < ${effectiveMax}`;
       const capacityClause = acceptsWaitlist
         ? sql`1 = 1`
         : effectiveMax > 0
-          ? sql`(SELECT COUNT(*) FROM lottery_entries WHERE tenant_id = ${draw.tenantId} AND draw_id = ${draw.id}) < ${effectiveMax}`
+          ? activeCapacityCountClause
           : sql`1 = 0`; // 秒杀无名额：拒绝写入
       // instant：join 发放 initial spins（默认 1），不抽奖（docs/116）
       const spinInit = initialSpinsForJoin(
@@ -766,4 +779,3 @@ export async function getEntries(
     .offset(offset)
     .orderBy(lotteryEntries.joinedAt);
 }
-

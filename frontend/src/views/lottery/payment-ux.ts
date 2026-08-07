@@ -90,6 +90,17 @@ export function composePaymentCode(prizeCode: { code?: string | null; secret?: s
   return secret ? `${code}:${secret}` : code
 }
 
+export function asHttpPaymentUrl(value: string | null | undefined): string {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
 export function buildPaymentSessionSnapshot(
   state: PaymentSessionState | null | undefined,
   nowMs = Date.now(),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  asHttpPaymentUrl,
   canRetryPaymentOrder,
   buildPaymentSessionSnapshot,
   composePaymentCode,
@@ -51,6 +52,13 @@ describe('payment-ux', () => {
     expect(composePaymentCode({ code: 'CARD-1', secret: 'SECRET' })).toBe('CARD-1:SECRET')
     expect(composePaymentCode({ code: 'CARD-1' })).toBe('CARD-1')
     expect(composePaymentCode(null)).toBe('')
+  })
+
+  it('二维码内容为 URL 时提供安全备用支付入口', () => {
+    expect(asHttpPaymentUrl('https://pay.example.com/checkout')).toBe('https://pay.example.com/checkout')
+    expect(asHttpPaymentUrl('http://pay.example.com/checkout')).toBe('http://pay.example.com/checkout')
+    expect(asHttpPaymentUrl('weixin://pay')).toBe('')
+    expect(asHttpPaymentUrl('not a url')).toBe('')
   })
 
   it('支付会话快照只保留恢复轮询所需字段，不持久化卡密明文', () => {

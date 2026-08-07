@@ -97,6 +97,7 @@ adminPaymentConfigRoute.get("/payment-config", async (c) => {
   }
 
   return ok(c, {
+    tenantId,
     providers: PAYMENT_PROVIDER_CATALOG.map((meta) => ({
       name: meta.name,
       displayName: meta.displayName,

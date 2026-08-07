@@ -66,7 +66,8 @@ async function cancelPaymentOrder(db: DbType, orderId: string, entryId: string):
     .where(eq(paymentOrders.id, orderId));
   await db
     .update(lotteryEntries)
-    .set({ paymentStatus: "" })
+    // 支付下单/重试失败同样释放秒杀名额；用户后续重试会由 armPaymentOrderForRetry 重新置 pending。
+    .set({ paymentStatus: "expired" })
     .where(eq(lotteryEntries.id, entryId));
 }
 

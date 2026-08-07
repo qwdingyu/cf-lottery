@@ -1098,6 +1098,17 @@
 .lottery-payment-support .result-hint {
   margin-top: 6px;
 }
+.lottery-payment-support-link {
+  display: inline-flex;
+  margin-top: 8px;
+  color: var(--tg-link);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.lottery-payment-support-link:hover {
+  text-decoration: underline;
+}
 
 /* ── 视觉增强（不改结构，仅美化） ── */
 .lottery-view { max-width: 860px; margin: 0 auto; }

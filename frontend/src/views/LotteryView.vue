@@ -609,6 +609,9 @@
         <div v-if="paymentState?.status === 'paid_fulfillment_failed'" class="lottery-payment-support" role="alert">
           <p class="result-error">{{ $t('lottery.paymentFulfillmentFailed') }}</p>
           <p class="result-hint">{{ $t('lottery.paymentFulfillmentSupportHint') }}</p>
+          <a v-if="publicSupportEmail" class="lottery-payment-support-link" :href="`mailto:${publicSupportEmail}?subject=${encodeURIComponent(paymentSupportSubject)}`">
+            {{ $t('lottery.paymentContactSupport', { email: publicSupportEmail }) }}
+          </a>
         </div>
         <p v-if="paymentError" class="result-error">{{ paymentError }}</p>
 
@@ -621,6 +624,14 @@
             class="btn btn-primary"
             @click="handleOpenPaymentLink"
           >{{ $t('lottery.paymentOpen') }}</a>
+          <a
+            v-if="paymentQrFallbackUrl && paymentQrFallbackUrl !== paymentState?.redirectUrl"
+            :href="paymentQrFallbackUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn-ghost"
+            @click="handleOpenPaymentLink"
+          >{{ $t('lottery.paymentOpenQrUrl') }}</a>
           <button
             v-if="paymentCanRetry"
             type="button"
@@ -952,6 +963,7 @@ import {
   publicStatusBannerTone,
 } from '@/composables/lottery-public-ux'
 import {
+  asHttpPaymentUrl,
   buildPaymentSessionSnapshot,
   canRetryPaymentOrder,
   composePaymentCode,
@@ -1661,6 +1673,7 @@ const paymentQrDataUrl = ref('')
 const paymentQrSeq = ref(0)
 let paymentPollTimer: ReturnType<typeof setInterval> | null = null
 const paymentState = ref<PaymentState | null>(null)
+const publicSupportEmail = ref('')
 
 /** lottery + resultMode=instant（实现见 instant-spin-ux） */
 function isInstantLottery(draw: { activityKind?: string; resultMode?: string } | null | undefined): boolean {
@@ -1857,6 +1870,11 @@ const paymentAmountText = computed(() =>
 const paymentCodeText = computed(() =>
   composePaymentCode(paymentState.value?.prizeCode || null),
 )
+const paymentQrFallbackUrl = computed(() => asHttpPaymentUrl(paymentState.value?.qrCode))
+const paymentSupportSubject = computed(() => {
+  const orderNo = paymentState.value?.orderNo || ''
+  return orderNo ? `支付订单补发协助 ${orderNo}` : '支付订单补发协助'
+})
 const paymentTitle = computed(() => {
   if (paymentState.value?.status === 'paid_fulfillment_failed') return t('lottery.paymentFulfillmentFailedTitle')
   if (paymentState.value?.status === 'paid') return t('lottery.paymentPaidTitle')
@@ -1921,6 +1939,21 @@ async function restorePaymentSession() {
   await refreshPaymentOrderStatus({ silent: true })
   if (shouldPollPaymentStatus(paymentState.value?.status)) {
     startPaymentPolling()
+  }
+}
+
+async function loadPublicSupportConfig() {
+  try {
+    const res = await fetch(`${API_BASE}/system-config/system-config`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+    if (!res.ok) return
+    const data = await res.json().catch(() => null) as { ok?: boolean; config?: Record<string, string> } | null
+    const email = String(data?.config?.support_email || '').trim()
+    publicSupportEmail.value = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
+  } catch {
+    publicSupportEmail.value = ''
   }
 }
 
@@ -3657,7 +3690,7 @@ onMounted(async () => {
   window.addEventListener('focus', refreshWhenVisible)
   window.addEventListener('online', refreshWhenVisible)
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  await fetchDraws()
+  await Promise.all([fetchDraws(), loadPublicSupportConfig()])
   // 有业务 JWT 时静默回填已参与（刷新后恢复 UI）
   await hydrateJoinedStateFromSession()
   // cf-auth OAuth 往返后：有 pendingJoin + 业务 JWT 则自动参与（docs/059）

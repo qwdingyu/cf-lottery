@@ -168,7 +168,7 @@ describe("retryPaymentOrder", () => {
     const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, ORDER_ID));
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
     expect(order?.status).toBe("cancelled");
-    expect(entry?.paymentStatus).toBe("");
+    expect(entry?.paymentStatus).toBe("expired");
   });
 });
 
