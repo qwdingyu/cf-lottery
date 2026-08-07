@@ -341,6 +341,22 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.warnings.some((item) => item.code === "flash_sale.stock.mismatch")).toBe(true);
   });
 
+  it("docs/130：导流秒杀没有购买链接时阻断发布，避免空抢购壳上线", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, stockLimit: 10 },
+      }),
+    });
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.destination.missing")).toBe(true);
+  });
+
   it("docs/131：直付秒杀缺价格、支付配置或卡密奖品时阻断发布", async () => {
     const draw = makeDraw({
       maxParticipants: 10,

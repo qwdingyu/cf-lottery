@@ -52,6 +52,7 @@ export interface FlashSaleDisplay {
   paymentRequired?: boolean
   priceCents?: number | null
   currency?: string
+  title?: string
   claimed?: number
   remaining?: number | null
   progressPercent?: number

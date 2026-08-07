@@ -62,9 +62,13 @@ describe("ACTIVITY_TEMPLATES 抽奖体验诚实性（docs/115）", () => {
       experienceType: "flash_sale",
       resultMode: "instant",
       participationMode: "open",
+      maxParticipants: 100,
+      enableProductLink: true,
+      enableFlashSale: true,
+      flashSaleStockLimit: 100,
     });
-    expect(flash!.description).toMatch(/导流链接/);
+    expect(flash!.description).toMatch(/商品图、价格/);
     expect(flash!.description).toMatch(/直付发卡/);
-    expect(flash!.hints.join(" ")).toMatch(/paymentRequired|priceCents|卡密码池/);
+    expect(flash!.hints.join(" ")).toMatch(/商品链接|paymentRequired|priceCents|卡密码池/);
   });
 });

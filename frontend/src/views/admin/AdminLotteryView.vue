@@ -2800,7 +2800,7 @@ function applyTemplate(tpl: any) {
     participationMode: tpl.defaults.participationMode || 'open',
     allocationPolicy: tpl.defaults.allocationPolicy || 'capacity',
     winnerCount: kind === 'lottery' ? Math.max(1, winnerCount) : 0,
-    maxParticipants: null,
+    maxParticipants: tpl.defaults?.maxParticipants ?? null,
     expectedParticipants: 0,
     // 模板 defaults 含展示开关时带入（后端 create 支持 show* 字段）
     showWinners: Number(tpl.defaults?.showWinnerList ?? tpl.defaults?.showWinnerCount ?? 0) === 1,
@@ -2817,6 +2817,19 @@ function applyTemplate(tpl: any) {
           weight: String(tpl.defaults?.resultMode || '') === 'instant' ? 1 : 0,
         }]
       : [],
+    enableProductLink: tpl.defaults?.enableProductLink === true,
+    productLink: {
+      url: '',
+      title: String(tpl.defaults?.productLinkTitle || ''),
+      imageUrl: '',
+      price: String(tpl.defaults?.productLinkPrice || ''),
+    },
+    enableFlashSale: tpl.defaults?.enableFlashSale === true,
+    flashSaleSessionLabel: String(tpl.defaults?.flashSaleSessionLabel || ''),
+    flashSaleStockLimit: tpl.defaults?.flashSaleStockLimit ?? null,
+    flashSalePaymentRequired: tpl.defaults?.flashSalePaymentRequired === true,
+    flashSaleCurrency: String(tpl.defaults?.flashSaleCurrency || 'cny'),
+    flashSaleTitle: String(tpl.defaults?.flashSaleTitle || ''),
   }
   // 模板智能增强：不同类型预设更合理的默认值，减少重复配置
   if (tpl.id === 'signup-chain' || kind === 'signup_chain') {

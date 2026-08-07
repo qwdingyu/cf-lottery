@@ -20,6 +20,16 @@ export interface ActivityTemplate {
     winnerCount: number;
     showParticipantCount: number;
     showWinnerCount: number;
+    maxParticipants?: number;
+    enableProductLink?: boolean;
+    productLinkTitle?: string;
+    productLinkPrice?: string;
+    enableFlashSale?: boolean;
+    flashSaleSessionLabel?: string;
+    flashSaleStockLimit?: number | null;
+    flashSalePaymentRequired?: boolean;
+    flashSaleCurrency?: string;
+    flashSaleTitle?: string;
   };
   /** 提示文案：创建时需要填写的关键字段 */
   hints: string[];
@@ -209,12 +219,12 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     },
     hints: ["用户提交申请后，在管理后台审批", "通过后可通过 Webhook 通知用户", "可在活动描述中说明审核标准"],
   },
-  // docs/130/131：秒杀体验壳。默认只抢名额/资格并导流；配置 paymentRequired=true 后走 cf-lottery 直付发卡。
+  // docs/130/131：秒杀体验壳。导流由商品链接承接；paymentRequired=true 后走 cf-lottery 直付发卡。
   {
     id: "flash-sale-rush",
-    name: "限时抢购（导流）",
+    name: "限时抢购",
     description:
-      "限时限量抢活动名额：倒计时、已抢进度、「抢」按钮。默认抢成功后通过导流链接跳转外部店铺；也可在秒杀壳中开启直付发卡。适合联名秒杀预热、卡密店引流、社群爆品场次。",
+      "商品化限时限量抢购：商品图、价格、倒计时、已抢进度、「抢」按钮。可导流到 cf-shop/外部店铺，也可开启 EasyPay/ZPay 直付发卡。适合 Token 卡密、联名商品、社群爆品场次。",
     icon: "⚡",
     category: "conversion",
     defaults: {
@@ -226,12 +236,22 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       winnerCount: 0,
       showParticipantCount: 1,
       showWinnerCount: 0,
+      maxParticipants: 100,
+      enableProductLink: true,
+      productLinkTitle: "限时抢购商品",
+      productLinkPrice: "¥9.90",
+      enableFlashSale: true,
+      flashSaleSessionLabel: "12:00场",
+      flashSaleStockLimit: 100,
+      flashSalePaymentRequired: false,
+      flashSaleCurrency: "cny",
+      flashSaleTitle: "限时抢购商品",
     },
     hints: [
-      "设置活动开始/结束时间（倒计时用）与 maxParticipants 名额",
-      "在导流配置 promotion_config.flashSale 中开启秒杀壳，并配置 stockLimit",
-      "导流模式下 destination / after_win 必须指向可下单外链",
-      "直付模式需配置 paymentRequired、priceCents、支付设置和单一卡密码池",
+      "先填商品链接、商品名称、展示价格和图片；导流模式必须指向可下单页面",
+      "确认活动开始/结束时间、maxParticipants 与 flashSale.stockLimit",
+      "直付模式开启 paymentRequired 后必须配置 priceCents、EasyPay/ZPay 支付设置和单一卡密码池",
+      "支付金额以 flashSale.priceCents 为准；productLink.price 仅用于外部导流展示",
     ],
   },
 ];

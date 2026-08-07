@@ -488,10 +488,10 @@ async function validatePromotion(db: DbType, tenantId: string, draw: LotteryDraw
       isSafeHttpUrl(legacyProductLink?.url);
     if (!flashParsed.config.paymentRequired && !hasShopLink) {
       add(
-        result.warnings,
+        result.errors,
         "promotion",
         "flash_sale.destination.missing",
-        "展示型秒杀已启用但未配置安全的导流/购买链接（destination 或 after_win CTA）；参与后无法进入外部购买承接",
+        "展示型秒杀必须配置安全的导流/购买链接（商品链接、destination 或 after_win CTA）；否则用户抢到后无法下单",
       );
     }
     if (draw.experienceType !== "flash_sale") {

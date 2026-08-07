@@ -192,6 +192,29 @@
               </label>
             </template>
           </div>
+          <div v-if="flashSaleMerchCard(draw)" class="lottery-flash-merch">
+            <div class="lottery-flash-merch-media" :class="{ 'lottery-flash-merch-media--empty': !flashSaleMerchCard(draw)?.imageUrl }">
+              <img
+                v-if="flashSaleMerchCard(draw)?.imageUrl"
+                :src="flashSaleMerchCard(draw)?.imageUrl"
+                :alt="flashSaleMerchCard(draw)?.title || $t('lottery.flashSaleProduct')"
+              />
+              <span v-else>SALE</span>
+            </div>
+            <div class="lottery-flash-merch-body">
+              <div class="lottery-flash-merch-tags">
+                <span v-if="flashSaleMerchCard(draw)?.sessionLabel" class="lottery-flash-merch-tag is-session">{{ flashSaleMerchCard(draw)?.sessionLabel }}</span>
+                <span class="lottery-flash-merch-tag">{{ flashSaleMerchCard(draw)?.isDirectPayment ? $t('lottery.flashDirectPayment') : $t('lottery.flashExternalCheckout') }}</span>
+                <span v-if="flashSaleMerchCard(draw)?.effectiveStockLimit" class="lottery-flash-merch-tag">{{ $t('lottery.flashQuota', { n: flashSaleMerchCard(draw)?.effectiveStockLimit }) }}</span>
+              </div>
+              <h4 class="lottery-flash-merch-title">{{ flashSaleMerchCard(draw)?.title || $t('lottery.flashSaleProduct') }}</h4>
+              <div class="lottery-flash-merch-bottom">
+                <strong v-if="flashSaleMerchCard(draw)?.priceText" class="lottery-flash-merch-price">{{ flashSaleMerchCard(draw)?.priceText }}</strong>
+                <span v-else class="lottery-flash-merch-price lottery-flash-merch-price--missing">{{ $t('lottery.flashPriceMissing') }}</span>
+                <span v-if="flashSaleMerchCard(draw)?.remaining != null" class="lottery-flash-merch-stock">{{ $t('lottery.flashRemaining', { n: flashSaleMerchCard(draw)?.remaining }) }}</span>
+              </div>
+            </div>
+          </div>
           <div class="lottery-game-area">
             <component
               :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
@@ -990,6 +1013,7 @@ import {
   resultModeTagI18nKey,
 } from './lottery/public-helpers'
 import { buildPublicPrizeShellPayload } from './lottery/prize-shell-display'
+import { buildFlashSaleMerchCard, type FlashSaleMerchCard } from './lottery/flash-sale-merchandising'
 import {
   entryIdFromAlreadyJoined,
   isAlreadyJoinedResponse,
@@ -1086,6 +1110,14 @@ const fetchError = ref('')
 const recordsLoading = ref(false)
 const draws = ref<LotteryDraw[]>([])
 const expandedId = ref<string | null>(null)
+const flashSaleMerchByDrawId = computed<Record<string, FlashSaleMerchCard>>(() => {
+  const map: Record<string, FlashSaleMerchCard> = {}
+  for (const draw of draws.value) {
+    const card = buildFlashSaleMerchCard(draw, formatPaymentAmount)
+    if (card) map[draw.id] = card
+  }
+  return map
+})
 /** 参与会话邮箱：刷新后仍可查结果（sessionStorage，非 localStorage，避免长期污染） */
 const sessionEmail = ref(
   typeof sessionStorage !== 'undefined'
@@ -1697,6 +1729,10 @@ function handleGamePlay(draw: LotteryDraw) {
     return
   }
   void handleJoin(draw.id)
+}
+
+function flashSaleMerchCard(draw: LotteryDraw) {
+  return flashSaleMerchByDrawId.value[draw.id] || null
 }
 
 // ── 查询我的结果（中奖卡密/安慰奖券） ──
