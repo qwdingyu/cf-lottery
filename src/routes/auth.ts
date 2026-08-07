@@ -146,7 +146,13 @@ authRoute.post("/register", async (c) => {
     });
 
     // 邮件发送失败不回滚注册：验证码已经落库，MVP 环境未配置 Resend 时仍可通过测试/人工渠道完成验证。
-    const emailEnv = { resendApiKey: getEnv(c, "RESEND_API_KEY") || "", emailFrom: getEnv(c, "EMAIL_FROM") || "" };
+    const emailEnv = {
+        resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+        emailFrom: getEnv(c, "EMAIL_FROM") || "",
+        remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || undefined,
+        remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || undefined,
+        remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || undefined,
+      };
     try {
       await sendAccessCode(emailEnv, email, "注册验证", code);
     } catch (err) {
@@ -300,7 +306,13 @@ authRoute.post("/login", async (c) => {
       used: 0,
       expiresAt,
     });
-    const emailEnv = { resendApiKey: getEnv(c, "RESEND_API_KEY") || "", emailFrom: getEnv(c, "EMAIL_FROM") || "" };
+    const emailEnv = {
+        resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+        emailFrom: getEnv(c, "EMAIL_FROM") || "",
+        remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || undefined,
+        remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || undefined,
+        remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || undefined,
+      };
     try {
       await sendAccessCode(emailEnv, user.email, "注册验证", code);
     } catch (err) {

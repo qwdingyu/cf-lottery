@@ -541,7 +541,13 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   });
 
   // 发送邮件
-  const emailEnv = { resendApiKey: getEnv(c, "RESEND_API_KEY") || "", emailFrom: getEnv(c, "EMAIL_FROM") || "" };
+  const emailEnv = {
+        resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+        emailFrom: getEnv(c, "EMAIL_FROM") || "",
+        remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || undefined,
+        remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || undefined,
+        remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || undefined,
+      };
   const sendResult = await sendAccessCode(emailEnv, email, draw.title, code);
 
   return ok(c, {
@@ -1150,6 +1156,9 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
         resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
         emailFrom: getEnv(c, "EMAIL_FROM") || "",
         emailFromName: getEnv(c, "EMAIL_FROM_NAME") || "",
+        remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || undefined,
+        remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || undefined,
+        remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || undefined,
       };
       void notifyInstantSpinWinner(db, draw.tenantId, draw.id, result.spinId, emailEnv).catch((err) => {
         console.error(`[public] notifyInstantSpinWinner failed for ${result.spinId}:`, err);

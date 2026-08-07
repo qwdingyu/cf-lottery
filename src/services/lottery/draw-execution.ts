@@ -23,7 +23,7 @@ import {
 } from "../../db/schema";
 import { randomSelect, hashDrawSeed } from "./utils";
 import { enqueueWebhookEvent, dispatchWebhookDelivery } from "./integration";
-import { sendEmail, buildLotteryWinnerTemplateData } from "../email-service";
+import { sendEmail, buildLotteryWinnerTemplateData, type EmailEnv } from "../email-service";
 import {
   aggregateViralInviteCounts,
   computeViralDrawWeight,
@@ -54,7 +54,7 @@ export async function performDraw(
   tenantId: string,
   drawId: string,
   operatorUserId: string,  // 操作者用户 ID（用于审计日志）
-  emailEnv?: { resendApiKey: string; emailFrom: string },  // 邮件通知配置（可选，未配置时跳过通知）
+  emailEnv?: EmailEnv,  // 邮件通知配置（可选，未配置时跳过通知）
 ): Promise<DrawResult> {
   const now = new Date().toISOString();
 
@@ -344,7 +344,7 @@ export async function performDraw(
 
     // 异步发送中奖通知邮件（不阻塞主流程，失败不影响开奖结果）
     // 由 platform system_config.notify_winner_email_enabled 控制（默认开启）
-    if (emailEnv?.resendApiKey) {
+    if (emailEnv && (emailEnv.resendApiKey || emailEnv.email || (emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret))) {
       const [notifyCfg] = await db
         .select({ value: systemConfig.value })
         .from(systemConfig)
@@ -375,7 +375,7 @@ export async function performDraw(
       if (loserRewardResult.granted > 0) {
         console.log(`[lottery] loser rewards granted: ${loserRewardResult.granted} for draw ${drawId}`);
         // 发券成功后发送安慰邮件（异步，不阻塞开奖主流程）
-        if (emailEnv?.resendApiKey) {
+        if (emailEnv && (emailEnv.resendApiKey || emailEnv.email || (emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret))) {
           void sendLoserConsolationEmails(db, emailEnv, tenantId, drawId, draw.title).catch((err) => {
             console.error(`[lottery] sendLoserConsolationEmails failed for ${drawId}:`, err);
           });
@@ -420,7 +420,7 @@ export async function sendWinnerNotifications(
   db: DbType,
   tenantId: string,
   drawId: string,
-  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string },
+  emailEnv: EmailEnv,
   options?: { winnerIds?: string[] },
 ): Promise<{ sent: number; failed: number }> {
   const [draw] = await db
@@ -589,9 +589,9 @@ export async function notifyInstantSpinWinner(
   tenantId: string,
   drawId: string,
   spinId: string,
-  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string },
+  emailEnv: EmailEnv,
 ): Promise<void> {
-  if (!emailEnv?.resendApiKey || !spinId) return;
+  if (!emailEnv || (!emailEnv.resendApiKey && !emailEnv.email && !(emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret)) || !spinId) return;
 
   const [notifyCfg] = await db
     .select({ value: systemConfig.value })
@@ -776,12 +776,12 @@ export async function healDrawingState(
  */
 export async function sendLoserConsolationEmails(
   db: DbType,
-  emailEnv: { resendApiKey?: string; emailFrom?: string; emailFromName?: string },
+  emailEnv: EmailEnv,
   tenantId: string,
   drawId: string,
   drawTitle: string,
 ): Promise<{ sent: number; failed: number }> {
-  if (!emailEnv.resendApiKey) return { sent: 0, failed: 0 };
+  if (!emailEnv.resendApiKey && !emailEnv.email && !(emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret)) return { sent: 0, failed: 0 };
 
   // 读取平台配置：是否启用安慰邮件
   const [cfgRow] = await db

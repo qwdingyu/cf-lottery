@@ -22,6 +22,10 @@ export type Bindings = {
   RESEND_API_KEY?: string;
   // Cloudflare Email Service binding（send_email；优先于 RESEND_API_KEY，零第三方依赖）
   EMAIL?: CloudflareEmailBinding;
+  // cf-auth 邮件网关（docs/093）：OAuth client 凭证，配置后邮件由 cf-auth 集中发送（优先）
+  REMOTE_EMAIL_URL?: string;
+  REMOTE_EMAIL_CLIENT_ID?: string;
+  REMOTE_EMAIL_CLIENT_SECRET?: string;
   // Resend 已验证的发件域名
   EMAIL_FROM?: string;
   EMAIL_FROM_NAME?: string;
