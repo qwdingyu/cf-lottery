@@ -10,7 +10,7 @@ import { createClient } from "@libsql/client";
 import { createDb } from "./db/client";
 import { and, sql } from "drizzle-orm";
 import { getEnv } from "./lib/platform";
-import { systemConfig, auditLogs, lotteryDraws } from "./db/schema";
+import { systemConfig, auditLogs, lotteryDraws, paymentOrders } from "./db/schema";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
@@ -84,7 +84,7 @@ export async function runScheduledMaintenance(
  * 清理过期的草稿/已取消活动以及审计日志。
  * 仅在 cron/maintenance 定时任务中触发，不在热路径执行。
  */
-async function runRetentionCleanup(db: ReturnType<typeof createDb>) {
+export async function runRetentionCleanup(db: ReturnType<typeof createDb>) {
   const rows = await db.select({ key: systemConfig.key, value: systemConfig.value })
     .from(systemConfig)
     .where(sql`${systemConfig.key} IN ('data_retention_days', 'audit_log_retention_days')`);
@@ -101,6 +101,11 @@ async function runRetentionCleanup(db: ReturnType<typeof createDb>) {
     const result = await db.delete(lotteryDraws).where(and(
       sql`${lotteryDraws.status} IN ('draft', 'cancelled')`,
       sql`${lotteryDraws.updatedAt} < ${cutoff}`,
+      sql`NOT EXISTS (
+        SELECT 1 FROM ${paymentOrders}
+        WHERE ${paymentOrders.drawId} = ${lotteryDraws.id}
+          AND ${paymentOrders.tenantId} = ${lotteryDraws.tenantId}
+      )`,
     ));
     deletedData = result.rowsAffected ?? 0;
   }

@@ -19,6 +19,7 @@ import {
   users,
 } from "../db/schema";
 import { adminPaymentConfigRoute } from "./admin-payment-config";
+import { encryptPaymentConfigValue } from "../services/payment/secret-config";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
@@ -33,6 +34,7 @@ const ENTRY_ID = "entry-admin-payment";
 const ORDER_ID = "order-admin-payment";
 const PRIZE_ID = "prize-admin-payment";
 const PRIZE_CODE_ID = "prize-code-admin-payment";
+const ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 const TEST_ENV = {
   TURSO_URL: "",
@@ -178,7 +180,7 @@ describe("admin payment management", () => {
         easypay: {
           enabled: true,
           easypay_pid: "pid",
-          easypay_key: "enc:key",
+          easypay_key: await encryptPaymentConfigValue("key", ENCRYPTION_KEY),
           easypay_api_base: "https://zpayz.cn",
         },
       }),
@@ -288,8 +290,8 @@ describe("admin payment management", () => {
         alipay: {
           enabled: true,
           alipay_app_id: "app-id",
-          alipay_private_key: "enc:private",
-          alipay_public_key: "enc:public",
+          alipay_private_key: await encryptPaymentConfigValue("private", ENCRYPTION_KEY),
+          alipay_public_key: await encryptPaymentConfigValue("public", ENCRYPTION_KEY),
         },
       }),
     });
@@ -396,7 +398,7 @@ describe("admin payment management", () => {
         easypay: {
           enabled: true,
           easypay_pid: "pid",
-          easypay_key: "enc:key",
+          easypay_key: await encryptPaymentConfigValue("key", ENCRYPTION_KEY),
           easypay_api_base: "https://zpayz.cn",
         },
         usdt_trc20: {

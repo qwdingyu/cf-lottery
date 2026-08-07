@@ -13,7 +13,9 @@ import {
   tenants,
 } from "../../db/schema";
 import type { PaymentProvider } from "@usethink/cf-core/features/payment";
-import { createTenantProvider, handlePaymentCallback, loadTenantConfig, retryPaymentOrder } from "./payment-service";
+import { EasyPayProviderError } from "@usethink/cf-core/features/payment";
+import { createTenantProvider, createPaymentOrder, handlePaymentCallback, loadTenantConfig, retryPaymentOrder } from "./payment-service";
+import { encryptPaymentConfigValue } from "./secret-config";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
@@ -24,6 +26,7 @@ const ENTRY_ID = "entry-payment-service";
 const ORDER_ID = "order-payment-service";
 const PRIZE_ID = "prize-payment-service";
 const PRIZE_CODE_ID = "prize-code-payment-service";
+const ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 const providerMock: PaymentProvider = {
   name: "alipay",
@@ -226,27 +229,27 @@ describe("tenant payment provider selection", () => {
         alipay: {
           enabled: true,
           alipay_app_id: "app",
-          alipay_private_key: "private",
-          alipay_public_key: "public",
+          alipay_private_key: await encryptPaymentConfigValue("private", ENCRYPTION_KEY),
+          alipay_public_key: await encryptPaymentConfigValue("public", ENCRYPTION_KEY),
         },
         easypay: {
           enabled: true,
           easypay_pid: "pid",
-          easypay_key: "key",
+          easypay_key: await encryptPaymentConfigValue("key", ENCRYPTION_KEY),
           easypay_api_base: "https://zpayz.cn",
         },
       }),
     });
 
-    await expect(loadTenantConfig(db, TENANT_ID, "", { currency: "cny" }))
+    await expect(loadTenantConfig(db, TENANT_ID, ENCRYPTION_KEY, { currency: "cny" }))
       .resolves.toMatchObject({ provider: "easypay" });
-    await expect(loadTenantConfig(db, TENANT_ID, "", { currency: "usdt" }))
+    await expect(loadTenantConfig(db, TENANT_ID, ENCRYPTION_KEY, { currency: "usdt" }))
       .resolves.toBeNull();
-    await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "alipay" }))
+    await expect(loadTenantConfig(db, TENANT_ID, ENCRYPTION_KEY, { provider: "alipay" }))
       .resolves.toMatchObject({ provider: "alipay" });
-    await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "easypay" }))
+    await expect(loadTenantConfig(db, TENANT_ID, ENCRYPTION_KEY, { provider: "easypay" }))
       .resolves.toMatchObject({ provider: "easypay" });
-    await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "stripe" }))
+    await expect(loadTenantConfig(db, TENANT_ID, ENCRYPTION_KEY, { provider: "stripe" }))
       .resolves.toBeNull();
   });
 
@@ -313,8 +316,55 @@ describe("handlePaymentCallback", () => {
     const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
 
     expect(result.processed).toBe(true);
-    expect(result.order?.status).toBe("expired");
+    expect(result.order?.status).toBe("paid_late_needs_refund");
     const [code] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, PRIZE_CODE_ID));
     expect(code?.status).toBe("available");
+  });
+});
+
+describe("ambiguous payment creation", () => {
+  it("keeps the order pending when EasyPay result is uncertain", async () => {
+    await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
+    await db.insert(lotteryDraws).values({
+      id: DRAW_ID,
+      tenantId: TENANT_ID,
+      publicSlug: "ambiguous-payment",
+      title: "支付测试活动",
+      status: "open",
+      experienceType: "flash_sale",
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 9900, currency: "cny" } }),
+      maxParticipants: 1,
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: ENTRY_ID,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "email",
+      identityValue: "buyer@example.com",
+      paymentStatus: "reserved",
+    });
+    const ambiguousProvider: PaymentProvider = {
+      ...providerMock,
+      createPayment: vi.fn(async () => {
+        throw new EasyPayProviderError("ambiguous", "网关响应超时");
+      }),
+    };
+
+    await expect(createPaymentOrder(db, {
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      entryId: ENTRY_ID,
+      amountCents: 9900,
+      currency: "cny",
+      provider: "easypay",
+      notifyUrl: "https://example.com/callback",
+    }, ambiguousProvider)).rejects.toThrow("网关响应超时");
+
+    const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.entryId, ENTRY_ID));
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
+    expect(order?.status).toBe("pending");
+    expect(entry?.paymentStatus).toBe("pending");
   });
 });

@@ -376,8 +376,9 @@ export async function createPaymentOrder(
         eq(lotteryEntries.paymentStatus, "reserved"),
       ))
       .returning({ id: lotteryEntries.id });
+    // entry 非空状态(已有 pending/paid/expired 订单)时不创建新订单,由 call-site 处理 retry
     if (armedEntry.length === 0) {
-      throw new Error("参与记录状态不允许创建支付订单");
+      throw new Error("该参与已有支付订单,请刷新或重试");
     }
 
     await tx.insert(paymentOrders).values({
@@ -507,12 +508,25 @@ export async function handlePaymentCallback(
     if (
       current.status === "paid" ||
       current.status === "paid_fulfillment_failed" ||
-      current.status === "expired" ||
-      current.status === "cancelled" ||
+      current.status === "paid_late_needs_refund" ||
       current.status === "refunded"
     ) {
-      // 终态回调只确认已处理，不重新发卡。尤其 expired 不能因迟到回调重新占用已释放名额。
+      // 终态回调只确认已处理，不重新发卡。
       return current;
+    }
+    if (current.status === "expired" || current.status === "cancelled") {
+      // 迟到付款必须落库，不能静默 success 后丢失付款事实；但名额可能已释放给别人，绝不能补发卡。
+      await tx
+        .update(paymentOrders)
+        .set({
+          status: "paid_late_needs_refund",
+          providerTradeNo: callback.providerTradeNo,
+          paidAt: callback.paidAt,
+          updatedAt: sql`(datetime('now'))`,
+        })
+        .where(eq(paymentOrders.id, current.id));
+      const [latePaid] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
+      return latePaid ?? current;
     }
     if (current.status !== "pending") return current;
 

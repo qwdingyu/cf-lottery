@@ -629,9 +629,9 @@
           <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
         </div>
 
-        <div v-if="paymentState?.status === 'paid_fulfillment_failed'" class="lottery-payment-support" role="alert">
-          <p class="result-error">{{ $t('lottery.paymentFulfillmentFailed') }}</p>
-          <p class="result-hint">{{ $t('lottery.paymentFulfillmentSupportHint') }}</p>
+        <div v-if="paymentState?.status === 'paid_fulfillment_failed' || paymentState?.status === 'paid_late_needs_refund'" class="lottery-payment-support" role="alert">
+          <p class="result-error">{{ paymentState?.status === 'paid_late_needs_refund' ? $t('lottery.paymentLatePaid') : $t('lottery.paymentFulfillmentFailed') }}</p>
+          <p class="result-hint">{{ paymentState?.status === 'paid_late_needs_refund' ? $t('lottery.paymentLatePaidSupportHint') : $t('lottery.paymentFulfillmentSupportHint') }}</p>
           <a v-if="publicSupportEmail" class="lottery-payment-support-link" :href="`mailto:${publicSupportEmail}?subject=${encodeURIComponent(paymentSupportSubject)}`">
             {{ $t('lottery.paymentContactSupport', { email: publicSupportEmail }) }}
           </a>
@@ -1913,6 +1913,7 @@ const paymentSupportSubject = computed(() => {
 })
 const paymentTitle = computed(() => {
   if (paymentState.value?.status === 'paid_fulfillment_failed') return t('lottery.paymentFulfillmentFailedTitle')
+  if (paymentState.value?.status === 'paid_late_needs_refund') return t('lottery.paymentLatePaidTitle')
   if (paymentState.value?.status === 'paid') return t('lottery.paymentPaidTitle')
   return t('lottery.paymentPendingTitle')
 })
@@ -1920,6 +1921,7 @@ const paymentHint = computed(() => {
   if (!paymentState.value) return ''
   if (paymentState.value.status === 'paid') return t('lottery.paymentPaidHint')
   if (paymentState.value.status === 'paid_fulfillment_failed') return t('lottery.paymentFulfillmentFailedHint')
+  if (paymentState.value.status === 'paid_late_needs_refund') return t('lottery.paymentLatePaidHint')
   if (paymentState.value.status === 'expired' || paymentState.value.status === 'cancelled') return t('lottery.paymentRetryHint')
   return t('lottery.paymentPendingHint')
 })
@@ -2117,6 +2119,9 @@ async function refreshPaymentOrderStatus(opts?: { silent?: boolean }) {
     } else if (data.order.status === 'paid_fulfillment_failed') {
       clearPaymentPollTimer()
       showToast(t('lottery.paymentFulfillmentFailed'), 'error')
+    } else if (data.order.status === 'paid_late_needs_refund') {
+      clearPaymentPollTimer()
+      showToast(t('lottery.paymentLatePaid'), 'error')
     } else if (!shouldPollPaymentStatus(data.order.status)) {
       clearPaymentPollTimer()
     }

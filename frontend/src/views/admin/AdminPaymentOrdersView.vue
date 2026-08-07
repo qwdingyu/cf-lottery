@@ -7,6 +7,7 @@
           <option value="pending">待支付</option>
           <option value="paid">已支付</option>
           <option value="paid_fulfillment_failed">发卡失败</option>
+          <option value="paid_late_needs_refund">待退款/人工处理</option>
           <option value="expired">已过期</option>
           <option value="cancelled">已取消</option>
           <option value="refunded">已退款</option>
@@ -196,6 +197,7 @@ function statusLabel(status: string) {
     pending: '待支付',
     paid: '已支付',
     paid_fulfillment_failed: '发卡失败',
+    paid_late_needs_refund: '待退款/人工处理',
     refunded: '已退款',
     expired: '已过期',
     cancelled: '已取消',
@@ -206,6 +208,7 @@ function statusLabel(status: string) {
 function statusClass(status: string) {
   if (status === 'paid') return 'tag-success'
   if (status === 'paid_fulfillment_failed') return 'tag-danger'
+  if (status === 'paid_late_needs_refund') return 'tag-danger'
   if (status === 'pending') return 'tag-warning'
   return 'tag-muted'
 }

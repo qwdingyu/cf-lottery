@@ -663,7 +663,9 @@ route.get("/draws/:id/publish-check", async (c) => {
   const tenantId = c.get("tenantId") as string;
   const drawId = c.req.param("id");
 
-  const check = await buildPublishCheck(db, tenantId, drawId);
+  const check = await buildPublishCheck(db, tenantId, drawId, {
+    credentialsEncryptionKey: getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "",
+  });
   if (!check) return fail(c, "活动不存在", 404);
   return ok(c, check);
 });

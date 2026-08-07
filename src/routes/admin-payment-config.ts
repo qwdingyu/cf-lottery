@@ -141,7 +141,13 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
     .limit(1);
 
   const providers = parseSavedProviders(row?.providers || "{}");
-  const checks = [];
+  const checks: Array<{
+    provider: string;
+    enabled: boolean;
+    issues: string[];
+    warnings: string[];
+    supportedCurrencies: readonly string[];
+  }> = [];
   for (const meta of PAYMENT_PROVIDER_CATALOG) {
     const config = providers[meta.name];
     const enabled = config?.enabled === true;
@@ -164,7 +170,11 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
         if (isEncryptedPaymentConfigValue(value)) {
           const decrypted = await decryptPaymentConfigValueResult(value, encryptionKey);
           if (!decrypted.ok) {
-            issues.push(`${field.label} 解密失败：${decrypted.reason}`);
+            issues.push(
+              decrypted.reason === "invalid_key"
+                ? `${field.label} 解密失败：CREDENTIALS_ENCRYPTION_KEY 未配置或格式错误`
+                : `${field.label} 解密失败：${decrypted.reason}`,
+            );
           } else {
             env[field.key] = decrypted.value;
           }

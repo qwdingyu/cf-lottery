@@ -652,7 +652,7 @@ export const paymentOrders = sqliteTable("payment_orders", {
   entryId: text("entry_id").notNull().unique(),
   amountCents: integer("amount_cents").notNull(),
   currency: text("currency").notNull().default("cny"),
-  status: text("status").notNull().default("pending"), // pending/paid/refunded/expired/cancelled
+  status: text("status").notNull().default("pending"), // pending/paid/paid_fulfillment_failed/paid_late_needs_refund/refunded/expired/cancelled
   provider: text("provider").notNull(),
   providerTradeNo: text("provider_trade_no"),
   prizeCodeId: text("prize_code_id"),
