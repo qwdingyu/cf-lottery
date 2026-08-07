@@ -136,6 +136,11 @@ const router = createRouter({
           name: 'AdminPaymentConfig',
           component: () => import('@/views/admin/AdminPaymentConfig.vue'),
         },
+        {
+          path: 'payment-orders',
+          name: 'AdminPaymentOrders',
+          component: () => import('@/views/admin/AdminPaymentOrdersView.vue'),
+        },
       ],
     },
     // 平台运营后台（L3），与租户后台（/admin）路由分离

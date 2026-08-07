@@ -79,6 +79,8 @@ export default {
     menuMembers: "团队成员",
     menuBlacklist: "黑名单",
     menuIntegrations: "集成设置",
+    menuPaymentConfig: "支付配置",
+    menuPaymentOrders: "支付订单",
     menuQuotaRedeem: "兑换额度",
     menuLogs: "操作日志",
     menuPlatform: "平台运营",

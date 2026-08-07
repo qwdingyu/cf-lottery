@@ -325,25 +325,7 @@ export async function handlePaymentCallback(
       return current;
     }
 
-    // 查活动的卡密奖（prizeType=code）
-    const tier = await findCodePrize(tx, tenantId, pre.drawId);
-
-    // 原子取卡密：available → issued（winnerId=entryId）
-    let prizeCodeId: string | null = null;
-    if (tier?.prizeId) {
-      const acquired = await tx
-        .update(prizeCodes)
-        .set({ status: "issued", issuedAt: sql`(datetime('now'))`, winnerId: pre.entryId })
-        .where(and(
-          eq(prizeCodes.tenantId, tenantId),
-          eq(prizeCodes.prizeId, tier.prizeId),
-          eq(prizeCodes.status, "available"),
-        ))
-        .orderBy(prizeCodes.id)
-        .limit(1)
-        .returning({ id: prizeCodes.id });
-      prizeCodeId = acquired[0]?.id ?? null;
-    }
+    const prizeCodeId = await acquirePrizeCode(tx, tenantId, pre.drawId, pre.entryId);
 
     // 卡密不足：标记 paid_fulfillment_failed（运营后台可见，docs/131 §7），不静默 null
     const newStatus = prizeCodeId ? "paid" : "paid_fulfillment_failed";
@@ -372,6 +354,84 @@ export async function handlePaymentCallback(
 
   if (!order) return { processed: false, error: "订单不存在" };
   return { processed: order.status === "paid" || order.status === "paid_fulfillment_failed", order };
+}
+
+/**
+ * 管理端人工补发：仅处理「已付款但发卡失败」订单。
+ * 运营补充码池后点击重试，事务内重新领取一张卡密并把订单恢复为 paid。
+ */
+export async function retryPaymentFulfillment(
+  db: DbType,
+  tenantId: string,
+  orderId: string,
+): Promise<{ ok: boolean; order?: typeof paymentOrders.$inferSelect; error?: string }> {
+  const order = await withDbTransaction(db, async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(paymentOrders)
+      .where(and(eq(paymentOrders.id, orderId), eq(paymentOrders.tenantId, tenantId)))
+      .limit(1);
+    if (!current) return { error: "订单不存在" };
+    if (current.status === "paid" && current.prizeCodeId) return { order: current };
+    if (current.status !== "paid_fulfillment_failed") {
+      return { error: "订单状态不允许补发" };
+    }
+
+    const prizeCodeId = await acquirePrizeCode(tx, tenantId, current.drawId, current.entryId);
+    if (!prizeCodeId) return { error: "没有可用卡密，请先补充码池" };
+
+    await tx
+      .update(paymentOrders)
+      .set({
+        status: "paid",
+        prizeCodeId,
+        updatedAt: sql`(datetime('now'))`,
+      })
+      .where(eq(paymentOrders.id, current.id));
+
+    await tx
+      .update(lotteryEntries)
+      .set({ paymentStatus: "paid" })
+      .where(eq(lotteryEntries.id, current.entryId));
+
+    const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
+    return { order: updated ?? current };
+  });
+
+  if ("error" in order) return { ok: false, error: order.error };
+  return { ok: true, order: order.order };
+}
+
+/** 原子领取活动绑定的卡密奖品。返回 null 表示未绑卡密奖或码池不足。 */
+async function acquirePrizeCode(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  entryId: string,
+): Promise<string | null> {
+  // 查活动的卡密奖（prizeType=code）
+  const tier = await findCodePrize(db, tenantId, drawId);
+  if (!tier?.prizeId) return null;
+
+  const acquired = await db
+    .update(prizeCodes)
+    .set({ status: "issued", issuedAt: sql`(datetime('now'))`, winnerId: entryId })
+    .where(and(
+      eq(prizeCodes.tenantId, tenantId),
+      eq(prizeCodes.status, "available"),
+      // SQLite/libSQL 不支持 Drizzle 生成的 UPDATE ... RETURNING ... ORDER BY ... LIMIT。
+      // 用子查询在同一条 UPDATE 内选中最小 id 的可用卡密，保留原子领取语义。
+      eq(prizeCodes.id, sql<string>`(
+        SELECT id FROM prize_codes
+        WHERE tenant_id = ${tenantId}
+          AND prize_id = ${tier.prizeId}
+          AND status = 'available'
+        ORDER BY id
+        LIMIT 1
+      )`),
+    ))
+    .returning({ id: prizeCodes.id });
+  return acquired[0]?.id ?? null;
 }
 
 /** 查询活动的卡密奖品（prizeType=code）的 prizeId，用于发卡 */

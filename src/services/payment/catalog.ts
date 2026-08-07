@@ -1,5 +1,5 @@
 /**
- * 支付 Provider 目录（照搬 cf-shop 的 catalog.ts 模式，provider 换成 cf-core 内置）
+ * 支付 Provider 目录（以 cf-core Provider 抽象为唯一协议实现入口）
  *
  * 定义每个支付渠道的元数据（显示名、字段、敏感位），供 L2 后台配置 UI 渲染。
  */

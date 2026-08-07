@@ -183,6 +183,8 @@ const menuItems = computed(() => [
   { name: 'AdminMembers', to: '/admin/members', label: t('adminLayout.menuMembers'), icon: '👥' },
   { name: 'AdminBlacklist', to: '/admin/blacklist', label: t('adminLayout.menuBlacklist'), icon: '🚫' },
   { name: 'AdminIntegrations', to: '/admin/integrations', label: t('adminLayout.menuIntegrations'), icon: '🔗' },
+  { name: 'AdminPaymentConfig', to: '/admin/payment-config', label: t('adminLayout.menuPaymentConfig'), icon: '💳' },
+  { name: 'AdminPaymentOrders', to: '/admin/payment-orders', label: t('adminLayout.menuPaymentOrders'), icon: '🧾' },
   { name: 'AdminQuotaRedeem', to: '/admin/quota-redeem', label: t('adminLayout.menuQuotaRedeem'), icon: '🎟' },
 ])
 

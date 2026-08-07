@@ -224,9 +224,13 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
   const [entry] = await db
     .select({ identityValue: lotteryEntries.identityValue })
     .from(lotteryEntries)
-    .where(eq(lotteryEntries.id, order.entryId))
+    .where(and(
+      eq(lotteryEntries.id, order.entryId),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+    ))
     .limit(1);
-  if (entry && entry.identityValue !== email) {
+  if (!entry || entry.identityValue !== email) {
     return fail(c, "无权查看该订单", 403);
   }
 

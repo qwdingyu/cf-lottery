@@ -77,6 +77,8 @@ export default {
     menuMembers: "Members",
     menuBlacklist: "Blacklist",
     menuIntegrations: "Integrations",
+    menuPaymentConfig: "Payment Config",
+    menuPaymentOrders: "Payment Orders",
     menuQuotaRedeem: "Redeem Quota",
     menuLogs: "Logs",
     menuPlatform: "Platform",

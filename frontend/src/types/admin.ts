@@ -684,6 +684,56 @@ export interface AdminPaymentConfigsResult {
   configs: AdminPaymentConfigItem[]
 }
 
+export interface AdminPaymentConfigCheckProvider {
+  name: string
+  displayName: string
+  enabled: boolean
+  configured: boolean
+  supportedCurrencies: string[]
+  issues: string[]
+  warnings: string[]
+}
+
+export interface AdminPaymentConfigCheckResult {
+  credentialsEncryptionKey: {
+    configured: boolean
+  }
+  providers: AdminPaymentConfigCheckProvider[]
+  currencySupport: Array<{
+    currency: string
+    available: boolean
+    providers: string[]
+  }>
+}
+
+export interface AdminPaymentOrder {
+  id: string
+  tenantId: string
+  drawId: string
+  entryId: string
+  amountCents: number
+  currency: string
+  status: string
+  provider: string
+  providerTradeNo?: string | null
+  prizeCodeId?: string | null
+  paidAt?: string | null
+  createdAt: string
+  updatedAt: string
+  drawTitle: string
+  publicSlug: string
+  identityType: string
+  identityValue: string
+  entryPaymentStatus: string
+  prizeCodeStatus?: string | null
+  hasPrizeCode: boolean
+}
+
+export interface AdminPaymentOrdersResult {
+  orders: AdminPaymentOrder[]
+  total: number
+}
+
 export interface AdminBatch {
   id?: string
   productId?: string
