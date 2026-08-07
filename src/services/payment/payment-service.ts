@@ -18,6 +18,7 @@ import { tenantConfigs, paymentOrders, prizeCodes, lotteryPrizeTiers, prizes, lo
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
 
 export type PaymentProviderName = "stripe" | "alipay" | "usdt_trc20";
+const RETRYABLE_PAYMENT_ORDER_STATUSES = new Set(["cancelled", "expired"]);
 
 /** 订单超时时间(分钟)：超过此时间未支付的 pending 订单标记 expired（docs/131 §8） */
 const ORDER_EXPIRE_MINUTES = 30;
@@ -56,6 +57,46 @@ async function expireOverdueOrders(db: DbType, tenantId: string): Promise<number
   }
 
   return overdue.length;
+}
+
+async function cancelPaymentOrder(db: DbType, orderId: string, entryId: string): Promise<void> {
+  await db
+    .update(paymentOrders)
+    .set({ status: "cancelled", updatedAt: sql`(datetime('now'))` })
+    .where(eq(paymentOrders.id, orderId));
+  await db
+    .update(lotteryEntries)
+    .set({ paymentStatus: "" })
+    .where(eq(lotteryEntries.id, entryId));
+}
+
+async function armPaymentOrderForRetry(
+  db: DbType,
+  input: CreateOrderInput,
+  orderId: string,
+): Promise<void> {
+  await withDbTransaction(db, async (tx) => {
+    await tx
+      .update(paymentOrders)
+      .set({
+        tenantId: input.tenantId,
+        drawId: input.drawId,
+        amountCents: input.amountCents,
+        currency: input.currency,
+        status: "pending",
+        provider: input.provider,
+        providerTradeNo: null,
+        prizeCodeId: null,
+        paidAt: null,
+        updatedAt: sql`(datetime('now'))`,
+      })
+      .where(eq(paymentOrders.id, orderId));
+
+    await tx
+      .update(lotteryEntries)
+      .set({ paymentStatus: "pending" })
+      .where(eq(lotteryEntries.id, input.entryId));
+  });
 }
 
 /** 从 DB 加载并解密租户支付配置；未配置或密钥缺失返回 null（照搬 cf-shop loadPaymentProviderConfigs） */
@@ -172,18 +213,50 @@ export async function createPaymentOrder(
     });
   } catch (err) {
     // 支付下单失败 → 回滚订单为 cancelled（释放 entry 名额，避免占位）
-    await db
-      .update(paymentOrders)
-      .set({ status: "cancelled", updatedAt: sql`(datetime('now'))` })
-      .where(eq(paymentOrders.id, id));
-    await db
-      .update(lotteryEntries)
-      .set({ paymentStatus: "" })
-      .where(eq(lotteryEntries.id, input.entryId));
+    await cancelPaymentOrder(db, id, input.entryId);
     throw err;
   }
 
   const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, id)).limit(1);
+  return { order: order!, payResult };
+}
+
+/** 重试已取消 / 已过期订单：复用同一 entryId 与 orderNo，避免把一参与一订单拆成多条记录。 */
+export async function retryPaymentOrder(
+  db: DbType,
+  input: CreateOrderInput,
+  provider: PaymentProvider,
+): Promise<{ order: typeof paymentOrders.$inferSelect; payResult: CreatePaymentResult }> {
+  const [existing] = await db
+    .select()
+    .from(paymentOrders)
+    .where(eq(paymentOrders.entryId, input.entryId))
+    .limit(1);
+  if (!existing) {
+    throw new Error("订单不存在");
+  }
+  if (!RETRYABLE_PAYMENT_ORDER_STATUSES.has(existing.status)) {
+    throw new Error("订单不可重试");
+  }
+
+  await armPaymentOrderForRetry(db, input, existing.id);
+
+  let payResult: CreatePaymentResult;
+  try {
+    payResult = await provider.createPayment({
+      orderNo: existing.id,
+      amountCents: input.amountCents,
+      currency: input.currency,
+      notifyUrl: input.notifyUrl,
+      returnUrl: input.returnUrl,
+      description: input.description,
+    });
+  } catch (err) {
+    await cancelPaymentOrder(db, existing.id, input.entryId);
+    throw err;
+  }
+
+  const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, existing.id)).limit(1);
   return { order: order!, payResult };
 }
 

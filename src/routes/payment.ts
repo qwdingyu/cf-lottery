@@ -12,7 +12,13 @@ import { eq, and } from "drizzle-orm";
 import { getEnv } from "../lib/platform";
 import { getDb, fail, ok } from "../lib/http";
 import { lotteryDraws, lotteryEntries, paymentOrders } from "../db/schema";
-import { loadTenantConfig, createTenantProvider, handlePaymentCallback, createPaymentOrder } from "../services/payment/payment-service";
+import {
+  loadTenantConfig,
+  createTenantProvider,
+  handlePaymentCallback,
+  createPaymentOrder,
+  retryPaymentOrder,
+} from "../services/payment/payment-service";
 import type { AppEnv } from "../bindings";
 
 export const paymentPublicRoute = new Hono<AppEnv>();
@@ -61,7 +67,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     .from(paymentOrders)
     .where(eq(paymentOrders.entryId, entry.id))
     .limit(1);
-  if (existing) {
+  if (existing && existing.status !== "cancelled" && existing.status !== "expired") {
     return ok(c, { orderNo: existing.id, status: existing.status, entryId: existing.entryId });
   }
 
@@ -73,10 +79,11 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   const provider = createTenantProvider(config.env);
   if (!provider) return fail(c, "支付服务暂不可用", 500);
 
+  const retryable = existing?.status === "cancelled" || existing?.status === "expired";
   const notifyUrl = `${c.req.url.replace(/\/draws\/.*/, "")}/payments/${draw.tenantId}/${config.provider}/callback`;
   const returnUrl = `${c.req.url.replace(/\/payment-orders.*/, "")}`;
 
-  const { order, payResult } = await createPaymentOrder(db, {
+  const orderInput = {
     tenantId: draw.tenantId,
     drawId: draw.id,
     entryId: entry.id,
@@ -86,7 +93,11 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     notifyUrl,
     returnUrl,
     description: flashSale.title || draw.title || "秒杀",
-  }, provider);
+  };
+
+  const { order, payResult } = retryable
+    ? await retryPaymentOrder(db, orderInput, provider)
+    : await createPaymentOrder(db, orderInput, provider);
 
   return ok(c, {
     orderNo: order.id,
@@ -105,7 +116,7 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
   const orderId = c.req.param("orderId");
-  const email = c.req.query("email") || "";
+  const email = (c.req.query("email") || "").trim().toLowerCase();
 
   const [draw] = await db
     .select()
@@ -124,15 +135,16 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
 
   // 验证订单属于该活动，且 email 是订单关联的参与身份
   if (order.drawId !== draw.id) return fail(c, "订单不属于此活动", 404);
-  if (email) {
-    const [entry] = await db
-      .select({ identityValue: lotteryEntries.identityValue })
-      .from(lotteryEntries)
-      .where(eq(lotteryEntries.id, order.entryId))
-      .limit(1);
-    if (entry && entry.identityValue !== email) {
-      return fail(c, "无权查看该订单", 403);
-    }
+  if (!email) {
+    return fail(c, "缺少 email", 400);
+  }
+  const [entry] = await db
+    .select({ identityValue: lotteryEntries.identityValue })
+    .from(lotteryEntries)
+    .where(eq(lotteryEntries.id, order.entryId))
+    .limit(1);
+  if (entry && entry.identityValue !== email) {
+    return fail(c, "无权查看该订单", 403);
   }
 
   // 查卡密信息（支付后才有）

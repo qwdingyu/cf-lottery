@@ -20,6 +20,9 @@ import { sql } from "drizzle-orm";
 export const adminPaymentConfigRoute = new Hono<AppEnv>();
 adminPaymentConfigRoute.use("*", requireAuth, requireTenantMember());
 
+/** 脱敏字段占位符（照搬 cf-shop：前端不回显密文，后端保留原值） */
+const SENSITIVE_CONFIG_PLACEHOLDER = "••••••••";
+
 // ═══════════════════════════════════════════════════════════════
 // GET /admin/payment-config  docs/131 §10
 // ═══════════════════════════════════════════════════════════════
@@ -38,20 +41,14 @@ adminPaymentConfigRoute.get("/payment-config", async (c) => {
     try { savedProviders = JSON.parse(row.providers || "{}"); } catch {}
   }
 
-  // 脱敏：隐藏敏感字段的密钥内容
+  // 脱敏：敏感字段统一用占位符（照搬 cf-shop，防前端回写覆盖真实密钥）
   const sanitizedProviders: Record<string, { enabled: boolean; fields: Record<string, string> }> = {};
   for (const meta of PAYMENT_PROVIDER_CATALOG) {
     const saved = (savedProviders[meta.name] || {}) as Record<string, unknown>;
     const fields: Record<string, string> = {};
     for (const field of meta.fields) {
       const raw = String(saved[field.key.toLowerCase()] ?? saved[field.key] ?? "");
-      if (raw && field.sensitive) {
-        fields[field.key] = raw.length > 8 ? raw.slice(0, 4) + "****" : "****";
-      } else if (raw) {
-        fields[field.key] = raw;
-      } else {
-        fields[field.key] = "";
-      }
+      fields[field.key] = raw && field.sensitive ? SENSITIVE_CONFIG_PLACEHOLDER : raw;
     }
     sanitizedProviders[meta.name] = {
       enabled: saved.enabled === true,
@@ -109,6 +106,17 @@ adminPaymentConfigRoute.put("/payment-config", async (c) => {
     return fail(c, "缺少 providers 参数", 400);
   }
 
+  // 读取现有配置（用于占位符保留原值）
+  const [existingRow] = await db
+    .select()
+    .from(tenantConfigs)
+    .where(eq(tenantConfigs.tenantId, tenantId))
+    .limit(1);
+  let existingProviders: Record<string, Record<string, unknown>> = {};
+  if (existingRow) {
+    try { existingProviders = JSON.parse(existingRow.providers || "{}"); } catch {}
+  }
+
   // 加密敏感字段,构建存储对象
   const { encrypt: aesEncrypt } = await import("@usethink/cf-core");
   const providers: Record<string, Record<string, unknown>> = {};
@@ -120,7 +128,17 @@ adminPaymentConfigRoute.put("/payment-config", async (c) => {
 
     const cfg: Record<string, unknown> = { enabled: item.enabled };
     for (const field of meta.fields) {
-      const raw = item.fields[field.key] || "";
+      let raw = item.fields[field.key] || "";
+      // 占位符 → 保留原值（照搬 cf-shop resolveSensitiveConfigPlaceholders）
+      if (field.sensitive && raw === SENSITIVE_CONFIG_PLACEHOLDER) {
+        const existing = existingProviders[item.name]?.[field.key.toLowerCase()] ?? existingProviders[item.name]?.[field.key];
+        if (existing && String(existing).startsWith("enc:")) {
+          cfg[field.key.toLowerCase()] = existing;
+          continue;
+        }
+        // DB 也无值 → 视为空
+        raw = "";
+      }
       if (field.required && !raw) {
         if (item.enabled) issues.push(`${meta.displayName}: ${field.label} 必填`);
         continue;

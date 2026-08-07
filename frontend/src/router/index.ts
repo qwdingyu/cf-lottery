@@ -131,6 +131,11 @@ const router = createRouter({
           name: 'AdminIntegrations',
           component: () => import('@/views/admin/AdminIntegrationsView.vue'),
         },
+        {
+          path: 'payment-config',
+          name: 'AdminPaymentConfig',
+          component: () => import('@/views/admin/AdminPaymentConfig.vue'),
+        },
       ],
     },
     // 平台运营后台（L3），与租户后台（/admin）路由分离
