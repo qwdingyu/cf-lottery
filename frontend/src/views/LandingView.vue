@@ -1,225 +1,167 @@
 <template>
   <div class="landing-page">
-    <!-- 顶部导航 -->
     <nav class="landing-nav">
-      <span class="nav-brand">{{ $t('landing.navBrand') }}</span>
-      <!-- 已登录：进后台 + 退出；未登录：仅登录。避免 token 残留时永远只能点「登录」再被 guest 守卫踢回后台。 -->
+      <RouterLink to="/" class="nav-brand">{{ $t('landing.navBrand') }}</RouterLink>
       <div class="nav-actions">
         <template v-if="isLoggedIn">
-          <RouterLink to="/admin" class="nav-link">{{ $t('landing.enterAdmin') }}</RouterLink>
-          <button type="button" class="nav-link nav-logout" @click="handleLogout">{{ $t('landing.logout') }}</button>
+          <RouterLink to="/admin" class="nav-link nav-link-primary">{{ $t('landing.enterAdmin') }}</RouterLink>
+          <button type="button" class="nav-link" @click="handleLogout">{{ $t('landing.logout') }}</button>
         </template>
-        <RouterLink v-else to="/admin/login" class="nav-link">{{ $t('landing.login') }}</RouterLink>
+        <RouterLink v-else to="/admin/login" class="nav-link nav-link-primary">{{ $t('landing.login') }}</RouterLink>
       </div>
     </nav>
 
-    <!-- Hero -->
-    <header class="landing-hero">
-      <h1 class="hero-title">{{ $t('landing.heroTitle1') }}<br>{{ $t('landing.heroTitle2') }}</h1>
-      <p class="hero-subtitle">{{ $t('landing.heroSubtitle') }}</p>
-      <div class="hero-actions">
-        <RouterLink to="/admin/register" class="btn btn-primary btn-lg">{{ $t('landing.registerCta') }}</RouterLink>
-        <!--
-          次 CTA 必须诚实（docs/055a P0）：
-          - 配置了 demo_public_slug → 真实活动深链
-          - 否则锚到 #how-it-works，禁止链到注册
-        -->
-        <RouterLink
-          v-if="demoLotteryPath"
-          :to="demoLotteryPath"
-          class="btn btn-ghost btn-lg"
-        >{{ $t('landing.viewDemo') }}</RouterLink>
-        <a v-else href="#how-it-works" class="btn btn-ghost btn-lg">{{ $t('landing.viewDemo') }}</a>
-      </div>
-      <p class="hero-note">{{ $t('landing.heroNote') }}</p>
-      <p class="hero-note hero-note-boundary">{{ $t('landing.freeBoundary') }}</p>
-      <!--
-        055a P1 视觉余量 / docs/073：诚实产品示意（纯 CSS 线框，非假截图、非录屏）。
-        有真实活动截图 asset 后再替换；禁止用营销图冒充真实后台。
-      -->
-      <figure class="hero-product-mock" :aria-label="$t('landing.heroMockAria')">
-        <div class="hero-mock-chrome" aria-hidden="true">
-          <span class="hero-mock-dot"></span>
-          <span class="hero-mock-dot"></span>
-          <span class="hero-mock-dot"></span>
-          <span class="hero-mock-url">{{ $t('landing.heroMockUrl') }}</span>
-        </div>
-        <div class="hero-mock-body" aria-hidden="true">
-          <div class="hero-mock-sidebar">
-            <div class="hero-mock-nav-line"></div>
-            <div class="hero-mock-nav-line short"></div>
-            <div class="hero-mock-nav-line"></div>
+    <main>
+      <section class="market-hero">
+        <div class="market-hero-copy">
+          <p class="market-eyebrow">{{ $t('landing.marketEyebrow') }}</p>
+          <h1>{{ $t('landing.marketHeroTitle') }}</h1>
+          <p class="market-subtitle">{{ $t('landing.marketHeroSubtitle') }}</p>
+          <div class="market-actions">
+            <a href="#public-activities" class="btn btn-primary btn-lg">{{ $t('landing.marketBrowseCta') }}</a>
+            <RouterLink to="/admin/register" class="btn btn-ghost btn-lg">{{ $t('landing.registerCta') }}</RouterLink>
           </div>
-          <div class="hero-mock-main">
-            <div class="hero-mock-title-bar"></div>
-            <div class="hero-mock-cards">
-              <div class="hero-mock-card">
-                <div class="hero-mock-wheel"></div>
-                <div class="hero-mock-line"></div>
+          <dl class="market-stats" :aria-label="$t('landing.marketStatsAria')">
+            <div>
+              <dt>{{ publicCards.length }}</dt>
+              <dd>{{ $t('landing.marketStatsPublic') }}</dd>
+            </div>
+            <div>
+              <dt>{{ flashCards.length }}</dt>
+              <dd>{{ $t('landing.marketStatsFlash') }}</dd>
+            </div>
+            <div>
+              <dt>{{ freeCards.length }}</dt>
+              <dd>{{ $t('landing.marketStatsFree') }}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <aside class="market-panel" :aria-busy="activitiesLoading">
+          <div class="market-panel-head">
+            <span>{{ $t('landing.marketPanelTitle') }}</span>
+            <button type="button" class="panel-refresh" :disabled="activitiesLoading" @click="loadHomeActivities">
+              {{ activitiesLoading ? $t('landing.marketLoading') : $t('landing.marketRefresh') }}
+            </button>
+          </div>
+          <div v-if="activitiesLoading" class="hero-skeleton-list" aria-hidden="true">
+            <div v-for="i in 3" :key="i" class="hero-skeleton-item" />
+          </div>
+          <div v-else-if="featuredCards.length" class="featured-stack">
+            <RouterLink
+              v-for="card in featuredCards"
+              :key="card.publicSlug"
+              :to="card.href"
+              class="featured-card"
+            >
+              <div class="featured-media" :class="{ 'featured-media-empty': !card.imageUrl }">
+                <img v-if="card.imageUrl" :src="card.imageUrl" :alt="card.title" />
+                <span v-else>{{ card.badge === 'flash' ? 'SALE' : 'FREE' }}</span>
               </div>
-              <div class="hero-mock-card muted">
-                <div class="hero-mock-line wide"></div>
-                <div class="hero-mock-line"></div>
-                <div class="hero-mock-line short"></div>
+              <div class="featured-body">
+                <div class="card-tags">
+                  <span class="card-tag" :class="'card-tag-' + card.badge">
+                    {{ card.badge === 'flash' ? $t('landing.marketFlashTag') : $t('landing.marketFreeTag') }}
+                  </span>
+                  <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
+                </div>
+                <strong>{{ card.title }}</strong>
+                <div class="featured-bottom">
+                  <span class="card-price">{{ card.priceText }}</span>
+                  <span v-if="card.remaining != null" class="card-stock">{{ $t('landing.marketRemaining', { n: card.remaining }) }}</span>
+                </div>
+              </div>
+            </RouterLink>
+          </div>
+          <div v-else class="market-empty">
+            <strong>{{ $t('landing.marketEmptyTitle') }}</strong>
+            <p>{{ $t('landing.marketEmptyDesc') }}</p>
+            <RouterLink to="/admin/register" class="btn btn-primary btn-sm">{{ $t('landing.ctaButton') }}</RouterLink>
+          </div>
+        </aside>
+      </section>
+
+      <section id="public-activities" class="activity-market">
+        <div class="section-head">
+          <div>
+            <p class="market-eyebrow">{{ $t('landing.marketSectionEyebrow') }}</p>
+            <h2>{{ $t('landing.marketSectionTitle') }}</h2>
+            <p>{{ $t('landing.marketSectionDesc') }}</p>
+          </div>
+          <div class="activity-filters" role="tablist" :aria-label="$t('landing.marketFilterAria')">
+            <button type="button" :class="{ active: activityFilter === 'all' }" @click="activityFilter = 'all'">{{ $t('landing.marketFilterAll') }}</button>
+            <button type="button" :class="{ active: activityFilter === 'flash' }" @click="activityFilter = 'flash'">{{ $t('landing.marketFilterFlash') }}</button>
+            <button type="button" :class="{ active: activityFilter === 'free' }" @click="activityFilter = 'free'">{{ $t('landing.marketFilterFree') }}</button>
+          </div>
+        </div>
+
+        <div v-if="activitiesLoading" class="activity-grid" aria-hidden="true">
+          <div v-for="i in 6" :key="i" class="activity-card activity-card-skeleton" />
+        </div>
+        <div v-else-if="activitiesError" class="market-error" role="alert">
+          <span>{{ activitiesError }}</span>
+          <button type="button" class="btn btn-ghost btn-sm" @click="loadHomeActivities">{{ $t('landing.marketRetry') }}</button>
+        </div>
+        <div v-else-if="filteredCards.length" class="activity-grid">
+          <RouterLink
+            v-for="card in filteredCards"
+            :key="card.publicSlug"
+            :to="card.href"
+            class="activity-card"
+          >
+            <div class="activity-media" :class="{ 'activity-media-empty': !card.imageUrl }">
+              <img v-if="card.imageUrl" :src="card.imageUrl" :alt="card.title" />
+              <span v-else>{{ card.badge === 'flash' ? 'SALE' : 'FREE' }}</span>
+            </div>
+            <div class="activity-body">
+              <div class="card-tags">
+                <span class="card-tag" :class="'card-tag-' + card.badge">
+                  {{ card.badge === 'flash' ? $t('landing.marketFlashTag') : $t('landing.marketFreeTag') }}
+                </span>
+                <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
+                <span v-if="card.remaining != null" class="card-tag">{{ $t('landing.marketRemaining', { n: card.remaining }) }}</span>
+              </div>
+              <h3>{{ card.title }}</h3>
+              <p v-if="card.description">{{ card.description }}</p>
+              <div v-if="card.badge === 'flash'" class="progress-row">
+                <div class="progress-track" role="progressbar" :aria-valuenow="card.progressPercent" aria-valuemin="0" aria-valuemax="100">
+                  <span :style="{ width: card.progressPercent + '%' }" />
+                </div>
+                <small>{{ $t('landing.marketClaimed', { n: card.progressPercent }) }}</small>
+              </div>
+              <div class="activity-bottom">
+                <strong class="card-price">{{ card.priceText }}</strong>
+                <span class="card-cta">{{ card.badge === 'flash' ? $t('landing.marketGrabCta') : $t('landing.marketJoinCta') }}</span>
               </div>
             </div>
-            <div class="hero-mock-cta"></div>
-          </div>
+          </RouterLink>
         </div>
-        <figcaption class="hero-mock-caption">{{ $t('landing.heroMockCaption') }}</figcaption>
-      </figure>
-    </header>
+        <div v-else class="market-empty market-empty-wide">
+          <strong>{{ $t('landing.marketNoFilterTitle') }}</strong>
+          <p>{{ $t('landing.marketNoFilterDesc') }}</p>
+          <RouterLink to="/admin/register" class="btn btn-primary btn-sm">{{ $t('landing.ctaButton') }}</RouterLink>
+        </div>
+      </section>
 
-    <!-- 创建流程 -->
-    <section id="how-it-works" class="landing-section">
-      <h2 class="section-title">{{ $t('landing.stepsTitle') }}</h2>
-      <div class="steps-grid">
-        <div class="step-card">
-          <div class="step-number">1</div>
-          <h3>{{ $t('landing.step1Title') }}</h3>
-          <p>{{ $t('landing.step1Desc') }}</p>
+      <section class="merchant-strip">
+        <div>
+          <p class="market-eyebrow">{{ $t('landing.merchantEyebrow') }}</p>
+          <h2>{{ $t('landing.merchantTitle') }}</h2>
+          <p>{{ $t('landing.merchantDesc') }}</p>
         </div>
-        <div class="step-card">
-          <div class="step-number">2</div>
-          <h3>{{ $t('landing.step2Title') }}</h3>
-          <p>{{ $t('landing.step2Desc') }}</p>
+        <div class="merchant-steps">
+          <span>{{ $t('landing.merchantStep1') }}</span>
+          <span>{{ $t('landing.merchantStep2') }}</span>
+          <span>{{ $t('landing.merchantStep3') }}</span>
         </div>
-        <div class="step-card">
-          <div class="step-number">3</div>
-          <h3>{{ $t('landing.step3Title') }}</h3>
-          <p>{{ $t('landing.step3Desc') }}</p>
-        </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- 活动目标模板 -->
-    <section class="landing-section landing-section-alt">
-      <h2 class="section-title">{{ $t('landing.templatesTitle') }}</h2>
-      <p class="section-desc">{{ $t('landing.templatesDesc') }}</p>
-      <div class="mode-grid">
-        <div class="mode-card">
-          <div class="mode-preview wheel-preview">
-            <div class="wheel-mini"></div>
-          </div>
-          <div class="mode-info">
-            <h3>{{ $t('landing.modeLotteryTitle') }}</h3>
-            <span class="mode-tag">{{ $t('landing.modeLotteryTag') }}</span>
-            <p>{{ $t('landing.modeLotteryDesc') }}</p>
-          </div>
-        </div>
-        <div class="mode-card">
-          <div class="mode-preview scratch-preview">
-            <div class="scratch-mini"></div>
-          </div>
-          <div class="mode-info">
-            <h3>{{ $t('landing.modeSignupTitle') }}</h3>
-            <span class="mode-tag">{{ $t('landing.modeSignupTag') }}</span>
-            <p>{{ $t('landing.modeSignupDesc') }}</p>
-          </div>
-        </div>
-        <div class="mode-card">
-          <div class="mode-preview slot-preview">
-            <div class="slot-mini"></div>
-          </div>
-          <div class="mode-info">
-            <h3>{{ $t('landing.modeSurveyTitle') }}</h3>
-            <span class="mode-tag">{{ $t('landing.modeSurveyTag') }}</span>
-            <p>{{ $t('landing.modeSurveyDesc') }}</p>
-          </div>
-        </div>
-        <div class="mode-card">
-          <div class="mode-preview card-preview">
-            <div class="card-mini"></div>
-          </div>
-          <div class="mode-info">
-            <h3>{{ $t('landing.modeReviewTitle') }}</h3>
-            <span class="mode-tag">{{ $t('landing.modeReviewTag') }}</span>
-            <p>{{ $t('landing.modeReviewDesc') }}</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 核心能力 -->
-    <section class="landing-section">
-      <h2 class="section-title">{{ $t('landing.capabilityTitle') }}</h2>
-      <div class="capability-grid">
-        <div class="capability-item">
-          <div class="capability-icon" aria-hidden="true">⚡</div>
-          <h3>{{ $t('landing.capQuickTitle') }}</h3>
-          <p>{{ $t('landing.capQuickDesc') }}</p>
-        </div>
-        <div class="capability-item">
-          <div class="capability-icon" aria-hidden="true">🛡️</div>
-          <h3>{{ $t('landing.capReliableTitle') }}</h3>
-          <p>{{ $t('landing.capReliableDesc') }}</p>
-        </div>
-        <div class="capability-item">
-          <div class="capability-icon" aria-hidden="true">📊</div>
-          <h3>{{ $t('landing.capReviewTitle') }}</h3>
-          <p>{{ $t('landing.capReviewDesc') }}</p>
-        </div>
-        <div class="capability-item">
-          <div class="capability-icon" aria-hidden="true">➡️</div>
-          <h3>{{ $t('landing.capFollowTitle') }}</h3>
-          <p>{{ $t('landing.capFollowDesc') }}</p>
-        </div>
-        <div class="capability-item">
-          <div class="capability-icon" aria-hidden="true">🔗</div>
-          <h3>{{ $t('landing.capIntegrateTitle') }}</h3>
-          <p>{{ $t('landing.capIntegrateDesc') }}</p>
-        </div>
-        <div class="capability-item">
-          <div class="capability-icon" aria-hidden="true">🏢</div>
-          <h3>{{ $t('landing.capManagedTitle') }}</h3>
-          <p>{{ $t('landing.capManagedDesc') }}</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- 适合场景 -->
-    <section class="landing-section landing-section-alt">
-      <h2 class="section-title">{{ $t('landing.scenarioTitle') }}</h2>
-      <div class="scenario-grid">
-        <div class="scenario-card">
-          <div class="scenario-icon">📱</div>
-          <h3>{{ $t('landing.scenarioCommunityTitle') }}</h3>
-          <p>{{ $t('landing.scenarioCommunityDesc') }}</p>
-        </div>
-        <div class="scenario-card">
-          <div class="scenario-icon">🏪</div>
-          <h3>{{ $t('landing.scenarioStoreTitle') }}</h3>
-          <p>{{ $t('landing.scenarioStoreDesc') }}</p>
-        </div>
-        <div class="scenario-card">
-          <div class="scenario-icon">🎉</div>
-          <h3>{{ $t('landing.scenarioAnnualTitle') }}</h3>
-          <p>{{ $t('landing.scenarioAnnualDesc') }}</p>
-        </div>
-        <div class="scenario-card">
-          <div class="scenario-icon">📚</div>
-          <h3>{{ $t('landing.scenarioCourseTitle') }}</h3>
-          <p>{{ $t('landing.scenarioCourseDesc') }}</p>
-        </div>
-        <div class="scenario-card">
-          <div class="scenario-icon">⭐</div>
-          <h3>{{ $t('landing.scenarioFanTitle') }}</h3>
-          <p>{{ $t('landing.scenarioFanDesc') }}</p>
-        </div>
-        <div class="scenario-card">
-          <div class="scenario-icon">🎪</div>
-          <h3>{{ $t('landing.scenarioExpoTitle') }}</h3>
-          <p>{{ $t('landing.scenarioExpoDesc') }}</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- CTA -->
-    <section class="landing-cta">
-      <h2>{{ $t('landing.ctaTitle') }}</h2>
-      <p>{{ $t('landing.ctaDesc') }}</p>
-      <RouterLink to="/admin/register" class="btn btn-primary btn-lg">{{ $t('landing.ctaButton') }}</RouterLink>
-    </section>
+      <section class="landing-cta">
+        <h2>{{ $t('landing.ctaTitle') }}</h2>
+        <p>{{ $t('landing.ctaDesc') }}</p>
+        <RouterLink to="/admin/register" class="btn btn-primary btn-lg">{{ $t('landing.ctaButton') }}</RouterLink>
+      </section>
+    </main>
 
     <footer class="landing-footer">
       <div class="footer-main">
@@ -237,271 +179,541 @@ import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useToast } from '@usethink/cf-admin-fe/composables'
+import {
+  buildLandingActivityCard,
+  type LandingActivityCard,
+  type LandingHomeActivity,
+} from './landing-activity-feed'
 
 const router = useRouter()
 const { t } = useI18n()
 const { isLoggedIn, clearToken } = useAdminAuth()
 const { showToast } = useToast()
 
-/**
- * 公开配置中的 Demo 活动 public_slug（可选）。
- * 仅接受安全字符，避免把配置值直接拼进路由造成异常路径。
- */
-const demoPublicSlug = ref('')
+const activitiesLoading = ref(false)
+const activitiesError = ref('')
+const homeActivities = ref<LandingHomeActivity[]>([])
+const activityFilter = ref<'all' | 'flash' | 'free'>('all')
 
-const demoLotteryPath = computed(() => {
-  const slug = demoPublicSlug.value.trim()
-  if (!slug) return ''
-  // public_slug 通常为短横线/字母数字；拒绝 / ? # 等
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(slug)) return ''
-  return `/lottery/${encodeURIComponent(slug)}`
+const publicCards = computed<LandingActivityCard[]>(() =>
+  homeActivities.value.map((activity) => buildLandingActivityCard(activity, t('landing.marketFreePrice'))),
+)
+const flashCards = computed(() => publicCards.value.filter((card) => card.badge === 'flash'))
+const freeCards = computed(() => publicCards.value.filter((card) => card.badge === 'free'))
+const featuredCards = computed(() => publicCards.value.slice(0, 3))
+const filteredCards = computed(() => {
+  if (activityFilter.value === 'flash') return flashCards.value
+  if (activityFilter.value === 'free') return freeCards.value
+  return publicCards.value
 })
 
-onMounted(async () => {
+async function loadHomeActivities() {
+  activitiesLoading.value = true
+  activitiesError.value = ''
   try {
-    const res = await fetch('/api/system-config/system-config', { credentials: 'same-origin' })
-    if (!res.ok) return
-    const body = await res.json() as { ok?: boolean; config?: Record<string, string> }
-    const slug = body?.config?.demo_public_slug
-    if (typeof slug === 'string' && slug.trim()) {
-      demoPublicSlug.value = slug.trim()
+    const res = await fetch('/api/public/home-activities?limit=12', { credentials: 'same-origin' })
+    const body = await res.json().catch(() => null) as { ok?: boolean; activities?: LandingHomeActivity[]; message?: string } | null
+    if (!res.ok || !body?.ok) {
+      activitiesError.value = body?.message || t('landing.marketLoadFailed')
+      return
     }
+    homeActivities.value = Array.isArray(body.activities) ? body.activities : []
   } catch {
-    // 公开配置失败不影响首页主路径
+    activitiesError.value = t('landing.marketLoadFailed')
+  } finally {
+    activitiesLoading.value = false
   }
-})
+}
 
 /** 首页退出：完整业务会话（admin + 参与 + cf-auth 临时键） */
 function handleLogout() {
   clearToken()
   showToast(t('landing.loggedOut'), 'success')
-  // 已在本页，仅刷新导航态；replace 保证历史不堆栈
   void router.replace('/')
 }
+
+onMounted(() => {
+  void loadHomeActivities()
+})
 </script>
 
 <style scoped>
-.landing-page { max-width: 960px; margin: 0 auto; padding: 0 20px; }
-/* 页内锚点：次 CTA 滚到「怎么玩」时不被顶栏挡住 */
-#how-it-works { scroll-margin-top: 72px; }
+.landing-page {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  color: var(--tg-text);
+}
 .landing-nav {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 0;
+  min-height: 64px;
   position: sticky;
   top: 0;
   z-index: 20;
-  background: color-mix(in srgb, var(--tg-bg, #0a0e17) 92%, transparent);
-  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--tg-bg, #0a0e17) 94%, transparent);
+  backdrop-filter: blur(10px);
 }
-.nav-brand { font-size: 18px; font-weight: 700; }
-.nav-actions { display: flex; align-items: center; gap: 12px; }
+.nav-brand,
 .nav-link {
-  font-size: 14px;
-  color: var(--tg-hint);
+  color: inherit;
   text-decoration: none;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 8px 4px;
-  min-height: 44px;
-  display: inline-flex;
+}
+.nav-brand {
+  font-size: 18px;
+  font-weight: 800;
+}
+.nav-actions {
+  display: flex;
   align-items: center;
+  gap: 10px;
+}
+.nav-link {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tg-hint);
+  cursor: pointer;
   font-family: inherit;
 }
-.nav-link:hover { color: var(--tg-text); }
-.nav-link:focus-visible { outline: 2px solid var(--admin-accent, #f59e0b); outline-offset: 2px; border-radius: 6px; }
-.nav-logout { color: var(--tg-hint); }
-.landing-hero { text-align: center; padding: 80px 0 60px; }
-.hero-badge { display: inline-block; background: rgba(245,158,11,.15); color: #f59e0b; padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 20px; }
-.hero-title { font-size: 40px; font-weight: 800; line-height: 1.3; margin-bottom: 16px; }
-.hero-subtitle { font-size: 17px; color: var(--tg-hint); max-width: 500px; margin: 0 auto 28px; }
-.hero-actions { display: flex; gap: 12px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; }
-.hero-note { font-size: 13px; color: var(--tg-hint); }
-.hero-note-boundary { margin-top: 8px; max-width: 520px; margin-left: auto; margin-right: auto; line-height: 1.5; opacity: 0.9; }
-/* 产品示意线框：低成本信任感，不冒充真实截图 */
-.hero-product-mock {
-  margin: 36px auto 0;
-  max-width: 520px;
-  text-align: left;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--tg-border, #334155) 80%, transparent);
-  background: color-mix(in srgb, var(--tg-surface, #111827) 88%, #0a0e17);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
-  overflow: hidden;
+.nav-link-primary {
+  color: #0f172a;
+  border-color: transparent;
+  background: #fbbf24;
+  font-weight: 700;
 }
-.hero-mock-chrome {
-  display: flex;
+.market-hero {
+  min-height: calc(100dvh - 88px);
+  display: grid;
+  grid-template-columns: minmax(0, .94fr) minmax(420px, 1fr);
+  gap: 32px;
   align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
-  background: rgba(0, 0, 0, 0.25);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 24px 0 36px;
 }
-.hero-mock-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #475569;
+.market-hero-copy h1 {
+  margin: 0;
+  max-width: 720px;
+  font-size: clamp(38px, 6vw, 72px);
+  line-height: .98;
+  letter-spacing: 0;
 }
-.hero-mock-dot:nth-child(1) { background: #f87171; }
-.hero-mock-dot:nth-child(2) { background: #fbbf24; }
-.hero-mock-dot:nth-child(3) { background: #34d399; }
-.hero-mock-url {
-  margin-left: 8px;
-  font-size: 11px;
+.market-eyebrow {
+  margin: 0 0 12px;
+  color: #fbbf24;
+  font-size: 13px;
+  font-weight: 800;
+}
+.market-subtitle {
+  margin: 18px 0 0;
+  max-width: 610px;
   color: var(--tg-hint);
-  opacity: 0.85;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 17px;
+  line-height: 1.65;
 }
-.hero-mock-body {
-  display: grid;
-  grid-template-columns: 72px 1fr;
-  min-height: 168px;
-}
-.hero-mock-sidebar {
-  padding: 14px 10px;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+.market-actions {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
 }
-.hero-mock-nav-line {
-  height: 8px;
-  border-radius: 4px;
-  background: rgba(148, 163, 184, 0.35);
-}
-.hero-mock-nav-line.short { width: 60%; }
-.hero-mock-main { padding: 14px 14px 16px; }
-.hero-mock-title-bar {
-  height: 12px;
-  width: 42%;
-  border-radius: 6px;
-  background: rgba(245, 158, 11, 0.45);
-  margin-bottom: 12px;
-}
-.hero-mock-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.hero-mock-card {
+.btn-lg {
+  min-height: 48px;
+  padding: 13px 24px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  padding: 12px;
-  min-height: 72px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-weight: 800;
+}
+.market-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 30px 0 0;
+  max-width: 520px;
+}
+.market-stats div {
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px;
+  background: rgba(255,255,255,.04);
+}
+.market-stats dt {
+  font-size: 26px;
+  font-weight: 900;
+}
+.market-stats dd {
+  margin: 2px 0 0;
+  color: var(--tg-hint);
+  font-size: 12px;
+}
+.market-panel,
+.activity-market,
+.merchant-strip,
+.landing-cta {
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px;
+  background: rgba(255,255,255,.04);
+}
+.market-panel {
+  padding: 16px;
+}
+.market-panel-head,
+.section-head,
+.activity-bottom,
+.featured-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.market-panel-head {
+  margin-bottom: 12px;
+  color: rgba(255,255,255,.82);
+  font-weight: 800;
+}
+.panel-refresh,
+.activity-filters button {
+  min-height: 36px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px;
+  background: rgba(255,255,255,.04);
+  color: var(--tg-hint);
+  cursor: pointer;
+}
+.panel-refresh {
+  padding: 0 10px;
+}
+.featured-stack {
+  display: grid;
+  gap: 10px;
+}
+.featured-card {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+  background: rgba(0,0,0,.18);
+  border: 1px solid rgba(255,255,255,.08);
+}
+.featured-card:hover,
+.activity-card:hover {
+  border-color: rgba(251,191,36,.5);
+  transform: translateY(-1px);
+}
+.featured-media,
+.activity-media {
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(255,255,255,.08);
+}
+.featured-media {
+  aspect-ratio: 1 / 1;
+}
+.featured-media img,
+.activity-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.featured-media-empty,
+.activity-media-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,.72);
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+.featured-body {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
-.hero-mock-card.muted { align-items: stretch; }
-.hero-mock-wheel {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 3px solid #f59e0b;
-  background: conic-gradient(#f43f5e 0 25%, #f59e0b 25% 50%, #10b981 50% 75%, #3b82f6 75% 100%);
+.featured-body strong,
+.activity-body h3 {
+  overflow-wrap: anywhere;
 }
-.hero-mock-line {
-  height: 6px;
-  width: 70%;
-  border-radius: 3px;
-  background: rgba(148, 163, 184, 0.3);
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.hero-mock-line.wide { width: 100%; }
-.hero-mock-line.short { width: 45%; }
-.hero-mock-cta {
-  height: 22px;
-  width: 36%;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  margin-left: auto;
-}
-.hero-mock-caption {
-  margin: 0;
-  padding: 8px 12px 10px;
-  font-size: 12px;
+.card-tag {
+  min-height: 22px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.08);
   color: var(--tg-hint);
+  font-size: 12px;
+}
+.card-tag-flash {
+  color: #fecdd3;
+  background: rgba(244,63,94,.2);
+}
+.card-tag-free {
+  color: #bbf7d0;
+  background: rgba(34,197,94,.16);
+}
+.card-price {
+  color: #fb7185;
+  font-size: 22px;
+  font-weight: 900;
+}
+.card-stock {
+  color: var(--tg-hint);
+  font-size: 12px;
+}
+.market-empty,
+.market-error {
+  padding: 22px;
+  border-radius: 8px;
+  background: rgba(0,0,0,.16);
+  color: var(--tg-hint);
+}
+.market-empty strong {
+  display: block;
+  margin-bottom: 6px;
+  color: rgba(255,255,255,.86);
+}
+.market-empty p {
+  margin: 0 0 14px;
+}
+.hero-skeleton-list,
+.activity-grid {
+  display: grid;
+  gap: 14px;
+}
+.hero-skeleton-item,
+.activity-card-skeleton {
+  min-height: 116px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.12), rgba(255,255,255,.05));
+  background-size: 200% 100%;
+  animation: marketShimmer 1.2s linear infinite;
+}
+.activity-market {
+  padding: 24px;
+  margin-top: 18px;
+}
+.section-head {
+  align-items: flex-end;
+  margin-bottom: 20px;
+}
+.section-head h2 {
+  margin: 0;
+  font-size: 28px;
+}
+.section-head p:not(.market-eyebrow) {
+  margin: 8px 0 0;
+  color: var(--tg-hint);
+}
+.activity-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.activity-filters button {
+  padding: 0 12px;
+}
+.activity-filters button.active {
+  color: #0f172a;
+  background: #fbbf24;
+  border-color: transparent;
+  font-weight: 800;
+}
+.activity-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.activity-card {
+  min-width: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  border: 1px solid rgba(255,255,255,.1);
+  background: rgba(0,0,0,.18);
+  transition: transform .18s ease, border-color .18s ease;
+}
+.activity-media {
+  aspect-ratio: 4 / 3;
+  border-radius: 0;
+}
+.activity-body {
+  padding: 14px;
+}
+.activity-body h3 {
+  margin: 10px 0 6px;
+  font-size: 17px;
+  line-height: 1.35;
+}
+.activity-body p {
+  min-height: 40px;
+  margin: 0 0 12px;
+  color: var(--tg-hint);
+  font-size: 13px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.progress-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 14px;
+}
+.progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(251,113,133,.18);
+  overflow: hidden;
+}
+.progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #fb7185, #f43f5e);
+}
+.progress-row small {
+  color: #fecdd3;
+  font-size: 12px;
+}
+.card-cta {
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  color: #0f172a;
+  background: #fbbf24;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.market-empty-wide {
   text-align: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(0, 0, 0, 0.12);
 }
-.btn-lg { padding: 14px 32px; font-size: 16px; font-weight: 600; border-radius: 10px; min-height: 48px; display: inline-flex; align-items: center; justify-content: center; }
-.btn-lg:focus-visible { outline: 2px solid var(--admin-accent, #f59e0b); outline-offset: 3px; }
-.landing-section { padding: 80px 0; }
-.landing-section-alt { background: rgba(255,255,255,.02); border-radius: 24px; margin: 0 -20px; padding: 80px 20px; }
-.section-title { text-align: center; font-size: 28px; font-weight: 700; margin-bottom: 12px; }
-.section-desc { text-align: center; color: var(--tg-hint); margin-bottom: 40px; font-size: 15px; }
+.merchant-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, .9fr);
+  gap: 24px;
+  align-items: center;
+  margin-top: 18px;
+  padding: 24px;
+}
+.merchant-strip h2,
+.landing-cta h2 {
+  margin: 0;
+  font-size: 28px;
+}
+.merchant-strip p:not(.market-eyebrow),
+.landing-cta p {
+  margin: 10px 0 0;
+  color: var(--tg-hint);
+  line-height: 1.6;
+}
+.merchant-steps {
+  display: grid;
+  gap: 10px;
+}
+.merchant-steps span {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.82);
+  font-weight: 700;
+}
+.landing-cta {
+  margin-top: 18px;
+  padding: 34px 24px;
+  text-align: center;
+}
+.landing-cta .btn {
+  margin-top: 20px;
+}
+.landing-footer {
+  padding: 34px 0;
+  text-align: center;
+}
+.footer-main {
+  color: var(--tg-hint);
+  font-size: 13px;
+}
+.footer-dot {
+  margin: 0 8px;
+}
+.footer-main a {
+  color: var(--tg-link);
+}
 
-/* 三步流程 */
-.steps-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 40px; }
-.step-card { text-align: center; }
-.step-number { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; margin: 0 auto 12px; }
-.step-card h3 { font-size: 17px; margin-bottom: 8px; }
-.step-card p { font-size: 14px; color: var(--tg-hint); line-height: 1.6; }
+@keyframes marketShimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
 
-/* 游戏模式 */
-.mode-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 40px; }
-.mode-card { background: var(--tg-surface); border-radius: 16px; overflow: hidden; transition: transform .2s; }
-.mode-card:hover { transform: translateY(-2px); }
+@media (max-width: 920px) {
+  .market-hero,
+  .merchant-strip {
+    grid-template-columns: 1fr;
+  }
+  .market-hero {
+    min-height: auto;
+    padding-top: 40px;
+  }
+  .activity-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .landing-page {
+    width: min(100% - 20px, 1180px);
+  }
+  .market-hero-copy h1 {
+    font-size: 36px;
+  }
+  .market-actions,
+  .section-head,
+  .activity-bottom {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .market-actions .btn,
+  .activity-filters button {
+    width: 100%;
+  }
+  .market-stats {
+    grid-template-columns: 1fr;
+  }
+  .featured-card {
+    grid-template-columns: 82px 1fr;
+  }
+  .activity-market,
+  .merchant-strip {
+    padding: 16px;
+  }
+  .activity-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .mode-card { transition: none; }
-  .mode-card:hover { transform: none; }
-}
-.mode-preview { height: 100px; display: flex; align-items: center; justify-content: center; }
-.wheel-preview { background: linear-gradient(135deg, #fef3c7, #fde68a); }
-.scratch-preview { background: linear-gradient(135deg, #e0e7ff, #c7d2fe); }
-.slot-preview { background: linear-gradient(135deg, #fce7f3, #fbcfe8); }
-.card-preview { background: linear-gradient(135deg, #d1fae5, #a7f3d0); }
-.wheel-mini { width: 60px; height: 60px; border-radius: 50%; border: 4px solid #f59e0b; background: conic-gradient(#f43f5e 0 25%, #f59e0b 25% 50%, #10b981 50% 75%, #3b82f6 75% 100%); }
-.scratch-mini { width: 80px; height: 50px; background: #94a3b8; border-radius: 8px; position: relative; }
-.scratch-mini::after { content: '🎁'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 24px; }
-.slot-mini { display: flex; gap: 4px; }
-.slot-mini > * { width: 20px; height: 40px; background: #f59e0b; border-radius: 4px; }
-.slot-mini::before { content: '7'; display: flex; align-items: center; justify-content: center; width: 20px; height: 40px; background: #f43f5e; border-radius: 4px; color: #fff; font-weight: 700; }
-.slot-mini::after { content: '7'; display: flex; align-items: center; justify-content: center; width: 20px; height: 40px; background: #10b981; border-radius: 4px; color: #fff; font-weight: 700; }
-.card-mini { width: 50px; height: 70px; background: linear-gradient(135deg, #6366f1, #4f46e5); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 20px; font-weight: 700; }
-.mode-info { padding: 14px; }
-.mode-info h3 { font-size: 15px; margin-bottom: 4px; }
-.mode-tag { display: inline-block; font-size: 11px; background: rgba(245,158,11,.15); color: #f59e0b; padding: 2px 8px; border-radius: 10px; margin-bottom: 6px; }
-.mode-info p { font-size: 12px; color: var(--tg-hint); line-height: 1.5; }
-
-/* 核心能力 */
-.capability-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-top: 40px; }
-.capability-item { display: flex; gap: 16px; align-items: flex-start; }
-.capability-icon { font-size: 28px; flex-shrink: 0; width: 48px; height: 48px; background: var(--tg-surface); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
-.capability-item h3 { font-size: 16px; margin-bottom: 4px; }
-.capability-item p { font-size: 14px; color: var(--tg-hint); line-height: 1.6; }
-
-/* 场景 */
-.scenario-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; }
-.scenario-card { text-align: center; padding: 20px; background: var(--tg-surface); border-radius: 12px; }
-.scenario-icon { font-size: 32px; margin-bottom: 8px; }
-.scenario-card h3 { font-size: 15px; margin-bottom: 4px; }
-.scenario-card p { font-size: 13px; color: var(--tg-hint); }
-
-/* CTA */
-.landing-cta { text-align: center; padding: 80px 0; }
-.landing-cta h2 { font-size: 28px; margin-bottom: 8px; }
-.landing-cta p { color: var(--tg-hint); margin-bottom: 24px; }
-
-/* Footer */
-.landing-footer { text-align: center; padding: 40px 0; border-top: 1px solid var(--tg-border); }
-.footer-main { font-size: 13px; color: var(--tg-hint); }
-.footer-dot { margin: 0 8px; }
-.footer-main a { color: var(--tg-link); }
-
-@media (max-width: 768px) {
-  .hero-title { font-size: 28px; }
-  .mode-grid { grid-template-columns: repeat(2, 1fr); }
-  .steps-grid { grid-template-columns: 1fr; }
-  .capability-grid { grid-template-columns: 1fr; }
-  .scenario-grid { grid-template-columns: repeat(2, 1fr); }
+  .hero-skeleton-item,
+  .activity-card-skeleton {
+    animation: none;
+  }
+  .featured-card:hover,
+  .activity-card:hover {
+    transform: none;
+  }
 }
 </style>

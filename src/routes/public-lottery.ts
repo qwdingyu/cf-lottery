@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins } from "../db/schema";
-import { eq, and, count, asc, ne } from "drizzle-orm";
+import { eq, and, count, asc, ne, desc, gt, inArray } from "drizzle-orm";
 import {
   getActivityOutcome,
   joinDraw,
@@ -59,6 +59,110 @@ publicLotteryRoute.use("*", async (c, next) => {
 
 // 裂变 / 接龙 / 分享码子域
 setupPublicShareRoutes(publicLotteryRoute);
+
+function parsePublicHomeLimit(raw: string | undefined): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return 12;
+  return Math.min(24, Math.max(1, n));
+}
+
+function productFromPublicConfig(draw: {
+  title: string;
+  productLink?: string | null;
+  promotionConfig?: string | null;
+}) {
+  const productLink = tryParseJson(draw.productLink || "{}") as Record<string, unknown> | null;
+  const promotion = tryParseJson(draw.promotionConfig || "{}") as Record<string, unknown> | null;
+  const destination = promotion?.destination && typeof promotion.destination === "object" && !Array.isArray(promotion.destination)
+    ? promotion.destination as Record<string, unknown>
+    : null;
+  return {
+    title: String(productLink?.title || destination?.title || draw.title || "").trim(),
+    imageUrl: String(productLink?.imageUrl || destination?.imageUrl || "").trim(),
+    priceText: String(productLink?.price || productLink?.priceText || destination?.priceText || "").trim(),
+    url: String(productLink?.url || destination?.url || "").trim(),
+  };
+}
+
+/**
+ * 公开首页活动流。
+ *
+ * 只暴露商家明确公开且当前可参与的活动，用于首页“活动货架”。
+ * 不返回内部 draw.id / tenant_id / 支付密钥 / 卡密库存明细，避免把多租户后台信息带到公网。
+ */
+publicLotteryRoute.get("/home-activities", async (c) => {
+  const db = getDb(c);
+  const limit = parsePublicHomeLimit(c.req.query("limit"));
+  const nowIso = new Date().toISOString();
+
+  const rows = await db
+    .select({
+      publicSlug: lotteryDraws.publicSlug,
+      title: lotteryDraws.title,
+      description: lotteryDraws.description,
+      status: lotteryDraws.status,
+      activityKind: lotteryDraws.activityKind,
+      experienceType: lotteryDraws.experienceType,
+      participationMode: lotteryDraws.participationMode,
+      startAt: lotteryDraws.startAt,
+      endAt: lotteryDraws.endAt,
+      maxParticipants: lotteryDraws.maxParticipants,
+      productLink: lotteryDraws.productLink,
+      promotionConfig: lotteryDraws.promotionConfig,
+      tenantId: lotteryDraws.tenantId,
+      internalId: lotteryDraws.id,
+    })
+    .from(lotteryDraws)
+    .where(and(
+      eq(lotteryDraws.visible, 1),
+      eq(lotteryDraws.status, "open"),
+      gt(lotteryDraws.endAt, nowIso),
+    ))
+    .orderBy(asc(lotteryDraws.endAt), desc(lotteryDraws.createdAt))
+    .limit(limit);
+
+  const drawIds = rows.map((draw) => draw.internalId);
+  const claimedByDrawId = new Map<string, number>();
+  if (drawIds.length > 0) {
+    const claimedRows = await db
+      .select({
+        drawId: lotteryEntries.drawId,
+        total: count(),
+      })
+      .from(lotteryEntries)
+      .where(and(
+        inArray(lotteryEntries.drawId, drawIds),
+        ne(lotteryEntries.paymentStatus, "expired"),
+      ))
+      .groupBy(lotteryEntries.drawId);
+    for (const row of claimedRows) {
+      claimedByDrawId.set(row.drawId, Number(row.total || 0));
+    }
+  }
+
+  const activities = await Promise.all(rows.map(async (draw) => {
+    const claimed = claimedByDrawId.get(draw.internalId) || 0;
+    const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
+    const flashSale = flashParsed.config
+      ? buildFlashSaleRuntime(flashParsed.config, claimed, draw.maxParticipants)
+      : null;
+    const product = productFromPublicConfig(draw);
+    return {
+      publicSlug: draw.publicSlug,
+      title: draw.title,
+      description: draw.description,
+      activityKind: draw.activityKind || "lottery",
+      experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode),
+      startAt: draw.startAt,
+      endAt: draw.endAt,
+      claimed,
+      product,
+      flashSale,
+    };
+  }));
+
+  return ok(c, { activities });
+});
 
 /**
  * join 成功响应附加 instant 次数字段（docs/116）。
@@ -1453,4 +1557,3 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
 
   return ok(c, result);
 });
-

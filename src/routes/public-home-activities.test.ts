@@ -1,0 +1,124 @@
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { Hono } from "hono";
+import type { AppEnv } from "../bindings";
+import type { DbType } from "../db/client";
+import { lotteryDraws, lotteryEntries, tenants } from "../db/schema";
+import { publicLotteryRoute } from "./public-lottery";
+import { clearTestData, getTestDb } from "../test-setup";
+
+let client: Awaited<ReturnType<typeof getTestDb>>["client"];
+let db: DbType;
+
+const TENANT = "tenant-public-home";
+const TEST_ENV = {
+  TURSO_URL: "",
+  ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+  JWT_SECRET: "test-public-home-secret",
+};
+
+beforeAll(async () => {
+  ({ client, db } = await getTestDb());
+});
+
+afterEach(async () => {
+  await clearTestData(client);
+});
+
+function app() {
+  const h = new Hono<AppEnv>();
+  h.use("*", async (c, next) => {
+    c.set("db", db);
+    await next();
+  });
+  h.route("/public", publicLotteryRoute);
+  return h;
+}
+
+function iso(minutes: number): string {
+  return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
+async function seedDraw(input: {
+  id: string;
+  slug: string;
+  title: string;
+  status?: string;
+  visible?: number;
+  endOffset?: number;
+  experienceType?: string;
+  productLink?: unknown;
+  promotionConfig?: unknown;
+}) {
+  await db.insert(lotteryDraws).values({
+    id: input.id,
+    tenantId: TENANT,
+    publicSlug: input.slug,
+    title: input.title,
+    status: input.status || "open",
+    visible: input.visible ?? 1,
+    activityKind: "claim",
+    participationMode: "open",
+    experienceType: input.experienceType || "flash_sale",
+    resultMode: "instant",
+    startAt: iso(-10),
+    endAt: iso(input.endOffset ?? 60),
+    maxParticipants: 10,
+    winnerCount: 0,
+    productLink: JSON.stringify(input.productLink || {}),
+    promotionConfig: JSON.stringify(input.promotionConfig || {}),
+  });
+}
+
+describe("GET /public/home-activities", () => {
+  it("只返回公开、open、未结束活动，并隐藏内部 ID/租户 ID", async () => {
+    await db.insert(tenants).values({ id: TENANT, name: "Public Home Tenant" });
+    await seedDraw({
+      id: "flash-open",
+      slug: "flash-open-slug",
+      title: "Token 秒杀",
+      productLink: { title: "Token 日卡", imageUrl: "https://img.example.com/card.png", price: "¥9.90", url: "https://shop.example.com/p/1" },
+      promotionConfig: { flashSale: { enabled: true, paymentRequired: true, priceCents: 990, currency: "cny", stockLimit: 10, sessionLabel: "12:00场", title: "Token 日卡" } },
+    });
+    await db.insert(lotteryEntries).values({
+      id: "entry-1",
+      tenantId: TENANT,
+      drawId: "flash-open",
+      identityType: "email",
+      identityValue: "buyer@example.com",
+      paymentStatus: "pending",
+      joinedAt: iso(-5),
+    });
+    await db.insert(lotteryEntries).values({
+      id: "entry-expired",
+      tenantId: TENANT,
+      drawId: "flash-open",
+      identityType: "email",
+      identityValue: "expired@example.com",
+      paymentStatus: "expired",
+      joinedAt: iso(-4),
+    });
+    await seedDraw({ id: "hidden", slug: "hidden-slug", title: "隐藏活动", visible: 0 });
+    await seedDraw({ id: "ended", slug: "ended-slug", title: "已结束活动", endOffset: -1 });
+    await seedDraw({ id: "draft", slug: "draft-slug", title: "草稿活动", status: "draft" });
+
+    const res = await app().request("/public/home-activities?limit=12", {}, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; activities: any[] };
+    expect(body.ok).toBe(true);
+    expect(body.activities).toHaveLength(1);
+    expect(body.activities[0]).toMatchObject({
+      publicSlug: "flash-open-slug",
+      title: "Token 秒杀",
+      product: { title: "Token 日卡", priceText: "¥9.90" },
+      flashSale: {
+        paymentRequired: true,
+        priceCents: 990,
+        remaining: 9,
+        progressPercent: 10,
+      },
+    });
+    expect(body.activities[0]).not.toHaveProperty("tenantId");
+    expect(body.activities[0]).not.toHaveProperty("id");
+    expect(JSON.stringify(body.activities[0])).not.toContain("tenant-public-home");
+  });
+});
