@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Hono } from "hono";
+import { eq } from "drizzle-orm";
 import type { AppEnv } from "../bindings";
 import type { DbType } from "../db/client";
 import {
@@ -8,6 +9,7 @@ import {
   paymentOrders,
   prizeCodes,
   prizes,
+  tenantConfigs,
   tenants,
 } from "../db/schema";
 import { clearTestData, getTestDb } from "../test-setup";
@@ -177,6 +179,69 @@ describe("payment route", () => {
     expect(res.status).toBe(400);
     const body = await res.json() as { error?: string };
     expect(body.error).toContain("email");
+  });
+
+  it("USDT-TRC20 自动确认未闭环前拒绝创建直付发卡订单", async () => {
+    await db.insert(tenants).values({ id: TENANT_ID, name: "payment-route" });
+    await db.insert(tenantConfigs).values({
+      tenantId: TENANT_ID,
+      enabled: 1,
+      providers: JSON.stringify({
+        usdt_trc20: {
+          enabled: true,
+          trc20_wallet_address: "TWallet",
+          trongrid_api_key: "key",
+        },
+      }),
+    });
+    await db.insert(lotteryDraws).values({
+      id: DRAW_ID,
+      tenantId: TENANT_ID,
+      publicSlug: "payment-route",
+      title: "支付路由测试",
+      status: "open",
+      activityKind: "claim",
+      participationMode: "open",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 60_000).toISOString(),
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          priceCents: 9900,
+          currency: "usdt",
+        },
+      }),
+    });
+    await db.insert(lotteryEntries).values({
+      id: ENTRY_ID,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "email",
+      identityValue: EMAIL,
+      displayName: "buyer",
+      paymentStatus: "",
+    });
+
+    const app = createTestApp();
+    const res = await app.request("/api/public/draws/payment-route/payment-orders", {
+      method: "POST",
+      body: JSON.stringify({ entryId: ENTRY_ID }),
+      headers: { "Content-Type": "application/json" },
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error?: string };
+    expect(body.error).toContain("自动发卡");
+    const orders = await db.select().from(paymentOrders).where(eq(paymentOrders.tenantId, TENANT_ID));
+    expect(orders).toHaveLength(0);
   });
 
   it("查询订单时必须提供 email，避免卡密直接暴露", async () => {

@@ -13,10 +13,9 @@
         </select>
         <select v-model="filter.provider" class="filter-input" :disabled="loading" @change="searchData">
           <option value="">全部渠道</option>
-          <option value="alipay">支付宝</option>
-          <option value="stripe">Stripe</option>
-          <option value="usdt_trc20">USDT-TRC20</option>
-          <option value="easypay">易支付</option>
+          <option v-for="provider in providerOptions" :key="provider.name" :value="provider.name">
+            {{ provider.displayName }}
+          </option>
         </select>
         <input
           v-model.trim="filter.drawId"
@@ -121,6 +120,7 @@ const { showToast } = useToast()
 const loading = ref(false)
 const error = ref('')
 const orders = ref<AdminPaymentOrder[]>([])
+const providerOptions = ref<AdminPaymentOrdersResult['providers']>([])
 const total = ref(0)
 const page = ref(1)
 const limit = ref(20)
@@ -149,6 +149,7 @@ async function loadData() {
   try {
     const data = await adminRequest<AdminPaymentOrdersResult>(`/api/admin/payment-orders?${buildQuery()}`)
     orders.value = data.orders
+    providerOptions.value = data.providers || []
     total.value = data.total
   } catch (err) {
     error.value = err instanceof Error ? err.message : '加载失败'
@@ -210,13 +211,7 @@ function statusClass(status: string) {
 }
 
 function providerLabel(provider: string) {
-  const map: Record<string, string> = {
-    alipay: '支付宝',
-    stripe: 'Stripe',
-    usdt_trc20: 'USDT-TRC20',
-    easypay: '易支付',
-  }
-  return map[provider] || provider
+  return providerOptions.value.find((item) => item.name === provider)?.displayName || provider
 }
 
 function formatAmount(amountCents: number, currency: string) {

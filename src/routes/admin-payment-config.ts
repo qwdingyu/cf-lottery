@@ -51,6 +51,18 @@ function savedProviderValue(config: Record<string, unknown> | undefined, key: st
   return String(config[key.toLowerCase()] ?? config[key] ?? "").trim();
 }
 
+async function loadSavedProvidersForTenant(
+  db: ReturnType<typeof getDb>,
+  tenantId: string,
+): Promise<Record<string, Record<string, unknown>>> {
+  const [row] = await db
+    .select({ providers: tenantConfigs.providers })
+    .from(tenantConfigs)
+    .where(eq(tenantConfigs.tenantId, tenantId))
+    .limit(1);
+  return parseSavedProviders(row?.providers || "{}");
+}
+
 // ═══════════════════════════════════════════════════════════════
 // GET /admin/payment-config  docs/131 §10
 // ═══════════════════════════════════════════════════════════════
@@ -159,7 +171,10 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
     };
   });
 
-  const currencySupport = ["cny", "usd", "usdt"].map((currency) => {
+  const currencies = [...new Set(
+    PAYMENT_PROVIDER_CATALOG.flatMap((meta) => meta.supportedCurrencies.map((currency) => currency.toLowerCase())),
+  )].sort();
+  const currencySupport = currencies.map((currency) => {
     const availableProviders = checks
       .filter((check) => (
         check.configured &&
@@ -314,6 +329,16 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
   if (drawId) conditions.push(eq(paymentOrders.drawId, drawId));
 
   const where = and(...conditions);
+  const savedProviders = await loadSavedProvidersForTenant(db, tenantId);
+  const providerOptions = PAYMENT_PROVIDER_CATALOG
+    .filter((meta) => savedProviders[meta.name]?.enabled === true)
+    .map((meta) => ({
+      name: meta.name,
+      displayName: meta.displayName,
+      supportedCurrencies: meta.supportedCurrencies,
+      supportsDirectFulfillment: meta.supportsDirectFulfillment,
+    }));
+
   const rows = await db
     .select({
       id: paymentOrders.id,
@@ -356,6 +381,7 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
     .where(where);
 
   return ok(c, {
+    providers: providerOptions,
     orders: rows.map((row) => ({
       ...row,
       hasPrizeCode: Boolean(row.prizeCodeId),

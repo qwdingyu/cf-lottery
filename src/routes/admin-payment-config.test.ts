@@ -297,4 +297,38 @@ describe("admin payment management", () => {
     expect(alipay?.issues.join(";")).toContain("CREDENTIALS_ENCRYPTION_KEY");
     expect(body.currencySupport.find((item) => item.currency === "cny")?.available).toBe(false);
   });
+
+  it("does not count USDT-TRC20 as direct fulfillment ready in config check", async () => {
+    await seedMembers();
+    await db.insert(tenantConfigs).values({
+      tenantId: TENANT_ID,
+      enabled: 1,
+      providers: JSON.stringify({
+        usdt_trc20: {
+          enabled: true,
+          trc20_wallet_address: "TWallet",
+          trongrid_api_key: "key",
+        },
+      }),
+    });
+
+    const app = createTestApp();
+    const res = await app.request("/api/admin/payment-config/check", {
+      headers: await authHeader(),
+    }, {
+      ...TEST_ENV,
+      CREDENTIALS_ENCRYPTION_KEY: "test-key",
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      providers: Array<{ name: string; configured: boolean; supportsDirectFulfillment: boolean; issues: string[] }>;
+      currencySupport: Array<{ currency: string; available: boolean; providers: string[] }>;
+    };
+    const usdt = body.providers.find((item) => item.name === "usdt_trc20");
+    expect(usdt?.supportsDirectFulfillment).toBe(false);
+    expect(usdt?.configured).toBe(false);
+    expect(usdt?.issues.join(";")).toContain("直付自动发卡");
+    expect(body.currencySupport.find((item) => item.currency === "usdt")?.available).toBe(false);
+  });
 });

@@ -4,9 +4,7 @@
  * 定义每个支付渠道的元数据（显示名、字段、敏感位），供 L2 后台配置 UI 渲染。
  */
 import type { ProviderFactory } from "@usethink/cf-core/features/payment";
-import { stripeFactory, alipayFactory, trc20Factory } from "@usethink/cf-core/features/payment";
-// ── 待 @usethink/cf-core 0.4.17+ 发布后取消注释（已提交至 cf-core git main，npm 发布中） ──
-// import { easyPayFactory } from "@usethink/cf-core/features/payment/providers/easypay";
+import { stripeFactory, alipayFactory, easyPayFactory } from "@usethink/cf-core/features/payment";
 
 export type ProviderFieldMeta = {
   key: string;
@@ -43,6 +41,22 @@ export const PAYMENT_PROVIDER_CATALOG = [
     ],
   },
   {
+    name: "easypay",
+    displayName: "易支付",
+    description: "对接所有兼容易支付协议的聚合网关，包括 ZPay；支持支付宝、微信和 QQ 支付",
+    supportedCurrencies: ["cny"] as const,
+    supportsDirectFulfillment: true,
+    factory: easyPayFactory,
+    fields: [
+      { key: "EASYPAY_PID", label: "商户PID", required: true, sensitive: false },
+      { key: "EASYPAY_KEY", label: "商户密钥", type: "password", required: true, sensitive: true },
+      { key: "EASYPAY_API_BASE", label: "易支付接口地址", type: "url", required: true, sensitive: false, placeholder: "https://zpayz.cn" },
+      { key: "EASYPAY_RETURN_URL", label: "支付后跳转URL（可选）", type: "url", required: false, sensitive: false },
+      { key: "EASYPAY_PAY_TYPE", label: "默认收款方式", required: false, sensitive: false, placeholder: "alipay" },
+      { key: "EASYPAY_ENABLED_PAY_TYPES", label: "启用收款方式", required: false, sensitive: false, placeholder: "alipay,wxpay,qqpay" },
+    ],
+  },
+  {
     name: "alipay",
     displayName: "支付宝",
     description: "支付宝当面付/H5，国内主流支付",
@@ -55,35 +69,6 @@ export const PAYMENT_PROVIDER_CATALOG = [
       { key: "ALIPAY_PUBLIC_KEY", label: "支付宝公钥", type: "password", required: true, sensitive: true },
     ],
   },
-  {
-    name: "usdt_trc20",
-    displayName: "USDT-TRC20",
-    description: "USDT-TRC20 加密货币收款（TronGrid API；当前未开放直付自动发卡）",
-    supportedCurrencies: ["usdt"] as const,
-    supportsDirectFulfillment: false,
-    factory: trc20Factory,
-    fields: [
-      { key: "TRC20_WALLET_ADDRESS", label: "钱包地址", required: true, sensitive: false, placeholder: "T..." },
-      { key: "TRONGRID_API_KEY", label: "TronGrid API Key", type: "password", required: true, sensitive: true },
-    ],
-  },
-  // ── 待 @usethink/cf-core 0.4.17+ 发布后取消注释，并取消上方 import 的注释 ──
-  // {
-  //   name: "easypay",
-  //   displayName: "易支付",
-  //   description: "对接所有兼容易支付协议的聚合网关，包括 ZPay；支持支付宝、微信和 QQ 支付",
-  //   supportedCurrencies: ["cny"] as const,
-  //   supportsDirectFulfillment: true,
-  //   factory: easyPayFactory,
-  //   fields: [
-  //     { key: "EASYPAY_PID", label: "商户PID", required: true, sensitive: false },
-  //     { key: "EASYPAY_KEY", label: "商户密钥", type: "password", required: true, sensitive: true },
-  //     { key: "EASYPAY_API_BASE", label: "易支付接口地址", type: "url", required: true, sensitive: false, placeholder: "https://zpayz.cn" },
-  //     { key: "EASYPAY_RETURN_URL", label: "支付后跳转URL（可选）", type: "url", required: false, sensitive: false },
-  //     { key: "EASYPAY_PAY_TYPE", label: "默认收款方式", required: false, sensitive: false, placeholder: "alipay" },
-  //     { key: "EASYPAY_ENABLED_PAY_TYPES", label: "启用收款方式", required: false, sensitive: false, placeholder: "alipay,wxpay,qqpay" },
-  //   ],
-  // },
 ] satisfies PaymentProviderCatalogItem[];
 
 export const PAYMENT_PROVIDER_FACTORIES = PAYMENT_PROVIDER_CATALOG.map((item) => item.factory);

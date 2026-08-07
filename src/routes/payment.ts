@@ -243,7 +243,10 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
     const [pc] = await db
       .select({ code: prizeCodes.code, secret: prizeCodes.secret })
       .from(prizeCodes)
-      .where(eq(prizeCodes.id, order.prizeCodeId))
+      .where(and(
+        eq(prizeCodes.id, order.prizeCodeId),
+        eq(prizeCodes.tenantId, draw.tenantId),
+      ))
       .limit(1);
     if (pc) codeInfo = { code: pc.code, secret: pc.secret };
   }

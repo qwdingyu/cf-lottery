@@ -168,8 +168,12 @@ describe("tenant payment provider selection", () => {
       .resolves.toMatchObject({ provider: "alipay" });
     await expect(loadTenantConfig(db, TENANT_ID, "", { currency: "usdt" }))
       .resolves.toMatchObject({ provider: "usdt_trc20" });
+    await expect(loadTenantConfig(db, TENANT_ID, "", { currency: "usdt", requireDirectFulfillment: true }))
+      .resolves.toBeNull();
     await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "alipay" }))
       .resolves.toMatchObject({ provider: "alipay" });
+    await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "usdt_trc20", requireDirectFulfillment: true }))
+      .resolves.toBeNull();
     await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "stripe" }))
       .resolves.toBeNull();
   });

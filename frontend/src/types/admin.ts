@@ -733,6 +733,12 @@ export interface AdminPaymentOrder {
 export interface AdminPaymentOrdersResult {
   orders: AdminPaymentOrder[]
   total: number
+  providers: Array<{
+    name: string
+    displayName: string
+    supportedCurrencies: string[]
+    supportsDirectFulfillment: boolean
+  }>
 }
 
 export interface AdminBatch {

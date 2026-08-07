@@ -105,6 +105,19 @@ async function addAlipayConfig() {
   });
 }
 
+async function addUsdtConfig() {
+  await client.execute({
+    sql: "INSERT INTO tenant_configs (tenant_id, enabled, providers) VALUES (?, ?, ?)",
+    args: [TENANT, 1, JSON.stringify({
+      usdt_trc20: {
+        enabled: true,
+        trc20_wallet_address: "TWallet",
+        trongrid_api_key: "key",
+      },
+    })],
+  });
+}
+
 describe("发布预检 — 基础信息", () => {
   it("标题为空时返回结构化错误", async () => {
     const draw = makeDraw({ title: "" });
@@ -396,6 +409,31 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
     expect(result.errors.filter((item) => item.section === "payment")).toEqual([]);
     expect(result.canPublish).toBe(true);
+  });
+
+  it("docs/131：USDT-TRC20 自动确认未闭环前阻断直付发卡发布", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          priceCents: 9900,
+          currency: "usdt",
+        },
+      }),
+    });
+    await addUsdtConfig();
+    await addCodeTier(draw.id, 1, 10);
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "payment.provider.direct_fulfillment_unsupported")).toBe(true);
+    expect(result.errors.some((item) => item.code === "payment.currency.unsupported")).toBe(false);
   });
 
   it("docs/128 红线：手动/定时开奖 + 扇面真奖名 阻断发布；instant 放行", async () => {

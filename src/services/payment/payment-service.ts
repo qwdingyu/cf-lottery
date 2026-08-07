@@ -4,7 +4,7 @@
  * 职责：
  * - 按租户加载/解密支付配置（tenant_configs.providers JSON，多租户隔离）
  * - 创建订单（payment_orders，entryId UNIQUE 一参与一订单）
- * - 调用 cf-core Provider 创建支付（Stripe/支付宝/TRC20）
+ * - 调用 cf-core Provider 创建支付（易支付/支付宝/Stripe）
  * - 支付回调验签 + 幂等 + 发卡密（prizeCodes available → issued 原子取卡）
  *
  * 复用 @usethink/cf-core/features/payment（Provider 抽象已在共享库）。
@@ -17,7 +17,7 @@ import { withDbTransaction } from "../../db/client";
 import { tenantConfigs, paymentOrders, prizeCodes, lotteryPrizeTiers, prizes, lotteryEntries } from "../../db/schema";
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
 
-export type PaymentProviderName = "stripe" | "alipay" | "usdt_trc20";
+export type PaymentProviderName = "easypay" | "stripe" | "alipay";
 const RETRYABLE_PAYMENT_ORDER_STATUSES = new Set(["cancelled", "expired"]);
 
 /** 订单超时时间(分钟)：超过此时间未支付的 pending 订单标记 expired（docs/131 §8） */
