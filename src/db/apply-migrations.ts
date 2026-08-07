@@ -50,6 +50,14 @@ function extractUp(content: string): string {
  * @param client 已连接的 libsql client（本地 SQLite 或 Turso）
  */
 export async function applyPendingMigrations(client: Client): Promise<number> {
+  // pm2 cluster 下多实例并发启动迁移：设 busy_timeout 让 SQLite 等待写锁而非立即
+  // 报 SQLITE_BUSY（@libsql/client 不自动重试 BUSY）。5s 足够覆盖首个实例建表耗时。
+  try {
+    await client.execute({ sql: "PRAGMA busy_timeout = 5000", args: [] });
+  } catch {
+    // 远程 Turso 可能不允许 PRAGMA busy_timeout，忽略
+  }
+
   // 1. 确保版本跟踪表存在
   await client.execute(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
