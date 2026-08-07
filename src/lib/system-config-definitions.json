@@ -466,5 +466,48 @@
     "group": "平台运营",
     "order": 28,
     "difficulty": "advanced"
+  },
+  {
+    "key": "payment_order_timeout_minutes",
+    "label": "订单超时（分钟）",
+    "description": "支付订单创建后超过此分钟数仍未支付，订单标记 expired，名额释放。",
+    "effect": "秒杀直付订单的超时定时器，超过此时间后订单过期、entry 名额释放。",
+    "scope": "admin",
+    "type": "integer",
+    "defaultValue": "30",
+    "min": 1,
+    "max": 120,
+    "group": "秒杀/支付",
+    "order": 30,
+    "difficulty": "advanced"
+  },
+  {
+    "key": "flash_sale_max_price_cents",
+    "label": "秒杀最高价格（分）",
+    "description": "限时抢购活动允许设置的最高价格（分），保护消费者。",
+    "effect": "创建秒杀活动时校验，超过此上限拒绝保存。",
+    "scope": "admin",
+    "type": "integer",
+    "unit": "cents",
+    "defaultValue": "1000000",
+    "min": 1,
+    "max": 100000000,
+    "group": "秒杀/支付",
+    "order": 31,
+    "difficulty": "advanced"
+  },
+  {
+    "key": "home_activities_max_items",
+    "label": "首页活动矩阵最多展示数",
+    "description": "公开首页活动矩阵接口返回的最大活动数。",
+    "effect": "GET /api/public/home-activities?limit 参数的上限约束。",
+    "scope": "admin",
+    "type": "integer",
+    "defaultValue": "24",
+    "min": 1,
+    "max": 100,
+    "group": "平台运营",
+    "order": 29,
+    "difficulty": "advanced"
   }
 ]
