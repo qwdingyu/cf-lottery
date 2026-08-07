@@ -344,7 +344,7 @@ export async function performDraw(
 
     // 异步发送中奖通知邮件（不阻塞主流程，失败不影响开奖结果）
     // 由 platform system_config.notify_winner_email_enabled 控制（默认开启）
-    if (emailEnv && (emailEnv.resendApiKey || emailEnv.email || (emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret))) {
+    if (emailEnv && (emailEnv.resendApiKey || emailEnv.email || (emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret))) {
       const [notifyCfg] = await db
         .select({ value: systemConfig.value })
         .from(systemConfig)
@@ -375,7 +375,7 @@ export async function performDraw(
       if (loserRewardResult.granted > 0) {
         console.log(`[lottery] loser rewards granted: ${loserRewardResult.granted} for draw ${drawId}`);
         // 发券成功后发送安慰邮件（异步，不阻塞开奖主流程）
-        if (emailEnv && (emailEnv.resendApiKey || emailEnv.email || (emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret))) {
+        if (emailEnv && (emailEnv.resendApiKey || emailEnv.email || (emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret))) {
           void sendLoserConsolationEmails(db, emailEnv, tenantId, drawId, draw.title).catch((err) => {
             console.error(`[lottery] sendLoserConsolationEmails failed for ${drawId}:`, err);
           });
@@ -591,7 +591,7 @@ export async function notifyInstantSpinWinner(
   spinId: string,
   emailEnv: EmailEnv,
 ): Promise<void> {
-  if (!emailEnv || (!emailEnv.resendApiKey && !emailEnv.email && !(emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret)) || !spinId) return;
+  if (!emailEnv || (!emailEnv.resendApiKey && !emailEnv.email && !(emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret)) || !spinId) return;
 
   const [notifyCfg] = await db
     .select({ value: systemConfig.value })
@@ -781,7 +781,7 @@ export async function sendLoserConsolationEmails(
   drawId: string,
   drawTitle: string,
 ): Promise<{ sent: number; failed: number }> {
-  if (!emailEnv.resendApiKey && !emailEnv.email && !(emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret)) return { sent: 0, failed: 0 };
+  if (!emailEnv.resendApiKey && !emailEnv.email && !(emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret)) return { sent: 0, failed: 0 };
 
   // 读取平台配置：是否启用安慰邮件
   const [cfgRow] = await db

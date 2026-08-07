@@ -1,20 +1,20 @@
 /**
- * 邮件通知服务 — Cloudflare Email / Resend provider（cf-lottery 精简版）
+ * 邮件通知服务 — 基于 @usethink/cf-core/email EmailService 的薄封装。
  *
- * escapeHtml / interpolate 统一从 @usethink/cf-core/email 引入。
- * 配置通过 wrangler secret/binding 设置：EMAIL（send_email binding，优先）或 RESEND_API_KEY。
+ * 模板管理：src/services/templates/*.ts —— 业务模板保留项目内（不纳入 cf-core）
+ * 发送管道（重试/超时/escapeHtml/remote/Resend/CF Email）由 cf-core EmailService 统一提供。
+ *
+ * 通道优先级：cf-auth 邮件网关 → Cloudflare Email → Resend
+ * cf-auth 网关自动从 CF_AUTH_ISSUER/CLIENT_ID/CLIENT_SECRET 推导，无需额外 env 变量。
  */
-import { escapeHtml, interpolate } from "@usethink/cf-core/features/email";
-import { sendViaCloudflareEmail, type CloudflareEmailBinding } from "@usethink/cf-core/features/email/cloudflare";
-import { sendViaRemote } from "@usethink/cf-core/features/email/remote";
+import { EmailService, escapeHtml, interpolate } from "@usethink/cf-core/features/email";
 export { escapeHtml, interpolate };
 
+import type { CloudflareEmailBinding } from "@usethink/cf-core/features/email/cloudflare";
 import lotteryWinnerHtml from "./templates/lottery_winner";
 import emailAccessCodeHtml from "./templates/email_access_code";
 import drawReminderHtml from "./templates/draw_reminder";
 import loserConsolationHtml from "./templates/loser_consolation";
-
-interface ResendResponse { id?: string; message?: string; }
 
 const templates: Record<string, string> = {
   lottery_winner: lotteryWinnerHtml,
@@ -46,6 +46,17 @@ export function buildLotteryWinnerTemplateData(input: {
   };
 }
 
+/** 邮件环境配置：复用 CF_AUTH_* OAuth 凭据，无额外变量 */
+export type EmailEnv = {
+  resendApiKey?: string;
+  emailFrom?: string;
+  emailFromName?: string;
+  email?: CloudflareEmailBinding;
+  cfAuthIssuer?: string;
+  cfAuthClientId?: string;
+  cfAuthClientSecret?: string;
+};
+
 export interface SendEmailInput {
   to: string; template: string; templateData: Record<string, string>; orderId?: string;
 }
@@ -54,73 +65,29 @@ export interface SendEmailResult {
   ok: boolean; message?: string; id?: string;
 }
 
-/** 邮件环境配置：cf-auth 网关（remote）优先，Cloudflare binding / Resend 兜底 */
-export type EmailEnv = {
-  resendApiKey?: string;
-  emailFrom?: string;
-  emailFromName?: string;
-  email?: CloudflareEmailBinding;
-  /** docs/093 邮件网关：cf-auth 集中发送（OAuth client 认证） */
-  remoteEmailUrl?: string;
-  remoteEmailClientId?: string;
-  remoteEmailClientSecret?: string;
-};
-
-function hasRemoteEmail(env: EmailEnv): boolean {
-  return Boolean(env.remoteEmailUrl && env.remoteEmailClientId && env.remoteEmailClientSecret);
-}
-
 export async function sendEmail(
   emailEnv: EmailEnv,
   input: SendEmailInput,
 ): Promise<SendEmailResult> {
-  // cf-auth 邮件网关优先（docs/093：OAuth client 认证，集中发送，零邮件配置）
-  if (hasRemoteEmail(emailEnv)) {
-    const tpl = templates[input.template];
-    if (!tpl) return { ok: false, message: `模板不存在: ${input.template}` };
-    const subject = templateSubjects[input.template] || "通知";
-    const html = interpolate(tpl, input.templateData);
-    const result = await sendViaRemote(
-      { url: emailEnv.remoteEmailUrl!, clientId: emailEnv.remoteEmailClientId!, clientSecret: emailEnv.remoteEmailClientSecret! },
-      { to: input.to, subject, html },
-    );
-    return { ok: result.ok, message: result.error || result.messageId, id: result.messageId };
-  }
-
-  // Cloudflare Email Service（send_email binding，零第三方依赖）
-  if (emailEnv.email) {
-    const from = emailEnv.emailFromName
-      ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
-      : (emailEnv.emailFrom || "noreply@eforge.xyz");
-    const tpl = templates[input.template];
-    if (!tpl) return { ok: false, message: `模板不存在: ${input.template}` };
-    const subject = templateSubjects[input.template] || "通知";
-    const html = interpolate(tpl, input.templateData);
-    const result = await sendViaCloudflareEmail(emailEnv.email, { from, to: input.to, subject, html });
-    return { ok: result.ok, message: result.error || result.messageId, id: result.messageId };
-  }
-
-  // Resend 兜底（向后兼容）
-  const apiKey = emailEnv.resendApiKey;
-  if (!apiKey) return { ok: false, message: "邮件服务未配置" };
   const tpl = templates[input.template];
   if (!tpl) return { ok: false, message: `模板不存在: ${input.template}` };
   const subject = templateSubjects[input.template] || "通知";
   const html = interpolate(tpl, input.templateData);
-  const fromEmail = emailEnv.emailFrom || "noreply@resend.dev";
-  const from = emailEnv.emailFromName ? `${emailEnv.emailFromName} <${fromEmail}>` : fromEmail;
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: input.to, subject, html }),
-    });
-    const body = await res.json() as ResendResponse;
-    if (res.ok) return { ok: true, id: body.id };
-    return { ok: false, message: body.message || "发送失败" };
-  } catch (err: any) {
-    return { ok: false, message: err.message || "网络错误" };
-  }
+  const from = emailEnv.emailFromName
+    ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
+    : (emailEnv.emailFrom || "noreply@eforge.xyz");
+
+  const svc = new EmailService({
+    ...(emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret
+      ? { remote: { url: `${emailEnv.cfAuthIssuer}/api/email/send`, clientId: emailEnv.cfAuthClientId, clientSecret: emailEnv.cfAuthClientSecret } }
+      : {}),
+    ...(emailEnv.resendApiKey ? { apiKey: emailEnv.resendApiKey } : {}),
+    ...(emailEnv.email ? { emailBinding: emailEnv.email } : {}),
+    from,
+  });
+
+  const result = await svc.send({ to: input.to, subject, html });
+  return { ok: result.ok, message: result.error || result.messageId, id: result.messageId };
 }
 
 export async function sendAccessCode(
@@ -128,40 +95,18 @@ export async function sendAccessCode(
   to: string, drawName: string, code: string,
 ): Promise<{ ok: boolean; message: string }> {
   const html = interpolate(emailAccessCodeHtml, { drawName, code });
-  // cf-auth 邮件网关优先（docs/093）
-  if (hasRemoteEmail(emailEnv)) {
-    const result = await sendViaRemote(
-      { url: emailEnv.remoteEmailUrl!, clientId: emailEnv.remoteEmailClientId!, clientSecret: emailEnv.remoteEmailClientSecret! },
-      { to, subject: "您的抽奖验证码", html },
-    );
-    return { ok: result.ok, message: result.error || result.messageId || "发送成功" };
-  }
-  // Cloudflare Email Service（send_email binding）
-  if (emailEnv.email) {
-    const from = emailEnv.emailFromName
-      ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
-      : (emailEnv.emailFrom || "noreply@eforge.xyz");
-    return sendViaCloudflareEmail(emailEnv.email, { from, to, subject: "您的抽奖验证码", html }).then(r => ({
-      ok: r.ok, message: r.error || r.messageId || "发送成功",
-    }));
-  }
-  // Resend 兜底
-  if (!emailEnv.resendApiKey) return { ok: false, message: "邮件服务未配置" };
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${emailEnv.resendApiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: emailEnv.emailFromName
-          ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@resend.dev"}>`
-          : emailEnv.emailFrom || "noreply@resend.dev",
-        to, subject: "您的抽奖验证码", html,
-      }),
-    });
-    const body = await res.json() as ResendResponse;
-    if (res.ok) return { ok: true, message: "发送成功" };
-    return { ok: false, message: body.message || "发送失败" };
-  } catch (err: any) {
-    return { ok: false, message: err.message || "网络错误" };
-  }
+  const from = emailEnv.emailFromName
+    ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
+    : (emailEnv.emailFrom || "noreply@eforge.xyz");
+
+  const svc = new EmailService({
+    ...(emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret
+      ? { remote: { url: `${emailEnv.cfAuthIssuer}/api/email/send`, clientId: emailEnv.cfAuthClientId, clientSecret: emailEnv.cfAuthClientSecret } }
+      : {}),
+    ...(emailEnv.resendApiKey ? { apiKey: emailEnv.resendApiKey } : {}),
+    from,
+  });
+
+  const result = await svc.send({ to, subject: "您的抽奖验证码", html });
+  return { ok: result.ok, message: result.error || "发送成功" };
 }

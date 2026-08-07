@@ -23,13 +23,21 @@ const migrationsDir = join(__dirname, "..", "migrations");
 const url = process.env.TURSO_URL;
 const token = process.env.TURSO_TOKEN;
 
-if (!url || !token) {
-  console.error("[migrate] Missing TURSO_URL/TURSO_TOKEN, aborting migrations");
-  console.error("[migrate] Set them in .dev.vars (local) or wrangler secret put (remote)");
+if (!url) {
+  console.error("[migrate] Missing TURSO_URL, aborting migrations");
+  console.error("[migrate] Set TURSO_URL in .env, or TURSO_URL=file:./data/lottery.db for local SQLite");
   process.exit(1);
 }
 
-const client = createClient({ url, authToken: token });
+// 本地 SQLite（file: 前缀）不需要 auth token；远程 Turso 必须有 token
+const isLocal = url.startsWith("file:");
+if (!isLocal && !token) {
+  console.error("[migrate] Missing TURSO_TOKEN for remote Turso database, aborting migrations");
+  console.error("[migrate] Set TURSO_TOKEN in .env, or use TURSO_URL=file:./data/lottery.db for local SQLite");
+  process.exit(1);
+}
+
+const client = createClient(isLocal ? { url } : { url, authToken: token });
 
 // 解析命令行参数
 const args = process.argv.slice(2);
