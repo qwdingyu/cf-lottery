@@ -17,12 +17,36 @@
 import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { createClient } from "@libsql/client";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { app } from "./index";
+import { applyPendingMigrations } from "./db/apply-migrations";
 
 const PORT = parseInt(process.env.PORT || "8787", 10);
 const PUBLIC_DIR = join(process.cwd(), "public");
+
+// ── 启动时自动迁移（docs/130，cf-auth 启动自动迁移模式）──
+// 数据库连接：DATABASE_URL || TURSO_URL || 本地 SQLite（与 cf-auth server.ts 一致）。
+// VPS 生产用本地 SQLite（file:./data/lottery.db），无需 token；Turso 远程需 token。
+// 迁移失败直接退出：schema 与代码不匹配时启动应用属灾难性风险（如缺列导致 500）。
+const DB_URL = process.env.DATABASE_URL || process.env.TURSO_URL || "file:./data/lottery.db";
+if (DB_URL) {
+  const migrateClient = createClient({ url: DB_URL, authToken: process.env.TURSO_TOKEN });
+  try {
+    const applied = await applyPendingMigrations(migrateClient);
+    if (applied > 0) {
+      console.log(`[migrate] 启动迁移: 应用 ${applied} 个迁移文件`);
+    } else {
+      console.log(`[migrate] 数据库 schema 已是最新（${DB_URL.startsWith("file:") ? "本地 SQLite" : "Turso"}）`);
+    }
+  } catch (err) {
+    console.error("[migrate] 启动迁移失败，阻止启动:", err);
+    process.exit(1);
+  } finally {
+    await migrateClient.close();
+  }
+}
 
 /**
  * 本地/服务器 env 注入中间件。

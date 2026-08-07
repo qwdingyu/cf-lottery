@@ -132,7 +132,8 @@ if [ "$DO_PACKAGE" = true ]; then
     public/ \
     ecosystem.config.json \
     package.json \
-    package-lock.json
+    package-lock.json \
+    migrations/
   PACKAGE_SIZE=$(du -h "$PACKAGE" | cut -f1)
   info "打包完成 → $PACKAGE ($PACKAGE_SIZE)"
 else
