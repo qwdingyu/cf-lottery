@@ -796,6 +796,26 @@
                       <span>{{ $t('lottery.adminFlashSalePaymentRequired') }}</span>
                     </label>
                     <template v-if="form.flashSalePaymentRequired">
+                      <div class="field-span-2 flash-sale-checklist" aria-live="polite">
+                        <div class="flash-sale-checklist-head">
+                          <strong>{{ $t('lottery.adminFlashSaleDirectChecklistTitle') }}</strong>
+                          <span>{{ $t('lottery.adminFlashSaleDirectChecklistDesc') }}</span>
+                        </div>
+                        <ul>
+                          <li v-for="item in flashSaleDirectChecklist" :key="item.key" :class="{ done: item.done }">
+                            <span class="check-dot">{{ item.done ? '✓' : '!' }}</span>
+                            <span>{{ $t(`lottery.${item.labelKey}`) }}</span>
+                          </li>
+                        </ul>
+                        <div class="flash-sale-checklist-actions">
+                          <RouterLink to="/admin/payment-config" class="btn btn-ghost btn-xs">
+                            {{ $t('lottery.adminFlashSaleGoPaymentConfig') }}
+                          </RouterLink>
+                          <RouterLink to="/admin/prizes" class="btn btn-ghost btn-xs">
+                            {{ $t('lottery.adminFlashSaleGoPrizeCodes') }}
+                          </RouterLink>
+                        </div>
+                      </div>
                       <label>
                         <span>{{ $t('lottery.adminFlashSalePriceCents') }}</span>
                         <input v-model.number="form.flashSalePriceCents" type="number" min="1" max="100000000" />
@@ -1590,7 +1610,7 @@
  * 抽奖管理页 — cf-lottery 适配版。
  */
 import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useAdminAuth } from '@/composables/useAdminAuth'
@@ -1647,6 +1667,7 @@ import {
   normalizeSurveyFieldOptions as normalizeSurveyFieldOptionsRaw,
 } from './lottery/activity-config'
 import { emptyLotteryEditorForm } from './lottery/form-defaults'
+import { buildFlashSaleDirectChecklist } from './lottery/flash-sale-readiness'
 import { buildPromotionConfigPayload, growthFieldsFromDraw, sanitizeRitualPhrasesForSave } from './lottery/growth-config'
 import {
   buildLotteryDrawConfirmMessage,
@@ -2055,6 +2076,20 @@ const rosterInput = ref('')
 const inviteCodeCount = ref(10)
 /** 奖品库（用于奖项配置下拉选择） */
 const prizeOptions = ref<any[]>([])
+
+const flashSaleDirectChecklist = computed(() => {
+  return buildFlashSaleDirectChecklist({
+    enableFlashSale: form.value.enableFlashSale,
+    flashSalePaymentRequired: form.value.flashSalePaymentRequired,
+    flashSalePriceCents: form.value.flashSalePriceCents,
+    flashSaleStockLimit: form.value.flashSaleStockLimit,
+    flashSaleTitle: form.value.flashSaleTitle,
+    maxParticipants: form.value.maxParticipants,
+    productLink: form.value.productLink,
+    tiers: form.value.tiers,
+    prizeOptions: prizeOptions.value,
+  })
+})
 
 // ── 活动后承接：未中奖自动发券开关（表单编辑用，保存时同步进 activityConfig.loserReward） ──
 const loserRewardEnabled = ref(false)

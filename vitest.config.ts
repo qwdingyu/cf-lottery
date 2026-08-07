@@ -48,6 +48,8 @@ export default defineConfig({
       "frontend/src/views/lottery/viral-leaderboard-ui.test.ts",
       // docs/114：管理端裂变回填与 promotionConfig 提交防擦
       "frontend/src/views/admin/lottery/growth-config.test.ts",
+      // docs/134/137：直付秒杀发布清单，避免商品/价格/码池路径继续断裂
+      "frontend/src/views/admin/lottery/flash-sale-readiness.test.ts",
       // docs/115：drawAt ↔ drawTrigger 推断（定时开奖接线）
       "frontend/src/lib/activity-defaults.test.ts",
       "frontend/src/views/admin/lottery/ops-utils.schedule.test.ts",

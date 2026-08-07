@@ -40,6 +40,71 @@
   max-width: 100%;
 }
 
+.flash-sale-checklist {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--r-md, 8px);
+  background: var(--surface, rgba(255, 255, 255, 0.04));
+}
+
+.flash-sale-checklist-head {
+  display: grid;
+  gap: 3px;
+}
+
+.flash-sale-checklist-head strong {
+  color: var(--tg-text, #f0f2f5);
+  font-size: 13px;
+}
+
+.flash-sale-checklist-head span {
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 12px;
+}
+
+.flash-sale-checklist ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.flash-sale-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 12px;
+}
+
+.flash-sale-checklist li.done {
+  color: var(--tg-text, #f0f2f5);
+}
+
+.check-dot {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.flash-sale-checklist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* 二维码弹窗 */
 .qr-modal-body { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; }
 .qr-image { width: 240px; height: 240px; border-radius: 8px; background: #fff; padding: 8px; }
