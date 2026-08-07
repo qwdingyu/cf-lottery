@@ -105,14 +105,15 @@ async function addAlipayConfig() {
   });
 }
 
-async function addUsdtConfig() {
+async function addEasyPayConfig() {
   await client.execute({
     sql: "INSERT INTO tenant_configs (tenant_id, enabled, providers) VALUES (?, ?, ?)",
     args: [TENANT, 1, JSON.stringify({
-      usdt_trc20: {
+      easypay: {
         enabled: true,
-        trc20_wallet_address: "TWallet",
-        trongrid_api_key: "key",
+        easypay_pid: "pid",
+        easypay_key: "key",
+        easypay_api_base: "https://zpayz.cn",
       },
     })],
   });
@@ -387,7 +388,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.errors.some((item) => item.code === "payment.identity.email_required")).toBe(true);
   });
 
-  it("docs/131：直付秒杀价格、CNY 支付渠道和单一卡密池充足时可发布", async () => {
+  it("docs/131：直付秒杀价格、易支付 CNY 渠道和单一卡密池充足时可发布", async () => {
     const draw = makeDraw({
       maxParticipants: 10,
       experienceType: "flash_sale",
@@ -403,7 +404,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
         },
       }),
     });
-    await addAlipayConfig();
+    await addEasyPayConfig();
     await addCodeTier(draw.id, 1, 10);
 
     const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
@@ -411,7 +412,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.canPublish).toBe(true);
   });
 
-  it("docs/131：USDT-TRC20 自动确认未闭环前阻断直付发卡发布", async () => {
+  it("docs/131：区块链支付暂不进入当前直付目录，USDT 发布被阻断", async () => {
     const draw = makeDraw({
       maxParticipants: 10,
       experienceType: "flash_sale",
@@ -427,13 +428,11 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
         },
       }),
     });
-    await addUsdtConfig();
     await addCodeTier(draw.id, 1, 10);
 
     const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
     expect(result.canPublish).toBe(false);
-    expect(result.errors.some((item) => item.code === "payment.provider.direct_fulfillment_unsupported")).toBe(true);
-    expect(result.errors.some((item) => item.code === "payment.currency.unsupported")).toBe(false);
+    expect(result.errors.some((item) => item.code === "payment.currency.unsupported")).toBe(true);
   });
 
   it("docs/128 红线：手动/定时开奖 + 扇面真奖名 阻断发布；instant 放行", async () => {

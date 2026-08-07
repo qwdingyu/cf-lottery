@@ -21,7 +21,7 @@ export type PaymentProviderCatalogItem = {
   displayName: string;
   description: string;
   supportedCurrencies: readonly string[];
-  /** 是否已具备“支付确认后自动发卡”的闭环能力。TRC20 查询确认未闭环前必须为 false。 */
+  /** 是否已具备“支付确认后自动发卡”的闭环能力。 */
   supportsDirectFulfillment: boolean;
   factory: ProviderFactory;
   fields: ProviderFieldMeta[];

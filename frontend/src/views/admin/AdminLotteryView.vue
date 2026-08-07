@@ -806,7 +806,6 @@
                           <option value="cny">CNY</option>
                           <option value="usd">USD</option>
                           <option value="eur">EUR</option>
-                          <option value="usdt">USDT</option>
                         </select>
                       </label>
                       <label class="field-span-2">

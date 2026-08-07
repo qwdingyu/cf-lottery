@@ -10,7 +10,7 @@
  * 复用 @usethink/cf-core/features/payment（Provider 抽象已在共享库）。
  */
 import { createProviderRegistry } from "@usethink/cf-core/features/payment";
-import type { PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
+import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
@@ -299,7 +299,12 @@ export async function handlePaymentCallback(
   provider: PaymentProvider,
   params: Record<string, string>,
 ): Promise<{ processed: boolean; order?: typeof paymentOrders.$inferSelect; error?: string }> {
-  const callback = await provider.verifyCallback(params);
+  let callback: CallbackResult;
+  try {
+    callback = await provider.verifyCallback(params);
+  } catch {
+    return { processed: false, error: "验签失败" };
+  }
   if (!callback) return { processed: false, error: "验签失败" };
 
   const [pre] = await db
@@ -309,8 +314,10 @@ export async function handlePaymentCallback(
     .limit(1);
   if (!pre) return { processed: false, error: "订单不存在" };
   if (pre.tenantId !== tenantId) return { processed: false, error: "租户不匹配" };
-  if (callback.amountCents !== pre.amountCents || callback.currency !== pre.currency) {
-    return { processed: false, error: "金额不匹配" };
+  const callbackCurrency = String(callback.currency || "").trim().toLowerCase();
+  const orderCurrency = String(pre.currency || "").trim().toLowerCase();
+  if (callback.amountCents !== pre.amountCents || callbackCurrency !== orderCurrency) {
+    return { processed: false, error: "金额或币种不匹配" };
   }
 
   // 事务内完成发卡与状态更新（docs/131 §7：读取→取卡密→更新订单，一次提交）

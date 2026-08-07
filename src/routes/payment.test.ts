@@ -181,7 +181,7 @@ describe("payment route", () => {
     expect(body.error).toContain("email");
   });
 
-  it("USDT-TRC20 自动确认未闭环前拒绝创建直付发卡订单", async () => {
+  it("区块链支付暂不进入当前目录，USDT 直付发卡订单被拒绝创建", async () => {
     await db.insert(tenants).values({ id: TENANT_ID, name: "payment-route" });
     await db.insert(tenantConfigs).values({
       tenantId: TENANT_ID,

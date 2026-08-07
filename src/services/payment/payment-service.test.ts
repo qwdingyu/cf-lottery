@@ -5,12 +5,15 @@ import type { DbType } from "../../db/client";
 import {
   lotteryDraws,
   lotteryEntries,
+  lotteryPrizeTiers,
   paymentOrders,
+  prizeCodes,
+  prizes,
   tenantConfigs,
   tenants,
 } from "../../db/schema";
 import type { PaymentProvider } from "@usethink/cf-core/features/payment";
-import { createTenantProvider, loadTenantConfig, retryPaymentOrder } from "./payment-service";
+import { createTenantProvider, handlePaymentCallback, loadTenantConfig, retryPaymentOrder } from "./payment-service";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
@@ -19,6 +22,8 @@ const TENANT_ID = "tenant-payment-service";
 const DRAW_ID = "draw-payment-service";
 const ENTRY_ID = "entry-payment-service";
 const ORDER_ID = "order-payment-service";
+const PRIZE_ID = "prize-payment-service";
+const PRIZE_CODE_ID = "prize-code-payment-service";
 
 const providerMock: PaymentProvider = {
   name: "alipay",
@@ -72,6 +77,30 @@ async function seedBaseRows(status: string) {
     currency: "cny",
     status,
     provider: "alipay",
+  });
+}
+
+async function seedCallbackRows() {
+  await seedBaseRows("pending");
+  await db.insert(prizes).values({
+    id: PRIZE_ID,
+    tenantId: TENANT_ID,
+    name: "卡密奖品",
+    prizeType: "code",
+  });
+  await db.insert(lotteryPrizeTiers).values({
+    id: "tier-payment-service",
+    tenantId: TENANT_ID,
+    drawId: DRAW_ID,
+    prizeId: PRIZE_ID,
+  });
+  await db.insert(prizeCodes).values({
+    id: PRIZE_CODE_ID,
+    tenantId: TENANT_ID,
+    prizeId: PRIZE_ID,
+    code: "CODE-1",
+    secret: "SECRET-1",
+    status: "available",
   });
 }
 
@@ -156,34 +185,71 @@ describe("tenant payment provider selection", () => {
           alipay_private_key: "private",
           alipay_public_key: "public",
         },
-        usdt_trc20: {
+        easypay: {
           enabled: true,
-          trc20_wallet_address: "TWallet",
-          trongrid_api_key: "key",
+          easypay_pid: "pid",
+          easypay_key: "key",
+          easypay_api_base: "https://zpayz.cn",
         },
       }),
     });
 
     await expect(loadTenantConfig(db, TENANT_ID, "", { currency: "cny" }))
-      .resolves.toMatchObject({ provider: "alipay" });
+      .resolves.toMatchObject({ provider: "easypay" });
     await expect(loadTenantConfig(db, TENANT_ID, "", { currency: "usdt" }))
-      .resolves.toMatchObject({ provider: "usdt_trc20" });
-    await expect(loadTenantConfig(db, TENANT_ID, "", { currency: "usdt", requireDirectFulfillment: true }))
       .resolves.toBeNull();
     await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "alipay" }))
       .resolves.toMatchObject({ provider: "alipay" });
-    await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "usdt_trc20", requireDirectFulfillment: true }))
-      .resolves.toBeNull();
+    await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "easypay" }))
+      .resolves.toMatchObject({ provider: "easypay" });
     await expect(loadTenantConfig(db, TENANT_ID, "", { provider: "stripe" }))
       .resolves.toBeNull();
   });
 
   it("createTenantProvider honours currency filtering from cf-core registry", () => {
     const env = {
-      TRC20_WALLET_ADDRESS: "TWallet",
-      TRONGRID_API_KEY: "key",
+      EASYPAY_PID: "pid",
+      EASYPAY_KEY: "key",
+      EASYPAY_API_BASE: "https://zpayz.cn",
     };
-    expect(createTenantProvider(env, "usdt")?.name).toBe("usdt_trc20");
-    expect(createTenantProvider(env, "cny")).toBeNull();
+    expect(createTenantProvider(env, "cny")?.name).toBe("easypay");
+    expect(createTenantProvider(env, "usdt")).toBeNull();
+  });
+});
+
+describe("handlePaymentCallback", () => {
+  it("accepts provider currency casing differences and issues one code", async () => {
+    await seedCallbackRows();
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: ORDER_ID,
+        providerTradeNo: "EP-OK",
+        amountCents: 9900,
+        currency: "CNY",
+        paidAt: "2026-08-07T00:00:00.000Z",
+      })),
+    };
+
+    const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
+
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("paid");
+    expect(result.order?.prizeCodeId).toBe(PRIZE_CODE_ID);
+    const [code] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, PRIZE_CODE_ID));
+    expect(code?.status).toBe("issued");
+    expect(code?.winnerId).toBe(ENTRY_ID);
+  });
+
+  it("fails closed when provider callback verification throws", async () => {
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => {
+        throw new Error("invalid signature");
+      }),
+    };
+
+    await expect(handlePaymentCallback(db, TENANT_ID, callbackProvider, {}))
+      .resolves.toMatchObject({ processed: false, error: "验签失败" });
   });
 });

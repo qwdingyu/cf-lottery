@@ -171,6 +171,18 @@ async function seedOtherTenantOrder() {
 describe("admin payment management", () => {
   it("lists only the current tenant payment orders and never exposes code secrets", async () => {
     await seedMembers();
+    await db.insert(tenantConfigs).values({
+      tenantId: TENANT_ID,
+      enabled: 1,
+      providers: JSON.stringify({
+        easypay: {
+          enabled: true,
+          easypay_pid: "pid",
+          easypay_key: "enc:key",
+          easypay_api_base: "https://zpayz.cn",
+        },
+      }),
+    });
     await seedOrder("paid");
     await seedOtherTenantOrder();
 
@@ -182,9 +194,11 @@ describe("admin payment management", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as {
       orders: Array<{ id: string; tenantId: string; identityValue: string; secret?: string }>;
+      providers: Array<{ name: string; displayName: string }>;
       total: number;
     };
     expect(body.total).toBe(1);
+    expect(body.providers).toEqual([expect.objectContaining({ name: "easypay", displayName: "易支付" })]);
     expect(body.orders).toHaveLength(1);
     expect(body.orders[0]).toMatchObject({
       id: ORDER_ID,
@@ -298,12 +312,18 @@ describe("admin payment management", () => {
     expect(body.currencySupport.find((item) => item.currency === "cny")?.available).toBe(false);
   });
 
-  it("does not count USDT-TRC20 as direct fulfillment ready in config check", async () => {
+  it("checks EasyPay as the CNY direct fulfillment provider and ignores legacy blockchain config", async () => {
     await seedMembers();
     await db.insert(tenantConfigs).values({
       tenantId: TENANT_ID,
       enabled: 1,
       providers: JSON.stringify({
+        easypay: {
+          enabled: true,
+          easypay_pid: "pid",
+          easypay_key: "enc:key",
+          easypay_api_base: "https://zpayz.cn",
+        },
         usdt_trc20: {
           enabled: true,
           trc20_wallet_address: "TWallet",
@@ -325,10 +345,15 @@ describe("admin payment management", () => {
       providers: Array<{ name: string; configured: boolean; supportsDirectFulfillment: boolean; issues: string[] }>;
       currencySupport: Array<{ currency: string; available: boolean; providers: string[] }>;
     };
+    const easypay = body.providers.find((item) => item.name === "easypay");
+    expect(easypay?.supportsDirectFulfillment).toBe(true);
+    expect(easypay?.configured).toBe(true);
+    expect(body.currencySupport.find((item) => item.currency === "cny")).toMatchObject({
+      available: true,
+      providers: ["easypay"],
+    });
     const usdt = body.providers.find((item) => item.name === "usdt_trc20");
-    expect(usdt?.supportsDirectFulfillment).toBe(false);
-    expect(usdt?.configured).toBe(false);
-    expect(usdt?.issues.join(";")).toContain("直付自动发卡");
-    expect(body.currencySupport.find((item) => item.currency === "usdt")?.available).toBe(false);
+    expect(usdt).toBeUndefined();
+    expect(body.currencySupport.find((item) => item.currency === "usdt")).toBeUndefined();
   });
 });

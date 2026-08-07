@@ -189,6 +189,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     status: order.status,
     amountCents: order.amountCents,
     currency: order.currency,
+    provider: order.provider,
     redirectUrl: payResult.redirectUrl,
     qrCode: payResult.qrCode,
   });
