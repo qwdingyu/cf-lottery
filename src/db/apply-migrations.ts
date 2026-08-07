@@ -9,7 +9,7 @@
  * - 迁移失败会抛出异常，由调用方（server.ts）决定是否阻止启动
  *   （迁移失败而应用继续启动 = schema 与代码不匹配，属灾难性风险）
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Client } from "@libsql/client";
@@ -17,6 +17,15 @@ import type { Client } from "@libsql/client";
 // migrations 目录定位：src/db/apply-migrations.ts（tsx 开发）与 dist/db/apply-migrations.js
 // （VPS 生产）相对项目根的层级一致，均为 ../../migrations
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "migrations");
+
+/** 确保 data/ 目录存在（本地 SQLite 文件模式所需，借鉴 cf-auth migrate.mjs）。 */
+export function ensureDataDir(dbUrl: string): void {
+  if (dbUrl.startsWith("file:")) {
+    const filePath = dbUrl.replace(/^file:/, "");
+    const abs = filePath.startsWith("/") ? filePath : join(process.cwd(), filePath);
+    mkdirSync(dirname(abs), { recursive: true });
+  }
+}
 
 /** 与 migrate.mjs 一致的语句解析：按 ; 拆分，循环移除语句开头的注释行。 */
 function parseStatements(sql: string): string[] {
@@ -88,8 +97,9 @@ export async function applyPendingMigrations(client: Client): Promise<number> {
     }
 
     const name = file.replace(/^\d+_/, "").replace(/\.sql$/, "");
+    // INSERT OR IGNORE：防多进程并发启动时同一迁移被重复记录（UNIQUE 冲突）
     await client.execute({
-      sql: "INSERT INTO schema_migrations (version, name, executed_at) VALUES (?, ?, datetime('now'))",
+      sql: "INSERT OR IGNORE INTO schema_migrations (version, name, executed_at) VALUES (?, ?, datetime('now'))",
       args: [version, name],
     });
     applied++;

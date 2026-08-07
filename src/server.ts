@@ -21,7 +21,7 @@ import { createClient } from "@libsql/client";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { app } from "./index";
-import { applyPendingMigrations } from "./db/apply-migrations";
+import { applyPendingMigrations, ensureDataDir } from "./db/apply-migrations";
 
 const PORT = parseInt(process.env.PORT || "8787", 10);
 const PUBLIC_DIR = join(process.cwd(), "public");
@@ -32,6 +32,7 @@ const PUBLIC_DIR = join(process.cwd(), "public");
 // 迁移失败直接退出：schema 与代码不匹配时启动应用属灾难性风险（如缺列导致 500）。
 const DB_URL = process.env.DATABASE_URL || process.env.TURSO_URL || "file:./data/lottery.db";
 if (DB_URL) {
+  ensureDataDir(DB_URL); // 本地 SQLite 时确保 data/ 目录存在（首次部署）
   const migrateClient = createClient({ url: DB_URL, authToken: process.env.TURSO_TOKEN });
   try {
     const applied = await applyPendingMigrations(migrateClient);
