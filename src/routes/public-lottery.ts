@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins } from "../db/schema";
-import { eq, and, count, asc } from "drizzle-orm";
+import { eq, and, count, asc, ne } from "drizzle-orm";
 import {
   getActivityOutcome,
   joinDraw,
@@ -109,10 +109,11 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
   // docs/083：visible=0 时对公众与「未开放」同文案，不额外泄露「存在但隐藏」
   if (Number(draw.visible ?? 1) !== 1) return fail(c, "活动未开放", 400);
 
+  // docs/131 §8：名额统计排除支付超时释放的 entry（payment_status='expired' 软释放）
   const [{ total }] = await db
     .select({ total: count() })
     .from(lotteryEntries)
-    .where(eq(lotteryEntries.drawId, draw.id));
+    .where(and(eq(lotteryEntries.drawId, draw.id), ne(lotteryEntries.paymentStatus, "expired")));
 
   const result: any = {
     id: draw.publicSlug, // 公开页面使用 publicSlug 作为标识，不暴露内部 ID

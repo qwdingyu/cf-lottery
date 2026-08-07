@@ -11,10 +11,10 @@
  */
 import { createProviderRegistry } from "@usethink/cf-core/features/payment";
 import type { PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
-import { tenantConfigs, paymentOrders, prizeCodes, lotteryPrizeTiers, prizes } from "../../db/schema";
+import { tenantConfigs, paymentOrders, prizeCodes, lotteryPrizeTiers, prizes, lotteryEntries } from "../../db/schema";
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
 
 export type PaymentProviderName = "stripe" | "alipay" | "usdt_trc20";
@@ -22,10 +22,22 @@ export type PaymentProviderName = "stripe" | "alipay" | "usdt_trc20";
 /** 订单超时时间(分钟)：超过此时间未支付的 pending 订单标记 expired（docs/131 §8） */
 const ORDER_EXPIRE_MINUTES = 30;
 
-/** 懒清理：标记超过 30 分钟未支付的 pending 订单为 expired */
+/** 懒清理：标记超过 30 分钟未支付的 pending 订单为 expired，并释放关联 entry 名额（docs/131 §8） */
 async function expireOverdueOrders(db: DbType, tenantId: string): Promise<number> {
   const cutoff = sql`datetime('now', '-' || ${ORDER_EXPIRE_MINUTES} || ' minutes')`;
-  const result = await db
+  // 查过期订单
+  const overdue = await db
+    .select({ id: paymentOrders.id, entryId: paymentOrders.entryId })
+    .from(paymentOrders)
+    .where(and(
+      eq(paymentOrders.tenantId, tenantId),
+      eq(paymentOrders.status, "pending"),
+      sql`${paymentOrders.createdAt} < ${cutoff}`,
+    ));
+  if (overdue.length === 0) return 0;
+
+  // 标记订单 expired
+  await db
     .update(paymentOrders)
     .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
     .where(and(
@@ -33,7 +45,17 @@ async function expireOverdueOrders(db: DbType, tenantId: string): Promise<number
       eq(paymentOrders.status, "pending"),
       sql`${paymentOrders.createdAt} < ${cutoff}`,
     ));
-  return result.rowsAffected ?? 0;
+
+  // 软释放：关联 entry 标记 payment_status=expired（不删 entry，保留审计链）
+  const entryIds = overdue.map((o) => o.entryId).filter(Boolean);
+  if (entryIds.length > 0) {
+    await db
+      .update(lotteryEntries)
+      .set({ paymentStatus: "expired" })
+      .where(inArray(lotteryEntries.id, entryIds));
+  }
+
+  return overdue.length;
 }
 
 /** 从 DB 加载并解密租户支付配置；未配置或密钥缺失返回 null（照搬 cf-shop loadPaymentProviderConfigs） */
@@ -129,6 +151,12 @@ export async function createPaymentOrder(
     provider: input.provider,
   });
 
+  // 标记关联 entry 支付状态为 pending（软释放，docs/131 §8）
+  await db
+    .update(lotteryEntries)
+    .set({ paymentStatus: "pending" })
+    .where(eq(lotteryEntries.id, input.entryId));
+
   const payResult = await provider.createPayment({
     orderNo: id,
     amountCents: input.amountCents,
@@ -213,6 +241,14 @@ export async function handlePaymentCallback(
         updatedAt: sql`(datetime('now'))`,
       })
       .where(eq(paymentOrders.id, pre.id));
+
+    // 支付成功 → entry 标记 paid（软释放状态机，docs/131 §8）
+    if (newStatus === "paid") {
+      await tx
+        .update(lotteryEntries)
+        .set({ paymentStatus: "paid" })
+        .where(eq(lotteryEntries.id, pre.entryId));
+    }
 
     const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, pre.id)).limit(1);
     return updated ?? null;

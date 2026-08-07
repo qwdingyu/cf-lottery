@@ -304,6 +304,12 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
   spinsTotalGranted: integer("spins_total_granted").notNull().default(0),
   /** instant：因有效邀请累计加到 granted 的部分（≤ maxExtraSpins） */
   spinsViralEarned: integer("spins_viral_earned").notNull().default(0),
+  /**
+   * 支付状态（docs/131 §8 软释放）：秒杀直付专用。
+   * '' = 无支付需求（普通参与）；pending = 订单创建中；paid = 已支付；expired = 订单超时释放。
+   * 名额统计（claimed）排除 expired，实现软释放（不删 entry，保留审计链）。
+   */
+  paymentStatus: text("payment_status").notNull().default(""),
 }, (t) => ({
   unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
   identityIdx: index("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),
