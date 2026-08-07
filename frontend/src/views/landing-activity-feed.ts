@@ -79,11 +79,11 @@ export function activityPhaseI18nKey(phase: LandingActivityPhase): string {
   return 'marketPhaseRunning'
 }
 
-export function buildLandingActivityCard(activity: LandingHomeActivity, freeLabel: string): LandingActivityCard {
+export function buildLandingActivityCard(activity: LandingHomeActivity, freeLabel: string, nowMs = Date.now()): LandingActivityCard {
   const badge = classifyLandingActivity(activity)
   const flashSale = activity.flashSale || null
   const paymentMode = resolveLandingPaymentMode(activity)
-  const phase = resolveLandingActivityPhase(activity)
+  const phase = resolveLandingActivityPhase(activity, nowMs)
   const title = String(flashSale?.sessionLabel ? activity.product?.title || flashSale.sessionLabel : activity.product?.title || activity.title).trim()
   const priceText = flashSale?.paymentRequired
     ? formatPaymentAmount(flashSale.priceCents, flashSale.currency || 'cny')

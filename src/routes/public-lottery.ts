@@ -77,6 +77,21 @@ function publicHttpUrl(value: unknown): string {
   }
 }
 
+function formatPublicAmount(amountMinor: number | null | undefined, currency: string | null | undefined): string {
+  const normalized = String(currency || "cny").trim().toUpperCase() || "CNY";
+  if (amountMinor == null) return "";
+  const n = Number(amountMinor);
+  if (!Number.isFinite(n) || n < 0) return "";
+  if (normalized === "JPY") return `¥${Math.round(n)}`;
+
+  const value = n / 100;
+  if (normalized === "CNY") return `¥${value.toFixed(2)}`;
+  if (normalized === "USD") return `$${value.toFixed(2)}`;
+  if (normalized === "EUR") return `€${value.toFixed(2)}`;
+  if (normalized === "GBP") return `£${value.toFixed(2)}`;
+  return `${value.toFixed(2)} ${normalized}`;
+}
+
 function productFromPublicConfig(draw: {
   title: string;
   productLink?: string | null;
@@ -162,9 +177,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
     const product = productFromPublicConfig(draw);
     // 直付秒杀补价格（docs/137 §2）：productLink 没设 price 时，从 flashSale.priceCents 补充
     if (!product.priceText && flashSale?.priceCents && flashSale.priceCents > 0) {
-      const amount = (flashSale.priceCents / 100).toFixed(2);
-      const suffix = String(flashSale.currency || "cny").toUpperCase();
-      product.priceText = suffix === "CNY" ? `¥${amount}` : `${amount} ${suffix}`;
+      product.priceText = formatPublicAmount(flashSale.priceCents, flashSale.currency);
     }
     return {
       publicSlug: draw.publicSlug,

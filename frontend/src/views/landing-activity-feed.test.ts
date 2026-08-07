@@ -9,6 +9,8 @@ import {
 } from './landing-activity-feed'
 
 describe('landing-activity-feed', () => {
+  const NOW = Date.parse('2026-08-07T04:30:00.000Z')
+
   it('直付秒杀卡片价格来自 flashSale.priceCents', () => {
     const card = buildLandingActivityCard({
       publicSlug: 'token-day',
@@ -25,12 +27,12 @@ describe('landing-activity-feed', () => {
         remaining: 8,
         progressPercent: 20,
       },
-    }, '免费')
+    }, '免费', NOW)
 
     expect(card).toMatchObject({
       badge: 'flash',
       paymentMode: 'direct',
-      phase: 'ended',
+      phase: 'running',
       title: 'Token 日卡',
       priceText: '¥9.90',
       sessionLabel: '12:00场',
@@ -47,7 +49,7 @@ describe('landing-activity-feed', () => {
       experienceType: 'wheel',
       startAt: '2026-08-07T04:00:00.000Z',
       endAt: '2026-08-07T05:00:00.000Z',
-    }, '免费')
+    }, '免费', NOW)
 
     expect(classifyLandingActivity({
       experienceType: 'wheel',
@@ -70,20 +72,18 @@ describe('landing-activity-feed', () => {
   })
 
   it('按开始结束时间识别活动阶段标签', () => {
-    const now = Date.parse('2026-08-07T04:30:00.000Z')
-
     expect(resolveLandingActivityPhase({
       startAt: '2026-08-07T05:00:00.000Z',
       endAt: '2026-08-07T06:00:00.000Z',
-    }, now)).toBe('upcoming')
+    }, NOW)).toBe('upcoming')
     expect(resolveLandingActivityPhase({
       startAt: '2026-08-07T04:00:00.000Z',
       endAt: '2026-08-07T05:00:00.000Z',
-    }, now)).toBe('running')
+    }, NOW)).toBe('running')
     expect(resolveLandingActivityPhase({
       startAt: '2026-08-07T03:00:00.000Z',
       endAt: '2026-08-07T04:00:00.000Z',
-    }, now)).toBe('ended')
+    }, NOW)).toBe('ended')
     expect(activityPhaseI18nKey('upcoming')).toBe('marketPhaseUpcoming')
   })
 })

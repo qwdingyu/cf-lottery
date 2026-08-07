@@ -152,4 +152,22 @@ describe("GET /public/home-activities", () => {
     expect(body.activities[0].flashSale.progressPercent).toBe(20);
     expect(body.activities[0].flashSale.remaining).toBe(4);
   });
+
+  it("直付秒杀缺展示价时用 priceCents 生成公开价格文本，并保持币种规则一致", async () => {
+    await db.insert(tenants).values({ id: TENANT, name: "Public Home Tenant" });
+    await seedDraw({
+      id: "jpy-price",
+      slug: "jpy-price-slug",
+      title: "日元秒杀",
+      productLink: { title: "JPY 卡密" },
+      promotionConfig: { flashSale: { enabled: true, paymentRequired: true, priceCents: 1200, currency: "jpy", stockLimit: 5 } },
+    });
+
+    const res = await app().request("/public/home-activities", {}, TEST_ENV);
+    const body = await res.json() as { ok: boolean; activities: any[] };
+
+    expect(res.status).toBe(200);
+    expect(body.activities[0].product.priceText).toBe("¥1200");
+    expect(body.activities[0].flashSale.priceCents).toBe(1200);
+  });
 });

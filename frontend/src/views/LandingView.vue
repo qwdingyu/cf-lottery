@@ -91,9 +91,9 @@
             <p>{{ $t('landing.marketSectionDesc') }}</p>
           </div>
           <div class="activity-filters" role="tablist" :aria-label="$t('landing.marketFilterAria')">
-            <button type="button" :class="{ active: activityFilter === 'all' }" @click="activityFilter = 'all'">{{ $t('landing.marketFilterAll') }}</button>
-            <button type="button" :class="{ active: activityFilter === 'flash' }" @click="activityFilter = 'flash'">{{ $t('landing.marketFilterFlash') }}</button>
-            <button type="button" :class="{ active: activityFilter === 'free' }" @click="activityFilter = 'free'">{{ $t('landing.marketFilterFree') }}</button>
+            <button type="button" role="tab" :aria-selected="activityFilter === 'all'" :class="{ active: activityFilter === 'all' }" @click="activityFilter = 'all'">{{ $t('landing.marketFilterAll') }}</button>
+            <button type="button" role="tab" :aria-selected="activityFilter === 'flash'" :class="{ active: activityFilter === 'flash' }" @click="activityFilter = 'flash'">{{ $t('landing.marketFilterFlash') }}</button>
+            <button type="button" role="tab" :aria-selected="activityFilter === 'free'" :class="{ active: activityFilter === 'free' }" @click="activityFilter = 'free'">{{ $t('landing.marketFilterFree') }}</button>
           </div>
         </div>
 
