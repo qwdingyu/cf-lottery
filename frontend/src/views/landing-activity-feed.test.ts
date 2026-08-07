@@ -3,8 +3,10 @@ import {
   buildLandingActivityCard,
   classifyLandingActivity,
   activityPhaseI18nKey,
+  eligibilityModeI18nKey,
   paymentModeI18nKey,
   resolveLandingActivityPhase,
+  resolveLandingEligibilityMode,
   resolveLandingPaymentMode,
 } from './landing-activity-feed'
 
@@ -15,6 +17,7 @@ describe('landing-activity-feed', () => {
     const card = buildLandingActivityCard({
       publicSlug: 'token-day',
       title: 'Token 秒杀',
+      participationMode: 'open',
       startAt: '2026-08-07T04:00:00.000Z',
       endAt: '2026-08-07T05:00:00.000Z',
       product: { title: 'Token 日卡', priceText: '外部价不采用' },
@@ -33,6 +36,7 @@ describe('landing-activity-feed', () => {
       badge: 'flash',
       paymentMode: 'direct',
       phase: 'running',
+      eligibilityMode: 'open',
       title: 'Token 日卡',
       priceText: '¥9.90',
       sessionLabel: '12:00场',
@@ -85,5 +89,14 @@ describe('landing-activity-feed', () => {
       endAt: '2026-08-07T04:00:00.000Z',
     }, NOW)).toBe('ended')
     expect(activityPhaseI18nKey('upcoming')).toBe('marketPhaseUpcoming')
+  })
+
+  it('公开活动卡片标识参与门槛，避免用户点击后才发现受限', () => {
+    expect(resolveLandingEligibilityMode({ participationMode: 'open' })).toBe('open')
+    expect(resolveLandingEligibilityMode({ participationMode: 'password' })).toBe('password')
+    expect(resolveLandingEligibilityMode({ participationMode: 'invite_code' })).toBe('invite')
+    expect(resolveLandingEligibilityMode({ participationMode: 'roster' })).toBe('roster')
+    expect(resolveLandingEligibilityMode({ participationMode: 'registered' })).toBe('registered')
+    expect(eligibilityModeI18nKey('invite')).toBe('marketEligibilityInvite')
   })
 })

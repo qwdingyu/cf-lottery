@@ -65,6 +65,7 @@
                   </span>
                   <span class="card-tag card-tag-phase">{{ $t(activityPhaseI18nKey(card.phase)) }}</span>
                   <span class="card-tag card-tag-payment">{{ $t(paymentModeI18nKey(card.paymentMode)) }}</span>
+                  <span class="card-tag">{{ $t(eligibilityModeI18nKey(card.eligibilityMode)) }}</span>
                   <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
                 </div>
                 <strong>{{ card.title }}</strong>
@@ -122,6 +123,7 @@
                 </span>
                 <span class="card-tag card-tag-phase">{{ $t(activityPhaseI18nKey(card.phase)) }}</span>
                 <span class="card-tag card-tag-payment">{{ $t(paymentModeI18nKey(card.paymentMode)) }}</span>
+                <span class="card-tag">{{ $t(eligibilityModeI18nKey(card.eligibilityMode)) }}</span>
                 <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
                 <span v-if="card.remaining != null" class="card-tag">{{ $t('landing.marketRemaining', { n: card.remaining }) }}</span>
               </div>
@@ -186,6 +188,7 @@ import { useToast } from '@usethink/cf-admin-fe/composables'
 import {
   activityPhaseI18nKey,
   buildLandingActivityCard,
+  eligibilityModeI18nKey,
   paymentModeI18nKey,
   type LandingActivityCard,
   type LandingHomeActivity,

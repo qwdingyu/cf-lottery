@@ -112,6 +112,7 @@ describe("GET /public/home-activities", () => {
     expect(body.activities[0]).toMatchObject({
       publicSlug: "flash-open-slug",
       title: "Token 秒杀",
+      participationMode: "open",
       product: { title: "Token 日卡", imageUrl: "", priceText: "¥9.90", url: "" },
       flashSale: {
         paymentRequired: true,

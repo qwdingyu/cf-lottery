@@ -185,6 +185,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       description: draw.description,
       activityKind: draw.activityKind || "lottery",
       experienceType: draw.experienceType || defaultExperienceForParticipation(draw.participationMode),
+      participationMode: draw.participationMode,
       startAt: draw.startAt,
       endAt: draw.endAt,
       claimed: draw.showParticipantCount ? claimed : undefined,

@@ -6,6 +6,7 @@ export interface LandingHomeActivity {
   description?: string
   activityKind?: string
   experienceType?: string
+  participationMode?: string
   startAt: string
   endAt: string
   claimed?: number
@@ -30,6 +31,7 @@ export interface LandingHomeActivity {
 export type LandingActivityKind = 'flash' | 'free'
 export type LandingPaymentMode = 'direct' | 'external' | 'free'
 export type LandingActivityPhase = 'upcoming' | 'running' | 'ended'
+export type LandingEligibilityMode = 'open' | 'password' | 'invite' | 'roster' | 'registered' | 'restricted'
 
 export interface LandingActivityCard {
   publicSlug: string
@@ -40,6 +42,7 @@ export interface LandingActivityCard {
   badge: LandingActivityKind
   paymentMode: LandingPaymentMode
   phase: LandingActivityPhase
+  eligibilityMode: LandingEligibilityMode
   sessionLabel: string
   remaining: number | null
   progressPercent: number
@@ -79,11 +82,31 @@ export function activityPhaseI18nKey(phase: LandingActivityPhase): string {
   return 'marketPhaseRunning'
 }
 
+export function resolveLandingEligibilityMode(activity: Pick<LandingHomeActivity, 'participationMode'>): LandingEligibilityMode {
+  const mode = String(activity.participationMode || 'open').trim()
+  if (mode === 'open') return 'open'
+  if (mode === 'password') return 'password'
+  if (mode === 'invite_code') return 'invite'
+  if (mode === 'roster') return 'roster'
+  if (mode === 'registered') return 'registered'
+  return 'restricted'
+}
+
+export function eligibilityModeI18nKey(mode: LandingEligibilityMode): string {
+  if (mode === 'password') return 'marketEligibilityPassword'
+  if (mode === 'invite') return 'marketEligibilityInvite'
+  if (mode === 'roster') return 'marketEligibilityRoster'
+  if (mode === 'registered') return 'marketEligibilityRegistered'
+  if (mode === 'restricted') return 'marketEligibilityRestricted'
+  return 'marketEligibilityOpen'
+}
+
 export function buildLandingActivityCard(activity: LandingHomeActivity, freeLabel: string, nowMs = Date.now()): LandingActivityCard {
   const badge = classifyLandingActivity(activity)
   const flashSale = activity.flashSale || null
   const paymentMode = resolveLandingPaymentMode(activity)
   const phase = resolveLandingActivityPhase(activity, nowMs)
+  const eligibilityMode = resolveLandingEligibilityMode(activity)
   const title = String(flashSale?.sessionLabel ? activity.product?.title || flashSale.sessionLabel : activity.product?.title || activity.title).trim()
   const priceText = flashSale?.paymentRequired
     ? formatPaymentAmount(flashSale.priceCents, flashSale.currency || 'cny')
@@ -98,6 +121,7 @@ export function buildLandingActivityCard(activity: LandingHomeActivity, freeLabe
     badge,
     paymentMode,
     phase,
+    eligibilityMode,
     sessionLabel: String(flashSale?.sessionLabel || '').trim(),
     remaining:
       flashSale?.remaining === null || flashSale?.remaining === undefined
