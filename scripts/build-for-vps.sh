@@ -162,7 +162,7 @@ echo "   后端:  dist/server.js"
 echo "   前端:  public/"
 if [ "$DO_PACKAGE" = true ]; then
   echo "   部署包: $PACKAGE"
-  echo "   部署:  scp $PACKAGE user@vps:/opt/lottery/ && ssh user@vps 'cd /opt/lottery && tar -xzf $PACKAGE && npm ci --omit=dev'"
+  echo "   部署:  bash local-deploy-vps.sh（详见 docs/156）"
 else
   echo "   部署:  将 dist/server.js + public/ + package.json + package-lock.json 上传到 VPS"
 fi

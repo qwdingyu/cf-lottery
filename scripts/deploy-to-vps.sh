@@ -56,7 +56,7 @@ info "打包完成 → $PACKAGE_FILE ($(du -h "$PACKAGE_FILE" | cut -f1))"
 # ── 步骤 3：上传 + 部署 ──
 info "步骤 2/3：上传到 $VPS_USER@$VPS_HOST:$VPS_PATH ..."
 ssh "$VPS_USER@$VPS_HOST" "mkdir -p $VPS_PATH"
-scp "$PACKAGE_FILE" "$VPS_USER@$VPS_HOST:$VPS_PATH/"
+cat "$PACKAGE_FILE" | ssh "$VPS_USER@$VPS_HOST" "cat > $VPS_PATH/$PACKAGE_FILE"
 
 info "步骤 3/3：VPS 上安装依赖 + 重启服务..."
 ssh "$VPS_USER@$VPS_HOST" << DEPLOY_SCRIPT
