@@ -14,7 +14,7 @@ import { eq, and, desc, inArray } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, fail, ok, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts, prizeCodes } from "../db/schema";
+import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts, prizeCodes, systemConfig } from "../db/schema";
 import { checkPublicIdentityRateLimit, checkPublicRateLimit, verifyEmailAccessCode } from "./public-lottery-helpers";
 import {
   loadTenantConfig,
