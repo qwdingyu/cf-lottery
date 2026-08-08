@@ -43,6 +43,10 @@ import { setupPublicShareRoutes } from "./public-lottery-share";
 import { defaultExperienceForParticipation } from "./admin-lottery-helpers";
 import { buildPublicPrizeShellPayload } from "../lib/prize-shell-display";
 import { buildFlashSaleRuntime, parseFlashSaleConfig } from "../lib/flash-sale-config";
+import {
+  PAYMENT_ENTRY_CAPACITY_STATUSES,
+  PAYMENT_ENTRY_STATUS,
+} from "../services/payment/payment-status";
 
 export const publicLotteryRoute = new Hono<AppEnv>();
 
@@ -165,7 +169,10 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       .from(lotteryEntries)
       .where(and(
         inArray(lotteryEntries.drawId, drawIds),
-        inArray(lotteryEntries.paymentStatus, ["", "reserved", "pending", "paid"]),
+        inArray(lotteryEntries.paymentStatus, [
+          PAYMENT_ENTRY_STATUS.NONE,
+          ...PAYMENT_ENTRY_CAPACITY_STATUSES,
+        ]),
       ))
       .groupBy(lotteryEntries.drawId);
     for (const row of claimedRows) {
@@ -284,7 +291,10 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
       .from(lotteryEntries)
       .where(and(
         eq(lotteryEntries.drawId, draw.id),
-        inArray(lotteryEntries.paymentStatus, ["", "reserved", "pending", "paid"]),
+        inArray(lotteryEntries.paymentStatus, [
+          PAYMENT_ENTRY_STATUS.NONE,
+          ...PAYMENT_ENTRY_CAPACITY_STATUSES,
+        ]),
       ));
     total = Number(countRow?.total || 0);
   }
@@ -599,7 +609,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     .limit(1);
   // join 意图：已参与 → 409 + entryId（裂变身份可恢复，docs/110）；query 仍可发码
   const directFlashSale = parseFlashSaleConfig(draw.promotionConfig).config?.paymentRequired === true;
-  const canReopenExpiredPaymentEntry = directFlashSale && existing?.paymentStatus === "expired";
+  const canReopenExpiredPaymentEntry = directFlashSale && existing?.paymentStatus === PAYMENT_ENTRY_STATUS.EXPIRED;
   if (purpose === "join" && existing && !canReopenExpiredPaymentEntry) {
     return c.json(
       {
