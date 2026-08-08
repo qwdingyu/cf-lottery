@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# deploy-to-vps.sh —— 打包并部署到 VPS
+# deploy-to-vps.sh —— 从已构建产物打包并部署到 VPS（systemd 模式）
 #
 # 前提：
-#   1. 已执行 bash scripts/build-for-vps.sh（或 bash scripts/build-for-vps.sh --obfuscate）
+#   1. 已执行 bash scripts/build-for-vps.sh（或带 --obfuscate）
 #   2. VPS 已配置 SSH 免密登录
-#   3. VPS 上已安装 Node.js 20+
+#   3. VPS 已安装 Node.js 24, systemd 服务已配置（详见 docs/156）
 #
 # 用法：
-#   VPS_HOST=1.2.3.4 VPS_PATH=/opt/lottery bash scripts/deploy-to-vps.sh
+#   VPS_HOST=38.47.198.72 VPS_PATH=/root/cf-lottery bash scripts/deploy-to-vps.sh
 #
-# VPS 环境变量建议配置在 /etc/systemd/system/lottery.service 或 .env 中：
-#   TURSO_URL=https://...
-#   TURSO_TOKEN=...
-#   JWT_SECRET=...
-#   APP_ORIGIN=https://lucky.eforge.xyz
-#   ...
+# 默认部署目标（与 local-deploy-vps.sh 一致）：
+#   VPS_HOST=38.47.198.72
+#   VPS_USER=root
+#   VPS_PATH=/root/cf-lottery
+#
+# 推荐：使用 local-deploy-vps.sh（构建+上传一体），本脚本用于需要分离构建与部署的场景。
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,15 +26,9 @@ info()  { echo -e "${GREEN}[deploy]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[deploy]${NC} $*"; }
 err()   { echo -e "${RED}[deploy]${NC} $*" >&2; }
 
-VPS_HOST="${VPS_HOST:-}"
-VPS_PATH="${VPS_PATH:-/opt/cf-lottery}"
+VPS_HOST="${VPS_HOST:-38.47.198.72}"
+VPS_PATH="${VPS_PATH:-/root/cf-lottery}"
 VPS_USER="${VPS_USER:-root}"
-
-if [ -z "$VPS_HOST" ]; then
-  err "请设置 VPS_HOST 环境变量"
-  echo "  用法: VPS_HOST=1.2.3.4 VPS_PATH=/opt/lottery bash scripts/deploy-to-vps.sh"
-  exit 1
-fi
 
 # ── 步骤 1：确认构建产物存在 ──
 if [ ! -f dist/server.js ]; then
@@ -81,14 +75,9 @@ rm "$PACKAGE_FILE"
 # 安装运行时依赖（仅 production，不装 devDependencies）
 npm ci --omit=dev 2>&1 | tail -3
 
-# 平滑重启（0 秒停机）
-if command -v pm2 &>/dev/null && pm2 list 2>/dev/null | grep -q lottery; then
-  PORT=\${PORT:-8787} pm2 restart lottery --update-env
-  echo "[deploy] PM2 已重启 lottery"
-else
-  echo "[deploy] PM2 未找到 lottery 进程，手动启动："
-  echo "  cd $VPS_PATH && PORT=8787 pm2 start dist/server.js --name lottery"
-fi
+# 重启 systemd 服务（启动时自动执行数据库迁移）
+systemctl restart cf-lottery
+echo "[deploy] systemd 已重启 cf-lottery"
 DEPLOY_SCRIPT
 
 # ── 清理本地打包文件 ──
