@@ -146,7 +146,6 @@ if [ "$DO_PACKAGE" = true ]; then
   tar -czf "$PACKAGE" \
     dist/server.js \
     public/ \
-    ecosystem.config.json \
     package.json \
     package-lock.json \
     migrations/
@@ -168,8 +167,7 @@ else
   echo "   部署:  将 dist/server.js + public/ + package.json + package-lock.json 上传到 VPS"
 fi
 echo "   运行:  PORT=8787 node dist/server.js"
-echo "   守护:  pm2 start ecosystem.config.json"
-echo "   重启:  pm2 restart lottery"
+echo "   部署:  上传后 systemctl restart cf-lottery（详见 docs/156）"
 echo ""
 if [ "$DO_OBFUSCATE" = false ]; then
   echo "   💡 如需启用代码混淆，重新运行: bash scripts/build-for-vps.sh --obfuscate"
