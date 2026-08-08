@@ -2,18 +2,20 @@
  * 支付路由（秒杀卡密多租户直付，docs/131）
  *
  * 路由组织：
- * - /api/public/draws/:slug/payment-orders — 创建/查询订单（公开，需参与）
+ * - /api/public/draws/:slug/payment-orders — 创建/恢复订单（公开，需参与）
+ * - /api/public/draws/:slug/payment-orders/recover — OTP 保护的订单找回
+ * - /api/public/draws/:slug/payment-orders/:id — Bearer 保护的订单状态/卡密查询
  * - /api/payments/:tenantId/:provider/callback — 支付回调（支付平台调用，无鉴权）
  *
  * 回调处理模式：GET query / POST form → provider.verifyCallback → 发卡。
  */
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, fail, ok, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts } from "../db/schema";
-import { checkPublicRateLimit } from "./public-lottery-helpers";
+import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts, prizeCodes } from "../db/schema";
+import { checkPublicIdentityRateLimit, checkPublicRateLimit, verifyEmailAccessCode } from "./public-lottery-helpers";
 import {
   loadTenantConfig,
   createTenantProvider,
@@ -306,6 +308,115 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     accessToken,
     redirectUrl: safePaymentRedirectUrl(payResult.redirectUrl),
     qrCode: payResult.qrCode,
+  });
+});
+
+/**
+ * 公开：OTP 保护的支付订单找回。
+ *
+ * 旧的 `GET .../payment-orders?email=` 只凭裸邮箱返回订单列表，既没有证明邮箱
+ * 控制权，也无法直接完成卡密查询。找回必须复用 my-result 的邮箱 OTP 身份证明；
+ * 本接口只返回已验证邮箱在当前活动中的订单摘要和已发卡密，不接受跨活动/跨租户查询。
+ */
+paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
+  const db = getDb(c);
+  const ip = getClientIp(c);
+  if (!(await checkPublicRateLimit(db, `payment-recover:${ip}`, 10, 60000))) {
+    return fail(c, "支付订单找回过于频繁，请稍后再试", 429);
+  }
+
+  const slug = c.req.param("slug");
+  const body = await c.req.json<{ email?: string; code?: string }>().catch(
+    () => ({} as { email?: string; code?: string }),
+  );
+  const email = String(body.email || "").trim().toLowerCase();
+  const code = String(body.code || "").trim();
+  if (!isValidEmail(email)) return fail(c, "请输入有效的邮箱地址", 400);
+  if (!/^\d{6}$/.test(code)) return fail(c, "请输入 6 位验证码", 400);
+
+  const [draw] = await db
+    .select({
+      id: lotteryDraws.id,
+      tenantId: lotteryDraws.tenantId,
+      promotionConfig: lotteryDraws.promotionConfig,
+    })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  const { parseFlashSaleConfig } = await import("../lib/flash-sale-config");
+  const flashSale = parseFlashSaleConfig(draw.promotionConfig).config;
+  if (!flashSale?.paymentRequired) {
+    return fail(c, "该活动未启用直付支付", 400);
+  }
+  if (!(await checkPublicIdentityRateLimit(db, "payment-recover", draw.id, email, 10, 60000))) {
+    return fail(c, "支付订单找回过于频繁，请稍后再试", 429);
+  }
+
+  // 查询 OTP 只证明邮箱控制权，不核销验证码；与 my-result 保持同一查询语义，
+  // 让用户可以在找回后继续刷新订单状态，真正的卡密读取仍受订单 Bearer 保护。
+  const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
+  if (!validCode) return fail(c, "验证码无效或已过期", 400);
+
+  const entries = await db
+    .select({ id: lotteryEntries.id })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+      eq(lotteryEntries.identityType, "email"),
+      eq(lotteryEntries.identityValue, email),
+    ));
+  if (entries.length === 0) return ok(c, { orders: [] });
+
+  const rows = await db
+    .select({
+      orderNo: paymentOrders.id,
+      entryId: paymentOrders.entryId,
+      status: paymentOrders.status,
+      amountCents: paymentOrders.amountCents,
+      currency: paymentOrders.currency,
+      provider: paymentOrders.provider,
+      paidAt: paymentOrders.paidAt,
+      prizeCodeId: paymentOrders.prizeCodeId,
+    })
+    .from(paymentOrders)
+    .where(and(
+      eq(paymentOrders.tenantId, draw.tenantId),
+      eq(paymentOrders.drawId, draw.id),
+      inArray(paymentOrders.entryId, entries.map((entry) => entry.id)),
+    ))
+    .orderBy(desc(paymentOrders.createdAt))
+    .limit(10);
+
+  const codeIds = rows.map((row) => row.prizeCodeId).filter(Boolean) as string[];
+  const codeRows = codeIds.length > 0
+    ? await db
+      .select({
+        id: prizeCodes.id,
+        code: prizeCodes.code,
+        secret: prizeCodes.secret,
+      })
+      .from(prizeCodes)
+      .where(and(
+        eq(prizeCodes.tenantId, draw.tenantId),
+        inArray(prizeCodes.id, codeIds),
+      ))
+    : [];
+  const codeById = new Map(codeRows.map((row) => [row.id, { code: row.code, secret: row.secret }]));
+
+  return ok(c, {
+    orders: rows.map((row) => ({
+      orderNo: row.orderNo,
+      entryId: row.entryId,
+      status: row.status,
+      amountCents: row.amountCents,
+      currency: row.currency,
+      provider: row.provider,
+      paidAt: row.paidAt,
+      prizeCode: row.prizeCodeId ? codeById.get(row.prizeCodeId) || null : null,
+    })),
   });
 });
 

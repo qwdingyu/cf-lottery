@@ -2241,6 +2241,85 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
   }
 }
 
+/**
+ * 查结果成功后的直付订单恢复。
+ *
+ * 订单列表不能按裸邮箱公开查询。邮箱 OTP 已在 my-result 中验证后，再调用
+ * OTP 保护的恢复接口；已支付订单直接展示卡密，待支付/可重试订单继续复用
+ * payment-orders POST，由后端签发新的订单访问令牌并恢复支付入口。
+ */
+async function recoverPaymentOrderFromResult(
+  draw: LotteryDraw,
+  entryId: string,
+  email: string,
+  code: string,
+) {
+  if (!isDirectPaymentDraw(draw) || !entryId || !email) return
+
+  // 登录态已由 my-result Bearer 证明邮箱身份，不需要重复输入 OTP。
+  if (!code) {
+    await showPaymentOrder(draw, entryId, email)
+    return
+  }
+
+  try {
+    const slug = publicDrawPathKey(draw.id)
+    if (!slug) return
+    const res = await fetch(
+      `${API_BASE}/public/draws/${encodeURIComponent(slug)}/payment-orders/recover`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+      },
+    )
+    const data = await res.json().catch(() => null) as {
+      ok?: boolean
+      message?: string
+      orders?: Array<{
+        orderNo?: string
+        entryId?: string
+        status?: string
+        amountCents?: number
+        currency?: string
+        provider?: string
+        paidAt?: string
+        prizeCode?: { code?: string | null; secret?: string | null } | null
+      }>
+    } | null
+    if (!data?.ok || !data.orders?.length) return
+
+    const order = data.orders[0]
+    const orderEntryId = String(order.entryId || entryId)
+    const status = String(order.status || 'unknown')
+    if (status === 'paid' || status === 'paid_fulfillment_failed' || status === 'paid_late_needs_refund') {
+      clearPaymentPollTimer()
+      paymentError.value = ''
+      paymentState.value = {
+        drawId: draw.id,
+        entryId: orderEntryId,
+        email,
+        orderNo: String(order.orderNo || ''),
+        status,
+        amountCents: Number(order.amountCents || draw.flashSale?.priceCents || 0),
+        currency: String(order.currency || draw.flashSale?.currency || 'cny'),
+        provider: String(order.provider || ''),
+        accessToken: '',
+        prizeCode: order.prizeCode || null,
+      }
+      paymentQrDataUrl.value = ''
+      showPaymentModal.value = true
+      return
+    }
+
+    // pending / expired / cancelled：继续走统一的支付入口恢复状态机。
+    await showPaymentOrder(draw, orderEntryId, email)
+  } catch {
+    // 查结果已经成功；订单恢复失败只提示支付侧，不覆盖用户刚查到的结果。
+    showToast(t('lottery.paymentQueryFailed'), 'error')
+  }
+}
+
 async function restartPaymentOrder() {
   const draw = draws.value.find((d) => d.id === paymentState.value?.drawId)
   if (!draw || !paymentState.value) return
@@ -2434,6 +2513,14 @@ async function queryMyResult() {
             ...spinsLeftById.value,
             [drawKey]: Number(data.spinsLeft),
           }
+        }
+        if (recoveredEntryId && isDirectPaymentDraw(myResultDraw.value)) {
+          await recoverPaymentOrderFromResult(
+            myResultDraw.value,
+            recoveredEntryId,
+            myResultEmail.value.trim().toLowerCase() || sessionEmail.value,
+            hasBearer ? '' : myResultCode.value.trim(),
+          )
         }
       }
     } else {

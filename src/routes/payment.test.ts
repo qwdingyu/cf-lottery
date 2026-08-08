@@ -6,6 +6,7 @@ import type { DbType } from "../db/client";
 import {
   lotteryDraws,
   lotteryEntries,
+  emailAccessCodes,
   paymentOrders,
   paymentOrderAttempts,
   prizeCodes,
@@ -22,6 +23,7 @@ import {
   paymentPublicRoute,
 } from "./payment";
 import { issuePaymentOrderAccessToken } from "../services/payment/payment-service";
+import { hashCode } from "./public-lottery-helpers";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
@@ -65,6 +67,15 @@ async function seedOrder() {
     participationMode: "open",
     experienceType: "card",
     resultMode: "instant",
+    promotionConfig: JSON.stringify({
+      flashSale: {
+        enabled: true,
+        paymentRequired: true,
+        stockLimit: 10,
+        priceCents: 9900,
+        currency: "cny",
+      },
+    }),
     startAt: new Date(Date.now() - 60_000).toISOString(),
     endAt: new Date(Date.now() + 60_000).toISOString(),
   });
@@ -437,5 +448,62 @@ describe("payment route", () => {
     expect(body.ok).toBe(true);
     expect(body.order.orderNo).toBe(ORDER_ID);
     expect(body.order.prizeCode).toEqual({ code: "CODE-123", secret: "SECRET-123" });
+  });
+
+  it("不再公开裸邮箱订单列表；OTP 找回可恢复已支付订单和卡密", async () => {
+    await seedOrder();
+    const app = createTestApp();
+    const env = {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    };
+
+    const insecureList = await app.request(
+      `/api/public/draws/payment-route/payment-orders?email=${encodeURIComponent(EMAIL)}`,
+      {},
+      env,
+    );
+    expect(insecureList.status).toBe(404);
+
+    await db.insert(emailAccessCodes).values({
+      id: "payment-recovery-code",
+      email: EMAIL,
+      drawId: DRAW_ID,
+      codeHash: await hashCode("123456"),
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      used: 0,
+    });
+
+    const missingCode = await app.request("/api/public/draws/payment-route/payment-orders/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: EMAIL, code: "000000" }),
+    }, env);
+    expect(missingCode.status).toBe(400);
+
+    const recovered = await app.request("/api/public/draws/payment-route/payment-orders/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: EMAIL, code: "123456" }),
+    }, env);
+    expect(recovered.status).toBe(200);
+    const body = await recovered.json() as {
+      ok: boolean;
+      orders: Array<{
+        orderNo: string;
+        entryId: string;
+        status: string;
+        prizeCode: { code: string; secret: string } | null;
+      }>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.orders).toHaveLength(1);
+    expect(body.orders[0]).toMatchObject({
+      orderNo: ORDER_ID,
+      entryId: ENTRY_ID,
+      status: "paid",
+      prizeCode: { code: "CODE-123", secret: "SECRET-123" },
+    });
   });
 });
