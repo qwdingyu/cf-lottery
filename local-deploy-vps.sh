@@ -23,10 +23,10 @@
 #   VPS_SSH_PORT=22 VPS_BUILD_FLAGS="--obfuscate" VPS_SSH_KEY=~/.ssh/key bash local-deploy-vps.sh
 #
 # 上传后的服务器侧操作（本脚本不自动执行）：
-#   ssh -i ~/.ssh/cf-lottery-vps.pem root@38.47.198.72
+#   ssh -i ~/.ssh/cf-lottery-vps.pem -o ServerAliveInterval=5 root@38.47.198.72
 #   cd /root/cf-lottery
 #   tar -xzf /root/cf-lottery-deploy-YYYYMMDD-HHMMSS.tar.gz
-#   npm ci --omit=dev
+#   npm ci --omit=dev        # 若 SSH 不稳定，改用: nohup bash -c "npm ci --omit=dev && systemctl restart cf-lottery" > /tmp/deploy.log 2>&1 &
 #   systemctl restart cf-lottery
 # 注意：server.js 启动时自动执行数据库迁移，无需单独 npm run db:migrate
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -79,9 +79,9 @@ if [ -z "$PACKAGE_FILE" ] || [ ! -f "$PACKAGE_FILE" ]; then
 fi
 
 info "步骤 2/2：上传 $PACKAGE_FILE 到 $VPS_USER@$VPS_HOST:$VPS_PATH/ ..."
-ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" "$VPS_USER@$VPS_HOST" "mkdir -p '$VPS_PATH'"
+ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "mkdir -p '$VPS_PATH'"
 # 使用 cat + SSH pipe 上传（scp 在部分 VPS 配置下存在连接重置问题）
-cat "$PACKAGE_FILE" | ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" "$VPS_USER@$VPS_HOST" "cat > $VPS_PATH/$PACKAGE_FILE"
+cat "$PACKAGE_FILE" | ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "cat > $VPS_PATH/$PACKAGE_FILE"
 
 echo ""
 info "✅ 上传完成"
