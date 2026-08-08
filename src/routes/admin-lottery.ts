@@ -422,7 +422,7 @@ adminLotteryRoute.get("/draws", async (c) => {
 
   // 并行查询参与人数
   const counts = await Promise.all(rows.map(async (d) => {
-    const [r] = await db.select({ total: count() }).from(lotteryEntries).where(eq(lotteryEntries.id, d.id));
+    const [r] = await db.select({ total: count() }).from(lotteryEntries).where(eq(lotteryEntries.drawId, d.id));
     return Number(r?.total ?? 0);
   }));
   const draws = rows.map((d, i) => ({ ...d, entryCount: counts[i]! }));
