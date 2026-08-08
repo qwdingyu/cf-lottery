@@ -509,5 +509,19 @@
     "group": "平台运营",
     "order": 29,
     "difficulty": "advanced"
+  },
+  {
+    "key": "prize_code_low_stock_threshold",
+    "label": "卡密低库存阈值(比例)",
+    "description": "直付秒杀发布预检:可用卡密/名额上限低于此比例时,产生低库存预警。",
+    "effect": "发布预检 warning,提示运营补充卡密,防止秒杀场次发卡不足。",
+    "scope": "admin",
+    "type": "number",
+    "defaultValue": "0.3",
+    "min": 0,
+    "max": 1,
+    "group": "秒杀/支付",
+    "order": 32,
+    "difficulty": "advanced"
   }
 ]

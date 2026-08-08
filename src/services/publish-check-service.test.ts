@@ -433,6 +433,92 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.canPublish).toBe(true);
   });
 
+  it("docs/131：直付秒杀不支持展示 maxPerUser>1，避免承诺可重复购买但订单模型只能一笔", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          maxPerUser: 2,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    });
+    await addEasyPayConfig();
+    await addCodeTier(draw.id, 1, 10);
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any, {
+      credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY,
+    });
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.payment.max_per_user.unsupported")).toBe(true);
+  });
+
+  it("docs/131：进行中活动不能共享同一卡密池，避免发布后竞争库存", async () => {
+    const sharedPrizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type) VALUES (?, ?, ?, ?)",
+      args: [sharedPrizeId, TENANT, "共享卡密池", "code"],
+    });
+    await client.execute({
+      sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+      args: [crypto.randomUUID(), TENANT, sharedPrizeId, "SHARED-1", "available"],
+    });
+
+    const existingDraw = makeDraw({
+      status: "open",
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 9900, currency: "cny" },
+      }),
+    });
+    const currentDraw = makeDraw({
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 9900, currency: "cny" },
+      }),
+    });
+    await client.execute({
+      sql: "INSERT INTO lottery_draws (id, tenant_id, public_slug, title, status, activity_kind, experience_type, start_at, end_at, max_participants, promotion_config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      args: [
+        existingDraw.id,
+        TENANT,
+        existingDraw.publicSlug,
+        existingDraw.title,
+        existingDraw.status,
+        existingDraw.activityKind,
+        existingDraw.experienceType,
+        existingDraw.startAt,
+        existingDraw.endAt,
+        existingDraw.maxParticipants,
+        existingDraw.promotionConfig,
+      ],
+    });
+    await client.execute({
+      sql: "INSERT INTO lottery_prize_tiers (id, tenant_id, draw_id, prize_id, winner_count, tier_name) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [crypto.randomUUID(), TENANT, existingDraw.id, sharedPrizeId, 1, "共享卡密"],
+    });
+    await client.execute({
+      sql: "INSERT INTO lottery_prize_tiers (id, tenant_id, draw_id, prize_id, winner_count, tier_name) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [crypto.randomUUID(), TENANT, currentDraw.id, sharedPrizeId, 1, "共享卡密"],
+    });
+    await addEasyPayConfig();
+
+    const result = await buildPublishCheckForDraw(db, TENANT, currentDraw as any, {
+      credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY,
+    });
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "payment.fulfillment.code_prize.shared")).toBe(true);
+  });
+
   it("docs/131：区块链支付暂不进入当前直付目录，USDT 发布被阻断", async () => {
     const draw = makeDraw({
       maxParticipants: 10,

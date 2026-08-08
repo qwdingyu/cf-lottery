@@ -269,6 +269,16 @@ async function validateFlashSalePayment(
     if (available < effectiveStockLimit) {
       add(result.errors, "payment", "payment.fulfillment.codes.insufficient", `直付秒杀可用卡密 ${available} 个，少于名额上限 ${effectiveStockLimit} 个`);
     }
+    // P2 低库存预警(不阻断发布,仅 warning)
+    const threshold = await readSystemConfigNumber(db, "prize_code_low_stock_threshold", 0.3);
+    if (available > 0 && effectiveStockLimit > 0 && available / effectiveStockLimit < threshold) {
+      add(
+        result.warnings,
+        "payment",
+        "payment.fulfillment.codes.low_stock",
+        `直付秒杀可用卡密 ${available}/${effectiveStockLimit},低于阈值 ${Math.round(threshold * 100)}%,建议补充卡密`,
+      );
+    }
   }
 
   // P2 互斥:直付秒杀不应同时配置 after_win CTA(支付弹窗与外部导流冲突,docs/140)
@@ -758,4 +768,17 @@ async function readSystemConfigInteger(db: DbType, key: string, fallback: number
 
 function formatPrice(cents: number): string {
   return (cents / 100).toFixed(2);
+}
+
+
+async function readSystemConfigNumber(db: DbType, key: string, fallback: number): Promise<number> {
+  try {
+    const [row] = await db
+      .select({ value: systemConfig.value })
+      .from(systemConfig)
+      .where(eq(systemConfig.key, key))
+      .limit(1);
+    if (row) { const v = Number(row.value || ""); if (Number.isFinite(v) && v >= 0) return v; }
+  } catch { /* 表不存在 → 默认 */ }
+  return fallback;
 }

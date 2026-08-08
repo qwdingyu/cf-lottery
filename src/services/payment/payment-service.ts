@@ -276,7 +276,7 @@ async function armPaymentOrderForRetry(
   db: DbType,
   input: CreateOrderInput,
   orderId: string,
-): Promise<{ attemptId: string; accessToken: string }> {
+): Promise<{ attemptId: string; accessToken: string; amountCents: number; currency: string }> {
   const accessToken = createPaymentAccessToken();
   const accessTokenHash = await sha256Hex(accessToken);
   return withDbTransaction(db, async (tx) => {
@@ -375,13 +375,15 @@ async function armPaymentOrderForRetry(
         ));
     }
 
+    const orderAmountCents = currentAmountCents(current);
+    const orderCurrency = currentCurrency(current);
     const [updatedRow] = await tx
       .update(paymentOrders)
       .set({
         tenantId: input.tenantId,
         drawId: input.drawId,
-        amountCents: input.amountCents,
-        currency: input.currency,
+        amountCents: orderAmountCents,
+        currency: orderCurrency,
         status: "pending",
         provider: input.provider,
         providerTradeNo: null,
@@ -409,12 +411,20 @@ async function armPaymentOrderForRetry(
       drawId: input.drawId,
       attemptNo: nextAttemptNo,
       provider: input.provider,
-      amountCents: input.amountCents,
-      currency: input.currency,
+      amountCents: orderAmountCents,
+      currency: orderCurrency,
       status: "pending",
     });
-    return { attemptId, accessToken };
+    return { attemptId, accessToken, amountCents: orderAmountCents, currency: orderCurrency };
   });
+}
+
+function currentAmountCents(current: Record<string, unknown>): number {
+  return Number((current as any).amountCents ?? 0);
+}
+
+function currentCurrency(current: Record<string, unknown>): string {
+  return String((current as any).currency || "cny").trim().toLowerCase();
 }
 
 /** Provider 创建支付后若返回平台侧单号，立即落库到当前 attempt。 */
@@ -643,8 +653,8 @@ export async function retryPaymentOrder(
   try {
     payResult = await provider.createPayment({
       orderNo: retryState.attemptId,
-      amountCents: input.amountCents,
-      currency: input.currency,
+      amountCents: retryState.amountCents,
+      currency: retryState.currency,
       notifyUrl: input.notifyUrl,
       returnUrl: input.returnUrl,
       description: input.description,

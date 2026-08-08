@@ -29,8 +29,19 @@ import {
   importPrizeCodes,
   randomSelect,
   triggerRewardEarned,
+  cancelDraw,
 } from "../services/lottery-service";
-import { lotteryPrizeTiers, shareRecords, lotteryEntries, apiKeys, activityEvents, tenantConfigs, lotteryDraws } from "../db/schema";
+import {
+  lotteryPrizeTiers,
+  shareRecords,
+  lotteryEntries,
+  apiKeys,
+  activityEvents,
+  tenantConfigs,
+  lotteryDraws,
+  paymentOrders,
+  paymentOrderAttempts,
+} from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 import { encryptPaymentConfigValue } from "../services/payment/secret-config";
@@ -1402,6 +1413,68 @@ describe("最大参与人数和参与时间", () => {
     const entries = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, id));
     expect(entries).toHaveLength(1);
     expect(entries[0]?.paymentStatus).toBe("reserved");
+  });
+
+  it("取消直付秒杀会原子释放未支付预约并终止继续支付", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "取消直付秒杀",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      participationMode: "open",
+      winnerCount: 0,
+      maxParticipants: 1,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 1,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    });
+    const first = await joinDraw(db, publicSlug, "cancel-payment@test.com");
+    expect(first.joined).toBe(true);
+    const attemptId = crypto.randomUUID();
+    const orderId = crypto.randomUUID();
+    await db.insert(paymentOrders).values({
+      id: orderId,
+      tenantId: TENANT,
+      drawId: id,
+      entryId: first.entryId!,
+      amountCents: 9900,
+      currency: "cny",
+      status: "pending",
+      provider: "easypay",
+      currentAttemptId: attemptId,
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: attemptId,
+      paymentOrderId: orderId,
+      tenantId: TENANT,
+      drawId: id,
+      attemptNo: 1,
+      provider: "easypay",
+      amountCents: 9900,
+      currency: "cny",
+      status: "pending",
+    });
+    const cancelled = await cancelDraw(db, TENANT, id);
+    expect(cancelled).toBe(true);
+
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, id));
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, first.entryId!));
+    const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, orderId));
+    const [attempt] = await db.select().from(paymentOrderAttempts).where(eq(paymentOrderAttempts.id, attemptId));
+    expect(draw?.status).toBe("cancelled");
+    expect(draw?.activeParticipantCount).toBe(0);
+    expect(entry?.paymentStatus).toBe("expired");
+    expect(order?.status).toBe("expired");
+    expect(attempt?.status).toBe("expired");
   });
 
   it("docs/130：秒杀仅 maxParticipants、无 flashSale 节点时仍按 max 截单", async () => {
