@@ -53,6 +53,8 @@ const canvasSize = 320
 let lastCelebrate = 0
 /** loading 期间慢速 idle 旋转的 rAF id */
 let idleRaf = 0
+/** 奖品图缓存：索引与 props.prizes 一一对应；加载完成后触发一次重绘 */
+const prizeImages = ref<Array<HTMLImageElement | null>>([])
 
 const sliceAngle = computed(() => (2 * Math.PI) / Math.max(props.prizes.length, 1))
 /** 外圈灯：提交中或庆祝旋转都亮，给即时反馈 */
@@ -90,6 +92,19 @@ function drawWheel(rotation: number) {
     const mid = sa + sliceAngle.value / 2
     const tx = cx + Math.cos(mid) * r * 0.62
     const ty = cy + Math.sin(mid) * r * 0.62
+    // 奖品图：有图时画在扇面外圈（圆形裁剪），文字下移到内圈，图为主、名为辅
+    const img = prizeImages.value[i]
+    if (img) {
+      const ix = cx + Math.cos(mid) * r * 0.72
+      const iy = cy + Math.sin(mid) * r * 0.72
+      const ir = Math.min(r * 0.16, 22)
+      ctx.save()
+      ctx.beginPath(); ctx.arc(ix, iy, ir, 0, 2 * Math.PI); ctx.closePath(); ctx.clip()
+      ctx.drawImage(img, ix - ir, iy - ir, ir * 2, ir * 2)
+      ctx.restore()
+      ctx.beginPath(); ctx.arc(ix, iy, ir, 0, 2 * Math.PI)
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke()
+    }
     ctx.save(); ctx.translate(tx, ty); ctx.rotate(mid + Math.PI / 2)
     ctx.fillStyle = '#fff'; ctx.font = 'bold 12px system-ui'
     ctx.textAlign = 'center'; ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 3
@@ -216,7 +231,23 @@ async function runCelebrateSpin() {
   spinning.value = false
 }
 
-watch(() => props.prizes, () => drawWheel(currentRot()), { immediate: true })
+watch(() => props.prizes, (list) => {
+  // 预加载奖品图：索引与 prizes 一一对应，全部 ready 后统一重绘一次（避免逐张闪烁）
+  prizeImages.value = new Array(list.length).fill(null)
+  list.forEach((p, i) => {
+    const url = String(p?.imageUrl || '').trim()
+    if (!url) return
+    const im = new Image()
+    im.onload = () => {
+      prizeImages.value[i] = im
+      // 单张就绪即重绘；扇面少（≤8）时成本可忽略，且避免等待全部加载
+      drawWheel(currentRot())
+    }
+    im.onerror = () => { prizeImages.value[i] = null }
+    im.src = url
+  })
+  drawWheel(currentRot())
+}, { immediate: true })
 
 watch(() => props.loading, (loading) => {
   if (loading && !spinning.value) startIdleSpin()

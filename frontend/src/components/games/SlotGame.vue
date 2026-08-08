@@ -6,7 +6,9 @@
           <div class="slot-reel-wrap" v-for="idx in 3" :key="'r'+idx">
             <div class="slot-reel" :ref="el => { if (el) reelRefs[idx] = el as HTMLDivElement }">
               <div v-for="(p, i) in reelPrizes" :key="idx+'-'+i" class="slot-item" :style="{ background: getGradient(i) }">
-                <span class="slot-emoji">{{ ['🎁','💎','🏆','🎯','🌟','💰','🎪','🎰'][i % 8] }}</span>
+                <!-- 有奖品图则渲染图（索引与 shellLabels 一一对应）；无图降级为首字符圆标，不再用 emoji 池 -->
+                <img v-if="p.imageUrl" class="slot-img" :src="p.imageUrl" :alt="p.name || ''" loading="lazy" />
+                <span v-else class="slot-fallback" :style="{ background: getGradient(i) }">{{ (p.name || '?').trim().charAt(0) || '?' }}</span>
                 <span class="slot-name">{{ (p.name || '?').slice(0, 6) }}</span>
               </div>
             </div>
@@ -170,7 +172,10 @@ onUnmounted(() => {
 .slot-reel-wrap { flex: 1; height: 200px; overflow: hidden; position: relative; border-radius: 8px; }
 .slot-reel { display: flex; flex-direction: column; }
 .slot-item { height: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-bottom: 2px solid rgba(255,255,255,0.1); }
-.slot-emoji { font-size: 24px; }
+/* 奖品图：圆形裁切，盖住渐变色块，视觉主体 */
+.slot-img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 2px solid rgba(255,255,255,0.35); }
+/* 无图降级：首字符圆标，用同系渐变底，不再是 emoji */
+.slot-fallback { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.3); }
 .slot-name { font-size: 11px; color: rgba(255,255,255,0.9); font-weight: 600; }
 .slot-overlay { position: absolute; left: 0; right: 0; height: 32px; pointer-events: none; z-index: 1; }
 .slot-overlay.top { top: 0; background: linear-gradient(180deg, #0f0d23, transparent); }
