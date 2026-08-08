@@ -506,9 +506,6 @@
           <p v-if="createPathHint" class="create-path-hint" role="status">{{ createPathHint }}</p>
           <div class="lottery-editor-scroll">
             <section id="lottery-basic" class="form-section" aria-labelledby="lottery-basic-title">
-        <p v-if="createPathHint" class="create-path-hint" role="status">{{ createPathHint }}</p>
-        <div class="lottery-editor-scroll">
-          <section id="lottery-basic" class="form-section" aria-labelledby="lottery-basic-title">
             <header class="form-section-head">
               <h4 id="lottery-basic-title" class="form-section-title">{{ $t('lottery.adminSectionBasic') }}</h4>
               <p class="form-section-desc">{{ $t('lottery.adminSectionBasicDesc') }}</p>
