@@ -477,7 +477,7 @@ describe("ambiguous payment creation", () => {
       drawId: DRAW_ID,
       identityType: "email",
       identityValue: "buyer@example.com",
-      paymentStatus: "",
+      paymentStatus: "reserved",
     });
     const ambiguousProvider: PaymentProvider = {
       ...providerMock,
@@ -522,7 +522,7 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
     await db.insert(lotteryEntries).values({
       id: entryId, tenantId: TENANT_ID, drawId,
       identityType: "email", identityValue: "buyer@example.com",
-      paymentStatus: "",
+      paymentStatus: "reserved",
     });
     // 前置:active_participant_count = 1 模拟 join 时 +1
     await db.update(lotteryDraws).set({ activeParticipantCount: 1 }).where(eq(lotteryDraws.id, drawId));
@@ -550,7 +550,7 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
     expect(drawAfter.cnt).toBe(0); // 计数器已释放
   });
 
-  it("createPaymentOrder 接续空状态支持首次支付(P0修复)", async () => {
+  it("createPaymentOrder 拒绝绕过 reserved 预约的空状态 entry", async () => {
     const drawId = crypto.randomUUID();
     const entryId = crypto.randomUUID();
     await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
@@ -567,11 +567,11 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
     });
     await db.update(lotteryDraws).set({ activeParticipantCount: 1 }).where(eq(lotteryDraws.id, drawId));
 
-    const created = await createPaymentOrder(db, {
+    await expect(createPaymentOrder(db, {
       tenantId: TENANT_ID, drawId, entryId,
       amountCents: 100, currency: "cny", provider: "easypay", notifyUrl: "https://cb",
-    }, providerMock);
-    expect(created.order.status).toBe("pending");
+    }, providerMock)).rejects.toThrow("参与预约已失效");
+    expect(await db.select().from(paymentOrders).where(eq(paymentOrders.entryId, entryId))).toHaveLength(0);
   });
 
   it.skip("expired 订单回调不重复发卡，标记 paid_late_needs_refund", async () => {

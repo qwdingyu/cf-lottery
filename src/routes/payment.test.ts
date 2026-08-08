@@ -253,7 +253,7 @@ describe("payment route", () => {
       identityType: "email",
       identityValue: EMAIL,
       displayName: "buyer",
-      paymentStatus: "",
+      paymentStatus: "reserved",
     });
 
     const app = createTestApp();
@@ -386,7 +386,7 @@ describe("payment route", () => {
       identityType: "email",
       identityValue: EMAIL,
       displayName: "buyer",
-      paymentStatus: "",
+      paymentStatus: "reserved",
     });
 
     const app = createTestApp();
