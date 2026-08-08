@@ -2058,6 +2058,7 @@ function showPaymentResumeError(draw: LotteryDraw, entryId: string | undefined, 
     amountCents: Number(draw.flashSale?.priceCents || 0),
     currency: String(draw.flashSale?.currency || 'cny'),
     provider: '',
+    accessToken: '',
     prizeCode: null,
   }
   showPaymentModal.value = true
