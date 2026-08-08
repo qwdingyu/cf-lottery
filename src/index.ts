@@ -180,13 +180,11 @@ app.use("*", async (c, next) => {
     if (url) {
       const db = createDb(createClient({ url, authToken: getEnv(c, "TURSO_TOKEN") }));
       c.set("db", db);
-      // 本地 SQLite 启用 WAL 模式防 database locked
+      // WAL 允许读写并发，但不会取消 SQLite 的单写者约束。
+      // 本地库的 WAL 状态会持久化到数据库文件；这里保留兼容性初始化，
+      // 线上是否生效仍应在启动巡检时执行 PRAGMA journal_mode 验证。
       if (url.startsWith("file:")) {
         db.run(sql`PRAGMA journal_mode = WAL`).catch(() => {});
-        // busy_timeout：并发写事务撞锁时让 SQLite 在内部等待（最多 5s），
-        // 避免每次冲突立即抛 SQLITE_BUSY 走应用层 50ms 起跳的重试，降低写冲突延迟。
-        // 与 apply-migrations.ts 的迁移期设置保持一致（5000ms）。
-        db.run(sql`PRAGMA busy_timeout = 5000`).catch(() => {});
       }
     } else {
       c.set("db", undefined);
