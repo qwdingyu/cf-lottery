@@ -61,6 +61,9 @@
    * --admin-accent 只用于 /admin 后台；C 端禁止再引用 --admin-accent（防后台色泄漏）。 */
   --brand: #f59e0b;
   --brand-bright: #fbbf24;
+  --brand-flash: #e11d48;
+  --brand-text: #fff;
+  --brand-gradient: linear-gradient(135deg, #f59e0b, #fbbf24);
   /* 琥珀金底上的文字色：深 slate 保证对比度 ≥ 4.5:1 */
   --brand-text: #0f172a;
   --brand-gradient: linear-gradient(135deg, #f59e0b, #fbbf24);
@@ -439,4 +442,18 @@ textarea::placeholder {
 
 .result-box:empty {
   display: none;
+}
+
+/* ── 触摸目标(44px) + 弹窗 overlay ── */
+.lottery-card, .nav-link, .lottery-view .btn, .landing-view .btn, .flash-sale-game .btn {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.overlay {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7);
+  display: flex; align-items: center; justify-content: center; z-index: 9999;
+}
+.overlay.bottom {
+  align-items: flex-end; justify-content: center;
 }

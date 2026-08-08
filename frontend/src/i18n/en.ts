@@ -1322,6 +1322,8 @@ export default {
     adminListTtvHint: "💡 Pick a template → check title & schedule → confirm prizes → save draft → open & copy link. While live, share first; draw after people join.",
     adminAdvancedGrowthSection: "Advanced (experience / traffic / viral / CTA)",
     adminAdvancedGrowthDesc: "Collapsed by default; templates set a default experience — expand only to change skin or growth CTAs",
+    /** docs/145: optional growth subtitle; never blocks draft save */
+    adminAdvancedGrowthOptionalHint: "Optional: flash sale, product link, viral, result CTAs",
     adminAdvancedExpand: "Expand",
     adminAdvancedCollapse: "Collapse",
     adminExperienceSummaryLabel: "Experience",
@@ -1329,16 +1331,20 @@ export default {
     adminExperienceAdvancedDesc: "Full experience list lives here; the main path can publish with the template default",
 
     // 055a P1: template → near-publishable draft + create path steps
+    // docs/145: 4 steps = basics(+schedule) → join → prizes/quota → growth(optional)
     adminCreateDraft: "Save draft",
     adminCreateStepBasic: "Basics",
     adminCreateStepTime: "Schedule",
     adminCreateStepJoin: "Who can join",
     adminCreateStepPrizes: "Prizes",
     adminCreateStepQuota: "Capacity",
+    adminCreateStepGrowth: "Growth",
     adminCreatePathAria: "Create path steps",
     adminSectionQuotaDesc: "Capacity and display toggles; optional for non-lottery drafts.",
     adminCreatePathFromTemplate: "Template “{name}” applied — review title & schedule; for lottery, confirm prizes before saving",
     adminCreatePathBlank: "Follow the steps; advanced growth settings stay collapsed and do not block saving a draft",
+    /** docs/145 P2: honest hint after template-scoped field visibility */
+    adminTemplateFieldScopedHint: "Only template-relevant fields are shown; full options remain in Advanced or when editing",
     adminCreateNeedName: "title",
     adminCreateNeedTime: "schedule",
     adminCreateNeedTimeOrder: "time order",

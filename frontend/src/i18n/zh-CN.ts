@@ -1296,6 +1296,8 @@ export default {
     adminListTtvHint: "💡 选模板 → 核对标题与时间 → 抽奖确认奖项 → 保存草稿 → 开启并复制链接。进行中优先分享；有人参与后再开奖。",
     adminAdvancedGrowthSection: "高级配置（体验 / 导流 / 裂变 / CTA）",
     adminAdvancedGrowthDesc: "默认收起，不影响发布主路径；模板已带默认体验，需改玩法皮肤或增长承接时再展开",
+    /** docs/145：高级区副文案，强调可选、不挡草稿 */
+    adminAdvancedGrowthOptionalHint: "可选：秒杀、商品导流、裂变、结果 CTA",
     adminAdvancedExpand: "展开",
     adminAdvancedCollapse: "收起",
     adminExperienceSummaryLabel: "当前体验",
@@ -1303,16 +1305,20 @@ export default {
     adminExperienceAdvancedDesc: "完整体验类型列表仅在此修改；主路径用模板默认值即可发布",
 
     // 055a P1：模板 → 可发布草稿 + 创建路径步骤
+    // docs/145：4 步 = 基础(标题+时间) → 参与 → 奖品/名额 → 营销(可选)
     adminCreateDraft: "保存草稿",
     adminCreateStepBasic: "基本信息",
     adminCreateStepTime: "时间",
     adminCreateStepJoin: "谁可参加",
     adminCreateStepPrizes: "奖品",
     adminCreateStepQuota: "名额",
+    adminCreateStepGrowth: "营销",
     adminCreatePathAria: "创建路径步骤",
     adminSectionQuotaDesc: "容量与展示开关；非抽奖活动可按需填写，不挡保存草稿。",
     adminCreatePathFromTemplate: "已应用模板「{name}」：核对标题与时间，抽奖请确认奖项后保存草稿",
     adminCreatePathBlank: "按步骤填写即可；高级增长配置默认折叠，不影响保存草稿",
+    /** docs/145 P2：高频模板收口差异字段后的诚实提示 */
+    adminTemplateFieldScopedHint: "已按模板只展示相关配置；其他能力仍可在「高级配置」或编辑时调整",
     adminCreateNeedName: "标题",
     adminCreateNeedTime: "时间",
     adminCreateNeedTimeOrder: "时间顺序",

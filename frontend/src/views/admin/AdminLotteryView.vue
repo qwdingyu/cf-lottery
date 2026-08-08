@@ -461,44 +461,51 @@
           055a：创建路径 3～4 步指示（不新路由、不 Wizard 框架）。
           步骤完成态 + 正确滚动锚点；不改提交语义。
         -->
-        <nav class="create-path-steps" :aria-label="$t('lottery.adminCreatePathAria')">
-          <button
-            type="button"
-            class="create-path-step"
-            :class="{ done: createStepDone.basic, current: createStepFocus === 1 }"
-            @click="focusCreateStep(1)"
-          >
-            <span class="create-path-num">{{ createStepDone.basic ? '✓' : '1' }}</span>
-            <span>{{ $t('lottery.adminCreateStepBasic') }}</span>
-          </button>
-          <button
-            type="button"
-            class="create-path-step"
-            :class="{ done: createStepDone.time, current: createStepFocus === 2 }"
-            @click="focusCreateStep(2)"
-          >
-            <span class="create-path-num">{{ createStepDone.time ? '✓' : '2' }}</span>
-            <span>{{ $t('lottery.adminCreateStepTime') }}</span>
-          </button>
-          <button
-            type="button"
-            class="create-path-step"
-            :class="{ done: createStepDone.join, current: createStepFocus === 3 }"
-            @click="focusCreateStep(3)"
-          >
-            <span class="create-path-num">{{ createStepDone.join ? '✓' : '3' }}</span>
-            <span>{{ $t('lottery.adminCreateStepJoin') }}</span>
-          </button>
-          <button
-            type="button"
-            class="create-path-step"
-            :class="{ done: createStepDone.prizes, current: createStepFocus === 4 }"
-            @click="focusCreateStep(4)"
-          >
-            <span class="create-path-num">{{ createStepDone.prizes ? '✓' : '4' }}</span>
-            <span>{{ form.activityKind === 'lottery' ? $t('lottery.adminCreateStepPrizes') : $t('lottery.adminCreateStepQuota') }}</span>
-          </button>
-        </nav>
+          <!--
+            055a：创建路径 3～4 步指示（不新路由、不 Wizard 框架）。
+            步骤完成态 + 正确滚动锚点；不改提交语义。
+          -->
+          <nav class="create-path-steps" :aria-label="$t('lottery.adminCreatePathAria')">
+            <button
+              type="button"
+              class="create-path-step"
+              :class="{ done: createStepDone.basic, current: createStepFocus === 1 }"
+              @click="focusCreateStep(1)"
+            >
+              <span class="create-path-num">{{ createStepDone.basic ? '✓' : '1' }}</span>
+              <span>{{ $t('lottery.adminCreateStepBasic') }}</span>
+            </button>
+            <button
+              type="button"
+              class="create-path-step"
+              :class="{ done: createStepDone.time, current: createStepFocus === 2 }"
+              @click="focusCreateStep(2)"
+            >
+              <span class="create-path-num">{{ createStepDone.time ? '✓' : '2' }}</span>
+              <span>{{ $t('lottery.adminCreateStepTime') }}</span>
+            </button>
+            <button
+              type="button"
+              class="create-path-step"
+              :class="{ done: createStepDone.join, current: createStepFocus === 3 }"
+              @click="focusCreateStep(3)"
+            >
+              <span class="create-path-num">{{ createStepDone.join ? '✓' : '3' }}</span>
+              <span>{{ $t('lottery.adminCreateStepJoin') }}</span>
+            </button>
+            <button
+              type="button"
+              class="create-path-step"
+              :class="{ done: createStepDone.prizes, current: createStepFocus === 4 }"
+              @click="focusCreateStep(4)"
+            >
+              <span class="create-path-num">{{ createStepDone.prizes ? '✓' : '4' }}</span>
+              <span>{{ form.activityKind === 'lottery' ? $t('lottery.adminCreateStepPrizes') : $t('lottery.adminCreateStepQuota') }}</span>
+            </button>
+          </nav>
+          <p v-if="createPathHint" class="create-path-hint" role="status">{{ createPathHint }}</p>
+          <div class="lottery-editor-scroll">
+            <section id="lottery-basic" class="form-section" aria-labelledby="lottery-basic-title">
         <p v-if="createPathHint" class="create-path-hint" role="status">{{ createPathHint }}</p>
         <div class="lottery-editor-scroll">
           <section id="lottery-basic" class="form-section" aria-labelledby="lottery-basic-title">
