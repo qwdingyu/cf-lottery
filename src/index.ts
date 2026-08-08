@@ -183,6 +183,10 @@ app.use("*", async (c, next) => {
       // 本地 SQLite 启用 WAL 模式防 database locked
       if (url.startsWith("file:")) {
         db.run(sql`PRAGMA journal_mode = WAL`).catch(() => {});
+        // busy_timeout：并发写事务撞锁时让 SQLite 在内部等待（最多 5s），
+        // 避免每次冲突立即抛 SQLITE_BUSY 走应用层 50ms 起跳的重试，降低写冲突延迟。
+        // 与 apply-migrations.ts 的迁移期设置保持一致（5000ms）。
+        db.run(sql`PRAGMA busy_timeout = 5000`).catch(() => {});
       }
     } else {
       c.set("db", undefined);
