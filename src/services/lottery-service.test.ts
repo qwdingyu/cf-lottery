@@ -495,7 +495,7 @@ describe("开奖核心流程", () => {
       winnerCount: 1,
     });
     await configureManualTier(id, 1);
-    await publishDraw(db, TENANT, id);
+    await publishDraw(db, TENANT, id, { credentialsEncryptionKey: PAYMENT_ENCRYPTION_KEY });
 
     // 把时间窗与 draw_at 拨到「已到期」
     await client.execute({
@@ -885,7 +885,7 @@ describe("活动事件", () => {
         args: [crypto.randomUUID(), TENANT, prizeId, `VCODE-${i}`, "available"],
       });
     }
-    await publishDraw(db, TENANT, id);
+    await publishDraw(db, TENANT, id, { credentialsEncryptionKey: PAYMENT_ENCRYPTION_KEY });
 
     const sharer = await joinDraw(db, publicSlug, "v-sharer@test.com");
     expect(sharer.joined).toBe(true);
@@ -1316,13 +1316,14 @@ describe("最大参与人数和参与时间", () => {
       winnerCount: 1,
       sortOrder: 1,
     });
-    await publishDraw(db, TENANT, id);
+    await publishDraw(db, TENANT, id, { credentialsEncryptionKey: PAYMENT_ENCRYPTION_KEY });
 
     const first = await joinDraw(db, publicSlug, "dup-slot@test.com");
     expect(first.joined).toBe(true);
     const duplicate = await joinDraw(db, publicSlug, "dup-slot@test.com");
     expect(duplicate.joined).toBe(false);
-    expect((duplicate as { alreadyJoined?: boolean }).alreadyJoined).toBe(true);
+    expect((duplicate as { soldOut?: boolean }).soldOut).toBe(true);
+    expect((duplicate as { code?: string }).code).toBe("flash_sale.sold_out");
 
     const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, id));
     const entries = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, id));
