@@ -240,7 +240,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       maxParticipants: 100,
       enableProductLink: true,
       productLinkTitle: "限时抢购商品",
-      productLinkPrice: "¥9.90",
+      productLinkPrice: "",
       enableFlashSale: true,
       flashSaleSessionLabel: "12:00场",
       flashSaleStockLimit: 100,
