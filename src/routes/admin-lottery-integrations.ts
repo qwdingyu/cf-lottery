@@ -273,10 +273,10 @@ adminLotteryRoute.post("/coupons/redeem", async (c) => {
 adminLotteryRoute.get("/brand", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  const [tenant] = await db.select({ brandConfig: tenants.brandConfig }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+  const [tenant] = await db.select({ brandConfig: tenants.brandConfig, storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
   if (!tenant) return fail(c, "租户不存在", 404);
   const config = tryParseJson(tenant.brandConfig);
-  return ok(c, { config });
+  return ok(c, { config, storeSlug: tenant.storeSlug || "" });
 });
 
 /** 更新品牌配置 */
@@ -291,7 +291,16 @@ adminLotteryRoute.put("/brand", async (c) => {
     domain: body.domain || "",
   };
   await db.update(tenants).set({ brandConfig: JSON.stringify(config), updatedAt: new Date().toISOString() }).where(eq(tenants.id, tenantId));
-  return ok(c, { config });
+
+  // store_slug 允许 L2 自定义(为空时保留原值或自动生成)
+  const storeSlug = String(body.storeSlug || "").trim().slice(0, 30);
+  if (storeSlug && storeSlug !== (await db.select({ slug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1))[0]?.slug) {
+    const [dup] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.storeSlug, storeSlug)).limit(1);
+    if (dup && dup.id !== tenantId) return fail(c, "店铺链接已被占用", 400);
+    await db.update(tenants).set({ storeSlug }).where(eq(tenants.id, tenantId));
+  }
+
+  return ok(c, { config, storeSlug: storeSlug || "" });
 });
 
 // ═════════════════════════════════════════════════════════

@@ -63,6 +63,11 @@ const router = createRouter({
       props: (route) => ({ id: route.params.slug || undefined }),
     },
     {
+      path: '/shop/:storeSlug',
+      name: 'Shop',
+      component: () => import('@/views/ShopView.vue'),
+    },
+    {
       path: '/admin/login',
       name: 'AdminLogin',
       component: AdminLoginView,

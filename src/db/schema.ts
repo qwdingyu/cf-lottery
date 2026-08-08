@@ -317,6 +317,13 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
    * pending = 订单创建中/待支付；paid = 已支付；expired = 超时释放。
    * 名额统计（claimed）排除 expired，实现软释放（不删 entry，保留审计链）。
    */
+  /**
+   * 直付秒杀名额状态（普通非支付活动固定为 ""）：
+   * reserved=参与成功且名额 CAS 已占用，pending=已建支付单，
+   * paid=已支付并完成发卡，expired=支付超时且名额已释放。
+   * paid_fulfillment_failed 表示已收款但暂时未发卡，必须占住名额等待补发；
+   * 完整定义统一维护在 services/payment/payment-status.ts。
+   */
   paymentStatus: text("payment_status").notNull().default(""),
 }, (t) => ({
   unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
@@ -659,7 +666,12 @@ export const paymentOrders = sqliteTable("payment_orders", {
   entryId: text("entry_id").notNull().unique(),
   amountCents: integer("amount_cents").notNull(),
   currency: text("currency").notNull().default("cny"),
-  status: text("status").notNull().default("pending"), // pending/paid/paid_fulfillment_failed/paid_late_needs_refund/refunded/expired/cancelled
+  /**
+   * 逻辑订单状态：pending → paid（已发卡）或 paid_fulfillment_failed（已收款待补发）；
+   * pending 超时进入 expired 并释放名额，迟到付款进入 paid_late_needs_refund。
+   * 状态常量与跨表转换规则统一维护在 services/payment/payment-status.ts。
+   */
+  status: text("status").notNull().default("pending"),
   provider: text("provider").notNull(),
   providerTradeNo: text("provider_trade_no"),
   /** 当前有效支付尝试；网关回调必须先命中 attempt，再进入逻辑订单。 */
@@ -693,6 +705,7 @@ export const paymentOrderAttempts = sqliteTable("payment_order_attempts", {
   provider: text("provider").notNull(),
   amountCents: integer("amount_cents").notNull(),
   currency: text("currency").notNull().default("cny"),
+  /** 一次网关交易尝试的状态；旧尝试迟到付款必须保留为待退款审计事实。 */
   status: text("status").notNull().default("pending"),
   providerTradeNo: text("provider_trade_no"),
   paidAt: text("paid_at"),
