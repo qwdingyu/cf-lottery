@@ -5,7 +5,7 @@
       <label>店铺链接</label>
       <div class="input-group">
         <input :value="shopUrl" readonly class="form-input" @focus="($event.target as HTMLInputElement).select()" />
-        <button class="btn btn-sm" @click="copyShopUrl">复制</button>
+        <button class="btn btn-sm" @click="copyShopUrl" :disabled="!!copyFeedback">{{ copyFeedback || '复制' }}</button>
       </div>
       <small class="hint">将此链接分享到 QQ/微信/群公告，用户点击即可看到您的所有公开活动</small>
     </div>
@@ -31,6 +31,7 @@ const shopUrl = ref('')
 const editingSlug = ref('')
 const saving = ref(false)
 const slugError = ref('')
+const copyFeedback = ref('')
 
 function generateSlug() {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -47,6 +48,8 @@ async function copyShopUrl() {
     const input = document.querySelector('.brand-settings input[readonly]') as HTMLInputElement
     if (input) { input.select(); document.execCommand('copy') }
   }
+  copyFeedback.value = '已复制'
+  setTimeout(() => { copyFeedback.value = '' }, 2000)
 }
 
 async function load() {

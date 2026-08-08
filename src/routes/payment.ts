@@ -32,6 +32,7 @@ import {
   PAYMENT_ENTRY_STATUS,
   PAYMENT_ORDER_STATUS,
 } from "../services/payment/payment-status";
+import { sendWinnerNotifications } from "../services/lottery/draw-execution";
 import type { AppEnv } from "../bindings";
 
 export const paymentPublicRoute = new Hono<AppEnv>();
@@ -555,6 +556,20 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
   const result = await handlePaymentCallback(db, order.tenantId, provider, params);
   if (!result.processed) {
     return c.text(result.error || "fail", 400);
+  }
+
+  // 支付成功后异步发送中奖邮件（不阻塞回调响应）。
+  // 仅当实际发卡成功（prizeCodeId 存在）且订单进入 paid 状态时触发；
+  // paid_fulfillment_failed 由运营后台 retryPaymentFulfillment 处理，不重复发邮件。
+  if (result.order?.prizeCodeId && result.order.status === PAYMENT_ORDER_STATUS.PAID) {
+    void sendWinnerNotifications(db, order.tenantId, order.drawId, {
+      resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+      emailFrom: getEnv(c, "EMAIL_FROM") || "",
+    }, {
+      winnerIds: [order.entryId],
+    }).catch((err) => {
+      console.error(`[payment] sendWinnerNotifications failed for order ${order.id}:`, err);
+    });
   }
 
   // 支付平台期望的响应格式：支付宝返回 success，Stripe 返回 200
