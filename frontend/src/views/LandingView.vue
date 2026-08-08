@@ -289,9 +289,9 @@ onMounted(() => {
   font-family: inherit;
 }
 .nav-link-primary {
-  color: #0f172a;
+  color: var(--brand-text);
   border-color: transparent;
-  background: #fbbf24;
+  background: var(--brand-bright);
   font-weight: 700;
 }
 .market-hero {
@@ -311,7 +311,7 @@ onMounted(() => {
 }
 .market-eyebrow {
   margin: 0 0 12px;
-  color: #fbbf24;
+  color: var(--brand-bright);
   font-size: 13px;
   font-weight: 800;
 }
@@ -544,8 +544,8 @@ onMounted(() => {
   padding: 0 12px;
 }
 .activity-filters button.active {
-  color: #0f172a;
-  background: #fbbf24;
+  color: var(--brand-text);
+  background: var(--brand-bright);
   border-color: transparent;
   font-weight: 800;
 }
@@ -612,8 +612,8 @@ onMounted(() => {
   min-height: 34px;
   padding: 7px 12px;
   border-radius: 8px;
-  color: #0f172a;
-  background: #fbbf24;
+  color: var(--brand-text);
+  background: var(--brand-bright);
   font-size: 13px;
   font-weight: 900;
   white-space: nowrap;

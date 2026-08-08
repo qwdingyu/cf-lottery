@@ -25,10 +25,11 @@
   cursor:pointer; height:26px; padding:0 10px; border-radius:6px; line-height:1; display:flex; align-items:center;
 }
 .lottery-logout:hover { color:#fff; border-color:rgba(255,255,255,0.3); }
+/* C 端焦点环统一走品牌金（--brand），不引用后台 --admin-accent */
 .lottery-logout:focus-visible,
 .lottery-login-btn:focus-visible,
 .lottery-share-btn:focus-visible {
-  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 .lottery-login-btn {
@@ -42,7 +43,7 @@
   font-size:13px; font-weight: 500;
   background: rgba(245,158,11,0.12);
   border:1px solid rgba(245,158,11,0.35);
-  color: #fbbf24;
+  color: var(--brand-bright);
   padding: 8px 14px;
   min-height: 44px;
   border-radius:8px;
@@ -64,7 +65,7 @@
 .lottery-card-title { margin:0 0 4px; font-size:17px; font-weight:600; }
 .lottery-card-tags { display:flex; gap:6px; flex-wrap:wrap; }
 .lottery-tag { font-size:11px; padding:2px 8px; border-radius:4px; background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.5); }
-.lottery-tag.open { background:rgba(245,158,11,0.15); color:#f59e0b; }
+.lottery-tag.open { background:rgba(245,158,11,0.15); color:var(--brand); }
 .lottery-tag.drawn, .lottery-tag.muted { background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.3); }
 .lottery-tag.won { background:rgba(34,197,94,0.15); color:#22c55e; }
 .lottery-tag.joined { background:rgba(59,130,246,0.15); color:#3b82f6; }
@@ -107,7 +108,7 @@
 .lottery-status-banner--warn {
   border-color: rgba(245,158,11,0.35);
   background: rgba(245,158,11,0.1);
-  color: #fbbf24;
+  color: var(--brand-bright);
 }
 .lottery-status-banner--info {
   border-color: rgba(59,130,246,0.35);
@@ -132,15 +133,15 @@
   width: 100%;
 }
 .lottery-result-btn--primary {
-  background: var(--admin-accent, #f59e0b);
-  color: #000;
+  background: var(--brand);
+  color: var(--brand-text);
   border-color: transparent;
   font-weight: 600;
 }
 .lottery-tag.draft,
 .lottery-tag.paused {
   background: rgba(245,158,11,0.12);
-  color: #fbbf24;
+  color: var(--brand-bright);
 }
 .lottery-tag.drawing {
   background: rgba(59,130,246,0.15);
@@ -266,7 +267,7 @@
 }
 .lottery-flash-merch-price--missing {
   font-size: 13px;
-  color: #fbbf24;
+  color: var(--brand-bright);
 }
 .lottery-flash-merch-stock {
   color: rgba(255,255,255,.66);
@@ -283,7 +284,7 @@
 .lottery-game-area { padding:24px 20px; display:flex; justify-content:center; }
 .lottery-join-bar { display:flex; align-items:center; justify-content:center; gap:12px; padding:16px 20px; border-top:1px solid rgba(255,255,255,0.06); flex-wrap:wrap; }
 .lottery-tag.mode { background:rgba(99,102,241,0.15); color:#a5b4fc; }
-.lottery-join-btn { font-size:15px; font-weight:600; padding:10px 32px; min-height:44px; border-radius:8px; background:var(--admin-accent,#f59e0b); color:#000; border:none; cursor:pointer; }
+.lottery-join-btn { font-size:15px; font-weight:600; padding:10px 32px; min-height:44px; border-radius:8px; background:var(--brand); color:var(--brand-text); border:none; cursor:pointer; }
 .lottery-join-btn:disabled { opacity:0.5; cursor:not-allowed; }
 .lottery-join-hint { font-size:13px; color:rgba(255,255,255,0.5); text-align:center; max-width:28em; line-height:1.4; }
 
@@ -306,7 +307,7 @@
   color:rgba(255,255,255,0.75); padding:8px 14px; min-height:44px; border-radius:8px; cursor:pointer;
 }
 .lottery-result-btn:focus-visible {
-  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -336,7 +337,7 @@
 .lottery-record-cta {
   margin-left: auto;
   font-size: 12px;
-  color: #f59e0b;
+  color: var(--brand);
   white-space: nowrap;
 }
 
@@ -929,7 +930,7 @@
   line-height: 1.35;
 }
 .modal-form input:not([type='checkbox']):not([type='radio']):focus-visible {
-  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 /* 盖过通用 input 的 height，保证 6 位 OTP 足够大 */
@@ -1053,7 +1054,7 @@
   margin: 0;
   font-size: 16px;
   font-weight: 700;
-  color: var(--admin-accent, #f59e0b);
+  color: var(--brand);
 }
 
 /* 查询我的结果弹窗 */
@@ -1097,8 +1098,8 @@
   border-radius: 12px;
   font-weight: 700;
   font-size: 15px;
-  background: linear-gradient(135deg, #f59e0b, #fbbf24);
-  color: #111;
+  background: var(--brand-gradient);
+  color: var(--brand-text);
   border: none;
   box-shadow: 0 4px 14px rgba(245, 158, 11, 0.28);
 }
@@ -1121,7 +1122,7 @@
 .result-cta-card .btn { display: inline-block; }
 .result-code-block { display: flex; flex-direction: column; gap: 4px; align-items: center; background: var(--tg-secondary-bg, #151b28); padding: 12px; border-radius: 8px; width: 100%; }
 .result-code-label { font-size: 12px; color: var(--tg-hint, #9aa4b2); }
-.result-code { font-size: 16px; font-weight: 700; color: var(--admin-accent, #f59e0b); cursor: pointer; word-break: break-all; }
+.result-code { font-size: 16px; font-weight: 700; color: var(--brand); cursor: pointer; word-break: break-all; }
 .result-share-win { margin-top: 12px; text-align: center; }
 .result-share-hint { font-size: 12px; color: var(--tg-hint); margin-bottom: 6px; }
 
@@ -1155,7 +1156,7 @@
 }
 .lottery-payment-code {
   font-size: 13px;
-  color: var(--admin-accent, #f59e0b);
+  color: var(--brand);
   cursor: pointer;
   word-break: break-all;
   text-align: right;
@@ -1206,19 +1207,19 @@
 /* ── 视觉增强（不改结构，仅美化） ── */
 .lottery-view { max-width: 860px; margin: 0 auto; }
 .lottery-header { background: linear-gradient(180deg, rgba(245,158,11,0.08) 0%, transparent 100%); padding: 20px 24px 16px; }
-.lottery-title { background: linear-gradient(135deg, #f59e0b, #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.lottery-title { background: var(--brand-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 .lottery-card { border: 1px solid rgba(245,158,11,0.1); transition: all 0.3s ease; }
 .lottery-card:hover { border-color: rgba(245,158,11,0.3); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
 .lottery-card.open { border-color: rgba(34,197,94,0.15); }
 .lottery-card.drawn { border-color: rgba(255,255,255,0.05); }
 .lottery-game-area { background: radial-gradient(ellipse at center, rgba(245,158,11,0.06) 0%, transparent 70%); min-height: 320px; align-items: center; }
-.lottery-join-btn.primary { background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #000; font-weight: 700; padding: 14px 40px; font-size: 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(245,158,11,0.3); transition: all 0.3s ease; }
+.lottery-join-btn.primary { background: var(--brand-gradient); color: var(--brand-text); font-weight: 700; padding: 14px 40px; font-size: 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(245,158,11,0.3); transition: all 0.3s ease; }
 .lottery-join-btn.primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(245,158,11,0.5); }
 .lottery-prize-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-top: 12px; }
 .lottery-prize-card { background: rgba(255,255,255,0.03); border-radius: 12px; padding: 16px; text-align: center; border: 1px solid rgba(255,255,255,0.06); }
 .lottery-prize-img { width: 64px; height: 64px; margin: 0 auto 8px; border-radius: 12px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; font-size: 32px; }
 .lottery-prize-name { display: block; font-weight: 600; font-size: 14px; }
-.lottery-prize-value { display: block; font-size: 12px; color: #f59e0b; margin-top: 4px; }
+.lottery-prize-value { display: block; font-size: 12px; color: var(--brand); margin-top: 4px; }
 .lottery-prize-count { display: block; font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 2px; }
 .lottery-hero { text-align: center; padding: 40px 20px 24px; }
 .lottery-hero-title { font-size: 28px; font-weight: 800; margin: 12px 0 4px; }

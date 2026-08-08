@@ -82,7 +82,7 @@ watch(() => props.disabled, (d) => {
 .card-inner { position: relative; width: 100%; height: 100%; min-height: 100px; transition: transform 0.6s; transform-style: preserve-3d; }
 .card-item.flipped .card-inner { transform: rotateY(180deg); }
 .card-item:focus-visible {
-  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline: 2px solid var(--brand);
   outline-offset: 3px;
   border-radius: 14px;
 }
@@ -94,8 +94,8 @@ watch(() => props.disabled, (d) => {
   min-width: min(200px, 80vw);
   padding: 12px 28px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #f59e0b, #fbbf24);
-  color: #1a1a2e;
+  background: var(--brand-gradient);
+  color: var(--brand-text);
   font-size: 15px;
   font-weight: 700;
   line-height: 1.25;

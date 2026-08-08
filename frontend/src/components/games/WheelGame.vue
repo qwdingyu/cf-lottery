@@ -254,11 +254,11 @@ onUnmounted(() => {
   filter: drop-shadow(0 0 20px rgba(245,158,11,0.3));
 }
 .wheel-lights { position: absolute; top: 50%; left: 50%; }
-.light-dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 6px #fbbf24; }
+.light-dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--brand-bright); box-shadow: 0 0 6px var(--brand-bright); }
 .light-dot.active { animation: blink 0.5s infinite alternate; }
 @keyframes blink { to { opacity: 0.3; transform: scale(0.7); } }
 .wheel-pointer-wrap { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; cursor: pointer; }
-.wheel-pointer { width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 22px solid #f59e0b; margin: 0 auto -2px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
+.wheel-pointer { width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 22px solid var(--brand); margin: 0 auto -2px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
 .wheel-pointer.spinning { animation: bounce 0.1s infinite alternate; }
 @keyframes bounce { to { transform: translateY(-2px); } }
 .wheel-btn {
@@ -267,8 +267,8 @@ onUnmounted(() => {
   min-width: 44px;
   min-height: 44px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #f59e0b, #fbbf24);
-  color: #1a1a2e;
+  background: var(--brand-gradient);
+  color: var(--brand-text);
   font-size: 12px;
   font-weight: 800;
   line-height: 1.15;

@@ -203,7 +203,7 @@ onMounted(initCanvas)
 .scratch-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; touch-action: none; }
 .scratch-canvas.hidden { opacity: 0; pointer-events: none; }
 .scratch-hint { color: var(--tg-hint); font-size: 13px; text-align: center; padding: 0 12px; }
-.scratch-hint.joined-hint { color: #fbbf24; font-weight: 600; }
+.scratch-hint.joined-hint { color: var(--brand-bright); font-weight: 600; }
 .scratch-join-btn {
   margin-top: 4px;
   min-height: 44px;

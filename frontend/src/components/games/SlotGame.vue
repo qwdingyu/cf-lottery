@@ -181,8 +181,8 @@ onUnmounted(() => {
   min-width: min(220px, 80vw);
   padding: 12px 28px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #f59e0b, #fbbf24);
-  color: #1a1a2e;
+  background: var(--brand-gradient);
+  color: var(--brand-text);
   font-size: 15px;
   font-weight: 700;
   line-height: 1.25;

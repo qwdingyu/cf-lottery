@@ -78,10 +78,10 @@ watch(() => props.celebrateKey, (key) => {
   min-height: 72px;
 }
 .grid-cell:hover:not(:disabled):not(.center) {
-  transform: scale(1.08); border-color: var(--admin-accent, #f59e0b); background: rgba(245,158,11,0.25);
+  transform: scale(1.08); border-color: var(--brand); background: rgba(245,158,11,0.25);
 }
 .grid-cell:focus-visible {
-  outline: 2px solid var(--admin-accent, #f59e0b);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 .grid-cell.center { background: linear-gradient(135deg, rgba(245,158,11,0.3), rgba(251,191,36,0.15)); border-color: rgba(245,158,11,0.3); cursor: default; }
@@ -94,7 +94,7 @@ watch(() => props.celebrateKey, (key) => {
 .grid-cell.flipped { background: linear-gradient(135deg, #6366f1, #4f46e5); border-color: #818cf8; }
 /* 提交中：高亮用户刚点的格，避免「点了没反应」 */
 .grid-cell.loading {
-  border-color: var(--admin-accent, #f59e0b);
+  border-color: var(--brand);
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.45);
   animation: gridCellPulse 1s ease-in-out infinite;
 }

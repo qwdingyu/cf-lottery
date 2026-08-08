@@ -611,7 +611,7 @@ watch(
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
-.my-viral-num--extra { color: #fbbf24; }
+.my-viral-num--extra { color: var(--brand-bright); }
 .my-viral-num--weight { color: #60a5fa; }
 .my-viral-label {
   display: block;

@@ -190,14 +190,17 @@ const buttonLabel = computed(() => {
   font-variant-numeric: tabular-nums;
   font-size: 14px;
   font-weight: 600;
-  color: #0f172a;
-  background: #fff1f2;
+  /* 暗色主题下的促销药丸：玫红字 + 同族半透明底，不再是全站唯一浅色块 */
+  color: var(--shop-sale-text, #fecdd3);
+  background: var(--shop-sale-soft, rgba(244, 63, 94, 0.16));
+  border: 1px solid var(--shop-sale-border, rgba(244, 63, 94, 0.42));
   border-radius: 8px;
   padding: 4px 10px;
 }
 .flash-countdown.ended {
-  color: #64748b;
-  background: #f1f5f9;
+  color: var(--tg-hint, #9aa4b2);
+  background: var(--surface-2, rgba(255, 255, 255, 0.07));
+  border-color: var(--border, rgba(255, 255, 255, 0.10));
 }
 .flash-progress-wrap {
   display: flex;
@@ -208,7 +211,8 @@ const buttonLabel = computed(() => {
   flex: 1;
   height: 10px;
   border-radius: 999px;
-  background: #ffe4e6;
+  /* 暗色轨道：玫红同族低透明底，保持填充前后的同色系对比 */
+  background: var(--shop-sale-soft, rgba(244, 63, 94, 0.16));
   overflow: hidden;
 }
 .flash-progress-fill {
@@ -219,13 +223,13 @@ const buttonLabel = computed(() => {
 }
 .flash-progress-label {
   font-size: 12px;
-  color: #64748b;
+  color: var(--tg-hint, #9aa4b2);
   white-space: nowrap;
 }
 .flash-stock {
   margin: 0;
   font-size: 13px;
-  color: #e11d48;
+  color: var(--shop-sale, #fb7185);
   text-align: center;
 }
 .flash-btn {
@@ -247,9 +251,11 @@ const buttonLabel = computed(() => {
 }
 .flash-btn.joined,
 .flash-btn.soldout {
-  opacity: 0.85;
+  opacity: 0.55;
   cursor: default;
-  background: #94a3b8 !important;
+  /* 终态降级为暗色中性底，文字仍可读；不再用浅灰 #94a3b8 造成「浅色补丁」 */
+  background: var(--surface-2, rgba(255, 255, 255, 0.07)) !important;
+  color: var(--tg-hint, #9aa4b8);
 }
 .flash-spinner {
   width: 14px;

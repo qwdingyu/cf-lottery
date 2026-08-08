@@ -56,6 +56,14 @@
   --shop-sale-text: #fecdd3;
   /* 店面工具栏吸顶：贴在 Header 下方（TG 移动端无顶栏 → 0） */
   --shop-sticky-top: 0px;
+  /* ── C 端品牌色（docs 评审 P0-2）：面向消费者的统一主色，琥珀金＝抽奖/好运品类心智。
+   * 与 --admin-accent 严格分工：--brand* 只用于 C 端（landing/lottery/games），
+   * --admin-accent 只用于 /admin 后台；C 端禁止再引用 --admin-accent（防后台色泄漏）。 */
+  --brand: #f59e0b;
+  --brand-bright: #fbbf24;
+  /* 琥珀金底上的文字色：深 slate 保证对比度 ≥ 4.5:1 */
+  --brand-text: #0f172a;
+  --brand-gradient: linear-gradient(135deg, #f59e0b, #fbbf24);
   /* 兼容旧别名：ConfirmDialog 等曾引用未定义的 --tg-surface-2 / --tg-muted */
   --tg-surface-2: var(--surface-2);
   --tg-border: var(--border);
