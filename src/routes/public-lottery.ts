@@ -9,7 +9,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins } from "../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins, paymentOrders } from "../db/schema";
 import { eq, and, count, asc, ne, desc, gt, inArray } from "drizzle-orm";
 import {
   getActivityOutcome,
@@ -138,6 +138,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       endAt: lotteryDraws.endAt,
       showParticipantCount: lotteryDraws.showParticipantCount,
       maxParticipants: lotteryDraws.maxParticipants,
+      activeParticipantCount: lotteryDraws.activeParticipantCount,
       productLink: lotteryDraws.productLink,
       promotionConfig: lotteryDraws.promotionConfig,
       tenantId: lotteryDraws.tenantId,
@@ -173,8 +174,10 @@ publicLotteryRoute.get("/home-activities", async (c) => {
   }
 
   const activities = rows.map((draw) => {
-    const claimed = claimedByDrawId.get(draw.internalId) || 0;
     const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
+    const claimed = flashParsed.config?.paymentRequired === true
+      ? Number(draw.activeParticipantCount || 0)
+      : (claimedByDrawId.get(draw.internalId) || 0);
     const flashSale = flashParsed.config
       ? buildFlashSaleRuntime(flashParsed.config, claimed, draw.maxParticipants)
       : null;
@@ -250,14 +253,24 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
   // docs/083：visible=0 时对公众与「未开放」同文案，不额外泄露「存在但隐藏」
   if (Number(draw.visible ?? 1) !== 1) return fail(c, "活动未开放", 400);
 
-  // docs/131 §8：名额统计排除支付超时释放的 entry（payment_status='expired' 软释放）
-  const [{ total }] = await db
-    .select({ total: count() })
-    .from(lotteryEntries)
-    .where(and(
-      eq(lotteryEntries.drawId, draw.id),
-      inArray(lotteryEntries.paymentStatus, ["", "reserved", "pending", "paid"]),
-    ));
+  const detailFlashConfig = parseFlashSaleConfig(draw.promotionConfig).config;
+  // 直付秒杀直接读取活动计数器；普通活动才扫描 entries。
+  let total = 0;
+  if (detailFlashConfig?.paymentRequired === true) {
+    total = Number(draw.activeParticipantCount || 0);
+  } else {
+    const [countRow] = await db
+      .select({ total: count() })
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.drawId, draw.id),
+        inArray(lotteryEntries.paymentStatus, ["", "reserved", "pending", "paid"]),
+      ));
+    total = Number(countRow?.total || 0);
+  }
+  const publicParticipantCount = detailFlashConfig?.paymentRequired === true
+    ? Number(draw.activeParticipantCount || 0)
+    : total;
 
   const result: any = {
     id: draw.publicSlug, // 公开页面使用 publicSlug 作为标识，不暴露内部 ID
@@ -278,7 +291,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     showWinnerCount: draw.showWinnerCount,
     // 公开端可据此决定是否展示「中奖名单」区块；个人查结果不依赖此字段
     showWinnerList: draw.showWinnerList,
-    participantCount: draw.showParticipantCount ? Number(total) : undefined,
+    participantCount: draw.showParticipantCount ? publicParticipantCount : undefined,
     winnerCount: draw.showWinnerCount ? draw.winnerCount : undefined,
     maxParticipants: draw.maxParticipants,
     // 导流：关联商品链接（仅在活动中开放时返回）
@@ -296,7 +309,9 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
     if (flashParsed.config) {
       const claimedForFlash =
-        draw.showParticipantCount ? Number(total) : Number(total);
+        flashParsed.config.paymentRequired === true
+          ? Number(draw.activeParticipantCount || 0)
+          : Number(total);
       // 即使运营关闭了「展示参与人数」，秒杀进度仍需要真实 claimed 才能诚实；
       // 仅返回聚合进度，不额外暴露明文名单。
       result.flashSale = buildFlashSaleRuntime(
@@ -558,12 +573,14 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
 
   // 检查是否已参与（按统一身份键判重）
   const [existing] = await db
-    .select({ id: lotteryEntries.id })
+    .select({ id: lotteryEntries.id, paymentStatus: lotteryEntries.paymentStatus })
     .from(lotteryEntries)
     .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.identityValue, identity.identityValue)))
     .limit(1);
   // join 意图：已参与 → 409 + entryId（裂变身份可恢复，docs/110）；query 仍可发码
-  if (purpose === "join" && existing) {
+  const directFlashSale = parseFlashSaleConfig(draw.promotionConfig).config?.paymentRequired === true;
+  const canReopenExpiredPaymentEntry = directFlashSale && existing?.paymentStatus === "expired";
+  if (purpose === "join" && existing && !canReopenExpiredPaymentEntry) {
     return c.json(
       {
         ok: false,

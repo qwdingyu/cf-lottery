@@ -11,12 +11,13 @@
  */
 import { createProviderRegistry, isAmbiguousEasyPayProviderError } from "@usethink/cf-core/features/payment";
 import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
-import { eq, and, sql, inArray, isNull } from "drizzle-orm";
+import { eq, and, sql, inArray, isNull, max } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
 import {
   tenantConfigs,
   paymentOrders,
+  paymentOrderAttempts,
   prizeCodes,
   lotteryPrizeTiers,
   prizes,
@@ -33,11 +34,91 @@ import { systemConfig as systemConfigTable } from "../../db/schema";
 export type PaymentProviderName = "easypay" | "stripe" | "alipay";
 
 const RETRYABLE_PAYMENT_ORDER_STATUSES = new Set(["cancelled", "expired"]);
+const PAYMENT_ACCESS_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 function shouldCancelOrderAfterCreateFailure(error: unknown): boolean {
   // 易支付/ZPay 已在 cf-core 区分 deterministic / ambiguous。
   // ambiguous 表示网关可能已经创建订单：本地必须保留 pending，允许迟到回调或用户刷新后恢复支付入口。
   return !isAmbiguousEasyPayProviderError(error);
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function createPaymentAccessToken(): string {
+  // 两个 UUID 提供足够的不可预测性；数据库只保存 SHA-256，令牌不会以明文落库。
+  return `${crypto.randomUUID()}${crypto.randomUUID().replace(/-/g, "")}`;
+}
+
+function paymentAccessTokenExpiresAt(now = Date.now()): string {
+  return new Date(now + PAYMENT_ACCESS_TOKEN_TTL_MS).toISOString();
+}
+
+/** 为公开订单签发访问令牌；调用方必须先完成 entry/email 绑定校验。 */
+export async function issuePaymentOrderAccessToken(
+  db: DbType,
+  tenantId: string,
+  orderId: string,
+  entryId: string,
+): Promise<string> {
+  const token = createPaymentAccessToken();
+  const updated = await db
+    .update(paymentOrders)
+    .set({
+      accessTokenHash: await sha256Hex(token),
+      accessTokenExpiresAt: paymentAccessTokenExpiresAt(),
+      updatedAt: sql`(datetime('now'))`,
+    })
+    .where(and(
+      eq(paymentOrders.id, orderId),
+      eq(paymentOrders.tenantId, tenantId),
+      eq(paymentOrders.entryId, entryId),
+    ))
+    .returning({ id: paymentOrders.id });
+  if (updated.length === 0) throw new Error("订单不存在");
+  return token;
+}
+
+/** 用短期 Bearer 令牌查订单；任何无令牌/过期令牌都不返回订单细节。 */
+export async function findPaymentOrderByAccessToken(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  orderId: string,
+  token: string,
+): Promise<typeof paymentOrders.$inferSelect | null> {
+  const normalized = String(token || "").trim();
+  if (!normalized) return null;
+  const [order] = await db
+    .select()
+    .from(paymentOrders)
+    .where(and(
+      eq(paymentOrders.id, orderId),
+      eq(paymentOrders.tenantId, tenantId),
+      eq(paymentOrders.drawId, drawId),
+      eq(paymentOrders.accessTokenHash, await sha256Hex(normalized)),
+      sql`${paymentOrders.accessTokenExpiresAt} > datetime('now')`,
+    ))
+    .limit(1);
+  return order ?? null;
+}
+
+async function decrementActiveFlashSaleCount(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  amount: number,
+): Promise<void> {
+  if (amount <= 0) return;
+  await db
+    .update(lotteryDraws)
+    .set({
+      activeParticipantCount: sql`MAX(0, ${lotteryDraws.activeParticipantCount} - ${amount})`,
+      updatedAt: sql`(datetime('now'))`,
+    })
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
 }
 
 /** 懒清理：标记超时未支付的 pending 订单为 expired，并释放关联 entry 名额（docs/131 §8）。超时分钟数从 systemConfig 读取，未配则默认 30。 */
@@ -59,7 +140,11 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
   return withDbTransaction(db, async (tx) => {
     // 订单和 entry 必须在同一事务中软释放，否则回调或并发参与可能看到半完成状态。
     const overdue = await tx
-      .select({ id: paymentOrders.id, entryId: paymentOrders.entryId })
+      .select({
+        id: paymentOrders.id,
+        entryId: paymentOrders.entryId,
+        currentAttemptId: paymentOrders.currentAttemptId,
+      })
       .from(paymentOrders)
       .where(and(
         eq(paymentOrders.tenantId, tenantId),
@@ -67,7 +152,7 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         sql`${paymentOrders.createdAt} < ${cutoff}`,
       ));
     const staleReservations = await tx
-      .select({ id: lotteryEntries.id })
+      .select({ id: lotteryEntries.id, drawId: lotteryEntries.drawId })
       .from(lotteryEntries)
       .where(and(
         eq(lotteryEntries.tenantId, tenantId),
@@ -81,6 +166,24 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       ));
     if (overdue.length === 0 && staleReservations.length === 0) return 0;
 
+    const releaseByDraw = new Map<string, number>();
+    for (const order of overdue) {
+      const [entry] = await tx
+        .select({ drawId: lotteryEntries.drawId, paymentStatus: lotteryEntries.paymentStatus })
+        .from(lotteryEntries)
+        .where(and(
+          eq(lotteryEntries.id, order.entryId),
+          eq(lotteryEntries.tenantId, tenantId),
+        ))
+        .limit(1);
+      if (entry?.paymentStatus === "pending") {
+        releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + 1);
+      }
+    }
+    for (const entry of staleReservations) {
+      releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + 1);
+    }
+
     await tx
       .update(paymentOrders)
       .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
@@ -89,6 +192,16 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         eq(paymentOrders.status, "pending"),
         sql`${paymentOrders.createdAt} < ${cutoff}`,
       ));
+    if (overdue.length > 0) {
+      await tx
+        .update(paymentOrderAttempts)
+        .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
+        .where(and(
+          eq(paymentOrderAttempts.tenantId, tenantId),
+          inArray(paymentOrderAttempts.id, overdue.map((order) => order.currentAttemptId).filter(Boolean) as string[]),
+          eq(paymentOrderAttempts.status, "pending"),
+        ));
+    }
 
     const entryIds = overdue.map((o) => o.entryId).filter(Boolean);
     if (entryIds.length > 0) {
@@ -113,6 +226,11 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         ));
     }
 
+    // 释放名额的 entry 都属于直付秒杀；按活动分组扣减计数器，避免把多个活动混成一个 delta。
+    for (const [drawId, amount] of releaseByDraw) {
+      await decrementActiveFlashSaleCount(tx, tenantId, drawId, amount);
+    }
+
     return overdue.length + staleReservations.length;
   });
 }
@@ -121,6 +239,7 @@ async function cancelPaymentOrder(
   db: DbType,
   input: Pick<CreateOrderInput, "tenantId" | "drawId" | "entryId">,
   orderId: string,
+  attemptId: string,
 ): Promise<void> {
   await withDbTransaction(db, async (tx) => {
     // 只有仍处于 pending 的订单才允许因网关创建失败而取消。
@@ -139,6 +258,15 @@ async function cancelPaymentOrder(
     if (cancelled.length === 0) return;
 
     await tx
+      .update(paymentOrderAttempts)
+      .set({ status: "failed", updatedAt: sql`(datetime('now'))` })
+      .where(and(
+        eq(paymentOrderAttempts.id, attemptId),
+        eq(paymentOrderAttempts.paymentOrderId, orderId),
+        eq(paymentOrderAttempts.status, "pending"),
+      ));
+
+    const released = await tx
       .update(lotteryEntries)
       .set({ paymentStatus: "expired" })
       .where(and(
@@ -147,6 +275,9 @@ async function cancelPaymentOrder(
         eq(lotteryEntries.drawId, input.drawId),
         eq(lotteryEntries.paymentStatus, "pending"),
       ));
+    if ((released.rowsAffected ?? 0) > 0) {
+      await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, released.rowsAffected ?? 0);
+    }
   });
 }
 
@@ -154,13 +285,16 @@ async function armPaymentOrderForRetry(
   db: DbType,
   input: CreateOrderInput,
   orderId: string,
-): Promise<void> {
-  await withDbTransaction(db, async (tx) => {
+): Promise<{ attemptId: string; accessToken: string }> {
+  const accessToken = createPaymentAccessToken();
+  const accessTokenHash = await sha256Hex(accessToken);
+  return withDbTransaction(db, async (tx) => {
     const [current] = await tx
       .select({
         id: paymentOrders.id,
         status: paymentOrders.status,
         entryId: paymentOrders.entryId,
+        currentAttemptId: paymentOrders.currentAttemptId,
       })
       .from(paymentOrders)
       .where(and(
@@ -197,8 +331,24 @@ async function armPaymentOrderForRetry(
       throw new Error("秒杀活动未配置可重试名额");
     }
 
-    // 过期 entry 已经被软释放，重试必须重新原子预约名额。
-    // 不能先把 entry 改回 pending 再 COUNT，否则并发下会把已释放名额重复占用。
+    // 过期 entry 已经被软释放，重试必须先通过活动计数器 CAS 重新预约名额。
+    // 不能先把 entry 改回 pending 再检查，否则并发下会把已释放名额重复占用。
+    const reserved = await tx
+      .update(lotteryDraws)
+      .set({
+        activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + 1`,
+        updatedAt: sql`(datetime('now'))`,
+      })
+      .where(and(
+        eq(lotteryDraws.id, input.drawId),
+        eq(lotteryDraws.tenantId, input.tenantId),
+        sql`${lotteryDraws.activeParticipantCount} < ${capacity}`,
+      ))
+      .returning({ id: lotteryDraws.id });
+    if (reserved.length === 0) {
+      throw new Error("秒杀名额已被其他用户占用");
+    }
+
     const rearmedEntry = await tx
       .update(lotteryEntries)
       .set({ paymentStatus: "pending" })
@@ -207,16 +357,27 @@ async function armPaymentOrderForRetry(
         eq(lotteryEntries.tenantId, input.tenantId),
         eq(lotteryEntries.drawId, input.drawId),
         eq(lotteryEntries.paymentStatus, "expired"),
-        sql`(
-          SELECT COUNT(*) FROM lottery_entries
-          WHERE tenant_id = ${input.tenantId}
-            AND draw_id = ${input.drawId}
-            AND payment_status IN ('reserved', 'pending', 'paid')
-        ) < ${capacity}`,
       ))
       .returning({ id: lotteryEntries.id });
     if (rearmedEntry.length === 0) {
       throw new Error("秒杀名额已被其他用户占用");
+    }
+
+    const [attemptNumber] = await tx
+      .select({ value: max(paymentOrderAttempts.attemptNo) })
+      .from(paymentOrderAttempts)
+      .where(eq(paymentOrderAttempts.paymentOrderId, orderId));
+    const attemptId = crypto.randomUUID();
+    const nextAttemptNo = Number(attemptNumber?.value || 0) + 1;
+
+    if (current.currentAttemptId) {
+      await tx
+        .update(paymentOrderAttempts)
+        .set({ status: "superseded", updatedAt: sql`(datetime('now'))` })
+        .where(and(
+          eq(paymentOrderAttempts.id, current.currentAttemptId),
+          eq(paymentOrderAttempts.status, "pending"),
+        ));
     }
 
     const [updatedRow] = await tx
@@ -229,6 +390,9 @@ async function armPaymentOrderForRetry(
         status: "pending",
         provider: input.provider,
         providerTradeNo: null,
+        currentAttemptId: attemptId,
+        accessTokenHash,
+        accessTokenExpiresAt: paymentAccessTokenExpiresAt(),
         prizeCodeId: null,
         paidAt: null,
         createdAt: sql`(datetime('now'))`,
@@ -242,22 +406,45 @@ async function armPaymentOrderForRetry(
     if (!updatedRow) {
       throw new Error("订单状态已变化，请刷新后重试");
     }
+
+    await tx.insert(paymentOrderAttempts).values({
+      id: attemptId,
+      paymentOrderId: orderId,
+      tenantId: input.tenantId,
+      drawId: input.drawId,
+      attemptNo: nextAttemptNo,
+      provider: input.provider,
+      amountCents: input.amountCents,
+      currency: input.currency,
+      status: "pending",
+    });
+    return { attemptId, accessToken };
   });
 }
 
-/** Provider 创建支付后若返回平台侧单号，立即落库，便于后续查询、排障和未来 cf-pay 迁移。 */
-async function persistProviderTradeNo(
+/** Provider 创建支付后若返回平台侧单号，立即落库到当前 attempt。 */
+export async function persistProviderTradeNo(
   db: DbType,
   orderId: string,
+  attemptId: string,
   payResult: CreatePaymentResult,
 ): Promise<void> {
   const providerTradeNo = String(payResult.providerTradeNo || "").trim();
   if (!providerTradeNo) return;
   await db
+    .update(paymentOrderAttempts)
+    .set({ providerTradeNo, updatedAt: sql`(datetime('now'))` })
+    .where(and(
+      eq(paymentOrderAttempts.id, attemptId),
+      eq(paymentOrderAttempts.paymentOrderId, orderId),
+      eq(paymentOrderAttempts.status, "pending"),
+    ));
+  await db
     .update(paymentOrders)
     .set({ providerTradeNo, updatedAt: sql`(datetime('now'))` })
     .where(and(
       eq(paymentOrders.id, orderId),
+      eq(paymentOrders.currentAttemptId, attemptId),
       eq(paymentOrders.status, "pending"),
       isNull(paymentOrders.providerTradeNo),
     ));
@@ -359,11 +546,14 @@ export async function createPaymentOrder(
   db: DbType,
   input: CreateOrderInput,
   provider: PaymentProvider,
-): Promise<{ order: typeof paymentOrders.$inferSelect; payResult: CreatePaymentResult }> {
+): Promise<{ order: typeof paymentOrders.$inferSelect; payResult: CreatePaymentResult; accessToken: string }> {
   // 懒清理本租户超时订单（避免定时任务，docs/131 §8）
   await expireOverdueOrders(db, input.tenantId);
 
   const id = crypto.randomUUID();
+  const attemptId = crypto.randomUUID();
+  const accessToken = createPaymentAccessToken();
+  const accessTokenHash = await sha256Hex(accessToken);
   // 事务只含数据库写入；provider.createPayment 是网络调用，放事务外避免长时间占锁
   await withDbTransaction(db, async (tx) => {
     const armedEntry = await tx
@@ -390,13 +580,27 @@ export async function createPaymentOrder(
       currency: input.currency,
       status: "pending",
       provider: input.provider,
+      currentAttemptId: attemptId,
+      accessTokenHash,
+      accessTokenExpiresAt: paymentAccessTokenExpiresAt(),
+    });
+    await tx.insert(paymentOrderAttempts).values({
+      id: attemptId,
+      paymentOrderId: id,
+      tenantId: input.tenantId,
+      drawId: input.drawId,
+      attemptNo: 1,
+      provider: input.provider,
+      amountCents: input.amountCents,
+      currency: input.currency,
+      status: "pending",
     });
   });
 
   let payResult: CreatePaymentResult;
   try {
     payResult = await provider.createPayment({
-      orderNo: id,
+      orderNo: attemptId,
       amountCents: input.amountCents,
       currency: input.currency,
       notifyUrl: input.notifyUrl,
@@ -406,22 +610,22 @@ export async function createPaymentOrder(
   } catch (err) {
     // 确定性失败才取消并释放名额；不确定失败保留 pending，防止“网关已收单/已支付，本地已取消”。
     if (shouldCancelOrderAfterCreateFailure(err)) {
-      await cancelPaymentOrder(db, input, id);
+      await cancelPaymentOrder(db, input, id, attemptId);
     }
     throw err;
   }
 
-  await persistProviderTradeNo(db, id, payResult);
+  await persistProviderTradeNo(db, id, attemptId, payResult);
   const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, id)).limit(1);
-  return { order: order!, payResult };
+  return { order: order!, payResult, accessToken };
 }
 
-/** 重试已取消 / 已过期订单：复用同一 entryId 与 orderNo，避免把一参与一订单拆成多条记录。 */
+/** 重试已取消 / 已过期订单：复用同一逻辑订单，但为网关创建全新的 attempt/orderNo。 */
 export async function retryPaymentOrder(
   db: DbType,
   input: CreateOrderInput,
   provider: PaymentProvider,
-): Promise<{ order: typeof paymentOrders.$inferSelect; payResult: CreatePaymentResult }> {
+): Promise<{ order: typeof paymentOrders.$inferSelect; payResult: CreatePaymentResult; accessToken: string }> {
   const [existing] = await db
     .select()
     .from(paymentOrders)
@@ -438,12 +642,12 @@ export async function retryPaymentOrder(
     throw new Error("订单不可重试");
   }
 
-  await armPaymentOrderForRetry(db, input, existing.id);
+  const retryState = await armPaymentOrderForRetry(db, input, existing.id);
 
   let payResult: CreatePaymentResult;
   try {
     payResult = await provider.createPayment({
-      orderNo: existing.id,
+      orderNo: retryState.attemptId,
       amountCents: input.amountCents,
       currency: input.currency,
       notifyUrl: input.notifyUrl,
@@ -452,21 +656,21 @@ export async function retryPaymentOrder(
     });
   } catch (err) {
     if (shouldCancelOrderAfterCreateFailure(err)) {
-      await cancelPaymentOrder(db, input, existing.id);
+      await cancelPaymentOrder(db, input, existing.id, retryState.attemptId);
     }
     throw err;
   }
 
-  await persistProviderTradeNo(db, existing.id, payResult);
+  await persistProviderTradeNo(db, existing.id, retryState.attemptId, payResult);
   const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, existing.id)).limit(1);
-  return { order: order!, payResult };
+  return { order: order!, payResult, accessToken: retryState.accessToken };
 }
 
 /**
- * 支付回调处理：验签 → 幂等 → 事务内（取卡密 + 标记 paid）→ 返回订单。
- * 卡密不足时订单标记 paid_fulfillment_failed（不静默 paid+null，docs/131 §7）。
- * params 为支付平台回调的 searchParams（Record<string,string>，由 Provider verifyCallback 解析）。
- * 重复回调返回 { processed: false, order } 不重复发卡。
+ * 支付回调处理：验签 → attempt 绑定 → 幂等 → 事务内取卡密/更新订单。
+ *
+ * 回调的 orderNo 永远是 payment_order_attempts.id，而不是逻辑订单 id。
+ * 旧 attempt 迟到付款只记录为 paid_late_needs_refund，不会占用新 attempt 的名额。
  */
 export async function handlePaymentCallback(
   db: DbType,
@@ -482,53 +686,74 @@ export async function handlePaymentCallback(
   }
   if (!callback) return { processed: false, error: "验签失败" };
 
-  const [pre] = await db
+  const [preAttempt] = await db
     .select()
-    .from(paymentOrders)
-    .where(eq(paymentOrders.id, callback.orderNo))
+    .from(paymentOrderAttempts)
+    .where(eq(paymentOrderAttempts.id, callback.orderNo))
     .limit(1);
-  if (!pre) return { processed: false, error: "订单不存在" };
-  if (pre.tenantId !== tenantId) return { processed: false, error: "租户不匹配" };
-  if (pre.provider !== provider.name) return { processed: false, error: "支付渠道不匹配" };
+  if (!preAttempt) return { processed: false, error: "支付尝试不存在" };
+  if (preAttempt.tenantId !== tenantId) return { processed: false, error: "租户不匹配" };
+  if (preAttempt.provider !== provider.name) return { processed: false, error: "支付渠道不匹配" };
   const callbackCurrency = String(callback.currency || "").trim().toLowerCase();
-  const orderCurrency = String(pre.currency || "").trim().toLowerCase();
-  if (callback.amountCents !== pre.amountCents || callbackCurrency !== orderCurrency) {
+  const attemptCurrency = String(preAttempt.currency || "").trim().toLowerCase();
+  if (callback.amountCents !== preAttempt.amountCents || callbackCurrency !== attemptCurrency) {
     return { processed: false, error: "金额或币种不匹配" };
   }
 
-  // 事务内完成发卡与状态更新（docs/131 §7：读取→取卡密→更新订单，一次提交）
-  const order = await withDbTransaction(db, async (tx) => {
-    // 幂等：事务内重新读取，已 paid 的订单直接返回
+  const result = await withDbTransaction(db, async (tx) => {
+    const [attempt] = await tx
+      .select()
+      .from(paymentOrderAttempts)
+      .where(eq(paymentOrderAttempts.id, preAttempt.id))
+      .limit(1);
     const [current] = await tx
       .select()
       .from(paymentOrders)
-      .where(eq(paymentOrders.id, pre.id))
+      .where(and(
+        eq(paymentOrders.id, preAttempt.paymentOrderId),
+        eq(paymentOrders.tenantId, tenantId),
+      ))
       .limit(1);
-    if (!current) return null;
-    if (
-      current.status === "paid" ||
-      current.status === "paid_fulfillment_failed" ||
-      current.status === "paid_late_needs_refund" ||
-      current.status === "refunded"
-    ) {
-      // 终态回调只确认已处理，不重新发卡。
-      return current;
+    if (!attempt || !current) return { order: null, handled: false };
+    if (["paid", "paid_late_needs_refund", "refunded"].includes(attempt.status)) {
+      return { order: current, handled: true };
     }
-    if (current.status === "expired" || current.status === "cancelled") {
-      // 迟到付款必须落库，不能静默 success 后丢失付款事实；但名额可能已释放给别人，绝不能补发卡。
+
+    const isCurrentAttempt = current.currentAttemptId === attempt.id && attempt.status === "pending";
+    const markAttemptLate = async () => {
       await tx
-        .update(paymentOrders)
+        .update(paymentOrderAttempts)
         .set({
           status: "paid_late_needs_refund",
           providerTradeNo: callback.providerTradeNo,
           paidAt: callback.paidAt,
           updatedAt: sql`(datetime('now'))`,
         })
-        .where(eq(paymentOrders.id, current.id));
-      const [latePaid] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
-      return latePaid ?? current;
+        .where(and(
+          eq(paymentOrderAttempts.id, attempt.id),
+          eq(paymentOrderAttempts.status, attempt.status),
+        ));
+    };
+
+    if (!isCurrentAttempt || current.status !== "pending") {
+      await markAttemptLate();
+      if (isCurrentAttempt && (current.status === "expired" || current.status === "cancelled")) {
+        await tx
+          .update(paymentOrders)
+          .set({
+            status: "paid_late_needs_refund",
+            providerTradeNo: callback.providerTradeNo,
+            paidAt: callback.paidAt,
+            updatedAt: sql`(datetime('now'))`,
+          })
+          .where(and(
+            eq(paymentOrders.id, current.id),
+            eq(paymentOrders.status, current.status),
+          ));
+      }
+      const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
+      return { order: updated ?? current, handled: true };
     }
-    if (current.status !== "pending") return current;
 
     const [entry] = await tx
       .select({ paymentStatus: lotteryEntries.paymentStatus })
@@ -540,15 +765,37 @@ export async function handlePaymentCallback(
       ))
       .limit(1);
     if (!entry || entry.paymentStatus !== "pending") {
-      // 防御性兜底：订单只能消费自己创建时占用的 pending entry。
-      // 空值、paid 或其他漂移状态都不能让迟到回调再次取走卡密。
-      return current;
+      // 支付事实已发生但 entry 无法继续履约，必须进入人工退款，不得静默成功。
+      await markAttemptLate();
+      await tx
+        .update(paymentOrders)
+        .set({
+          status: "paid_late_needs_refund",
+          providerTradeNo: callback.providerTradeNo,
+          paidAt: callback.paidAt,
+          updatedAt: sql`(datetime('now'))`,
+        })
+        .where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.status, "pending")));
+      const [late] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
+      return { order: late ?? current, handled: true };
     }
 
-    const prizeCodeId = await acquirePrizeCode(tx, tenantId, pre.drawId, pre.entryId);
+    const prizeCodeId = await acquirePrizeCode(tx, tenantId, current.drawId, current.entryId);
 
     // 卡密不足：标记 paid_fulfillment_failed（运营后台可见，docs/131 §7），不静默 null
     const newStatus = prizeCodeId ? "paid" : "paid_fulfillment_failed";
+    await tx
+      .update(paymentOrderAttempts)
+      .set({
+        status: "paid",
+        providerTradeNo: callback.providerTradeNo,
+        paidAt: callback.paidAt,
+        updatedAt: sql`(datetime('now'))`,
+      })
+      .where(and(
+        eq(paymentOrderAttempts.id, attempt.id),
+        eq(paymentOrderAttempts.status, "pending"),
+      ));
     await tx
       .update(paymentOrders)
       .set({
@@ -558,15 +805,18 @@ export async function handlePaymentCallback(
         paidAt: callback.paidAt,
         updatedAt: sql`(datetime('now'))`,
       })
-      .where(eq(paymentOrders.id, pre.id));
+      .where(and(
+        eq(paymentOrders.id, current.id),
+        eq(paymentOrders.currentAttemptId, attempt.id),
+        eq(paymentOrders.status, "pending"),
+      ));
 
-    // 支付成功 → entry 标记 paid（软释放状态机，docs/131 §8）
-    if (newStatus === "paid") {
+    // 只要支付成功，entry 就必须标记 paid；卡密不足是履约失败，不应让名额回收后被二次售卖。
     const paidEntry = await tx
       .update(lotteryEntries)
       .set({ paymentStatus: "paid" })
       .where(and(
-        eq(lotteryEntries.id, pre.entryId),
+        eq(lotteryEntries.id, current.entryId),
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.drawId, current.drawId),
         eq(lotteryEntries.paymentStatus, "pending"),
@@ -575,16 +825,13 @@ export async function handlePaymentCallback(
     if (paidEntry.length === 0) {
       throw new Error("参与记录状态已变化，支付履约未提交");
     }
-    }
 
-    const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, pre.id)).limit(1);
-    return updated ?? null;
+    const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
+    return { order: updated ?? current, handled: true };
   });
 
-  if (!order) return { processed: false, error: "订单不存在" };
-  // 对已终态订单（包括 expired/cancelled/refunded）也返回已处理，避免支付平台
-  // 因迟到回调反复重试；状态保持不变，绝不因回调重新发卡。
-  return { processed: order.status !== "pending", order };
+  if (!result.order) return { processed: false, error: "订单不存在" };
+  return { processed: result.handled, order: result.order };
 }
 
 /**
@@ -618,7 +865,7 @@ export async function retryPaymentFulfillment(
         eq(lotteryEntries.id, current.entryId),
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.drawId, current.drawId),
-        eq(lotteryEntries.paymentStatus, "pending"),
+        inArray(lotteryEntries.paymentStatus, ["pending", "paid"]),
       ))
       .returning({ id: lotteryEntries.id });
     if (paidEntry.length === 0) {

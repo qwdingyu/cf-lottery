@@ -27,6 +27,10 @@ const TEST_DB_URL = process.env.CF_LOTTERY_TEST_DB_URL || `file:${TEST_DB_PATH}`
 if (!process.env.TRUST_CF_CONNECTING_IP) {
   process.env.TRUST_CF_CONNECTING_IP = "true";
 }
+// 支付配置加密/解密的测试密钥（32字节 hex）
+if (!process.env.CREDENTIALS_ENCRYPTION_KEY) {
+  process.env.CREDENTIALS_ENCRYPTION_KEY = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+}
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 const DEFAULT_SYSTEM_CONFIGS: Array<[string, string]> = [
   ["plan_free_max_activities", "10"],

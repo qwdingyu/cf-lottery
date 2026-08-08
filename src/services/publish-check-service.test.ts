@@ -106,13 +106,16 @@ async function addAlipayConfig() {
 }
 
 async function addEasyPayConfig() {
+  const { encryptSecretConfigValue } = await import("../lib/secret-config");
+  const key = process.env.CREDENTIALS_ENCRYPTION_KEY || "test-key-32-bytes-long!";
+  const encryptedKey = await encryptSecretConfigValue("key", key);
   await client.execute({
     sql: "INSERT INTO tenant_configs (tenant_id, enabled, providers) VALUES (?, ?, ?)",
     args: [TENANT, 1, JSON.stringify({
       easypay: {
         enabled: true,
         easypay_pid: "pid",
-        easypay_key: "key",
+        easypay_key: encryptedKey,
         easypay_api_base: "https://zpayz.cn",
       },
     })],

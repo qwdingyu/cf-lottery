@@ -25,6 +25,7 @@ export interface PaymentSessionState {
   amountCents: number
   currency: string
   provider: string
+  accessToken: string
   redirectUrl?: string
   qrCode?: string
 }
@@ -108,7 +109,7 @@ export function buildPaymentSessionSnapshot(
   state: PaymentSessionState | null | undefined,
   nowMs = Date.now(),
 ): PaymentSessionSnapshot | null {
-  if (!state?.orderNo || !state.drawId || !state.entryId || !state.email) return null
+  if (!state?.orderNo || !state.drawId || !state.entryId || !state.email || !state.accessToken) return null
   return {
     drawId: String(state.drawId),
     entryId: String(state.entryId),
@@ -118,6 +119,7 @@ export function buildPaymentSessionSnapshot(
     amountCents: Number(state.amountCents || 0),
     currency: String(state.currency || 'cny'),
     provider: String(state.provider || ''),
+    accessToken: String(state.accessToken),
     redirectUrl: state.redirectUrl ? String(state.redirectUrl) : undefined,
     qrCode: state.qrCode ? String(state.qrCode) : undefined,
     savedAt: nowMs,
@@ -144,6 +146,7 @@ export function parsePaymentSessionSnapshot(
       amountCents: Number(parsed.amountCents || 0),
       currency: String(parsed.currency || 'cny'),
       provider: String(parsed.provider || ''),
+      accessToken: String(parsed.accessToken || ''),
       redirectUrl: parsed.redirectUrl ? String(parsed.redirectUrl) : undefined,
       qrCode: parsed.qrCode ? String(parsed.qrCode) : undefined,
     }, savedAt)

@@ -12,6 +12,7 @@ import { and, eq, inArray, sql, count, asc } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
+  paymentOrders,
   lotteryRosterMembers,
   lotteryInviteCodes,
   emailAccessCodes,
@@ -155,6 +156,95 @@ export async function joinDraw(
 
   try {
     return await withDbTransaction(db, async (tx) => {
+      const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
+      const flashCap = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
+      const isFlashSaleJoin =
+        flashParsed.config != null || draw.experienceType === "flash_sale";
+      const isDirectPaymentFlashSale = isFlashSaleJoin && flashParsed.config?.paymentRequired === true;
+      const effectiveMax =
+        flashCap != null && flashCap > 0
+          ? flashCap
+          : isFlashSaleJoin && (draw.maxParticipants == null || draw.maxParticipants <= 0)
+            ? 0
+            : (draw.maxParticipants ?? 50000);
+
+      // 直付秒杀超时后不删除 entry：同一身份再次参与时，原子重新占用原 entry，
+      // 让前端无论是否保留旧 entryId 都能重新走支付，不制造第二条参与记录。
+      if (isDirectPaymentFlashSale) {
+        const [expiredEntry] = await tx
+          .select({ id: lotteryEntries.id, paymentStatus: lotteryEntries.paymentStatus })
+          .from(lotteryEntries)
+          .where(and(
+            eq(lotteryEntries.tenantId, draw.tenantId),
+            eq(lotteryEntries.drawId, draw.id),
+            eq(lotteryEntries.identityType, identityType),
+            eq(lotteryEntries.identityValue, checkinDateSuffix ? uniqueValue : normalizedValue),
+            eq(lotteryEntries.paymentStatus, "expired"),
+          ))
+          .limit(1);
+        if (expiredEntry) {
+          const [existingOrder] = await tx
+            .select({ status: paymentOrders.status })
+            .from(paymentOrders)
+            .where(and(
+              eq(paymentOrders.tenantId, draw.tenantId),
+              eq(paymentOrders.drawId, draw.id),
+              eq(paymentOrders.entryId, expiredEntry.id),
+            ))
+            .limit(1);
+          if (existingOrder && !["expired", "cancelled"].includes(existingOrder.status)) {
+            return {
+              joined: false,
+              message: "该参与已有支付记录，请联系客服处理",
+              alreadyJoined: true as const,
+              entryId: expiredEntry.id,
+            };
+          }
+          if (effectiveMax <= 0) {
+            return {
+              joined: false,
+              message: "已抢光",
+              soldOut: true as const,
+              code: "flash_sale.sold_out" as const,
+            };
+          }
+          const reserved = await tx
+            .update(lotteryDraws)
+            .set({
+              activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + 1`,
+              updatedAt: sql`(datetime('now'))`,
+            })
+            .where(and(
+              eq(lotteryDraws.id, draw.id),
+              eq(lotteryDraws.tenantId, draw.tenantId),
+              eq(lotteryDraws.status, "open"),
+              sql`${lotteryDraws.activeParticipantCount} < ${effectiveMax}`,
+            ))
+            .returning({ id: lotteryDraws.id });
+          if (reserved.length === 0) {
+            return {
+              joined: false,
+              message: "已抢光",
+              soldOut: true as const,
+              code: "flash_sale.sold_out" as const,
+            };
+          }
+          await tx
+            .update(lotteryEntries)
+            .set({ paymentStatus: "reserved", joinedAt: nowIso })
+            .where(and(
+              eq(lotteryEntries.id, expiredEntry.id),
+              eq(lotteryEntries.paymentStatus, "expired"),
+            ));
+          return {
+            joined: true,
+            entryId: expiredEntry.id,
+            activityKind: draw.activityKind,
+            reopened: true as const,
+          };
+        }
+      }
+
       // 邀请码扣减和参与记录写入必须在同一事务中，避免重复/满额时白白消耗邀请码。
       let inviteCodeId = "";
       if (draw.participationMode === "invite_code") {
@@ -187,14 +277,9 @@ export async function joinDraw(
       // docs/130：秒杀硬截单以 flashSale.stockLimit 优先，再回退 maxParticipants。
       // 为什么与展示同源：公开端进度条用 resolveEffectiveStockLimit；参与路径若只认 maxParticipants，
       // 会出现「前端显示已抢光、后端仍可 join」或反过来——必须同一生效上限。
-      // 原子性：条件 INSERT ... WHERE COUNT(*) < cap，与邀请码 CAS 同事务，无独立库存表。
-      const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
-      const flashCap = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
+      // 直付秒杀使用活动级计数器 CAS；普通活动继续沿用条件 INSERT。
       // 仅 flashSale 启用或 experience_type=flash_sale 走秒杀截单语义；
       // 普通 claim/reveal 仍按 maxParticipants（可无限软顶），避免误杀非秒杀领取。
-      const isFlashSaleJoin =
-        flashParsed.config != null || draw.experienceType === "flash_sale";
-      const isDirectPaymentFlashSale = isFlashSaleJoin && flashParsed.config?.paymentRequired === true;
       // 秒杀：禁止候补超卖；其它活动仍按 maxParticipants（无上限时 50000 软顶）
       const effectiveMax =
         flashCap != null && flashCap > 0
@@ -206,27 +291,41 @@ export async function joinDraw(
         draw.activityKind === "signup_chain" &&
         draw.allocationPolicy === "waitlist" &&
         !isFlashSaleJoin; // 秒杀不做候补，满即拒
-      // 容量检查：仅按活动维度（draw_id）校验，不做租户级累计参与人数 COUNT。
-      // 原因：租户级 COUNT 会扩大 Turso rows read 和请求延迟，不适合放在用户参与热路径。
-      // 租户级累计参与人数额度未来通过快照表（定时任务预聚合）实现。
-      // 详见 docs/023_Cloudflare免费版与Turso约束下认证和运行安全方案_2026-08-01.md
-      const activeCapacityCountClause = isDirectPaymentFlashSale
-        ? sql`(
+      // 普通活动仍按活动维度做条件 INSERT；直付秒杀不在热路径扫描 entries。
+      const activeCapacityCountClause = sql`(
             SELECT COUNT(*) FROM lottery_entries
             WHERE tenant_id = ${draw.tenantId}
-              AND draw_id = ${draw.id}
-              AND payment_status IN ('reserved', 'pending', 'paid')
-          ) < ${effectiveMax}`
-        : sql`(
-            SELECT COUNT(*) FROM lottery_entries
-            WHERE tenant_id = ${draw.tenantId}
-              AND draw_id = ${draw.id}
+            AND draw_id = ${draw.id}
           ) < ${effectiveMax}`;
-      const capacityClause = acceptsWaitlist
+      let capacityClause = acceptsWaitlist
         ? sql`1 = 1`
         : effectiveMax > 0
           ? activeCapacityCountClause
           : sql`1 = 0`; // 秒杀无名额：拒绝写入
+      if (isDirectPaymentFlashSale && effectiveMax > 0) {
+        const reserved = await tx
+          .update(lotteryDraws)
+          .set({
+            activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + 1`,
+            updatedAt: sql`(datetime('now'))`,
+          })
+          .where(and(
+            eq(lotteryDraws.id, draw.id),
+            eq(lotteryDraws.tenantId, draw.tenantId),
+            eq(lotteryDraws.status, "open"),
+            sql`${lotteryDraws.activeParticipantCount} < ${effectiveMax}`,
+          ))
+          .returning({ id: lotteryDraws.id });
+        if (reserved.length === 0) {
+          return {
+            joined: false,
+            message: "已抢光",
+            soldOut: true as const,
+            code: "flash_sale.sold_out" as const,
+          };
+        }
+        capacityClause = sql`1 = 1`;
+      }
       // instant：join 发放 initial spins（默认 1），不抽奖（docs/116）
       const spinInit = initialSpinsForJoin(
         Number((draw as { maxSpinsPerEntry?: number }).maxSpinsPerEntry ?? 0),
@@ -247,6 +346,15 @@ export async function joinDraw(
       `);
 
       if ((insertResult.rowsAffected ?? 0) === 0) {
+        if (isDirectPaymentFlashSale) {
+          await tx
+            .update(lotteryDraws)
+            .set({
+              activeParticipantCount: sql`MAX(0, ${lotteryDraws.activeParticipantCount} - 1)`,
+              updatedAt: sql`(datetime('now'))`,
+            })
+            .where(and(eq(lotteryDraws.id, draw.id), eq(lotteryDraws.tenantId, draw.tenantId)));
+        }
         // 秒杀售罄文案与普通「名额已满」区分，便于前端映射 flashSoldOut
         if (isFlashSaleJoin && !acceptsWaitlist) {
           return {

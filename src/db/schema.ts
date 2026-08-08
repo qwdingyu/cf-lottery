@@ -214,6 +214,11 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   drawAt: text("draw_at"),
   accessPassword: text("access_password").notNull().default(""),
   maxParticipants: integer("max_participants"),
+  /**
+   * 直付秒杀当前占用名额计数器（reserved/pending/paid）。
+   * 参与热路径用条件 UPDATE 做 CAS，避免 COUNT(lottery_entries) 随规模线性增长。
+   */
+  activeParticipantCount: integer("active_participant_count").notNull().default(0),
   winnerCount: integer("winner_count").notNull().default(1),
   showParticipantCount: integer("show_participant_count").notNull().default(1),
   showWinnerCount: integer("show_winner_count").notNull().default(1),
@@ -655,6 +660,11 @@ export const paymentOrders = sqliteTable("payment_orders", {
   status: text("status").notNull().default("pending"), // pending/paid/paid_fulfillment_failed/paid_late_needs_refund/refunded/expired/cancelled
   provider: text("provider").notNull(),
   providerTradeNo: text("provider_trade_no"),
+  /** 当前有效支付尝试；网关回调必须先命中 attempt，再进入逻辑订单。 */
+  currentAttemptId: text("current_attempt_id"),
+  /** 仅存 SHA-256，公开查单使用短期 Bearer 令牌，不把邮箱放进 URL。 */
+  accessTokenHash: text("access_token_hash"),
+  accessTokenExpiresAt: text("access_token_expires_at"),
   prizeCodeId: text("prize_code_id"),
   paidAt: text("paid_at"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
@@ -662,4 +672,31 @@ export const paymentOrders = sqliteTable("payment_orders", {
 }, (t) => ({
   tenantOrderIdx: index("idx_payment_orders_tenant").on(t.tenantId, t.createdAt),
   statusIdx: index("idx_payment_orders_status").on(t.status, t.createdAt),
+  currentAttemptIdx: index("idx_payment_orders_current_attempt").on(t.currentAttemptId),
+}));
+
+/**
+ * 支付尝试（一次逻辑订单可以有多次网关下单）。
+ *
+ * payment_orders 负责购买事实和履约结果；本表负责外部支付世界的每次交易号。
+ * 这样取消/超时后重试不会复用旧 out_trade_no，迟到回调也能被精确识别为旧尝试。
+ */
+export const paymentOrderAttempts = sqliteTable("payment_order_attempts", {
+  id: text("id").primaryKey(),
+  paymentOrderId: text("payment_order_id").notNull(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  attemptNo: integer("attempt_no").notNull(),
+  provider: text("provider").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("cny"),
+  status: text("status").notNull().default("pending"),
+  providerTradeNo: text("provider_trade_no"),
+  paidAt: text("paid_at"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  orderAttemptUnique: uniqueIndex("idx_payment_order_attempts_order_no").on(t.paymentOrderId, t.attemptNo),
+  tenantStatusIdx: index("idx_payment_order_attempts_tenant_status").on(t.tenantId, t.status, t.createdAt),
+  orderIdx: index("idx_payment_order_attempts_order").on(t.paymentOrderId, t.createdAt),
 }));

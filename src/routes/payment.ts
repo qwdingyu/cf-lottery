@@ -8,11 +8,11 @@
  * 回调处理模式：GET query / POST form → provider.verifyCallback → 发卡。
  */
 import { Hono } from "hono";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, fail, ok, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, paymentOrders } from "../db/schema";
+import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts } from "../db/schema";
 import { checkPublicRateLimit } from "./public-lottery-helpers";
 import {
   loadTenantConfig,
@@ -21,6 +21,9 @@ import {
   createPaymentOrder,
   expireOverdueOrders,
   retryPaymentOrder,
+  issuePaymentOrderAccessToken,
+  findPaymentOrderByAccessToken,
+  persistProviderTradeNo,
 } from "../services/payment/payment-service";
 import type { AppEnv } from "../bindings";
 
@@ -114,6 +117,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     existing.status !== "expired" &&
     existing.status !== "pending"
   ) {
+    const accessToken = await issuePaymentOrderAccessToken(db, draw.tenantId, existing.id, existing.entryId);
     return ok(c, {
       orderNo: existing.id,
       status: existing.status,
@@ -121,6 +125,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
       amountCents: existing.amountCents,
       currency: existing.currency,
       provider: existing.provider,
+      accessToken,
     });
   }
 
@@ -158,11 +163,22 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   const returnUrl = buildPaymentReturnUrl(c.req.url);
 
   if (resumingPending) {
-    // 已有 pending 订单不新增 DB 行；只用同一 orderNo 重新生成支付入口，解决刷新后丢失支付链接/二维码。
+    // 已有 pending 订单不新增逻辑订单；只用当前 attempt 重新生成支付入口。
+    const [attempt] = await db
+      .select()
+      .from(paymentOrderAttempts)
+      .where(and(
+        eq(paymentOrderAttempts.id, existing.currentAttemptId || ""),
+        eq(paymentOrderAttempts.paymentOrderId, existing.id),
+        eq(paymentOrderAttempts.status, "pending"),
+      ))
+      .limit(1);
+    if (!attempt) return fail(c, "订单支付尝试已失效，请联系客服处理", 409);
+    const accessToken = await issuePaymentOrderAccessToken(db, draw.tenantId, existing.id, existing.entryId);
     let payResult: CreatePaymentResult;
     try {
       payResult = await provider.createPayment({
-        orderNo: existing.id,
+        orderNo: attempt.id,
         amountCents: existing.amountCents,
         currency: existing.currency,
         notifyUrl,
@@ -172,16 +188,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     } catch {
       return fail(c, "支付入口生成失败，请稍后重试", 502);
     }
-    if (payResult.providerTradeNo) {
-      await db
-        .update(paymentOrders)
-        .set({ providerTradeNo: payResult.providerTradeNo, updatedAt: sql`(datetime('now'))` })
-        .where(and(
-          eq(paymentOrders.id, existing.id),
-          eq(paymentOrders.status, "pending"),
-          sql`${paymentOrders.providerTradeNo} IS NULL`,
-        ));
-    }
+    await persistProviderTradeNo(db, existing.id, attempt.id, payResult);
     return ok(c, {
       orderNo: existing.id,
       status: existing.status,
@@ -189,6 +196,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
       amountCents: existing.amountCents,
       currency: existing.currency,
       provider: existing.provider,
+      accessToken,
       redirectUrl: payResult.redirectUrl,
       qrCode: payResult.qrCode,
     });
@@ -208,12 +216,14 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
 
   let order: typeof paymentOrders.$inferSelect;
   let payResult: CreatePaymentResult;
+  let accessToken = "";
   try {
     const created = retryable
       ? await retryPaymentOrder(db, orderInput, provider)
       : await createPaymentOrder(db, orderInput, provider);
     order = created.order;
     payResult = created.payResult;
+    accessToken = created.accessToken;
   } catch (err) {
     const message = err instanceof Error ? err.message : "";
     if (message.includes("名额")) {
@@ -228,6 +238,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     amountCents: order.amountCents,
     currency: order.currency,
     provider: order.provider,
+    accessToken,
     redirectUrl: payResult.redirectUrl,
     qrCode: payResult.qrCode,
   });
@@ -240,7 +251,8 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
   const db = getDb(c);
   const slug = c.req.param("slug");
   const orderId = c.req.param("orderId");
-  const email = (c.req.query("email") || "").trim().toLowerCase();
+  const authorization = c.req.header("Authorization") || "";
+  const accessToken = authorization.replace(/^Bearer\s+/i, "").trim();
   const ip = getClientIp(c);
   if (!(await checkPublicRateLimit(db, `payment-query:${ip}`, 30, 60000))) {
     return fail(c, "支付查询过于频繁，请稍后再试", 429);
@@ -253,34 +265,9 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  // 用 orderId 查订单；验证 email 与订单关联的 entry 匹配（docs/131 §11 卡密防泄露）
-  const [order] = await db
-    .select()
-    .from(paymentOrders)
-    .where(eq(paymentOrders.id, orderId))
-    .limit(1);
-  if (!order) return ok(c, { order: null });
-
-  // 验证订单属于该活动，且 email 是订单关联的参与身份
-  if (order.drawId !== draw.id) return fail(c, "订单不属于此活动", 404);
-  if (!email) {
-    return fail(c, "缺少 email", 400);
-  }
-  if (!isValidEmail(email)) {
-    return fail(c, "email 无效", 400);
-  }
-  const [entry] = await db
-    .select({ identityValue: lotteryEntries.identityValue })
-    .from(lotteryEntries)
-    .where(and(
-      eq(lotteryEntries.id, order.entryId),
-      eq(lotteryEntries.tenantId, draw.tenantId),
-      eq(lotteryEntries.drawId, draw.id),
-    ))
-    .limit(1);
-  if (!entry || entry.identityValue.trim().toLowerCase() !== email) {
-    return fail(c, "无权查看该订单", 403);
-  }
+  // 卡密查询只接受创建订单时签发的短期 Bearer 令牌，避免 orderId+email 组合泄露密钥。
+  const order = await findPaymentOrderByAccessToken(db, draw.tenantId, draw.id, orderId, accessToken);
+  if (!order) return fail(c, "订单不存在或访问已失效", 404);
 
   // 查卡密信息（支付后才有）
   let codeInfo: { code?: string; secret?: string } | null = null;
@@ -350,14 +337,23 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
     return c.text("invalid request", 400);
   }
 
-  // 根据回调参数中的 orderNo 查订单，获取租户 ID
+  // 根据回调参数中的 orderNo 查支付尝试，再获取逻辑订单和租户。
   const orderNo = params.orderNo || params.out_trade_no || "";
   if (!orderNo) return c.text("missing orderNo", 400);
 
+  const [attempt] = await db
+    .select()
+    .from(paymentOrderAttempts)
+    .where(eq(paymentOrderAttempts.id, orderNo))
+    .limit(1);
+  if (!attempt) return c.text("order not found", 404);
   const [order] = await db
     .select()
     .from(paymentOrders)
-    .where(eq(paymentOrders.id, orderNo))
+    .where(and(
+      eq(paymentOrders.id, attempt.paymentOrderId),
+      eq(paymentOrders.tenantId, pathTenantId),
+    ))
     .limit(1);
   if (!order || order.provider !== providerName) return c.text("order not found", 404);
   // 路径 tenantId 必须与订单租户一致（防跨租户串单，docs/131 §11）
