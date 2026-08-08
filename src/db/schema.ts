@@ -373,10 +373,14 @@ export const lotteryWinners = sqliteTable("lottery_winners", {
   drawnAt: text("drawn_at").notNull().default(sql`(datetime('now'))`),
   notificationStatus: text("notification_status").notNull().default("pending"),
   notificationError: text("notification_error").notNull().default(""),
+  /** 邮件通知失败重试次数，每次发送失败 +1，超过 maxRetryAttempts 后不再尝试 */
+  notificationRetryCount: integer("notification_retry_count").notNull().default(0),
 }, (t) => ({
   spinUnique: uniqueIndex("idx_winners_spin_unique").on(t.tenantId, t.drawId, t.spinId),
   entryIdx: index("idx_winners_entry").on(t.tenantId, t.drawId, t.entryId),
   drawIdx: index("idx_winners_draw").on(t.tenantId, t.drawId, t.drawnAt),
+  /** 通知状态索引：用于快速筛选通知失败且未超重试次数的中奖记录 */
+  notificationStatusIdx: index("idx_winners_notification_status").on(t.tenantId, t.notificationStatus),
 }));
 
 // ── 审计日志 ──

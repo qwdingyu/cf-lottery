@@ -14,7 +14,7 @@ import { eq, and, desc, inArray } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, fail, ok, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts, prizeCodes, systemConfig } from "../db/schema";
+import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts, prizeCodes, prizes, systemConfig } from "../db/schema";
 import { checkPublicIdentityRateLimit, checkPublicRateLimit, verifyEmailAccessCode } from "./public-lottery-helpers";
 import {
   loadTenantConfig,
@@ -581,11 +581,32 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         .limit(1);
       if (!winner || winner.identityType !== "email") return;
 
-      const [code] = order.prizeCodeId
-        ? await db.select({ code: prizeCodes.code }).from(prizeCodes).where(eq(prizeCodes.id, order.prizeCodeId)).limit(1)
+      // 查活动标题（用于邮件中 drawName，避免展示 UUID）
+      const [drawInfo] = await db
+        .select({ title: lotteryDraws.title })
+        .from(lotteryDraws)
+        .where(eq(lotteryDraws.id, order.drawId))
+        .limit(1);
+
+      // 查卡密信息（同时取 code 和 secret，分别用于展示账号和交付密钥）
+      const [codeInfo] = order.prizeCodeId
+        ? await db
+          .select({ code: prizeCodes.code, secret: prizeCodes.secret, prizeId: prizeCodes.prizeId })
+          .from(prizeCodes)
+          .where(eq(prizeCodes.id, order.prizeCodeId))
+          .limit(1)
         : [];
 
-      // 直接发送邮件，复用 sendWinnerNotifications 的模板数据构建逻辑
+      // 查奖品名称（productName 应为奖品名，而非卡密值）
+      const productName = codeInfo?.prizeId
+        ? await db
+          .select({ name: prizes.name })
+          .from(prizes)
+          .where(eq(prizes.id, codeInfo.prizeId))
+          .limit(1)
+          .then((rows) => rows[0]?.name || "奖品")
+        : "奖品";
+
       const { sendEmail, buildLotteryWinnerTemplateData } = await import("../services/email-service");
       await sendEmail({
         cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
@@ -595,9 +616,12 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         to: winner.email,
         template: "lottery_winner",
         templateData: buildLotteryWinnerTemplateData({
-          drawName: order.drawId,
-          productName: code?.code || "卡密",
-          deliverySecret: code?.code || "",
+          drawName: drawInfo?.title || "活动",
+          productName,
+          orderNo: order.id,
+          accountLabel: codeInfo?.code || "",
+          deliverySecret: codeInfo?.secret || "",
+          deliveryNote: "支付已完成，卡密已发放。如有疑问请联系主办方。",
         }),
       });
     })().catch((err) => {

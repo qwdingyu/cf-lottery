@@ -245,45 +245,30 @@ export async function performDraw(
           }
           seenEntryIds.add(entry.id);
 
-          // 原子锁码：如果奖项配置了奖品，从奖品码池中取一条 available 的记录
-          // 【关键】先 SELECT 获取一条可用码的 ID，再按 ID 执行 UPDATE
-          // 不能直接 UPDATE ... WHERE status='available'（会更新所有可用码，导致数据损坏）
+          // 原子锁码：子查询 UPDATE + returning 消除 TOCTOU 窗口（与 spin-execution.ts 一致）
+          // 单语句内完成"选码→锁码"，无需 SELECT 后 UPDATE 的两步往返
+          // 子查询 LIMIT 1 保证只锁一条码，不会将所有可用码标记为 issued
           let prizeCodeId = "";
           if (tier.prizeId) {
-            // 步骤 1: SELECT 获取一条可用码（原子操作，配合事务保证并发安全）
-            const [availableCode] = await tx
-              .select({ id: prizeCodes.id, code: prizeCodes.code })
-              .from(prizeCodes)
+            const [lockedCode] = await tx
+              .update(prizeCodes)
+              .set({ status: "issued", winnerId: entry.id, issuedAt: now })
               .where(and(
-                eq(prizeCodes.prizeId, tier.prizeId),
-                eq(prizeCodes.status, "available"),
                 eq(prizeCodes.tenantId, tenantId),
+                eq(prizeCodes.status, "available"),
+                eq(prizeCodes.id, sql<string>`(
+                  SELECT id FROM prize_codes
+                  WHERE tenant_id = ${tenantId}
+                  AND prize_id = ${tier.prizeId}
+                  AND status = 'available'
+                  ORDER BY id
+                  LIMIT 1
+                )`),
               ))
-              .limit(1);
+              .returning({ id: prizeCodes.id });
 
-            if (availableCode) {
-              // 步骤 2: 按 ID 原子锁定（仅更新该条码）
-              const lockResult = await tx
-                .update(prizeCodes)
-                .set({ status: "issued", winnerId: entry.id, issuedAt: now })
-                .where(and(
-                  eq(prizeCodes.id, availableCode.id),
-                  eq(prizeCodes.status, "available"),
-                ));
-
-            // rowsAffected = 0 表示码已用完（被其他中奖者锁定）
-            if ((lockResult.rowsAffected ?? 0) > 0) {
-              // 查询刚锁定的码的 ID
-              const [lockedCode] = await tx
-                .select({ id: prizeCodes.id })
-                .from(prizeCodes)
-                .where(and(
-                  eq(prizeCodes.prizeId, tier.prizeId),
-                  eq(prizeCodes.winnerId, entry.id),
-                  eq(prizeCodes.tenantId, tenantId),
-                ))
-                .limit(1);
-              prizeCodeId = lockedCode?.id || "";
+            if (lockedCode) {
+              prizeCodeId = lockedCode.id;
 
               // 发放成功后更新奖品已用数（used_count），保证运营者可看到码池消耗
               await tx.update(prizes)
@@ -291,7 +276,6 @@ export async function performDraw(
                 .where(eq(prizes.id, tier.prizeId));
             }
             // 码不足时跳过（prizeCodeId 保持空字符串），中奖者仍记录但无码
-            }
           }
 
           // 写入中奖记录
@@ -443,6 +427,7 @@ export async function sendWinnerNotifications(
       identityType: lotteryWinners.identityType,
       prizeCodeId: lotteryWinners.prizeCodeId,
       notificationStatus: lotteryWinners.notificationStatus,
+      notificationRetryCount: lotteryWinners.notificationRetryCount,
     })
     .from(lotteryWinners)
     .where(
@@ -523,8 +508,18 @@ export async function sendWinnerNotifications(
   let sent = 0;
   let failed = 0;
 
+  // 读取邮件通知最大重试次数配置，默认 3 次
+  const [retryCfg] = await db
+    .select({ value: systemConfig.value })
+    .from(systemConfig)
+    .where(eq(systemConfig.key, "email_notification_retry_max_attempts"))
+    .limit(1);
+  const maxRetryAttempts = Number(retryCfg?.value || 3);
+
   for (const winner of winners) {
     if (winner.notificationStatus === "sent") continue;
+    // 超过最大重试次数 → 跳过，不再尝试发送
+    if (winner.notificationRetryCount >= maxRetryAttempts) continue;
 
     let accountLabel = "";
     let deliverySecret = "";
@@ -561,6 +556,8 @@ export async function sendWinnerNotifications(
         .set({
           notificationStatus: result.ok ? "sent" : "failed",
           notificationError: result.ok ? "" : (result.message || "").slice(0, 500),
+          // 发送成功重置重试计数；失败则 +1（累计到 maxRetryAttempts 即停止）
+          notificationRetryCount: result.ok ? 0 : sql`notification_retry_count + 1`,
         })
         .where(eq(lotteryWinners.id, winner.winnerId));
       if (result.ok) sent += 1;
@@ -571,6 +568,8 @@ export async function sendWinnerNotifications(
         .set({
           notificationStatus: "failed",
           notificationError: (err as Error).message.slice(0, 500),
+          // 异常场景也递增重试计数，保证与正常失败路径一致
+          notificationRetryCount: sql`notification_retry_count + 1`,
         })
         .where(eq(lotteryWinners.id, winner.winnerId));
       failed += 1;

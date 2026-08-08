@@ -74,6 +74,12 @@
           <span>{{ $t('adminDashboard.todosFailedNotify') }}</span>
           <span class="todo-arrow">→</span>
         </RouterLink>
+        <!-- 库存预警：直付秒杀卡密不足 → 跳转奖品管理页导入码 -->
+        <RouterLink v-if="todos.lowStockCount > 0 || todos.criticalStockCount > 0" to="/admin/prizes" class="todo-item">
+          <span class="todo-badge" :class="{ 'todo-badge-danger': todos.criticalStockCount > 0 }">{{ todos.lowStockCount + todos.criticalStockCount }}</span>
+          <span>{{ $t('adminDashboard.todosLowStock') }}</span>
+          <span class="todo-arrow">→</span>
+        </RouterLink>
       </div>
     </div>
 
@@ -151,7 +157,7 @@ const stats = ref({
 })
 const recentDraws = ref<any[]>([])
 /** 待办事项（待开奖/通知失败） */
-const todos = ref({ dueDraws: 0, failedNotifications: 0 })
+const todos = ref({ dueDraws: 0, failedNotifications: 0, lowStockCount: 0, criticalStockCount: 0 })
 const roi = ref<{ totalConversions: number; totalAmountCents: number; roiDays?: number; byType: Array<{ type: string; count: number; amountCents: number }> }>({ totalConversions: 0, totalAmountCents: 0, byType: [] })
 const roiDays = computed(() => roi.value.roiDays ?? 30)
 
@@ -170,7 +176,7 @@ function conversionLabel(type: string): string {
   }
   return map[type] || type
 }
-const hasTodos = computed(() => todos.value.dueDraws > 0 || todos.value.failedNotifications > 0)
+const hasTodos = computed(() => todos.value.dueDraws > 0 || todos.value.failedNotifications > 0 || todos.value.lowStockCount > 0 || todos.value.criticalStockCount > 0)
 
 const planLabelMap: Record<string, string> = {
   free: 'Free',
@@ -234,6 +240,8 @@ async function loadData() {
     todos.value = {
       dueDraws: dashboardData?.dueCount ?? 0,
       failedNotifications: dashboardData?.failedNotifyCount ?? 0,
+      lowStockCount: dashboardData?.lowStockCount ?? 0,
+      criticalStockCount: dashboardData?.criticalStockCount ?? 0,
     }
     // 营销 ROI 数据
     roi.value = dashboardData?.roi ?? { totalConversions: 0, totalAmountCents: 0, byType: [] }

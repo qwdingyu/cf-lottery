@@ -10,7 +10,7 @@ import type { AppEnv } from "../bindings";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail } from "../lib/http";
 import { getEnv } from "../lib/platform";
-import { lotteryDraws, prizes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig } from "../db/schema";
 import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import {
   createDraw,
@@ -25,7 +25,9 @@ import {
   defaultResultModeForActivity,
 } from "../services/lottery-service";
 import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
+import { parseFlashSaleConfig } from "../lib/flash-sale-config";
 import { readSystemConfigMap } from "../lib/system-config-registry";
+import { readSystemConfigNumber } from "../services/admin/system-config";
 import { setupPrizeRoutes } from "./admin-lottery-prizes";
 import { setupTenantOpsRoutes } from "./admin-lottery-tenant-ops";
 import { setupIntegrationRoutes } from "./admin-lottery-integrations";
@@ -158,12 +160,97 @@ adminLotteryRoute.get("/dashboard", async (c) => {
     ))
     .groupBy(externalConversions.conversionType);
 
+  // ═════════════════════════════════════════════════════════
+  // 库存预警：检查直付秒杀（paymentRequired=true）的卡密库存
+  //
+  // 为什么在 dashboard 端点做：运营台概览是统一的信息聚合入口，运营者打开后台
+  // 第一时间就能发现卡密不足，避免用户支付后进入 paid_fulfillment_failed。
+  // 只查 open 状态的活动，因为只有 open 状态才接受支付。
+  // ═════════════════════════════════════════════════════════
+  const openDraws = await db
+    .select({ id: lotteryDraws.id, title: lotteryDraws.title, promotionConfig: lotteryDraws.promotionConfig })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "open")));
+
+  const flashDrawIds: string[] = [];
+  for (const draw of openDraws) {
+    const { config } = parseFlashSaleConfig(draw.promotionConfig);
+    if (config?.paymentRequired) {
+      flashDrawIds.push(draw.id);
+    }
+  }
+
+  let lowStockCount = 0;
+  let criticalStockCount = 0;
+  const stockWarnings: Array<{
+    drawId: string;
+    drawTitle: string;
+    prizeName: string;
+    availableCount: number;
+    stockLimit: number | null;
+  }> = [];
+
+  if (flashDrawIds.length > 0) {
+    // 查活动关联的码奖品及各码池可用数量（LEFT JOIN 保证 availableCount 为 0 时仍返回行）
+    const inventoryRows = await db
+      .select({
+        drawId: lotteryPrizeTiers.drawId,
+        prizeName: prizes.name,
+        availableCount: sql<number>`COUNT(${prizeCodes.id})`,
+      })
+      .from(lotteryPrizeTiers)
+      .innerJoin(prizes, and(
+        eq(prizes.id, lotteryPrizeTiers.prizeId),
+        eq(prizes.prizeType, "code"),
+        eq(prizes.active, 1),
+      ))
+      .leftJoin(prizeCodes, and(
+        eq(prizeCodes.prizeId, lotteryPrizeTiers.prizeId),
+        eq(prizeCodes.status, "available"),
+      ))
+      .where(and(
+        eq(lotteryPrizeTiers.tenantId, tenantId),
+        inArray(lotteryPrizeTiers.drawId, flashDrawIds),
+      ))
+      .groupBy(lotteryPrizeTiers.drawId, prizes.name);
+
+    const drawMap = new Map(openDraws.map((d) => [d.id, d]));
+
+    for (const row of inventoryRows) {
+      const draw = drawMap.get(row.drawId);
+      const { config } = parseFlashSaleConfig(draw?.promotionConfig || "{}");
+      const available = Number(row.availableCount);
+      const warning = {
+        drawId: row.drawId,
+        drawTitle: draw?.title || "",
+        prizeName: row.prizeName,
+        availableCount: available,
+        stockLimit: config?.stockLimit ?? null,
+      };
+      stockWarnings.push(warning);
+      // 从系统配置读取预警阈值，默认低库存=5、告警=0
+      const warnThreshold = Number(await readSystemConfigNumber(db, "inventory_warn_threshold", 5));
+      const criticalThreshold = Number(await readSystemConfigNumber(db, "inventory_critical_threshold", 0));
+      if (available <= criticalThreshold) {
+        criticalStockCount++;
+      } else if (available <= warnThreshold) {
+        lowStockCount++;
+      }
+    }
+  }
+
   return ok(c, {
     openCount: Number(openRow?.count || 0),
     draftCount: Number(draftRow?.count || 0),
     drawnCount: Number(drawnRow?.count || 0),
     dueCount: Number(dueRow?.count || 0),
     failedNotifyCount: Number(failedNotifyRow?.count || 0),
+    /** 库存预警：可用卡密 ≤ 5 的直付秒杀活动数 */
+    lowStockCount,
+    /** 库存预警：卡密已售罄（available=0）的直付秒杀活动数 */
+    criticalStockCount,
+    /** 库存预警详情（含 drawId、drawTitle、prizeName、availableCount） */
+    stockWarnings,
     plan: tenantUsage.plan,
     limits: tenantUsage.limits,
     usage: tenantUsage.usage,

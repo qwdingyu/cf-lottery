@@ -238,42 +238,44 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         let award = false;
 
         if (picked.prizeId && picked.prizeType === "code") {
-          const [availableCode] = await tx
-            .select({ id: prizeCodes.id, code: prizeCodes.code, secret: prizeCodes.secret })
-            .from(prizeCodes)
+          // 原子取码：子查询 UPDATE 消除 SELECT→UPDATE 之间的竞态窗口。
+          // 两个并发 spin 看到同一张可用卡密时，SQLite 单写者序列化保证只有一个 UPDATE 成功，
+          // 失败的 rowsAffected = 0 → 本轮 spin 未中，已扣次数不退还（与普通未中行为一致）。
+          // 模式与 draw-execution.ts acquirePrizeCode 一致。
+          const lockResult = await tx
+            .update(prizeCodes)
+            .set({
+              status: "issued",
+              // instant：winner_id 绑 spin，避免一人多奖回查歧义（docs/117 P0-4）
+              winnerId: spinId,
+              issuedAt: nowIso,
+            })
             .where(and(
-              eq(prizeCodes.prizeId, picked.prizeId),
-              eq(prizeCodes.status, "available"),
               eq(prizeCodes.tenantId, draw.tenantId),
+              eq(prizeCodes.status, "available"),
+              eq(prizeCodes.id, sql<string>`(
+                SELECT id FROM prize_codes
+                WHERE tenant_id = ${draw.tenantId}
+                AND prize_id = ${picked.prizeId}
+                AND status = 'available'
+                ORDER BY id
+                LIMIT 1
+              )`),
             ))
-            .limit(1);
+            .returning({ id: prizeCodes.id, code: prizeCodes.code, secret: prizeCodes.secret });
 
-          if (availableCode) {
-            const lockResult = await tx
-              .update(prizeCodes)
-              .set({
-                status: "issued",
-                // instant：winner_id 绑 spin，避免一人多奖回查歧义（docs/117 P0-4）
-                winnerId: spinId,
-                issuedAt: nowIso,
-              })
-              .where(and(
-                eq(prizeCodes.id, availableCode.id),
-                eq(prizeCodes.status, "available"),
-              ));
-
-            if ((lockResult.rowsAffected ?? 0) > 0) {
-              prizeCodeId = availableCode.id;
-              prizeCodePlain = availableCode.secret
-                ? `${availableCode.code}:${availableCode.secret}`
-                : availableCode.code;
-              await tx.update(prizes)
-                .set({ usedCount: sql`used_count + 1`, updatedAt: nowIso })
-                .where(eq(prizes.id, picked.prizeId));
-              award = true;
-            }
+          if (lockResult.length > 0) {
+            const code = lockResult[0]!;
+            prizeCodeId = code.id;
+            prizeCodePlain = code.secret
+              ? `${code.code}:${code.secret}`
+              : code.code;
+            await tx.update(prizes)
+              .set({ usedCount: sql`used_count + 1`, updatedAt: nowIso })
+              .where(eq(prizes.id, picked.prizeId));
+            award = true;
           }
-          // 无码或 CAS 失败 → 未中，仍已扣次
+          // 无码或竞态失败 → 未中，仍已扣次
         } else if (picked.prizeId) {
           // 人工履约等非码奖品：名额已在 eligible 校验
           award = true;

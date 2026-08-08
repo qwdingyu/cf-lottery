@@ -523,5 +523,47 @@
     "group": "秒杀/支付",
     "order": 32,
     "difficulty": "advanced"
+  },
+  {
+    "key": "inventory_warn_threshold",
+    "label": "库存预警阈值（数量）",
+    "description": "Dashboard 中卡密库存低于此数量时标记为黄色预警。",
+    "effect": "Dashboard 库存预警展示 lowStockCount 时使用此阈值。",
+    "scope": "admin",
+    "type": "integer",
+    "defaultValue": "5",
+    "min": 1,
+    "max": 1000,
+    "group": "秒杀/支付",
+    "order": 33,
+    "difficulty": "advanced"
+  },
+  {
+    "key": "inventory_critical_threshold",
+    "label": "库存告警阈值（数量）",
+    "description": "Dashboard 中卡密库存等于此数量或以下时标记为红色告警。通常设为 0（售罄）。",
+    "effect": "Dashboard 库存预警展示 criticalStockCount 时使用此阈值。",
+    "scope": "admin",
+    "type": "integer",
+    "defaultValue": "0",
+    "min": 0,
+    "max": 1000,
+    "group": "秒杀/支付",
+    "order": 34,
+    "difficulty": "advanced"
+  },
+  {
+    "key": "email_notification_retry_max_attempts",
+    "label": "邮件通知最大重试次数",
+    "description": "中奖邮件发送失败后最多可重试的次数（含手动重试）。超过此次数后不再尝试发送。",
+    "effect": "sendWinnerNotifications 和 retry-email 路径读取此配置，超过限制的 winner 跳过发送。",
+    "scope": "admin",
+    "type": "integer",
+    "defaultValue": "3",
+    "min": 1,
+    "max": 20,
+    "group": "邮件通知",
+    "order": 5,
+    "difficulty": "advanced"
   }
 ]

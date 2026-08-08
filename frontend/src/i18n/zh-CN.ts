@@ -23,6 +23,15 @@ export default {
     backToHome: "返回主页",
   },
 
+  // ── 店铺首页（ShopView） ──────────────────────────────
+  shop: {
+    title: "店铺",
+    loading: "加载中…",
+    refresh: "刷新",
+    notFound: "店铺不存在",
+    loadFailed: "加载失败",
+  },
+
   // ── 确认对话框（ConfirmDialog） ───────────────────────
   confirm: {
     confirm: "确认",
@@ -139,6 +148,7 @@ export default {
     todosAria: "待办事项",
     todosDueDraws: "个定时活动到期待开奖",
     todosFailedNotify: "个中奖通知发送失败 — 打开「查看结果」可重发",
+    todosLowStock: "个直付秒杀活动卡密库存告急 — 请及时补充码池",
     convPurchase: "购买",
     convRegistration: "注册",
     convCoupon: "券核销",
@@ -797,7 +807,7 @@ export default {
     /** 游戏壳无奖池时的中性占位（勿写「奖品」以免 delayed 暗示中奖） */
     shellPlaceholder: "参与",
     /** 奖池条旁：delayed 壳=氛围，列表才是奖目录 */
-    prizeShellRitualHint: "转盘文案为参与氛围，不代表当场中奖；奖品以奖池与开奖结果为准。",
+    prizeShellRitualHint: "转盘扇面仅营造参与氛围，不表示开奖结果。奖品与中奖名单以最终开奖结果为准。",
     loginOnlyHint: "登录后可查看本页参与记录与结果；推荐使用统一认证，无需离开活动页。",
     loginViaAdmin: "使用账号密码登录（管理端）",
     credentialOnlyHint: "你已登录，请补全本活动的访问凭证后继续参与。",

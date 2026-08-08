@@ -190,6 +190,19 @@
   color: rgba(255,255,255,0.75);
 }
 .lottery-prize-chip-n { color: rgba(245,158,11,0.95); font-weight: 600; }
+/* 游戏壳声明：delayed 仪式壳下提示扇面文案仅营造参与氛围，奖品以奖池和开奖结果为准。
+   视觉上坐落于奖池陈列与游戏区之间，信息递进：「有什么」→「声明」→「来玩」*/
+.lottery-prize-shell-hint {
+  margin: 12px 20px 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(245,158,11,0.06);
+  border: 1px solid rgba(245,158,11,0.12);
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.45);
+  text-align: center;
+}
 .lottery-submission-title {
   margin: 0 0 4px;
   font-size: 14px;

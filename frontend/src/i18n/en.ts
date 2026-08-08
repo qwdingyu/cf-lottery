@@ -22,6 +22,15 @@ export default {
     backToHome: "Back to home",
   },
 
+  // ── Shop storefront (ShopView) ─────────────────────────
+  shop: {
+    title: "Shop",
+    loading: "Loading…",
+    refresh: "Refresh",
+    notFound: "Shop not found",
+    loadFailed: "Failed to load",
+  },
+
   confirm: {
     confirm: "Confirm",
     cancel: "Cancel",
@@ -137,6 +146,7 @@ export default {
     todosAria: "To-dos",
     todosDueDraws: "scheduled activities due for draw",
     todosFailedNotify: "winner notifications failed — open “View results” to resend",
+    todosLowStock: "direct-payment activities with low card inventory — refill codes now",
     convPurchase: "Purchase",
     convRegistration: "Registration",
     convCoupon: "Coupon redeem",
@@ -825,7 +835,7 @@ export default {
     prizeStripAria: "Prizes in this activity",
     shellPlaceholder: "Join",
     prizeShellRitualHint:
-      "Wheel labels are join ambience, not an instant win. Prizes follow the prize list and final draw.",
+      "The wheel's segments create a fun joining experience and do not represent the actual draw result. Prizes are determined by the official draw outcome.",
     loginOnlyHint: "Sign in to see your entries and results on this page. Prefer unified login so you stay on the activity.",
     loginViaAdmin: "Sign in with password (admin)",
     credentialOnlyHint: "You're signed in — enter this activity's access credentials to continue.",

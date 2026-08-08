@@ -76,6 +76,27 @@ export async function upsertSystemConfig(
     });
 }
 
+// ── G19.5: 读取单个整数配置（带默认值） ──────────────
+
+/**
+ * 读取单个系统配置的整数值，未配置时返回 defaultValue。
+ * 用于 Dashboard 等需要快速读取单个配置的场景。
+ */
+export async function readSystemConfigNumber(
+  db: DbType,
+  key: string,
+  defaultValue: number,
+): Promise<number> {
+  const [row] = await db
+    .select({ value: systemConfig.value })
+    .from(systemConfig)
+    .where(eq(systemConfig.key, key))
+    .limit(1);
+  if (!row) return defaultValue;
+  const parsed = Number(row.value);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
 // ── G20: 删除系统配置 ──────────────────────────────
 
 export async function deleteSystemConfig(

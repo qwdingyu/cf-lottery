@@ -70,7 +70,7 @@ async function refresh() {
   loading.value = true; error.value = ''
   try {
     const res = await fetch(`/api/public/shops/${slug}`)
-    if (!res.ok) throw new Error(res.status === 404 ? '店铺不存在' : '加载失败')
+    if (!res.ok) throw new Error(res.status === 404 ? t('shop.notFound') : t('shop.loadFailed'))
     const data = await res.json()
     store.value = data.store
     activities.value = data.activities || []
