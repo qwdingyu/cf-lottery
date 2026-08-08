@@ -2,6 +2,7 @@
   <div class="shop-view">
     <div class="shop-toolbar">
       <div class="shop-heading">
+        <RouterLink to="/" class="shop-home-link">{{ $t('common.backToHome') }}</RouterLink>
         <h1 class="section-title">{{ store.name || $t('shop.title') }}</h1>
         <button class="btn btn-ghost btn-sm" @click="refresh" :disabled="loading">{{ loading ? $t('shop.loading') : $t('shop.refresh') }}</button>
       </div>
@@ -84,6 +85,8 @@ onMounted(refresh)
 .shop-view { max-width: 960px; margin: 0 auto; padding: 24px; }
 .shop-toolbar { margin-bottom: 24px; }
 .shop-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.shop-home-link { color: var(--primary); text-decoration: none; font-size: 14px; }
+.shop-home-link:hover { text-decoration: underline; }
 .section-title { margin: 0; }
 .category-bar { display: flex; gap: 6px; }
 .cat-btn { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }

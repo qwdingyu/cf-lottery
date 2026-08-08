@@ -56,7 +56,7 @@
             >
               <div class="featured-media" :class="{ 'featured-media-empty': !card.imageUrl }">
                 <img v-if="card.imageUrl" :src="card.imageUrl" :alt="card.title" />
-                <span v-else>{{ card.badge === 'flash' ? 'SALE' : 'FREE' }}</span>
+                <span v-else>{{ card.badge === 'flash' ? $t('landing.marketFlashTag') : $t('landing.marketFreeTag') }}</span>
               </div>
               <div class="featured-body">
                 <div class="card-tags">

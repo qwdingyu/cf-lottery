@@ -18,6 +18,9 @@ export default {
     title: "Lottery Platform",
     footer: "Powered by cf-lottery",
   },
+  common: {
+    backToHome: "Back to home",
+  },
 
   confirm: {
     confirm: "Confirm",
@@ -229,7 +232,7 @@ export default {
     heroSubtitle: "No coding, no developers. Pick a template, share it, and track who joined, who won, and how it performed.",
     marketEyebrow: "Featured",
     marketHeroTitle: "Flash sales, free perks, and lead activities on one page",
-    marketHeroSubtitle: "Only public activities appear here. Payment, stock lock, EasyPay/ZPay checkout, and card delivery still happen inside the activity page.",
+    marketHeroSubtitle: "Only public activities appear here. Payment, stock lock, checkout, and card delivery still happen inside the activity page.",
     marketBrowseCta: "Browse activities",
     marketStatsAria: "Public activity stats",
     marketStatsPublic: "Open activities",

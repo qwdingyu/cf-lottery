@@ -2,6 +2,7 @@
   <div class="lottery-view">
     <header class="lottery-header">
       <div class="lottery-header-left">
+        <RouterLink to="/" class="lottery-home-link">{{ $t('common.backToHome') }}</RouterLink>
         <h1 class="lottery-title">{{ drawTitle }}</h1>
         <!-- 深链单活动：只保留分享，不提供「回全部/广场」（docs/055a ADR-055a-1） -->
         <div v-if="isDeepLinked && draws[0]" class="lottery-link-bar">

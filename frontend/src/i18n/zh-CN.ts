@@ -19,6 +19,9 @@ export default {
     title: "抽奖活动平台",
     footer: "Powered by cf-lottery",
   },
+  common: {
+    backToHome: "返回主页",
+  },
 
   // ── 确认对话框（ConfirmDialog） ───────────────────────
   confirm: {
@@ -231,7 +234,7 @@ export default {
     heroSubtitle: "不用写代码、不用求技术。选个模板发出去，谁参与了、谁中奖了、效果怎么样，后台一清二楚。",
     marketEyebrow: "公开活动矩阵",
     marketHeroTitle: "限时抢购、免费福利和留资活动，一页承接",
-    marketHeroSubtitle: "首页只展示已公开活动；点击进入活动页后，再完成身份校验、名额锁定、EasyPay/ZPay 支付和卡密交付。",
+    marketHeroSubtitle: "首页只展示已公开活动；点击进入活动页后，再完成身份校验、名额锁定、支付和卡密交付。",
     marketBrowseCta: "浏览公开活动",
     marketStatsAria: "公开活动统计",
     marketStatsPublic: "可参与活动",
