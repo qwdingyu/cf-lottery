@@ -597,7 +597,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         templateData: buildLotteryWinnerTemplateData({
           drawName: order.drawId,
           productName: code?.code || "卡密",
-          prizeCode: code?.code || "",
+          deliverySecret: code?.code || "",
         }),
       });
     })().catch((err) => {
