@@ -1,4 +1,4 @@
--- 0036_payment_expiry_indexes.sql
+-- 0038_payment_expiry_indexes.sql
 -- 支付超时懒清理按租户、状态和创建时间筛选；补齐高并发下的索引路径。
 
 -- UP

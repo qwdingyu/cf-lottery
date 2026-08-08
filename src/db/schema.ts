@@ -690,7 +690,9 @@ export const paymentOrders = sqliteTable("payment_orders", {
   tenantStatusCreatedIdx: index("idx_payment_orders_tenant_status_created").on(t.tenantId, t.status, t.createdAt),
   currentAttemptIdx: index("idx_payment_orders_current_attempt").on(t.currentAttemptId),
   // 支付平台交易号是外部事实键；同一租户同一渠道必须唯一，避免重复通知或脏数据串单。
-  providerTradeNoUnique: uniqueIndex("idx_payment_orders_provider_trade_no").on(t.tenantId, t.provider, t.providerTradeNo),
+  providerTradeNoUnique: uniqueIndex("idx_payment_orders_provider_trade_no")
+    .on(t.tenantId, t.provider, t.providerTradeNo)
+    .where(sql`${t.providerTradeNo} IS NOT NULL AND ${t.providerTradeNo} <> ''`),
 }));
 
 /**
@@ -719,5 +721,7 @@ export const paymentOrderAttempts = sqliteTable("payment_order_attempts", {
   tenantStatusIdx: index("idx_payment_order_attempts_tenant_status").on(t.tenantId, t.status, t.createdAt),
   orderIdx: index("idx_payment_order_attempts_order").on(t.paymentOrderId, t.createdAt),
   // 单次支付尝试的交易号也必须唯一收口；否则重复回调或网关异常会污染审计链。
-  providerTradeNoUnique: uniqueIndex("idx_payment_order_attempts_provider_trade_no").on(t.tenantId, t.provider, t.providerTradeNo),
+  providerTradeNoUnique: uniqueIndex("idx_payment_order_attempts_provider_trade_no")
+    .on(t.tenantId, t.provider, t.providerTradeNo)
+    .where(sql`${t.providerTradeNo} IS NOT NULL AND ${t.providerTradeNo} <> ''`),
 }));

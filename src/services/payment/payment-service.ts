@@ -446,23 +446,27 @@ export async function persistProviderTradeNo(
 ): Promise<void> {
   const providerTradeNo = String(payResult.providerTradeNo || "").trim();
   if (!providerTradeNo) return;
-  await db
-    .update(paymentOrderAttempts)
-    .set({ providerTradeNo, updatedAt: sql`(datetime('now'))` })
-    .where(and(
-      eq(paymentOrderAttempts.id, attemptId),
-      eq(paymentOrderAttempts.paymentOrderId, orderId),
-      eq(paymentOrderAttempts.status, PAYMENT_ATTEMPT_STATUS.PENDING),
-    ));
-  await db
-    .update(paymentOrders)
-    .set({ providerTradeNo, updatedAt: sql`(datetime('now'))` })
-    .where(and(
-      eq(paymentOrders.id, orderId),
-      eq(paymentOrders.currentAttemptId, attemptId),
-      eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
-      isNull(paymentOrders.providerTradeNo),
-    ));
+  await withDbTransaction(db, async (tx) => {
+    // 两张表都以 provider_trade_no 表达同一笔外部交易。0039 迁移对该字段加了唯一约束；
+    // 必须同一事务写入，才能保证脏网关返回重复流水时不会只更新 attempt 或只更新 order。
+    await tx
+      .update(paymentOrderAttempts)
+      .set({ providerTradeNo, updatedAt: sql`(datetime('now'))` })
+      .where(and(
+        eq(paymentOrderAttempts.id, attemptId),
+        eq(paymentOrderAttempts.paymentOrderId, orderId),
+        eq(paymentOrderAttempts.status, PAYMENT_ATTEMPT_STATUS.PENDING),
+      ));
+    await tx
+      .update(paymentOrders)
+      .set({ providerTradeNo, updatedAt: sql`(datetime('now'))` })
+      .where(and(
+        eq(paymentOrders.id, orderId),
+        eq(paymentOrders.currentAttemptId, attemptId),
+        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
+        isNull(paymentOrders.providerTradeNo),
+      ));
+  });
 }
 
 /** 从 DB 加载并解密租户支付配置；未配置或密钥缺失返回 null（照搬 cf-shop loadPaymentProviderConfigs） */

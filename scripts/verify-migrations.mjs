@@ -16,6 +16,42 @@ function isExpectedRepeatError(message) {
     || message.includes("already exists");
 }
 
+/**
+ * 与 scripts/migrate.mjs / src/db/apply-migrations.ts 保持同一拆分规则：
+ * 分号后的纯注释块不是可执行 SQL，必须在验证阶段过滤，否则会把有效迁移误报为失败。
+ */
+function parseStatements(sql) {
+  return sql
+    .split(";")
+    .map((statement) => {
+      const lines = statement.trim().split("\n");
+      while (lines.length > 0 && lines[0].trim().startsWith("--")) {
+        lines.shift();
+      }
+      return lines.join("\n").trim();
+    })
+    .filter(Boolean);
+}
+
+function extractUpSql(sql) {
+  return sql.includes("-- UP")
+    ? sql.split("-- UP")[1].split("-- DOWN")[0].trim()
+    : sql;
+}
+
+function assertUniqueMigrationVersions(files) {
+  const filenamesByVersion = new Map();
+  for (const file of files) {
+    const version = file.split("_")[0] || "";
+    if (!version) throw new Error(`迁移文件缺少版本前缀: ${file}`);
+    const previous = filenamesByVersion.get(version);
+    if (previous) {
+      throw new Error(`迁移版本重复: ${version} 同时用于 ${previous} 和 ${file}`);
+    }
+    filenamesByVersion.set(version, file);
+  }
+}
+
 async function main() {
   // 清理旧测试数据库
   for (const suffix of ["", "-wal", "-shm"]) {
@@ -31,17 +67,13 @@ async function main() {
   const files = readdirSync(MIGRATIONS_DIR)
     .filter(f => f.endsWith(".sql"))
     .sort();
+  assertUniqueMigrationVersions(files);
 
   console.log(`   发现 ${files.length} 个迁移文件`);
 
   for (const file of files) {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8").trim();
-    // 只取 -- UP 之前的部分（或全部，如果没有 UP 标记）
-    const upSql = sql.includes("-- UP") 
-      ? sql.split("-- UP")[1].split("-- DOWN")[0].trim()
-      : sql;
-    
-    const statements = upSql.split(";").map(s => s.trim()).filter(Boolean);
+    const statements = parseStatements(extractUpSql(sql));
     for (const stmt of statements) {
       try {
         await client.execute(stmt);
@@ -64,6 +96,7 @@ async function main() {
     "email_access_codes", "audit_logs", "system_config",
     "activity_events", "webhook_deliveries", "redemption_codes", "redemption_records",
     "external_conversions", "rate_limit_log", "tenant_usage_snapshots", "activity_submissions",
+    "tenant_configs", "payment_orders", "payment_order_attempts",
   ];
   for (const table of tables) {
     try {
@@ -107,14 +140,31 @@ async function main() {
     }
   }
 
-  // 5. 重复执行验证
-  console.log("\n📋 测试 5: 重复执行迁移（已存在容错）");
+  // 5. 支付关键索引：迁移存在不代表高并发查询和重复流水保护已实际生效。
+  console.log("\n📋 测试 5: 验证支付关键索引");
+  const paymentIndexes = [
+    "idx_payment_orders_tenant_status_created",
+    "idx_lottery_entries_tenant_payment_joined",
+    "idx_payment_orders_provider_trade_no",
+    "idx_payment_order_attempts_provider_trade_no",
+  ];
+  for (const index of paymentIndexes) {
+    const result = await client.execute({
+      sql: "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ? LIMIT 1",
+      args: [index],
+    });
+    if (result.rows.length === 0) {
+      console.error(`  ❌ ${index} 缺失`);
+      process.exit(1);
+    }
+    console.log(`  ✅ ${index}`);
+  }
+
+  // 6. 重复执行验证
+  console.log("\n📋 测试 6: 重复执行迁移（已存在容错）");
   for (const file of files) {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8").trim();
-    const upSql = sql.includes("-- UP") 
-      ? sql.split("-- UP")[1].split("-- DOWN")[0].trim()
-      : sql;
-    const statements = upSql.split(";").map(s => s.trim()).filter(Boolean);
+    const statements = parseStatements(extractUpSql(sql));
     for (const stmt of statements) {
       try {
         await client.execute(stmt);

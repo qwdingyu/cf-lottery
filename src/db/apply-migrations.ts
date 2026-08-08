@@ -45,6 +45,19 @@ function extractUp(content: string): string {
   return upMatch ? upMatch[1] : content;
 }
 
+function assertUniqueMigrationVersions(files: string[]): void {
+  const filenamesByVersion = new Map<string, string>();
+  for (const file of files) {
+    const version = file.split("_")[0] || "";
+    if (!version) throw new Error(`迁移文件缺少版本前缀: ${file}`);
+    const previous = filenamesByVersion.get(version);
+    if (previous) {
+      throw new Error(`迁移版本重复: ${version} 同时用于 ${previous} 和 ${file}`);
+    }
+    filenamesByVersion.set(version, file);
+  }
+}
+
 /**
  * 应用所有未执行的迁移，返回本次应用的迁移数。
  * @param client 已连接的 libsql client（本地 SQLite 或 Turso）
@@ -80,6 +93,7 @@ export async function applyPendingMigrations(client: Client): Promise<number> {
   const files = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
     .sort();
+  assertUniqueMigrationVersions(files);
 
   let applied = 0;
   for (const file of files) {

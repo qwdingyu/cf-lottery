@@ -67,6 +67,19 @@ function parseMigrationFile(content) {
   };
 }
 
+function assertUniqueMigrationVersions(files) {
+  const filenamesByVersion = new Map();
+  for (const file of files) {
+    const version = file.split("_")[0] || "";
+    if (!version) throw new Error(`迁移文件缺少版本前缀: ${file}`);
+    const previous = filenamesByVersion.get(version);
+    if (previous) {
+      throw new Error(`迁移版本重复: ${version} 同时用于 ${previous} 和 ${file}`);
+    }
+    filenamesByVersion.set(version, file);
+  }
+}
+
 // 获取已执行的迁移
 async function getExecutedMigrations() {
   await ensureMigrationTable();
@@ -214,6 +227,7 @@ async function main() {
   const files = readdirSync(migrationsDir)
     .filter((f) => f.endsWith(".sql"))
     .sort();
+  assertUniqueMigrationVersions(files);
 
   if (files.length === 0) {
     console.log("[migrate] No migration files found in migrations/");

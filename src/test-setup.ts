@@ -76,6 +76,19 @@ function parseMigrationStatements(content: string): string[] {
     .filter(Boolean);
 }
 
+function assertUniqueMigrationVersions(files: string[]): void {
+  const filenamesByVersion = new Map<string, string>();
+  for (const file of files) {
+    const version = file.split("_")[0] || "";
+    if (!version) throw new Error(`迁移文件缺少版本前缀: ${file}`);
+    const previous = filenamesByVersion.get(version);
+    if (previous) {
+      throw new Error(`迁移版本重复: ${version} 同时用于 ${previous} 和 ${file}`);
+    }
+    filenamesByVersion.set(version, file);
+  }
+}
+
 async function ensureMigrationTable(client: Client) {
   await client.execute(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -111,6 +124,7 @@ async function applyMigrations(client: Client) {
   const files = readdirSync(MIGRATIONS_DIR)
     .filter((file) => file.endsWith(".sql"))
     .sort();
+  assertUniqueMigrationVersions(files);
 
   for (const file of files) {
     const version = file.split("_")[0] || "";

@@ -21,6 +21,7 @@ import {
   expireOverdueOrders,
   handlePaymentCallback,
   loadTenantConfig,
+  persistProviderTradeNo,
   retryPaymentOrder,
   retryPaymentFulfillment,
 } from "./payment-service";
@@ -317,6 +318,56 @@ describe("tenant payment provider selection", () => {
     };
     expect(createTenantProvider(env, "cny")?.name).toBe("easypay");
     expect(createTenantProvider(env, "usdt")).toBeNull();
+  });
+});
+
+describe("providerTradeNo integrity", () => {
+  it("拒绝同一租户同一渠道的重复支付流水，并回滚第二笔尝试的半写入", async () => {
+    await seedBaseRows("pending");
+    await persistProviderTradeNo(db, ORDER_ID, ATTEMPT_ID, { providerTradeNo: "EP-DUPLICATE" });
+
+    const secondEntryId = "entry-payment-service-2";
+    const secondOrderId = "order-payment-service-2";
+    const secondAttemptId = "attempt-payment-service-2";
+    await db.insert(lotteryEntries).values({
+      id: secondEntryId,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "email",
+      identityValue: "buyer-2@example.com",
+      paymentStatus: "pending",
+    });
+    await db.insert(paymentOrders).values({
+      id: secondOrderId,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      entryId: secondEntryId,
+      amountCents: 9900,
+      currency: "cny",
+      status: "pending",
+      provider: "alipay",
+      currentAttemptId: secondAttemptId,
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: secondAttemptId,
+      paymentOrderId: secondOrderId,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      attemptNo: 1,
+      provider: "alipay",
+      amountCents: 9900,
+      currency: "cny",
+      status: "pending",
+    });
+
+    await expect(
+      persistProviderTradeNo(db, secondOrderId, secondAttemptId, { providerTradeNo: "EP-DUPLICATE" }),
+    ).rejects.toThrow();
+
+    const [secondOrder] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, secondOrderId));
+    const [secondAttempt] = await db.select().from(paymentOrderAttempts).where(eq(paymentOrderAttempts.id, secondAttemptId));
+    expect(secondOrder?.providerTradeNo).toBeNull();
+    expect(secondAttempt?.providerTradeNo).toBeNull();
   });
 });
 
