@@ -558,10 +558,19 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
     return c.text(result.error || "fail", 400);
   }
 
-  // 支付成功后异步发送中奖邮件（不阻塞回调响应）。
-  // 仅当实际发卡成功（prizeCodeId 存在）且订单进入 paid 状态时触发；
-  // paid_fulfillment_failed 由运营后台 retryPaymentFulfillment 处理，不重复发邮件。
-  if (result.order?.prizeCodeId && result.order.status === PAYMENT_ORDER_STATUS.PAID) {
+  // 支付成功后异步发送中奖邮件（不阻塞回调响应）——受 L3 系统配置 notify_winner_email_enabled 控制。
+  const notifyWinnerEnabled = await db
+    .select({ value: systemConfig.value })
+    .from(systemConfig)
+    .where(eq(systemConfig.key, "notify_winner_email_enabled"))
+    .limit(1)
+    .then((r) => r[0]?.value !== "false")
+    .catch(() => true); // 默认开启
+  if (
+    result.order?.prizeCodeId &&
+    result.order.status === PAYMENT_ORDER_STATUS.PAID &&
+    notifyWinnerEnabled
+  ) {
     void sendWinnerNotifications(db, order.tenantId, order.drawId, {
       cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
       cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
