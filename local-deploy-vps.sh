@@ -80,7 +80,8 @@ fi
 
 info "步骤 2/2：上传 $PACKAGE_FILE 到 $VPS_USER@$VPS_HOST:$VPS_PATH/ ..."
 ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" "$VPS_USER@$VPS_HOST" "mkdir -p '$VPS_PATH'"
-scp -i "$VPS_SSH_KEY" -P "$VPS_SSH_PORT" "$PACKAGE_FILE" "$VPS_USER@$VPS_HOST:$VPS_PATH/"
+# 使用 cat + SSH pipe 上传（scp 在部分 VPS 配置下存在连接重置问题）
+cat "$PACKAGE_FILE" | ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" "$VPS_USER@$VPS_HOST" "cat > $VPS_PATH/$PACKAGE_FILE"
 
 echo ""
 info "✅ 上传完成"
