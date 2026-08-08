@@ -32,7 +32,6 @@ import {
   PAYMENT_ENTRY_STATUS,
   PAYMENT_ORDER_STATUS,
 } from "../services/payment/payment-status";
-import { sendWinnerNotifications } from "../services/lottery/draw-execution";
 import type { AppEnv } from "../bindings";
 
 export const paymentPublicRoute = new Hono<AppEnv>();
@@ -571,14 +570,38 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
     result.order.status === PAYMENT_ORDER_STATUS.PAID &&
     notifyWinnerEnabled
   ) {
-    void sendWinnerNotifications(db, order.tenantId, order.drawId, {
-      cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
-      cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
-      cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
-    }, {
-      winnerIds: [order.entryId],
-    }).catch((err) => {
-      console.error(`[payment] sendWinnerNotifications failed for order ${order.id}:`, err);
+    void (async () => {
+      const [winner] = await db
+        .select({
+          email: lotteryEntries.identityValue,
+          identityType: lotteryEntries.identityType,
+        })
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.id, order.entryId))
+        .limit(1);
+      if (!winner || winner.identityType !== "email") return;
+
+      const [code] = order.prizeCodeId
+        ? await db.select({ code: prizeCodes.code }).from(prizeCodes).where(eq(prizeCodes.id, order.prizeCodeId)).limit(1)
+        : [];
+
+      // 直接发送邮件，复用 sendWinnerNotifications 的模板数据构建逻辑
+      const { sendEmail, buildLotteryWinnerTemplateData } = await import("../services/email-service");
+      await sendEmail({
+        cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
+        cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
+        cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
+      }, {
+        to: winner.email,
+        template: "lottery_winner",
+        templateData: buildLotteryWinnerTemplateData({
+          drawName: order.drawId,
+          prizeName: code?.code || "卡密",
+          prizeCode: code?.code || "",
+        }),
+      });
+    })().catch((err) => {
+      console.error(`[payment] 中奖邮件发送失败 for order ${order.id}:`, err);
     });
   }
 
