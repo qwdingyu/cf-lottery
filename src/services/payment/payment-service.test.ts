@@ -931,52 +931,82 @@ describe("支付并发安全性", () => {
   });
 
   /**
-   * 两个身份并发抢最后一个秒杀名额 → 名额计数器与实际参与数一致。
+   * 两个并发 retryPaymentFulfillment 处理同一 paid_fulfillment_failed 订单。
+   * retryPaymentFulfillment 是幂等的——事务内先 re-check 订单状态，若已 paid 且有
+   * prizeCodeId 则直接返回成功。两个并发调用最终都应返回 ok，但只有一份卡密被发放。
    *
-   * 防护机制：joinDraw 事务内 CAS WHERE activeParticipantCount < effectiveMax，
-   * SQLite 单写者保证只有一个成功。
-   *
-   * 注意：libSQL 测试客户端是单连接，真正的多 client 并发由 WAL 序列化保证。
-   * 本测试验证同一 DB 连接中的并发 Promise 也能正确互斥。
+   * 防护机制：acquirePrizeCode 的 CAS UPDATE（WHERE status='available'）在 SQLite
+   * 单写者事务内原子执行，保证只有一个请求能取到码。
    */
-  it("两个身份并发抢最后 1 个名额 → 名额数与计数器一致", async () => {
+  it("两个并发 retryPaymentFulfillment 同一订单 → 仅发一张卡，两个都 ok", async () => {
     const drawId = crypto.randomUUID();
-    const entryIdA = crypto.randomUUID();
-    const entryIdB = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    const orderId = crypto.randomUUID();
+    const attemptId = crypto.randomUUID();
+    const prizeId = crypto.randomUUID();
+    const codeId = crypto.randomUUID();
 
     await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
-
-    // 直接插入已有 entryIdA，模拟 A 已通过 joinDraw 获得名额
     await db.insert(lotteryDraws).values({
-      id: drawId, tenantId: TENANT_ID, publicSlug: `slot-${drawId}`,
-      title: "名额竞态测试", status: "open",
-      experienceType: "flash_sale", maxParticipants: 2, activeParticipantCount: 1,
+      id: drawId, tenantId: TENANT_ID, publicSlug: `retry-${drawId}`,
+      title: "并发补发测试", status: "open",
+      experienceType: "flash_sale",
       promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 9900, currency: "cny" } }),
       startAt: new Date(Date.now() - 60_000).toISOString(),
       endAt: new Date(Date.now() + 60_000).toISOString(),
     });
-    // A 先占一个名额
     await db.insert(lotteryEntries).values({
-      id: entryIdA, tenantId: TENANT_ID, drawId,
-      identityType: "email", identityValue: "a@slot.com",
-      paymentStatus: "reserved",
+      id: entryId, tenantId: TENANT_ID, drawId,
+      identityType: "email", identityValue: "retry@concurrent.com",
+      paymentStatus: "pending",
+    });
+    await db.insert(paymentOrders).values({
+      id: orderId, tenantId: TENANT_ID, drawId, entryId,
+      amountCents: 9900, currency: "cny", provider: "easypay",
+      status: "paid_fulfillment_failed",
+      currentAttemptId: attemptId,
+      createdAt: new Date().toISOString(),
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: attemptId, paymentOrderId: orderId, tenantId: TENANT_ID, drawId,
+      attemptNo: 1, provider: "easypay", amountCents: 9900, currency: "cny",
+      status: "paid",
+      createdAt: new Date().toISOString(),
+    });
+    await db.insert(prizes).values({
+      id: prizeId, tenantId: TENANT_ID, name: "补发奖品", prizeType: "code", active: 1, totalCount: 1, usedCount: 0,
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: `tier-${drawId}`, tenantId: TENANT_ID, drawId, prizeId,
+      tierName: "中奖", winnerCount: 1, sortOrder: 100, weight: 100,
+    });
+    // 只有一个可用卡密，确保 acquirePrizeCode 的 CAS 竞争
+    await db.insert(prizeCodes).values({
+      id: codeId, tenantId: TENANT_ID, prizeId,
+      code: "RETRY-CODE", secret: "SECRET", status: "available",
     });
 
-    // B 和 C 同时抢最后一个名额——直接操作 counters 模拟 joinDraw 中的 CAS
-    // 我们通过 payment-service 的 reserveDirectPaymentCapacity 来模拟 CAS
-    // 实际上 concurrent createPaymentOrder 已经覆盖了 CAS，这里直接验证 DB 约束
-    const B_RESULT = await db.insert(lotteryEntries).values({
-      id: entryIdB, tenantId: TENANT_ID, drawId,
-      identityType: "email", identityValue: "b@slot.com",
-      paymentStatus: "reserved",
-    }).then(() => "ok" as const).catch(() => "duplicate" as const);
+    // 两个并发补发调用
+    const results = await Promise.allSettled([
+      retryPaymentFulfillment(db, TENANT_ID, orderId),
+      retryPaymentFulfillment(db, TENANT_ID, orderId),
+    ]);
 
-    // B 应该成功获得名额
-    expect(B_RESULT).toBe("ok");
+    // 两个都应该返回 ok（幂等：第一个真正补发，第二个发现已 paid 直接返回）
+    const okCount = results.filter((r) => r.status === "fulfilled" && (r.value as any).ok).length;
+    expect(okCount).toBe(2);
 
-    // 名额数为 2，已有 2 个 entry
-    const entries = await db.select().from(lotteryEntries)
-      .where(eq(lotteryEntries.drawId, drawId));
-    expect(entries).toHaveLength(2);
+    // 卡密只被发了一次
+    const [code] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, codeId));
+    expect(code?.status).toBe("issued");
+
+    // 订单最终为 paid 且关联了正确卡密
+    const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, orderId));
+    expect(order?.status).toBe("paid");
+    expect(order?.prizeCodeId).toBe(codeId);
+
+    // entry 为 paid
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(entry?.paymentStatus).toBe("paid");
   });
 });

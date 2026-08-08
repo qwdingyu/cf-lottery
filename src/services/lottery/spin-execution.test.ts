@@ -746,4 +746,54 @@ describe("performInstantSpin", () => {
     expect(spins.length).toBe(1);
     expect(spins[0]!.won).toBe(0);
   });
+
+  it("两个不同 entry 并发抽 winner_count=1 的同一奖档 → 仅一个 winner", async () => {
+    // 与「两用户争抢最后 1 个码」不同：这里码池充足（codes=5），
+    // 但 tier 的 winnerCount=1 封顶。即使两人都拿到码，也只允许一个 winner。
+    // 这段验证的是档位 winnerCount 的并发封顶，而非码池 CAS。
+    const { slug, id, tierId } = await seedInstantDraw(db, client, {
+      maxSpins: 2,
+      weight: 100,
+      codes: 5,
+      winnerCount: 1,
+    });
+    const a = await joinDraw(db, slug, "winrace-a@test.com");
+    const b = await joinDraw(db, slug, "winrace-b@test.com");
+    expect(a.joined).toBe(true);
+    expect(b.joined).toBe(true);
+    await grantSpins(client, a.entryId!, 2);
+    await grantSpins(client, b.entryId!, 2);
+
+    // 两个不同身份并发抽——SQLite 单写者事务串行化，先拿到写锁的中奖，
+    // 后到的在事务内重查 winner 计数时发现档位已满则未中。
+    const results = await Promise.allSettled([
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "winrace-a@test.com",
+        idempotencyKey: "winrace-a",
+      }),
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "winrace-b@test.com",
+        idempotencyKey: "winrace-b",
+      }),
+    ]);
+
+    // 两个都必须成功返回（未中不是错误，是 won=false 的结果）
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+
+    // 恰好一个 winner，且属于这两个 entry 之一
+    const winners = await db.select().from(lotteryWinners).where(eq(lotteryWinners.drawId, id));
+    expect(winners.length).toBe(1);
+    expect(winners[0]!.tierId).toBe(tierId);
+    expect([a.entryId, b.entryId]).toContain(winners[0]!.entryId);
+
+    // 两人各记一条 spin（未中也记），仅一条 won=1
+    const spins = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, id));
+    expect(spins.length).toBe(2);
+    expect(spins.filter((s) => s.won === 1).length).toBe(1);
+    expect(spins.filter((s) => s.won === 0).length).toBe(1);
+  });
 });
