@@ -572,7 +572,7 @@ export async function createPaymentOrder(
         eq(lotteryEntries.id, input.entryId),
         eq(lotteryEntries.tenantId, input.tenantId),
         eq(lotteryEntries.drawId, input.drawId),
-        eq(lotteryEntries.paymentStatus, "reserved"),
+        eq(lotteryEntries.paymentStatus, ""),
       ))
       .returning({ id: lotteryEntries.id });
     // entry 非空状态(已有 pending/paid/expired 订单)时不创建新订单,由 call-site 处理 retry

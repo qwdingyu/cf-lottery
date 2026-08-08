@@ -477,7 +477,7 @@ describe("ambiguous payment creation", () => {
       drawId: DRAW_ID,
       identityType: "email",
       identityValue: "buyer@example.com",
-      paymentStatus: "reserved",
+      paymentStatus: "",
     });
     const ambiguousProvider: PaymentProvider = {
       ...providerMock,
@@ -500,5 +500,103 @@ describe("ambiguous payment creation", () => {
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
     expect(order?.status).toBe("pending");
     expect(entry?.paymentStatus).toBe("pending");
+  });
+});
+
+describe("秒杀核心生命周期测试(冒烟)", () => {
+  it("createPaymentOrder 正常创建 + 过期释放计数器闭环", async () => {
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT_ID,
+      publicSlug: `smoke-${drawId}`,
+      title: "秒杀冒烟测试",
+      status: "open",
+      experienceType: "flash_sale",
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 9900, currency: "cny" } }),
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT_ID, drawId,
+      identityType: "email", identityValue: "buyer@example.com",
+      paymentStatus: "",
+    });
+    // 前置:active_participant_count = 1 模拟 join 时 +1
+    await db.update(lotteryDraws).set({ activeParticipantCount: 1 }).where(eq(lotteryDraws.id, drawId));
+
+    const created = await createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      amountCents: 9900, currency: "cny",
+      provider: "easypay", notifyUrl: "https://cb",
+    }, providerMock);
+
+    expect(created.order.status).toBe("pending");
+    expect(created.order.entryId).toBe(entryId);
+    expect(created.accessToken.length).toBeGreaterThan(0);
+
+    // entry paymentStatus 应为 pending
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(entry.paymentStatus).toBe("pending");
+
+    // 强制模拟超时释放
+    await db.update(paymentOrders).set({ createdAt: "2020-01-01T00:00:00Z" }).where(eq(paymentOrders.id, created.order.id));
+    const released = await expireOverdueOrders(db, TENANT_ID);
+    expect(released).toBe(1);
+
+    const [drawAfter] = await db.select({ cnt: lotteryDraws.activeParticipantCount }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    expect(drawAfter.cnt).toBe(0); // 计数器已释放
+  });
+
+  it("createPaymentOrder 接续空状态支持首次支付(P0修复)", async () => {
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT_ID, publicSlug: `res-${drawId}`, title: "测试",
+      status: "open", experienceType: "flash_sale",
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 100, currency: "cny" } }),
+      startAt: new Date(Date.now() - 60_000).toISOString(), endAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT_ID, drawId,
+      identityType: "email", identityValue: "new-user@example.com",
+      paymentStatus: "",
+    });
+    await db.update(lotteryDraws).set({ activeParticipantCount: 1 }).where(eq(lotteryDraws.id, drawId));
+
+    const created = await createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      amountCents: 100, currency: "cny", provider: "easypay", notifyUrl: "https://cb",
+    }, providerMock);
+    expect(created.order.status).toBe("pending");
+  });
+
+  it("expired 订单回调不重复发卡，标记 paid_late_needs_refund", async () => {
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    const orderId = crypto.randomUUID();
+    await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT_ID, publicSlug: `late-${drawId}`, title: "迟到付款",
+      status: "open", experienceType: "flash_sale",
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 500, currency: "cny" } }),
+      startAt: new Date(Date.now() - 60_000).toISOString(), endAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await db.insert(lotteryEntries).values({ id: entryId, tenantId: TENANT_ID, drawId, identityType: "email", identityValue: "late@ex.com", paymentStatus: "expired" });
+    // 插入过期订单
+    await db.insert(paymentOrders).values({
+      id: orderId, tenantId: TENANT_ID, drawId, entryId,
+      amountCents: 500, currency: "cny", status: "expired", provider: "easypay",
+      createdAt: "2020-01-01T00:00:00Z",
+    });
+
+    const lateProvider = { ...providerMock, verifyCallback: vi.fn().mockResolvedValue({ orderNo: orderId, amountCents: 500, currency: "CNY", providerTradeNo: "late-1", paidAt: new Date().toISOString() }) };
+    const result = await handlePaymentCallback(db, TENANT_ID, lateProvider, {});
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("paid_late_needs_refund");
+    expect(result.order?.prizeCodeId).toBeNull();
   });
 });
