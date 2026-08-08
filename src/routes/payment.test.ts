@@ -204,7 +204,7 @@ describe("payment route", () => {
       identityType: "phone",
       identityValue: "13800138000",
       displayName: "buyer",
-      paymentStatus: "",
+      paymentStatus: "reserved",
     });
 
     const app = createTestApp();

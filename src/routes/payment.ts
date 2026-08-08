@@ -25,7 +25,6 @@ import {
   retryPaymentOrder,
   issuePaymentOrderAccessToken,
   findPaymentOrderByAccessToken,
-  persistProviderTradeNo,
   resumePendingPaymentOrder,
 } from "../services/payment/payment-service";
 import type { AppEnv } from "../bindings";
@@ -354,8 +353,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
     return fail(c, "支付订单找回过于频繁，请稍后再试", 429);
   }
 
-  // 查询 OTP 只证明邮箱控制权，不核销验证码；与 my-result 保持同一查询语义，
-  // 让用户可以在找回后继续刷新订单状态，真正的卡密读取仍受订单 Bearer 保护。
+  // 查询 OTP 只证明邮箱控制权，不核销验证码；与 my-result 保持同一查询语义。
+  // 已支付订单在本接口内直接返回卡密，待支付订单仍必须走订单 Bearer 查询链路。
   const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
   if (!validCode) return fail(c, "验证码无效或已过期", 400);
 
