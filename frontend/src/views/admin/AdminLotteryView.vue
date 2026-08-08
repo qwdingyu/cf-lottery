@@ -817,8 +817,9 @@
                         </div>
                       </div>
                       <label>
-                        <span>{{ $t('lottery.adminFlashSalePriceCents') }}</span>
-                        <input v-model.number="form.flashSalePriceCents" type="number" min="1" max="100000000" />
+                        <span>{{ $t('lottery.adminFlashSalePriceYuan') }}</span>
+                        <input v-model="flashSalePriceYuan" type="number" min="0.01" step="0.01" max="1000000" placeholder="9.90" />
+                        <small>{{ $t('lottery.adminFlashSalePriceHint') }}</small>
                       </label>
                       <label>
                         <span>{{ $t('lottery.adminFlashSaleCurrency') }}</span>
@@ -2072,6 +2073,16 @@ const emptyForm = () => emptyLotteryEditorForm(t)
 
 const form = ref(emptyForm())
 const isEditing = ref(false)
+const flashSalePriceYuan = computed({
+  get: () => {
+    const v = form.value.flashSalePriceCents
+    return v != null && v > 0 ? (v / 100).toFixed(2) : ''
+  },
+  set: (val: string) => {
+    const n = parseFloat(val)
+    form.value.flashSalePriceCents = isNaN(n) || n <= 0 ? null : Math.max(1, Math.round(n * 100))
+  },
+})
 const rosterInput = ref('')
 const inviteCodeCount = ref(10)
 /** 奖品库（用于奖项配置下拉选择） */

@@ -234,4 +234,56 @@ describe("GET /public/shops/:storeSlug", () => {
     expect(JSON.stringify(body.activities[0])).not.toContain("internal-shop-draw-id");
     expect(JSON.stringify(body.activities[0])).not.toContain("tenant-public-home");
   });
+
+  it("店铺首页展示型秒杀按真实 entry 聚合，且排除 expired 占位", async () => {
+    await db.insert(tenants).values({ id: TENANT, name: "Public Shop Tenant 2", storeSlug: "display-shop" });
+    await seedDraw({
+      id: "internal-display-draw-id",
+      slug: "display-shop-slug",
+      title: "展示型秒杀",
+      productLink: { title: "Token 周卡" },
+      promotionConfig: {
+        flashSale: {
+          enabled: true,
+          paymentRequired: false,
+          priceCents: 1990,
+          currency: "cny",
+          stockLimit: 5,
+          sessionLabel: "18:00场",
+        },
+      },
+    });
+    await db.insert(lotteryEntries).values([
+      {
+        id: "display-paid-entry",
+        tenantId: TENANT,
+        drawId: "internal-display-draw-id",
+        identityType: "email",
+        identityValue: "buyer@example.com",
+        paymentStatus: "paid",
+        joinedAt: iso(-5),
+      },
+      {
+        id: "display-expired-entry",
+        tenantId: TENANT,
+        drawId: "internal-display-draw-id",
+        identityType: "email",
+        identityValue: "expired@example.com",
+        paymentStatus: "expired",
+        joinedAt: iso(-4),
+      },
+    ]);
+
+    const res = await app().request("/public/shops/display-shop", {}, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; activities: any[] };
+
+    expect(body.ok).toBe(true);
+    expect(body.activities[0].flashSale).toMatchObject({
+      paymentRequired: false,
+      remaining: 4,
+      progressPercent: 20,
+      effectiveStockLimit: 5,
+    });
+  });
 });

@@ -382,6 +382,29 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.errors.some((item) => item.code === "payment.fulfillment.code_prize.required")).toBe(true);
   });
 
+  it("docs/131：直付秒杀 priceCents 必须是整数分，小数金额发布前阻断", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          priceCents: 9900.9,
+          currency: "cny",
+        },
+      }),
+    });
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.price.invalid")).toBe(true);
+    expect(result.errors.some((item) => item.code === "flash_sale.payment.price.required")).toBe(true);
+  });
+
   it("docs/131：直付秒杀必须使用 email 身份，registered 模式发布前阻断", async () => {
     const draw = makeDraw({
       maxParticipants: 10,

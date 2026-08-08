@@ -441,7 +441,7 @@ describe("开奖核心流程", () => {
         args: [crypto.randomUUID(), TENANT, prizeId, `CRON-INST-${i}`, "available"],
       });
     }
-    await publishDraw(db, TENANT, id);
+    await publishDraw(db, TENANT, id, { credentialsEncryptionKey: PAYMENT_ENCRYPTION_KEY });
 
     // 模拟脏数据/历史误配：instant 活动被写成 scheduled 且 draw_at 已过
     await client.execute({
@@ -1273,6 +1273,61 @@ describe("最大参与人数和参与时间", () => {
     expect(full.message).toBe("已抢光");
     expect((full as { soldOut?: boolean }).soldOut).toBe(true);
     expect((full as { code?: string }).code).toBe("flash_sale.sold_out");
+  });
+
+  it("docs/130：直付秒杀重复参与不应泄漏活动计数器占位", async () => {
+    await db.insert(tenantConfigs).values({
+      tenantId: TENANT,
+      enabled: 1,
+      providers: JSON.stringify({
+        easypay: {
+          enabled: true,
+          easypay_pid: "pid",
+          easypay_key: await encryptPaymentConfigValue("key", PAYMENT_ENCRYPTION_KEY),
+          easypay_api_base: "https://zpayz.cn",
+        },
+      }),
+    });
+    const { id: prizeId } = await createPrize(db, TENANT, { name: "重复参与卡密", prizeType: "code" });
+    await importPrizeCodes(db, TENANT, prizeId, [{ code: "RETRY-COUNTER-1", secret: "S1" }]);
+
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "直付重复参与计数器",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      participationMode: "open",
+      winnerCount: 0,
+      maxParticipants: 1,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 9900, currency: "cny" },
+      }),
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      prizeId,
+      tierName: "重复参与卡密",
+      winnerCount: 1,
+      sortOrder: 1,
+    });
+    await publishDraw(db, TENANT, id);
+
+    const first = await joinDraw(db, publicSlug, "dup-slot@test.com");
+    expect(first.joined).toBe(true);
+    const duplicate = await joinDraw(db, publicSlug, "dup-slot@test.com");
+    expect(duplicate.joined).toBe(false);
+    expect((duplicate as { alreadyJoined?: boolean }).alreadyJoined).toBe(true);
+
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, id));
+    const entries = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, id));
+    expect(draw?.activeParticipantCount).toBe(1);
+    expect(entries).toHaveLength(1);
   });
 
   it("docs/134：直付秒杀截单排除已过期支付占位，避免软释放后仍被 COUNT 拒绝", async () => {
