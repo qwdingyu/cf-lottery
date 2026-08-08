@@ -24,10 +24,11 @@
 #
 # 上传后的服务器侧操作（本脚本不自动执行）：
 #   ssh -i ~/.ssh/cf-lottery-vps.pem root@38.47.198.72
-#   cd /root
-#   tar -xzf cf-lottery-deploy-YYYYMMDD-HHMMSS.tar.gz
+#   cd /root/cf-lottery
+#   tar -xzf /root/cf-lottery-deploy-YYYYMMDD-HHMMSS.tar.gz
 #   npm ci --omit=dev
-#   pm2 restart lottery --update-env
+#   systemctl restart cf-lottery
+# 注意：server.js 启动时自动执行数据库迁移，无需单独 npm run db:migrate
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
