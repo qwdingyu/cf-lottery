@@ -217,13 +217,13 @@ export function csvEscape(value: unknown): string {
 
 /** 编码活动列表游标 */
 export function encodeDrawCursor(createdAt: string, id: string): string {
-  return Buffer.from(`${createdAt}|${id}`).toString("base64");
+  return btoa(`${createdAt}|${id}`);
 }
 
 /** 解码活动列表游标，解码失败返回 null */
 export function decodeDrawCursor(cursor: string): { createdAt: string; id: string } | null {
   try {
-    const raw = Buffer.from(cursor, "base64").toString("utf8");
+    const raw = atob(cursor);
     const sep = raw.indexOf("|");
     if (sep === -1) return null;
     return { createdAt: raw.slice(0, sep), id: raw.slice(sep + 1) };

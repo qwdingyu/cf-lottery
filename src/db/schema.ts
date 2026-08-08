@@ -613,6 +613,9 @@ export const externalConversions = sqliteTable("external_conversions", {
   conversionDrawIdx: index("idx_external_conversions_draw").on(t.tenantId, t.drawId, t.conversionType, t.createdAt),
   conversionEntryIdx: index("idx_external_conversions_entry").on(t.tenantId, t.drawId, t.entryId, t.createdAt),
   conversionRefIdx: index("idx_external_conversions_ref").on(t.tenantId, t.drawId, t.refCode, t.createdAt),
+  // ROI 仪表盘查询：WHERE tenantId=? AND occurredAt>=?（dashboard_roi_days 窗口聚合）
+  // docs/155 P3-3：此前 occurredAt 不在任何索引中，查询需回表过滤；此索引把 O(N) 降到 O(log N)
+  conversionOccurredIdx: index("idx_external_conversions_occurred").on(t.tenantId, t.occurredAt),
 }));
 
 // ── 兑换码（运营者生成，终端用户兑换获取活动额度） ──

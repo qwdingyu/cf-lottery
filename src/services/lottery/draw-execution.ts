@@ -24,6 +24,7 @@ import {
 import { randomSelect, hashDrawSeed } from "./utils";
 import { enqueueWebhookEvent, dispatchWebhookDelivery } from "./integration";
 import { sendEmail, buildLotteryWinnerTemplateData, type EmailEnv } from "../email-service";
+import { runBounded } from "../../lib/concurrency";
 import {
   aggregateViralInviteCounts,
   computeViralDrawWeight,
@@ -505,9 +506,6 @@ export async function sendWinnerNotifications(
     }
   }
 
-  let sent = 0;
-  let failed = 0;
-
   // 读取邮件通知最大重试次数配置，默认 3 次
   const [retryCfg] = await db
     .select({ value: systemConfig.value })
@@ -517,10 +515,13 @@ export async function sendWinnerNotifications(
   // 未配置时默认 3 次；使用 != null 而非 ||，避免合法值 "0" 被误判为假值降级为 3
   const maxRetryAttempts = retryCfg?.value != null ? Number(retryCfg.value) : 3;
 
-  for (const winner of winners) {
-    if (winner.notificationStatus === "sent") continue;
+  // 有界并发发送邮件（默认 5 路并发）：Resend free 计划约 2 req/s，5 路足以保持吞吐
+  // 同时避免打爆下游 API 限流。每个 winner 独立处理自己的错误，一个失败不影响其他。
+  // 跳过已发送和超过重试次数的 winner。
+  const results = await runBounded(winners, 5, async (winner) => {
+    if (winner.notificationStatus === "sent") return null;
     // 超过最大重试次数 → 跳过，不再尝试发送
-    if (winner.notificationRetryCount >= maxRetryAttempts) continue;
+    if (winner.notificationRetryCount >= maxRetryAttempts) return null;
 
     let accountLabel = "";
     let deliverySecret = "";
@@ -561,8 +562,7 @@ export async function sendWinnerNotifications(
           notificationRetryCount: result.ok ? 0 : sql`notification_retry_count + 1`,
         })
         .where(eq(lotteryWinners.id, winner.winnerId));
-      if (result.ok) sent += 1;
-      else failed += 1;
+      return result.ok ? "sent" : "failed";
     } catch (err) {
       await db
         .update(lotteryWinners)
@@ -573,8 +573,18 @@ export async function sendWinnerNotifications(
           notificationRetryCount: sql`notification_retry_count + 1`,
         })
         .where(eq(lotteryWinners.id, winner.winnerId));
-      failed += 1;
+      return "failed";
     }
+  });
+
+  let sent = 0;
+  let failed = 0;
+  for (const r of results) {
+    if (r.ok && r.value === "sent") sent++;
+    else if (r.ok && r.value === "failed") failed++;
+    // null 表示「已发送或超过重试次数」的跳过，不计入 sent/failed
+    // !r.ok 表示意外异常（如 DB 连接断开），也计为失败
+    else if (!r.ok) failed++;
   }
 
   return { sent, failed };
@@ -802,12 +812,11 @@ export async function sendLoserConsolationEmails(
     ))
     .limit(500);
 
-  let sent = 0;
-  let failed = 0;
   const origin = "";  // APP_ORIGIN 由调用方传入，这里用相对路径
 
-  for (const coupon of issuedCoupons) {
-    if (!coupon.recipientEmail || !coupon.recipientEmail.includes("@")) continue;
+  // 有界并发发送安慰邮件（默认 5 路并发），过滤无有效邮箱的失效记录
+  const results = await runBounded(issuedCoupons, 5, async (coupon) => {
+    if (!coupon.recipientEmail || !coupon.recipientEmail.includes("@")) return null;
     try {
       await sendEmail(emailEnv, {
         to: coupon.recipientEmail,
@@ -819,8 +828,18 @@ export async function sendLoserConsolationEmails(
           nextActivityUrl: origin || "",
         },
       });
-      sent++;
-    } catch { failed++; }
+      return "sent";
+    } catch {
+      return "failed";
+    }
+  });
+
+  let sent = 0;
+  let failed = 0;
+  for (const r of results) {
+    if (r.ok && r.value === "sent") sent++;
+    else if (r.ok && r.value === "failed") failed++;
+    else if (!r.ok) failed++;
   }
 
   return { sent, failed };
