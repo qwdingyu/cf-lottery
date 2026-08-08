@@ -446,7 +446,7 @@
       @prev="pagination.prevPage(); loadData()"
       @next="pagination.nextPage(); loadData()"
       @jump="pagination.setPage($event); loadData()"
-      @update:limit="pagination.setLimit($event); loadData()"
+      @update:limit="pagination.setLimit($event); resetCursorMap(); loadData()"
     />
 
     <!-- 创建/编辑活动 -->
