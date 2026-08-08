@@ -203,11 +203,13 @@ adminLotteryRoute.get("/dashboard", async (c) => {
       .from(lotteryPrizeTiers)
       .innerJoin(prizes, and(
         eq(prizes.id, lotteryPrizeTiers.prizeId),
+        eq(prizes.tenantId, tenantId),
         eq(prizes.prizeType, "code"),
         eq(prizes.active, 1),
       ))
       .leftJoin(prizeCodes, and(
         eq(prizeCodes.prizeId, lotteryPrizeTiers.prizeId),
+        eq(prizeCodes.tenantId, tenantId),
         eq(prizeCodes.status, "available"),
       ))
       .where(and(

@@ -39,6 +39,7 @@ import {
   activityEvents,
   tenantConfigs,
   lotteryDraws,
+  lotteryInviteCodes,
   paymentOrders,
   paymentOrderAttempts,
 } from "../db/schema";
@@ -316,6 +317,26 @@ describe("四种参与模式", () => {
     });
     await joinDraw(db, publicSlug, "u1@t.com", "email", { inviteCode: "INV001" });
     expect((await joinDraw(db, publicSlug, "u2@t.com", "email", { inviteCode: "INV001" })).joined).toBe(false);
+  });
+
+  it("invite_code：活动满额时拒绝参与但不消耗邀请码次数", async () => {
+    const { id, publicSlug } = await setupDraw("invite_code", { maxParticipants: 1 });
+    const inviteId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO lottery_invite_codes (id, tenant_id, draw_id, code, max_uses) VALUES (?,?,?,?,?)",
+      args: [inviteId, TENANT, id, "CAP-INVITE", 2],
+    });
+
+    expect((await joinDraw(db, publicSlug, "u1@t.com", "email", { inviteCode: "CAP-INVITE" })).joined).toBe(true);
+    const rejected = await joinDraw(db, publicSlug, "u2@t.com", "email", { inviteCode: "CAP-INVITE" });
+    expect(rejected.joined).toBe(false);
+    expect(rejected.message).toContain("名额已满");
+
+    const [invite] = await db
+      .select({ usedCount: lotteryInviteCodes.usedCount })
+      .from(lotteryInviteCodes)
+      .where(eq(lotteryInviteCodes.id, inviteId));
+    expect(invite!.usedCount).toBe(1);
   });
 });
 

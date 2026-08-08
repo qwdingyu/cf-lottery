@@ -271,22 +271,10 @@ export async function joinDraw(
         }
       }
 
-      // 邀请码扣减和参与记录写入必须在同一事务中，避免重复/满额时白白消耗邀请码。
+      // 邀请码只在参与记录成功落库后扣减。这里先做可用性预检并拿到 id；
+      // 真正 usedCount + 1 放在 INSERT 成功之后，避免活动满额/秒杀售罄时白白消耗资格。
       let inviteCodeId = "";
       if (draw.participationMode === "invite_code") {
-        const inviteResult = await tx
-          .update(lotteryInviteCodes)
-          .set({ usedCount: sql`${lotteryInviteCodes.usedCount} + 1` })
-          .where(and(
-            eq(lotteryInviteCodes.tenantId, draw.tenantId),
-            eq(lotteryInviteCodes.drawId, draw.id),
-            eq(lotteryInviteCodes.code, options!.inviteCode!),
-            eq(lotteryInviteCodes.active, 1),
-            sql`${lotteryInviteCodes.usedCount} < ${lotteryInviteCodes.maxUses}`,
-          ));
-        if ((inviteResult.rowsAffected ?? 0) === 0) {
-          return { joined: false, message: "邀请码无效或已用完" };
-        }
         const [invite] = await tx
           .select({ id: lotteryInviteCodes.id })
           .from(lotteryInviteCodes)
@@ -294,9 +282,14 @@ export async function joinDraw(
             eq(lotteryInviteCodes.tenantId, draw.tenantId),
             eq(lotteryInviteCodes.drawId, draw.id),
             eq(lotteryInviteCodes.code, options!.inviteCode!),
+            eq(lotteryInviteCodes.active, 1),
+            sql`${lotteryInviteCodes.usedCount} < ${lotteryInviteCodes.maxUses}`,
           ))
           .limit(1);
-        inviteCodeId = invite?.id || "";
+        if (!invite) {
+          return { joined: false, message: "邀请码无效或已用完" };
+        }
+        inviteCodeId = invite.id;
       }
 
       const entryId = crypto.randomUUID();
@@ -385,6 +378,22 @@ export async function joinDraw(
           };
         }
         return { joined: false, message: acceptsWaitlist ? "参与失败，请稍后重试" : "活动名额已满" };
+      }
+
+      if (inviteCodeId) {
+        const inviteResult = await tx
+          .update(lotteryInviteCodes)
+          .set({ usedCount: sql`${lotteryInviteCodes.usedCount} + 1` })
+          .where(and(
+            eq(lotteryInviteCodes.id, inviteCodeId),
+            eq(lotteryInviteCodes.tenantId, draw.tenantId),
+            eq(lotteryInviteCodes.drawId, draw.id),
+            eq(lotteryInviteCodes.active, 1),
+            sql`${lotteryInviteCodes.usedCount} < ${lotteryInviteCodes.maxUses}`,
+          ));
+        if ((inviteResult.rowsAffected ?? 0) === 0) {
+          throw new InviteCodeUnavailableError();
+        }
       }
 
       // 消费验证码（事务内标记 used=1，失败自动回滚）
@@ -478,6 +487,9 @@ export async function joinDraw(
       };
     });
   } catch (err: unknown) {
+    if (err instanceof InviteCodeUnavailableError) {
+      return { joined: false, message: "邀请码无效或已用完" };
+    }
     // UNIQUE 约束冲突：同一参与者重复提交
     // LibSQL/Drizzle 可能把文案放在 message 或 cause 链上（docs/110）
     if (isUniqueConstraintError(err)) {
@@ -503,6 +515,13 @@ export async function joinDraw(
       }
     }
     throw err;
+  }
+}
+
+class InviteCodeUnavailableError extends Error {
+  constructor() {
+    super("邀请码无效或已用完");
+    this.name = "InviteCodeUnavailableError";
   }
 }
 

@@ -577,7 +577,11 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
           identityType: lotteryEntries.identityType,
         })
         .from(lotteryEntries)
-        .where(eq(lotteryEntries.id, order.entryId))
+        .where(and(
+          eq(lotteryEntries.id, order.entryId),
+          eq(lotteryEntries.tenantId, order.tenantId),
+          eq(lotteryEntries.drawId, order.drawId),
+        ))
         .limit(1);
       if (!winner || winner.identityType !== "email") return;
 
@@ -585,7 +589,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
       const [drawInfo] = await db
         .select({ title: lotteryDraws.title })
         .from(lotteryDraws)
-        .where(eq(lotteryDraws.id, order.drawId))
+        .where(and(eq(lotteryDraws.id, order.drawId), eq(lotteryDraws.tenantId, order.tenantId)))
         .limit(1);
 
       // 查卡密信息（同时取 code 和 secret，分别用于展示账号和交付密钥）
@@ -593,7 +597,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         ? await db
           .select({ code: prizeCodes.code, secret: prizeCodes.secret, prizeId: prizeCodes.prizeId })
           .from(prizeCodes)
-          .where(eq(prizeCodes.id, order.prizeCodeId))
+          .where(and(eq(prizeCodes.id, order.prizeCodeId), eq(prizeCodes.tenantId, order.tenantId)))
           .limit(1)
         : [];
 
@@ -602,7 +606,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         ? await db
           .select({ name: prizes.name })
           .from(prizes)
-          .where(eq(prizes.id, codeInfo.prizeId))
+          .where(and(eq(prizes.id, codeInfo.prizeId), eq(prizes.tenantId, order.tenantId)))
           .limit(1)
           .then((rows) => rows[0]?.name || "奖品")
         : "奖品";
