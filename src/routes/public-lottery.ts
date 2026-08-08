@@ -221,12 +221,20 @@ publicLotteryRoute.get("/shops/:storeSlug", async (c) => {
   const rows = await db.select({
     publicSlug: lotteryDraws.publicSlug, title: lotteryDraws.title, activityKind: lotteryDraws.activityKind, experienceType: lotteryDraws.experienceType,
     startAt: lotteryDraws.startAt, endAt: lotteryDraws.endAt, productLink: lotteryDraws.productLink, promotionConfig: lotteryDraws.promotionConfig,
-    maxParticipants: lotteryDraws.maxParticipants, participationMode: lotteryDraws.participationMode,
+    maxParticipants: lotteryDraws.maxParticipants, participationMode: lotteryDraws.participationMode, description: lotteryDraws.description,
   }).from(lotteryDraws).where(and(eq(lotteryDraws.tenantId, tenant.id), eq(lotteryDraws.status, "open"), eq(lotteryDraws.visible, 1), sql`${lotteryDraws.endAt} > ${nowIso}`)).orderBy(desc(lotteryDraws.startAt)).limit(50);
+  const drawIds = rows.map((r) => r.publicSlug);
+  const claimedMap = new Map<string, number>();
+  if (drawIds.length > 0) {
+    const counts = await db.select({ drawId: lotteryDraws.id, count: count() }).from(lotteryEntries).where(and(eq(lotteryEntries.tenantId, tenant.id), ne(lotteryEntries.paymentStatus, "expired"), inArray(lotteryEntries.drawId, drawIds))).groupBy(lotteryEntries.drawId);
+    for (const c of counts) { claimedMap.set(c.drawId, c.count as number); }
+  }
   const result = rows.map((row) => {
     const { config: flashSale } = parseFlashSaleConfig(row.promotionConfig);
     const product = productFromPublicConfig(row);
-    return { publicSlug: row.publicSlug, title: row.title, activityKind: row.activityKind, experienceType: row.experienceType, startAt: row.startAt, endAt: row.endAt, product, flashSale, participationMode: row.participationMode };
+    const effectiveMax = flashSale?.stockLimit ?? row.maxParticipants ?? 0;
+    const claimed = claimedMap.get(row.publicSlug) ?? 0;
+    return { publicSlug: row.publicSlug, title: row.title, activityKind: row.activityKind, experienceType: row.experienceType, startAt: row.startAt, endAt: row.endAt, description: row.description, product, flashSale: flashSale?.enabled ? { paymentRequired: flashSale.paymentRequired, priceCents: flashSale.priceCents, currency: flashSale.currency || "cny", sessionLabel: flashSale.sessionLabel, remaining: Math.max(0, effectiveMax - claimed), progressPercent: effectiveMax > 0 ? Math.min(100, Math.round((claimed / effectiveMax) * 100)) : 0 } : null, participationMode: row.participationMode };
   });
   return ok(c, { store: { name: tenant.name, brand: tryParseJson(tenant.brandConfig) || {}, storeSlug: slug }, activities: result });
 });

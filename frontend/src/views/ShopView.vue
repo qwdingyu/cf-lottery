@@ -1,93 +1,105 @@
 <template>
-  <div class="shop-page">
-    <div v-if="loading" class="loading">{{ $t('lottery.marketLoading') }}</div>
-    <div v-else-if="error" class="error">{{ error }}</div>
-    <template v-else>
-      <header class="shop-header">
-        <h1>{{ store.name }}</h1>
-        <p v-if="store.brand?.description" class="shop-desc">{{ store.brand.description }}</p>
-      </header>
-      <nav class="shop-tabs" role="tablist" aria-label="活动分类">
-        <button v-for="tab in tabs" :key="tab.key" role="tab" :aria-selected="activeTab === tab.key" :class="{ active: activeTab === tab.key }" @click="activeTab = tab.key">{{ tab.label }}</button>
-      </nav>
-      <div v-if="filtered.length === 0" class="empty">{{ $t('lottery.marketEmptyTitle') }}</div>
-      <section v-else class="activity-grid">
-        <div v-for="card in filtered" :key="card.publicSlug" class="activity-card" @click="$router.push(`/lottery/${card.publicSlug}`)">
-          <div class="card-head">
-            <span class="badge" :class="card.activityKind">{{ kindLabel(card.activityKind) }}</span>
-            <span v-if="card.flashSale?.paymentRequired" class="price">¥{{ (card.flashSale.priceCents / 100).toFixed(2) }}</span>
-            <span v-else class="free-tag">{{ $t('lottery.marketFreePrice') }}</span>
-          </div>
-          <h3>{{ card.title }}</h3>
-          <p class="card-time">{{ fmtDate(card.startAt) }} - {{ fmtDate(card.endAt) }}</p>
+  <div class="shop-view">
+    <div class="shop-toolbar">
+      <div class="shop-heading">
+        <h1 class="section-title">{{ store.name || $t('shop.title') }}</h1>
+        <button class="btn btn-ghost btn-sm" @click="refresh" :disabled="loading">{{ loading ? $t('shop.loading') : $t('shop.refresh') }}</button>
+      </div>
+      <div class="category-bar" :aria-label="$t('landing.marketFilterAria')">
+        <button v-for="tab in tabs" :key="tab.key" class="cat-btn" :class="{ active: activeTab === tab.key }" @click="activeTab = tab.key">
+          {{ tab.label }}<span class="cat-count">{{ tab.count }}</span>
+        </button>
+      </div>
+    </div>
+    <div v-if="loading" class="skeleton-grid" aria-busy="true">
+      <div v-for="i in 4" :key="i" class="skeleton-card"><div class="skeleton skeleton-line w-70" /><div class="skeleton skeleton-line w-40" /></div>
+    </div>
+    <div v-else-if="error" class="empty-state" role="alert">
+      <p>{{ error }}</p><button class="btn" @click="refresh">{{ $t('shop.refresh') }}</button>
+    </div>
+    <div v-else-if="cards.length === 0" class="empty-state">
+      <p>{{ $t('landing.marketEmptyTitle') }}</p><small>{{ $t('landing.marketEmptyDesc') }}</small>
+    </div>
+    <section v-else class="product-grid">
+      <div v-for="card in cards" :key="card.publicSlug" class="product-card" @click="$router.push(card.href)">
+        <div class="card-head">
+          <span class="badge" :class="card.paymentMode">{{ card.badge }}</span>
+          <span class="price">{{ card.priceText }}</span>
         </div>
-      </section>
-    </template>
+        <h3>{{ card.title }}</h3>
+        <div v-if="card.progressPercent > 0" class="progress-bar"><div class="progress-fill" :style="{width: card.progressPercent + '%'}" /></div>
+        <p class="card-meta">{{ card.sessionLabel || card.phase }}</p>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { buildLandingActivityCard, classifyLandingActivity } from '@/views/landing-activity-feed'
 
-function fmtDate(iso: string) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
-
+const { t } = useI18n()
 const route = useRoute()
-const storeSlug = route.params.storeSlug as string
+const slug = route.params.storeSlug as string
 const loading = ref(true)
 const error = ref('')
 const activeTab = ref('all')
-const store = ref<{ name: string; brand: any; storeSlug: string }>({ name: '', brand: {}, storeSlug: '' })
+const store = ref<{ name: string }>({ name: '' })
 const activities = ref<any[]>([])
 
-const tabs = [
-  { key: 'all', label: '全部' },
-  { key: 'claim', label: '限时抢购' },
-  { key: 'lottery', label: '大转盘' },
-  { key: 'survey', label: '问卷' },
-]
-
-const filtered = computed(() => {
-  if (activeTab.value === 'all') return activities.value
-  return activities.value.filter((a) => a.activityKind === activeTab.value)
+const tabs = computed(() => {
+  const all = activities.value
+  return [
+    { key: 'all', label: t('landing.marketFilterAll'), count: all.length },
+    { key: 'flash', label: t('landing.marketFilterFlash'), count: all.filter((a: any) => classifyLandingActivity(a) === 'flash').length },
+    { key: 'free', label: t('landing.marketFilterFree'), count: all.filter((a: any) => classifyLandingActivity(a) === 'free').length },
+  ]
 })
 
-function kindLabel(kind: string): string {
-  const map: Record<string, string> = { lottery: '抽奖', claim: '抢购', survey: '问卷', signup_chain: '接龙', vote: '投票' }
-  return map[kind] || kind
-}
+const cards = computed(() => {
+  let list = activities.value
+  if (activeTab.value === 'flash') list = list.filter((a: any) => classifyLandingActivity(a) === 'flash')
+  if (activeTab.value === 'free') list = list.filter((a: any) => classifyLandingActivity(a) === 'free')
+  return list.map((a: any) => buildLandingActivityCard(a, t('landing.marketFreePrice')))
+})
 
-onMounted(async () => {
+async function refresh() {
+  loading.value = true; error.value = ''
   try {
-    const res = await fetch(`/api/public/shops/${storeSlug}`)
+    const res = await fetch(`/api/public/shops/${slug}`)
     if (!res.ok) throw new Error(res.status === 404 ? '店铺不存在' : '加载失败')
     const data = await res.json()
     store.value = data.store
     activities.value = data.activities || []
-  } catch (e: any) {
-    error.value = e.message
-  } finally { loading.value = false }
-})
+  } catch (e: any) { error.value = e.message }
+  finally { loading.value = false }
+}
+
+onMounted(refresh)
 </script>
 
 <style scoped>
-.shop-page { max-width: 960px; margin: 0 auto; padding: 24px; }
-.shop-header { margin-bottom: 24px; }
-.shop-desc { color: var(--muted); font-size: 14px; }
-.shop-tabs { display: flex; gap: 8px; margin-bottom: 24px; }
-.shop-tabs button { padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
-.shop-tabs button.active { background: var(--primary); color: #fff; }
-.activity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-.activity-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px; cursor: pointer; }
+.shop-view { max-width: 960px; margin: 0 auto; padding: 24px; }
+.shop-toolbar { margin-bottom: 24px; }
+.shop-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.section-title { margin: 0; }
+.category-bar { display: flex; gap: 6px; }
+.cat-btn { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
+.cat-btn.active { background: var(--primary); color: #fff; }
+.cat-count { font-size: 11px; margin-left: 4px; opacity: .7; }
+.product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.product-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px; cursor: pointer; }
 .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; }
-.badge.claim { background: var(--danger); color: #fff; }
-.badge.lottery { background: var(--primary); color: #fff; }
-.price { font-weight: bold; color: var(--danger); }
-.free-tag { color: var(--success); font-weight: bold; }
-.card-time { font-size: 12px; color: var(--muted); }
+.badge.flash,.badge.direct{background:var(--danger);color:#fff}.badge.free,.badge.external{background:var(--success);color:#fff}
+.price { font-weight: bold; }
+.progress-bar { height: 4px; background: #eee; border-radius: 2px; margin: 8px 0; }
+.progress-fill { height: 100%; background: var(--danger); border-radius: 2px; }
+.card-meta { font-size: 12px; color: var(--muted); }
+.skeleton-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.skeleton-card { border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.skeleton-line { height: 10px; background: #eee; border-radius: 4px; margin: 8px 0; }.w-70{width:70%}.w-40{width:40%}
+.empty-state { text-align: center; padding: 48px; color: var(--muted); }
 </style>
