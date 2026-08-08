@@ -216,21 +216,21 @@ adminLotteryRoute.get("/dashboard", async (c) => {
 
     const drawMap = new Map(openDraws.map((d) => [d.id, d]));
 
+    // 从系统配置读取预警阈值（一次查询，循环内复用，避免 N×2 次 systemConfig 查询）
+    const warnThreshold = await readSystemConfigNumber(db, "inventory_warn_threshold", 5);
+    const criticalThreshold = await readSystemConfigNumber(db, "inventory_critical_threshold", 0);
+
     for (const row of inventoryRows) {
       const draw = drawMap.get(row.drawId);
-      const { config } = parseFlashSaleConfig(draw?.promotionConfig || "{}");
       const available = Number(row.availableCount);
       const warning = {
         drawId: row.drawId,
         drawTitle: draw?.title || "",
         prizeName: row.prizeName,
         availableCount: available,
-        stockLimit: config?.stockLimit ?? null,
+        stockLimit: (() => { const { config } = parseFlashSaleConfig(draw?.promotionConfig || "{}"); return config?.stockLimit ?? null; })(),
       };
       stockWarnings.push(warning);
-      // 从系统配置读取预警阈值，默认低库存=5、告警=0
-      const warnThreshold = Number(await readSystemConfigNumber(db, "inventory_warn_threshold", 5));
-      const criticalThreshold = Number(await readSystemConfigNumber(db, "inventory_critical_threshold", 0));
       if (available <= criticalThreshold) {
         criticalStockCount++;
       } else if (available <= warnThreshold) {
