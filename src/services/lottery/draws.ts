@@ -22,6 +22,11 @@ import { DEFAULT_ACTIVITY_PARTICIPANT_CAP } from "./types";
 import { enforceTenantActivityQuota } from "./plan";
 import { hashAccessPassword } from "./utils";
 import { buildPublishCheckForDraw, type PublishCheckOptions } from "../publish-check-service";
+import {
+  PAYMENT_ATTEMPT_STATUS,
+  PAYMENT_ENTRY_STATUS,
+  PAYMENT_ORDER_STATUS,
+} from "../payment/payment-status";
 
 /* ── 查询函数 ────────────────────────────────────────────── */
 
@@ -480,35 +485,40 @@ export async function cancelDraw(db: DbType, tenantId: string, drawId: string): 
       .where(and(
         eq(paymentOrders.tenantId, tenantId),
         eq(paymentOrders.drawId, drawId),
-        eq(paymentOrders.status, "pending"),
+        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
       ));
     const pendingOrderIds = pendingOrders.map((order) => order.id);
     if (pendingOrderIds.length > 0) {
       await tx
         .update(paymentOrders)
-        .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
+        .set({ status: PAYMENT_ORDER_STATUS.EXPIRED, updatedAt: sql`(datetime('now'))` })
         .where(and(
           eq(paymentOrders.tenantId, tenantId),
           eq(paymentOrders.drawId, drawId),
-          eq(paymentOrders.status, "pending"),
+          eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
         ));
       await tx
         .update(paymentOrderAttempts)
-        .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
+        .set({ status: PAYMENT_ATTEMPT_STATUS.EXPIRED, updatedAt: sql`(datetime('now'))` })
         .where(and(
           eq(paymentOrderAttempts.tenantId, tenantId),
           inArray(paymentOrderAttempts.paymentOrderId, pendingOrderIds),
-          eq(paymentOrderAttempts.status, "pending"),
+          eq(paymentOrderAttempts.status, PAYMENT_ATTEMPT_STATUS.PENDING),
         ));
     }
 
     const releasedEntries = await tx
       .update(lotteryEntries)
-      .set({ paymentStatus: "expired" })
+      .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
       .where(and(
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.drawId, drawId),
-        inArray(lotteryEntries.paymentStatus, ["reserved", "pending"]),
+        // 取消活动只释放尚未收款的 reserved/pending；已收款待补发不能被释放，
+        // 否则会重新占用名额并丢失退款/补发审计链。
+        inArray(lotteryEntries.paymentStatus, [
+          PAYMENT_ENTRY_STATUS.RESERVED,
+          PAYMENT_ENTRY_STATUS.PENDING,
+        ]),
       ))
       .returning({ id: lotteryEntries.id });
     if (releasedEntries.length > 0) {

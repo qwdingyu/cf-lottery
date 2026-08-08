@@ -30,6 +30,10 @@ import {
   parseFlashSaleConfig,
   resolveEffectiveStockLimit,
 } from "../../lib/flash-sale-config";
+import {
+  isRetryablePaymentOrderStatus,
+  PAYMENT_ENTRY_STATUS,
+} from "../payment/payment-status";
 
 export interface JoinDrawResult {
   joined: boolean;
@@ -193,7 +197,7 @@ export async function joinDraw(
             eq(lotteryEntries.drawId, draw.id),
             eq(lotteryEntries.identityType, identityType),
             eq(lotteryEntries.identityValue, checkinDateSuffix ? uniqueValue : normalizedValue),
-            eq(lotteryEntries.paymentStatus, "expired"),
+            eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.EXPIRED),
           ))
           .limit(1);
         if (expiredEntry) {
@@ -206,7 +210,7 @@ export async function joinDraw(
               eq(paymentOrders.entryId, expiredEntry.id),
             ))
             .limit(1);
-          if (existingOrder && !["expired", "cancelled"].includes(existingOrder.status)) {
+          if (existingOrder && !isRetryablePaymentOrderStatus(existingOrder.status)) {
             return {
               joined: false,
               message: "该参与已有支付记录，请联系客服处理",
@@ -245,10 +249,10 @@ export async function joinDraw(
           }
           await tx
             .update(lotteryEntries)
-            .set({ paymentStatus: "reserved", joinedAt: nowIso })
+            .set({ paymentStatus: PAYMENT_ENTRY_STATUS.RESERVED, joinedAt: nowIso })
             .where(and(
               eq(lotteryEntries.id, expiredEntry.id),
-              eq(lotteryEntries.paymentStatus, "expired"),
+              eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.EXPIRED),
             ));
           return {
             joined: true,
@@ -349,7 +353,7 @@ export async function joinDraw(
           spins_left, spins_total_granted, spins_viral_earned, payment_status
         )
         SELECT ${entryId}, ${draw.tenantId}, ${draw.id}, ${identityType}, ${checkinDateSuffix ? uniqueValue : normalizedValue}, ${inviteCodeId}, ${options?.ipHash || ""}, ${nowIso},
-          ${spinInit.spinsLeft}, ${spinInit.spinsTotalGranted}, ${spinInit.spinsViralEarned}, ${isDirectPaymentFlashSale ? "reserved" : ""}
+          ${spinInit.spinsLeft}, ${spinInit.spinsTotalGranted}, ${spinInit.spinsViralEarned}, ${isDirectPaymentFlashSale ? PAYMENT_ENTRY_STATUS.RESERVED : PAYMENT_ENTRY_STATUS.NONE}
         WHERE ${capacityClause}
       `);
 

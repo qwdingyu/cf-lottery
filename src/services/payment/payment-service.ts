@@ -28,6 +28,7 @@ import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
 import { decryptPaymentConfigValue, isEncryptedPaymentConfigValue } from "./secret-config";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../../lib/flash-sale-config";
 import {
+  isPaidPaymentAttemptStatus,
   isRetryablePaymentOrderStatus,
   PAYMENT_ATTEMPT_STATUS,
   PAYMENT_ENTRY_STATUS,
@@ -255,7 +256,7 @@ async function cancelPaymentOrder(
       .returning({ id: paymentOrders.id });
     if (cancelled.length === 0) return;
 
-    await tx
+    const paidAttempt = await tx
       .update(paymentOrderAttempts)
       .set({ status: PAYMENT_ATTEMPT_STATUS.FAILED, updatedAt: sql`(datetime('now'))` })
       .where(and(
@@ -767,7 +768,7 @@ export async function handlePaymentCallback(
       ))
       .limit(1);
     if (!attempt || !current) return { order: null, handled: false };
-    if (["paid", "paid_late_needs_refund", "refunded"].includes(attempt.status)) {
+    if (isPaidPaymentAttemptStatus(attempt.status)) {
       return { order: current, handled: true };
     }
 
@@ -776,7 +777,7 @@ export async function handlePaymentCallback(
       await tx
         .update(paymentOrderAttempts)
         .set({
-          status: "paid_late_needs_refund",
+          status: PAYMENT_ATTEMPT_STATUS.LATE_NEEDS_REFUND,
           providerTradeNo: callback.providerTradeNo,
           paidAt: callback.paidAt,
           updatedAt: sql`(datetime('now'))`,
@@ -787,13 +788,13 @@ export async function handlePaymentCallback(
         ));
     };
 
-    if (!isCurrentAttempt || current.status !== "pending") {
+    if (!isCurrentAttempt || current.status !== PAYMENT_ORDER_STATUS.PENDING) {
       await markAttemptLate();
       if (isCurrentAttempt) {
         await tx
           .update(paymentOrders)
           .set({
-            status: "paid_late_needs_refund",
+            status: PAYMENT_ORDER_STATUS.LATE_NEEDS_REFUND,
             providerTradeNo: callback.providerTradeNo,
             paidAt: callback.paidAt,
             updatedAt: sql`(datetime('now'))`,
@@ -816,18 +817,18 @@ export async function handlePaymentCallback(
         eq(lotteryEntries.drawId, current.drawId),
       ))
       .limit(1);
-    if (!entry || entry.paymentStatus !== "pending") {
+    if (!entry || entry.paymentStatus !== PAYMENT_ENTRY_STATUS.PENDING) {
       // 支付事实已发生但 entry 无法继续履约，必须进入人工退款，不得静默成功。
       await markAttemptLate();
       await tx
         .update(paymentOrders)
         .set({
-          status: "paid_late_needs_refund",
+          status: PAYMENT_ORDER_STATUS.LATE_NEEDS_REFUND,
           providerTradeNo: callback.providerTradeNo,
           paidAt: callback.paidAt,
           updatedAt: sql`(datetime('now'))`,
         })
-        .where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.status, "pending")));
+        .where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING)));
       const [late] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
       return { order: late ?? current, handled: true };
     }
@@ -835,20 +836,27 @@ export async function handlePaymentCallback(
     const prizeCodeId = await acquirePrizeCode(tx, tenantId, current.drawId, current.entryId);
 
     // 卡密不足：标记 paid_fulfillment_failed（运营后台可见，docs/131 §7），不静默 null
-    const newStatus = prizeCodeId ? "paid" : "paid_fulfillment_failed";
+    const newStatus = prizeCodeId
+      ? PAYMENT_ORDER_STATUS.PAID
+      : PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED;
     await tx
       .update(paymentOrderAttempts)
       .set({
-        status: "paid",
+        status: PAYMENT_ATTEMPT_STATUS.PAID,
         providerTradeNo: callback.providerTradeNo,
         paidAt: callback.paidAt,
         updatedAt: sql`(datetime('now'))`,
       })
       .where(and(
         eq(paymentOrderAttempts.id, attempt.id),
-        eq(paymentOrderAttempts.status, "pending"),
-      ));
-    await tx
+        eq(paymentOrderAttempts.status, PAYMENT_ATTEMPT_STATUS.PENDING),
+      ))
+      .returning({ id: paymentOrderAttempts.id });
+    if (paidAttempt.length === 0) {
+      throw new Error("支付尝试状态已变化，请重试回调");
+    }
+
+    const paidOrder = await tx
       .update(paymentOrders)
       .set({
         status: newStatus,
@@ -860,18 +868,25 @@ export async function handlePaymentCallback(
       .where(and(
         eq(paymentOrders.id, current.id),
         eq(paymentOrders.currentAttemptId, attempt.id),
-        eq(paymentOrders.status, "pending"),
-      ));
+        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
+      ))
+      .returning({ id: paymentOrders.id });
+    if (paidOrder.length === 0) {
+      throw new Error("支付订单状态已变化，请重试回调");
+    }
 
-    // 只要支付成功，entry 就必须标记 paid；卡密不足是履约失败，不应让名额回收后被二次售卖。
+    // 只有支付确认且成功领取卡密时，entry 才能进入 paid。
+    // 卡密不足必须保留为履约异常，占住名额等待补发，避免同一名额被再次售卖。
     const paidEntry = await tx
       .update(lotteryEntries)
-      .set({ paymentStatus: "paid" })
+      .set({ paymentStatus: prizeCodeId
+        ? PAYMENT_ENTRY_STATUS.PAID
+        : PAYMENT_ENTRY_STATUS.FULFILLMENT_FAILED })
       .where(and(
         eq(lotteryEntries.id, current.entryId),
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.drawId, current.drawId),
-        eq(lotteryEntries.paymentStatus, "pending"),
+        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
       ))
       .returning({ id: lotteryEntries.id });
     if (paidEntry.length === 0) {
@@ -902,8 +917,8 @@ export async function retryPaymentFulfillment(
       .where(and(eq(paymentOrders.id, orderId), eq(paymentOrders.tenantId, tenantId)))
       .limit(1);
     if (!current) return { error: "订单不存在" };
-    if (current.status === "paid" && current.prizeCodeId) return { order: current };
-    if (current.status !== "paid_fulfillment_failed") {
+    if (current.status === PAYMENT_ORDER_STATUS.PAID && current.prizeCodeId) return { order: current };
+    if (current.status !== PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED) {
       return { error: "订单状态不允许补发" };
     }
 
@@ -912,12 +927,15 @@ export async function retryPaymentFulfillment(
 
     const paidEntry = await tx
       .update(lotteryEntries)
-      .set({ paymentStatus: "paid" })
+      .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
       .where(and(
         eq(lotteryEntries.id, current.entryId),
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.drawId, current.drawId),
-        inArray(lotteryEntries.paymentStatus, ["pending", "paid"]),
+        inArray(lotteryEntries.paymentStatus, [
+          PAYMENT_ENTRY_STATUS.PENDING,
+          PAYMENT_ENTRY_STATUS.FULFILLMENT_FAILED,
+        ]),
       ))
       .returning({ id: lotteryEntries.id });
     if (paidEntry.length === 0) {
@@ -927,13 +945,13 @@ export async function retryPaymentFulfillment(
     const updatedOrder = await tx
       .update(paymentOrders)
       .set({
-        status: "paid",
+        status: PAYMENT_ORDER_STATUS.PAID,
         prizeCodeId,
         updatedAt: sql`(datetime('now'))`,
       })
       .where(and(
         eq(paymentOrders.id, current.id),
-        eq(paymentOrders.status, "paid_fulfillment_failed"),
+        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED),
       ))
       .returning({ id: paymentOrders.id });
     if (updatedOrder.length === 0) {
