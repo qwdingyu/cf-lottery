@@ -344,7 +344,7 @@ describe("handlePaymentCallback", () => {
     expect(code?.winnerId).toBe(ENTRY_ID);
   });
 
-  it("支付成功但码池为空时 entry 仍保持 paid，补发后恢复完整履约", async () => {
+  it("支付成功但码池为空时 entry 保持履约异常，补发后才进入 paid", async () => {
     await seedBaseRows("pending");
     await db.insert(prizes).values({
       id: PRIZE_ID,
@@ -372,7 +372,9 @@ describe("handlePaymentCallback", () => {
     const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
     expect(result.order?.status).toBe("paid_fulfillment_failed");
     const [entryAfterPayment] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
-    expect(entryAfterPayment?.paymentStatus).toBe("paid");
+    // entry 只表达参与/名额生命周期；履约异常由 payment_orders.status 表达，
+    // 因此发卡失败时仍保持 pending，补发成功后才进入 paid。
+    expect(entryAfterPayment?.paymentStatus).toBe("pending");
 
     await db.insert(prizeCodes).values({
       id: PRIZE_CODE_ID,
@@ -574,7 +576,7 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
     expect(await db.select().from(paymentOrders).where(eq(paymentOrders.entryId, entryId))).toHaveLength(0);
   });
 
-  it.skip("expired 订单回调不重复发卡，标记 paid_late_needs_refund", async () => {
+  it("expired 订单回调不重复发卡，标记 paid_late_needs_refund", async () => {
     const drawId = crypto.randomUUID();
     const entryId = crypto.randomUUID();
     const orderId = crypto.randomUUID();
@@ -600,7 +602,19 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
       provider: "easypay", amountCents: 500, currency: "cny", status: "pending",
     });
 
-    const lateProvider = { ...providerMock, verifyCallback: vi.fn().mockResolvedValue({ orderNo: orderId, amountCents: 500, currency: "CNY", providerTradeNo: "late-1", paidAt: new Date().toISOString() }) };
+    // attempt 的渠道是 easypay；测试 Provider 必须保持同一渠道，才能验证
+    // “已过期订单可验签并进入待退款”这条真实回调链，而不是被渠道错配门禁提前拒绝。
+    const lateProvider = {
+      ...providerMock,
+      name: "easypay" as const,
+      verifyCallback: vi.fn().mockResolvedValue({
+        orderNo: orderId,
+        amountCents: 500,
+        currency: "CNY",
+        providerTradeNo: "late-1",
+        paidAt: new Date().toISOString(),
+      }),
+    };
     const result = await handlePaymentCallback(db, TENANT_ID, lateProvider, {});
     expect(result.processed).toBe(true);
     expect(result.order?.status).toBe("paid_late_needs_refund");

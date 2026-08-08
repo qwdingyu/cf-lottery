@@ -1,5 +1,6 @@
 <template>
   <div class="admin-page">
+    <BrandSettings v-if="!isEditing" />
     <div class="toolbar">
       <div class="filters">
         <select v-model="statusFilter" :aria-label="$t('lottery.adminStatus')" @change="reloadFromFirstPage">
@@ -1668,6 +1669,7 @@ import {
 } from './lottery/activity-config'
 import { emptyLotteryEditorForm } from './lottery/form-defaults'
 import { buildFlashSaleDirectChecklist } from './lottery/flash-sale-readiness'
+import BrandSettings from './BrandSettings.vue'
 import { buildPromotionConfigPayload, growthFieldsFromDraw, sanitizeRitualPhrasesForSave } from './lottery/growth-config'
 import {
   buildLotteryDrawConfirmMessage,

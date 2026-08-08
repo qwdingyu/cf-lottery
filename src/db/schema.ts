@@ -321,8 +321,9 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
    * 直付秒杀名额状态（普通非支付活动固定为 ""）：
    * reserved=参与成功且名额 CAS 已占用，pending=已建支付单，
    * paid=已支付并完成发卡，expired=支付超时且名额已释放。
-   * paid_fulfillment_failed 表示已收款但暂时未发卡，必须占住名额等待补发；
-   * 完整定义统一维护在 services/payment/payment-status.ts。
+   * 已收款但暂时未发卡的异常只写入 payment_orders.status，
+   * entry 保持 pending 以继续占住名额；完整定义统一维护在
+   * services/payment/payment-status.ts。
    */
   paymentStatus: text("payment_status").notNull().default(""),
 }, (t) => ({

@@ -14,13 +14,12 @@
  * lottery_entries.payment_status 的正常状态：
  * ""       普通非支付活动，无支付需求；
  * reserved 直付秒杀参与成功，活动名额 CAS 已占用，等待创建支付订单；
- * pending   支付订单已创建，等待付款；
+ * pending   支付订单已创建，等待付款，或已付款但仍在等待发卡完成；
  * paid      已支付并完成发卡；
  * expired   支付超时或创建支付失败，名额已释放。
  *
- * paid_fulfillment_failed 是唯一的履约异常状态：已确认收款但暂时没有
- * 可发放卡密。它必须占住原名额，直到运营补发成功后才转为 paid；不能
- * 被当作普通 paid，也不能被超时清理逻辑释放。
+ * 注意：`paid_fulfillment_failed` 只属于 payment_orders.status / payment_order_attempts.status，
+ * 不属于 entry 状态。entry 只负责名额与参与生命周期，不负责表达履约异常细节。
  */
 export const PAYMENT_ENTRY_STATUS = {
   NONE: "",
@@ -28,7 +27,6 @@ export const PAYMENT_ENTRY_STATUS = {
   PENDING: "pending",
   PAID: "paid",
   EXPIRED: "expired",
-  FULFILLMENT_FAILED: "paid_fulfillment_failed",
 } as const;
 
 export type PaymentEntryStatus = typeof PAYMENT_ENTRY_STATUS[keyof typeof PAYMENT_ENTRY_STATUS];
@@ -64,7 +62,6 @@ export const PAYMENT_ENTRY_CAPACITY_STATUSES = [
   PAYMENT_ENTRY_STATUS.RESERVED,
   PAYMENT_ENTRY_STATUS.PENDING,
   PAYMENT_ENTRY_STATUS.PAID,
-  PAYMENT_ENTRY_STATUS.FULFILLMENT_FAILED,
 ] as const;
 
 /** 只有这两种订单终态允许再次发起支付尝试。 */

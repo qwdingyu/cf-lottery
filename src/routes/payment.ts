@@ -27,6 +27,11 @@ import {
   findPaymentOrderByAccessToken,
   resumePendingPaymentOrder,
 } from "../services/payment/payment-service";
+import {
+  isRetryablePaymentOrderStatus,
+  PAYMENT_ENTRY_STATUS,
+  PAYMENT_ORDER_STATUS,
+} from "../services/payment/payment-status";
 import type { AppEnv } from "../bindings";
 
 export const paymentPublicRoute = new Hono<AppEnv>();
@@ -155,9 +160,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     .limit(1);
   if (
     existing &&
-    existing.status !== "cancelled" &&
-    existing.status !== "expired" &&
-    existing.status !== "pending"
+    !isRetryablePaymentOrderStatus(existing.status) &&
+    existing.status !== PAYMENT_ORDER_STATUS.PENDING
   ) {
     const accessToken = await issuePaymentOrderAccessToken(db, draw.tenantId, existing.id, existing.entryId);
     return ok(c, {
@@ -177,19 +181,19 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     return fail(c, "活动当前不可创建支付订单", 409);
   }
   if (
-    existing?.status === "pending" &&
+    existing?.status === PAYMENT_ORDER_STATUS.PENDING &&
     draw.status !== "open" &&
     draw.status !== "paused"
   ) {
     return fail(c, "活动已关闭，不能继续支付", 409);
   }
-  if ((existing?.status === "cancelled" || existing?.status === "expired") && draw.status !== "open") {
+  if (existing && isRetryablePaymentOrderStatus(existing.status) && draw.status !== "open") {
     return fail(c, "活动已关闭，不能重新创建支付订单", 409);
   }
-  if (existing?.status === "pending" && entry.paymentStatus !== "pending") {
+  if (existing?.status === PAYMENT_ORDER_STATUS.PENDING && entry.paymentStatus !== PAYMENT_ENTRY_STATUS.PENDING) {
     return fail(c, "订单与参与记录状态不一致，请联系客服处理", 409);
   }
-  if (!existing && entry.paymentStatus !== "reserved") {
+  if (!existing && entry.paymentStatus !== PAYMENT_ENTRY_STATUS.RESERVED) {
     return fail(c, "参与预约已失效，请重新参与", 409);
   }
 
@@ -200,7 +204,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   // 造成金额漂移。
   const currency = existing?.currency || flashSale.currency || "cny";
   const amountCents = existing?.amountCents ?? flashSale.priceCents;
-  const resumingPending = existing?.status === "pending";
+  const resumingPending = existing?.status === PAYMENT_ORDER_STATUS.PENDING;
   const config = await loadTenantConfig(
     db,
     entry.tenantId,
@@ -214,7 +218,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   const provider = createTenantProvider(config.env, resumingPending ? existing.currency : currency);
   if (!provider) return fail(c, "支付服务暂不可用", 500);
 
-  const retryable = existing?.status === "cancelled" || existing?.status === "expired";
+  const retryable = existing != null && isRetryablePaymentOrderStatus(existing.status);
   const paymentRequestUrl = buildPaymentRequestUrl(c.req.url, getEnv(c, "APP_ORIGIN"), slug);
   const notifyUrl = buildPaymentCallbackUrl(paymentRequestUrl, draw.tenantId, config.provider);
   const returnUrl = buildPaymentReturnUrl(paymentRequestUrl);

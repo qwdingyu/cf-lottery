@@ -256,7 +256,7 @@ async function cancelPaymentOrder(
       .returning({ id: paymentOrders.id });
     if (cancelled.length === 0) return;
 
-    const paidAttempt = await tx
+    await tx
       .update(paymentOrderAttempts)
       .set({ status: PAYMENT_ATTEMPT_STATUS.FAILED, updatedAt: sql`(datetime('now'))` })
       .where(and(
@@ -839,7 +839,7 @@ export async function handlePaymentCallback(
     const newStatus = prizeCodeId
       ? PAYMENT_ORDER_STATUS.PAID
       : PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED;
-    await tx
+    const paidAttempt = await tx
       .update(paymentOrderAttempts)
       .set({
         status: PAYMENT_ATTEMPT_STATUS.PAID,
@@ -875,22 +875,23 @@ export async function handlePaymentCallback(
       throw new Error("支付订单状态已变化，请重试回调");
     }
 
-    // 只有支付确认且成功领取卡密时，entry 才能进入 paid。
-    // 卡密不足必须保留为履约异常，占住名额等待补发，避免同一名额被再次售卖。
-    const paidEntry = await tx
-      .update(lotteryEntries)
-      .set({ paymentStatus: prizeCodeId
-        ? PAYMENT_ENTRY_STATUS.PAID
-        : PAYMENT_ENTRY_STATUS.FULFILLMENT_FAILED })
-      .where(and(
-        eq(lotteryEntries.id, current.entryId),
-        eq(lotteryEntries.tenantId, tenantId),
-        eq(lotteryEntries.drawId, current.drawId),
-        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
-      ))
-      .returning({ id: lotteryEntries.id });
-    if (paidEntry.length === 0) {
-      throw new Error("参与记录状态已变化，支付履约未提交");
+    // entry 的 paid 只代表“已支付并完成发卡”。
+    // 卡密不足时订单进入 paid_fulfillment_failed，entry 保持 pending 继续占位，
+    // 等运营补发成功后再由 retryPaymentFulfillment 原子切换为 paid。
+    if (prizeCodeId) {
+      const paidEntry = await tx
+        .update(lotteryEntries)
+        .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
+        .where(and(
+          eq(lotteryEntries.id, current.entryId),
+          eq(lotteryEntries.tenantId, tenantId),
+          eq(lotteryEntries.drawId, current.drawId),
+          eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
+        ))
+        .returning({ id: lotteryEntries.id });
+      if (paidEntry.length === 0) {
+        throw new Error("参与记录状态已变化，支付履约未提交");
+      }
     }
 
     const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
@@ -932,10 +933,7 @@ export async function retryPaymentFulfillment(
         eq(lotteryEntries.id, current.entryId),
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.drawId, current.drawId),
-        inArray(lotteryEntries.paymentStatus, [
-          PAYMENT_ENTRY_STATUS.PENDING,
-          PAYMENT_ENTRY_STATUS.FULFILLMENT_FAILED,
-        ]),
+        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
       ))
       .returning({ id: lotteryEntries.id });
     if (paidEntry.length === 0) {
