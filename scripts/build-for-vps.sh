@@ -60,6 +60,18 @@ warn()  { echo -e "${YELLOW}[build]${NC} $*"; }
 rm -rf dist && mkdir -p dist
 info "步骤 0/4：清理 dist/"
 
+# ── 步骤 0：迁移文件唯一性检查（防0036编号冲突等灾难） ──
+info "步骤 0/4：迁移文件唯一性检查..."
+DUP_MIGRATIONS=$(cd migrations && ls 0*.sql 2>/dev/null | sed 's/_.*//' | sort | uniq -d || true)
+if [ -n "$DUP_MIGRATIONS" ]; then
+  err "迁移文件编号重复（以下编号被多个文件使用，必须解决后再构建）："
+  while IFS= read -r num; do
+    ls migrations/${num}_*.sql 2>/dev/null
+  done <<< "$DUP_MIGRATIONS"
+  exit 1
+fi
+info "迁移编号通过（无重复）"
+
 # ── 步骤 1：TypeScript 类型检查 ──
 info "步骤 1/4：TypeScript 类型检查..."
 npx tsc --noEmit
@@ -68,6 +80,10 @@ info "tsc 通过"
 # ── 步骤 2：前端构建 ──
 # 清理上次构建累积的旧产物（Vite 未启用 emptyOutDir，每次都累加）
 info "步骤 2/4：构建前端（先清理旧产物）..."
+# ── 步骤 2：前端编译检查 + 构建 ──
+info "步骤 2/4：前端模板类型检查..."
+(cd frontend && npx vue-tsc -b --pretty false)
+info "vue-tsc 通过"
 rm -rf public/assets
 npm run frontend:build
 info "前端构建完成 → public/"
