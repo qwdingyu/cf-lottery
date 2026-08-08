@@ -1088,7 +1088,7 @@ export default {
     adminFlashSaleMaxPerUser: "每人限次（展示）",
     adminFlashSalePaymentRequired: "启用 cf-lottery 直付发卡",
     adminFlashSalePriceYuan: "直付单价(元)",
-    adminFlashSalePriceHint: "运营侧按元填写，存储端自动转换为分(1元=100分)；仅支持正数", "支付金额（分）",
+    adminFlashSalePriceHint: "运营侧按元填写，存储端自动转换为分(1元=100分)；仅支持正数",
     adminFlashSaleCurrency: "支付币种",
     adminFlashSalePaymentTitle: "订单标题",
     adminFlashSaleDirectChecklistTitle: "直付发布清单",
