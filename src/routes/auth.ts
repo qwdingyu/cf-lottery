@@ -422,8 +422,10 @@ authRoute.post("/create-tenant", requireAuth, async (c) => {
   }
 
   const tenantId = crypto.randomUUID();
+  // 自动生成店铺 slug(8 位随机,唯一,避免用户填写困难)
+  const storeSlug = `shop_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
   await withDbTransaction(db, async (tx) => {
-    await tx.insert(tenants).values({ id: tenantId, name });
+    await tx.insert(tenants).values({ id: tenantId, name, storeSlug });
     await tx.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
   });
 

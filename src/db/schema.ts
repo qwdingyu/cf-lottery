@@ -20,6 +20,8 @@ export const tenants = sqliteTable("tenants", {
   extraActivityQuota: integer("extra_activity_quota").notNull().default(0),
   extraParticipantQuota: integer("extra_participant_quota").notNull().default(0),
   extraQuotaExpiresAt: text("extra_quota_expires_at"),
+  /** 店铺公开 Slug(公开唯一,不暴露内部 ID;L2 可自定义) */
+  storeSlug: text("store_slug").unique(),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });

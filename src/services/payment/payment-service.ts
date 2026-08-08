@@ -27,13 +27,18 @@ import {
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
 import { decryptPaymentConfigValue, isEncryptedPaymentConfigValue } from "./secret-config";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../../lib/flash-sale-config";
+import {
+  isRetryablePaymentOrderStatus,
+  PAYMENT_ATTEMPT_STATUS,
+  PAYMENT_ENTRY_STATUS,
+  PAYMENT_ORDER_STATUS,
+} from "./payment-status";
 
 // systemConfig 表（用于读取运行时配置订单超时/价格上限等）
 import { systemConfig as systemConfigTable } from "../../db/schema";
 
 export type PaymentProviderName = "easypay" | "stripe" | "alipay";
 
-const RETRYABLE_PAYMENT_ORDER_STATUSES = new Set(["cancelled", "expired"]);
 const PAYMENT_ACCESS_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 function shouldCancelOrderAfterCreateFailure(error: unknown): boolean {
@@ -148,7 +153,7 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       .from(paymentOrders)
       .where(and(
         eq(paymentOrders.tenantId, tenantId),
-        eq(paymentOrders.status, "pending"),
+        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
         sql`datetime(${paymentOrders.createdAt}) < ${cutoff}`,
       ));
 
@@ -157,7 +162,7 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       .from(lotteryEntries)
       .where(and(
         eq(lotteryEntries.tenantId, tenantId),
-        eq(lotteryEntries.paymentStatus, "reserved"),
+        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.RESERVED),
         sql`datetime(${lotteryEntries.joinedAt}) < ${cutoff}`,
         sql`NOT EXISTS (
           SELECT 1 FROM payment_orders
@@ -169,21 +174,21 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
 
     await tx
       .update(paymentOrders)
-      .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
+      .set({ status: PAYMENT_ORDER_STATUS.EXPIRED, updatedAt: sql`(datetime('now'))` })
       .where(and(
         eq(paymentOrders.tenantId, tenantId),
-        eq(paymentOrders.status, "pending"),
+        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
         sql`datetime(${paymentOrders.createdAt}) < ${cutoff}`,
       ));
 
     if (overdue.length > 0) {
       await tx
         .update(paymentOrderAttempts)
-        .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
+        .set({ status: PAYMENT_ATTEMPT_STATUS.EXPIRED, updatedAt: sql`(datetime('now'))` })
         .where(and(
           eq(paymentOrderAttempts.tenantId, tenantId),
           inArray(paymentOrderAttempts.id, overdue.map((order) => order.currentAttemptId).filter(Boolean) as string[]),
-          eq(paymentOrderAttempts.status, "pending"),
+          eq(paymentOrderAttempts.status, PAYMENT_ATTEMPT_STATUS.PENDING),
         ));
     }
 
@@ -192,11 +197,11 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
     if (entryIds.length > 0) {
       const releasedPending = await tx
         .update(lotteryEntries)
-        .set({ paymentStatus: "expired" })
+        .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
         .where(and(
           eq(lotteryEntries.tenantId, tenantId),
           inArray(lotteryEntries.id, entryIds),
-          eq(lotteryEntries.paymentStatus, "pending"),
+          eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
         ))
         .returning({ drawId: lotteryEntries.drawId });
       for (const entry of releasedPending) {
@@ -207,11 +212,11 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
     if (staleReservations.length > 0) {
       const releasedReserved = await tx
         .update(lotteryEntries)
-        .set({ paymentStatus: "expired" })
+        .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
         .where(and(
           eq(lotteryEntries.tenantId, tenantId),
           inArray(lotteryEntries.id, staleReservations.map((entry) => entry.id)),
-          eq(lotteryEntries.paymentStatus, "reserved"),
+          eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.RESERVED),
         ))
         .returning({ drawId: lotteryEntries.drawId });
       for (const entry of releasedReserved) {
@@ -239,34 +244,34 @@ async function cancelPaymentOrder(
     // 如果回调已经把订单置为 paid，不能被迟到的下单异常覆盖。
     const cancelled = await tx
       .update(paymentOrders)
-      .set({ status: "cancelled", updatedAt: sql`(datetime('now'))` })
+      .set({ status: PAYMENT_ORDER_STATUS.CANCELLED, updatedAt: sql`(datetime('now'))` })
       .where(and(
         eq(paymentOrders.id, orderId),
         eq(paymentOrders.tenantId, input.tenantId),
         eq(paymentOrders.drawId, input.drawId),
         eq(paymentOrders.entryId, input.entryId),
-        eq(paymentOrders.status, "pending"),
+        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
       ))
       .returning({ id: paymentOrders.id });
     if (cancelled.length === 0) return;
 
     await tx
       .update(paymentOrderAttempts)
-      .set({ status: "failed", updatedAt: sql`(datetime('now'))` })
+      .set({ status: PAYMENT_ATTEMPT_STATUS.FAILED, updatedAt: sql`(datetime('now'))` })
       .where(and(
         eq(paymentOrderAttempts.id, attemptId),
         eq(paymentOrderAttempts.paymentOrderId, orderId),
-        eq(paymentOrderAttempts.status, "pending"),
+        eq(paymentOrderAttempts.status, PAYMENT_ATTEMPT_STATUS.PENDING),
       ));
 
     const released = await tx
       .update(lotteryEntries)
-      .set({ paymentStatus: "expired" })
+      .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
       .where(and(
         eq(lotteryEntries.id, input.entryId),
         eq(lotteryEntries.tenantId, input.tenantId),
         eq(lotteryEntries.drawId, input.drawId),
-        eq(lotteryEntries.paymentStatus, "pending"),
+        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
       ));
     if ((released.rowsAffected ?? 0) > 0) {
       await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, released.rowsAffected ?? 0);
@@ -299,7 +304,7 @@ async function armPaymentOrderForRetry(
         eq(paymentOrders.entryId, input.entryId),
       ))
       .limit(1);
-    if (!current || !RETRYABLE_PAYMENT_ORDER_STATUSES.has(current.status)) {
+    if (!current || !isRetryablePaymentOrderStatus(current.status)) {
       throw new Error("订单不可重试");
     }
 
@@ -350,12 +355,12 @@ async function armPaymentOrderForRetry(
 
     const rearmedEntry = await tx
       .update(lotteryEntries)
-      .set({ paymentStatus: "pending" })
+      .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PENDING })
       .where(and(
         eq(lotteryEntries.id, input.entryId),
         eq(lotteryEntries.tenantId, input.tenantId),
         eq(lotteryEntries.drawId, input.drawId),
-        eq(lotteryEntries.paymentStatus, "expired"),
+        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.EXPIRED),
       ))
       .returning({ id: lotteryEntries.id });
     if (rearmedEntry.length === 0) {
@@ -372,10 +377,10 @@ async function armPaymentOrderForRetry(
     if (current.currentAttemptId) {
       await tx
         .update(paymentOrderAttempts)
-        .set({ status: "superseded", updatedAt: sql`(datetime('now'))` })
+        .set({ status: PAYMENT_ATTEMPT_STATUS.SUPERSEDED, updatedAt: sql`(datetime('now'))` })
         .where(and(
           eq(paymentOrderAttempts.id, current.currentAttemptId),
-          eq(paymentOrderAttempts.status, "pending"),
+          eq(paymentOrderAttempts.status, PAYMENT_ATTEMPT_STATUS.PENDING),
         ));
     }
 
@@ -388,7 +393,7 @@ async function armPaymentOrderForRetry(
         drawId: input.drawId,
         amountCents: orderAmountCents,
         currency: orderCurrency,
-        status: "pending",
+        status: PAYMENT_ORDER_STATUS.PENDING,
         provider: input.provider,
         providerTradeNo: null,
         currentAttemptId: attemptId,
@@ -417,7 +422,7 @@ async function armPaymentOrderForRetry(
       provider: input.provider,
       amountCents: orderAmountCents,
       currency: orderCurrency,
-      status: "pending",
+      status: PAYMENT_ATTEMPT_STATUS.PENDING,
     });
     return { attemptId, accessToken, amountCents: orderAmountCents, currency: orderCurrency };
   });
@@ -446,7 +451,7 @@ export async function persistProviderTradeNo(
     .where(and(
       eq(paymentOrderAttempts.id, attemptId),
       eq(paymentOrderAttempts.paymentOrderId, orderId),
-      eq(paymentOrderAttempts.status, "pending"),
+      eq(paymentOrderAttempts.status, PAYMENT_ATTEMPT_STATUS.PENDING),
     ));
   await db
     .update(paymentOrders)
@@ -454,7 +459,7 @@ export async function persistProviderTradeNo(
     .where(and(
       eq(paymentOrders.id, orderId),
       eq(paymentOrders.currentAttemptId, attemptId),
-      eq(paymentOrders.status, "pending"),
+      eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
       isNull(paymentOrders.providerTradeNo),
     ));
 }
@@ -567,12 +572,12 @@ export async function createPaymentOrder(
   await withDbTransaction(db, async (tx) => {
     const armedEntry = await tx
       .update(lotteryEntries)
-      .set({ paymentStatus: "pending" })
+      .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PENDING })
       .where(and(
         eq(lotteryEntries.id, input.entryId),
         eq(lotteryEntries.tenantId, input.tenantId),
         eq(lotteryEntries.drawId, input.drawId),
-        eq(lotteryEntries.paymentStatus, "reserved"),
+        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.RESERVED),
       ))
       .returning({ id: lotteryEntries.id });
     // 直付秒杀必须先经过 joinDraw 的 reserved 预约；不接受普通活动的空状态 entry，
@@ -588,7 +593,7 @@ export async function createPaymentOrder(
       entryId: input.entryId,
       amountCents: input.amountCents,
       currency: input.currency,
-      status: "pending",
+      status: PAYMENT_ORDER_STATUS.PENDING,
       provider: input.provider,
       currentAttemptId: attemptId,
       accessTokenHash,
@@ -603,7 +608,7 @@ export async function createPaymentOrder(
       provider: input.provider,
       amountCents: input.amountCents,
       currency: input.currency,
-      status: "pending",
+      status: PAYMENT_ATTEMPT_STATUS.PENDING,
     });
   });
 
@@ -685,7 +690,7 @@ export async function retryPaymentOrder(
   if (!existing) {
     throw new Error("订单不存在");
   }
-  if (!RETRYABLE_PAYMENT_ORDER_STATUSES.has(existing.status)) {
+  if (!isRetryablePaymentOrderStatus(existing.status)) {
     throw new Error("订单不可重试");
   }
 

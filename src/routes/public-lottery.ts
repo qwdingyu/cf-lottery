@@ -9,8 +9,8 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins } from "../db/schema";
-import { eq, and, count, asc, ne, desc, gt, inArray } from "drizzle-orm";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins, tenants } from "../db/schema";
+import { eq, and, count, asc, ne, desc, gt, inArray, sql } from "drizzle-orm";
 import {
   getActivityOutcome,
   joinDraw,
@@ -202,6 +202,26 @@ publicLotteryRoute.get("/home-activities", async (c) => {
   });
 
   return ok(c, { activities });
+});
+
+// ── 店铺首页(docs/142):GET /api/public/shops/:storeSlug ──
+publicLotteryRoute.get("/shops/:storeSlug", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("storeSlug");
+  const [tenant] = await db.select({ id: tenants.id, name: tenants.name, brandConfig: tenants.brandConfig }).from(tenants).where(eq(tenants.storeSlug, slug)).limit(1);
+  if (!tenant) return fail(c, "店铺不存在", 404);
+  const nowIso = new Date().toISOString();
+  const rows = await db.select({
+    publicSlug: lotteryDraws.publicSlug, title: lotteryDraws.title, activityKind: lotteryDraws.activityKind, experienceType: lotteryDraws.experienceType,
+    startAt: lotteryDraws.startAt, endAt: lotteryDraws.endAt, productLink: lotteryDraws.productLink, promotionConfig: lotteryDraws.promotionConfig,
+    maxParticipants: lotteryDraws.maxParticipants, participationMode: lotteryDraws.participationMode,
+  }).from(lotteryDraws).where(and(eq(lotteryDraws.tenantId, tenant.id), eq(lotteryDraws.status, "open"), eq(lotteryDraws.visible, 1), sql`${lotteryDraws.endAt} > ${nowIso}`)).orderBy(desc(lotteryDraws.startAt)).limit(50);
+  const result = rows.map((row) => {
+    const { config: flashSale } = parseFlashSaleConfig(row.promotionConfig);
+    const product = productFromPublicConfig(row);
+    return { publicSlug: row.publicSlug, title: row.title, activityKind: row.activityKind, experienceType: row.experienceType, startAt: row.startAt, endAt: row.endAt, product, flashSale, participationMode: row.participationMode };
+  });
+  return ok(c, { store: { name: tenant.name, brand: tryParseJson(tenant.brandConfig) || {}, storeSlug: slug }, activities: result });
 });
 
 /**
