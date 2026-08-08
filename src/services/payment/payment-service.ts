@@ -204,6 +204,16 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       }
     }
 
+    for (const [drawId, count] of releaseByDraw) {
+      await tx
+        .update(lotteryDraws)
+        .set({
+          activeParticipantCount: sql`MAX(0, ${lotteryDraws.activeParticipantCount} - ${count})`,
+          updatedAt: sql`(datetime('now'))`,
+        })
+        .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+    }
+
     if (staleReservations.length > 0) {
       const releasedReserved = await tx
         .update(lotteryEntries)
