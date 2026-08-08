@@ -541,12 +541,15 @@
 }
 
 @media (max-width: 520px) {
-  .modal-overlay {
+  /* 统一底部抽屉：登录弹窗(.modal-overlay)与结果/支付弹窗(.game-result-overlay)同行为 */
+  .modal-overlay,
+  .game-result-overlay {
     align-items: flex-end;
     padding: 0;
     padding-bottom: 0;
   }
-  .modal-content {
+  .modal-content,
+  .game-result-modal {
     max-width: 100%;
     border-radius: var(--r-xl) var(--r-xl) 0 0;
     padding: 20px 16px max(20px, env(safe-area-inset-bottom, 0px));
