@@ -39,6 +39,9 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[vps-deploy]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[vps-deploy]${NC} $*"; }
 err()   { echo -e "${RED}[vps-deploy]${NC} $*" >&2; }
+shell_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
 
 VPS_HOST="${VPS_HOST:-38.47.198.72}"
 VPS_USER="${VPS_USER:-root}"
@@ -53,7 +56,7 @@ if [ -z "$VPS_SSH_KEY" ]; then
   exit 1
 fi
 
-# 展开常见的 ~/ 私钥路径，避免 scp -i 收到未展开的字符串。
+# 展开常见的 ~/ 私钥路径，避免 ssh -i 收到未展开的字符串。
 case "$VPS_SSH_KEY" in
   ~/*) VPS_SSH_KEY="$HOME/${VPS_SSH_KEY#~/}" ;;
 esac
@@ -78,10 +81,13 @@ if [ -z "$PACKAGE_FILE" ] || [ ! -f "$PACKAGE_FILE" ]; then
   exit 1
 fi
 
+REMOTE_DIR="$(shell_quote "$VPS_PATH")"
+REMOTE_PACKAGE_PATH="$(shell_quote "${VPS_PATH%/}/$PACKAGE_FILE")"
+
 info "步骤 2/2：上传 $PACKAGE_FILE 到 $VPS_USER@$VPS_HOST:$VPS_PATH/ ..."
-ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "mkdir -p '$VPS_PATH'"
+ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "mkdir -p $REMOTE_DIR"
 # 使用 cat + SSH pipe 上传（scp 在部分 VPS 配置下存在连接重置问题）
-cat "$PACKAGE_FILE" | ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "cat > $VPS_PATH/$PACKAGE_FILE"
+cat "$PACKAGE_FILE" | ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "cat > $REMOTE_PACKAGE_PATH"
 
 echo ""
 info "✅ 上传完成"

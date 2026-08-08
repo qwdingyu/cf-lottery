@@ -102,7 +102,7 @@ VPS_SSH_KEY=~/.ssh/cf-lottery-vps.pem bash local-deploy-vps.sh
 
 > ⚠️ **铁律：当前生产部署默认使用 `bash local-deploy-vps.sh`**
 > - Cloudflare Workers 部署已暂停；仅在明确回退/测试时使用 `bash local-deploy-cloudeflare.sh`
-> - VPS 上传脚本会执行 `scripts/build-for-vps.sh --package`，生成部署包并通过私钥 `scp` 到 `root@38.47.198.72:/root/`
+> - VPS 上传脚本会执行 `scripts/build-for-vps.sh --package`，生成部署包并通过私钥 `cat + ssh pipe` 上传到 `root@38.47.198.72:/root/`
 > - 数据库迁移（新增列/表）：生产环境 server.js 启动时自动执行；开发/测试可手动 `npm run db:migrate`
 > - 私钥只通过 `VPS_SSH_KEY` 环境变量传入，禁止写入仓库
 ```

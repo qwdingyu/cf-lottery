@@ -12,6 +12,7 @@ import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
 import {
   lotteryDraws,
+  lotteryEntries,
   lotteryPrizeTiers,
   lotterySpins,
   lotteryWinners,
@@ -21,7 +22,7 @@ import {
 } from "../../db/schema";
 import { performInstantSpin, SpinBusinessError } from "./spin-execution";
 import { performDraw, notifyInstantSpinWinner, sendWinnerNotifications } from "./draw-execution";
-import { joinDraw } from "./participation";
+import { joinDraw, type JoinDrawResult } from "./participation";
 
 const TENANT = "tenant-spin-t";
 
@@ -795,5 +796,68 @@ describe("performInstantSpin", () => {
     expect(spins.length).toBe(2);
     expect(spins.filter((s) => s.won === 1).length).toBe(1);
     expect(spins.filter((s) => s.won === 0).length).toBe(1);
+  });
+
+  it("两个不同身份并发抢最后一个直付秒杀名额 → 仅一人抢到，activeParticipantCount=1", async () => {
+    // 创建直付秒杀活动：stockLimit=1，open，无码池（join 阶段不涉及抽奖）
+    // 名额由 joinDraw 的活动级 CAS（activeParticipantCount < effectiveMax）抢占，
+    // 不是 createPaymentOrder 抢占——两类测试必须分开（docs/148 §五）。
+    const id = crypto.randomUUID();
+    const slug = `fs-cap-${id.slice(0, 6)}`;
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 86400_000 * 7).toISOString();
+
+    await db.insert(lotteryDraws).values({
+      id,
+      tenantId: TENANT,
+      publicSlug: slug,
+      title: "直付秒杀名额并发测试",
+      description: "",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "flash_sale",
+      drawTrigger: "manual",
+      resultMode: "instant",
+      startAt,
+      endAt,
+      // stockLimit=1：活动级 activeParticipantCount（0<1）CAS 抢占最后名额
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 9900, currency: "cny" },
+      }),
+      maxParticipants: 1,
+      activeParticipantCount: 0,
+    });
+
+    // 两个不同身份并发 joinDraw——SQLite 单写者事务串行化：
+    // 先拿到写锁的 CAS 成功（activeParticipantCount 0→1），
+    // 后到的重查 1<1 失败 → soldOut。
+    const results = await Promise.allSettled([
+      joinDraw(db, slug, "capfight-a@test.com"),
+      joinDraw(db, slug, "capfight-b@test.com"),
+    ]);
+
+    // 两个都必须正常返回（soldOut 不是异常，是未抢到结果）
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const joinedCount = results.filter(
+      (r) => (r as PromiseFulfilledResult<JoinDrawResult>).value.joined,
+    ).length;
+    const soldOutCount = results.filter(
+      (r) => (r as PromiseFulfilledResult<JoinDrawResult>).value.soldOut,
+    ).length;
+
+    // 恰好一人 joined=true，另一人 soldOut=true
+    expect(joinedCount).toBe(1);
+    expect(soldOutCount).toBe(1);
+
+    // 活动级计数器：只有一个名额被占用
+    const [drawAfter] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, id));
+    expect(drawAfter!.activeParticipantCount).toBe(1);
+
+    // entries：恰好一条 reserved 预约，另一身份无 entry
+    const entries = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, id));
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.paymentStatus).toBe("reserved");
   });
 });

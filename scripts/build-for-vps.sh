@@ -52,9 +52,10 @@ for arg in "$@"; do
   esac
 done
 
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[build]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[build]${NC} $*"; }
+err()   { echo -e "${RED}[build]${NC} $*" >&2; }
 
 # ── 步骤 0：清理上次产物 ──
 rm -rf dist && mkdir -p dist

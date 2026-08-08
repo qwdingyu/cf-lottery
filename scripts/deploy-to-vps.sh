@@ -25,10 +25,27 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[deploy]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[deploy]${NC} $*"; }
 err()   { echo -e "${RED}[deploy]${NC} $*" >&2; }
+shell_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
 
 VPS_HOST="${VPS_HOST:-38.47.198.72}"
 VPS_PATH="${VPS_PATH:-/root/cf-lottery}"
 VPS_USER="${VPS_USER:-root}"
+VPS_SSH_PORT="${VPS_SSH_PORT:-22}"
+VPS_SSH_KEY="${VPS_SSH_KEY:-}"
+SSH_ARGS=(-p "$VPS_SSH_PORT" -o ServerAliveInterval=5)
+
+if [ -n "$VPS_SSH_KEY" ]; then
+  case "$VPS_SSH_KEY" in
+    ~/*) VPS_SSH_KEY="$HOME/${VPS_SSH_KEY#~/}" ;;
+  esac
+  if [ ! -f "$VPS_SSH_KEY" ]; then
+    err "私钥文件不存在: $VPS_SSH_KEY"
+    exit 1
+  fi
+  SSH_ARGS+=(-i "$VPS_SSH_KEY")
+fi
 
 # ── 步骤 1：确认构建产物存在 ──
 if [ ! -f dist/server.js ]; then
@@ -43,6 +60,7 @@ fi
 #   public/           前端静态资源
 #   package.json      依赖声明（VPS 上 npm ci --omit=dev）
 #   package-lock.json 锁定版本
+#   migrations/       启动自动迁移所需 SQL 文件
 info "步骤 1/3：打包部署产物..."
 PACKAGE_FILE="cf-lottery-deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
 tar -czf "$PACKAGE_FILE" \
@@ -50,18 +68,21 @@ tar -czf "$PACKAGE_FILE" \
   public/ \
   package.json \
   package-lock.json \
+  migrations/ \
   --exclude='.DS_Store'
 info "打包完成 → $PACKAGE_FILE ($(du -h "$PACKAGE_FILE" | cut -f1))"
 
 # ── 步骤 3：上传 + 部署 ──
+REMOTE_DIR="$(shell_quote "$VPS_PATH")"
+REMOTE_PACKAGE_PATH="$(shell_quote "${VPS_PATH%/}/$PACKAGE_FILE")"
 info "步骤 2/3：上传到 $VPS_USER@$VPS_HOST:$VPS_PATH ..."
-ssh "$VPS_USER@$VPS_HOST" "mkdir -p $VPS_PATH"
-cat "$PACKAGE_FILE" | ssh "$VPS_USER@$VPS_HOST" "cat > $VPS_PATH/$PACKAGE_FILE"
+ssh "${SSH_ARGS[@]}" "$VPS_USER@$VPS_HOST" "mkdir -p $REMOTE_DIR"
+cat "$PACKAGE_FILE" | ssh "${SSH_ARGS[@]}" "$VPS_USER@$VPS_HOST" "cat > $REMOTE_PACKAGE_PATH"
 
 info "步骤 3/3：VPS 上安装依赖 + 重启服务..."
-ssh "$VPS_USER@$VPS_HOST" << DEPLOY_SCRIPT
-set -e
-cd "$VPS_PATH"
+ssh "${SSH_ARGS[@]}" "$VPS_USER@$VPS_HOST" << DEPLOY_SCRIPT
+set -euo pipefail
+cd $REMOTE_DIR
 
 # 备份旧版本
 if [ -f dist/server.js ]; then
@@ -69,11 +90,11 @@ if [ -f dist/server.js ]; then
 fi
 
 # 解压新版本
-tar -xzf "$PACKAGE_FILE"
-rm "$PACKAGE_FILE"
+tar -xzf $(shell_quote "$PACKAGE_FILE")
+rm $(shell_quote "$PACKAGE_FILE")
 
 # 安装运行时依赖（仅 production，不装 devDependencies）
-npm ci --omit=dev 2>&1 | tail -3
+npm ci --omit=dev
 
 # 重启 systemd 服务（启动时自动执行数据库迁移）
 systemctl restart cf-lottery
