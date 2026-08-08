@@ -1437,6 +1437,9 @@ describe("最大参与人数和参与时间", () => {
         },
       }),
     });
+    await db.update(lotteryDraws)
+      .set({ status: "open" })
+      .where(eq(lotteryDraws.id, id));
     const first = await joinDraw(db, publicSlug, "cancel-payment@test.com");
     expect(first.joined).toBe(true);
     const attemptId = crypto.randomUUID();

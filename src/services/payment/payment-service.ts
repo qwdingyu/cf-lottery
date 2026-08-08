@@ -151,6 +151,7 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         eq(paymentOrders.status, "pending"),
         sql`datetime(${paymentOrders.createdAt}) < ${cutoff}`,
       ));
+
     const staleReservations = await tx
       .select({ id: lotteryEntries.id, drawId: lotteryEntries.drawId })
       .from(lotteryEntries)
@@ -174,6 +175,7 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         eq(paymentOrders.status, "pending"),
         sql`datetime(${paymentOrders.createdAt}) < ${cutoff}`,
       ));
+
     if (overdue.length > 0) {
       await tx
         .update(paymentOrderAttempts)
@@ -286,6 +288,8 @@ async function armPaymentOrderForRetry(
         status: paymentOrders.status,
         entryId: paymentOrders.entryId,
         currentAttemptId: paymentOrders.currentAttemptId,
+        amountCents: paymentOrders.amountCents,
+        currency: paymentOrders.currency,
       })
       .from(paymentOrders)
       .where(and(
@@ -419,12 +423,12 @@ async function armPaymentOrderForRetry(
   });
 }
 
-function currentAmountCents(current: Record<string, unknown>): number {
-  return Number((current as any).amountCents ?? 0);
+function currentAmountCents(current: { amountCents: number }): number {
+  return Number(current.amountCents);
 }
 
-function currentCurrency(current: Record<string, unknown>): string {
-  return String((current as any).currency || "cny").trim().toLowerCase();
+function currentCurrency(current: { currency: string }): string {
+  return String(current.currency || "cny").trim().toLowerCase();
 }
 
 /** Provider 创建支付后若返回平台侧单号，立即落库到当前 attempt。 */

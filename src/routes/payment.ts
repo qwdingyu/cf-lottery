@@ -46,6 +46,35 @@ export function buildPaymentReturnUrl(requestUrl: string): string {
   return url.toString();
 }
 
+function safeHttpOrigin(value: unknown): string | undefined {
+  const raw = String(value || "").trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    url.pathname = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 支付网关回调和用户回跳地址必须来自服务端配置的 APP_ORIGIN。
+ * 只有未配置时才回退到当前请求 origin，避免 Host 头被伪造后把网关通知
+ * 指向攻击者域名。活动页仍保留 slug 路径，支付完成后能回到原活动。
+ */
+export function buildPaymentRequestUrl(requestUrl: string, appOrigin: string | undefined, slug: string): string {
+  const configuredOrigin = String(appOrigin || "").trim();
+  const origin = configuredOrigin
+    ? safeHttpOrigin(configuredOrigin)
+    : new URL(requestUrl).origin;
+  if (!origin) throw new Error("APP_ORIGIN 必须是 http/https 地址");
+  return `${origin}/api/public/draws/${encodeURIComponent(slug)}/payment-orders`;
+}
+
 function safePaymentRedirectUrl(value: unknown): string | undefined {
   const raw = String(value || "").trim();
   if (!raw) return undefined;
@@ -140,13 +169,17 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     });
   }
 
-  // 活动关闭后不允许凭旧 entry 新建或重试订单；已有 pending 订单仍允许恢复支付，
-  // 避免用户已经付款途中因运营暂停活动而失去合法支付入口。
+  // 活动关闭后不允许凭旧 entry 新建或重试订单；暂停期间仍允许恢复已经
+  // 发起的 pending 支付，避免用户已经付款途中因运营暂停活动而失去合法支付入口。
   if (!existing && draw.status !== "open") {
     return fail(c, "活动当前不可创建支付订单", 409);
   }
-  if (existing?.status === "pending" && draw.status === "cancelled") {
-    return fail(c, "活动已取消，不能继续支付", 409);
+  if (
+    existing?.status === "pending" &&
+    draw.status !== "open" &&
+    draw.status !== "paused"
+  ) {
+    return fail(c, "活动已关闭，不能继续支付", 409);
   }
   if ((existing?.status === "cancelled" || existing?.status === "expired") && draw.status !== "open") {
     return fail(c, "活动已关闭，不能重新创建支付订单", 409);
@@ -161,7 +194,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   // 活动发布后当前路由禁止编辑配置；这里仍以订单快照兜底，防止历史数据或后台修复
   // 造成金额漂移。
   const currency = existing?.currency || flashSale.currency || "cny";
-  const amountCents = existing?.amountCents || flashSale.priceCents;
+  const amountCents = existing?.amountCents ?? flashSale.priceCents;
   const resumingPending = existing?.status === "pending";
   const config = await loadTenantConfig(
     db,
@@ -177,8 +210,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   if (!provider) return fail(c, "支付服务暂不可用", 500);
 
   const retryable = existing?.status === "cancelled" || existing?.status === "expired";
-  const notifyUrl = buildPaymentCallbackUrl(c.req.url, draw.tenantId, config.provider);
-  const returnUrl = buildPaymentReturnUrl(c.req.url);
+  const paymentRequestUrl = buildPaymentRequestUrl(c.req.url, getEnv(c, "APP_ORIGIN"), slug);
+  const notifyUrl = buildPaymentCallbackUrl(paymentRequestUrl, draw.tenantId, config.provider);
+  const returnUrl = buildPaymentReturnUrl(paymentRequestUrl);
 
   if (resumingPending) {
     // 已有 pending 订单不新增逻辑订单；只用当前 attempt 重新生成支付入口。

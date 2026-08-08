@@ -151,8 +151,9 @@ describe("retryPaymentOrder", () => {
         tenantId: TENANT_ID,
         drawId: DRAW_ID,
         entryId: ENTRY_ID,
-        amountCents: 9900,
-        currency: "cny",
+        // 重试请求故意传入不同金额/币种，必须仍以原订单快照为准。
+        amountCents: 1,
+        currency: "usd",
         provider: "alipay",
         notifyUrl: "https://example.com/payments/callback",
         returnUrl: "https://example.com/result",

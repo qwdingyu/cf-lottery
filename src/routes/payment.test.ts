@@ -14,7 +14,13 @@ import {
   tenants,
 } from "../db/schema";
 import { clearTestData, getTestDb } from "../test-setup";
-import { buildPaymentCallbackUrl, buildPaymentReturnUrl, paymentCallbackRoute, paymentPublicRoute } from "./payment";
+import {
+  buildPaymentCallbackUrl,
+  buildPaymentRequestUrl,
+  buildPaymentReturnUrl,
+  paymentCallbackRoute,
+  paymentPublicRoute,
+} from "./payment";
 import { issuePaymentOrderAccessToken } from "../services/payment/payment-service";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -121,6 +127,14 @@ describe("payment route", () => {
       .toBe("https://lottery.example.com/api/payments/tenant-payment-route/alipay/callback");
     expect(buildPaymentReturnUrl(requestUrl))
       .toBe("https://lottery.example.com/api/public/draws/payment-route");
+  });
+
+  it("支付回调和回跳地址优先使用服务端 APP_ORIGIN，不信任伪造 Host", () => {
+    const requestUrl = "https://attacker.example/api/public/draws/payment-route/payment-orders";
+    expect(buildPaymentRequestUrl(requestUrl, "https://lottery.example.com/", "payment-route"))
+      .toBe("https://lottery.example.com/api/public/draws/payment-route/payment-orders");
+    expect(() => buildPaymentRequestUrl(requestUrl, "javascript:alert(1)", "payment-route"))
+      .toThrow("APP_ORIGIN");
   });
 
   it("Stripe webhook 使用原始 JSON body 提取 order_no，而不是按表单解析", async () => {
@@ -246,6 +260,77 @@ describe("payment route", () => {
     const body = await res.json() as { error?: string };
     expect(body.error).toContain("参与身份");
     expect(await db.select().from(paymentOrders)).toHaveLength(0);
+  });
+
+  it("活动已开奖时不能恢复 pending 支付，避免结束后继续收款", async () => {
+    await db.insert(tenants).values({ id: TENANT_ID, name: "payment-route" });
+    await db.insert(lotteryDraws).values({
+      id: DRAW_ID,
+      tenantId: TENANT_ID,
+      publicSlug: "payment-route",
+      title: "已结束支付测试",
+      status: "drawn",
+      activityKind: "claim",
+      participationMode: "open",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() - 1_000).toISOString(),
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 1,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    });
+    await db.insert(lotteryEntries).values({
+      id: ENTRY_ID,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "email",
+      identityValue: EMAIL,
+      displayName: "buyer",
+      paymentStatus: "pending",
+    });
+    await db.insert(paymentOrders).values({
+      id: ORDER_ID,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      entryId: ENTRY_ID,
+      amountCents: 9900,
+      currency: "cny",
+      status: "pending",
+      provider: "easypay",
+      currentAttemptId: ORDER_ID,
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: ORDER_ID,
+      paymentOrderId: ORDER_ID,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      attemptNo: 1,
+      provider: "easypay",
+      amountCents: 9900,
+      currency: "cny",
+      status: "pending",
+    });
+
+    const app = createTestApp();
+    const res = await app.request("/api/public/draws/payment-route/payment-orders", {
+      method: "POST",
+      body: JSON.stringify({ entryId: ENTRY_ID, email: EMAIL }),
+      headers: { "Content-Type": "application/json" },
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ message: "活动已关闭，不能继续支付" });
   });
 
   it("区块链支付暂不进入当前目录，USDT 直付发卡订单被拒绝创建", async () => {
