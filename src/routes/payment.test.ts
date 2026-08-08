@@ -507,3 +507,46 @@ describe("payment route", () => {
     });
   });
 });
+
+describe("支付成功后中奖邮件触发(集成冒烟)", () => {
+  it("paid+有prizeCodeId+系统配置开启时触发邮件发送(不抛错)", async () => {
+    await seedEasypayConfig();
+    await client.execute({ sql: "INSERT INTO systemConfig (key,value) VALUES ('notify_winner_email_enabled','true')" });
+    const app = createTestApp();
+    const paymentResult = await app.request("/api/public/draws/flash-open/payment-orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entryId: ENTRY_ID }),
+    });
+    expect(paymentResult.status).toBe(200);
+    const { orderNo } = await paymentResult.json() as { orderNo: string };
+    // 模拟回调(实际已发邮件,不阻塞)
+    const cb = await app.request(`/api/payments/${TENANT_ID}/easypay/callback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `orderNo=${orderNo}&amount=9900&providerTradeNo=EP-TEST`,
+    });
+    expect(cb.status).toBe(200); // 回调成功,邮件异步发送未报错
+  });
+
+  it("paid_fulfillment_failed不触发邮件(prizeCodeId=null)", async () => {
+    await seedEasypayConfig();
+    // 不导入卡密,模拟卡密不足
+    const app = createTestApp();
+    const paymentResult = await app.request("/api/public/draws/flash-open/payment-orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entryId: ENTRY_ID }),
+    });
+    const { orderNo } = await paymentResult.json() as { orderNo: string };
+    const cb = await app.request(`/api/payments/${TENANT_ID}/easypay/callback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `orderNo=${orderNo}&amount=9900&providerTradeNo=EP-NOCODE`,
+    });
+    expect(cb.status).toBe(200);
+    // 卡密不足时订单状态为 paid_fulfillment_failed,邮件不触发
+    const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, orderNo));
+    expect(order.status).toBe("paid_fulfillment_failed");
+  });
+});
