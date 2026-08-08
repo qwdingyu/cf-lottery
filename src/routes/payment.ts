@@ -563,8 +563,9 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
   // paid_fulfillment_failed 由运营后台 retryPaymentFulfillment 处理，不重复发邮件。
   if (result.order?.prizeCodeId && result.order.status === PAYMENT_ORDER_STATUS.PAID) {
     void sendWinnerNotifications(db, order.tenantId, order.drawId, {
-      resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
-      emailFrom: getEnv(c, "EMAIL_FROM") || "",
+      cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
+      cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
+      cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
     }, {
       winnerIds: [order.entryId],
     }).catch((err) => {
