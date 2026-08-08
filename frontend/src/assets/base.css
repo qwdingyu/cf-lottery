@@ -62,8 +62,6 @@
   --brand: #f59e0b;
   --brand-bright: #fbbf24;
   --brand-flash: #e11d48;
-  --brand-text: #fff;
-  --brand-gradient: linear-gradient(135deg, #f59e0b, #fbbf24);
   /* 琥珀金底上的文字色：深 slate 保证对比度 ≥ 4.5:1 */
   --brand-text: #0f172a;
   --brand-gradient: linear-gradient(135deg, #f59e0b, #fbbf24);
