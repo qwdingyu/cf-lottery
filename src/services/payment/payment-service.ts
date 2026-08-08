@@ -572,12 +572,13 @@ export async function createPaymentOrder(
         eq(lotteryEntries.id, input.entryId),
         eq(lotteryEntries.tenantId, input.tenantId),
         eq(lotteryEntries.drawId, input.drawId),
-        eq(lotteryEntries.paymentStatus, ""),
+        eq(lotteryEntries.paymentStatus, "reserved"),
       ))
       .returning({ id: lotteryEntries.id });
-    // entry 非空状态(已有 pending/paid/expired 订单)时不创建新订单,由 call-site 处理 retry
+    // 直付秒杀必须先经过 joinDraw 的 reserved 预约；不接受普通活动的空状态 entry，
+    // 避免绕过活动级名额 CAS 直接创建支付订单。
     if (armedEntry.length === 0) {
-      throw new Error("该参与已有支付订单,请刷新或重试");
+      throw new Error("参与预约已失效，请重新参与");
     }
 
     await tx.insert(paymentOrders).values({
@@ -627,6 +628,43 @@ export async function createPaymentOrder(
   await persistProviderTradeNo(db, id, attemptId, payResult);
   const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, id)).limit(1);
   return { order: order!, payResult, accessToken };
+}
+
+/**
+ * 恢复同一 pending 订单的当前支付尝试。
+ *
+ * 创建支付是数据库写入后的外部 I/O，不能放进事务；因此这里必须复用与首次下单/
+ * 重试相同的错误分类：确定性失败取消并释放名额，不确定失败保留 pending 等待回调或再次恢复。
+ * 路由层不应自行调用 Provider，否则很容易漏掉这条状态机分支。
+ */
+export async function resumePendingPaymentOrder(
+  db: DbType,
+  input: CreateOrderInput,
+  provider: PaymentProvider,
+  orderId: string,
+  attemptId: string,
+): Promise<{ order: typeof paymentOrders.$inferSelect; payResult: CreatePaymentResult }> {
+  let payResult: CreatePaymentResult;
+  try {
+    payResult = await provider.createPayment({
+      orderNo: attemptId,
+      amountCents: input.amountCents,
+      currency: input.currency,
+      notifyUrl: input.notifyUrl,
+      returnUrl: input.returnUrl,
+      description: input.description,
+    });
+  } catch (err) {
+    if (shouldCancelOrderAfterCreateFailure(err)) {
+      await cancelPaymentOrder(db, input, orderId, attemptId);
+    }
+    throw err;
+  }
+
+  await persistProviderTradeNo(db, orderId, attemptId, payResult);
+  const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, orderId)).limit(1);
+  if (!order) throw new Error("订单不存在");
+  return { order, payResult };
 }
 
 /** 重试已取消 / 已过期订单：复用同一逻辑订单，但为网关创建全新的 attempt/orderNo。 */

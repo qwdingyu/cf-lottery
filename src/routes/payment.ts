@@ -8,7 +8,7 @@
  * 回调处理模式：GET query / POST form → provider.verifyCallback → 发卡。
  */
 import { Hono } from "hono";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, fail, ok, isValidEmail } from "../lib/http";
@@ -24,6 +24,7 @@ import {
   issuePaymentOrderAccessToken,
   findPaymentOrderByAccessToken,
   persistProviderTradeNo,
+  resumePendingPaymentOrder,
 } from "../services/payment/payment-service";
 import type { AppEnv } from "../bindings";
 
@@ -187,6 +188,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   if (existing?.status === "pending" && entry.paymentStatus !== "pending") {
     return fail(c, "订单与参与记录状态不一致，请联系客服处理", 409);
   }
+  if (!existing && entry.paymentStatus !== "reserved") {
+    return fail(c, "参与预约已失效，请重新参与", 409);
+  }
 
   // 加载租户支付配置
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
@@ -229,18 +233,27 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     const accessToken = await issuePaymentOrderAccessToken(db, draw.tenantId, existing.id, existing.entryId);
     let payResult: CreatePaymentResult;
     try {
-      payResult = await provider.createPayment({
-        orderNo: attempt.id,
-        amountCents: existing.amountCents,
-        currency: existing.currency,
-        notifyUrl,
-        returnUrl,
-        description: flashSale.title || draw.title || "秒杀",
-      });
+      const resumed = await resumePendingPaymentOrder(
+        db,
+        {
+          tenantId: draw.tenantId,
+          drawId: draw.id,
+          entryId: existing.entryId,
+          amountCents: existing.amountCents,
+          currency: existing.currency,
+          provider: existing.provider as "easypay" | "stripe" | "alipay",
+          notifyUrl,
+          returnUrl,
+          description: flashSale.title || draw.title || "秒杀",
+        },
+        provider,
+        existing.id,
+        attempt.id,
+      );
+      payResult = resumed.payResult;
     } catch {
       return fail(c, "支付入口生成失败，请稍后重试", 502);
     }
-    await persistProviderTradeNo(db, existing.id, attempt.id, payResult);
     return ok(c, {
       orderNo: existing.id,
       status: existing.status,
@@ -294,54 +307,6 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     redirectUrl: safePaymentRedirectUrl(payResult.redirectUrl),
     qrCode: payResult.qrCode,
   });
-});
-
-// ═══════════════════════════════════════════════════════════════
-// 公开：按 email 查该活动的支付订单列表(用户找回卡密入口,docs/140 P1)
-// ═══════════════════════════════════════════════════════════════
-paymentPublicRoute.get("/draws/:slug/payment-orders", async (c) => {
-  const db = getDb(c);
-  const slug = c.req.param("slug");
-  const email = c.req.query("email") || "";
-  if (!email) return ok(c, { orders: [] });
-
-  const [draw] = await db
-    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId })
-    .from(lotteryDraws)
-    .where(eq(lotteryDraws.publicSlug, slug))
-    .limit(1);
-  if (!draw) return fail(c, "活动不存在", 404);
-
-  const entries = await db
-    .select({ id: lotteryEntries.id })
-    .from(lotteryEntries)
-    .where(and(
-      eq(lotteryEntries.drawId, draw.id),
-      eq(lotteryEntries.identityType, "email"),
-      eq(lotteryEntries.identityValue, email),
-    ));
-  if (entries.length === 0) return ok(c, { orders: [] });
-
-  const rows = await db
-    .select()
-    .from(paymentOrders)
-    .where(and(
-      eq(paymentOrders.tenantId, draw.tenantId),
-      eq(paymentOrders.drawId, draw.id),
-      inArray(paymentOrders.entryId, entries.map(e => e.id)),
-    ))
-    .orderBy(desc(paymentOrders.createdAt))
-    .limit(10);
-
-  const result = rows.map((r) => ({
-    orderNo: r.id,
-    status: r.status,
-    amountCents: r.amountCents,
-    currency: r.currency,
-    paidAt: r.paidAt,
-    hasPrizeCode: !!r.prizeCodeId,
-  }));
-  return ok(c, { orders: result });
 });
 
 // ═══════════════════════════════════════════════════════════════

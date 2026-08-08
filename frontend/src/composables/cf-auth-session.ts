@@ -45,6 +45,19 @@ export type SessionStore = {
   removeItem(key: string): void
 }
 
+/**
+ * 统一保存公开参与邮箱。
+ *
+ * OTP 的「已参与」分支可能在真正 verify-join 之前结束；如果该分支没有把
+ * 刚验证的邮箱写入会话，刷新页面后就无法恢复直付订单。
+ */
+export function persistLotterySessionEmail(store: SessionStore, email: string): string {
+  const normalized = String(email || '').trim().toLowerCase()
+  if (normalized) store.setItem(LOTTERY_SESSION_EMAIL_KEY, normalized)
+  else store.removeItem(LOTTERY_SESSION_EMAIL_KEY)
+  return normalized
+}
+
 /** 保存参与意图（startCfAuth 跳转前调用） */
 export function saveCfAuthPendingJoin(store: SessionStore, pending: CfAuthPendingJoin): void {
   const drawId = String(pending.drawId || '').trim()
@@ -109,10 +122,7 @@ export function applyCfAuthSessionToLottery(
     'cf-auth'
   store.setItem(LOTTERY_REGISTERED_TOKEN_KEY, token)
   store.setItem(LOTTERY_REGISTERED_USERNAME_KEY, displayName)
-  if (email) {
-    store.setItem(LOTTERY_SESSION_EMAIL_KEY, email)
-  }
-  return { token, email, displayName }
+  return { token, email: persistLotterySessionEmail(store, email), displayName }
 }
 
 /** 清除 PKCE / state / return（不碰 pendingJoin，便于失败重试策略由调用方决定） */

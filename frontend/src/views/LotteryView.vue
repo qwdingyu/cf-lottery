@@ -971,6 +971,7 @@ import {
   LOTTERY_REGISTERED_TOKEN_KEY,
   LOTTERY_REGISTERED_USERNAME_KEY,
   LOTTERY_SESSION_EMAIL_KEY,
+  persistLotterySessionEmail,
   buildCfAuthVerifyJoinBody,
   missingJoinCredentialForMode,
   shouldResumeCfAuthJoin,
@@ -1199,9 +1200,7 @@ const loginModalHint = computed(() => {
 })
 
 function persistSessionEmail(email: string) {
-  sessionEmail.value = email
-  if (email) sessionStorage.setItem(LOTTERY_SESSION_EMAIL_KEY, email)
-  else sessionStorage.removeItem(LOTTERY_SESSION_EMAIL_KEY)
+  sessionEmail.value = persistLotterySessionEmail(sessionStorage, email)
 }
 
 /**
@@ -3617,6 +3616,7 @@ async function handleSendCode() {
       if (isSpin) showToast(t('lottery.spinCodeSent'), 'success')
     } else if (!isSpin && isAlreadyJoinedResponse(data, res.status)) {
       // join 路径已参与：标已参与；若是 instant 可引导再 spin
+      persistSessionEmail(email)
       handleAlreadyJoined(pendingJoinDrawId.value!, { entryId: entryIdFromAlreadyJoined(data) })
     } else {
       loginError.value = data.message || t('lottery.sendFailed')
@@ -3697,6 +3697,9 @@ async function handleVerifyCode() {
       loginCode.value = ''
       codeSent.value = false
     } else if (isAlreadyJoinedResponse(data, res.status)) {
+      // verify-join 可能在验证码成功后返回 409；此时也必须保留刚验证的邮箱，
+      // 否则直付秒杀无法在刷新后恢复支付订单。
+      persistSessionEmail(email)
       handleAlreadyJoined(pendingJoinDrawId.value!, { entryId: entryIdFromAlreadyJoined(data) })
     } else if (data.soldOut || data.code === 'flash_sale.sold_out') {
       handleFlashSaleSoldOut(pendingJoinDrawId.value!, data.message)
