@@ -142,6 +142,11 @@ const router = createRouter({
           component: () => import('@/views/admin/AdminPaymentConfig.vue'),
         },
         {
+          path: 'brand',
+          name: 'AdminBrand',
+          component: () => import('@/views/admin/BrandSettings.vue'),
+        },
+        {
           path: 'payment-orders',
           name: 'AdminPaymentOrders',
           component: () => import('@/views/admin/AdminPaymentOrdersView.vue'),

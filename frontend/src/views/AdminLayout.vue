@@ -179,13 +179,14 @@ const menuItems = computed(() => [
   { name: 'AdminDashboard', to: '/admin', label: t('adminLayout.menuDashboard'), icon: '📊' },
   { name: 'AdminLottery', to: '/admin/draws', label: t('adminLayout.menuLottery'), icon: '🎰' },
   { name: 'AdminPrizes', to: '/admin/prizes', label: t('adminLayout.menuPrizes'), icon: '🎁' },
-  { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '📝' },
-  { name: 'AdminMembers', to: '/admin/members', label: t('adminLayout.menuMembers'), icon: '👥' },
-  { name: 'AdminBlacklist', to: '/admin/blacklist', label: t('adminLayout.menuBlacklist'), icon: '🚫' },
-  { name: 'AdminIntegrations', to: '/admin/integrations', label: t('adminLayout.menuIntegrations'), icon: '🔗' },
+  { name: 'AdminBrand', to: '/admin/brand', label: t('adminLayout.menuBrand'), icon: '🏪' },
   { name: 'AdminPaymentConfig', to: '/admin/payment-config', label: t('adminLayout.menuPaymentConfig'), icon: '💳' },
   { name: 'AdminPaymentOrders', to: '/admin/payment-orders', label: t('adminLayout.menuPaymentOrders'), icon: '🧾' },
   { name: 'AdminQuotaRedeem', to: '/admin/quota-redeem', label: t('adminLayout.menuQuotaRedeem'), icon: '🎟' },
+  { name: 'AdminIntegrations', to: '/admin/integrations', label: t('adminLayout.menuIntegrations'), icon: '🔗' },
+  { name: 'AdminMembers', to: '/admin/members', label: t('adminLayout.menuMembers'), icon: '👥' },
+  { name: 'AdminBlacklist', to: '/admin/blacklist', label: t('adminLayout.menuBlacklist'), icon: '🚫' },
+  { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '📝' },
 ])
 
 const currentName = computed(() => {
