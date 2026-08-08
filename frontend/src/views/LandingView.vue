@@ -277,8 +277,9 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
 }
+/* 触摸目标 ≥44px（对齐 docs/074 与 lottery 页规范，移动端拇指可达） */
 .nav-link {
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 12px;
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 8px;
@@ -384,9 +385,10 @@ onMounted(() => {
   color: rgba(255,255,255,.82);
   font-weight: 800;
 }
+/* 筛选 tab / 刷新按钮同为触摸目标，≥44px */
 .panel-refresh,
 .activity-filters button {
-  min-height: 36px;
+  min-height: 44px;
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 8px;
   background: rgba(255,255,255,.04);
