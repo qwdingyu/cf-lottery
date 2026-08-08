@@ -263,6 +263,10 @@ export const lotteryPrizeTiers = sqliteTable("lottery_prize_tiers", {
   prizeId: text("prize_id").notNull(),
   tierName: text("tier_name").notNull().default("中奖"),
   winnerCount: integer("winner_count").notNull().default(1),
+  /** 已发放数量（CAS 乐观锁计数器，用于 instant spin 奖档上限）。使用
+   * UPDATE ... SET awarded_count = awarded_count + 1 WHERE awarded_count < winner_count
+   * 替代 SELECT COUNT(lottery_winners) 读改写，消除 PostgreSQL/MySQL 多写者超发风险。 */
+  awardedCount: integer("awarded_count").notNull().default(0),
   sortOrder: integer("sort_order").notNull().default(100),
   /** instant 加权抽样权重；0=不参与即时抽（delayed performDraw 忽略本列） */
   weight: integer("weight").notNull().default(0),

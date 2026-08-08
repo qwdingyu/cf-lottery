@@ -796,6 +796,10 @@ describe("performInstantSpin", () => {
     expect(spins.length).toBe(2);
     expect(spins.filter((s) => s.won === 1).length).toBe(1);
     expect(spins.filter((s) => s.won === 0).length).toBe(1);
+
+    // awarded_count CAS 计数器与 winner 数一致（docs/148 §四）
+    const [tier] = await db.select().from(lotteryPrizeTiers).where(eq(lotteryPrizeTiers.id, tierId));
+    expect(tier?.awardedCount).toBe(1);
   });
 
   it("两个不同身份并发抢最后一个直付秒杀名额 → 仅一人抢到，activeParticipantCount=1", async () => {

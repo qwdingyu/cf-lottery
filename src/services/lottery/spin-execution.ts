@@ -7,7 +7,7 @@
  */
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
-import { and, count, eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
@@ -175,6 +175,8 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
           tierName: lotteryPrizeTiers.tierName,
           prizeId: lotteryPrizeTiers.prizeId,
           winnerCount: lotteryPrizeTiers.winnerCount,
+          /** 已发放计数器（CAS 乐观锁），替代 COUNT(lottery_winners) 读改写 */
+          awardedCount: lotteryPrizeTiers.awardedCount,
           weight: lotteryPrizeTiers.weight,
           sortOrder: lotteryPrizeTiers.sortOrder,
           prizeName: prizes.name,
@@ -196,6 +198,8 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         prizeName: string | null;
         prizeType: string | null;
         prizeIndex: number;
+        /** 奖档名额上限，用于 award 阶段的 CAS 占用 */
+        cap: number;
       }> = [];
 
       for (let i = 0; i < tiers.length; i++) {
@@ -204,15 +208,11 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         if (w <= 0) continue;
         const cap = Math.max(0, Number(t.winnerCount || 0));
         if (cap < 1) continue;
-        const [{ total }] = await tx
-          .select({ total: count() })
-          .from(lotteryWinners)
-          .where(and(
-            eq(lotteryWinners.tenantId, draw.tenantId),
-            eq(lotteryWinners.drawId, draw.id),
-            eq(lotteryWinners.tierId, t.id),
-          ));
-        if (Number(total || 0) >= cap) continue;
+        // 用 awarded_count 计数器替代 COUNT(lottery_winners) 读改写（docs/148 §四）。
+        // 这里只做过滤供加权抽样；名额真实上限由 award 阶段的 CAS UPDATE 保证，
+        // 因此并发下即使读到旧值，也不会超发。
+        const awarded = Math.max(0, Number(t.awardedCount || 0));
+        if (awarded >= cap) continue;
         eligible.push({
           id: t.id,
           weight: w,
@@ -221,6 +221,7 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
           prizeName: t.prizeName || null,
           prizeType: t.prizeType || null,
           prizeIndex: i,
+          cap,
         });
       }
 
@@ -270,15 +271,51 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
             prizeCodePlain = code.secret
               ? `${code.code}:${code.secret}`
               : code.code;
-            await tx.update(prizes)
-              .set({ usedCount: sql`used_count + 1`, updatedAt: nowIso })
-              .where(eq(prizes.id, picked.prizeId));
-            award = true;
+            // 码已取到，再 CAS 占用奖档名额（docs/148 §四）。
+            // 先取码后 CAS 避免「占用名额但码池耗尽」的幻象 award。
+            // 若 CAS 失败（并发下该档恰好在那一刻已满），释放已取码并视为未中。
+            const claimTier = await tx
+              .update(lotteryPrizeTiers)
+              .set({ awardedCount: sql`${lotteryPrizeTiers.awardedCount} + 1` })
+              .where(and(
+                eq(lotteryPrizeTiers.id, picked.id),
+                eq(lotteryPrizeTiers.tenantId, draw.tenantId),
+                eq(lotteryPrizeTiers.drawId, draw.id),
+                sql`${lotteryPrizeTiers.awardedCount} < ${picked.cap}`,
+              ));
+            if ((claimTier.rowsAffected ?? 0) > 0) {
+              await tx.update(prizes)
+                .set({ usedCount: sql`used_count + 1`, updatedAt: nowIso })
+                .where(eq(prizes.id, picked.prizeId));
+              award = true;
+            } else {
+              // 奖档名额已被并发占满：释放已取到的码，视为未中（仍扣次）
+              await tx
+                .update(prizeCodes)
+                .set({ status: "available", winnerId: null, issuedAt: null })
+                .where(and(
+                  eq(prizeCodes.id, prizeCodeId),
+                  eq(prizeCodes.tenantId, draw.tenantId),
+                ));
+              prizeCodeId = "";
+              prizeCodePlain = null;
+            }
           }
           // 无码或竞态失败 → 未中，仍已扣次
         } else if (picked.prizeId) {
-          // 人工履约等非码奖品：名额已在 eligible 校验
-          award = true;
+          // 非码奖品（人工履约等）：CAS 占用奖档名额（docs/148 §四）
+          const claimTier = await tx
+            .update(lotteryPrizeTiers)
+            .set({ awardedCount: sql`${lotteryPrizeTiers.awardedCount} + 1` })
+            .where(and(
+              eq(lotteryPrizeTiers.id, picked.id),
+              eq(lotteryPrizeTiers.tenantId, draw.tenantId),
+              eq(lotteryPrizeTiers.drawId, draw.id),
+              sql`${lotteryPrizeTiers.awardedCount} < ${picked.cap}`,
+            ));
+          if ((claimTier.rowsAffected ?? 0) > 0) {
+            award = true;
+          }
         }
         // 无 prizeId 的权重档不发奖（避免空奖「假中」）
 
