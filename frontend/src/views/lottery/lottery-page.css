@@ -59,7 +59,26 @@
 
 /* ── 活动卡片 ── */
 .lottery-main { max-width:720px; margin:0 auto; padding:20px; }
-.lottery-card { background:#1a1a2e; border-radius:12px; margin-bottom:16px; overflow:hidden; border:1px solid rgba(255,255,255,0.06); }
+/* 卡片：基础 + 交互合并定义，避免多处覆盖（原 L62 基础 / L792 增强两处拆分已合并） */
+.lottery-card {
+  background:#1a1a2e;
+  border-radius:12px;
+  margin-bottom:16px;
+  overflow:hidden;
+  border:1px solid rgba(245,158,11,0.1);
+  transition: border-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+}
+.lottery-card:hover {
+  border-color: rgba(245,158,11,0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lottery-card { transition: none; }
+  .lottery-card:hover { transform: none; }
+}
+.lottery-card.open { border-color: rgba(34,197,94,0.15); }
+.lottery-card.drawn { border-color: rgba(255,255,255,0.05); }
 .lottery-card-head { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; cursor:pointer; }
 .lottery-card-head:hover { background:rgba(255,255,255,0.03); }
 .lottery-card-title { margin:0 0 4px; font-size:17px; font-weight:600; }
@@ -789,10 +808,6 @@
 .lottery-view { max-width: 860px; margin: 0 auto; }
 .lottery-header { background: linear-gradient(180deg, rgba(245,158,11,0.08) 0%, transparent 100%); padding: 20px 24px 16px; }
 .lottery-title { background: var(--brand-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.lottery-card { border: 1px solid rgba(245,158,11,0.1); transition: all 0.3s ease; }
-.lottery-card:hover { border-color: rgba(245,158,11,0.3); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
-.lottery-card.open { border-color: rgba(34,197,94,0.15); }
-.lottery-card.drawn { border-color: rgba(255,255,255,0.05); }
 .lottery-game-area { background: radial-gradient(ellipse at center, rgba(245,158,11,0.06) 0%, transparent 70%); min-height: 320px; align-items: center; }
 .lottery-join-btn.primary { background: var(--brand-gradient); color: var(--brand-text); font-weight: 700; padding: 14px 40px; font-size: 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(245,158,11,0.3); transition: all 0.3s ease; }
 .lottery-join-btn.primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(245,158,11,0.5); }

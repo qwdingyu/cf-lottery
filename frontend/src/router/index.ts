@@ -204,6 +204,12 @@ const router = createRouter({
       path: '/admin/:pathMatch(.*)*',
       redirect: '/admin',
     },
+    // C 端 404 兜底：必须放在 /admin/* 通配之后、其余全部未命中时生效
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'NotFound',
+      component: () => import('@/views/NotFoundView.vue'),
+    },
   ],
 })
 

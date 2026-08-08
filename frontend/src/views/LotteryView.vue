@@ -38,6 +38,8 @@
       <!-- 055a：无 slug 不是「广场空列表」，而是请用活动链接；深链加载失败则诚实说明 -->
       <p>{{ isDeepLinked ? $t('lottery.noActivity') : $t('lottery.needActivityLink') }}</p>
       <p v-if="!isDeepLinked" class="lottery-empty-hint">{{ $t('lottery.needActivityLinkHint') }}</p>
+      <!-- 空 slug 兜底：给一个可行动的出口，而不是死胡同（P2 404/空态优化） -->
+      <RouterLink v-if="!isDeepLinked" to="/" class="btn btn-primary" style="margin-top:12px;display:inline-block;text-decoration:none">{{ $t('landing.marketBrowseCta') }}</RouterLink>
     </div>
 
     <!-- 活动卡片 -->
