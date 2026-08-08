@@ -186,10 +186,11 @@ export async function joinDraw(
             ? 0
             : (draw.maxParticipants ?? 50000);
 
-      // 直付秒杀超时后不删除 entry：同一身份再次参与时，原子重新占用原 entry，
-      // 让前端无论是否保留旧 entryId 都能重新走支付，不制造第二条参与记录。
+      // 直付秒杀是一身份一预约：同一身份已经有有效预约/已支付时，必须返回
+      // 原 entryId 让公开端恢复支付或查卡，不能因为整场已满而误报“已抢光”。
+      // 只有 expired 软释放状态才允许重新通过活动级 CAS 抢回名额。
       if (isDirectPaymentFlashSale) {
-        const [expiredEntry] = await tx
+        const [existingPaymentEntry] = await tx
           .select({ id: lotteryEntries.id, paymentStatus: lotteryEntries.paymentStatus })
           .from(lotteryEntries)
           .where(and(
@@ -197,17 +198,24 @@ export async function joinDraw(
             eq(lotteryEntries.drawId, draw.id),
             eq(lotteryEntries.identityType, identityType),
             eq(lotteryEntries.identityValue, checkinDateSuffix ? uniqueValue : normalizedValue),
-            eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.EXPIRED),
           ))
           .limit(1);
-        if (expiredEntry) {
+        if (existingPaymentEntry && existingPaymentEntry.paymentStatus !== PAYMENT_ENTRY_STATUS.EXPIRED) {
+          return {
+            joined: false,
+            message: "您已参与此活动",
+            alreadyJoined: true as const,
+            entryId: existingPaymentEntry.id,
+          };
+        }
+        if (existingPaymentEntry?.paymentStatus === PAYMENT_ENTRY_STATUS.EXPIRED) {
           const [existingOrder] = await tx
             .select({ status: paymentOrders.status })
             .from(paymentOrders)
             .where(and(
               eq(paymentOrders.tenantId, draw.tenantId),
               eq(paymentOrders.drawId, draw.id),
-              eq(paymentOrders.entryId, expiredEntry.id),
+              eq(paymentOrders.entryId, existingPaymentEntry.id),
             ))
             .limit(1);
           if (existingOrder && !isRetryablePaymentOrderStatus(existingOrder.status)) {
@@ -215,7 +223,7 @@ export async function joinDraw(
               joined: false,
               message: "该参与已有支付记录，请联系客服处理",
               alreadyJoined: true as const,
-              entryId: expiredEntry.id,
+              entryId: existingPaymentEntry.id,
             };
           }
           if (effectiveMax <= 0) {
@@ -251,12 +259,12 @@ export async function joinDraw(
             .update(lotteryEntries)
             .set({ paymentStatus: PAYMENT_ENTRY_STATUS.RESERVED, joinedAt: nowIso })
             .where(and(
-              eq(lotteryEntries.id, expiredEntry.id),
+              eq(lotteryEntries.id, existingPaymentEntry.id),
               eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.EXPIRED),
             ));
           return {
             joined: true,
-            entryId: expiredEntry.id,
+            entryId: existingPaymentEntry.id,
             activityKind: draw.activityKind,
             reopened: true as const,
           };

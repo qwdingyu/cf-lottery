@@ -209,8 +209,10 @@ describe("retryPaymentOrder", () => {
 
     const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, ORDER_ID));
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, DRAW_ID));
     expect(order?.status).toBe("cancelled");
     expect(entry?.paymentStatus).toBe("expired");
+    expect(draw?.activeParticipantCount).toBe(0);
   });
 
   it("expired order retry cannot reacquire a released slot after capacity is occupied", async () => {
@@ -271,6 +273,32 @@ describe("expireOverdueOrders", () => {
     const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, DRAW_ID));
     expect(order?.status).toBe("expired");
     expect(attempt?.status).toBe("expired");
+    expect(entry?.paymentStatus).toBe("expired");
+    expect(draw?.activeParticipantCount).toBe(0);
+  });
+
+  it("释放没有生成订单的陈旧 reserved 预约，避免孤儿预约长期占用秒杀名额", async () => {
+    await seedBaseRows("expired");
+    const staleEntryId = `${ENTRY_ID}-stale-reserved`;
+    const expiredAt = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    await db.insert(lotteryEntries).values({
+      id: staleEntryId,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "email",
+      identityValue: "stale-reserved@example.com",
+      displayName: "stale",
+      paymentStatus: "reserved",
+      joinedAt: expiredAt,
+    });
+    await db.update(lotteryDraws)
+      .set({ activeParticipantCount: 1 })
+      .where(eq(lotteryDraws.id, DRAW_ID));
+
+    await expect(expireOverdueOrders(db, TENANT_ID)).resolves.toBe(1);
+
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, staleEntryId));
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, DRAW_ID));
     expect(entry?.paymentStatus).toBe("expired");
     expect(draw?.activeParticipantCount).toBe(0);
   });

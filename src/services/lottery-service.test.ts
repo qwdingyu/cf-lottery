@@ -1275,7 +1275,7 @@ describe("最大参与人数和参与时间", () => {
     expect((full as { code?: string }).code).toBe("flash_sale.sold_out");
   });
 
-  it("docs/130：直付秒杀重复参与不应泄漏活动计数器占位", async () => {
+  it("docs/130：直付秒杀重复参与返回已有预约，不误报售罄也不泄漏计数器", async () => {
     await db.insert(tenantConfigs).values({
       tenantId: TENANT,
       enabled: 1,
@@ -1322,8 +1322,9 @@ describe("最大参与人数和参与时间", () => {
     expect(first.joined).toBe(true);
     const duplicate = await joinDraw(db, publicSlug, "dup-slot@test.com");
     expect(duplicate.joined).toBe(false);
-    expect((duplicate as { soldOut?: boolean }).soldOut).toBe(true);
-    expect((duplicate as { code?: string }).code).toBe("flash_sale.sold_out");
+    expect(duplicate.alreadyJoined).toBe(true);
+    expect(duplicate.entryId).toBe(first.entryId);
+    expect((duplicate as { soldOut?: boolean }).soldOut).toBeUndefined();
 
     const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, id));
     const entries = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, id));
