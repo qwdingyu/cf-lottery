@@ -587,7 +587,7 @@ route.post("/draws/:id/winners/:winnerId/resend", async (c) => {
 
   await db
     .update(lotteryWinners)
-    .set({ notificationStatus: "pending", notificationError: "" })
+    .set({ notificationStatus: "pending", notificationError: "", notificationRetryCount: 0 })
     .where(eq(lotteryWinners.id, winner.id));
 
   // 同步发送：无独立「pending 邮件」cron，只重置状态等于空操作
