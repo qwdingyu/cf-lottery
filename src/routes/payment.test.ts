@@ -7,6 +7,7 @@ import {
   lotteryDraws,
   lotteryEntries,
   paymentOrders,
+  paymentOrderAttempts,
   prizeCodes,
   prizes,
   tenantConfigs,
@@ -14,6 +15,7 @@ import {
 } from "../db/schema";
 import { clearTestData, getTestDb } from "../test-setup";
 import { buildPaymentCallbackUrl, buildPaymentReturnUrl, paymentCallbackRoute, paymentPublicRoute } from "./payment";
+import { issuePaymentOrderAccessToken } from "../services/payment/payment-service";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
@@ -92,8 +94,22 @@ async function seedOrder() {
     currency: "cny",
     status: "paid",
     provider: "alipay",
+    currentAttemptId: ORDER_ID,
     providerTradeNo: "EP-123",
     prizeCodeId: PRIZE_CODE_ID,
+    paidAt: new Date().toISOString(),
+  });
+  await db.insert(paymentOrderAttempts).values({
+    id: ORDER_ID,
+    paymentOrderId: ORDER_ID,
+    tenantId: TENANT_ID,
+    drawId: DRAW_ID,
+    attemptNo: 1,
+    provider: "alipay",
+    amountCents: 9900,
+    currency: "cny",
+    status: "paid",
+    providerTradeNo: "EP-123",
     paidAt: new Date().toISOString(),
   });
 }
@@ -295,7 +311,7 @@ describe("payment route", () => {
     expect(orders).toHaveLength(0);
   });
 
-  it("查询订单时必须提供 email，避免卡密直接暴露", async () => {
+  it("查询订单必须使用短期访问令牌，避免卡密直接暴露", async () => {
     await seedOrder();
     const app = createTestApp();
 
@@ -304,16 +320,22 @@ describe("payment route", () => {
       ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
       JWT_SECRET: "test",
     });
-    expect(missing.status).toBe(400);
+    expect(missing.status).toBe(404);
 
-    const wrong = await app.request(`/api/public/draws/payment-route/payment-orders/${ORDER_ID}?email=other@example.com`, {}, {
+    const wrong = await app.request(`/api/public/draws/payment-route/payment-orders/${ORDER_ID}`, {
+      headers: { Authorization: "Bearer invalid-token" },
+    }, {
       TURSO_URL: "",
       ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
       JWT_SECRET: "test",
     });
-    expect(wrong.status).toBe(403);
+    expect(wrong.status).toBe(404);
 
-    const okRes = await app.request(`/api/public/draws/payment-route/payment-orders/${ORDER_ID}?email=${encodeURIComponent(EMAIL)}`, {}, {
+    const accessToken = await issuePaymentOrderAccessToken(db, TENANT_ID, ORDER_ID, ENTRY_ID);
+
+    const okRes = await app.request(`/api/public/draws/payment-route/payment-orders/${ORDER_ID}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }, {
       TURSO_URL: "",
       ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
       JWT_SECRET: "test",

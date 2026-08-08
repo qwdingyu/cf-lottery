@@ -2080,9 +2080,16 @@ async function refreshPaymentOrderStatus(opts?: { silent?: boolean }) {
   const slug = publicDrawPathKey(state.drawId)
   if (!slug) return
   try {
+    const requestInit = buildPublicDrawRequestInit()
     const res = await fetch(
-      `${API_BASE}/public/draws/${encodeURIComponent(slug)}/payment-orders/${encodeURIComponent(state.orderNo)}?email=${encodeURIComponent(state.email)}`,
-      buildPublicDrawRequestInit(),
+      `${API_BASE}/public/draws/${encodeURIComponent(slug)}/payment-orders/${encodeURIComponent(state.orderNo)}`,
+      {
+        ...requestInit,
+        headers: {
+          ...(requestInit.headers || {}),
+          Authorization: `Bearer ${state.accessToken}`,
+        },
+      },
     )
     const data = await res.json().catch(() => null) as {
       ok?: boolean
@@ -2178,6 +2185,7 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       amountCents?: number
       currency?: string
       provider?: string
+      accessToken?: string
       redirectUrl?: string
       qrCode?: string
     }
@@ -2194,6 +2202,7 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       amountCents: Number(data.amountCents || flashSale.priceCents || 0),
       currency: String(data.currency || flashSale.currency || 'cny'),
       provider: String(data.provider || ''),
+      accessToken: String(data.accessToken || ''),
       redirectUrl: data.redirectUrl || undefined,
       qrCode: data.qrCode || undefined,
       prizeCode: null,
@@ -2218,6 +2227,7 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       amountCents: Number(flashSale.priceCents || 0),
       currency: String(flashSale.currency || 'cny'),
       provider: '',
+      accessToken: '',
       prizeCode: null,
     }
     clearPaymentSession()

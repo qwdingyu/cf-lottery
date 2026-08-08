@@ -71,6 +71,7 @@ describe('payment-ux', () => {
       amountCents: 9900,
       currency: 'cny',
       provider: 'easypay',
+      accessToken: 'token-1',
       redirectUrl: 'https://pay.example.com',
       qrCode: 'qr-content',
       prizeCode: { code: 'CARD-1', secret: 'SECRET' },
@@ -98,6 +99,7 @@ describe('payment-ux', () => {
       amountCents: 9900,
       currency: 'cny',
       provider: 'easypay',
+      accessToken: 'token-1',
       savedAt: 1000,
     }), 2000)).toMatchObject({ orderNo: 'order-1' })
     expect(parsePaymentSessionSnapshot(JSON.stringify({

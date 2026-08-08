@@ -8,6 +8,7 @@
           <option value="paid">已支付</option>
           <option value="paid_fulfillment_failed">发卡失败</option>
           <option value="paid_late_needs_refund">待退款/人工处理</option>
+          <option value="needs_refund">旧尝试待退款</option>
           <option value="expired">已过期</option>
           <option value="cancelled">已取消</option>
           <option value="refunded">已退款</option>
@@ -63,6 +64,10 @@
               <div class="cell-main">{{ order.id }}</div>
               <div class="cell-sub">{{ providerLabel(order.provider) }}</div>
               <div v-if="order.providerTradeNo" class="cell-sub">{{ order.providerTradeNo }}</div>
+              <div v-if="order.pendingRefundAttemptCount" class="cell-sub refund-hint">
+                旧尝试待退款 {{ order.pendingRefundAttemptCount }} 次
+                <span v-if="order.pendingRefundProviderTradeNo">/{{ order.pendingRefundProviderTradeNo }}</span>
+              </div>
             </td>
             <td>
               <div class="cell-main">{{ order.drawTitle }}</div>
@@ -73,7 +78,7 @@
               <div class="cell-sub">{{ order.identityType }}</div>
             </td>
             <td>{{ formatAmount(order.amountCents, order.currency) }}</td>
-            <td><span class="tag" :class="statusClass(order.status)">{{ statusLabel(order.status) }}</span></td>
+            <td><span class="tag" :class="statusClass(order.status, order.pendingRefundAttemptCount)">{{ statusLabel(order.status, order.pendingRefundAttemptCount) }}</span></td>
             <td>
               <span class="tag" :class="order.hasPrizeCode ? 'tag-success' : 'tag-muted'">
                 {{ order.hasPrizeCode ? '已发卡' : '未发卡' }}
@@ -192,7 +197,8 @@ async function retryFulfillment(order: AdminPaymentOrder) {
   }
 }
 
-function statusLabel(status: string) {
+function statusLabel(status: string, pendingRefundAttemptCount = 0) {
+  if (pendingRefundAttemptCount > 0) return '旧尝试待退款'
   const map: Record<string, string> = {
     pending: '待支付',
     paid: '已支付',
@@ -205,7 +211,8 @@ function statusLabel(status: string) {
   return map[status] || status
 }
 
-function statusClass(status: string) {
+function statusClass(status: string, pendingRefundAttemptCount = 0) {
+  if (pendingRefundAttemptCount > 0) return 'tag-danger'
   if (status === 'paid') return 'tag-success'
   if (status === 'paid_fulfillment_failed') return 'tag-danger'
   if (status === 'paid_late_needs_refund') return 'tag-danger'
@@ -235,4 +242,5 @@ onMounted(loadData)
 .pagination-text { color: var(--muted); font-size: 13px; }
 .tag-warning { background: rgba(234, 179, 8, .16); color: #ca8a04; }
 .tag-danger { background: rgba(239, 68, 68, .16); color: #dc2626; }
+.refund-hint { color: #dc2626; }
 </style>

@@ -7,6 +7,7 @@ import {
   lotteryEntries,
   lotteryPrizeTiers,
   paymentOrders,
+  paymentOrderAttempts,
   prizeCodes,
   prizes,
   tenantConfigs,
@@ -14,7 +15,15 @@ import {
 } from "../../db/schema";
 import type { PaymentProvider } from "@usethink/cf-core/features/payment";
 import { EasyPayProviderError } from "@usethink/cf-core/features/payment";
-import { createTenantProvider, createPaymentOrder, handlePaymentCallback, loadTenantConfig, retryPaymentOrder } from "./payment-service";
+import {
+  createTenantProvider,
+  createPaymentOrder,
+  expireOverdueOrders,
+  handlePaymentCallback,
+  loadTenantConfig,
+  retryPaymentOrder,
+  retryPaymentFulfillment,
+} from "./payment-service";
 import { encryptPaymentConfigValue } from "./secret-config";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -24,6 +33,7 @@ const TENANT_ID = "tenant-payment-service";
 const DRAW_ID = "draw-payment-service";
 const ENTRY_ID = "entry-payment-service";
 const ORDER_ID = "order-payment-service";
+const ATTEMPT_ID = "attempt-payment-service-1";
 const PRIZE_ID = "prize-payment-service";
 const PRIZE_CODE_ID = "prize-code-payment-service";
 const ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -60,6 +70,7 @@ async function seedBaseRows(status: string) {
     title: "支付测试活动",
     status: "open",
     maxParticipants: 1,
+    activeParticipantCount: status === "pending" ? 1 : 0,
     experienceType: "flash_sale",
     promotionConfig: JSON.stringify({
       flashSale: {
@@ -91,6 +102,18 @@ async function seedBaseRows(status: string) {
     currency: "cny",
     status,
     provider: "alipay",
+    currentAttemptId: ATTEMPT_ID,
+  });
+  await db.insert(paymentOrderAttempts).values({
+    id: ATTEMPT_ID,
+    paymentOrderId: ORDER_ID,
+    tenantId: TENANT_ID,
+    drawId: DRAW_ID,
+    attemptNo: 1,
+    provider: "alipay",
+    amountCents: 9900,
+    currency: "cny",
+    status: status === "pending" ? "pending" : status === "expired" ? "expired" : "failed",
   });
 }
 
@@ -140,7 +163,7 @@ describe("retryPaymentOrder", () => {
 
     expect(providerMock.createPayment).toHaveBeenCalledTimes(1);
     expect(providerMock.createPayment).toHaveBeenCalledWith(expect.objectContaining({
-      orderNo: ORDER_ID,
+      orderNo: expect.not.stringMatching(new RegExp(`^${ORDER_ID}$`)),
       amountCents: 9900,
       currency: "cny",
     }));
@@ -152,8 +175,11 @@ describe("retryPaymentOrder", () => {
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
     expect(order?.status).toBe("pending");
     expect(order?.providerTradeNo).toBe("checkout-123");
+    expect(order?.currentAttemptId).not.toBe(ATTEMPT_ID);
     expect(order?.prizeCodeId).toBeNull();
     expect(entry?.paymentStatus).toBe("pending");
+    const [oldAttempt] = await db.select().from(paymentOrderAttempts).where(eq(paymentOrderAttempts.id, ATTEMPT_ID));
+    expect(["failed", "superseded"]).toContain(oldAttempt?.status);
   });
 
   it("rolls back to cancelled when retry fails", async () => {
@@ -196,6 +222,9 @@ describe("retryPaymentOrder", () => {
       displayName: "occupied",
       paymentStatus: "pending",
     });
+    await db.update(lotteryDraws)
+      .set({ activeParticipantCount: 1 })
+      .where(eq(lotteryDraws.id, DRAW_ID));
 
     await expect(retryPaymentOrder(
       db,
@@ -216,6 +245,32 @@ describe("retryPaymentOrder", () => {
     expect(order?.status).toBe("expired");
     expect(entry?.paymentStatus).toBe("expired");
     expect(providerMock.createPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("expireOverdueOrders", () => {
+  it("正确处理 ISO 时间格式的超时订单并释放秒杀名额", async () => {
+    await seedBaseRows("pending");
+    const expiredAt = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    await db
+      .update(paymentOrders)
+      .set({ createdAt: expiredAt })
+      .where(eq(paymentOrders.id, ORDER_ID));
+    await db
+      .update(lotteryEntries)
+      .set({ joinedAt: expiredAt })
+      .where(eq(lotteryEntries.id, ENTRY_ID));
+
+    await expect(expireOverdueOrders(db, TENANT_ID)).resolves.toBe(1);
+
+    const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, ORDER_ID));
+    const [attempt] = await db.select().from(paymentOrderAttempts).where(eq(paymentOrderAttempts.id, ATTEMPT_ID));
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, DRAW_ID));
+    expect(order?.status).toBe("expired");
+    expect(attempt?.status).toBe("expired");
+    expect(entry?.paymentStatus).toBe("expired");
+    expect(draw?.activeParticipantCount).toBe(0);
   });
 });
 
@@ -270,7 +325,7 @@ describe("handlePaymentCallback", () => {
     const callbackProvider: PaymentProvider = {
       ...providerMock,
       verifyCallback: vi.fn(async () => ({
-        orderNo: ORDER_ID,
+        orderNo: ATTEMPT_ID,
         providerTradeNo: "EP-OK",
         amountCents: 9900,
         currency: "CNY",
@@ -286,6 +341,50 @@ describe("handlePaymentCallback", () => {
     const [code] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, PRIZE_CODE_ID));
     expect(code?.status).toBe("issued");
     expect(code?.winnerId).toBe(ENTRY_ID);
+  });
+
+  it("支付成功但码池为空时 entry 仍保持 paid，补发后恢复完整履约", async () => {
+    await seedBaseRows("pending");
+    await db.insert(prizes).values({
+      id: PRIZE_ID,
+      tenantId: TENANT_ID,
+      name: "卡密奖品",
+      prizeType: "code",
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: "tier-payment-service-empty",
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      prizeId: PRIZE_ID,
+    });
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: ATTEMPT_ID,
+        providerTradeNo: "EP-NO-CODE",
+        amountCents: 9900,
+        currency: "cny",
+        paidAt: "2026-08-08T00:00:00.000Z",
+      })),
+    };
+
+    const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
+    expect(result.order?.status).toBe("paid_fulfillment_failed");
+    const [entryAfterPayment] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
+    expect(entryAfterPayment?.paymentStatus).toBe("paid");
+
+    await db.insert(prizeCodes).values({
+      id: PRIZE_CODE_ID,
+      tenantId: TENANT_ID,
+      prizeId: PRIZE_ID,
+      code: "CODE-RECOVERED",
+      secret: "SECRET-RECOVERED",
+      status: "available",
+    });
+    const fulfillment = await retryPaymentFulfillment(db, TENANT_ID, ORDER_ID);
+    expect(fulfillment.ok).toBe(true);
+    expect(fulfillment.order?.status).toBe("paid");
+    expect(fulfillment.order?.prizeCodeId).toBe(PRIZE_CODE_ID);
   });
 
   it("fails closed when provider callback verification throws", async () => {
@@ -305,7 +404,7 @@ describe("handlePaymentCallback", () => {
     const callbackProvider: PaymentProvider = {
       ...providerMock,
       verifyCallback: vi.fn(async () => ({
-        orderNo: ORDER_ID,
+        orderNo: ATTEMPT_ID,
         providerTradeNo: "EP-LATE",
         amountCents: 9900,
         currency: "CNY",
@@ -319,6 +418,40 @@ describe("handlePaymentCallback", () => {
     expect(result.order?.status).toBe("paid_late_needs_refund");
     const [code] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, PRIZE_CODE_ID));
     expect(code?.status).toBe("available");
+  });
+
+  it("旧支付尝试迟到付款只进入待退款，不会污染新的 attempt", async () => {
+    await seedBaseRows("expired");
+    await retryPaymentOrder(
+      db,
+      {
+        tenantId: TENANT_ID,
+        drawId: DRAW_ID,
+        entryId: ENTRY_ID,
+        amountCents: 9900,
+        currency: "cny",
+        provider: "alipay",
+        notifyUrl: "https://example.com/callback",
+      },
+      providerMock,
+    );
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: ATTEMPT_ID,
+        providerTradeNo: "EP-OLD-LATE",
+        amountCents: 9900,
+        currency: "cny",
+        paidAt: "2026-08-08T00:00:00.000Z",
+      })),
+    };
+
+    const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("pending");
+    const [oldAttempt] = await db.select().from(paymentOrderAttempts).where(eq(paymentOrderAttempts.id, ATTEMPT_ID));
+    expect(oldAttempt?.status).toBe("paid_late_needs_refund");
+    expect(result.order?.currentAttemptId).not.toBe(ATTEMPT_ID);
   });
 });
 

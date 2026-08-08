@@ -8,7 +8,7 @@
  * 回调处理模式：GET query / POST form → provider.verifyCallback → 发卡。
  */
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, fail, ok, isValidEmail } from "../lib/http";
@@ -245,7 +245,55 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// 公开：查询订单状态 docs/131 §10
+// 公开：按 email 查该活动的支付订单列表(用户找回卡密入口,docs/140 P1)
+// ═══════════════════════════════════════════════════════════════
+paymentPublicRoute.get("/draws/:slug/payment-orders", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+  const email = c.req.query("email") || "";
+  if (!email) return ok(c, { orders: [] });
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  const entries = await db
+    .select({ id: lotteryEntries.id })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.drawId, draw.id),
+      eq(lotteryEntries.identityType, "email"),
+      eq(lotteryEntries.identityValue, email),
+    ));
+  if (entries.length === 0) return ok(c, { orders: [] });
+
+  const rows = await db
+    .select()
+    .from(paymentOrders)
+    .where(and(
+      eq(paymentOrders.tenantId, draw.tenantId),
+      eq(paymentOrders.drawId, draw.id),
+      inArray(paymentOrders.entryId, entries.map(e => e.id)),
+    ))
+    .orderBy(desc(paymentOrders.createdAt))
+    .limit(10);
+
+  const result = rows.map((r) => ({
+    orderNo: r.id,
+    status: r.status,
+    amountCents: r.amountCents,
+    currency: r.currency,
+    paidAt: r.paidAt,
+    hasPrizeCode: !!r.prizeCodeId,
+  }));
+  return ok(c, { orders: result });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 公开：查询单个订单状态 docs/131 §10(get by orderId)
 // ═══════════════════════════════════════════════════════════════
 paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
   const db = getDb(c);
@@ -355,7 +403,10 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
       eq(paymentOrders.tenantId, pathTenantId),
     ))
     .limit(1);
-  if (!order || order.provider !== providerName) return c.text("order not found", 404);
+  // 回调渠道属于具体 attempt，而不是逻辑订单当前选中的 provider。
+  // 重试允许切换主渠道；若仍检查 payment_orders.provider，旧渠道迟到回调会在进入
+  // 状态机前被 404，无法落库为 paid_late_needs_refund。
+  if (!order || attempt.provider !== providerName) return c.text("order not found", 404);
   // 路径 tenantId 必须与订单租户一致（防跨租户串单，docs/131 §11）
   if (order.tenantId !== pathTenantId) return c.text("tenant mismatch", 403);
 

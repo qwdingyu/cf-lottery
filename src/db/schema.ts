@@ -672,6 +672,7 @@ export const paymentOrders = sqliteTable("payment_orders", {
 }, (t) => ({
   tenantOrderIdx: index("idx_payment_orders_tenant").on(t.tenantId, t.createdAt),
   statusIdx: index("idx_payment_orders_status").on(t.status, t.createdAt),
+  tenantStatusCreatedIdx: index("idx_payment_orders_tenant_status_created").on(t.tenantId, t.status, t.createdAt),
   currentAttemptIdx: index("idx_payment_orders_current_attempt").on(t.currentAttemptId),
 }));
 

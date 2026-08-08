@@ -34,7 +34,7 @@ export interface PaymentSessionSnapshot extends PaymentSessionState {
   savedAt: number
 }
 
-const PAYMENT_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000
+const PAYMENT_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const PAYMENT_SESSION_CLOCK_SKEW_MS = 60 * 1000
 
 export function isDirectPaymentDraw(draw: Pick<LotteryDraw, 'flashSale'> | null | undefined): boolean {

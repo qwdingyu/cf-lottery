@@ -414,7 +414,7 @@ describe("admin payment management", () => {
       headers: await authHeader(),
     }, {
       ...TEST_ENV,
-      CREDENTIALS_ENCRYPTION_KEY: "test-key",
+      CREDENTIALS_ENCRYPTION_KEY: ENCRYPTION_KEY,
     });
 
     expect(res.status).toBe(200);

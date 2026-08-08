@@ -199,6 +199,7 @@ export async function clearTestData(client: Client) {
     "email_access_codes",
     "prize_codes",
     "prizes",
+    "payment_order_attempts",
     "payment_orders",
     "tenant_configs",
     "lottery_draws",

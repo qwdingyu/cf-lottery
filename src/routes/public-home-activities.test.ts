@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Hono } from "hono";
+import { eq } from "drizzle-orm";
 import type { AppEnv } from "../bindings";
 import type { DbType } from "../db/client";
 import { lotteryDraws, lotteryEntries, tenants } from "../db/schema";
@@ -64,10 +65,11 @@ async function seedDraw(input: {
     startAt: iso(-10),
     endAt: iso(input.endOffset ?? 60),
     maxParticipants: 10,
-    winnerCount: 0,
-    showParticipantCount: input.showParticipantCount ?? 1,
-    productLink: JSON.stringify(input.productLink || {}),
-    promotionConfig: JSON.stringify(input.promotionConfig || {}),
+      winnerCount: 0,
+      showParticipantCount: input.showParticipantCount ?? 1,
+      activeParticipantCount: 0,
+      productLink: JSON.stringify(input.productLink || {}),
+      promotionConfig: JSON.stringify(input.promotionConfig || {}),
   });
 }
 
@@ -90,6 +92,9 @@ describe("GET /public/home-activities", () => {
       paymentStatus: "pending",
       joinedAt: iso(-5),
     });
+    await db.update(lotteryDraws)
+      .set({ activeParticipantCount: 1 })
+      .where(eq(lotteryDraws.id, "flash-open"));
     await db.insert(lotteryEntries).values({
       id: "entry-expired",
       tenantId: TENANT,
@@ -144,6 +149,9 @@ describe("GET /public/home-activities", () => {
       paymentStatus: "paid",
       joinedAt: iso(-5),
     });
+    await db.update(lotteryDraws)
+      .set({ activeParticipantCount: 1 })
+      .where(eq(lotteryDraws.id, "private-count"));
 
     const res = await app().request("/public/home-activities", {}, TEST_ENV);
     expect(res.status).toBe(200);

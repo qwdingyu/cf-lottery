@@ -31,6 +31,20 @@ import {
   resolveEffectiveStockLimit,
 } from "../../lib/flash-sale-config";
 
+export interface JoinDrawResult {
+  joined: boolean;
+  message?: string;
+  alreadyJoined?: boolean;
+  entryId?: string;
+  soldOut?: boolean;
+  code?: string;
+  activityKind?: string;
+  reopened?: boolean;
+  attribution?: { attributed: boolean; sharerEntryId?: string; refCode?: string };
+  submissionId?: string;
+  outcome?: Record<string, unknown>;
+}
+
 /* ── 候选池 ───────────────────────────────────────────────── */
 
 /**
@@ -65,7 +79,7 @@ export async function joinDraw(
     /** verify-join 优化：事务内标记验证码已使用，失败自动回滚，省一次 DB 往返 */
     codeIdToConsume?: string;
   },
-) {
+): Promise<JoinDrawResult> {
   // 通过 public_slug 查找活动（不暴露活动 ID）
   const [draw] = await db
     .select()
@@ -281,12 +295,6 @@ export async function joinDraw(
       // 仅 flashSale 启用或 experience_type=flash_sale 走秒杀截单语义；
       // 普通 claim/reveal 仍按 maxParticipants（可无限软顶），避免误杀非秒杀领取。
       // 秒杀：禁止候补超卖；其它活动仍按 maxParticipants（无上限时 50000 软顶）
-      const effectiveMax =
-        flashCap != null && flashCap > 0
-          ? flashCap
-          : isFlashSaleJoin && (draw.maxParticipants == null || draw.maxParticipants <= 0)
-            ? 0 // 秒杀未配名额：条件永远不满足，拒绝超发（发布预检应已阻断）
-            : (draw.maxParticipants ?? 50000);
       const acceptsWaitlist =
         draw.activityKind === "signup_chain" &&
         draw.allocationPolicy === "waitlist" &&

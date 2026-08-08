@@ -99,7 +99,7 @@ export async function findPaymentOrderByAccessToken(
       eq(paymentOrders.tenantId, tenantId),
       eq(paymentOrders.drawId, drawId),
       eq(paymentOrders.accessTokenHash, await sha256Hex(normalized)),
-      sql`${paymentOrders.accessTokenExpiresAt} > datetime('now')`,
+      sql`datetime(${paymentOrders.accessTokenExpiresAt}) > datetime('now')`,
     ))
     .limit(1);
   return order ?? null;
@@ -149,7 +149,7 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       .where(and(
         eq(paymentOrders.tenantId, tenantId),
         eq(paymentOrders.status, "pending"),
-        sql`${paymentOrders.createdAt} < ${cutoff}`,
+        sql`datetime(${paymentOrders.createdAt}) < ${cutoff}`,
       ));
     const staleReservations = await tx
       .select({ id: lotteryEntries.id, drawId: lotteryEntries.drawId })
@@ -157,7 +157,7 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       .where(and(
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.paymentStatus, "reserved"),
-        sql`${lotteryEntries.joinedAt} < ${cutoff}`,
+        sql`datetime(${lotteryEntries.joinedAt}) < ${cutoff}`,
         sql`NOT EXISTS (
           SELECT 1 FROM payment_orders
           WHERE payment_orders.entry_id = ${lotteryEntries.id}
@@ -166,31 +166,13 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       ));
     if (overdue.length === 0 && staleReservations.length === 0) return 0;
 
-    const releaseByDraw = new Map<string, number>();
-    for (const order of overdue) {
-      const [entry] = await tx
-        .select({ drawId: lotteryEntries.drawId, paymentStatus: lotteryEntries.paymentStatus })
-        .from(lotteryEntries)
-        .where(and(
-          eq(lotteryEntries.id, order.entryId),
-          eq(lotteryEntries.tenantId, tenantId),
-        ))
-        .limit(1);
-      if (entry?.paymentStatus === "pending") {
-        releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + 1);
-      }
-    }
-    for (const entry of staleReservations) {
-      releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + 1);
-    }
-
     await tx
       .update(paymentOrders)
       .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
       .where(and(
         eq(paymentOrders.tenantId, tenantId),
         eq(paymentOrders.status, "pending"),
-        sql`${paymentOrders.createdAt} < ${cutoff}`,
+        sql`datetime(${paymentOrders.createdAt}) < ${cutoff}`,
       ));
     if (overdue.length > 0) {
       await tx
@@ -204,26 +186,35 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
     }
 
     const entryIds = overdue.map((o) => o.entryId).filter(Boolean);
+    const releaseByDraw = new Map<string, number>();
     if (entryIds.length > 0) {
-      await tx
+      const releasedPending = await tx
         .update(lotteryEntries)
         .set({ paymentStatus: "expired" })
         .where(and(
           eq(lotteryEntries.tenantId, tenantId),
           inArray(lotteryEntries.id, entryIds),
           eq(lotteryEntries.paymentStatus, "pending"),
-        ));
+        ))
+        .returning({ drawId: lotteryEntries.drawId });
+      for (const entry of releasedPending) {
+        releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + 1);
+      }
     }
 
     if (staleReservations.length > 0) {
-      await tx
+      const releasedReserved = await tx
         .update(lotteryEntries)
         .set({ paymentStatus: "expired" })
         .where(and(
           eq(lotteryEntries.tenantId, tenantId),
           inArray(lotteryEntries.id, staleReservations.map((entry) => entry.id)),
           eq(lotteryEntries.paymentStatus, "reserved"),
-        ));
+        ))
+        .returning({ drawId: lotteryEntries.drawId });
+      for (const entry of releasedReserved) {
+        releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + 1);
+      }
     }
 
     // 释放名额的 entry 都属于直付秒杀；按活动分组扣减计数器，避免把多个活动混成一个 delta。
@@ -719,7 +710,7 @@ export async function handlePaymentCallback(
       return { order: current, handled: true };
     }
 
-    const isCurrentAttempt = current.currentAttemptId === attempt.id && attempt.status === "pending";
+    const isCurrentAttempt = current.currentAttemptId === attempt.id;
     const markAttemptLate = async () => {
       await tx
         .update(paymentOrderAttempts)
@@ -737,7 +728,7 @@ export async function handlePaymentCallback(
 
     if (!isCurrentAttempt || current.status !== "pending") {
       await markAttemptLate();
-      if (isCurrentAttempt && (current.status === "expired" || current.status === "cancelled")) {
+      if (isCurrentAttempt) {
         await tx
           .update(paymentOrders)
           .set({

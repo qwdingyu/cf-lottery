@@ -426,7 +426,9 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     await addEasyPayConfig();
     await addCodeTier(draw.id, 1, 10);
 
-    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any, {
+      credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY,
+    });
     expect(result.errors.filter((item) => item.section === "payment")).toEqual([]);
     expect(result.canPublish).toBe(true);
   });

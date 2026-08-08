@@ -727,6 +727,8 @@ export interface AdminPaymentOrder {
   identityValue: string
   entryPaymentStatus: string
   prizeCodeStatus?: string | null
+  pendingRefundAttemptCount?: number
+  pendingRefundProviderTradeNo?: string | null
   hasPrizeCode: boolean
 }
 

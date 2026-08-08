@@ -20,6 +20,7 @@ import {
   lotteryDraws,
   lotteryEntries,
   paymentOrders,
+  paymentOrderAttempts,
   prizeCodes,
   tenantConfigs,
 } from "../db/schema";
@@ -142,8 +143,11 @@ adminPaymentConfigRoute.get("/payment-config/check", async (c) => {
 
   const providers = parseSavedProviders(row?.providers || "{}");
   const checks: Array<{
-    provider: string;
+    name: string;
+    displayName: string;
     enabled: boolean;
+    configured: boolean;
+    supportsDirectFulfillment: boolean;
     issues: string[];
     warnings: string[];
     supportedCurrencies: readonly string[];
@@ -359,7 +363,15 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
     eq(lotteryDraws.tenantId, tenantId),
     eq(lotteryEntries.tenantId, tenantId),
   ];
-  if (status) conditions.push(eq(paymentOrders.status, status));
+  if (status === "needs_refund") {
+    conditions.push(sql`EXISTS (
+      SELECT 1 FROM ${paymentOrderAttempts}
+      WHERE ${paymentOrderAttempts.paymentOrderId} = ${paymentOrders.id}
+        AND ${paymentOrderAttempts.status} = 'paid_late_needs_refund'
+    )`);
+  } else if (status) {
+    conditions.push(eq(paymentOrders.status, status));
+  }
   if (provider) conditions.push(eq(paymentOrders.provider, provider));
   if (drawId) conditions.push(eq(paymentOrders.drawId, drawId));
 
@@ -395,6 +407,18 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
       identityValue: lotteryEntries.identityValue,
       entryPaymentStatus: lotteryEntries.paymentStatus,
       prizeCodeStatus: prizeCodes.status,
+      pendingRefundAttemptCount: sql<number>`(
+        SELECT COUNT(*) FROM ${paymentOrderAttempts}
+        WHERE ${paymentOrderAttempts.paymentOrderId} = ${paymentOrders.id}
+          AND ${paymentOrderAttempts.status} = 'paid_late_needs_refund'
+      )`,
+      pendingRefundProviderTradeNo: sql<string | null>`(
+        SELECT provider_trade_no FROM ${paymentOrderAttempts}
+        WHERE ${paymentOrderAttempts.paymentOrderId} = ${paymentOrders.id}
+          AND ${paymentOrderAttempts.status} = 'paid_late_needs_refund'
+        ORDER BY created_at DESC
+        LIMIT 1
+      )`,
     })
     .from(paymentOrders)
     .innerJoin(lotteryDraws, eq(lotteryDraws.id, paymentOrders.drawId))
@@ -419,6 +443,7 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
     providers: providerOptions,
     orders: rows.map((row) => ({
       ...row,
+      pendingRefundAttemptCount: Number(row.pendingRefundAttemptCount || 0),
       hasPrizeCode: Boolean(row.prizeCodeId),
     })),
     total: Number(total || 0),
