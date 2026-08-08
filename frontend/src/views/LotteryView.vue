@@ -640,15 +640,15 @@
 
         <div class="result-actions">
           <a
-            v-if="paymentState?.redirectUrl"
-            :href="paymentState.redirectUrl"
+            v-if="paymentRedirectUrl"
+            :href="paymentRedirectUrl"
             target="_blank"
             rel="noopener noreferrer"
             class="btn btn-primary"
             @click="handleOpenPaymentLink"
           >{{ $t('lottery.paymentOpen') }}</a>
           <a
-            v-if="paymentQrFallbackUrl && paymentQrFallbackUrl !== paymentState?.redirectUrl"
+            v-if="paymentQrFallbackUrl && paymentQrFallbackUrl !== paymentRedirectUrl"
             :href="paymentQrFallbackUrl"
             target="_blank"
             rel="noopener noreferrer"
@@ -669,7 +669,7 @@
             :disabled="paymentLoading"
             @click="handleRefreshPaymentStatus"
           >{{ paymentLoading ? $t('lottery.loadingText') : $t('lottery.paymentRefresh') }}</button>
-          <button type="button" class="btn" :class="paymentState?.redirectUrl ? 'btn-ghost' : 'btn-primary'" @click="closePaymentModal">
+          <button type="button" class="btn" :class="paymentRedirectUrl ? 'btn-ghost' : 'btn-primary'" @click="closePaymentModal">
             {{ $t('lottery.gotIt') }}
           </button>
         </div>
@@ -1906,6 +1906,8 @@ const paymentAmountText = computed(() =>
 const paymentCodeText = computed(() =>
   composePaymentCode(paymentState.value?.prizeCode || null),
 )
+// Provider 返回值仍经过前端白名单过滤，避免异常网关响应进入 href。
+const paymentRedirectUrl = computed(() => asHttpPaymentUrl(paymentState.value?.redirectUrl))
 const paymentQrFallbackUrl = computed(() => asHttpPaymentUrl(paymentState.value?.qrCode))
 const paymentSupportSubject = computed(() => {
   const orderNo = paymentState.value?.orderNo || ''
@@ -2253,7 +2255,7 @@ async function restartPaymentOrder() {
 }
 
 async function handleOpenPaymentLink() {
-  if (!paymentState.value?.redirectUrl) return
+  if (!paymentRedirectUrl.value) return
   showToast(t('lottery.paymentLinkOpened'), 'success')
 }
 

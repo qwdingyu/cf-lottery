@@ -6,7 +6,7 @@
  * - 只检查当前活动必要的少量关联数据，避免在 Cloudflare Workers Free + Turso Free 上做全局扫描。
  * - 预检返回结构化 code/section，前端可以直接展示成运营清单，后续补问卷/投票配置时也只扩展本文件。
  */
-import { and, count, eq, sql } from "drizzle-orm";
+import { and, count, eq, inArray, ne, sql } from "drizzle-orm";
 import type { DbType } from "../db/client";
 import {
   lotteryDraws,
@@ -134,6 +134,18 @@ async function validateFlashSalePayment(
     );
   }
 
+  // 当前 payment_orders.entry_id 唯一，一场活动内一个身份只能形成一条参与记录和一笔
+  // 直付订单。maxPerUser>1 在没有独立购买批次/订单项模型时无法兑现，必须阻断发布，
+  // 避免前台展示“可重复购买”而后端实际只能成功一次。
+  if (flashSale.maxPerUser !== 1) {
+    add(
+      result.errors,
+      "payment",
+      "flash_sale.payment.max_per_user.unsupported",
+      "直付秒杀当前每个身份每场只能购买 1 次；maxPerUser 必须设置为 1",
+    );
+  }
+
   const currency = String(flashSale.currency || "cny").trim().toLowerCase();
   const catalogCurrencyProviders = PAYMENT_PROVIDER_CATALOG.filter((meta) => providerSupportsCurrency(meta, currency));
   const currencyProviders = PAYMENT_PROVIDER_CATALOG.filter((meta) => providerSupportsDirectFulfillmentCurrency(meta, currency));
@@ -215,6 +227,35 @@ async function validateFlashSalePayment(
     return;
   }
 
+  // prize_codes 没有活动级分配额度。若多个进行中活动共享同一奖品池，
+  // 各自预检都可能通过，最终在支付/开奖热路径竞争同一批卡密，造成已付款但发卡失败。
+  // 当前阶段采用 fail-closed：每个进行中活动必须使用独立卡密奖品池。
+  const sharedPrizeDraws = await db
+    .select({
+      drawId: lotteryDraws.id,
+      status: lotteryDraws.status,
+    })
+    .from(lotteryPrizeTiers)
+    .innerJoin(lotteryDraws, and(
+      eq(lotteryDraws.id, lotteryPrizeTiers.drawId),
+      eq(lotteryDraws.tenantId, tenantId),
+    ))
+    .where(and(
+      eq(lotteryPrizeTiers.tenantId, tenantId),
+      eq(lotteryPrizeTiers.prizeId, codePrizeRows[0].prizeId),
+      ne(lotteryDraws.id, draw.id),
+      inArray(lotteryDraws.status, ["open", "paused", "drawing"]),
+    ));
+  if (sharedPrizeDraws.length > 0) {
+    add(
+      result.errors,
+      "payment",
+      "payment.fulfillment.code_prize.shared",
+      "该卡密奖品池已绑定其他进行中的活动，不能共享；请为本场活动建立独立卡密奖品池",
+    );
+    return;
+  }
+
   if (effectiveStockLimit != null && effectiveStockLimit > 0) {
     const [{ total }] = await db
       .select({ total: count() })
@@ -227,6 +268,21 @@ async function validateFlashSalePayment(
     const available = Number(total || 0);
     if (available < effectiveStockLimit) {
       add(result.errors, "payment", "payment.fulfillment.codes.insufficient", `直付秒杀可用卡密 ${available} 个，少于名额上限 ${effectiveStockLimit} 个`);
+    }
+  }
+
+  // P2 互斥:直付秒杀不应同时配置 after_win CTA(支付弹窗与外部导流冲突,docs/140)
+  const promotionConfig = parseJsonObject(draw.promotionConfig);
+  if (promotionConfig) {
+    const ctas = promotionConfig["ctas"] as Record<string, unknown> | undefined;
+    const afterWin = ctas?.["after_win"] as Record<string, unknown> | undefined;
+    if (afterWin && typeof afterWin.url === "string" && afterWin.url.trim()) {
+      add(
+        result.errors,
+        "payment",
+        "flash_sale.payment.cta_conflict",
+        "直付秒杀不能同时配置中奖后导流链接(after_win CTA)；直付时支付弹窗已承接转化。如需导流请关闭 paymentRequired 或清空 afterWinCtaUrl",
+      );
     }
   }
 }

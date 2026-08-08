@@ -6,7 +6,8 @@
  * 参与域与开奖域直接查库读取活动配置，不依赖本模块（无反向依赖）。
  */
 import type { DbType } from "../../db/client";
-import { and, eq, count, inArray } from "drizzle-orm";
+import { withDbTransaction } from "../../db/client";
+import { and, eq, count, inArray, sql } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
@@ -14,6 +15,8 @@ import {
   lotteryPrizeTiers,
   prizes,
   prizeCodes,
+  paymentOrders,
+  paymentOrderAttempts,
 } from "../../db/schema";
 import { DEFAULT_ACTIVITY_PARTICIPANT_CAP } from "./types";
 import { enforceTenantActivityQuota } from "./plan";
@@ -444,22 +447,80 @@ export async function resumeDraw(db: DbType, tenantId: string, drawId: string): 
  * 已开奖或开奖中的活动不可取消。
  */
 export async function cancelDraw(db: DbType, tenantId: string, drawId: string): Promise<boolean> {
-  const [draw] = await db
-    .select()
-    .from(lotteryDraws)
-    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
-    .limit(1);
+  return withDbTransaction(db, async (tx) => {
+    const [draw] = await tx
+      .select({ id: lotteryDraws.id, status: lotteryDraws.status })
+      .from(lotteryDraws)
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+      .limit(1);
 
-  if (!draw) throw new Error("活动不存在");
-  // 已开奖或开奖中的活动不可取消，防止数据不一致
-  if (draw.status === "drawn" || draw.status === "drawing") {
-    throw new Error("已开奖或开奖中的活动不可取消");
-  }
+    if (!draw) throw new Error("活动不存在");
+    // 已开奖或开奖中的活动不可取消，防止结果与支付履约事实被覆盖。
+    if (draw.status === "drawn" || draw.status === "drawing") {
+      throw new Error("已开奖或开奖中的活动不可取消");
+    }
 
-  const result = await db
-    .update(lotteryDraws)
-    .set({ status: "cancelled", updatedAt: new Date().toISOString() })
-    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+    const cancelled = await tx
+      .update(lotteryDraws)
+      .set({ status: "cancelled", updatedAt: new Date().toISOString() })
+      .where(and(
+        eq(lotteryDraws.id, drawId),
+        eq(lotteryDraws.tenantId, tenantId),
+        inArray(lotteryDraws.status, ["draft", "open", "paused"]),
+      ))
+      .returning({ id: lotteryDraws.id });
+    if (cancelled.length === 0) return false;
 
-  return (result.rowsAffected ?? 0) > 0;
+    // 取消是终止运营，不允许继续为未支付订单重新生成支付入口。
+    // 外部网关可能仍在途，订单先落 expired；迟到回调会被支付服务转为
+    // paid_late_needs_refund，保留可退款审计链，而不是静默丢失付款事实。
+    const pendingOrders = await tx
+      .select({ id: paymentOrders.id })
+      .from(paymentOrders)
+      .where(and(
+        eq(paymentOrders.tenantId, tenantId),
+        eq(paymentOrders.drawId, drawId),
+        eq(paymentOrders.status, "pending"),
+      ));
+    const pendingOrderIds = pendingOrders.map((order) => order.id);
+    if (pendingOrderIds.length > 0) {
+      await tx
+        .update(paymentOrders)
+        .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
+        .where(and(
+          eq(paymentOrders.tenantId, tenantId),
+          eq(paymentOrders.drawId, drawId),
+          eq(paymentOrders.status, "pending"),
+        ));
+      await tx
+        .update(paymentOrderAttempts)
+        .set({ status: "expired", updatedAt: sql`(datetime('now'))` })
+        .where(and(
+          eq(paymentOrderAttempts.tenantId, tenantId),
+          inArray(paymentOrderAttempts.paymentOrderId, pendingOrderIds),
+          eq(paymentOrderAttempts.status, "pending"),
+        ));
+    }
+
+    const releasedEntries = await tx
+      .update(lotteryEntries)
+      .set({ paymentStatus: "expired" })
+      .where(and(
+        eq(lotteryEntries.tenantId, tenantId),
+        eq(lotteryEntries.drawId, drawId),
+        inArray(lotteryEntries.paymentStatus, ["reserved", "pending"]),
+      ))
+      .returning({ id: lotteryEntries.id });
+    if (releasedEntries.length > 0) {
+      await tx
+        .update(lotteryDraws)
+        .set({
+          activeParticipantCount: sql`MAX(0, ${lotteryDraws.activeParticipantCount} - ${releasedEntries.length})`,
+          updatedAt: sql`(datetime('now'))`,
+        })
+        .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+    }
+
+    return true;
+  });
 }

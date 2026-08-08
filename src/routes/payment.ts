@@ -46,6 +46,17 @@ export function buildPaymentReturnUrl(requestUrl: string): string {
   return url.toString();
 }
 
+function safePaymentRedirectUrl(value: unknown): string | undefined {
+  const raw = String(value || "").trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 公开：创建订单（参与成功后调用）docs/131 §10
 // ═══════════════════════════════════════════════════════════════
@@ -134,6 +145,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   if (!existing && draw.status !== "open") {
     return fail(c, "活动当前不可创建支付订单", 409);
   }
+  if (existing?.status === "pending" && draw.status === "cancelled") {
+    return fail(c, "活动已取消，不能继续支付", 409);
+  }
   if ((existing?.status === "cancelled" || existing?.status === "expired") && draw.status !== "open") {
     return fail(c, "活动已关闭，不能重新创建支付订单", 409);
   }
@@ -143,7 +157,11 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
 
   // 加载租户支付配置
   const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
-  const currency = flashSale.currency || "cny";
+  // 订单金额是用户当次购买事实，重试不能因为运营修改活动配置而悄悄改变价格。
+  // 活动发布后当前路由禁止编辑配置；这里仍以订单快照兜底，防止历史数据或后台修复
+  // 造成金额漂移。
+  const currency = existing?.currency || flashSale.currency || "cny";
+  const amountCents = existing?.amountCents || flashSale.priceCents;
   const resumingPending = existing?.status === "pending";
   const config = await loadTenantConfig(
     db,
@@ -197,7 +215,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
       currency: existing.currency,
       provider: existing.provider,
       accessToken,
-      redirectUrl: payResult.redirectUrl,
+      redirectUrl: safePaymentRedirectUrl(payResult.redirectUrl),
       qrCode: payResult.qrCode,
     });
   }
@@ -206,7 +224,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     tenantId: draw.tenantId,
     drawId: draw.id,
     entryId: entry.id,
-    amountCents: flashSale.priceCents,
+    amountCents,
     currency,
     provider: config.provider,
     notifyUrl,
@@ -239,7 +257,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     currency: order.currency,
     provider: order.provider,
     accessToken,
-    redirectUrl: payResult.redirectUrl,
+    redirectUrl: safePaymentRedirectUrl(payResult.redirectUrl),
     qrCode: payResult.qrCode,
   });
 });

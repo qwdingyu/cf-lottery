@@ -303,6 +303,7 @@ async function armPaymentOrderForRetry(
       .select({
         id: lotteryDraws.id,
         tenantId: lotteryDraws.tenantId,
+        status: lotteryDraws.status,
         maxParticipants: lotteryDraws.maxParticipants,
         experienceType: lotteryDraws.experienceType,
         promotionConfig: lotteryDraws.promotionConfig,
@@ -314,6 +315,9 @@ async function armPaymentOrderForRetry(
       ))
       .limit(1);
     if (!draw) throw new Error("活动不存在");
+    if (draw.status !== "open") {
+      throw new Error("活动当前不可重试支付");
+    }
 
     const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
     const isFlashSale = flashParsed.config != null || draw.experienceType === "flash_sale";
