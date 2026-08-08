@@ -155,12 +155,13 @@ export function parseFlashSaleConfig(promotionConfig: unknown): FlashSaleParseRe
     node.paymentRequired === "true" ||
     node.payment_required === "true";
 
-  // 秒杀价格（分）：整数校验，非法置 null（订单创建时校验）
+  // 秒杀价格（分）：必须是整数最小货币单位。不能向下取整，否则手写 JSON
+  // 中的 9900.9 会静默变成 9900，造成支付金额低于运营配置意图。
   const priceRaw = node.priceCents ?? node.price_cents;
   let priceCents: number | null = null;
   if (priceRaw !== null && priceRaw !== undefined && priceRaw !== "") {
-    const n = Math.floor(Number(priceRaw));
-    if (Number.isFinite(n) && n >= 0 && n <= 100_000_000) {
+    const n = Number(priceRaw);
+    if (Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= 100_000_000) {
       priceCents = n;
     } else {
       issues.push({ code: "flash_sale.price.invalid", message: "秒杀价格必须是 0～1000000 元内的整数（分）" });

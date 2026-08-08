@@ -180,3 +180,58 @@ describe("GET /public/home-activities", () => {
     expect(body.activities[0].flashSale.priceCents).toBe(1200);
   });
 });
+
+describe("GET /public/shops/:storeSlug", () => {
+  it("店铺首页直付秒杀按活动计数器计算进度，且不暴露内部 ID", async () => {
+    await db.insert(tenants).values({ id: TENANT, name: "Public Shop Tenant", storeSlug: "token-shop" });
+    await seedDraw({
+      id: "internal-shop-draw-id",
+      slug: "shop-flash-slug",
+      title: "店铺 Token 秒杀",
+      productLink: { title: "Token 日卡" },
+      promotionConfig: {
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          priceCents: 990,
+          currency: "cny",
+          stockLimit: 10,
+          sessionLabel: "12:00场",
+        },
+      },
+    });
+    await db.insert(lotteryEntries).values({
+      id: "shop-paid-entry",
+      tenantId: TENANT,
+      drawId: "internal-shop-draw-id",
+      identityType: "email",
+      identityValue: "buyer@example.com",
+      paymentStatus: "paid",
+      joinedAt: iso(-5),
+    });
+    await db.update(lotteryDraws)
+      .set({ activeParticipantCount: 3 })
+      .where(eq(lotteryDraws.id, "internal-shop-draw-id"));
+
+    const res = await app().request("/public/shops/token-shop", {}, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; activities: any[] };
+
+    expect(body.ok).toBe(true);
+    expect(body.activities).toHaveLength(1);
+    expect(body.activities[0]).toMatchObject({
+      publicSlug: "shop-flash-slug",
+      product: { title: "Token 日卡", priceText: "¥9.90" },
+      flashSale: {
+        paymentRequired: true,
+        priceCents: 990,
+        remaining: 7,
+        progressPercent: 30,
+        effectiveStockLimit: 10,
+      },
+    });
+    expect(body.activities[0]).not.toHaveProperty("id");
+    expect(JSON.stringify(body.activities[0])).not.toContain("internal-shop-draw-id");
+    expect(JSON.stringify(body.activities[0])).not.toContain("tenant-public-home");
+  });
+});

@@ -60,6 +60,18 @@ describe("parseFlashSaleConfig", () => {
     });
   });
 
+  it("priceCents 必须是整数分，不能静默截断小数", () => {
+    const { config, issues } = parseFlashSaleConfig({
+      flashSale: {
+        enabled: true,
+        paymentRequired: true,
+        priceCents: 9900.9,
+      },
+    });
+    expect(config?.priceCents).toBeNull();
+    expect(issues.some((i) => i.code === "flash_sale.price.invalid")).toBe(true);
+  });
+
   it("兼容 flash_sale / snake_case", () => {
     const { config } = parseFlashSaleConfig(
       JSON.stringify({

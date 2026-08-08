@@ -218,23 +218,72 @@ publicLotteryRoute.get("/shops/:storeSlug", async (c) => {
   const [tenant] = await db.select({ id: tenants.id, name: tenants.name, brandConfig: tenants.brandConfig }).from(tenants).where(eq(tenants.storeSlug, slug)).limit(1);
   if (!tenant) return fail(c, "店铺不存在", 404);
   const nowIso = new Date().toISOString();
-  const rows = await db.select({
-    publicSlug: lotteryDraws.publicSlug, title: lotteryDraws.title, activityKind: lotteryDraws.activityKind, experienceType: lotteryDraws.experienceType,
-    startAt: lotteryDraws.startAt, endAt: lotteryDraws.endAt, productLink: lotteryDraws.productLink, promotionConfig: lotteryDraws.promotionConfig,
-    maxParticipants: lotteryDraws.maxParticipants, participationMode: lotteryDraws.participationMode, description: lotteryDraws.description,
-  }).from(lotteryDraws).where(and(eq(lotteryDraws.tenantId, tenant.id), eq(lotteryDraws.status, "open"), eq(lotteryDraws.visible, 1), sql`${lotteryDraws.endAt} > ${nowIso}`)).orderBy(desc(lotteryDraws.startAt)).limit(50);
-  const drawIds = rows.map((r) => r.publicSlug);
+  const rows = await db
+    .select({
+      id: lotteryDraws.id,
+      publicSlug: lotteryDraws.publicSlug,
+      title: lotteryDraws.title,
+      activityKind: lotteryDraws.activityKind,
+      experienceType: lotteryDraws.experienceType,
+      startAt: lotteryDraws.startAt,
+      endAt: lotteryDraws.endAt,
+      productLink: lotteryDraws.productLink,
+      promotionConfig: lotteryDraws.promotionConfig,
+      maxParticipants: lotteryDraws.maxParticipants,
+      participationMode: lotteryDraws.participationMode,
+      description: lotteryDraws.description,
+      activeParticipantCount: lotteryDraws.activeParticipantCount,
+    })
+    .from(lotteryDraws)
+    .where(and(
+      eq(lotteryDraws.tenantId, tenant.id),
+      eq(lotteryDraws.status, "open"),
+      eq(lotteryDraws.visible, 1),
+      sql`${lotteryDraws.endAt} > ${nowIso}`,
+    ))
+    .orderBy(desc(lotteryDraws.startAt))
+    .limit(50);
+  const drawIds = rows.map((r) => r.id);
   const claimedMap = new Map<string, number>();
   if (drawIds.length > 0) {
-    const counts = await db.select({ drawId: lotteryDraws.id, count: count() }).from(lotteryEntries).where(and(eq(lotteryEntries.tenantId, tenant.id), ne(lotteryEntries.paymentStatus, "expired"), inArray(lotteryEntries.drawId, drawIds))).groupBy(lotteryEntries.drawId);
+    const counts = await db
+      .select({ drawId: lotteryEntries.drawId, count: count() })
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.tenantId, tenant.id),
+        inArray(lotteryEntries.paymentStatus, [
+          PAYMENT_ENTRY_STATUS.NONE,
+          ...PAYMENT_ENTRY_CAPACITY_STATUSES,
+        ]),
+        inArray(lotteryEntries.drawId, drawIds),
+      ))
+      .groupBy(lotteryEntries.drawId);
     for (const c of counts) { claimedMap.set(c.drawId, c.count as number); }
   }
   const result = rows.map((row) => {
     const { config: flashSale } = parseFlashSaleConfig(row.promotionConfig);
     const product = productFromPublicConfig(row);
-    const effectiveMax = flashSale?.stockLimit ?? row.maxParticipants ?? 0;
-    const claimed = claimedMap.get(row.publicSlug) ?? 0;
-    return { publicSlug: row.publicSlug, title: row.title, activityKind: row.activityKind, experienceType: row.experienceType, startAt: row.startAt, endAt: row.endAt, description: row.description, product, flashSale: flashSale?.enabled ? { paymentRequired: flashSale.paymentRequired, priceCents: flashSale.priceCents, currency: flashSale.currency || "cny", sessionLabel: flashSale.sessionLabel, remaining: Math.max(0, effectiveMax - claimed), progressPercent: effectiveMax > 0 ? Math.min(100, Math.round((claimed / effectiveMax) * 100)) : 0 } : null, participationMode: row.participationMode };
+    const claimed = flashSale?.paymentRequired === true
+      ? Number(row.activeParticipantCount || 0)
+      : (claimedMap.get(row.id) || 0);
+    const flashRuntime = flashSale?.enabled
+      ? buildFlashSaleRuntime(flashSale, claimed, row.maxParticipants)
+      : null;
+    if (!product.priceText && flashRuntime?.priceCents && flashRuntime.priceCents > 0) {
+      product.priceText = formatPublicAmount(flashRuntime.priceCents, flashRuntime.currency);
+    }
+    return {
+      publicSlug: row.publicSlug,
+      title: row.title,
+      activityKind: row.activityKind,
+      experienceType: row.experienceType,
+      startAt: row.startAt,
+      endAt: row.endAt,
+      description: row.description,
+      product,
+      flashSale: flashRuntime,
+      participationMode: row.participationMode,
+    };
   });
   return ok(c, { store: { name: tenant.name, brand: tryParseJson(tenant.brandConfig) || {}, storeSlug: slug }, activities: result });
 });
