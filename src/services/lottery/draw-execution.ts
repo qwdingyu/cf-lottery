@@ -745,7 +745,7 @@ export async function healDrawingState(
   const [{ total }] = await db
     .select({ total: count() })
     .from(lotteryWinners)
-    .where(eq(lotteryWinners.drawId, drawId));
+    .where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
 
   const nowIso = new Date().toISOString();
 

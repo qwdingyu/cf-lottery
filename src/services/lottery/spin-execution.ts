@@ -409,7 +409,7 @@ async function finalizeFreshResult(
       spinsTotalGranted: lotteryEntries.spinsTotalGranted,
     })
     .from(lotteryEntries)
-    .where(eq(lotteryEntries.id, entry.id))
+    .where(and(eq(lotteryEntries.id, entry.id), eq(lotteryEntries.tenantId, draw.tenantId)))
     .limit(1);
 
   const spinsLeft = Number(freshEntry?.spinsLeft ?? 0);

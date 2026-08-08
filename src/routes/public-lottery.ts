@@ -1204,7 +1204,7 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
         const [pc] = await db
           .select({ code: prizeCodes.code, secret: prizeCodes.secret })
           .from(prizeCodes)
-          .where(eq(prizeCodes.id, winner.prizeCodeId))
+          .where(and(eq(prizeCodes.id, winner.prizeCodeId), eq(prizeCodes.tenantId, draw.tenantId)))
           .limit(1);
         if (pc) wPrizeCode = pc.secret ? `${pc.code}:${pc.secret}` : pc.code;
       }

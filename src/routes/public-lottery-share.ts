@@ -36,7 +36,7 @@ route.get("/draws/:slug/signup-list", async (c) => {
   const slug = c.req.param("slug");
 
   const [draw] = await db
-    .select({ id: lotteryDraws.id, activityKind: lotteryDraws.activityKind })
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, activityKind: lotteryDraws.activityKind })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
     .limit(1);
@@ -49,7 +49,7 @@ route.get("/draws/:slug/signup-list", async (c) => {
       joinedAt: lotteryEntries.joinedAt,
     })
     .from(lotteryEntries)
-    .where(eq(lotteryEntries.drawId, draw.id))
+    .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.tenantId, draw.tenantId)))
     .orderBy(lotteryEntries.joinedAt)
     .limit(200);  // 公开 API 上限，防止数据炸弹
 
@@ -73,7 +73,7 @@ route.get("/draws/:slug/viral-leaderboard", async (c) => {
   const entryId = c.req.query("entryId") || "";
 
   const [draw] = await db
-    .select({ id: lotteryDraws.id, promotionConfig: lotteryDraws.promotionConfig })
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, promotionConfig: lotteryDraws.promotionConfig })
     .from(lotteryDraws)
     .where(eq(lotteryDraws.publicSlug, slug))
     .limit(1);
@@ -93,7 +93,7 @@ route.get("/draws/:slug/viral-leaderboard", async (c) => {
       joinedCount: shareRecords.joinedCount,
     })
     .from(shareRecords)
-    .where(eq(shareRecords.drawId, draw.id));
+    .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.tenantId, draw.tenantId)));
 
   const aggMap = aggregateViralInviteCounts(shareRows);
 
@@ -115,7 +115,10 @@ route.get("/draws/:slug/viral-leaderboard", async (c) => {
         displayName: lotteryEntries.displayName,
       })
       .from(lotteryEntries)
-      .where(inArray(lotteryEntries.id, Array.from(entryIds)));
+      .where(and(
+        inArray(lotteryEntries.id, Array.from(entryIds)),
+        eq(lotteryEntries.tenantId, draw.tenantId),
+      ));
     for (const e of entryRows) {
       identityMap.set(e.id, e.displayName || maskIdentity(e.identityValue));
     }
