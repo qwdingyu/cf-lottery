@@ -596,7 +596,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         template: "lottery_winner",
         templateData: buildLotteryWinnerTemplateData({
           drawName: order.drawId,
-          prizeName: code?.code || "卡密",
+          productName: code?.code || "卡密",
           prizeCode: code?.code || "",
         }),
       });
