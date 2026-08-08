@@ -115,11 +115,11 @@ export async function performDraw(
       const actualWinnerCount = await db
         .select({ total: count() })
         .from(lotteryWinners)
-        .where(eq(lotteryWinners.drawId, drawId));
+        .where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
       const actualCandidateCount = await db
         .select({ total: count() })
         .from(lotteryEntries)
-        .where(eq(lotteryEntries.drawId, drawId));
+        .where(and(eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)));
       return {
         drawId,
         winnerCount: Number(actualWinnerCount[0]?.total ?? 0),
@@ -137,13 +137,13 @@ export async function performDraw(
     await db
       .update(lotteryDraws)
       .set({ drawSeedHash: seedHash, drawSeed: seed, algorithmVersion: "uniform_v1", updatedAt: now })
-      .where(eq(lotteryDraws.id, drawId));
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
 
     // 3. 读取候选池（所有参与者）
     const entries = await db
       .select()
       .from(lotteryEntries)
-      .where(eq(lotteryEntries.drawId, drawId));
+      .where(and(eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)));
 
     const candidateCount = entries.length;
     if (candidateCount === 0) {
@@ -154,7 +154,7 @@ export async function performDraw(
     const [draw] = await db
       .select()
       .from(lotteryDraws)
-      .where(eq(lotteryDraws.id, drawId))
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
       .limit(1);
     if (!draw) throw new Error("活动不存在");
 
@@ -162,7 +162,7 @@ export async function performDraw(
     const tiers = await db
       .select()
       .from(lotteryPrizeTiers)
-      .where(eq(lotteryPrizeTiers.drawId, drawId))
+      .where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)))
       .orderBy(lotteryPrizeTiers.sortOrder);
 
     // 计算总中奖人数：有奖项配置时按奖项总和，否则按活动默认 winnerCount
@@ -274,7 +274,7 @@ export async function performDraw(
               // 发放成功后更新奖品已用数（used_count），保证运营者可看到码池消耗
               await tx.update(prizes)
                 .set({ usedCount: sql`used_count + 1`, updatedAt: now })
-                .where(eq(prizes.id, tier.prizeId));
+                .where(and(eq(prizes.id, tier.prizeId), eq(prizes.tenantId, tenantId)));
             }
             // 码不足时跳过（prizeCodeId 保持空字符串），中奖者仍记录但无码
           }
@@ -475,7 +475,7 @@ export async function sendWinnerNotifications(
         prizeName: prizes.name,
       })
       .from(lotteryPrizeTiers)
-      .leftJoin(prizes, eq(prizes.id, lotteryPrizeTiers.prizeId))
+      .leftJoin(prizes, and(eq(prizes.id, lotteryPrizeTiers.prizeId), eq(prizes.tenantId, tenantId)))
       .where(inArray(lotteryPrizeTiers.id, tierIds));
     for (const row of tierRows) {
       prizeLabelMap.set(row.tierId, {

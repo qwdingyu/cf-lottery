@@ -1882,7 +1882,7 @@ describe("triggerRewardEarned", () => {
 
   it("未配置 reward 时静默跳过，不影响参与", async () => {
     const { drawId, sharerEntryId } = await setupRewardDraw("{}");
-    const result = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    const result = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
     expect(result.triggered).toBe(false);
     expect(result.reason).toBe("no_reward_config");
   });
@@ -1894,7 +1894,7 @@ describe("triggerRewardEarned", () => {
       quota: { perUserPerDay: 2, globalPerDay: 100 },
     });
     const { drawId, sharerEntryId } = await setupRewardDraw(config);
-    const result = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    const result = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
     expect(result.triggered).toBe(true);
     expect(result.reason).toBe("reward_sent");
 
@@ -1918,10 +1918,10 @@ describe("triggerRewardEarned", () => {
     });
     const { drawId, sharerEntryId } = await setupRewardDraw(config);
     // 第一次触发：消耗当日配额
-    const first = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    const first = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
     expect(first.triggered).toBe(true);
     // 第二次触发：配额超限
-    const second = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc2");
+    const second = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc2");
     expect(second.triggered).toBe(false);
     expect(second.reason).toBe("quota_exceeded");
   });
@@ -1941,10 +1941,10 @@ describe("triggerRewardEarned", () => {
       ipHash: "ip-r2", joinedAt: new Date().toISOString(),
     });
 
-    const first = await triggerRewardEarned(db, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    const first = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
     expect(first.triggered).toBe(true);
     // 全局配额已满（perUserPerDay=10 未超，但 global=1 已消耗）
-    const second = await triggerRewardEarned(db, drawId, sharer2Id, "sharer2@test.com", "sc2");
+    const second = await triggerRewardEarned(db, TENANT, drawId, sharer2Id, "sharer2@test.com", "sc2");
     expect(second.triggered).toBe(false);
     expect(second.reason).toBe("quota_exceeded");
   });

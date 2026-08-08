@@ -46,6 +46,7 @@ export type TriggerRewardEarnedResult = {
  */
 export async function triggerRewardEarned(
   tx: DbType,
+  tenantId: string,
   drawId: string,
   sharerEntryId: string,
   inviterIdentityValue: string,
@@ -54,7 +55,7 @@ export async function triggerRewardEarned(
   const [draw] = await tx
     .select({ tenantId: lotteryDraws.tenantId, activityConfig: lotteryDraws.activityConfig })
     .from(lotteryDraws)
-    .where(eq(lotteryDraws.id, drawId))
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
     .limit(1);
   if (!draw) return { triggered: false, reason: "no_reward_config", sharerEntryId, deliveryIds: [] };
 
@@ -100,17 +101,13 @@ export async function triggerRewardEarned(
   const globalKey = `reward:global:${drawId}`;
   if (!(await checkDbRateLimit(tx, globalKey, globalPerDay, REWARD_QUOTA_WINDOW_MS))) {
     return { triggered: false, reason: "quota_exceeded", sharerEntryId, deliveryIds: [] };
-  }
-
-  const tenantId = draw.tenantId;
-
-  // 记录奖励意图事件——必须先在事务内落库，再入队 webhook。
+  }  // 记录奖励意图事件——必须先在事务内落库，再入队 webhook。
   // 顺序原因：如果 enqueueWebhookEvent 失败（抛异常），recordActivityEvent 已写入。
   // 此时事务会被 maybeTriggerReward 的 catch 捕获，但事件记录保留在事务中。
   // 这是有意为之：reward_earned 事件是看板/审计的唯一真相源（source of truth），
   // webhook 投递失败可以通过事件列表人工补偿。
   await recordActivityEvent(tx, {
-    tenantId,
+    tenantId: draw.tenantId,
     drawId,
     entryId: sharerEntryId,
     eventType: "reward_earned",
@@ -153,13 +150,18 @@ export async function triggerRewardEarned(
  */
 export async function getSharerIdentityValue(
   db: DbType,
+  tenantId: string,
   drawId: string,
   sharerEntryId: string,
 ): Promise<string> {
   const [row] = await db
     .select({ identityValue: lotteryEntries.identityValue })
     .from(lotteryEntries)
-    .where(and(eq(lotteryEntries.id, sharerEntryId), eq(lotteryEntries.drawId, drawId)))
+    .where(and(
+      eq(lotteryEntries.id, sharerEntryId),
+      eq(lotteryEntries.drawId, drawId),
+      eq(lotteryEntries.tenantId, tenantId),
+    ))
     .limit(1);
   return row?.identityValue || "";
 }

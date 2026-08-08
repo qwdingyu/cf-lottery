@@ -673,9 +673,10 @@ async function maybeTriggerReward(
   }
 
   try {
-    const sharerIdentity = await getSharerIdentityValue(tx, draw.id, attribution.sharerEntryId);
+    const sharerIdentity = await getSharerIdentityValue(tx, draw.tenantId, draw.id, attribution.sharerEntryId);
     const result = await triggerRewardEarned(
       tx,
+      draw.tenantId,
       draw.id,
       attribution.sharerEntryId,
       sharerIdentity,

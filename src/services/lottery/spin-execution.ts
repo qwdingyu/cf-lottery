@@ -449,7 +449,7 @@ async function buildSpinResultFromRow(
     const [pc] = await db
       .select({ code: prizeCodes.code, secret: prizeCodes.secret })
       .from(prizeCodes)
-      .where(eq(prizeCodes.id, spin.prizeCodeId))
+      .where(and(eq(prizeCodes.id, spin.prizeCodeId), eq(prizeCodes.tenantId, draw.tenantId)))
       .limit(1);
     if (pc) prizeCode = pc.secret ? `${pc.code}:${pc.secret}` : pc.code;
   }
@@ -460,7 +460,7 @@ async function buildSpinResultFromRow(
         prizeName: prizes.name,
       })
       .from(lotteryPrizeTiers)
-      .leftJoin(prizes, eq(prizes.id, lotteryPrizeTiers.prizeId))
+      .leftJoin(prizes, and(eq(prizes.id, lotteryPrizeTiers.prizeId), eq(prizes.tenantId, draw.tenantId)))
       .where(eq(lotteryPrizeTiers.id, spin.tierId))
       .limit(1);
     if (tierRow) {
@@ -475,7 +475,7 @@ async function buildSpinResultFromRow(
       spinsTotalGranted: lotteryEntries.spinsTotalGranted,
     })
     .from(lotteryEntries)
-    .where(eq(lotteryEntries.id, entry.id))
+    .where(and(eq(lotteryEntries.id, entry.id), eq(lotteryEntries.tenantId, draw.tenantId)))
     .limit(1);
 
   const spinsLeft = Number(freshEntry?.spinsLeft ?? entry.spinsLeft ?? 0);
