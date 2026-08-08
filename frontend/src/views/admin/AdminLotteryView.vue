@@ -1997,6 +1997,23 @@ const {
   runSequential: runBatchSequential,
 } = useAdminBatchOperation()
 const pagination = useTablePagination({ initialLimit: 50 })
+
+/**
+ * 游标分页状态（docs/154 P2-1）。
+ *
+ * cursorMap 记录每页的游标：page → cursor，
+ * 顺序翻页（prev/next）时复用已有游标，避免 OFFSET 大偏移量性能退化。
+ * 跳页（@jump）时，若目标页游标未知则回退到 offset 分页。
+ * 筛选变更时 resetCursorMap 清空所有游标回到第一页。
+ */
+const cursorMap = new Map<number, string>()
+cursorMap.set(1, '')  // 第一页游标为空，表示从头开始
+
+/** 重置游标映射（筛选变更/刷新时调用） */
+function resetCursorMap() {
+  cursorMap.clear()
+  cursorMap.set(1, '')
+}
 let winnersStatusTimer: ReturnType<typeof setInterval> | null = null
 let winnersStatusRefreshes = 0
 let winnersStatusInFlight = false
@@ -2486,6 +2503,7 @@ function canDeleteDraw(draw: LotteryDraw): boolean {
 
 /** 筛选变更回第 1 页，避免页码卡在空页 */
 function reloadFromFirstPage() {
+  resetCursorMap()  // 筛选条件变化，清空游标缓存从头开始
   pagination.setPage(1)
   void loadData()
 }
@@ -2927,9 +2945,16 @@ function applyTemplate(tpl: any) {
 async function loadData() {
   const ok = await runLoad(
     async ({ isStale }) => {
+      const page = pagination.page.value
+      // 游标分页：优先使用 cursorMap 中记录的游标（顺序翻页时高效），
+      // 跳页时若目标页游标未知则回退到 offset（兼容旧版 AdminPagination 的 @jump）
+      const knownCursor = cursorMap.get(page)
       const data = await fetchLotteryDraws({
         limit: pagination.limit.value,
-        offset: (pagination.page.value - 1) * pagination.limit.value,
+        cursor: knownCursor ?? undefined,  // 已知游标时使用游标模式
+        offset: knownCursor === undefined  // 未知游标时回退到 offset 模式
+          ? (page - 1) * pagination.limit.value
+          : undefined,
         status: statusFilter.value || undefined,
         query: listQuery.value || undefined,
         activityKind: activityKindFilter.value || undefined,
@@ -2941,6 +2966,10 @@ async function loadData() {
       // 预填公开链接缓存，打开二维码/海报弹窗时再本地生成图
       for (const d of draws.value) {
         prefetchPublicUrl(d)
+      }
+      // 存储下一页游标，供顺序翻页时复用
+      if (data.nextCursor) {
+        cursorMap.set(page + 1, data.nextCursor)
       }
       pagination.setTotal(data.total || 0)
     },

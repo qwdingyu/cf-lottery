@@ -207,6 +207,31 @@ export function csvEscape(value: unknown): string {
   return out;
 }
 
+/**
+ * 游标分页编码/解码（活动列表用）。
+ *
+ * 复合游标由 createdAt 和 id 组成，以 | 分隔后 base64 编码。
+ * createdAt 排序为主键，id 为辅去重键——同一毫秒创建多个活动时不会重复/遗漏。
+ * 与 `ORDER BY createdAt DESC, id DESC` 配合使用，确保分页结果确定性。
+ */
+
+/** 编码活动列表游标 */
+export function encodeDrawCursor(createdAt: string, id: string): string {
+  return Buffer.from(`${createdAt}|${id}`).toString("base64");
+}
+
+/** 解码活动列表游标，解码失败返回 null */
+export function decodeDrawCursor(cursor: string): { createdAt: string; id: string } | null {
+  try {
+    const raw = Buffer.from(cursor, "base64").toString("utf8");
+    const sep = raw.indexOf("|");
+    if (sep === -1) return null;
+    return { createdAt: raw.slice(0, sep), id: raw.slice(sep + 1) };
+  } catch {
+    return null;
+  }
+}
+
 export function validateProductLink(link: any): string | null {
   if (!link || typeof link !== "object") return "商品链接配置无效";
   if (typeof link.url !== "string" || !link.url.trim()) return "商品链接不能为空";

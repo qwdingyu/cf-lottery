@@ -16,20 +16,26 @@ import type {
 
 export async function fetchLotteryDraws(params: {
   limit: number
-  offset: number
+  /** 游标分页：顺序翻页时传上一页返回的 nextCursor；跳页时用 offset */
+  cursor?: string
+  offset?: number
   status?: string
   query?: string
   activityKind?: string
   createdFrom?: string
   createdTo?: string
 }) {
-  const search = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) })
+  const search = new URLSearchParams({ limit: String(params.limit) })
+  if (params.cursor) search.set('cursor', params.cursor)
+  else if (typeof params.offset === 'number') search.set('offset', String(params.offset))
   if (params.status) search.set('status', params.status)
   if (params.query) search.set('query', params.query)
   if (params.activityKind) search.set('activityKind', params.activityKind)
   if (params.createdFrom) search.set('createdFrom', params.createdFrom)
   if (params.createdTo) search.set('createdTo', params.createdTo)
-  return adminRequest<{ draws: LotteryDraw[]; total: number }>(`/api/admin/draws?${search}`)
+  return adminRequest<{ draws: LotteryDraw[]; total: number; nextCursor?: string; hasMore?: boolean }>(
+    `/api/admin/draws?${search}`,
+  )
 }
 
 export const createLotteryDraw = async (body: unknown) =>

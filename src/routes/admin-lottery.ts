@@ -37,6 +37,8 @@ import {
   recordTenantAudit,
   escapeLike,
   parseAdminPagination,
+  encodeDrawCursor,
+  decodeDrawCursor,
   validateProductLink,
   coerceEnum,
   normalizeOptionalPositiveInteger,
@@ -328,11 +330,19 @@ adminLotteryRoute.get("/me", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 /** 奖品列表 */
-/** 活动列表（分页，支持状态筛选和搜索） */
+/** 活动列表（游标分页，支持状态筛选和搜索）
+ *
+ * 分页策略（docs/154 P2-1）：
+ * - cursor 参数：base64 编码的 (createdAt,id) 复合游标，用于高效顺序翻页（避免 OFFSET 大偏移量性能退化）。
+ * - offset 参数：兼容旧版序号跳页（如 AdminPagination 的 @jump 跳转），当 cursor 未提供时使用 offset。
+ * - 两者同时提供时 cursor 优先。
+ * - 返回 nextCursor 和 hasMore，前端在顺序翻页时用 cursor 传回。
+ */
 adminLotteryRoute.get("/draws", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const { limit, offset } = parseAdminPagination(c);
+  const cursorParam = c.req.query("cursor") || "";
   const status = c.req.query("status") || "";
   const query = c.req.query("query") || "";
   // 活动类型筛选（047 文档 🔴）：租户创建多种类型活动后可按类型查找
@@ -363,28 +373,61 @@ adminLotteryRoute.get("/draws", async (c) => {
   if (createdFrom) conditions.push(sql`${lotteryDraws.createdAt} >= ${createdFrom}`);
   if (createdTo) conditions.push(sql`${lotteryDraws.createdAt} <= ${createdTo}`);
 
-  const rows = await db
+  // 游标解码：当 cursor 参数有效时，添加 keyset 分页条件
+  // 复合游标 (createdAt, id) 确保排序确定性和唯一性，避免同一毫秒创建多个活动时重复/遗漏
+  const cursor = cursorParam ? decodeDrawCursor(cursorParam) : null;
+  // 游标条件单独保存，用于 count 查询时排除（总数不应用游标过滤）
+  const cursorCondition = cursor
+    ? sql`(
+      ${lotteryDraws.createdAt} < ${cursor.createdAt}
+      OR (
+        ${lotteryDraws.createdAt} = ${cursor.createdAt}
+        AND ${lotteryDraws.id} < ${cursor.id}
+      )
+    )`
+    : null;
+  if (cursorCondition) {
+    conditions.push(cursorCondition);
+  }
+
+  // 始终多取 1 条，用于判断是否有下一页并生成游标
+  // 游标模式：通过 WHERE 条件跳过已看数据；offset 模式：通过 OFFSET 跳过（兼容旧版页码跳转）
+  const fetchLimit = limit + 1;
+
+  const queryBuilder = db
     .select()
     .from(lotteryDraws)
     .where(and(...conditions))
-    .orderBy(desc(lotteryDraws.createdAt))
-    .limit(limit)
-    .offset(offset);
+    .orderBy(desc(lotteryDraws.createdAt), desc(lotteryDraws.id));
 
-  // 查询总数
+  const rows = cursor !== null
+    ? await queryBuilder.limit(fetchLimit)
+    : await queryBuilder.limit(fetchLimit).offset(offset);
+
+  // 判断是否有下一页并生成游标
+  // 多取 1 条确保 rows.length > limit 时说明还有下一页
+  const hasMore = rows.length > limit;
+  if (hasMore) rows.pop();  // 移除多取的那条
+  const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
+  const nextCursor = lastRow ? encodeDrawCursor(lastRow.createdAt, lastRow.id) : "";
+
+  // 查询总数（排除游标条件，用于 UI 分页栏显示总页数）
+  const totalConditions = cursorCondition
+    ? conditions.filter(c => c !== cursorCondition)
+    : conditions;
   const [totalRow] = await db
     .select({ total: count() })
     .from(lotteryDraws)
-    .where(and(...conditions));
+    .where(and(...totalConditions));
 
   // 并行查询参与人数
   const counts = await Promise.all(rows.map(async (d) => {
-    const [r] = await db.select({ total: count() }).from(lotteryEntries).where(eq(lotteryEntries.drawId, d.id));
+    const [r] = await db.select({ total: count() }).from(lotteryEntries).where(eq(lotteryEntries.id, d.id));
     return Number(r?.total ?? 0);
   }));
   const draws = rows.map((d, i) => ({ ...d, entryCount: counts[i]! }));
 
-  return ok(c, { draws, total: Number(totalRow?.total ?? 0) });
+  return ok(c, { draws, total: Number(totalRow?.total ?? 0), nextCursor, hasMore });
 });
 
 /** 活动详情 */

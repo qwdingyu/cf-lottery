@@ -1082,4 +1082,56 @@ describe("P0 活动可见性 visible", () => {
     const junkBody = await junkRes.json() as { draws: Array<{ id: string }> };
     expect(junkBody.draws.some((d) => d.id === open.id)).toBe(true);
   });
+
+  it("docs/154 P2-1：活动列表游标分页——顺序翻页无重复/遗漏，total/hasMore/nextCursor 正确", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const headers = { ...(await authHeader()) };
+
+    // 创建 5 个活动，并设置不同的 createdAt 保证排序确定（createdAt DESC：c4 > c3 > ... > c0）
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const d = await createDraft(app, "lottery", { title: `cursor-${i}` });
+      ids.push(d.id);
+    }
+    const base = Date.now();
+    for (let i = 0; i < ids.length; i++) {
+      await db.update(lotteryDraws)
+        .set({ createdAt: new Date(base + i * 1000).toISOString() })
+        .where(eq(lotteryDraws.id, ids[i]!));
+    }
+
+    // 第 1 页：limit=2，无游标（等价 offset=0）
+    const p1 = await app.request("/api/admin/draws?limit=2", { headers }, TEST_ENV);
+    expect(p1.status).toBe(200);
+    const p1Body = await p1.json() as { draws: Array<{ id: string }>; total: number; nextCursor?: string; hasMore?: boolean };
+    expect(p1Body.draws.length).toBe(2);
+    expect(p1Body.total).toBe(5);
+    expect(p1Body.hasMore).toBe(true);
+    expect(p1Body.nextCursor).toBeTruthy();
+
+    // 第 2 页：带 nextCursor 顺序翻页
+    const p2 = await app.request(`/api/admin/draws?limit=2&cursor=${encodeURIComponent(p1Body.nextCursor!)}`, { headers }, TEST_ENV);
+    expect(p2.status).toBe(200);
+    const p2Body = await p2.json() as { draws: Array<{ id: string }>; total: number; nextCursor?: string; hasMore?: boolean };
+    expect(p2Body.draws.length).toBe(2);
+    expect(p2Body.total).toBe(5);
+    expect(p2Body.hasMore).toBe(true);
+    expect(p2Body.nextCursor).toBeTruthy();
+
+    // 前两页无重复（4 个不同活动）
+    const idsSeen = new Set([...p1Body.draws.map((d) => d.id), ...p2Body.draws.map((d) => d.id)]);
+    expect(idsSeen.size).toBe(4);
+
+    // 第 3 页：最后一页，hasMore=false
+    const p3 = await app.request(`/api/admin/draws?limit=2&cursor=${encodeURIComponent(p2Body.nextCursor!)}`, { headers }, TEST_ENV);
+    expect(p3.status).toBe(200);
+    const p3Body = await p3.json() as { draws: Array<{ id: string }>; hasMore?: boolean };
+    expect(p3Body.draws.length).toBe(1);
+    expect(p3Body.hasMore).toBe(false);
+
+    // 全部 5 个活动都被覆盖，无重复无遗漏
+    const allIds = new Set([...p1Body.draws.map((d) => d.id), ...p2Body.draws.map((d) => d.id), ...p3Body.draws.map((d) => d.id)]);
+    expect(allIds.size).toBe(5);
+  });
 });
