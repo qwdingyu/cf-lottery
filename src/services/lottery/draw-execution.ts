@@ -514,7 +514,8 @@ export async function sendWinnerNotifications(
     .from(systemConfig)
     .where(eq(systemConfig.key, "email_notification_retry_max_attempts"))
     .limit(1);
-  const maxRetryAttempts = Number(retryCfg?.value || 3);
+  // 未配置时默认 3 次；使用 != null 而非 ||，避免合法值 "0" 被误判为假值降级为 3
+  const maxRetryAttempts = retryCfg?.value != null ? Number(retryCfg.value) : 3;
 
   for (const winner of winners) {
     if (winner.notificationStatus === "sent") continue;

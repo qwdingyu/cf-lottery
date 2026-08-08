@@ -411,10 +411,9 @@ adminLotteryRoute.get("/draws", async (c) => {
   const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
   const nextCursor = lastRow ? encodeDrawCursor(lastRow.createdAt, lastRow.id) : "";
 
-  // 查询总数（排除游标条件，用于 UI 分页栏显示总页数）
-  const totalConditions = cursorCondition
-    ? conditions.filter(c => c !== cursorCondition)
-    : conditions;
+  // 查询总数（需排除游标条件，用于 UI 分页栏显示总页数）
+  // 游标条件始终追加在 conditions 末尾，用 slice(0,-1) 排除比引用相等（!==）更明确、更不易被重构破坏
+  const totalConditions = cursorCondition ? conditions.slice(0, -1) : conditions;
   const [totalRow] = await db
     .select({ total: count() })
     .from(lotteryDraws)

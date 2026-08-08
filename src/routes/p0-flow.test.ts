@@ -1134,4 +1134,38 @@ describe("P0 活动可见性 visible", () => {
     const allIds = new Set([...p1Body.draws.map((d) => d.id), ...p2Body.draws.map((d) => d.id), ...p3Body.draws.map((d) => d.id)]);
     expect(allIds.size).toBe(5);
   });
+
+  it("docs/154 P2-1 边界：同一毫秒创建多个活动时 id 决胜无遗漏/重复", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const headers = { ...(await authHeader()) };
+
+    // 创建 4 个活动，全部设置为同一 createdAt（靠 id 排序决胜）
+    const ids: string[] = [];
+    const sameTime = new Date().toISOString();
+    for (let i = 0; i < 4; i++) {
+      const d = await createDraft(app, "lottery", { title: `same-ts-${i}` });
+      ids.push(d.id);
+    }
+    for (let i = 0; i < ids.length; i++) {
+      await db.update(lotteryDraws)
+        .set({ createdAt: sameTime })
+        .where(eq(lotteryDraws.id, ids[i]!));
+    }
+
+    // 第 1 页 limit=2
+    const p1 = await app.request("/api/admin/draws?limit=2", { headers }, TEST_ENV);
+    const p1Body = await p1.json() as { draws: Array<{ id: string }>; nextCursor?: string };
+    expect(p1Body.draws.length).toBe(2);
+    expect(p1Body.nextCursor).toBeTruthy();
+
+    // 第 2 页
+    const p2 = await app.request(`/api/admin/draws?limit=2&cursor=${encodeURIComponent(p1Body.nextCursor!)}`, { headers }, TEST_ENV);
+    const p2Body = await p2.json() as { draws: Array<{ id: string }> };
+    expect(p2Body.draws.length).toBe(2);
+
+    // 所有 4 个活动都被覆盖，无重复无遗漏
+    const allIds = new Set([...p1Body.draws.map((d) => d.id), ...p2Body.draws.map((d) => d.id)]);
+    expect(allIds.size).toBe(4);
+  });
 });
