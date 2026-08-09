@@ -18,3 +18,4 @@ data/
 # VPS 部署包（含 cf-lottery- 前缀的新格式与历史无前缀格式）
 deploy-*.tar.gz
 cf-lottery-deploy-*.tar.gz
+backups/
