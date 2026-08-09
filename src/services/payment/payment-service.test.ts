@@ -1107,6 +1107,53 @@ it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
       quantity: 3, amountCents: 26700, currency: "cny",
       status: "paid_fulfillment_failed", provider: "easypay", currentAttemptId: attemptId,
     });
+    await db.insert(paymentOrderItems).values([
+      {
+        id: `${orderId}-item-1`,
+        tenantId: TENANT_ID,
+        drawId,
+        paymentOrderId: orderId,
+        lineNo: 1,
+        itemType: "flash_sale",
+        title: "批量奖品",
+        quantity: 1,
+        amountCents: 8900,
+        currency: "cny",
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        status: "pending",
+        unitPriceCents: 8900,
+      },
+      {
+        id: `${orderId}-item-2`,
+        tenantId: TENANT_ID,
+        drawId,
+        paymentOrderId: orderId,
+        lineNo: 2,
+        itemType: "flash_sale",
+        title: "批量奖品",
+        quantity: 1,
+        amountCents: 8900,
+        currency: "cny",
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        status: "pending",
+        unitPriceCents: 8900,
+      },
+      {
+        id: `${orderId}-item-3`,
+        tenantId: TENANT_ID,
+        drawId,
+        paymentOrderId: orderId,
+        lineNo: 3,
+        itemType: "flash_sale",
+        title: "批量奖品",
+        quantity: 1,
+        amountCents: 8900,
+        currency: "cny",
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        status: "pending",
+        unitPriceCents: 8900,
+      },
+    ]);
     await db.insert(paymentOrderAttempts).values({
       id: attemptId, paymentOrderId: orderId, tenantId: TENANT_ID, drawId,
       attemptNo: 1, provider: "easypay", amountCents: 26700, currency: "cny", status: "paid",
@@ -1264,8 +1311,8 @@ describe("支付并发安全性", () => {
       provider: "easypay", notifyUrl: "https://cb.example.com",
     } as const;
 
-    // V2：两个调用都应成功（entry_id 不再唯一，容量 stockLimit=2 足够）
-    // 使用独立 mock 避免 providerTradeNo 唯一约束冲突
+    // V2：同一个 reserved entry 只能成功创建一笔在途订单。
+    // 第二个并发调用在服务端门禁上必须失败，不能把 entry 从 reserved 复制成多笔 pending。
     let tradeNoCounter = 0;
     const uniqueProvider: PaymentProvider = {
       ...providerMock,
@@ -1281,12 +1328,12 @@ describe("支付并发安全性", () => {
     ]);
 
     const okCount = results.filter((r) => r.status === "fulfilled").length;
-    expect(okCount).toBe(2);
+    expect(okCount).toBe(1);
 
-    // 验证有两条 order 记录
+    // 验证只有一条 order 记录
     const orders = await db.select().from(paymentOrders)
       .where(eq(paymentOrders.entryId, entryId));
-    expect(orders).toHaveLength(2);
+    expect(orders).toHaveLength(1);
     expect(orders.every((o) => o.status === "pending")).toBe(true);
   });
 

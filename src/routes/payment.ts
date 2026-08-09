@@ -412,17 +412,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
   const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
   if (!validCode) return fail(c, "验证码无效或已过期", 400);
 
-  const entries = await db
-    .select({ id: lotteryEntries.id })
-    .from(lotteryEntries)
-    .where(and(
-      eq(lotteryEntries.tenantId, draw.tenantId),
-      eq(lotteryEntries.drawId, draw.id),
-      eq(lotteryEntries.identityType, "email"),
-      eq(lotteryEntries.identityValue, email),
-    ));
-  if (entries.length === 0) return ok(c, { orders: [] });
-
+  // V2（docs/158 §2.1 §3.3）：找回订单按订单头 buyer_identity_value 快照直接匹配，
+  // 不再回查 lottery_entries 再经 entry_id 反查。这样即使 entry 身份被改名/回收，
+  // 订单仍能按"谁在何时购买"的快照被找回。命中 `idx_payment_orders_buyer_identity` 索引。
   const rows = await db
     .select({
       orderNo: paymentOrders.id,
@@ -439,7 +431,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
     .where(and(
       eq(paymentOrders.tenantId, draw.tenantId),
       eq(paymentOrders.drawId, draw.id),
-      inArray(paymentOrders.entryId, entries.map((entry) => entry.id)),
+      eq(paymentOrders.buyerIdentityType, "email"),
+      eq(paymentOrders.buyerIdentityValue, email),
     ))
     .orderBy(desc(paymentOrders.createdAt))
     .limit(10);

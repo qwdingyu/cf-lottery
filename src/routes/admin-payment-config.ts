@@ -409,8 +409,10 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
       updatedAt: paymentOrders.updatedAt,
       drawTitle: lotteryDraws.title,
       publicSlug: lotteryDraws.publicSlug,
-      identityType: lotteryEntries.identityType,
-      identityValue: lotteryEntries.identityValue,
+      // V2（docs/158 §2.1 §3.3）：展示购买者必须使用订单头 buyer 快照，不得回读 lottery_entries 当前值。
+      identityType: paymentOrders.buyerIdentityType,
+      identityValue: paymentOrders.buyerIdentityValue,
+      identityDisplayName: paymentOrders.buyerDisplayName,
       entryPaymentStatus: lotteryEntries.paymentStatus,
       pendingRefundAttemptCount: sql<number>`(
         SELECT COUNT(*) FROM ${paymentOrderAttempts}

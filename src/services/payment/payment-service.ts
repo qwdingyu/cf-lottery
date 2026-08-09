@@ -1098,19 +1098,20 @@ export async function retryPaymentFulfillment(
         eq(paymentOrderItems.status, PAYMENT_ORDER_ITEM_STATUS.PENDING),
       ))
       .orderBy(paymentOrderItems.lineNo);
-    if (pendingItems.length > 0) {
-      const acquiredPrizeCodeIds = await acquirePrizeCodes(
-        tx,
-        tenantId,
-        current.drawId,
-        current.entryId,
-        current.id,
-        pendingItems.length,
-      );
-      if (acquiredPrizeCodeIds.length !== pendingItems.length) return { error: "没有足够可用卡密，请先补充码池" };
-      // V2：补发只绑定尚未履约的订单项，不能按订单总 quantity 重复领取卡密。
-      await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
+    if (pendingItems.length === 0) {
+      return { error: "订单没有可补发的待处理明细" };
     }
+    const acquiredPrizeCodeIds = await acquirePrizeCodes(
+      tx,
+      tenantId,
+      current.drawId,
+      current.entryId,
+      current.id,
+      pendingItems.length,
+    );
+    if (acquiredPrizeCodeIds.length !== pendingItems.length) return { error: "没有足够可用卡密，请先补充码池" };
+    // V2：补发只绑定尚未履约的订单项，不能按订单总 quantity 重复领取卡密。
+    await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
 
     const paidEntry = await tx
       .update(lotteryEntries)

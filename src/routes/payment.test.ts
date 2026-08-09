@@ -108,6 +108,13 @@ async function seedOrder() {
     tenantId: TENANT_ID,
     drawId: DRAW_ID,
     entryId: ENTRY_ID,
+    // V2（docs/158 §2.1）：buyer 快照 — 下单时拷贝参与者的身份，后续独立于 entry 存在。
+    buyerIdentityType: "email",
+    buyerIdentityValue: EMAIL,
+    buyerDisplayName: "buyer",
+    quantity: 1,
+    unitPriceCents: 9900,
+    pricingSnapshotJson: "{}",
     amountCents: 9900,
     currency: "cny",
     status: "paid",
@@ -385,6 +392,21 @@ describe("payment route", () => {
       status: "pending",
       provider: "easypay",
       currentAttemptId: ORDER_ID,
+    });
+    await db.insert(paymentOrderItems).values({
+      id: `${ORDER_ID}-item-1`,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      paymentOrderId: ORDER_ID,
+      lineNo: 1,
+      itemType: "flash_sale",
+      title: "已结束支付测试",
+      quantity: 1,
+      amountCents: 9900,
+      currency: "cny",
+      pricingSnapshotJson: "{}",
+      status: "pending",
+      unitPriceCents: 9900,
     });
     await db.insert(paymentOrderAttempts).values({
       id: ORDER_ID,

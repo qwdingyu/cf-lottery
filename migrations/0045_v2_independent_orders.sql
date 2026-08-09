@@ -62,12 +62,16 @@ SELECT
   po.updated_at
 FROM payment_orders po
 LEFT JOIN lottery_entries e ON e.id = po.entry_id AND e.tenant_id = po.tenant_id
+-- 递归 CTE 生成 1..max(quantity) 序列，支持任意 quantity（docs/158 §4.3）
+-- 先查最大 quantity 确定递归深度，避免无限制递归
 CROSS JOIN (
-  SELECT 1 AS i UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
-  UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8
-  UNION ALL SELECT 9 UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
-  UNION ALL SELECT 13 UNION ALL SELECT 14 UNION ALL SELECT 15 UNION ALL SELECT 16
-  UNION ALL SELECT 17 UNION ALL SELECT 18 UNION ALL SELECT 19 UNION ALL SELECT 20
+  WITH RECURSIVE seq_gen(i) AS (
+    SELECT 1
+    UNION ALL
+    SELECT i + 1 FROM seq_gen
+    WHERE i < (SELECT COALESCE(MAX(quantity), 0) FROM payment_orders)
+  )
+  SELECT i FROM seq_gen
 ) seq
 WHERE seq.i <= po.quantity;
 
