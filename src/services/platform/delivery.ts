@@ -1,0 +1,215 @@
+/**
+ * 平台出站消息投递服务（docs/167 出站方向，Phase 1）
+ *
+ * 职责：
+ * - enqueuePlatformEvent：事件发生时，查匹配的 platformTargets，渲染模板，写入 platformDeliveries
+ * - dispatchPlatformDeliveries：维护 cron 拾取 pending 投递，经 QQ 适配器发送，更新状态
+ *
+ * 设计约束：
+ * - 出站投递不阻塞业务热路径：事件写入 platformDeliveries 即返回，剩余由 cron 异步处理
+ * - 发送失败不回滚业务：delivery 标记 failed/max_retries，不影响开奖/参与/签到
+ * - 适配器连接失败时，记录 lastError 和 nextRetryAt，下次 cron 轮询重试
+ */
+import { asc, and, eq, sql } from "drizzle-orm";
+import type { DbType, DbWriteScope } from "../../db/client";
+import { platformTargets, platformDeliveries } from "../../db/schema";
+import { createQQAdapter } from "./qq-adapter";
+import type { PlatformMessage } from "./types";
+import { PLATFORM_EVENT_TYPES_SET, type PlatformEventType, renderPlatformEventMessage } from "./templates";
+
+export interface EnqueuePlatformEventInput {
+  tenantId: string;
+  drawId: string;
+  eventType: PlatformEventType;
+  /** 模板变量字典，键与模板中的 {{变量名}} 对应 */
+  data: Record<string, string>;
+  /** 可选的全局事件 ID（用于去重） */
+  eventId?: string;
+}
+
+/** 匹配某租户/活动的所有已启用平台目标，为每个目标创建一条投递记录 */
+export async function enqueuePlatformEvent(db: DbWriteScope, input: EnqueuePlatformEventInput) {
+  if (!PLATFORM_EVENT_TYPES_SET.has(input.eventType)) {
+    throw new Error(`平台事件类型无效: ${input.eventType}`);
+  }
+
+  /** 查找该租户下绑定该活动且已启用助手的平台目标 */
+  const targets = await db
+    .select()
+    .from(platformTargets)
+    .where(and(
+      eq(platformTargets.tenantId, input.tenantId),
+      eq(platformTargets.activeDrawId, input.drawId),
+      eq(platformTargets.assistantEnabled, 1),
+    ));
+
+  const deliveryIds: string[] = [];
+  const now = new Date().toISOString();
+  const eventId = input.eventId || `pevt_${crypto.randomUUID().replace(/-/g, "")}`;
+
+  for (const target of targets) {
+    const message = renderPlatformEventMessage(input.eventType, input.data);
+    const deliveryId = crypto.randomUUID();
+    const payloadJson = JSON.stringify({
+      eventType: input.eventType,
+      data: input.data,
+      renderedMessage: message,
+    });
+
+    await db.insert(platformDeliveries).values({
+      id: deliveryId,
+      tenantId: input.tenantId,
+      platformTargetId: target.id,
+      platform: target.platform,
+      targetId: target.targetId,
+      eventId,
+      eventType: input.eventType,
+      command: "",
+      payloadJson,
+      status: "pending",
+      attemptCount: 0,
+      providerMessageId: "",
+      responseBody: "",
+      lastError: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    deliveryIds.push(deliveryId);
+  }
+
+  return { eventId, deliveryIds, targetCount: targets.length };
+}
+
+/** 拾取并投递待处理的平台消息（由维护 cron 触发） */
+export async function dispatchPlatformDeliveries(
+  db: DbType,
+  limit: number,
+  fetcher: typeof fetch = fetch,
+) {
+  const rows = await db
+    .select()
+    .from(platformDeliveries)
+    .where(and(
+      eq(platformDeliveries.status, "pending"),
+      sql`(${platformDeliveries.nextRetryAt} IS NULL OR ${platformDeliveries.nextRetryAt} <= ${new Date().toISOString()})`,
+    ))
+    .orderBy(asc(platformDeliveries.createdAt))
+    .limit(Math.max(1, Math.min(limit, 100)));
+
+  let sent = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  const now = new Date().toISOString();
+
+  for (const delivery of rows) {
+    const [target] = await db
+      .select()
+      .from(platformTargets)
+      .where(eq(platformTargets.id, delivery.platformTargetId))
+      .limit(1);
+
+    if (!target) {
+      await db
+        .update(platformDeliveries)
+        .set({
+          status: "failed",
+          lastError: "平台目标已删除",
+          updatedAt: now,
+        })
+        .where(eq(platformDeliveries.id, delivery.id));
+      failed++;
+      errors.push(`delivery ${delivery.id}: 平台目标 ${delivery.platformTargetId} 已删除`);
+      continue;
+    }
+
+    // 从 adapterConfigJson 解析适配器连接配置
+    let adapterConfig: Record<string, unknown> = {};
+    try {
+      adapterConfig = JSON.parse(target.adapterConfigJson || "{}");
+    } catch {
+      adapterConfig = {};
+    }
+
+    const baseUrl = String(adapterConfig.baseUrl || "").trim();
+    if (!baseUrl) {
+      const newAttempt = delivery.attemptCount + 1;
+      const maxRetries = 3;
+      const nextRetry = newAttempt >= maxRetries ? null : new Date(Date.now() + 60000 * newAttempt).toISOString();
+      await db
+        .update(platformDeliveries)
+        .set({
+          status: newAttempt >= maxRetries ? "failed" : "pending",
+          attemptCount: newAttempt,
+          lastError: "未配置适配器 baseUrl",
+          nextRetryAt: nextRetry,
+          updatedAt: now,
+        })
+        .where(eq(platformDeliveries.id, delivery.id));
+      failed++;
+      errors.push(`delivery ${delivery.id}: platformTarget ${target.id} 未配置 baseUrl`);
+      continue;
+    }
+
+    try {
+      const adapter = createQQAdapter({ baseUrl, token: String(adapterConfig.token || "") }, fetcher);
+      const message: PlatformMessage = {
+        platform: "qq",
+        targetId: target.targetId,
+        type: "text",
+        text: extractRenderedMessage(delivery.payloadJson, delivery.eventType),
+      };
+      const result = await adapter.send(message);
+      await db
+        .update(platformDeliveries)
+        .set({
+          status: "sent",
+          attemptCount: delivery.attemptCount + 1,
+          providerMessageId: result.messageId,
+          responseBody: JSON.stringify(result.response || {}),
+          sentAt: now,
+          updatedAt: now,
+        })
+        .where(eq(platformDeliveries.id, delivery.id));
+      sent++;
+    } catch (err) {
+      const errorMsg = String(err instanceof Error ? err.message : err);
+      const newAttempt = delivery.attemptCount + 1;
+      const maxRetries = 3;
+      const nextRetry = newAttempt >= maxRetries ? null : new Date(Date.now() + 60000 * newAttempt).toISOString();
+      await db
+        .update(platformDeliveries)
+        .set({
+          status: newAttempt >= maxRetries ? "failed" : "pending",
+          attemptCount: newAttempt,
+          lastError: errorMsg.slice(0, 500),
+          nextRetryAt: nextRetry,
+          updatedAt: now,
+        })
+        .where(eq(platformDeliveries.id, delivery.id));
+      failed++;
+      errors.push(`delivery ${delivery.id}: ${errorMsg.slice(0, 200)}`);
+    }
+  }
+
+  return { sent, failed, errors };
+}
+
+/** 从 payloadJson 中提取渲染后的消息文本 */
+function extractRenderedMessage(payloadJson: string, fallback: string): string {
+  try {
+    const parsed = JSON.parse(payloadJson);
+    return typeof parsed.renderedMessage === "string" && parsed.renderedMessage
+      ? parsed.renderedMessage
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** 遍历所有租户处理待投递平台消息（由维护 cron 调用） */
+export async function processPendingPlatformDeliveriesForAllTenants(
+  db: DbType,
+  options?: { perTenantLimit?: number; fetcher?: typeof fetch },
+) {
+  return dispatchPlatformDeliveries(db, options?.perTenantLimit ?? 20, options?.fetcher);
+}
