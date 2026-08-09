@@ -1169,6 +1169,10 @@ export default {
     adminTierWeightHint: "Instant spin weight; higher = more likely for this tier",
     adminViralLeaderboard: "Show invite leaderboard",
     adminViralLeaderboardHint: "Participants can see who invited the most people",
+    /** claim: social sharing shows leaderboard only, no impact on purchase priority */
+    adminSocialSection: "Social Sharing",
+    adminSocialSectionDesc: "Enable to show invite leaderboard (leaderboard only, does not change purchase priority or draw results)",
+    adminEnableSocial: "Enable social sharing",
     adminCtaSection: "CTA routing config",
     adminCtaSectionDesc: "Winners and losers see different routing cards for precise follow-up",
     adminAfterWinCta: "Post-win CTA card",

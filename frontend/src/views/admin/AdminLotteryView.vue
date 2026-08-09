@@ -893,15 +893,20 @@
               <!-- 裂变传播配置 -->
               <section class="form-section form-section--nested" aria-labelledby="lottery-viral">
                 <header class="form-section-head">
-                  <h4 id="lottery-viral" class="form-section-title">{{ $t('lottery.adminViralSection') }}</h4>
-                  <p class="form-section-desc">{{ $t('lottery.adminViralSectionDesc') }}</p>
+                  <h4 id="lottery-viral" class="form-section-title">
+                    {{ form.activityKind === 'claim' ? $t('lottery.adminSocialSection') : $t('lottery.adminViralSection') }}
+                  </h4>
+                  <p class="form-section-desc">
+                    {{ form.activityKind === 'claim' ? $t('lottery.adminSocialSectionDesc') : $t('lottery.adminViralSectionDesc') }}
+                  </p>
                 </header>
                 <div class="form-grid two-cols">
                   <label class="field-span-2">
                     <input v-model="form.enableViral" type="checkbox" class="checkbox-inline" />
-                    <span>{{ $t('lottery.adminEnableViral') }}</span>
+                    <span>{{ form.activityKind === 'claim' ? $t('lottery.adminEnableSocial') : $t('lottery.adminEnableViral') }}</span>
                   </label>
                   <template v-if="form.enableViral">
+                    <template v-if="form.activityKind !== 'claim'">
                     <label>
                       <span>{{ form.resultMode === 'instant' ? $t('lottery.adminViralPerInviteSpinsLabel') : $t('lottery.adminViralPerInviteLabel') }}</span>
                       <input v-model.number="form.viralExtraEntriesPerInvite" type="number" min="1" max="10" />
@@ -912,6 +917,7 @@
                       <input v-model.number="form.viralMaxExtraEntries" type="number" min="1" max="100" />
                       <small>{{ form.resultMode === 'instant' ? $t('lottery.adminViralMaxSpinsSuffix') : $t('lottery.adminViralMaxSuffix') }}</small>
                     </label>
+                    </template>
                     <label class="field-span-2">
                       <input v-model="form.viralLeaderboardEnabled" type="checkbox" class="checkbox-inline" />
                       <span>{{ $t('lottery.adminViralLeaderboard') }}</span>

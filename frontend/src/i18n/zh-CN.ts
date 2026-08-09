@@ -1142,6 +1142,10 @@ export default {
     adminTierWeightHint: "即时抽奖概率权重；越大越容易抽中本档",
     adminViralLeaderboard: "展示邀请排行榜",
     adminViralLeaderboardHint: "参与者可见谁邀请了最多人",
+    /** claim 秒杀：社交传播只展示排行榜，不影响购买优先级 */
+    adminSocialSection: "社交传播",
+    adminSocialSectionDesc: "开启后可展示邀请排行榜（仅展示榜单，不改变购买优先级和开奖结果）",
+    adminEnableSocial: "开启社交传播",
     adminCtaSection: "CTA 承接配置",
     adminCtaSectionDesc: "中奖和未中奖用户展示不同的导流卡片，精准承接不同状态",
     adminAfterWinCta: "中奖后导流卡片",
