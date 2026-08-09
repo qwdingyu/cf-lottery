@@ -297,7 +297,7 @@ describe("/抽奖 (executeSpinCommand)", () => {
     await seedManualDraw();
     const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "spin" }));
     expect(result.handled).toBe(true);
-    expect(result.reply).toContain("不是即时抽奖模式");
+    expect(result.reply).toContain("手动开奖");
   });
 
   it("instant 但非 lottery 活动时提示绑定即时抽奖活动", async () => {
@@ -408,5 +408,30 @@ describe("/我的奖品 (executeMyPrizeCommand)", () => {
     }));
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("未启用");
+  });
+});
+
+describe("executeBuiltinPlatformCommand 通用兜底", () => {
+  it("群已绑定但未选择活动时返回友好提示，不抛活动不存在", async () => {
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ drawId: "", publicSlug: "" }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("未选择活动");
+  });
+
+  it("命令处理器抛异常时返回系统繁忙提示，避免用户收不到任何回复", async () => {
+    // 用抛异常的 db 模拟数据库故障，验证顶层 try/catch 兜底
+    const throwingDb = {
+      select: () => { throw new Error("db down"); },
+    } as unknown as DbType;
+    const result = await executeBuiltinPlatformCommand(throwingDb, makeInput({ command: "my_prize" }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("系统繁忙");
+  });
+
+  it("未注册 handler 的命令返回暂不支持提示", async () => {
+    // 传入一个不在 COMMAND_HANDLERS 中的命令名，验证 fallback 生效
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "unknown_cmd" as never } as never));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("暂不支持");
   });
 });

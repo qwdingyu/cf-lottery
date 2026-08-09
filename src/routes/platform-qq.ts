@@ -74,7 +74,8 @@ platformQQRoute.post("/message", async (c) => {
     messageId: String(body.message_id || ""),
     senderDisplayName: extractSenderDisplayName(body),
     raw: body,
-  });
+    // 传入已在路由层查到的 target，避免 inbound 内部再查一次 DB
+  }, target);
 
   if (!result) return ok(c, { handled: false });
   return ok(c, { handled: result.handled, reply: result.reply });

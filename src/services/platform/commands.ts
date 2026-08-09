@@ -115,23 +115,39 @@ export async function executeBuiltinPlatformCommand(
     };
   }
 
+  // 群已绑定但未选择活动时给出友好提示，避免 joinDraw 抛出"活动不存在"这种模糊错误
+  if (!input.drawId || !input.publicSlug) {
+    return {
+      handled: true,
+      reply: "当前群已绑定但未选择活动，请管理员在后台为群助手绑定活动。",
+    };
+  }
+
   if (input.command === "help") {
     return { handled: true, reply: renderHelpReply(input.builtinCommands) };
   }
 
   const handler = COMMAND_HANDLERS[input.command];
   if (handler) {
-    return handler(db, input);
+    try {
+      return await handler(db, input);
+    } catch (err) {
+      // 所有命令的意外异常统一兜底，防止 500 导致用户收不到任何回复（Silence）
+      console.error(`[platform] executeBuiltinPlatformCommand ${input.command} failed:`, err);
+      return {
+        handled: true,
+        reply: "系统繁忙，请稍后再试。",
+      };
+    }
   }
 
   /**
    * 这里有意 fail closed。
-   * 平台身份接入活动数据前，必须逐个命令接正式业务函数并补测试；
-   * 不能临时拼公开 HTTP API，因为公开路由是 email/JWT/OTP 语义。
+   * 新命令必须注册 handler 后才能使用，避免未接业务函数时被误调用。
    */
   return {
     handled: true,
-    reply: `${COMMAND_LABELS[input.command]} 已识别，平台命令服务正在接入活动「${input.publicSlug}」。`,
+    reply: `${COMMAND_LABELS[input.command]} 暂不支持。`,
   };
 }
 
@@ -165,13 +181,10 @@ function parseViralConfig(promotionConfig: string): ViralWeightConfig | null {
 function renderPlatformDisplayName(entry: { displayName: string; identityValue: string }): string {
   const name = String(entry.displayName || "").trim();
   if (name) return name.length > 16 ? `${name.slice(0, 16)}...` : name;
+  // displayName 为空时使用 identityValue 脱敏展示
+  // identityValue 为纯数字 QQ 号（如 "123456789"），输出 "123***789"
   const value = String(entry.identityValue || "").trim();
   if (!value) return "***";
-  if (value.startsWith("qq:")) {
-    const qq = value.slice(3).split(":")[0] || "";
-    if (qq.length <= 4) return "QQ用户";
-    return `QQ${qq.slice(0, 2)}***${qq.slice(-2)}`;
-  }
   return value.length <= 6 ? "***" : `${value.slice(0, 3)}***${value.slice(-3)}`;
 }
 
@@ -426,7 +439,7 @@ async function executeSpinCommand(
   }
 
   if (String(draw.resultMode || "") !== "instant") {
-    return { handled: true, reply: "当前活动不是即时抽奖模式，请在手动开奖后查看结果。发送 /帮助 查看更多命令。" };
+    return { handled: true, reply: "当前活动为手动开奖，开奖后可用 /我的奖品 查看结果。" };
   }
 
   const entry = await ensurePlatformEntry(db, input);

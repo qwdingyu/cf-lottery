@@ -10,20 +10,32 @@
 import type { DbType } from "../../db/client";
 import { executeBuiltinPlatformCommand, recognizeBuiltinCommand } from "./commands";
 import { getActivePlatformTarget } from "./targets";
-import type { InboundPlatformEvent, PlatformCommandResult } from "./types";
+import type { InboundPlatformEvent, PlatformCommandResult, PlatformTargetBinding } from "./types";
 
+/**
+ * 处理入站平台事件（如 QQ 群消息）。
+ *
+ * @param db 数据库实例
+ * @param event 入站事件
+ * @param preFetchedTarget 可选预查的平台目标绑定，避免路由层和入站处理层重复查询（platform-qq.ts 路由已查一次用于鉴权）
+ */
 export async function handleInboundPlatformEvent(
   db: DbType,
   event: InboundPlatformEvent,
+  preFetchedTarget?: PlatformTargetBinding | null,
 ): Promise<PlatformCommandResult | null> {
   if (event.eventType !== "message" || !event.text) return null;
   const command = recognizeBuiltinCommand(event.text);
   if (!command) return null;
 
-  const target = await getActivePlatformTarget(db, {
-    platform: event.platform,
-    targetId: event.sourceId,
-  });
+  // 使用预查 target（路由层已鉴权）或自行查询
+  let target = preFetchedTarget;
+  if (!target) {
+    target = await getActivePlatformTarget(db, {
+      platform: event.platform,
+      targetId: event.sourceId,
+    });
+  }
   if (!target || !target.assistantEnabled) {
     return {
       handled: true,
