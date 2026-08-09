@@ -1891,6 +1891,8 @@ adminQqAssistant: {
     labelAdapterBaseUrl: "NapCat 地址",
     hintAdapterBaseUrl: "租户自部署 NapCat/OneBot HTTP 地址。P0 不保存访问 token，请优先使用内网、白名单或反向代理保护。",
     placeholderAdapterBaseUrl: "例如 http://127.0.0.1:3000",
+    hintAdapterBaseUrlEdit: "留空则不修改现有地址",
+    placeholderAdapterBaseUrlEdit: "留空保持当前地址不变",
     builtinCommands: "内置命令开关",
     cmdCheckin: "签到",
     cmdSpin: "抽奖",

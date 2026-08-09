@@ -1915,6 +1915,8 @@ adminQqAssistant: {
     labelAdapterBaseUrl: "NapCat URL",
     hintAdapterBaseUrl: "Tenant-hosted NapCat/OneBot HTTP URL. P0 does not store access tokens; protect it with private networking, allowlists, or a reverse proxy.",
     placeholderAdapterBaseUrl: "e.g. http://127.0.0.1:3000",
+    hintAdapterBaseUrlEdit: "Leave empty to keep the current URL",
+    placeholderAdapterBaseUrlEdit: "Leave empty to keep the current value",
     builtinCommands: "Built-in Commands",
     cmdCheckin: "Check-in",
     cmdSpin: "Spin",

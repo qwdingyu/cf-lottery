@@ -4,7 +4,7 @@
  * 提供 platformTargets 的完整 CRUD：
  * - 列表/详情/创建/更新/删除
  * - 创建时自动生成每群独立入站密钥（明文只返回一次，库中只存 SHA-256 哈希）
- * - 重置入站密钥
+ * - 编辑时可填写新入站密钥覆盖；留空不更新；也支持系统生成重置入站密钥
  *
  * 设计约束：
  * - 平台目标（QQ 群）归属租户，字段与 webhookConfigs 完全隔离（不污染 HTTP webhook 语义）
@@ -243,6 +243,13 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     if (body.builtinCommands && typeof body.builtinCommands === "object") {
       const merged = parseBuiltinCommandsInput(body.builtinCommands as Record<string, unknown>);
       patch.builtinCommandsJson = JSON.stringify(merged);
+    }
+    if (typeof body.inboundSecret === "string") {
+      const inboundSecret = body.inboundSecret.trim();
+      if (inboundSecret) {
+        if (inboundSecret.length < 16) return fail(c, "入站密钥至少 16 位");
+        patch.inboundSecretHash = await hashPlatformInboundSecret(inboundSecret);
+      }
     }
 
     await db

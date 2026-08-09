@@ -1,7 +1,7 @@
 /**
  * 管理端平台目标 CRUD 测试（docs/167 Phase 1）
  *
- * 覆盖：创建/列表/更新/删除/重置密钥/重复群号/未登录 401
+ * 覆盖：创建/列表/更新/删除/重置密钥/重复群号/敏感配置拒绝/未登录 401
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Hono } from "hono";
@@ -89,6 +89,7 @@ describe("platform-targets CRUD", () => {
         targetId: "123456789",
         targetName: "测试群",
         activeDrawId: DRAW_ID,
+        adapterConfig: { baseUrl: "http://127.0.0.1:3000" },
         checkinEnabled: true,
         spinEnabled: true,
       }),
@@ -96,6 +97,13 @@ describe("platform-targets CRUD", () => {
     const data = await res.json() as Record<string, unknown>;
     expect(data.ok).toBe(true);
     expect(String(data.inboundSecret || "")).toMatch(/^pin_/);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const detailRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      headers: { ...authHeaders() },
+    });
+    const detail = await detailRes.json() as Record<string, unknown>;
+    const item = detail.item as Record<string, unknown>;
+    expect(JSON.parse(String(item.adapterConfigJson || "{}"))).toEqual({ baseUrl: "http://127.0.0.1:3000" });
   });
 
   it("创建后列表中有该条目", async () => {
@@ -152,6 +160,40 @@ describe("platform-targets CRUD", () => {
     const data = await res.json() as Record<string, unknown>;
     expect(data.ok).toBe(false);
     expect(data.message).toContain("活动不存在");
+  });
+
+  it("拒绝保存 NapCat 明文 token", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "666666",
+        targetName: "敏感配置测试",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { baseUrl: "http://127.0.0.1:3000", token: "secret-token" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(false);
+    expect(data.message).toContain("暂不支持保存 NapCat token");
+  });
+
+  it("P0 拒绝非 QQ 平台绑定", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        platform: "telegram",
+        targetId: "tg-1",
+        targetName: "Telegram",
+        activeDrawId: DRAW_ID,
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(false);
+    expect(data.message).toContain("P0 仅支持 qq");
   });
 
   it("更新成功", async () => {

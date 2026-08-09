@@ -82,10 +82,13 @@
                 <option v-for="d in draws" :key="d.id" :value="d.id">{{ d.title }}</option>
               </select>
             </div>
-            <div v-if="!editingTarget" class="form-group">
-              <label>{{ $t('adminQqAssistant.labelAdapterBaseUrl') }}</label>
-              <div class="form-hint">{{ $t('adminQqAssistant.hintAdapterBaseUrl') }}</div>
-              <input v-model="form.adapterBaseUrl" class="form-input" :placeholder="$t('adminQqAssistant.placeholderAdapterBaseUrl')" />
+            <div class="form-group">
+              <label>
+                {{ $t('adminQqAssistant.labelAdapterBaseUrl') }}
+                <span v-if="editingTarget" class="form-hint">{{ $t('adminQqAssistant.hintAdapterBaseUrlEdit') }}</span>
+              </label>
+              <div v-if="!editingTarget" class="form-hint">{{ $t('adminQqAssistant.hintAdapterBaseUrl') }}</div>
+              <input v-model="form.adapterBaseUrl" class="form-input" :placeholder="editingTarget ? $t('adminQqAssistant.placeholderAdapterBaseUrlEdit') : $t('adminQqAssistant.placeholderAdapterBaseUrl')" />
             </div>
             <fieldset class="form-fieldset">
               <legend>{{ $t('adminQqAssistant.builtinCommands') }}</legend>
@@ -247,9 +250,17 @@ async function saveTarget() {
       helpEnabled: form.value.helpEnabled,
     }
     if (editingTarget.value) {
+      /* 编辑时：baseUrl 留空则不更新 adapterConfig，填写则覆盖 */
+      const editPayload: Record<string, unknown> = {
+        targetName: form.value.targetName,
+        activeDrawId: form.value.activeDrawId,
+        builtinCommands,
+      }
+      const baseUrl = form.value.adapterBaseUrl.trim()
+      if (baseUrl) editPayload.adapterConfig = { baseUrl }
       await api(`/platform-targets/${editingTarget.value.id}`, {
         method: 'PUT',
-        body: JSON.stringify({ targetName: form.value.targetName, activeDrawId: form.value.activeDrawId, builtinCommands }),
+        body: JSON.stringify(editPayload),
       })
       showToast(t('adminQqAssistant.toastUpdated'), 'success')
     } else {

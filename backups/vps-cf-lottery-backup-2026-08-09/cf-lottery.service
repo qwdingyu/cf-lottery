@@ -1,0 +1,25 @@
+[Unit]
+Description=cf-lottery Hono Node Server (RP of cf-auth)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/cf-lottery
+EnvironmentFile=/root/cf-lottery/.env
+Environment=PATH=/root/.nvm/versions/node/v24.18.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOST=127.0.0.1
+ExecStart=/root/.nvm/versions/node/v24.18.0/bin/node /root/cf-lottery/dist/server.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+MemoryMax=512M
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=full
+ReadWritePaths=/root/cf-lottery/data
+
+[Install]
+WantedBy=multi-user.target
