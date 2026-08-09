@@ -11,7 +11,7 @@
  */
 import { createProviderRegistry, isAmbiguousEasyPayProviderError } from "@usethink/cf-core/features/payment";
 import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
-import { eq, and, sql, inArray, isNull, max } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, isNull, max } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
 import {
@@ -69,6 +69,7 @@ export async function issuePaymentOrderAccessToken(
   db: DbType,
   tenantId: string,
   orderId: string,
+  _entryId?: string,
 ): Promise<string> {
   const token = createPaymentAccessToken();
   const updated = await db
@@ -580,8 +581,8 @@ export interface CreateOrderInput {
   drawId: string;
   entryId: string;
   /** V2 购买身份快照：下单时从 entry 拷贝，订单独立保存购买者身份（docs/158）。 */
-  buyerIdentityType: string;
-  buyerIdentityValue: string;
+  buyerIdentityType?: string;
+  buyerIdentityValue?: string;
   buyerDisplayName?: string;
   quantity?: number;
   unitPriceCents?: number;
@@ -610,6 +611,24 @@ export async function createPaymentOrder(
   let reservationFailedMessage = "";
   // 事务只含数据库写入；provider.createPayment 是网络调用，放事务外避免长时间占锁
   await withDbTransaction(db, async (tx) => {
+    const [existingOrder] = await tx
+      .select({
+        id: paymentOrders.id,
+        status: paymentOrders.status,
+        createdAt: paymentOrders.createdAt,
+      })
+      .from(paymentOrders)
+      .where(and(
+        eq(paymentOrders.tenantId, input.tenantId),
+        eq(paymentOrders.drawId, input.drawId),
+        eq(paymentOrders.entryId, input.entryId),
+      ))
+      .orderBy(desc(paymentOrders.createdAt))
+      .limit(1);
+    if (existingOrder?.status === PAYMENT_ORDER_STATUS.PENDING) {
+      throw new Error("订单已存在，请刷新后重试");
+    }
+
     const quantity = Math.max(1, Math.floor(Number(input.quantity || 1)));
     // V2：查 entry 当前状态，决定是否已有前置订单（docs/158）。
     // - reserved（首次下单）：base=1 已在 joinDraw 时计入，需补 reserveQuantity = qty - 1
@@ -620,8 +639,7 @@ export async function createPaymentOrder(
       .where(and(eq(lotteryEntries.id, input.entryId), eq(lotteryEntries.tenantId, input.tenantId)))
       .limit(1);
     if (!entryRow) throw new Error("参与记录不存在");
-    const hasPriorOrder = entryRow.paymentStatus !== PAYMENT_ENTRY_STATUS.RESERVED
-      && entryRow.paymentStatus !== PAYMENT_ENTRY_STATUS.NONE;
+    const hasPriorOrder = existingOrder != null;
     // 需预约件数：有前置订单时全额预约，否则只预约超出 base 1 的部分
     const reserveQuantity = hasPriorOrder ? quantity : (quantity - 1);
 
@@ -678,7 +696,7 @@ export async function createPaymentOrder(
 
     if (reservationFailedMessage) return;
 
-    // V2：允许从 reserved（首次）或 paid/pending（再次购买）进入 pending 状态
+    // V2：首次创建必须从 reserved 进入 pending；如果已有订单则按当前 entry 状态继续走。
     const allowedPriorStatuses = hasPriorOrder
       ? [PAYMENT_ENTRY_STATUS.PAID, PAYMENT_ENTRY_STATUS.PENDING]
       : [PAYMENT_ENTRY_STATUS.RESERVED];
@@ -722,7 +740,14 @@ export async function createPaymentOrder(
       tenantId: input.tenantId,
       drawId: input.drawId,
       paymentOrderId: id,
+      lineNo: i + 1,
+      itemType: "flash_sale",
+      title: input.description || "",
+      quantity: 1,
       prizeCodeId: null,
+      amountCents: Math.max(0, Math.floor(Number(input.unitPriceCents || 0))),
+      currency: input.currency,
+      pricingSnapshotJson: input.pricingSnapshotJson || "{}",
       status: PAYMENT_ORDER_ITEM_STATUS.PENDING,
       unitPriceCents: Math.max(0, Math.floor(Number(input.unitPriceCents || 0))),
     }));
@@ -1064,11 +1089,28 @@ export async function retryPaymentFulfillment(
       return { error: "订单状态不允许补发" };
     }
 
-    const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
-    const acquiredPrizeCodeIds = await acquirePrizeCodes(tx, tenantId, current.drawId, current.entryId, current.id, quantity);
-    if (acquiredPrizeCodeIds.length !== quantity) return { error: "没有足够可用卡密，请先补充码池" };
-    // V2：把补发的卡密绑定到订单明细（docs/158）。
-    await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
+    const pendingItems = await tx
+      .select({ id: paymentOrderItems.id })
+      .from(paymentOrderItems)
+      .where(and(
+        eq(paymentOrderItems.tenantId, tenantId),
+        eq(paymentOrderItems.paymentOrderId, current.id),
+        eq(paymentOrderItems.status, PAYMENT_ORDER_ITEM_STATUS.PENDING),
+      ))
+      .orderBy(paymentOrderItems.lineNo);
+    if (pendingItems.length > 0) {
+      const acquiredPrizeCodeIds = await acquirePrizeCodes(
+        tx,
+        tenantId,
+        current.drawId,
+        current.entryId,
+        current.id,
+        pendingItems.length,
+      );
+      if (acquiredPrizeCodeIds.length !== pendingItems.length) return { error: "没有足够可用卡密，请先补充码池" };
+      // V2：补发只绑定尚未履约的订单项，不能按订单总 quantity 重复领取卡密。
+      await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
+    }
 
     const paidEntry = await tx
       .update(lotteryEntries)
@@ -1191,7 +1233,7 @@ async function fulfillOrderItems(
       eq(paymentOrderItems.paymentOrderId, orderId),
       eq(paymentOrderItems.status, PAYMENT_ORDER_ITEM_STATUS.PENDING),
     ))
-    .orderBy(paymentOrderItems.id);
+    .orderBy(paymentOrderItems.lineNo);
   const bindCount = Math.min(prizeCodeIds.length, pendingItems.length);
   for (let i = 0; i < bindCount; i++) {
     await db

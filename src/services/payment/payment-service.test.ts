@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../../test-setup";
 import type { DbType } from "../../db/client";
 import {
@@ -8,6 +8,7 @@ import {
   lotteryPrizeTiers,
   paymentOrders,
   paymentOrderAttempts,
+  paymentOrderItems,
   prizeCodes,
   prizes,
   tenantConfigs,
@@ -106,6 +107,21 @@ async function seedBaseRows(status: string) {
     provider: "alipay",
     currentAttemptId: ATTEMPT_ID,
   });
+  await db.insert(paymentOrderItems).values({
+    id: `${ORDER_ID}-item-1`,
+    tenantId: TENANT_ID,
+    drawId: DRAW_ID,
+    paymentOrderId: ORDER_ID,
+    lineNo: 1,
+    itemType: "flash_sale",
+    title: "支付测试活动",
+    quantity: 1,
+    amountCents: 9900,
+    currency: "cny",
+    pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+    status: status === "pending" ? "pending" : "refunded",
+    unitPriceCents: 9900,
+  });
   await db.insert(paymentOrderAttempts).values({
     id: ATTEMPT_ID,
     paymentOrderId: ORDER_ID,
@@ -153,6 +169,8 @@ describe("retryPaymentOrder", () => {
         tenantId: TENANT_ID,
         drawId: DRAW_ID,
         entryId: ENTRY_ID,
+        buyerIdentityType: "email",
+        buyerIdentityValue: "test@example.com",
         // 重试请求故意传入不同金额/币种，必须仍以原订单快照为准。
         amountCents: 1,
         currency: "usd",
@@ -162,6 +180,7 @@ describe("retryPaymentOrder", () => {
         description: "秒杀卡密",
       },
       providerMock,
+      ORDER_ID,
     );
 
     expect(providerMock.createPayment).toHaveBeenCalledTimes(1);
@@ -179,7 +198,7 @@ describe("retryPaymentOrder", () => {
     expect(order?.status).toBe("pending");
     expect(order?.providerTradeNo).toBe("checkout-123");
     expect(order?.currentAttemptId).not.toBe(ATTEMPT_ID);
-    expect(order?.prizeCodeId).toBeNull();
+    /* V2 removed */ // expect(order?.prizeCodeId).toBeNull();
     expect(entry?.paymentStatus).toBe("pending");
     const [oldAttempt] = await db.select().from(paymentOrderAttempts).where(eq(paymentOrderAttempts.id, ATTEMPT_ID));
     expect(["failed", "superseded"]).toContain(oldAttempt?.status);
@@ -200,12 +219,15 @@ describe("retryPaymentOrder", () => {
         tenantId: TENANT_ID,
         drawId: DRAW_ID,
         entryId: ENTRY_ID,
+        buyerIdentityType: "email",
+        buyerIdentityValue: "test@example.com",
         amountCents: 9900,
         currency: "cny",
         provider: "alipay",
         notifyUrl: "https://example.com/payments/callback",
       },
       failingProvider,
+      ORDER_ID,
     )).rejects.toThrow("gateway down");
 
     const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, ORDER_ID));
@@ -237,12 +259,15 @@ describe("retryPaymentOrder", () => {
         tenantId: TENANT_ID,
         drawId: DRAW_ID,
         entryId: ENTRY_ID,
+        buyerIdentityType: "email",
+        buyerIdentityValue: "test@example.com",
         amountCents: 9900,
         currency: "cny",
         provider: "alipay",
         notifyUrl: "https://example.com/payments/callback",
       },
       providerMock,
+      ORDER_ID,
     )).rejects.toThrow("名额");
 
     const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, ORDER_ID));
@@ -395,6 +420,21 @@ describe("providerTradeNo integrity", () => {
       provider: "alipay",
       currentAttemptId: secondAttemptId,
     });
+    await db.insert(paymentOrderItems).values({
+      id: `${secondOrderId}-item-1`,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      paymentOrderId: secondOrderId,
+      lineNo: 1,
+      itemType: "flash_sale",
+      title: "支付测试活动",
+      quantity: 1,
+      amountCents: 9900,
+      currency: "cny",
+      pricingSnapshotJson: "{}",
+      status: "pending",
+      unitPriceCents: 9900,
+    });
     await db.insert(paymentOrderAttempts).values({
       id: secondAttemptId,
       paymentOrderId: secondOrderId,
@@ -436,7 +476,7 @@ describe("handlePaymentCallback", () => {
 
     expect(result.processed).toBe(true);
     expect(result.order?.status).toBe("paid");
-    expect(result.order?.prizeCodeId).toBe(PRIZE_CODE_ID);
+    /* V2 removed */ // expect(result.order?.prizeCodeId).toBe(PRIZE_CODE_ID);
     const [code] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, PRIZE_CODE_ID));
     expect(code?.status).toBe("issued");
     expect(code?.winnerId).toBe(ENTRY_ID);
@@ -476,7 +516,7 @@ describe("handlePaymentCallback", () => {
     const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.paymentOrderId, ORDER_ID));
     expect(codes).toHaveLength(3);
     expect(codes.every((code) => code.status === "issued" && code.winnerId === ENTRY_ID)).toBe(true);
-    expect(result.order?.prizeCodeId).toBe(PRIZE_CODE_ID);
+    /* V2 removed */ // expect(result.order?.prizeCodeId).toBe(PRIZE_CODE_ID);
   });
 
   it("批量直付码池不足时不部分发卡，订单进入履约失败", async () => {
@@ -559,7 +599,7 @@ describe("handlePaymentCallback", () => {
     const fulfillment = await retryPaymentFulfillment(db, TENANT_ID, ORDER_ID);
     expect(fulfillment.ok).toBe(true);
     expect(fulfillment.order?.status).toBe("paid");
-    expect(fulfillment.order?.prizeCodeId).toBe(PRIZE_CODE_ID);
+    /* V2 removed */ // expect(fulfillment.order?.prizeCodeId).toBe(PRIZE_CODE_ID);
   });
 
   it("fails closed when provider callback verification throws", async () => {
@@ -603,12 +643,15 @@ describe("handlePaymentCallback", () => {
         tenantId: TENANT_ID,
         drawId: DRAW_ID,
         entryId: ENTRY_ID,
+        buyerIdentityType: "email",
+        buyerIdentityValue: "test@example.com",
         amountCents: 9900,
         currency: "cny",
         provider: "alipay",
         notifyUrl: "https://example.com/callback",
       },
       providerMock,
+      ORDER_ID,
     );
     const callbackProvider: PaymentProvider = {
       ...providerMock,
@@ -664,6 +707,8 @@ describe("ambiguous payment creation", () => {
       tenantId: TENANT_ID,
       drawId: DRAW_ID,
       entryId: ENTRY_ID,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       amountCents: 9900,
       currency: "cny",
       provider: "easypay",
@@ -703,6 +748,8 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
 
     const created = await createPaymentOrder(db, {
       tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       amountCents: 9900, currency: "cny",
       provider: "easypay", notifyUrl: "https://cb",
     }, providerMock);
@@ -754,6 +801,8 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
       tenantId: TENANT_ID,
       drawId,
       entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       quantity: 3,
       unitPriceCents: 8900,
       pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
@@ -800,6 +849,8 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
       tenantId: TENANT_ID,
       drawId,
       entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       quantity: 2,
       unitPriceCents: 9900,
       pricingSnapshotJson: "{}",
@@ -835,6 +886,8 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
 
     await expect(createPaymentOrder(db, {
       tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       amountCents: 100, currency: "cny", provider: "easypay", notifyUrl: "https://cb",
     }, providerMock)).rejects.toThrow("参与预约已失效");
     expect(await db.select().from(paymentOrders).where(eq(paymentOrders.entryId, entryId))).toHaveLength(0);
@@ -859,6 +912,21 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
       currentAttemptId: orderId,
       createdAt: "2020-01-01T00:00:00Z",
     });
+    await db.insert(paymentOrderItems).values({
+      id: `${orderId}-item-1`,
+      tenantId: TENANT_ID,
+      drawId,
+      paymentOrderId: orderId,
+      lineNo: 1,
+      itemType: "flash_sale",
+      title: "迟到付款",
+      quantity: 1,
+      amountCents: 500,
+      currency: "cny",
+      pricingSnapshotJson: "{}",
+      status: "refunded",
+      unitPriceCents: 500,
+    });
     // 对应 payment_order_attempts(handlePaymentCallback 依赖)
     await db.insert(paymentOrderAttempts).values({
       id: orderId,
@@ -882,7 +950,7 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
     const result = await handlePaymentCallback(db, TENANT_ID, lateProvider, {});
     expect(result.processed).toBe(true);
     expect(result.order?.status).toBe("paid_late_needs_refund");
-    expect(result.order?.prizeCodeId).toBeNull();
+    /* V2 removed */ // expect(result.order?.prizeCodeId).toBeNull();
   });
 });
 
@@ -922,6 +990,8 @@ describe("批量数量生命周期", () => {
     // 先创建批量订单（quantity=3），模拟支付入口已生成但用户刷新后恢复
     const created = await createPaymentOrder(db, {
       tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       quantity: 3, unitPriceCents: 8900,
       pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
       amountCents: 26700, currency: "cny", provider: "easypay",
@@ -933,6 +1003,8 @@ describe("批量数量生命周期", () => {
     const attemptId = created.order.currentAttemptId!;
     const resumed = await resumePendingPaymentOrder(db, {
       tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       amountCents: 26700, currency: "cny", provider: "easypay",
       notifyUrl: "https://cb", description: "批量秒杀恢复",
     }, providerMock, created.order.id, attemptId);
@@ -949,6 +1021,8 @@ it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
     // 先创建批量订单，再模拟确定性失败 → 取消
     await expect(createPaymentOrder(db, {
       tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       quantity: 3, unitPriceCents: 8900,
       pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
       amountCents: 26700, currency: "cny", provider: "easypay",
@@ -966,12 +1040,22 @@ it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
     expect(entry?.paymentStatus).toBe("expired");
     expect(draw?.activeParticipantCount).toBe(0);
 
+    // 从 DB 查被取消的订单 ID
+    const [cancelledOrder] = await db
+      .select({ id: paymentOrders.id })
+      .from(paymentOrders)
+      .where(and(eq(paymentOrders.drawId, drawId), eq(paymentOrders.entryId, entryId)))
+      .limit(1);
+    expect(cancelledOrder).toBeDefined();
+
     // 重试：应恢复 quantity=3，重新预约 3 件名额，并复用同一逻辑订单
     const retried = await retryPaymentOrder(db, {
       tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       amountCents: 26700, currency: "cny", provider: "easypay",
       notifyUrl: "https://cb", description: "批量秒杀重试",
-    }, providerMock);
+    }, providerMock, cancelledOrder!.id);
 
     expect(retried.order.quantity).toBe(3);
     expect(retried.order.amountCents).toBe(26700);
@@ -1065,6 +1149,8 @@ it("smoke: 批量直付全链路 创建(qty=3) → 回调 → 发 3 卡 → entr
     // 1) 创建批量订单，quantity=3
     const created = await createPaymentOrder(db, {
       tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       quantity: 3, unitPriceCents: 8900,
       pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
       amountCents: 26700, currency: "cny", provider: "easypay",
@@ -1108,6 +1194,8 @@ it("smoke: 批量直付全链路 创建(qty=3) → 回调 → 发 3 卡 → entr
 
     const created = await createPaymentOrder(db, {
       tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       quantity: 3, unitPriceCents: 8900,
       pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
       amountCents: 26700, currency: "cny", provider: "easypay",
@@ -1145,13 +1233,12 @@ it("smoke: 批量直付全链路 创建(qty=3) → 回调 → 发 3 卡 → entr
 // ═══════════════════════════════════════════════════════════════════════════
 describe("支付并发安全性", () => {
   /**
-   * 两个并发 createPaymentOrder 操作同一个 reserved entry，
-   * 只有第一个能成功创建 order（reserved→pending CAS），第二个应失败。
-   *
-   * 防护机制：payment-service.ts createPaymentOrder 中
-   *   WHERE paymentStatus='reserved' AND NOT EXISTS (SELECT 1 FROM payment_orders WHERE entry_id=?)
+   * V2 两个并发 createPaymentOrder 操作同一个 reserved entry，
+   * 由于 entry_id 不再唯一，两个订单都可以创建成功（docs/158）。
+   * 第一个利率用 reserved→pending CAS，第二个利用 pending→pending 走多次购买路径。
+   * 容量限制由 activeParticipantCount CAS 保证，entry 级不再硬阻断。
    */
-  it("两个并发 createPaymentOrder 同一 reserved entry → 仅一个订单", async () => {
+  it("两个并发 createPaymentOrder 同一 reserved entry → 两个订单均可创建（V2）", async () => {
     const drawId = crypto.randomUUID();
     const entryId = crypto.randomUUID();
     await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
@@ -1159,7 +1246,7 @@ describe("支付并发安全性", () => {
       id: drawId, tenantId: TENANT_ID, publicSlug: `concurrent-${drawId}`,
       title: "并发创建订单测试", status: "open",
       experienceType: "flash_sale",
-      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 9900, currency: "cny" } }),
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 2, priceCents: 9900, currency: "cny" } }),
       startAt: new Date(Date.now() - 60_000).toISOString(),
       endAt: new Date(Date.now() + 60_000).toISOString(),
     });
@@ -1171,26 +1258,36 @@ describe("支付并发安全性", () => {
 
     const orderInput = {
       tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email",
+      buyerIdentityValue: "test@example.com",
       amountCents: 9900, currency: "cny",
       provider: "easypay", notifyUrl: "https://cb.example.com",
     } as const;
 
-    // 两个并发调用——由于 SQLite 单写者序列化，先到的占用 reserved slot
+    // V2：两个调用都应成功（entry_id 不再唯一，容量 stockLimit=2 足够）
+    // 使用独立 mock 避免 providerTradeNo 唯一约束冲突
+    let tradeNoCounter = 0;
+    const uniqueProvider: PaymentProvider = {
+      ...providerMock,
+      createPayment: vi.fn(async () => ({
+        providerTradeNo: `checkout-concurrent-${++tradeNoCounter}`,
+        redirectUrl: "https://pay.example.com/checkout",
+        qrCode: "https://pay.example.com/qr",
+      })),
+    };
     const results = await Promise.allSettled([
-      createPaymentOrder(db, orderInput, providerMock),
-      createPaymentOrder(db, orderInput, providerMock),
+      createPaymentOrder(db, orderInput, uniqueProvider),
+      createPaymentOrder(db, orderInput, uniqueProvider),
     ]);
 
     const okCount = results.filter((r) => r.status === "fulfilled").length;
-    const failCount = results.filter((r) => r.status === "rejected").length;
-    expect(okCount).toBe(1);
-    expect(failCount).toBe(1);
+    expect(okCount).toBe(2);
 
-    // 验证只有一条 order 记录
+    // 验证有两条 order 记录
     const orders = await db.select().from(paymentOrders)
       .where(eq(paymentOrders.entryId, entryId));
-    expect(orders).toHaveLength(1);
-    expect(orders[0]!.status).toBe("pending");
+    expect(orders).toHaveLength(2);
+    expect(orders.every((o) => o.status === "pending")).toBe(true);
   });
 
   /**
@@ -1226,6 +1323,21 @@ describe("支付并发安全性", () => {
       id: orderId, tenantId: TENANT_ID, drawId, entryId,
       amountCents: 9900, currency: "cny", status: "pending",
       provider: "easypay", currentAttemptId: attemptId,
+    });
+    await db.insert(paymentOrderItems).values({
+      id: `${orderId}-item-1`,
+      tenantId: TENANT_ID,
+      drawId,
+      paymentOrderId: orderId,
+      lineNo: 1,
+      itemType: "flash_sale",
+      title: "并发回调测试",
+      quantity: 1,
+      amountCents: 9900,
+      currency: "cny",
+      pricingSnapshotJson: "{}",
+      status: "pending",
+      unitPriceCents: 9900,
     });
     await db.insert(paymentOrderAttempts).values({
       id: attemptId, paymentOrderId: orderId, tenantId: TENANT_ID, drawId,
@@ -1315,6 +1427,21 @@ describe("支付并发安全性", () => {
       provider: "easypay", currentAttemptId: attemptId,
       createdAt: new Date(Date.now() - 3600_000).toISOString(),
     });
+    await db.insert(paymentOrderItems).values({
+      id: `${orderId}-item-1`,
+      tenantId: TENANT_ID,
+      drawId,
+      paymentOrderId: orderId,
+      lineNo: 1,
+      itemType: "flash_sale",
+      title: "竞态退款",
+      quantity: 1,
+      amountCents: 9900,
+      currency: "cny",
+      pricingSnapshotJson: "{}",
+      status: "pending",
+      unitPriceCents: 9900,
+    });
     await db.insert(paymentOrderAttempts).values({
       id: attemptId, paymentOrderId: orderId, tenantId: TENANT_ID, drawId,
       attemptNo: 1, provider: "easypay", amountCents: 9900, currency: "cny",
@@ -1402,6 +1529,21 @@ describe("支付并发安全性", () => {
       currentAttemptId: attemptId,
       createdAt: new Date().toISOString(),
     });
+    await db.insert(paymentOrderItems).values({
+      id: `${orderId}-item-1`,
+      tenantId: TENANT_ID,
+      drawId,
+      paymentOrderId: orderId,
+      lineNo: 1,
+      itemType: "flash_sale",
+      title: "补发奖品",
+      quantity: 1,
+      amountCents: 9900,
+      currency: "cny",
+      pricingSnapshotJson: "{}",
+      status: "pending",
+      unitPriceCents: 9900,
+    });
     await db.insert(paymentOrderAttempts).values({
       id: attemptId, paymentOrderId: orderId, tenantId: TENANT_ID, drawId,
       attemptNo: 1, provider: "easypay", amountCents: 9900, currency: "cny",
@@ -1438,7 +1580,7 @@ describe("支付并发安全性", () => {
     // 订单最终为 paid 且关联了正确卡密
     const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, orderId));
     expect(order?.status).toBe("paid");
-    expect(order?.prizeCodeId).toBe(codeId);
+    /* V2 removed */ // expect(order?.prizeCodeId).toBe(codeId);
 
     // entry 为 paid
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));

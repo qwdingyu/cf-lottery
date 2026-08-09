@@ -9,6 +9,7 @@ import {
   emailAccessCodes,
   paymentOrders,
   paymentOrderAttempts,
+  paymentOrderItems,
   prizeCodes,
   prizes,
   tenantConfigs,
@@ -113,7 +114,7 @@ async function seedOrder() {
     provider: "alipay",
     currentAttemptId: ORDER_ID,
     providerTradeNo: "EP-123",
-    prizeCodeId: PRIZE_CODE_ID,
+    /* V2 removed */ // prizeCodeId: PRIZE_CODE_ID,
     paidAt: new Date().toISOString(),
   });
   await db.insert(paymentOrderAttempts).values({
@@ -128,6 +129,22 @@ async function seedOrder() {
     status: "paid",
     providerTradeNo: "EP-123",
     paidAt: new Date().toISOString(),
+  });
+  // V2：订单项承载已发卡密（docs/158）
+  await db.insert(paymentOrderItems).values({
+    id: `${ORDER_ID}-item-1`,
+    tenantId: TENANT_ID,
+    drawId: DRAW_ID,
+    paymentOrderId: ORDER_ID,
+    lineNo: 1,
+    itemType: "flash_sale",
+    title: "卡密奖品",
+    quantity: 1,
+    prizeCodeId: PRIZE_CODE_ID,
+    amountCents: 9900,
+    currency: "cny",
+    status: "fulfilled",
+    unitPriceCents: 9900,
   });
 }
 
@@ -479,7 +496,7 @@ describe("payment route", () => {
     });
     expect(wrong.status).toBe(404);
 
-    const accessToken = await issuePaymentOrderAccessToken(db, TENANT_ID, ORDER_ID, ENTRY_ID);
+    const accessToken = await issuePaymentOrderAccessToken(db, TENANT_ID, ORDER_ID);
 
     const okRes = await app.request(`/api/public/draws/payment-route/payment-orders/${ORDER_ID}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -507,9 +524,9 @@ describe("payment route", () => {
     await db.update(paymentOrders)
       .set({ quantity: 2, unitPriceCents: 8900, amountCents: 17800 })
       .where(eq(paymentOrders.id, ORDER_ID));
-    await db.update(prizeCodes)
-      .set({ paymentOrderId: ORDER_ID })
-      .where(eq(prizeCodes.id, PRIZE_CODE_ID));
+    await db.update(paymentOrderItems)
+      .set({ prizeCodeId: PRIZE_CODE_ID, status: "fulfilled" })
+      .where(eq(paymentOrderItems.paymentOrderId, ORDER_ID));
     await db.insert(prizeCodes).values({
       id: `${PRIZE_CODE_ID}-2`,
       tenantId: TENANT_ID,
@@ -520,7 +537,23 @@ describe("payment route", () => {
       winnerId: ENTRY_ID,
       paymentOrderId: ORDER_ID,
     });
-    const accessToken = await issuePaymentOrderAccessToken(db, TENANT_ID, ORDER_ID, ENTRY_ID);
+    await db.insert(paymentOrderItems).values({
+      id: `${ORDER_ID}-item-2`,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      paymentOrderId: ORDER_ID,
+      lineNo: 2,
+      itemType: "flash_sale",
+      title: "卡密奖品",
+      quantity: 1,
+      prizeCodeId: `${PRIZE_CODE_ID}-2`,
+      amountCents: 8900,
+      currency: "cny",
+      pricingSnapshotJson: "{}",
+      status: "fulfilled",
+      unitPriceCents: 8900,
+    });
+    const accessToken = await issuePaymentOrderAccessToken(db, TENANT_ID, ORDER_ID);
     const app = createTestApp();
 
     const okRes = await app.request(`/api/public/draws/payment-route/payment-orders/${ORDER_ID}`, {

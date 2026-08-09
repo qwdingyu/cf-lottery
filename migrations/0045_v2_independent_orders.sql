@@ -13,7 +13,65 @@
 -- UP
 BEGIN TRANSACTION;
 
--- 1. 重建 payment_orders：去掉 entry_id UNIQUE，新增 buyer snapshot，移除 prize_code_id
+-- 1. 新增 payment_order_items 表（先建表，从旧 payment_orders 迁移存量后紧接着删旧表）
+CREATE TABLE IF NOT EXISTS payment_order_items (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  draw_id TEXT NOT NULL,
+  payment_order_id TEXT NOT NULL,
+  line_no INTEGER NOT NULL DEFAULT 1,
+  item_type TEXT NOT NULL DEFAULT 'flash_sale',
+  title TEXT NOT NULL DEFAULT '',
+  quantity INTEGER NOT NULL DEFAULT 1,
+  prize_code_id TEXT,
+  amount_cents INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'cny',
+  pricing_snapshot_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending',
+  unit_price_cents INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_order_items_order ON payment_order_items(tenant_id, payment_order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_order_items_order_line ON payment_order_items(payment_order_id, line_no);
+CREATE INDEX IF NOT EXISTS idx_payment_order_items_prize_code ON payment_order_items(tenant_id, prize_code_id);
+
+-- 2. 迁移存量订单：对每笔已支付/已发卡订单，按 quantity 创建订单项（绑定已发卡密）
+-- 必须在重建 payment_orders 之前执行，因为旧表仍持有 prize_code_id。
+INSERT INTO payment_order_items (
+  id, tenant_id, draw_id, payment_order_id, line_no, item_type, title, quantity, prize_code_id, amount_cents, currency,
+  pricing_snapshot_json, status, unit_price_cents, created_at, updated_at
+)
+SELECT
+  (po.id || '-' || printf('%03d', seq.i)),
+  po.tenant_id,
+  po.draw_id,
+  po.id,
+  seq.i,
+  'flash_sale',
+  COALESCE(e.display_name, ''),
+  1,
+  CASE WHEN seq.i = 1 THEN po.prize_code_id ELSE NULL END,
+  po.unit_price_cents,
+  po.currency,
+  po.pricing_snapshot_json,
+  CASE WHEN po.status IN ('paid', 'paid_fulfillment_failed') THEN 'fulfilled' ELSE 'pending' END,
+  po.unit_price_cents,
+  po.created_at,
+  po.updated_at
+FROM payment_orders po
+LEFT JOIN lottery_entries e ON e.id = po.entry_id AND e.tenant_id = po.tenant_id
+CROSS JOIN (
+  SELECT 1 AS i UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+  UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8
+  UNION ALL SELECT 9 UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
+  UNION ALL SELECT 13 UNION ALL SELECT 14 UNION ALL SELECT 15 UNION ALL SELECT 16
+  UNION ALL SELECT 17 UNION ALL SELECT 18 UNION ALL SELECT 19 UNION ALL SELECT 20
+) seq
+WHERE seq.i <= po.quantity;
+
+-- 3. 重建 payment_orders：去掉 entry_id UNIQUE，新增 buyer snapshot，移除 prize_code_id
 CREATE TABLE IF NOT EXISTS payment_orders_new (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -68,47 +126,6 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_buyer_identity ON payment_orders(t
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_orders_provider_trade_no
   ON payment_orders(tenant_id, provider, provider_trade_no)
   WHERE provider_trade_no IS NOT NULL AND provider_trade_no <> '';
-
--- 2. 新增 payment_order_items 表
-CREATE TABLE IF NOT EXISTS payment_order_items (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  draw_id TEXT NOT NULL,
-  payment_order_id TEXT NOT NULL,
-  prize_code_id TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
-  unit_price_cents INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_payment_order_items_order ON payment_order_items(tenant_id, payment_order_id);
-CREATE INDEX IF NOT EXISTS idx_payment_order_items_prize_code ON payment_order_items(tenant_id, prize_code_id);
-
--- 3. 迁移存量订单：对每笔已支付/已发卡订单，按 quantity 创建订单项（绑定已发卡密）
--- 确保存量数据在 V2 模型下仍可查询
-INSERT INTO payment_order_items (
-  id, tenant_id, draw_id, payment_order_id, prize_code_id, status, unit_price_cents, created_at, updated_at
-)
-SELECT
-  (po.id || '-' || printf('%03d', seq.i)),
-  po.tenant_id,
-  po.draw_id,
-  po.id,
-  CASE WHEN seq.i = 1 THEN po.prize_code_id ELSE NULL END,
-  CASE WHEN po.status IN ('paid', 'paid_fulfillment_failed') THEN 'fulfilled' ELSE 'pending' END,
-  po.unit_price_cents,
-  po.created_at,
-  po.updated_at
-FROM payment_orders po
-CROSS JOIN (
-  SELECT 1 AS i UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
-  UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8
-  UNION ALL SELECT 9 UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
-  UNION ALL SELECT 13 UNION ALL SELECT 14 UNION ALL SELECT 15 UNION ALL SELECT 16
-  UNION ALL SELECT 17 UNION ALL SELECT 18 UNION ALL SELECT 19 UNION ALL SELECT 20
-) seq
-WHERE seq.i <= po.quantity;
 
 COMMIT;
 

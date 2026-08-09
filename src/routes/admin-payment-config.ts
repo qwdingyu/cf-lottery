@@ -22,7 +22,6 @@ import {
   paymentOrders,
   paymentOrderAttempts,
   paymentOrderItems,
-  prizeCodes,
   tenantConfigs,
 } from "../db/schema";
 import { parseAdminPagination, recordTenantAudit } from "./admin-lottery-helpers";
@@ -399,7 +398,7 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
       provider: paymentOrders.provider,
       providerTradeNo: paymentOrders.providerTradeNo,
       // V2：通过 order_items 子查询判断是否有已发卡密（docs/158）
-      hasPrizeCode: sql<number>`(
+      fulfilledItemCount: sql<number>`(
         SELECT COUNT(*) FROM ${paymentOrderItems}
         WHERE ${paymentOrderItems.paymentOrderId} = ${paymentOrders.id}
           AND ${paymentOrderItems.tenantId} = ${tenantId}
@@ -413,7 +412,6 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
       identityType: lotteryEntries.identityType,
       identityValue: lotteryEntries.identityValue,
       entryPaymentStatus: lotteryEntries.paymentStatus,
-      prizeCodeStatus: prizeCodes.status,
       pendingRefundAttemptCount: sql<number>`(
         SELECT COUNT(*) FROM ${paymentOrderAttempts}
         WHERE ${paymentOrderAttempts.paymentOrderId} = ${paymentOrders.id}
@@ -430,10 +428,6 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
     .from(paymentOrders)
     .innerJoin(lotteryDraws, eq(lotteryDraws.id, paymentOrders.drawId))
     .innerJoin(lotteryEntries, eq(lotteryEntries.id, paymentOrders.entryId))
-    .leftJoin(prizeCodes, and(
-      eq(prizeCodes.paymentOrderId, paymentOrders.id),
-      eq(prizeCodes.tenantId, tenantId),
-    ))
     .where(where)
     .orderBy(desc(paymentOrders.createdAt))
     .limit(limit)
@@ -451,7 +445,8 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
     orders: rows.map((row) => ({
       ...row,
       pendingRefundAttemptCount: Number(row.pendingRefundAttemptCount || 0),
-      hasPrizeCode: Number(row.hasPrizeCode || 0) > 0,
+      fulfilledItemCount: Number(row.fulfilledItemCount || 0),
+      hasPrizeCode: Number(row.fulfilledItemCount || 0) > 0,
     })),
     total: Number(total || 0),
   });

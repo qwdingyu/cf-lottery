@@ -11,6 +11,7 @@ import {
   lotteryEntries,
   lotteryPrizeTiers,
   paymentOrders,
+  paymentOrderItems,
   prizeCodes,
   prizes,
   tenantConfigs,
@@ -135,6 +136,22 @@ async function seedOrder(status = "paid_fulfillment_failed") {
     provider: "alipay",
     paidAt: now,
   });
+  await db.insert(paymentOrderItems).values({
+    id: `${ORDER_ID}-item-1`,
+    tenantId: TENANT_ID,
+    drawId: DRAW_ID,
+    paymentOrderId: ORDER_ID,
+    lineNo: 1,
+    itemType: "flash_sale",
+    title: "支付订单测试",
+    quantity: 1,
+    prizeCodeId: status === "paid" ? PRIZE_CODE_ID : null,
+    amountCents: 9900,
+    currency: "cny",
+    pricingSnapshotJson: "{}",
+    status: status === "paid" ? "fulfilled" : "pending",
+    unitPriceCents: 9900,
+  });
 }
 
 async function seedOtherTenantOrder() {
@@ -254,7 +271,7 @@ describe("admin payment management", () => {
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
     const [code] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, PRIZE_CODE_ID));
     expect(order?.status).toBe("paid");
-    expect(order?.prizeCodeId).toBe(PRIZE_CODE_ID);
+    /* V2 removed */ // expect(order?.prizeCodeId).toBe(PRIZE_CODE_ID);
     expect(entry?.paymentStatus).toBe("paid");
     expect(code?.status).toBe("issued");
     expect(code?.winnerId).toBe(ENTRY_ID);

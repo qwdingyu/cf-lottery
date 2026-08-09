@@ -774,8 +774,15 @@ export const paymentOrderItems = sqliteTable("payment_order_items", {
   tenantId: text("tenant_id").notNull(),
   drawId: text("draw_id").notNull(),
   paymentOrderId: text("payment_order_id").notNull(),
+  lineNo: integer("line_no").notNull().default(1),
+  itemType: text("item_type").notNull().default("flash_sale"),
+  title: text("title").notNull().default(""),
+  quantity: integer("quantity").notNull().default(1),
   /** 履约后绑定的卡密；履约前为 null。 */
   prizeCodeId: text("prize_code_id"),
+  amountCents: integer("amount_cents").notNull().default(0),
+  currency: text("currency").notNull().default("cny"),
+  pricingSnapshotJson: text("pricing_snapshot_json").notNull().default("{}"),
   /** 明细状态：pending → fulfilled / refunded；与 payment_orders.status 解耦。 */
   status: text("status").notNull().default("pending"),
   /** 该件单价快照（分），与订单 unit_price_cents 一致，明细级审计。 */
@@ -785,6 +792,7 @@ export const paymentOrderItems = sqliteTable("payment_order_items", {
 }, (t) => ({
   // 按订单取全部明细（公开查单/找回/邮件展示）。
   orderIdx: index("idx_payment_order_items_order").on(t.tenantId, t.paymentOrderId),
+  orderLineUnique: uniqueIndex("idx_payment_order_items_order_line").on(t.paymentOrderId, t.lineNo),
   // 按卡密反查归属订单（退款/换码/核销链路）。
   prizeCodeIdx: index("idx_payment_order_items_prize_code").on(t.tenantId, t.prizeCodeId),
 }));
