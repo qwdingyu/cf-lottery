@@ -286,7 +286,7 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
             if ((claimTier.rowsAffected ?? 0) > 0) {
               await tx.update(prizes)
                 .set({ usedCount: sql`used_count + 1`, updatedAt: nowIso })
-                .where(eq(prizes.id, picked.prizeId));
+                .where(and(eq(prizes.id, picked.prizeId), eq(prizes.tenantId, draw.tenantId)));
               award = true;
             } else {
               // 奖档名额已被并发占满：释放已取到的码，视为未中（仍扣次）

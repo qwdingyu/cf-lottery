@@ -705,6 +705,7 @@ export async function grantLoserRewards(
       })
       .where(and(
         eq(couponCodes.id, coupon.id),
+        eq(couponCodes.tenantId, tenantId),
         eq(couponCodes.status, "available"),
       ));
     if ((result.rowsAffected ?? 0) > 0) granted++;
@@ -844,4 +845,3 @@ export async function sendLoserConsolationEmails(
 
   return { sent, failed };
 }
-

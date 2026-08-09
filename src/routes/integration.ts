@@ -313,10 +313,14 @@ integrationRoute.post("/events", async (c) => {
 
     let redeemed = false;
     if (prizeCode.status === "issued") {
-      await db.update(prizeCodes)
+      const result = await db.update(prizeCodes)
         .set({ status: "redeemed" })
-        .where(eq(prizeCodes.id, prizeCode.id));
-      redeemed = true;
+        .where(and(
+          eq(prizeCodes.id, prizeCode.id),
+          eq(prizeCodes.tenantId, apiKey.tenantId),
+          eq(prizeCodes.status, "issued"),
+        ));
+      redeemed = (result.rowsAffected ?? 0) > 0;
     }
     // 幂等：already redeemed 也返回成功，但标记 redeemed=false（未发生变更）
 

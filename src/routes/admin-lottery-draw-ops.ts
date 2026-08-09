@@ -513,56 +513,73 @@ route.post("/draws/:id/tiers", async (c) => {
 route.post("/draws/:id/winners/:winnerId/retry-code", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  const [winner] = await db
-    .select()
-    .from(lotteryWinners)
-    .where(and(eq(lotteryWinners.id, c.req.param("winnerId")), eq(lotteryWinners.tenantId, tenantId)))
-    .limit(1);
+  const drawId = c.req.param("id");
+  const winnerId = c.req.param("winnerId");
+  const now = new Date().toISOString();
 
-  if (!winner) return fail(c, "中奖记录不存在", 404);
-  if (winner.prizeCodeId) return fail(c, "已有奖品码，无需补发", 400);
+  const result = await withDbTransaction(db, async (tx) => {
+    const [winner] = await tx
+      .select()
+      .from(lotteryWinners)
+      .where(and(
+        eq(lotteryWinners.id, winnerId),
+        eq(lotteryWinners.tenantId, tenantId),
+        eq(lotteryWinners.drawId, drawId),
+      ))
+      .limit(1);
 
-  // 获取奖项配置，找到对应的奖品 ID
-  const [tier] = await db
-    .select({ prizeId: lotteryPrizeTiers.prizeId })
-    .from(lotteryPrizeTiers)
-    .where(eq(lotteryPrizeTiers.id, winner.tierId))
-    .limit(1);
+    if (!winner) return { ok: false as const, status: 404, message: "中奖记录不存在" };
+    if (winner.prizeCodeId) return { ok: false as const, status: 400, message: "已有奖品码，无需补发" };
 
-  if (!tier?.prizeId) return fail(c, "未配置奖品，无法补发", 400);
+    const [tier] = await tx
+      .select({ prizeId: lotteryPrizeTiers.prizeId })
+      .from(lotteryPrizeTiers)
+      .where(and(
+        eq(lotteryPrizeTiers.id, winner.tierId),
+        eq(lotteryPrizeTiers.tenantId, tenantId),
+        eq(lotteryPrizeTiers.drawId, drawId),
+      ))
+      .limit(1);
 
-  // 原子锁码：从奖品码池中取一条 available 的记录
-  const lockResult = await db
-    .update(prizeCodes)
-    .set({ status: "issued", winnerId: winner.entryId, issuedAt: new Date().toISOString() })
-    .where(and(
-      eq(prizeCodes.prizeId, tier.prizeId),
-      eq(prizeCodes.status, "available"),
-      eq(prizeCodes.tenantId, tenantId),
-    ));
+    if (!tier?.prizeId) return { ok: false as const, status: 400, message: "未配置奖品，无法补发" };
 
-  if ((lockResult.rowsAffected ?? 0) === 0) {
-    return fail(c, "奖品码库存不足", 400);
-  }
+    // 原子锁码：必须用子查询 LIMIT 1，否则 UPDATE prize_id/status 会把同奖品所有可用码一次性发出。
+    const [lockedCode] = await tx
+      .update(prizeCodes)
+      .set({ status: "issued", winnerId: winner.entryId, issuedAt: now })
+      .where(and(
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.status, "available"),
+        eq(prizeCodes.id, sql<string>`(
+          SELECT id FROM prize_codes
+          WHERE tenant_id = ${tenantId}
+            AND prize_id = ${tier.prizeId}
+            AND status = 'available'
+          ORDER BY id
+          LIMIT 1
+        )`),
+      ))
+      .returning({ id: prizeCodes.id });
 
-  // 查询刚锁定的码
-  const [lockedCode] = await db
-    .select({ id: prizeCodes.id })
-    .from(prizeCodes)
-    .where(and(
-      eq(prizeCodes.prizeId, tier.prizeId),
-      eq(prizeCodes.winnerId, winner.entryId),
-      eq(prizeCodes.tenantId, tenantId),
-    ))
-    .limit(1);
+    if (!lockedCode) return { ok: false as const, status: 400, message: "奖品码库存不足" };
 
-  // 更新中奖记录的 prize_code_id
-  await db
-    .update(lotteryWinners)
-    .set({ prizeCodeId: lockedCode?.id || "" })
-    .where(eq(lotteryWinners.id, winner.id));
+    const updatedWinner = await tx
+      .update(lotteryWinners)
+      .set({ prizeCodeId: lockedCode.id })
+      .where(and(
+        eq(lotteryWinners.id, winner.id),
+        eq(lotteryWinners.tenantId, tenantId),
+        eq(lotteryWinners.drawId, drawId),
+        eq(lotteryWinners.prizeCodeId, ""),
+      ))
+      .returning({ id: lotteryWinners.id });
+    if (updatedWinner.length === 0) throw new Error("中奖记录状态已变化，请刷新后重试");
 
-  return ok(c, { prizeCodeId: lockedCode?.id || "" });
+    return { ok: true as const, prizeCodeId: lockedCode.id };
+  });
+
+  if (!result.ok) return fail(c, result.message, result.status);
+  return ok(c, { prizeCodeId: result.prizeCodeId });
 });
 
 /**

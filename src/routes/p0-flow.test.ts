@@ -11,7 +11,7 @@ import type { DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
-import { activityEvents, activitySubmissions, activityOutcomes, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, lotteryBlacklist, lotteryPrizeTiers, systemConfig, webhookConfigs } from "../db/schema";
+import { activityEvents, activitySubmissions, activityOutcomes, couponCodes, tenants, users, tenantMembers, lotteryDraws, lotteryEntries, lotteryWinners, lotteryBlacklist, lotteryPrizeTiers, prizes, prizeCodes, systemConfig, webhookConfigs } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -796,6 +796,86 @@ describe("L2 视角：registered 参与者身份可读", () => {
     expect(res.status).toBe(400);
     const body = await res.json() as any;
     expect(body.message).toContain("限制参与");
+  });
+});
+
+describe("管理端补发卡密", () => {
+  it("单个 winner 补发只锁定一张卡密，不会批量消耗同奖品码池", async () => {
+    const app = createTestApp();
+    await seedOwner();
+    const drawId = crypto.randomUUID();
+    const prizeId = crypto.randomUUID();
+    const tierId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    const winnerId = crypto.randomUUID();
+
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT_ID,
+      publicSlug: "retry-code-one",
+      title: "补发卡密单码锁定",
+      status: "drawn",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: futureIso(-60),
+      endAt: futureIso(60),
+    });
+    await db.insert(prizes).values({
+      id: prizeId,
+      tenantId: TENANT_ID,
+      name: "码奖品",
+      prizeType: "code",
+      active: 1,
+      totalCount: 3,
+      usedCount: 0,
+    });
+    await db.insert(prizeCodes).values([
+      { id: "retry-code-1", tenantId: TENANT_ID, prizeId, code: "RC-1", status: "available" },
+      { id: "retry-code-2", tenantId: TENANT_ID, prizeId, code: "RC-2", status: "available" },
+      { id: "retry-code-3", tenantId: TENANT_ID, prizeId, code: "RC-3", status: "available" },
+    ]);
+    await db.insert(lotteryPrizeTiers).values({
+      id: tierId,
+      tenantId: TENANT_ID,
+      drawId,
+      prizeId,
+      tierName: "一等奖",
+      winnerCount: 1,
+      sortOrder: 100,
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT_ID,
+      drawId,
+      identityType: "email",
+      identityValue: "retry-code@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryWinners).values({
+      id: winnerId,
+      spinId: crypto.randomUUID(),
+      tenantId: TENANT_ID,
+      drawId,
+      tierId,
+      entryId,
+      identityType: "email",
+      identityValue: "retry-code@test.com",
+      prizeCodeId: "",
+    });
+
+    const res = await app.request(`/api/admin/draws/${drawId}/winners/${winnerId}/retry-code`, {
+      method: "POST",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.prizeId, prizeId));
+    expect(codes.filter((code) => code.status === "issued")).toHaveLength(1);
+    expect(codes.filter((code) => code.status === "available")).toHaveLength(2);
+
+    const [winner] = await db.select().from(lotteryWinners).where(eq(lotteryWinners.id, winnerId));
+    expect(winner?.prizeCodeId).toBeTruthy();
+    expect(codes.find((code) => code.id === winner?.prizeCodeId)?.status).toBe("issued");
   });
 });
 
