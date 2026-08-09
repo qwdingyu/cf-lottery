@@ -1472,6 +1472,17 @@ export default {
           "Charge amount follows flashSale.priceCents; productLink.price is display-only for outbound",
         ],
       },
+      // docs/162 P2-A: reservation template (backend already supports reservation)
+      "reservation-booking": {
+        name: "Appointment Booking",
+        desc: "Users submit a booking; capacity-confirmed, first-come first-served. Great for class enrollment, store visits, appointment slots, and event sessions.",
+        hints: [
+          "Set the booking capacity (maxParticipants)",
+          "Show the booked count on the public page (showParticipantCount=1)",
+          "Export the booking roster from the admin console after the window closes",
+          "Optional password or roster-mode eligibility control",
+        ],
+      },
     },
     adminCreatedNeedPrizeHint: "Draft created and link copied — edit to add prize tiers before publishing",
     adminCreateDoneWithPreview: "Activity created; link copied. Confirm to open the public page (uncheck below to skip).",

@@ -67,6 +67,10 @@ export default defineConfig({
       "frontend/src/composables/platform-access.test.ts",
       // docs/162：模板文案 i18n 兜底 / 参数 chips
       "frontend/src/views/admin/lottery/template-i18n.test.ts",
+      // docs/162 P2-2：canvas dpr 截断适配
+      "frontend/src/components/games/canvas-utils.test.ts",
+      // docs/162 P2-4：body 滚动锁定多弹窗计数器
+      "frontend/src/composables/body-scroll-lock.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

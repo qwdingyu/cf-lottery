@@ -342,6 +342,89 @@
 .template-card--blank:hover {
   opacity: 1;
 }
+/* docs/162 P2-B：参数 chips（开奖方式 / 需奖品 / 收款）在一目了然的位置 */
+.template-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+.template-chip {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--admin-accent-soft, rgba(245, 158, 11, 0.15));
+  color: var(--admin-accent, #f59e0b);
+  white-space: nowrap;
+}
+/* docs/162 P1-A：模板加载骨架 */
+.template-card--skeleton {
+  cursor: default;
+  pointer-events: none;
+  border-color: transparent;
+}
+.template-skel-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--tg-secondary-bg, rgba(255,255,255,.05));
+  animation: skelPulse 1.2s ease-in-out infinite;
+}
+.template-skel-line {
+  width: 70%;
+  height: 11px;
+  border-radius: 4px;
+  background: var(--tg-secondary-bg, rgba(255,255,255,.05));
+  animation: skelPulse 1.2s ease-in-out infinite;
+}
+.template-skel-line--short {
+  width: 45%;
+}
+@keyframes skelPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.9; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .template-skel-icon,
+  .template-skel-line { animation: none; opacity: 0.5; }
+}
+/* docs/162 P1-A：模板加载失败 */
+.template-load-failed {
+  text-align: center;
+  padding: 24px 16px;
+}
+.template-load-failed-text {
+  font-size: 14px;
+  color: var(--tg-hint, #9aa4b2);
+  margin: 0 0 14px;
+}
+.template-load-failed-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+/* docs/162 P1-C：套用模板后的配置要点列表 */
+.template-hints {
+  list-style: none;
+  margin: 8px 0 2px;
+  padding: 10px 14px;
+  background: var(--admin-accent-soft, rgba(245, 158, 11, 0.08));
+  border-left: 3px solid var(--admin-accent, #f59e0b);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--tg-text, #e4e7eb);
+  line-height: 1.5;
+}
+.template-hints li::before {
+  content: "• ";
+  color: var(--admin-accent, #f59e0b);
+}
+/* docs/145 P2 接线：已按模板收敛 字段的次级提示，比 create-path-hint 更轻 */
+.create-path-hint--scoped {
+  font-size: 12px;
+  color: var(--tg-hint, #9aa4b2);
+  margin-top: 4px;
+}
 .template-icon {
   font-size: 32px;
   line-height: 1;

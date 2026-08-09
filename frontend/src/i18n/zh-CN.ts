@@ -1445,6 +1445,17 @@ export default {
           "支付金额以 flashSale.priceCents 为准；productLink.price 仅用于外部导流展示",
         ],
       },
+      // docs/162 P2-A：预约模板（后端已支持 reservation，模板补齐）
+      "reservation-booking": {
+        name: "预约报名",
+        desc: "用户选择后提交预约，按容量确认占位，满员即止。适合课程预约、门店到店、号源占位、活动场次预约。",
+        hints: [
+          "设置预约名额上限（maxParticipants）",
+          "公开页展示已预约人数（showParticipantCount=1）",
+          "过期后可在管理台导出预约名单",
+          "可设置密码保护或名单模式控制参与资格",
+        ],
+      },
     },
     adminCreatedNeedPrizeHint: "草稿已创建并复制链接；发布前请编辑补齐奖项（或使用快速创建奖品）",
     adminCreateDoneWithPreview: "活动已创建，链接已复制。确认后可打开用户页预览（可取消下方勾选）。",

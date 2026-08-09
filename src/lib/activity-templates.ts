@@ -256,4 +256,30 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       "支付金额以 flashSale.priceCents 为准；productLink.price 仅用于外部导流展示",
     ],
   },
+  // docs/162 P2-A：预约活动模板（reservation / calendar / capacity_assignment）
+  // 后端已支持 reservation activityKind，但此前无模板；enabled_kinds 默认含 reservation。
+  {
+    id: "reservation-booking",
+    name: "预约报名",
+    description: "用户选择后提交预约，按容量确认占位，满员即止。适合课程预约、门店到店、号源占位、活动场次预约。",
+    icon: "🗓️",
+    category: "conversion",
+    defaults: {
+      activityKind: "reservation",
+      experienceType: "calendar",
+      resultMode: "capacity_assignment",
+      participationMode: "open",
+      allocationPolicy: "capacity",
+      winnerCount: 0,
+      showParticipantCount: 1,
+      showWinnerCount: 0,
+      maxParticipants: 50,
+    },
+    hints: [
+      "设置预约名额上限（maxParticipants）",
+      "公开页展示已预约人数（showParticipantCount=1）",
+      "过期后可在管理台导出预约名单",
+      "可设置密码保护或名单模式控制参与资格",
+    ],
+  },
 ];

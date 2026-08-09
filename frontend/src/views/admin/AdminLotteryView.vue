@@ -695,8 +695,12 @@
               <p class="form-section-desc">{{ $t('lottery.adminAdvancedGrowthDesc') }}</p>
             </header>
             <div v-show="showAdvancedGrowth" id="lottery-advanced-body" class="form-advanced-body">
-              <!-- 体验类型：模板已带默认值；完整列表仅在此修改（055a 断点 C） -->
-              <section class="form-section form-section--nested" aria-labelledby="lottery-experience">
+              <!-- 体验类型：模板已带默认值；完整列表仅在此修改（055a 断点 C）；docs/145 按模板收口 -->
+              <section
+                v-if="editorVisibility.experienceType"
+                class="form-section form-section--nested"
+                aria-labelledby="lottery-experience"
+              >
                 <header class="form-section-head">
                   <h4 id="lottery-experience" class="form-section-title">{{ $t('lottery.adminExperienceType') }}</h4>
                   <p class="form-section-desc">{{ $t('lottery.adminExperienceAdvancedDesc') }}</p>
@@ -730,7 +734,7 @@
                 与 experienceType 解耦：同一转盘可换「壳文案策略」。
               -->
               <section
-                v-if="form.activityKind === 'lottery'"
+                v-if="form.activityKind === 'lottery' && editorVisibility.prizeShell"
                 class="form-section form-section--nested"
                 aria-labelledby="lottery-prize-shell"
               >
@@ -779,8 +783,8 @@
                 </div>
               </section>
 
-              <!-- 秒杀壳配置（docs/130/131）：默认展示/导流；paymentRequired=true 时走 cf-lottery 直付发卡 -->
-              <section class="form-section form-section--nested" aria-labelledby="lottery-flash-sale">
+              <!-- 秒杀壳配置（docs/130/131）：默认展示/导流；paymentRequired=true 时走 cf-lottery 直付发卡；docs/145 不可见时隐藏 -->
+              <section v-if="editorVisibility.flashSale" class="form-section form-section--nested" aria-labelledby="lottery-flash-sale">
                 <header class="form-section-head">
                   <h4 id="lottery-flash-sale" class="form-section-title">{{ $t('lottery.adminFlashSaleSection') }}</h4>
                   <p class="form-section-desc">{{ $t('lottery.adminFlashSaleSectionDesc') }}</p>
@@ -895,7 +899,7 @@
               </section>
 
               <!-- 导流配置：关联商品推广 -->
-              <section class="form-section form-section--nested" aria-labelledby="lottery-traffic">
+              <section v-if="editorVisibility.productLink" class="form-section form-section--nested" aria-labelledby="lottery-traffic">
                 <header class="form-section-head">
                   <h4 id="lottery-traffic" class="form-section-title">{{ $t('lottery.adminTrafficSection') }}</h4>
                   <p class="form-section-desc">{{ $t('lottery.adminTrafficSectionDesc') }}</p>
@@ -927,7 +931,7 @@
               </section>
 
               <!-- 裂变传播配置 -->
-              <section class="form-section form-section--nested" aria-labelledby="lottery-viral">
+              <section v-if="editorVisibility.viral" class="form-section form-section--nested" aria-labelledby="lottery-viral">
                 <header class="form-section-head">
                   <h4 id="lottery-viral" class="form-section-title">
                     {{ form.activityKind === 'claim' ? $t('lottery.adminSocialSection') : $t('lottery.adminViralSection') }}
@@ -964,7 +968,7 @@
               </section>
 
               <!-- 多状态 CTA 承接：中奖/未中奖不同导流 -->
-              <section class="form-section form-section--nested" aria-labelledby="lottery-ctas">
+              <section v-if="editorVisibility.cta" class="form-section form-section--nested" aria-labelledby="lottery-ctas">
                 <header class="form-section-head">
                   <h4 id="lottery-ctas" class="form-section-title">{{ $t('lottery.adminCtaSection') }}</h4>
                   <p class="form-section-desc">{{ $t('lottery.adminCtaSectionDesc') }}</p>
@@ -993,7 +997,7 @@
 
               <!-- 未中奖自动发券：次要承接，默认不在主路径（仅抽奖） -->
               <section
-                v-if="form.activityKind === 'lottery'"
+                v-if="form.activityKind === 'lottery' && editorVisibility.loserReward"
                 class="form-section form-section--nested"
                 aria-labelledby="lottery-loserreward"
               >
@@ -1134,7 +1138,7 @@
               </p>
             </header>
             <div class="form-grid two-cols">
-              <div v-if="form.activityKind === 'lottery'" class="field-span-2">
+              <div v-if="form.activityKind === 'lottery' && editorVisibility.tiers" class="field-span-2">
                 <span class="field-label-text">{{ $t('lottery.adminTierConfig') }}</span>
                 <div class="tier-list">
                   <div v-for="(tier, idx) in form.tiers" :key="idx" class="tier-row">
@@ -1184,7 +1188,7 @@
                 <input v-model.number="form.winnerCount" type="number" min="1" max="9999" step="1" required />
                 <small class="field-hint">{{ $t('lottery.winnerCountHint') }}</small>
               </label>
-              <label v-if="form.activityKind === 'lottery' && form.resultMode === 'instant'">
+              <label v-if="form.activityKind === 'lottery' && form.resultMode === 'instant' && editorVisibility.maxSpins">
                 <span>{{ $t('lottery.adminMaxSpinsPerEntry') }}</span>
                 <input v-model.number="form.maxSpinsPerEntry" type="number" min="1" max="100" step="1" required />
                 <small class="field-hint">{{ $t('lottery.adminMaxSpinsPerEntryHint') }}</small>

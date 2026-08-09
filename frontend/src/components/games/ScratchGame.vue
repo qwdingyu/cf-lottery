@@ -15,8 +15,8 @@
         ref="canvasRef"
         class="scratch-canvas"
         :class="{ hidden: joinedPulse }"
-        :width="300"
-        :height="200"
+        :width="LOGICAL_W * dpr"
+        :height="LOGICAL_H * dpr"
         role="img"
         :aria-label="scratched ? $t('lottery.gameScratchReveal') : $t('lottery.gameScratchHint')"
         :tabindex="disabled ? -1 : 0"
@@ -50,6 +50,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { GameProps, GameEmits } from './types'
+import { cappedDevicePixelRatio } from './canvas-utils'
 
 const props = withDefaults(defineProps<GameProps>(), {
   disabled: false,
@@ -66,21 +67,33 @@ const isDrawing = ref(false)
 const joinedPulse = ref(false)
 let lastCelebrate = 0
 
+/**
+ * docs/162 P2-2：ScratchGame 原来 canvas 固定 300×200 bitmap，CSS 拉满 92vw，
+ * Retina 屏涂层文字明显模糊。用 cappedDevicePixelRatio 放缩后 ptrToCanvas 和
+ * draw ops 仍用逻辑尺寸，checkScratched 判断透明率不变。
+ */
+const LOGICAL_W = 300
+const LOGICAL_H = 200
+const dpr = cappedDevicePixelRatio()
+
 function initCanvas() {
   const canvas = canvasRef.value
   if (!canvas) return
+  // docs/162 P2-2：dpr 适配——bitmap 放大，ctx 缩放，绘制用逻辑坐标
+  canvas.width = LOGICAL_W * dpr
+  canvas.height = LOGICAL_H * dpr
   const ctx = canvas.getContext('2d')
   if (!ctx) return
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.fillStyle = '#94a3b8'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H)
   ctx.fillStyle = '#64748b'
   ctx.font = 'bold 18px sans-serif'
   ctx.textAlign = 'center'
-  // i18n：避免英文界面硬编码中文（055a P2）
-  ctx.fillText(t('lottery.gameScratchCanvasTitle'), canvas.width / 2, canvas.height / 2 + 6)
+  ctx.fillText(t('lottery.gameScratchCanvasTitle'), LOGICAL_W / 2, LOGICAL_H / 2 + 6)
   ctx.fillStyle = '#475569'
   ctx.font = '12px sans-serif'
-  ctx.fillText(t('lottery.gameScratchCanvasHint'), canvas.width / 2, canvas.height / 2 + 30)
+  ctx.fillText(t('lottery.gameScratchCanvasHint'), LOGICAL_W / 2, LOGICAL_H / 2 + 30)
 }
 
 function scratchAt(x: number, y: number) {
@@ -106,8 +119,9 @@ function pointerToCanvas(clientX: number, clientY: number) {
   const rw = rect.width || 1
   const rh = rect.height || 1
   return {
-    x: ((clientX - rect.left) / rw) * canvas.width,
-    y: ((clientY - rect.top) / rh) * canvas.height,
+    // docs/162 P2-2：CSS 拉伸后 rect 比例映射到逻辑尺寸（LOGICAL_W/LOGICAL_H）而非 bitmap
+    x: ((clientX - rect.left) / rw) * LOGICAL_W,
+    y: ((clientY - rect.top) / rh) * LOGICAL_H,
   }
 }
 
@@ -146,7 +160,8 @@ function quickScratch() {
   if (!canvas) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, LOGICAL_W, LOGICAL_H)
   scratched.value = true
   // 不自动 emit('play')——用户需手动点击按钮确认参与，防误操作
 }

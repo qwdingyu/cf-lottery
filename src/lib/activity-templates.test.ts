@@ -74,4 +74,21 @@ describe("ACTIVITY_TEMPLATES 抽奖体验诚实性（docs/115）", () => {
     expect(flash!.description).toMatch(/直付发卡/);
     expect(flash!.hints.join(" ")).toMatch(/商品链接|paymentRequired|priceCents|卡密码池/);
   });
+
+  it("docs/162 P2-A：预约模板存在（reservation + calendar + capacity_assignment）", () => {
+    const booking = ACTIVITY_TEMPLATES.find((t) => t.id === "reservation-booking");
+    expect(booking).toBeTruthy();
+    expect(booking!.defaults).toMatchObject({
+      activityKind: "reservation",
+      experienceType: "calendar",
+      resultMode: "capacity_assignment",
+      participationMode: "open",
+      winnerCount: 0,
+      showParticipantCount: 1,
+      maxParticipants: 50,
+    });
+    // 预约不是抽奖，不应要求中奖名额
+    expect(booking!.defaults.activityKind).not.toBe("lottery");
+    expect(booking!.defaults.winnerCount).toBe(0);
+  });
 });

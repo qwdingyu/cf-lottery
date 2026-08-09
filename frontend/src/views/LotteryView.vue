@@ -165,7 +165,7 @@
                   @input="setSurveyField(draw.id, field.id, ($event.target as HTMLTextAreaElement).value)"
                 />
                 <select
-                  v-else-if="field.type === 'select' || field.type === 'radio'"
+                  v-else-if="field.type === 'select'"
                   :value="submissionDrafts[draw.id]?.fields?.[field.id] || ''"
                   :disabled="joiningId === draw.id"
                   @change="setSurveyField(draw.id, field.id, ($event.target as HTMLSelectElement).value)"
@@ -173,6 +173,21 @@
                   <option value="">{{ $t('lottery.pleaseSelect') }}</option>
                   <option v-for="o in (field.options || [])" :key="o.id" :value="o.id">{{ o.label }}</option>
                 </select>
+                <!-- docs/162 P2-3：radio 原先渲染为 select 下拉（与 select 合并分支），
+                     单选语义丢失且多一次点按；现按投票区投票选项样式渲染为 radio 组 -->
+                <div v-else-if="field.type === 'radio'" class="radio-stack">
+                  <label v-for="o in (field.options || [])" :key="o.id" class="radio-option">
+                    <input
+                      type="radio"
+                      :name="'survey-' + draw.id + '-' + field.id"
+                      :value="o.id"
+                      :checked="submissionDrafts[draw.id]?.fields?.[field.id] === o.id"
+                      :disabled="joiningId === draw.id"
+                      @change="setSurveyField(draw.id, field.id, o.id)"
+                    />
+                    <span>{{ o.label }}</span>
+                  </label>
+                </div>
                 <div v-else-if="field.type === 'checkbox'" class="checkbox-stack">
                   <label v-for="o in (field.options || [])" :key="o.id" class="checkbox-option">
                     <input
@@ -999,6 +1014,11 @@ import { getGameComponent, hasRegisteredGameExperience } from '@/components/game
 import GameResultModal from '@/components/games/GameResultModal.vue'
 import ViralLeaderboard from '@/components/ViralLeaderboard.vue'
 import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
+import {
+  lockBodyScroll,
+  unlockBodyScroll,
+  forceUnlockBodyScroll,
+} from '@/composables/body-scroll-lock'
 import {
   consumeCfAuthPendingJoin,
   readCfAuthPendingJoin,
@@ -3912,6 +3932,16 @@ function handleVisibilityChange() {
 
 onMounted(async () => {
   void cfAuth.refresh()
+
+  /**
+   * docs/162 P2-4：弹窗 body 滚动锁定——多个弹窗叠加时计数器保证
+   * 最后一个关闭才真正解锁，避免中间解锁造成穿透。
+   */
+  watch(
+    () => showLoginModal.value || showResult.value || showPaymentModal.value || showMyResultModal.value,
+    (anyOpen) => { if (anyOpen) lockBodyScroll(); else unlockBodyScroll() },
+    { immediate: false },
+  )
   // 回调页可能刚写入 registered_token：同步到 ref（深链首屏）
   const storedTok = sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY)
   if (storedTok && !registeredToken.value) registeredToken.value = storedTok
@@ -3961,5 +3991,7 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   stopMyResultCooldown()
   clearResultModalTimer()
+  // docs/162 P2-4：组件卸载时强制解锁滚动（计数器归零，防御异常残留）
+  forceUnlockBodyScroll()
 })
 </script>

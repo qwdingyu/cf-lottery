@@ -219,7 +219,8 @@
 /* 问卷/投票表单控件：参与前必填，视觉并入卡片体系（原属旧体系，删除后补回） */
 .vote-option,
 .survey-field,
-.checkbox-option {
+.checkbox-option,
+.radio-option {
   display: flex;
   gap: 8px;
   align-items: flex-start;
@@ -255,7 +256,8 @@
 .survey-field select {
   width: 100%;
 }
-.checkbox-stack {
+.checkbox-stack,
+.radio-stack {
   display: flex;
   flex-direction: column;
   gap: 6px;
