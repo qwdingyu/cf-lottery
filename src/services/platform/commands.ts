@@ -10,7 +10,7 @@
  * 涉及卡密的回复必须默认群内脱敏，不能把完整码发到 QQ 群里。
  */
 import type { DbType } from "../../db/client";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, shareRecords } from "../../db/schema";
 import { joinDraw, recordActivityEvent } from "../lottery-service";
 import { performInstantSpin, SpinBusinessError } from "../lottery/spin-execution";
@@ -87,6 +87,21 @@ export function renderHelpReply(config: BuiltinCommandConfig): string {
   return `当前可用命令：${enabled.join(" ")}`;
 }
 
+/**
+ * 命令路由表：新命令只需在此注册一行即可接入。
+ * 注意：help 特殊处理（renderHelpReply 依赖 builtinCommands 配置），不在此表中。
+ */
+const COMMAND_HANDLERS: Record<string, (
+  db: DbType,
+  input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
+) => Promise<PlatformCommandResult>> = {
+  checkin: executeCheckinCommand,
+  share: executeShareCommand,
+  leaderboard: executeLeaderboardCommand,
+  spin: executeSpinCommand,
+  my_prize: executeMyPrizeCommand,
+};
+
 export async function executeBuiltinPlatformCommand(
   db: DbType,
   input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
@@ -102,24 +117,9 @@ export async function executeBuiltinPlatformCommand(
     return { handled: true, reply: renderHelpReply(input.builtinCommands) };
   }
 
-  if (input.command === "checkin") {
-    return executeCheckinCommand(db, input);
-  }
-
-  if (input.command === "share") {
-    return executeShareCommand(db, input);
-  }
-
-  if (input.command === "leaderboard") {
-    return executeLeaderboardCommand(db, input);
-  }
-
-  if (input.command === "spin") {
-    return executeSpinCommand(db, input);
-  }
-
-  if (input.command === "my_prize") {
-    return executeMyPrizeCommand(db, input);
+  const handler = COMMAND_HANDLERS[input.command];
+  if (handler) {
+    return handler(db, input);
   }
 
   /**
@@ -392,7 +392,7 @@ async function executeCheckinCommand(
  * 执行 /抽奖 命令（instant 即时抽奖）。
  *
  * 流程：
- * 1. 校验活动 resultMode 是否为 instant
+ * 1. 校验活动 activityKind=lottery 且 resultMode=instant
  * 2. 构建幂等键（优先使用 QQ messageId，防止同一条消息重试被重复扣次）
  * 3. 调用 performInstantSpin 执行即时抽奖
  * 4. 根据结果返回中奖/未中奖消息
@@ -401,9 +401,13 @@ async function executeSpinCommand(
   db: DbType,
   input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
 ): Promise<PlatformCommandResult> {
-  // 查询活动确认 resultMode=instant
+  // 命令层先明确收口：只有 lottery + instant 可以从 QQ 群直接触发抽奖。
+  // 虽然 performInstantSpin 也有纵深校验，这里提前返回更符合 SaaS 用户可理解的群内提示。
   const [draw] = await db
-    .select({ resultMode: lotteryDraws.resultMode })
+    .select({
+      activityKind: lotteryDraws.activityKind,
+      resultMode: lotteryDraws.resultMode,
+    })
     .from(lotteryDraws)
     .where(and(
       eq(lotteryDraws.id, input.drawId),
@@ -411,6 +415,10 @@ async function executeSpinCommand(
     ))
     .limit(1);
   if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定 QQ 群助手。" };
+
+  if (String(draw.activityKind || "") !== "lottery") {
+    return { handled: true, reply: "当前绑定活动不是抽奖活动，不能使用 /抽奖。请管理员绑定即时抽奖活动。" };
+  }
 
   if (String(draw.resultMode || "") !== "instant") {
     return { handled: true, reply: "当前活动不是即时抽奖模式，请在手动开奖后查看结果。发送 /帮助 查看更多命令。" };
@@ -479,12 +487,12 @@ async function executeMyPrizeCommand(
   }
 
   // 查询中奖记录，关联奖项名称。卡密明文不进入群消息响应，避免公开群泄露。
+  // 使用 isNotNull 将 prizeCodeId 转为布尔标记 hasCode，不查 prizeCodes 表明文。
   const winners = await db
     .select({
-      id: lotteryWinners.id,
       tierName: lotteryPrizeTiers.tierName,
       prizeName: prizes.name,
-      prizeCodeId: lotteryWinners.prizeCodeId,
+      hasCode: isNotNull(lotteryWinners.prizeCodeId),
       drawnAt: lotteryWinners.drawnAt,
     })
     .from(lotteryWinners)
@@ -509,7 +517,7 @@ async function executeMyPrizeCommand(
 
   const lines = winners.map((w, idx) => {
     const name = w.prizeName || w.tierName || `奖品 #${idx + 1}`;
-    const code = w.prizeCodeId ? "（卡密已发放，群内不展示）" : "";
+    const code = w.hasCode ? "（卡密已发放，群内不展示）" : "";
     return `${idx + 1}. ${name}${code}`;
   });
 

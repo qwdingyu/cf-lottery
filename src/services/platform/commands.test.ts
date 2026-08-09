@@ -171,8 +171,19 @@ async function ensureEntry() {
   });
 }
 
-/** 给用户直接插入一条完整的中奖记录（spin+winner+prize+codes） */
-async function seedWinner(opts?: { prizeName?: string; code?: string; secret?: string }) {
+/**
+ * 给用户直接插入一条完整的中奖记录（spin+winner+prize+codes）。
+ * - 传入 entryId 时复用已有参与记录（多奖品场景），否则新建一条。
+ * - 通过 opts 定制奖项名/卡密/排序，避免在测试体里重复拼 SQL。
+ */
+async function seedWinner(opts?: {
+  prizeName?: string;
+  tierName?: string;
+  code?: string;
+  secret?: string;
+  sortOrder?: number;
+  entryId?: string;
+}): Promise<{ entryId: string; codeId: string; tierId: string }> {
   const prizeId = crypto.randomUUID();
   await db.insert(prizes).values({
     id: prizeId,
@@ -189,9 +200,9 @@ async function seedWinner(opts?: { prizeName?: string; code?: string; secret?: s
     tenantId: TENANT_ID,
     drawId: DRAW_ID,
     prizeId,
-    tierName: "一等奖",
+    tierName: opts?.tierName || "一等奖",
     winnerCount: 1,
-    sortOrder: 100,
+    sortOrder: opts?.sortOrder ?? 100,
     weight: 100,
   });
 
@@ -206,18 +217,22 @@ async function seedWinner(opts?: { prizeName?: string; code?: string; secret?: s
     issuedAt: new Date().toISOString(),
   });
 
-  const entryId = crypto.randomUUID();
-  await db.insert(lotteryEntries).values({
-    id: entryId,
-    tenantId: TENANT_ID,
-    drawId: DRAW_ID,
-    identityType: "qq",
-    identityValue: USER_ID,
-    displayName: "测试用户",
-    joinedAt: new Date().toISOString(),
-    spinsLeft: 0,
-    spinsTotalGranted: 5,
-  });
+  // 复用已有 entry 或新插入一条
+  let entryId = opts?.entryId || "";
+  if (!entryId) {
+    entryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "qq",
+      identityValue: USER_ID,
+      displayName: "测试用户",
+      joinedAt: new Date().toISOString(),
+      spinsLeft: 0,
+      spinsTotalGranted: 5,
+    });
+  }
 
   const spinId = crypto.randomUUID();
   await db.insert(lotterySpins).values({
@@ -339,47 +354,15 @@ describe("/我的奖品 (executeMyPrizeCommand)", () => {
 
   it("有多个奖品时返回完整列表", async () => {
     await seedInstantDraw();
-    await seedWinner({ prizeName: "二等奖", code: "WIN-CODE-2", secret: "WIN-SEC-2" });
-
-    // 查找已有 entry
-    const entryRow = await db
-      .select({ id: lotteryEntries.id })
-      .from(lotteryEntries)
-      .where(and(
-        eq(lotteryEntries.tenantId, TENANT_ID),
-        eq(lotteryEntries.drawId, DRAW_ID),
-        eq(lotteryEntries.identityValue, USER_ID),
-      ))
-      .limit(1);
-    const entryId = entryRow[0]?.id;
-    if (!entryId) throw new Error("未找到 entry");
-
-    // 创建第二个奖品
-    const prizeId2 = crypto.randomUUID();
-    await db.insert(prizes).values({
-      id: prizeId2, tenantId: TENANT_ID, name: "三等奖", prizeType: "code", totalCount: 1, active: 1,
-    });
-    const tierId2 = crypto.randomUUID();
-    await db.insert(lotteryPrizeTiers).values({
-      id: tierId2, tenantId: TENANT_ID, drawId: DRAW_ID, prizeId: prizeId2,
-      tierName: "三等奖", winnerCount: 1, sortOrder: 200, weight: 0,
-    });
-    const codeId2 = crypto.randomUUID();
-    await db.insert(prizeCodes).values({
-      id: codeId2, tenantId: TENANT_ID, prizeId: prizeId2,
-      code: "WIN-CODE-3", secret: "WIN-SEC-3", status: "issued", issuedAt: new Date().toISOString(),
-    });
-    const spinId2 = crypto.randomUUID();
-    await db.insert(lotterySpins).values({
-      id: spinId2, tenantId: TENANT_ID, drawId: DRAW_ID, entryId,
-      tierId: tierId2, idempotencyKey: `seed-${spinId2}`,
-      prizeCodeId: codeId2, prizeIndex: 1, won: 1, algorithmVersion: "1",
-      createdAt: new Date().toISOString(),
-    });
-    await db.insert(lotteryWinners).values({
-      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId: DRAW_ID, tierId: tierId2,
-      entryId, spinId: spinId2, identityType: "qq", identityValue: USER_ID,
-      prizeCodeId: codeId2, drawnAt: new Date().toISOString(), notificationStatus: "pending",
+    // 第一个奖品会新建 entry，第二个复用同一 entry 模拟同一用户多件中奖
+    const first = await seedWinner({ prizeName: "二等奖", code: "WIN-CODE-2", secret: "WIN-SEC-2" });
+    await seedWinner({
+      prizeName: "三等奖",
+      tierName: "三等奖",
+      code: "WIN-CODE-3",
+      secret: "WIN-SEC-3",
+      sortOrder: 200,
+      entryId: first.entryId,
     });
 
     const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "my_prize" }));
