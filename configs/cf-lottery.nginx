@@ -1,0 +1,65 @@
+# cf-lottery nginx 反代
+# 上游: systemd → 127.0.0.1:8787
+# 域名: lucky.eforge.xyz
+
+upstream cf_lottery_node {
+    server 127.0.0.1:8787;
+    keepalive 32;
+}
+
+server {
+    server_name lucky.eforge.xyz;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    client_max_body_size 10m;
+
+    # ── 静态资源：长缓存 + gzip ──
+    location /assets/ {
+        # 移除上游可能设置的短缓存头，强制 immutable
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+
+        proxy_pass http://cf_lottery_node;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+    }
+
+    # ── 其他请求 ──
+    location / {
+        proxy_pass http://cf_lottery_node;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+    }
+
+    # gzip 压缩 JS/CSS（vite 构建产物已 hash 命名，可安全缓存）
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 256;
+    gzip_types text/javascript application/javascript text/css;
+
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    ssl_certificate /etc/letsencrypt/live/lucky.eforge.xyz/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/lucky.eforge.xyz/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+server {
+    if ($host = lucky.eforge.xyz) {
+        return 301 https://$host$request_uri;
+    }
+
+    listen 80;
+    listen [::]:80;
+    server_name lucky.eforge.xyz;
+    return 404;
+}
