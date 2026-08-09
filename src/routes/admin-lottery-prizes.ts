@@ -134,7 +134,8 @@ route.post("/prizes/:id/codes/generate", async (c) => {
 
   // 排除易混淆字符：0/O、1/I/l
   const CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-  const randomBytes = new Uint8Array(Math.max(codeLen, secretLen) * count);
+  // 随机字节数组大小必须能容纳 code + secret 的全部字符
+  const randomBytes = new Uint8Array((codeLen + secretLen) * count);
   crypto.getRandomValues(randomBytes);
 
   const codes: Array<{ code: string; secret: string }> = [];
