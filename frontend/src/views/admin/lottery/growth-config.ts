@@ -14,6 +14,12 @@ export type GrowthProductLink = {
   price: string
 }
 
+export type FlashSalePricingTier = {
+  minQuantity: number
+  unitPriceCents: number
+  label: string
+}
+
 export type GrowthFieldsFromDraw = {
   enableProductLink: boolean
   productLink: GrowthProductLink
@@ -50,6 +56,7 @@ export type GrowthFieldsFromDraw = {
   flashSalePriceCents: number | null
   flashSaleCurrency: string
   flashSaleTitle: string
+  flashSalePricingTiers: FlashSalePricingTier[]
   /** 是否已有增长配置：编辑时应用来展开高级区 */
   hasGrowthConfig: boolean
 }
@@ -189,6 +196,22 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
   }
   const flashSaleCurrency = String(flashSale?.currency || 'cny').trim().toLowerCase().slice(0, 8) || 'cny'
   const flashSaleTitle = String(flashSale?.title || '').trim().slice(0, 100)
+  const rawPricingTiers = flashSale?.pricingTiers ?? flashSale?.pricing_tiers
+  const flashSalePricingTiers: FlashSalePricingTier[] = Array.isArray(rawPricingTiers)
+    ? rawPricingTiers.slice(0, 8).flatMap((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+        const row = item as Record<string, unknown>
+        const minQuantity = Number(row.minQuantity ?? row.min_quantity)
+        const unitPriceCents = Number(row.unitPriceCents ?? row.unit_price_cents ?? row.priceCents ?? row.price_cents)
+        if (!Number.isInteger(minQuantity) || minQuantity < 1 || minQuantity > 100) return []
+        if (!Number.isInteger(unitPriceCents) || unitPriceCents < 1 || unitPriceCents > 100_000_000) return []
+        return [{
+          minQuantity,
+          unitPriceCents,
+          label: String(row.label || '').trim().slice(0, 32),
+        }]
+      })
+    : []
 
   const productUrl = String(productSrc?.url || '').trim()
   const enableProductLink = Boolean(productUrl)
@@ -242,6 +265,7 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
     flashSalePriceCents,
     flashSaleCurrency,
     flashSaleTitle,
+    flashSalePricingTiers,
     hasGrowthConfig:
       enableProductLink ||
       enableViral ||
@@ -290,6 +314,7 @@ export function buildPromotionConfigPayload(form: {
   flashSalePriceCents?: number | null
   flashSaleCurrency?: string | null
   flashSaleTitle?: string | null
+  flashSalePricingTiers?: FlashSalePricingTier[] | null
 }, opts: { isEditing: boolean }): Record<string, unknown> | undefined {
   const hasProduct = Boolean(form.enableProductLink && form.productLink?.url)
   const hasViral = Boolean(form.enableViral)
@@ -340,6 +365,22 @@ export function buildPromotionConfigPayload(form: {
     }
     const currency = String(form.flashSaleCurrency || 'cny').trim().toLowerCase().slice(0, 8) || 'cny'
     const title = String(form.flashSaleTitle || '').trim().slice(0, 100)
+    const pricingTiers = Array.isArray(form.flashSalePricingTiers)
+      ? form.flashSalePricingTiers
+          .slice(0, 8)
+          .flatMap((tier) => {
+            const minQuantity = Number(tier?.minQuantity)
+            const unitPriceCents = Number(tier?.unitPriceCents)
+            if (!Number.isInteger(minQuantity) || minQuantity < 1 || minQuantity > maxPerUser) return []
+            if (!Number.isInteger(unitPriceCents) || unitPriceCents < 1 || unitPriceCents > 100_000_000) return []
+            return [{
+              minQuantity,
+              unitPriceCents,
+              label: String(tier?.label || '').trim().slice(0, 32),
+            }]
+          })
+          .sort((a, b) => a.minQuantity - b.minQuantity)
+      : []
     flashSaleBlock = {
       flashSale: {
         enabled: true,
@@ -356,6 +397,7 @@ export function buildPromotionConfigPayload(form: {
               ...(priceCents != null ? { priceCents } : {}),
               currency,
               ...(title ? { title } : {}),
+              ...(pricingTiers.length > 0 ? { pricingTiers } : {}),
             }
           : {}),
       },

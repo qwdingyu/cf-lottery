@@ -828,6 +828,32 @@
                         <input v-model="flashSalePriceYuan" type="number" min="0.01" step="0.01" max="1000000" placeholder="9.90" />
                         <small>{{ $t('lottery.adminFlashSalePriceHint') }}</small>
                       </label>
+                      <div class="field-span-2 flash-sale-tier-editor">
+                        <div class="flash-sale-tier-editor__head">
+                          <span>阶梯价</span>
+                          <button type="button" class="btn btn-ghost btn-xs" :disabled="form.flashSalePricingTiers.length >= 8" @click="addFlashSalePricingTier">
+                            添加阶梯
+                          </button>
+                        </div>
+                        <div v-if="form.flashSalePricingTiers.length" class="flash-sale-tier-list">
+                          <div v-for="(tier, idx) in form.flashSalePricingTiers" :key="idx" class="flash-sale-tier-row">
+                            <label>
+                              <span>起购件数</span>
+                              <input v-model.number="tier.minQuantity" type="number" min="1" :max="form.flashSaleMaxPerUser || 100" />
+                            </label>
+                            <label>
+                              <span>单价(元)</span>
+                              <input :value="flashSaleTierPriceYuan(idx)" type="number" min="0.01" step="0.01" max="1000000" @input="onFlashSaleTierPriceInput(idx, $event)" />
+                            </label>
+                            <label>
+                              <span>标签</span>
+                              <input v-model="tier.label" maxlength="32" placeholder="批发价" />
+                            </label>
+                            <button type="button" class="btn btn-ghost btn-xs" @click="removeFlashSalePricingTier(idx)">删除</button>
+                          </div>
+                        </div>
+                        <small class="field-hint">达到起购件数后，整笔订单全部件数按该档单价计算。</small>
+                      </div>
                       <label>
                         <span>{{ $t('lottery.adminFlashSaleCurrency') }}</span>
                         <select v-model="form.flashSaleCurrency">
@@ -2114,6 +2140,38 @@ const flashSalePriceYuan = computed({
     form.value.flashSalePriceCents = isNaN(n) || n <= 0 ? null : Math.max(1, Math.round(n * 100))
   },
 })
+
+function flashSaleTierPriceYuan(index: number): string {
+  const tier = form.value.flashSalePricingTiers[index]
+  const cents = Number(tier?.unitPriceCents || 0)
+  return cents > 0 ? (cents / 100).toFixed(2) : ''
+}
+
+function setFlashSaleTierPriceYuan(index: number, value: string) {
+  const tier = form.value.flashSalePricingTiers[index]
+  if (!tier) return
+  const n = parseFloat(value)
+  tier.unitPriceCents = isNaN(n) || n <= 0 ? 0 : Math.max(1, Math.round(n * 100))
+}
+
+function onFlashSaleTierPriceInput(index: number, event: Event) {
+  setFlashSaleTierPriceYuan(index, (event.target as HTMLInputElement | null)?.value || '')
+}
+
+function addFlashSalePricingTier() {
+  if (form.value.flashSalePricingTiers.length >= 8) return
+  const lastMin = form.value.flashSalePricingTiers
+    .reduce((max, tier) => Math.max(max, Number(tier.minQuantity || 0)), 1)
+  form.value.flashSalePricingTiers.push({
+    minQuantity: Math.min(100, lastMin + 1),
+    unitPriceCents: form.value.flashSalePriceCents || 0,
+    label: '',
+  })
+}
+
+function removeFlashSalePricingTier(index: number) {
+  form.value.flashSalePricingTiers.splice(index, 1)
+}
 const rosterInput = ref('')
 const inviteCodeCount = ref(10)
 /** 奖品库（用于奖项配置下拉选择） */
@@ -2935,6 +2993,7 @@ function applyTemplate(tpl: any) {
     flashSalePriceCents: tpl.defaults?.flashSalePriceCents ?? null,
     flashSaleCurrency: String(tpl.defaults?.flashSaleCurrency || 'cny'),
     flashSaleTitle: String(tpl.defaults?.flashSaleTitle || ''),
+    flashSalePricingTiers: [],
   }
   // 模板智能增强：不同类型预设更合理的默认值，减少重复配置
   if (tpl.id === 'signup-chain' || kind === 'signup_chain') {
@@ -3422,6 +3481,7 @@ async function handleEdit(draw: LotteryDraw) {
     flashSalePriceCents: growth.flashSalePriceCents,
     flashSaleCurrency: growth.flashSaleCurrency || 'cny',
     flashSaleTitle: growth.flashSaleTitle || '',
+    flashSalePricingTiers: growth.flashSalePricingTiers || [],
   }
   isEditing.value = true
   // 回填未中奖自动发券开关状态

@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildFlashSaleRuntime,
+  calculateFlashSalePrice,
   parseFlashSaleConfig,
   resolveEffectiveStockLimit,
   shouldExposeFlashSale,
@@ -101,6 +102,29 @@ describe("parseFlashSaleConfig", () => {
 
     const badUser = parseFlashSaleConfig({ flashSale: { enabled: true, maxPerUser: 0 } });
     expect(badUser.issues.some((i) => i.code === "flash_sale.max_per_user.invalid")).toBe(true);
+  });
+
+  it("解析阶梯价并按 cliff 单价计算批量订单金额", () => {
+    const { config, issues } = parseFlashSaleConfig({
+      flashSale: {
+        enabled: true,
+        paymentRequired: true,
+        priceCents: 9900,
+        maxPerUser: 20,
+        pricingTiers: [
+          { minQuantity: 10, unitPriceCents: 7900, label: "批发价" },
+          { minQuantity: 3, unitPriceCents: 8900, label: "小批量" },
+        ],
+      },
+    });
+    expect(issues).toEqual([]);
+    expect(config?.pricingTiers).toEqual([
+      { minQuantity: 3, unitPriceCents: 8900, label: "小批量" },
+      { minQuantity: 10, unitPriceCents: 7900, label: "批发价" },
+    ]);
+    expect(calculateFlashSalePrice(config!, 2)).toMatchObject({ quantity: 2, unitPriceCents: 9900, amountCents: 19800 });
+    expect(calculateFlashSalePrice(config!, 3)).toMatchObject({ quantity: 3, unitPriceCents: 8900, amountCents: 26700 });
+    expect(calculateFlashSalePrice(config!, 12)).toMatchObject({ quantity: 12, unitPriceCents: 7900, amountCents: 94800 });
   });
 });
 

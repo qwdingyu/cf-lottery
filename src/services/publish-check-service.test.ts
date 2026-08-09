@@ -456,7 +456,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.canPublish).toBe(true);
   });
 
-  it("docs/131：直付秒杀不支持展示 maxPerUser>1，避免承诺可重复购买但订单模型只能一笔", async () => {
+  it("docs/141：直付秒杀允许 maxPerUser>1 表示单笔批量购买上限", async () => {
     const draw = makeDraw({
       maxParticipants: 10,
       experienceType: "flash_sale",
@@ -479,8 +479,36 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     const result = await buildPublishCheckForDraw(db, TENANT, draw as any, {
       credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY,
     });
+    expect(result.errors.filter((item) => item.section === "payment")).toEqual([]);
+    expect(result.canPublish).toBe(true);
+  });
+
+  it("docs/141：阶梯价起购数量不能超过单笔购买上限", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          maxPerUser: 2,
+          priceCents: 9900,
+          currency: "cny",
+          pricingTiers: [{ minQuantity: 3, unitPriceCents: 8900, label: "批发价" }],
+        },
+      }),
+    });
+    await addEasyPayConfig();
+    await addCodeTier(draw.id, 1, 10);
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any, {
+      credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY,
+    });
     expect(result.canPublish).toBe(false);
-    expect(result.errors.some((item) => item.code === "flash_sale.payment.max_per_user.unsupported")).toBe(true);
+    expect(result.errors.some((item) => item.code === "flash_sale.payment.pricing_tier.exceeds_max")).toBe(true);
   });
 
   it("docs/131：进行中活动不能共享同一卡密池，避免发布后竞争库存", async () => {

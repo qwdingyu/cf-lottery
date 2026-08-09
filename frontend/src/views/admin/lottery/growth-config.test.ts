@@ -305,10 +305,12 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
           enabled: true,
           sessionLabel: '20:00场',
           stockLimit: 50,
+          maxPerUser: 10,
           paymentRequired: true,
           priceCents: 9900,
           currency: 'cny',
           title: '秒杀卡密',
+          pricingTiers: [{ minQuantity: 10, unitPriceCents: 7900, label: '批发价' }],
         },
       }),
     })
@@ -317,6 +319,8 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
     expect(g.flashSalePriceCents).toBe(9900)
     expect(g.flashSaleCurrency).toBe('cny')
     expect(g.flashSaleTitle).toBe('秒杀卡密')
+    expect(g.flashSaleMaxPerUser).toBe(10)
+    expect(g.flashSalePricingTiers).toEqual([{ minQuantity: 10, unitPriceCents: 7900, label: '批发价' }])
 
     const payload = buildPromotionConfigPayload(
       {
@@ -332,6 +336,7 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
         flashSalePriceCents: g.flashSalePriceCents,
         flashSaleCurrency: g.flashSaleCurrency,
         flashSaleTitle: g.flashSaleTitle,
+        flashSalePricingTiers: g.flashSalePricingTiers,
       },
       { isEditing: true },
     )
@@ -339,10 +344,12 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
       enabled: true,
       sessionLabel: '20:00场',
       stockLimit: 50,
+      maxPerUser: 10,
       paymentRequired: true,
       priceCents: 9900,
       currency: 'cny',
       title: '秒杀卡密',
+      pricingTiers: [{ minQuantity: 10, unitPriceCents: 7900, label: '批发价' }],
     })
   })
 

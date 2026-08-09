@@ -186,6 +186,8 @@ export const prizeCodes = sqliteTable("prize_codes", {
    */
   status: text("status").notNull().default("available"),
   winnerId: text("winner_id").default(""),
+  /** 批量直付订单 ID；同一订单可发多张码，winner_id 保留给中奖/核销兼容。 */
+  paymentOrderId: text("payment_order_id"),
   issuedAt: text("issued_at"),
   /** 奖品卡密过期时间（可空，空=永不过期，限时卡密奖品刚需） */
   expiresAt: text("expires_at"),
@@ -676,6 +678,12 @@ export const paymentOrders = sqliteTable("payment_orders", {
   tenantId: text("tenant_id").notNull(),
   drawId: text("draw_id").notNull(),
   entryId: text("entry_id").notNull().unique(),
+  /** 单笔购买件数。批发/批量购买不新增 entry，而是在一笔订单内购买多件。 */
+  quantity: integer("quantity").notNull().default(1),
+  /** 下单时命中的单价快照（分），避免运营改价影响历史订单和重试。 */
+  unitPriceCents: integer("unit_price_cents").notNull().default(0),
+  /** 下单时的阶梯价快照 JSON，保留命中阶梯与配置摘要用于审计。 */
+  pricingSnapshotJson: text("pricing_snapshot_json").notNull().default("{}"),
   amountCents: integer("amount_cents").notNull(),
   currency: text("currency").notNull().default("cny"),
   /**

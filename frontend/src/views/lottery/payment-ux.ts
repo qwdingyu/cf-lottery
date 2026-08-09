@@ -23,6 +23,8 @@ export interface PaymentSessionState {
   orderNo: string
   status: string
   amountCents: number
+  quantity?: number
+  unitPriceCents?: number
   currency: string
   provider: string
   accessToken: string
@@ -117,6 +119,8 @@ export function buildPaymentSessionSnapshot(
     orderNo: String(state.orderNo),
     status: String(state.status || 'pending'),
     amountCents: Number(state.amountCents || 0),
+    quantity: Math.max(1, Math.floor(Number(state.quantity || 1))),
+    unitPriceCents: Math.max(0, Math.floor(Number(state.unitPriceCents || 0))),
     currency: String(state.currency || 'cny'),
     provider: String(state.provider || ''),
     accessToken: String(state.accessToken),

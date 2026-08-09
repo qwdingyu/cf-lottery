@@ -134,16 +134,42 @@ async function validateFlashSalePayment(
     );
   }
 
-  // 当前 payment_orders.entry_id 唯一，一场活动内一个身份只能形成一条参与记录和一笔
-  // 直付订单。maxPerUser>1 在没有独立购买批次/订单项模型时无法兑现，必须阻断发布，
-  // 避免前台展示“可重复购买”而后端实际只能成功一次。
-  if (flashSale.maxPerUser !== 1) {
+  if (!Number.isInteger(flashSale.maxPerUser) || flashSale.maxPerUser < 1 || flashSale.maxPerUser > 100) {
     add(
       result.errors,
       "payment",
-      "flash_sale.payment.max_per_user.unsupported",
-      "直付秒杀当前每个身份每场只能购买 1 次；maxPerUser 必须设置为 1",
+      "flash_sale.payment.max_per_user.invalid",
+      "直付秒杀单笔购买上限必须是 1～100 的整数",
     );
+  }
+
+  const seenTierMin = new Set<number>();
+  for (const tier of flashSale.pricingTiers) {
+    if (!Number.isInteger(tier.minQuantity) || tier.minQuantity < 1) {
+      add(result.errors, "payment", "flash_sale.payment.pricing_tier.min_invalid", "阶梯价起购数量必须是正整数");
+    }
+    if (tier.minQuantity > flashSale.maxPerUser) {
+      add(
+        result.errors,
+        "payment",
+        "flash_sale.payment.pricing_tier.exceeds_max",
+        `阶梯价「${tier.label || tier.minQuantity}」起购数量不能超过单笔上限 ${flashSale.maxPerUser}`,
+      );
+    }
+    if (seenTierMin.has(tier.minQuantity)) {
+      add(result.errors, "payment", "flash_sale.payment.pricing_tier.duplicate", `阶梯价起购数量 ${tier.minQuantity} 重复`);
+    }
+    seenTierMin.add(tier.minQuantity);
+    if (!Number.isInteger(tier.unitPriceCents) || tier.unitPriceCents <= 0) {
+      add(result.errors, "payment", "flash_sale.payment.pricing_tier.price_invalid", "阶梯价单价必须是大于 0 的整数分");
+    } else if (tier.unitPriceCents > maxPriceCents) {
+      add(
+        result.errors,
+        "payment",
+        "flash_sale.payment.pricing_tier.price_too_high",
+        `阶梯价单价不能超过 ${formatPrice(maxPriceCents)} 元；当前配置为 ${formatPrice(tier.unitPriceCents)} 元`,
+      );
+    }
   }
 
   const currency = String(flashSale.currency || "cny").trim().toLowerCase();

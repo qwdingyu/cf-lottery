@@ -105,6 +105,44 @@
   gap: 8px;
 }
 
+.flash-sale-tier-editor {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--r-md, 8px);
+  background: var(--surface, rgba(255, 255, 255, 0.04));
+}
+
+.flash-sale-tier-editor__head,
+.flash-sale-tier-row {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.flash-sale-tier-editor__head {
+  justify-content: space-between;
+  align-items: center;
+  color: var(--tg-text, #f0f2f5);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.flash-sale-tier-list {
+  display: grid;
+  gap: 8px;
+}
+
+.flash-sale-tier-row {
+  flex-wrap: wrap;
+}
+
+.flash-sale-tier-row label {
+  flex: 1 1 130px;
+  min-width: 0;
+}
+
 /* 二维码弹窗 */
 .qr-modal-body { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; }
 .qr-image { width: 240px; height: 240px; border-radius: 8px; background: #fff; padding: 8px; }

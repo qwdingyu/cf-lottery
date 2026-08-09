@@ -150,6 +150,8 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         id: paymentOrders.id,
         entryId: paymentOrders.entryId,
         currentAttemptId: paymentOrders.currentAttemptId,
+        drawId: paymentOrders.drawId,
+        quantity: paymentOrders.quantity,
       })
       .from(paymentOrders)
       .where(and(
@@ -204,9 +206,11 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
           inArray(lotteryEntries.id, entryIds),
           eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
         ))
-        .returning({ drawId: lotteryEntries.drawId });
+        .returning({ id: lotteryEntries.id, drawId: lotteryEntries.drawId });
       for (const entry of releasedPending) {
-        releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + 1);
+        const order = overdue.find((item) => item.entryId === entry.id);
+        const quantity = Math.max(1, Math.floor(Number(order?.quantity || 1)));
+        releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + quantity);
       }
     }
 
@@ -253,7 +257,7 @@ async function cancelPaymentOrder(
         eq(paymentOrders.entryId, input.entryId),
         eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
       ))
-      .returning({ id: paymentOrders.id });
+      .returning({ id: paymentOrders.id, quantity: paymentOrders.quantity });
     if (cancelled.length === 0) return;
 
     await tx
@@ -275,7 +279,8 @@ async function cancelPaymentOrder(
         eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
       ));
     if ((released.rowsAffected ?? 0) > 0) {
-      await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, released.rowsAffected ?? 0);
+      const quantity = Math.max(1, Math.floor(Number(cancelled[0]?.quantity || 1)));
+      await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, quantity);
     }
   });
 }
@@ -296,6 +301,7 @@ async function armPaymentOrderForRetry(
         currentAttemptId: paymentOrders.currentAttemptId,
         amountCents: paymentOrders.amountCents,
         currency: paymentOrders.currency,
+        quantity: paymentOrders.quantity,
       })
       .from(paymentOrders)
       .where(and(
@@ -338,16 +344,17 @@ async function armPaymentOrderForRetry(
 
     // 过期 entry 已经被软释放，重试必须先通过活动计数器 CAS 重新预约名额。
     // 不能先把 entry 改回 pending 再检查，否则并发下会把已释放名额重复占用。
+    const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
     const reserved = await tx
       .update(lotteryDraws)
       .set({
-        activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + 1`,
+        activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + ${quantity}`,
         updatedAt: sql`(datetime('now'))`,
       })
       .where(and(
         eq(lotteryDraws.id, input.drawId),
         eq(lotteryDraws.tenantId, input.tenantId),
-        sql`${lotteryDraws.activeParticipantCount} < ${capacity}`,
+        sql`${lotteryDraws.activeParticipantCount} + ${quantity} <= ${capacity}`,
       ))
       .returning({ id: lotteryDraws.id });
     if (reserved.length === 0) {
@@ -552,6 +559,9 @@ export interface CreateOrderInput {
   tenantId: string;
   drawId: string;
   entryId: string;
+  quantity?: number;
+  unitPriceCents?: number;
+  pricingSnapshotJson?: string;
   amountCents: number;
   currency: string;
   provider: PaymentProviderName;
@@ -575,6 +585,44 @@ export async function createPaymentOrder(
   const accessTokenHash = await sha256Hex(accessToken);
   // 事务只含数据库写入；provider.createPayment 是网络调用，放事务外避免长时间占锁
   await withDbTransaction(db, async (tx) => {
+    const quantity = Math.max(1, Math.floor(Number(input.quantity || 1)));
+    const extraQuantity = quantity - 1;
+    if (extraQuantity > 0) {
+      const [draw] = await tx
+        .select({
+          maxParticipants: lotteryDraws.maxParticipants,
+          experienceType: lotteryDraws.experienceType,
+          promotionConfig: lotteryDraws.promotionConfig,
+        })
+        .from(lotteryDraws)
+        .where(and(eq(lotteryDraws.id, input.drawId), eq(lotteryDraws.tenantId, input.tenantId)))
+        .limit(1);
+      if (!draw) throw new Error("活动不存在");
+      const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
+      const isFlashSale = flashParsed.config != null || draw.experienceType === "flash_sale";
+      const capacity = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
+      if (!isFlashSale || capacity == null || capacity <= 0) {
+        throw new Error("秒杀活动未配置可用名额");
+      }
+      // joinDraw 已经为 entry 预约 1 件；这里在建单事务内补占额外件数。
+      // 不能只在路由层预检，否则两个批量订单并发时会同时看到相同剩余库存。
+      const reserved = await tx
+        .update(lotteryDraws)
+        .set({
+          activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + ${extraQuantity}`,
+          updatedAt: sql`(datetime('now'))`,
+        })
+        .where(and(
+          eq(lotteryDraws.id, input.drawId),
+          eq(lotteryDraws.tenantId, input.tenantId),
+          sql`${lotteryDraws.activeParticipantCount} + ${extraQuantity} <= ${capacity}`,
+        ))
+        .returning({ id: lotteryDraws.id });
+      if (reserved.length === 0) {
+        throw new Error("秒杀名额已被其他用户占用");
+      }
+    }
+
     const armedEntry = await tx
       .update(lotteryEntries)
       .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PENDING })
@@ -596,6 +644,9 @@ export async function createPaymentOrder(
       tenantId: input.tenantId,
       drawId: input.drawId,
       entryId: input.entryId,
+      quantity,
+      unitPriceCents: Math.max(0, Math.floor(Number(input.unitPriceCents || 0))),
+      pricingSnapshotJson: input.pricingSnapshotJson || "{}",
       amountCents: input.amountCents,
       currency: input.currency,
       status: PAYMENT_ORDER_STATUS.PENDING,
@@ -841,10 +892,12 @@ export async function handlePaymentCallback(
       return { order: late ?? current, handled: true };
     }
 
-    const prizeCodeId = await acquirePrizeCode(tx, tenantId, current.drawId, current.entryId);
+    const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
+    const acquiredPrizeCodeIds = await acquirePrizeCodes(tx, tenantId, current.drawId, current.entryId, current.id, quantity);
+    const prizeCodeId = acquiredPrizeCodeIds[0] ?? null;
 
     // 卡密不足：标记 paid_fulfillment_failed（运营后台可见，docs/131 §7），不静默 null
-    const newStatus = prizeCodeId
+    const newStatus = acquiredPrizeCodeIds.length === quantity
       ? PAYMENT_ORDER_STATUS.PAID
       : PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED;
     const paidAttempt = await tx
@@ -886,7 +939,7 @@ export async function handlePaymentCallback(
     // entry 的 paid 只代表“已支付并完成发卡”。
     // 卡密不足时订单进入 paid_fulfillment_failed，entry 保持 pending 继续占位，
     // 等运营补发成功后再由 retryPaymentFulfillment 原子切换为 paid。
-    if (prizeCodeId) {
+    if (acquiredPrizeCodeIds.length === quantity) {
       const paidEntry = await tx
         .update(lotteryEntries)
         .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
@@ -931,8 +984,10 @@ export async function retryPaymentFulfillment(
       return { error: "订单状态不允许补发" };
     }
 
-    const prizeCodeId = await acquirePrizeCode(tx, tenantId, current.drawId, current.entryId);
-    if (!prizeCodeId) return { error: "没有可用卡密，请先补充码池" };
+    const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
+    const acquiredPrizeCodeIds = await acquirePrizeCodes(tx, tenantId, current.drawId, current.entryId, current.id, quantity);
+    if (acquiredPrizeCodeIds.length !== quantity) return { error: "没有足够可用卡密，请先补充码池" };
+    const prizeCodeId = acquiredPrizeCodeIds[0] ?? null;
 
     const paidEntry = await tx
       .update(lotteryEntries)
@@ -972,36 +1027,68 @@ export async function retryPaymentFulfillment(
   return { ok: true, order: order.order };
 }
 
-/** 原子领取活动绑定的卡密奖品。返回 null 表示未绑卡密奖或码池不足。 */
-async function acquirePrizeCode(
+/**
+ * 原子领取活动绑定的卡密奖品。批量直付必须全量领取成功才提交：
+ * - 成功：返回 quantity 个 code id，并用 payment_order_id 建立订单级关联。
+ * - 失败：释放本次已经试领的卡密，返回 []，避免用户已付款后只拿到半单。
+ */
+async function acquirePrizeCodes(
   db: DbType,
   tenantId: string,
   drawId: string,
   entryId: string,
-): Promise<string | null> {
+  orderId: string,
+  quantityRaw: number,
+): Promise<string[]> {
+  const quantity = Math.max(1, Math.floor(Number(quantityRaw || 1)));
   // 查活动的卡密奖（prizeType=code）
   const tier = await findCodePrize(db, tenantId, drawId);
-  if (!tier?.prizeId) return null;
+  if (!tier?.prizeId) return [];
 
-  const acquired = await db
-    .update(prizeCodes)
-    .set({ status: "issued", issuedAt: sql`(datetime('now'))`, winnerId: entryId })
-    .where(and(
-      eq(prizeCodes.tenantId, tenantId),
-      eq(prizeCodes.status, "available"),
-      // SQLite/libSQL 不支持 Drizzle 生成的 UPDATE ... RETURNING ... ORDER BY ... LIMIT。
-      // 用子查询在同一条 UPDATE 内选中最小 id 的可用卡密，保留原子领取语义。
-      eq(prizeCodes.id, sql<string>`(
-        SELECT id FROM prize_codes
-        WHERE tenant_id = ${tenantId}
-          AND prize_id = ${tier.prizeId}
-          AND status = 'available'
-        ORDER BY id
-        LIMIT 1
-      )`),
-    ))
-    .returning({ id: prizeCodes.id });
-  return acquired[0]?.id ?? null;
+  const ids: string[] = [];
+  for (let i = 0; i < quantity; i += 1) {
+    const acquired = await db
+      .update(prizeCodes)
+      .set({
+        status: "issued",
+        issuedAt: sql`(datetime('now'))`,
+        winnerId: entryId,
+        paymentOrderId: orderId,
+      })
+      .where(and(
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.status, "available"),
+        // SQLite/libSQL 不支持 Drizzle 生成的 UPDATE ... RETURNING ... ORDER BY ... LIMIT。
+        // 用子查询在同一条 UPDATE 内选中最小 id 的可用卡密，保留原子领取语义。
+        eq(prizeCodes.id, sql<string>`(
+          SELECT id FROM prize_codes
+          WHERE tenant_id = ${tenantId}
+            AND prize_id = ${tier.prizeId}
+            AND status = 'available'
+          ORDER BY id
+          LIMIT 1
+        )`),
+      ))
+      .returning({ id: prizeCodes.id });
+    const id = acquired[0]?.id;
+    if (!id) {
+      if (ids.length > 0) {
+        await db
+          .update(prizeCodes)
+          .set({ status: "available", winnerId: "", paymentOrderId: null, issuedAt: null })
+          .where(and(
+            eq(prizeCodes.tenantId, tenantId),
+            inArray(prizeCodes.id, ids),
+            eq(prizeCodes.paymentOrderId, orderId),
+            eq(prizeCodes.winnerId, entryId),
+            eq(prizeCodes.status, "issued"),
+          ));
+      }
+      return [];
+    }
+    ids.push(id);
+  }
+  return ids;
 }
 
 /**

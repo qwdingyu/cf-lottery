@@ -466,7 +466,7 @@ adminPaymentConfigRoute.post("/payment-orders/:id/retry-fulfillment", async (c) 
   if (!result.ok) {
     const status = result.error === "订单不存在"
       ? 404
-      : result.error?.includes("没有可用卡密")
+      : (result.error?.includes("没有可用卡密") || result.error?.includes("没有足够可用卡密"))
         ? 409
         : 400;
     return fail(c, result.error || "补发失败", status);

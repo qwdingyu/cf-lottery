@@ -10,7 +10,7 @@
  * 回调处理模式：GET query / POST form → provider.verifyCallback → 发卡。
  */
 import { Hono } from "hono";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, or } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, fail, ok, isValidEmail } from "../lib/http";
@@ -93,6 +93,32 @@ function safePaymentRedirectUrl(value: unknown): string | undefined {
   }
 }
 
+async function listPaymentOrderPrizeCodes(
+  db: ReturnType<typeof getDb>,
+  tenantId: string,
+  orderId: string,
+  fallbackPrizeCodeId?: string | null,
+): Promise<Array<{ code: string; secret: string }>> {
+  const conditions = [eq(prizeCodes.paymentOrderId, orderId)];
+  if (fallbackPrizeCodeId) conditions.push(eq(prizeCodes.id, fallbackPrizeCodeId));
+  const rows = await db
+    .select({ id: prizeCodes.id, code: prizeCodes.code, secret: prizeCodes.secret })
+    .from(prizeCodes)
+    .where(and(
+      eq(prizeCodes.tenantId, tenantId),
+      conditions.length === 1 ? conditions[0] : or(...conditions),
+    ))
+    .orderBy(prizeCodes.id);
+  const seen = new Set<string>();
+  const result: Array<{ code: string; secret: string }> = [];
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    result.push({ code: row.code, secret: row.secret });
+  }
+  return result;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 公开：创建订单（参与成功后调用）docs/131 §10
 // ═══════════════════════════════════════════════════════════════
@@ -112,7 +138,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
 
   // 解析 flashSale 配置（含 priceCents）
-  const { parseFlashSaleConfig } = await import("../lib/flash-sale-config");
+  const { parseFlashSaleConfig, calculateFlashSalePrice } = await import("../lib/flash-sale-config");
   const { config: flashSale } = parseFlashSaleConfig(draw.promotionConfig);
   if (!flashSale?.paymentRequired) {
     return fail(c, "秒杀活动未启用直付支付", 400);
@@ -125,7 +151,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   await expireOverdueOrders(db, draw.tenantId);
 
   // 查找参与者 entry（通过 entryId，docs/131 §10；邮箱必须与 entry 身份一致）
-  const body = await c.req.json<{ entryId?: string; email?: string }>().catch(() => ({} as { entryId?: string; email?: string }));
+  const body = await c.req.json<{ entryId?: string; email?: string; quantity?: number }>().catch(
+    () => ({} as { entryId?: string; email?: string; quantity?: number }),
+  );
   const entryId = String(body.entryId || "").trim();
   const email = String(body.email || "").trim().toLowerCase();
   if (!entryId) return fail(c, "缺少 entryId", 400);
@@ -169,6 +197,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
       status: existing.status,
       entryId: existing.entryId,
       amountCents: existing.amountCents,
+      quantity: existing.quantity,
+      unitPriceCents: existing.unitPriceCents,
       currency: existing.currency,
       provider: existing.provider,
       accessToken,
@@ -202,8 +232,29 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   // 订单金额是用户当次购买事实，重试不能因为运营修改活动配置而悄悄改变价格。
   // 活动发布后当前路由禁止编辑配置；这里仍以订单快照兜底，防止历史数据或后台修复
   // 造成金额漂移。
+  const rawQuantity = body.quantity ?? 1;
+  const rawQuantityNumber = Number(rawQuantity);
+  if (!existing && (!Number.isFinite(rawQuantityNumber) || !Number.isInteger(rawQuantityNumber) || rawQuantityNumber < 1)) {
+    return fail(c, "购买数量必须是正整数", 400);
+  }
+  if (!existing && rawQuantityNumber > flashSale.maxPerUser) {
+    return fail(c, `单笔最多可购买 ${flashSale.maxPerUser} 件`, 400);
+  }
+  const calculated = calculateFlashSalePrice(flashSale, rawQuantity);
+  const pricingSnapshotJson = JSON.stringify({
+    model: "cliff_unit_price",
+    quantity: calculated.quantity,
+    unitPriceCents: calculated.unitPriceCents,
+    amountCents: calculated.amountCents,
+    tierLabel: calculated.tierLabel,
+    basePriceCents: flashSale.priceCents,
+    tiers: flashSale.pricingTiers,
+  });
   const currency = existing?.currency || flashSale.currency || "cny";
-  const amountCents = existing?.amountCents ?? flashSale.priceCents;
+  const quantity = existing?.quantity ?? calculated.quantity;
+  const unitPriceCents = existing?.unitPriceCents ?? calculated.unitPriceCents;
+  const amountCents = existing?.amountCents ?? calculated.amountCents;
+  const pricingSnapshot = existing?.pricingSnapshotJson || pricingSnapshotJson;
   const resumingPending = existing?.status === PAYMENT_ORDER_STATUS.PENDING;
   const config = await loadTenantConfig(
     db,
@@ -244,6 +295,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
           tenantId: draw.tenantId,
           drawId: draw.id,
           entryId: existing.entryId,
+          quantity: existing.quantity,
+          unitPriceCents: existing.unitPriceCents,
+          pricingSnapshotJson: existing.pricingSnapshotJson || "{}",
           amountCents: existing.amountCents,
           currency: existing.currency,
           provider: existing.provider as "easypay" | "stripe" | "alipay",
@@ -263,6 +317,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
       orderNo: existing.id,
       status: existing.status,
       entryId: existing.entryId,
+      quantity: existing.quantity,
+      unitPriceCents: existing.unitPriceCents,
       amountCents: existing.amountCents,
       currency: existing.currency,
       provider: existing.provider,
@@ -276,6 +332,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     tenantId: draw.tenantId,
     drawId: draw.id,
     entryId: entry.id,
+    quantity,
+    unitPriceCents,
+    pricingSnapshotJson: pricingSnapshot,
     amountCents,
     currency,
     provider: config.provider,
@@ -305,6 +364,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   return ok(c, {
     orderNo: order.id,
     status: order.status,
+    quantity: order.quantity,
+    unitPriceCents: order.unitPriceCents,
     amountCents: order.amountCents,
     currency: order.currency,
     provider: order.provider,
@@ -378,6 +439,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
       orderNo: paymentOrders.id,
       entryId: paymentOrders.entryId,
       status: paymentOrders.status,
+      quantity: paymentOrders.quantity,
+      unitPriceCents: paymentOrders.unitPriceCents,
       amountCents: paymentOrders.amountCents,
       currency: paymentOrders.currency,
       provider: paymentOrders.provider,
@@ -393,33 +456,52 @@ paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
     .orderBy(desc(paymentOrders.createdAt))
     .limit(10);
 
-  const codeIds = rows.map((row) => row.prizeCodeId).filter(Boolean) as string[];
-  const codeRows = codeIds.length > 0
+  const orderIds = rows.map((row) => row.orderNo);
+  const fallbackCodeIds = rows.map((row) => row.prizeCodeId).filter(Boolean) as string[];
+  const codeRows = rows.length > 0
     ? await db
       .select({
         id: prizeCodes.id,
+        paymentOrderId: prizeCodes.paymentOrderId,
         code: prizeCodes.code,
         secret: prizeCodes.secret,
       })
       .from(prizeCodes)
       .where(and(
         eq(prizeCodes.tenantId, draw.tenantId),
-        inArray(prizeCodes.id, codeIds),
+        or(
+          inArray(prizeCodes.paymentOrderId, orderIds),
+          fallbackCodeIds.length > 0 ? inArray(prizeCodes.id, fallbackCodeIds) : eq(prizeCodes.id, "__never__"),
+        ),
       ))
     : [];
-  const codeById = new Map(codeRows.map((row) => [row.id, { code: row.code, secret: row.secret }]));
+  const fallbackCodeById = new Map(codeRows.map((row) => [row.id, { code: row.code, secret: row.secret }]));
+  const codesByOrderId = new Map<string, Array<{ code: string; secret: string }>>();
+  for (const row of codeRows) {
+    if (!row.paymentOrderId) continue;
+    const list = codesByOrderId.get(row.paymentOrderId) || [];
+    list.push({ code: row.code, secret: row.secret });
+    codesByOrderId.set(row.paymentOrderId, list);
+  }
 
   return ok(c, {
-    orders: rows.map((row) => ({
-      orderNo: row.orderNo,
-      entryId: row.entryId,
-      status: row.status,
-      amountCents: row.amountCents,
-      currency: row.currency,
-      provider: row.provider,
-      paidAt: row.paidAt,
-      prizeCode: row.prizeCodeId ? codeById.get(row.prizeCodeId) || null : null,
-    })),
+    orders: rows.map((row) => {
+      const codes = codesByOrderId.get(row.orderNo)
+        || (row.prizeCodeId && fallbackCodeById.has(row.prizeCodeId) ? [fallbackCodeById.get(row.prizeCodeId)!] : []);
+      return {
+        orderNo: row.orderNo,
+        entryId: row.entryId,
+        status: row.status,
+        quantity: row.quantity,
+        unitPriceCents: row.unitPriceCents,
+        amountCents: row.amountCents,
+        currency: row.currency,
+        provider: row.provider,
+        paidAt: row.paidAt,
+        prizeCode: codes[0] || null,
+        prizeCodes: codes,
+      };
+    }),
   });
 });
 
@@ -448,30 +530,20 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
   const order = await findPaymentOrderByAccessToken(db, draw.tenantId, draw.id, orderId, accessToken);
   if (!order) return fail(c, "订单不存在或访问已失效", 404);
 
-  // 查卡密信息（支付后才有）
-  let codeInfo: { code?: string; secret?: string } | null = null;
-  if (order.prizeCodeId) {
-    const { prizeCodes } = await import("../db/schema");
-    const [pc] = await db
-      .select({ code: prizeCodes.code, secret: prizeCodes.secret })
-      .from(prizeCodes)
-      .where(and(
-        eq(prizeCodes.id, order.prizeCodeId),
-        eq(prizeCodes.tenantId, draw.tenantId),
-      ))
-      .limit(1);
-    if (pc) codeInfo = { code: pc.code, secret: pc.secret };
-  }
+  const codes = await listPaymentOrderPrizeCodes(db, draw.tenantId, order.id, order.prizeCodeId);
 
   return ok(c, {
     order: {
       orderNo: order.id,
       status: order.status,
+      quantity: order.quantity,
+      unitPriceCents: order.unitPriceCents,
       amountCents: order.amountCents,
       currency: order.currency,
       provider: order.provider,
       paidAt: order.paidAt,
-      prizeCode: codeInfo,
+      prizeCode: codes[0] || null,
+      prizeCodes: codes,
     },
   });
 });
@@ -565,9 +637,10 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
     .limit(1)
     .then((r) => r[0]?.value !== "false")
     .catch(() => true); // 默认开启
+  const fulfilledOrder = result.order;
   if (
-    result.order?.prizeCodeId &&
-    result.order.status === PAYMENT_ORDER_STATUS.PAID &&
+    fulfilledOrder?.prizeCodeId &&
+    fulfilledOrder.status === PAYMENT_ORDER_STATUS.PAID &&
     notifyWinnerEnabled
   ) {
     void (async () => {
@@ -578,9 +651,9 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         })
         .from(lotteryEntries)
         .where(and(
-          eq(lotteryEntries.id, order.entryId),
-          eq(lotteryEntries.tenantId, order.tenantId),
-          eq(lotteryEntries.drawId, order.drawId),
+          eq(lotteryEntries.id, fulfilledOrder.entryId),
+          eq(lotteryEntries.tenantId, fulfilledOrder.tenantId),
+          eq(lotteryEntries.drawId, fulfilledOrder.drawId),
         ))
         .limit(1);
       if (!winner || winner.identityType !== "email") return;
@@ -589,15 +662,15 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
       const [drawInfo] = await db
         .select({ title: lotteryDraws.title })
         .from(lotteryDraws)
-        .where(and(eq(lotteryDraws.id, order.drawId), eq(lotteryDraws.tenantId, order.tenantId)))
+        .where(and(eq(lotteryDraws.id, fulfilledOrder.drawId), eq(lotteryDraws.tenantId, fulfilledOrder.tenantId)))
         .limit(1);
 
       // 查卡密信息（同时取 code 和 secret，分别用于展示账号和交付密钥）
-      const [codeInfo] = order.prizeCodeId
+      const [codeInfo] = fulfilledOrder.prizeCodeId
         ? await db
           .select({ code: prizeCodes.code, secret: prizeCodes.secret, prizeId: prizeCodes.prizeId })
           .from(prizeCodes)
-          .where(and(eq(prizeCodes.id, order.prizeCodeId), eq(prizeCodes.tenantId, order.tenantId)))
+          .where(and(eq(prizeCodes.id, fulfilledOrder.prizeCodeId), eq(prizeCodes.tenantId, fulfilledOrder.tenantId)))
           .limit(1)
         : [];
 
@@ -606,7 +679,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         ? await db
           .select({ name: prizes.name })
           .from(prizes)
-          .where(and(eq(prizes.id, codeInfo.prizeId), eq(prizes.tenantId, order.tenantId)))
+          .where(and(eq(prizes.id, codeInfo.prizeId), eq(prizes.tenantId, fulfilledOrder.tenantId)))
           .limit(1)
           .then((rows) => rows[0]?.name || "奖品")
         : "奖品";
@@ -622,14 +695,16 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         templateData: buildLotteryWinnerTemplateData({
           drawName: drawInfo?.title || "活动",
           productName,
-          orderNo: order.id,
+          orderNo: fulfilledOrder.id,
           accountLabel: codeInfo?.code || "",
           deliverySecret: codeInfo?.secret || "",
-          deliveryNote: "支付已完成，卡密已发放。如有疑问请联系主办方。",
+          deliveryNote: fulfilledOrder.quantity > 1
+            ? `支付已完成，本订单共 ${fulfilledOrder.quantity} 件；请在活动页订单详情查看全部卡密。`
+            : "支付已完成，卡密已发放。如有疑问请联系主办方。",
         }),
       });
     })().catch((err) => {
-      console.error(`[payment] 中奖邮件发送失败 for order ${order.id}:`, err);
+      console.error(`[payment] 中奖邮件发送失败 for order ${fulfilledOrder.id}:`, err);
     });
   }
 

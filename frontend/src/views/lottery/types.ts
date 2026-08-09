@@ -94,6 +94,7 @@ export type LotteryDraw = {
     ctaLabel?: string
     paymentRequired?: boolean
     priceCents?: number | null
+    pricingTiers?: Array<{ minQuantity?: number; unitPriceCents?: number; label?: string }>
     currency?: string
     title?: string
     claimed?: number

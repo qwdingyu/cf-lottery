@@ -216,6 +216,16 @@
                 <span v-else class="lottery-flash-merch-price lottery-flash-merch-price--missing">{{ $t('lottery.flashPriceMissing') }}</span>
                 <span v-if="flashSaleMerchCard(draw)?.remaining != null" class="lottery-flash-merch-stock">{{ $t('lottery.flashRemaining', { n: flashSaleMerchCard(draw)?.remaining }) }}</span>
               </div>
+              <label v-if="isDirectPaymentDraw(draw) && Number(draw.flashSale?.maxPerUser || 1) > 1" class="lottery-flash-quantity" @click.stop>
+                <span>购买件数</span>
+                <input
+                  :value="flashSaleQuantityFor(draw)"
+                  type="number"
+                  min="1"
+                  :max="draw.flashSale?.maxPerUser || 1"
+                  @input="onFlashSaleQuantityInput(draw, $event)"
+                />
+              </label>
             </div>
           </div>
           <div class="lottery-game-area">
@@ -611,6 +621,10 @@
             <span class="lottery-payment-label">{{ $t('lottery.paymentAmount') }}</span>
             <strong class="lottery-payment-value">{{ paymentAmountText }}</strong>
           </div>
+          <div v-if="paymentState?.quantity && paymentState.quantity > 1" class="lottery-payment-row">
+            <span class="lottery-payment-label">购买件数</span>
+            <strong class="lottery-payment-value">{{ paymentState.quantity }}</strong>
+          </div>
           <div class="lottery-payment-row">
             <span class="lottery-payment-label">{{ $t('lottery.paymentOrderNo') }}</span>
             <code class="lottery-payment-code" @click="copyPaymentOrderNo">{{ paymentState?.orderNo }}</code>
@@ -626,9 +640,11 @@
           <p class="result-hint">{{ $t('lottery.paymentQrHint') }}</p>
         </div>
 
-        <div v-if="paymentState?.prizeCode && paymentStatusIsPaid" class="result-code-block">
+        <div v-if="paymentCodes.length && paymentStatusIsPaid" class="result-code-block">
           <span class="result-code-label">{{ $t('lottery.prizeCodeLabel') }}</span>
-          <code class="result-code" @click="copyPaymentCode">{{ paymentCodeText }}</code>
+          <code v-for="(code, idx) in paymentCodes" :key="idx" class="result-code" @click="copyPaymentCode">
+            {{ composePaymentCode(code) }}
+          </code>
           <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
         </div>
 
@@ -1698,6 +1714,7 @@ const lastJoinResult = ref<{
 /** 直付秒杀支付弹窗状态 */
 type PaymentState = PaymentSessionState & {
   prizeCode?: { code?: string | null; secret?: string | null } | null
+  prizeCodes?: Array<{ code?: string | null; secret?: string | null }>
 }
 
 const showPaymentModal = ref(false)
@@ -1707,6 +1724,7 @@ const paymentQrDataUrl = ref('')
 const paymentQrSeq = ref(0)
 let paymentPollTimer: ReturnType<typeof setInterval> | null = null
 const paymentState = ref<PaymentState | null>(null)
+const flashSaleQuantityByDrawId = ref<Record<string, number>>({})
 const publicSupportEmail = ref('')
 
 /** lottery + resultMode=instant（实现见 instant-spin-ux） */
@@ -1908,6 +1926,9 @@ const paymentAmountText = computed(() =>
 const paymentCodeText = computed(() =>
   composePaymentCode(paymentState.value?.prizeCode || null),
 )
+const paymentCodes = computed(() => paymentState.value?.prizeCodes?.length
+  ? paymentState.value.prizeCodes
+  : (paymentState.value?.prizeCode ? [paymentState.value.prizeCode] : []))
 // Provider 返回值仍经过前端白名单过滤，避免异常网关响应进入 href。
 const paymentRedirectUrl = computed(() => asHttpPaymentUrl(paymentState.value?.redirectUrl))
 const paymentQrFallbackUrl = computed(() => asHttpPaymentUrl(paymentState.value?.qrCode))
@@ -1915,6 +1936,22 @@ const paymentSupportSubject = computed(() => {
   const orderNo = paymentState.value?.orderNo || ''
   return orderNo ? `支付订单补发协助 ${orderNo}` : '支付订单补发协助'
 })
+
+function flashSaleQuantityFor(draw: LotteryDraw): number {
+  const max = Math.max(1, Math.floor(Number(draw.flashSale?.maxPerUser || 1)))
+  const current = Math.floor(Number(flashSaleQuantityByDrawId.value[draw.id] || 1))
+  return Math.min(max, Math.max(1, current))
+}
+
+function onFlashSaleQuantityInput(draw: LotteryDraw, event: Event) {
+  const raw = Number((event.target as HTMLInputElement | null)?.value || 1)
+  const max = Math.max(1, Math.floor(Number(draw.flashSale?.maxPerUser || 1)))
+  const quantity = Number.isFinite(raw) ? Math.floor(raw) : 1
+  flashSaleQuantityByDrawId.value = {
+    ...flashSaleQuantityByDrawId.value,
+    [draw.id]: Math.min(max, Math.max(1, quantity)),
+  }
+}
 const paymentTitle = computed(() => {
   if (paymentState.value?.status === 'paid_fulfillment_failed') return t('lottery.paymentFulfillmentFailedTitle')
   if (paymentState.value?.status === 'paid_late_needs_refund') return t('lottery.paymentLatePaidTitle')
@@ -1975,6 +2012,7 @@ async function restorePaymentSession() {
   paymentState.value = {
     ...snapshot,
     prizeCode: null,
+    prizeCodes: [],
   }
   showPaymentModal.value = true
   await syncPaymentQrCode(snapshot.qrCode)
@@ -2060,10 +2098,13 @@ function showPaymentResumeError(draw: LotteryDraw, entryId: string | undefined, 
     orderNo: '',
     status: 'unknown',
     amountCents: Number(draw.flashSale?.priceCents || 0),
+    quantity: flashSaleQuantityFor(draw),
+    unitPriceCents: Number(draw.flashSale?.priceCents || 0),
     currency: String(draw.flashSale?.currency || 'cny'),
     provider: '',
     accessToken: '',
     prizeCode: null,
+    prizeCodes: [],
   }
   showPaymentModal.value = true
 }
@@ -2101,11 +2142,14 @@ async function refreshPaymentOrderStatus(opts?: { silent?: boolean }) {
       order?: {
         orderNo?: string
         status?: string
+        quantity?: number
+        unitPriceCents?: number
         amountCents?: number
         currency?: string
         provider?: string
         paidAt?: string
         prizeCode?: { code?: string | null; secret?: string | null } | null
+        prizeCodes?: Array<{ code?: string | null; secret?: string | null }>
       } | null
     } | null
     if (!data?.ok || !data.order) {
@@ -2118,10 +2162,13 @@ async function refreshPaymentOrderStatus(opts?: { silent?: boolean }) {
     paymentState.value = {
       ...state,
       status: String(data.order.status || state.status),
+      quantity: Number(data.order.quantity || state.quantity || 1),
+      unitPriceCents: Number(data.order.unitPriceCents || state.unitPriceCents || 0),
       amountCents: Number(data.order.amountCents || state.amountCents),
       currency: String(data.order.currency || state.currency),
       provider: String(data.order.provider || state.provider),
       prizeCode: data.order.prizeCode || state.prizeCode || null,
+      prizeCodes: data.order.prizeCodes || state.prizeCodes || [],
     }
     persistPaymentSession(paymentState.value)
 
@@ -2170,6 +2217,7 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
 
   paymentLoading.value = true
   paymentError.value = ''
+  const quantity = flashSaleQuantityFor(draw)
   try {
     const slug = publicDrawPathKey(draw.id)
     if (!slug) {
@@ -2179,13 +2227,15 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // 后端必须把支付请求邮箱与 entry 身份绑定，不能只凭前端可恢复的 entryId 下单。
-      body: JSON.stringify({ entryId, email }),
+      body: JSON.stringify({ entryId, email, quantity }),
     })
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean
       message?: string
       orderNo?: string
       status?: string
+      quantity?: number
+      unitPriceCents?: number
       amountCents?: number
       currency?: string
       provider?: string
@@ -2203,6 +2253,8 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       email,
       orderNo: data.orderNo,
       status: String(data.status || 'pending'),
+      quantity: Number(data.quantity || quantity),
+      unitPriceCents: Number(data.unitPriceCents || flashSale.priceCents || 0),
       amountCents: Number(data.amountCents || flashSale.priceCents || 0),
       currency: String(data.currency || flashSale.currency || 'cny'),
       provider: String(data.provider || ''),
@@ -2210,6 +2262,7 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       redirectUrl: data.redirectUrl || undefined,
       qrCode: data.qrCode || undefined,
       prizeCode: null,
+      prizeCodes: [],
     }
     persistPaymentSession(paymentState.value)
     showPaymentModal.value = true
@@ -2228,11 +2281,14 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       email,
       orderNo: '',
       status: 'unknown',
+      quantity,
+      unitPriceCents: Number(flashSale.priceCents || 0),
       amountCents: Number(flashSale.priceCents || 0),
       currency: String(flashSale.currency || 'cny'),
       provider: '',
       accessToken: '',
       prizeCode: null,
+      prizeCodes: [],
     }
     clearPaymentSession()
     paymentError.value = err instanceof Error ? err.message : t('lottery.paymentCreateFailed')
@@ -2283,11 +2339,14 @@ async function recoverPaymentOrderFromResult(
         orderNo?: string
         entryId?: string
         status?: string
+        quantity?: number
+        unitPriceCents?: number
         amountCents?: number
         currency?: string
         provider?: string
         paidAt?: string
         prizeCode?: { code?: string | null; secret?: string | null } | null
+        prizeCodes?: Array<{ code?: string | null; secret?: string | null }>
       }>
     } | null
     if (!data?.ok || !data.orders?.length) return
@@ -2304,11 +2363,14 @@ async function recoverPaymentOrderFromResult(
         email,
         orderNo: String(order.orderNo || ''),
         status,
+        quantity: Number(order.quantity || 1),
+        unitPriceCents: Number(order.unitPriceCents || draw.flashSale?.priceCents || 0),
         amountCents: Number(order.amountCents || draw.flashSale?.priceCents || 0),
         currency: String(order.currency || draw.flashSale?.currency || 'cny'),
         provider: String(order.provider || ''),
         accessToken: '',
         prizeCode: order.prizeCode || null,
+        prizeCodes: order.prizeCodes || (order.prizeCode ? [order.prizeCode] : []),
       }
       paymentQrDataUrl.value = ''
       showPaymentModal.value = true

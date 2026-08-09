@@ -350,6 +350,25 @@
   font-size: 12px;
   white-space: nowrap;
 }
+.lottery-flash-quantity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: rgba(255,255,255,.76);
+  font-size: 12px;
+}
+.lottery-flash-quantity input {
+  width: 86px;
+  min-height: 32px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(0,0,0,.18);
+  color: rgba(255,255,255,.94);
+  padding: 4px 8px;
+  font: inherit;
+}
 .lottery-empty-hint {
   margin: 8px auto 0;
   max-width: 28em;

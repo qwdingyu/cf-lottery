@@ -36,6 +36,11 @@ export type FlashSaleConfig = {
   currency: string;
   /** 秒杀商品标题（订单描述/展示） */
   title: string;
+  /**
+   * 阶梯单价（分）。按 minQuantity 从小到大匹配，取不超过购买数量的最高阶梯。
+   * 例：[{minQuantity: 1, unitPriceCents: 990}, {minQuantity: 10, unitPriceCents: 790}]
+   */
+  pricingTiers: Array<{ minQuantity: number; unitPriceCents: number; label: string }>;
 };
 
 export type FlashSaleRuntime = FlashSaleConfig & {
@@ -59,6 +64,8 @@ const MAX_SESSION_LABEL = 32;
 const MAX_CTA_LABEL = 12;
 const MAX_STOCK = 1_000_000;
 const MAX_PER_USER = 100;
+const MAX_PRICE_CENTS = 100_000_000;
+const MAX_TIERS = 8;
 
 function textValue(value: unknown, max: number): string {
   return String(value ?? "")
@@ -98,6 +105,31 @@ function positiveInt(value: unknown, max: number): number | null {
   const n = Number(value);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1 || n > max) return null;
   return n;
+}
+
+function parsePricingTiers(node: Record<string, unknown>, issues: FlashSaleParseResult["issues"]) {
+  const raw = node.pricingTiers ?? node.pricing_tiers;
+  if (!Array.isArray(raw)) return [];
+  const tiers: Array<{ minQuantity: number; unitPriceCents: number; label: string }> = [];
+  for (const item of raw.slice(0, MAX_TIERS)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const row = item as Record<string, unknown>;
+    const minQuantity = positiveInt(row.minQuantity ?? row.min_quantity, MAX_PER_USER);
+    const unitRaw = row.unitPriceCents ?? row.unit_price_cents ?? row.priceCents ?? row.price_cents;
+    const unitPriceCents = positiveInt(unitRaw, MAX_PRICE_CENTS);
+    if (!minQuantity || !unitPriceCents) {
+      issues.push({ code: "flash_sale.pricing_tier.invalid", message: "阶梯价必须包含 minQuantity 和 unitPriceCents 正整数" });
+      continue;
+    }
+    tiers.push({
+      minQuantity,
+      unitPriceCents,
+      label: textValue(row.label, 32),
+    });
+  }
+  const unique = new Map<number, { minQuantity: number; unitPriceCents: number; label: string }>();
+  for (const tier of tiers) unique.set(tier.minQuantity, tier);
+  return Array.from(unique.values()).sort((a, b) => a.minQuantity - b.minQuantity);
 }
 
 /**
@@ -161,7 +193,7 @@ export function parseFlashSaleConfig(promotionConfig: unknown): FlashSaleParseRe
   let priceCents: number | null = null;
   if (priceRaw !== null && priceRaw !== undefined && priceRaw !== "") {
     const n = Number(priceRaw);
-    if (Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= 100_000_000) {
+    if (Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= MAX_PRICE_CENTS) {
       priceCents = n;
     } else {
       issues.push({ code: "flash_sale.price.invalid", message: "秒杀价格必须是 0～1000000 元内的整数（分）" });
@@ -169,6 +201,7 @@ export function parseFlashSaleConfig(promotionConfig: unknown): FlashSaleParseRe
   }
   const currency = String(node.currency || "cny").toLowerCase().slice(0, 8);
   const title = String(node.title || "").trim().slice(0, 100);
+  const pricingTiers = parsePricingTiers(node, issues);
 
   const config: FlashSaleConfig = {
     enabled: true,
@@ -183,9 +216,43 @@ export function parseFlashSaleConfig(promotionConfig: unknown): FlashSaleParseRe
     priceCents,
     currency,
     title,
+    pricingTiers,
   };
 
   return { config, issues };
+}
+
+/** 购买数量清洗：直付批量购买仍是一身份一订单，数量是订单内件数。 */
+export function normalizeFlashSaleQuantity(raw: unknown, flashSale: FlashSaleConfig): number {
+  const n = Number(raw);
+  const requested = Number.isFinite(n) ? Math.floor(n) : 1;
+  const min = 1;
+  const max = Math.max(1, Math.min(MAX_PER_USER, Math.floor(Number(flashSale.maxPerUser || 1))));
+  return Math.min(max, Math.max(min, requested));
+}
+
+/** 按阶梯价计算服务端权威金额；前端不得提交金额。 */
+export function calculateFlashSalePrice(
+  flashSale: FlashSaleConfig,
+  quantityRaw: unknown,
+): { quantity: number; unitPriceCents: number; amountCents: number; tierLabel: string } {
+  const quantity = normalizeFlashSaleQuantity(quantityRaw, flashSale);
+  const basePrice = Math.max(0, Math.floor(Number(flashSale.priceCents || 0)));
+  let matched = {
+    minQuantity: 1,
+    unitPriceCents: basePrice,
+    label: "",
+  };
+  for (const tier of flashSale.pricingTiers) {
+    if (tier.minQuantity <= quantity) matched = tier;
+  }
+  const unitPriceCents = Math.max(0, Math.floor(Number(matched.unitPriceCents || basePrice)));
+  return {
+    quantity,
+    unitPriceCents,
+    amountCents: unitPriceCents * quantity,
+    tierLabel: matched.label,
+  };
 }
 
 /**
