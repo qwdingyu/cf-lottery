@@ -677,7 +677,18 @@ export const paymentOrders = sqliteTable("payment_orders", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").notNull(),
   drawId: text("draw_id").notNull(),
-  entryId: text("entry_id").notNull().unique(),
+  /**
+   * V2（docs/158）：entry_id 不再唯一。同一参与身份可产生多笔独立订单（一次下单=一笔订单）。
+   * entry 只表达"谁参与了活动"，订单是独立的购买/履约事实。
+   */
+  entryId: text("entry_id").notNull(),
+  /**
+   * 购买身份快照（V2 新增）。下单时把参与者的身份拷贝到订单上，即使后续 entry 被改名/回收，
+   * 订单仍保留"谁在何时购买"的审计事实。公开找回/查单按此身份匹配，不再回查 entry。
+   */
+  buyerIdentityType: text("buyer_identity_type").notNull().default("email"),
+  buyerIdentityValue: text("buyer_identity_value").notNull().default(""),
+  buyerDisplayName: text("buyer_display_name").notNull().default(""),
   /** 单笔购买件数。批发/批量购买不新增 entry，而是在一笔订单内购买多件。 */
   quantity: integer("quantity").notNull().default(1),
   /** 下单时命中的单价快照（分），避免运营改价影响历史订单和重试。 */
@@ -699,7 +710,6 @@ export const paymentOrders = sqliteTable("payment_orders", {
   /** 仅存 SHA-256，公开查单使用短期 Bearer 令牌，不把邮箱放进 URL。 */
   accessTokenHash: text("access_token_hash"),
   accessTokenExpiresAt: text("access_token_expires_at"),
-  prizeCodeId: text("prize_code_id"),
   paidAt: text("paid_at"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
@@ -708,6 +718,10 @@ export const paymentOrders = sqliteTable("payment_orders", {
   statusIdx: index("idx_payment_orders_status").on(t.status, t.createdAt),
   tenantStatusCreatedIdx: index("idx_payment_orders_tenant_status_created").on(t.tenantId, t.status, t.createdAt),
   currentAttemptIdx: index("idx_payment_orders_current_attempt").on(t.currentAttemptId),
+  // V2：entry_id 从唯一约束改为普通索引，支持一参与多订单（docs/158）。
+  entryIdx: index("idx_payment_orders_entry").on(t.tenantId, t.entryId),
+  // V2：购买身份快照索引，公开找回按身份列直接匹配（不再回查 entry）。
+  buyerIdentityIdx: index("idx_payment_orders_buyer_identity").on(t.tenantId, t.drawId, t.buyerIdentityValue),
   // 支付平台交易号是外部事实键；同一租户同一渠道必须唯一，避免重复通知或脏数据串单。
   providerTradeNoUnique: uniqueIndex("idx_payment_orders_provider_trade_no")
     .on(t.tenantId, t.provider, t.providerTradeNo)
@@ -744,3 +758,40 @@ export const paymentOrderAttempts = sqliteTable("payment_order_attempts", {
     .on(t.tenantId, t.provider, t.providerTradeNo)
     .where(sql`${t.providerTradeNo} IS NOT NULL AND ${t.providerTradeNo} <> ''`),
 }));
+
+/**
+ * V2 订单项（docs/158）：一笔订单（payment_orders）下的每个已购单元。
+ *
+ * 为什么引入订单项：
+ * - V1 把"一身份一订单"与"一订单一件/多件"混在一起，发卡时用订单上的 quantity 循环取码，
+ *   无法表达"同笔订单里每一件卡密的独立履约/退款/换码"。
+ * - V2 一次下单即一笔订单，quantity 件 → quantity 个订单项；每项在履约后绑定一个 prize_code_id。
+ * - 订单项状态：pending（下单未履约）→ fulfilled（已发卡）或 refunded（退款/作废）。
+ *   它负责明细级履约，payment_orders.status 只负责订单整体支付与收尾。
+ */
+export const paymentOrderItems = sqliteTable("payment_order_items", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  drawId: text("draw_id").notNull(),
+  paymentOrderId: text("payment_order_id").notNull(),
+  /** 履约后绑定的卡密；履约前为 null。 */
+  prizeCodeId: text("prize_code_id"),
+  /** 明细状态：pending → fulfilled / refunded；与 payment_orders.status 解耦。 */
+  status: text("status").notNull().default("pending"),
+  /** 该件单价快照（分），与订单 unit_price_cents 一致，明细级审计。 */
+  unitPriceCents: integer("unit_price_cents").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  // 按订单取全部明细（公开查单/找回/邮件展示）。
+  orderIdx: index("idx_payment_order_items_order").on(t.tenantId, t.paymentOrderId),
+  // 按卡密反查归属订单（退款/换码/核销链路）。
+  prizeCodeIdx: index("idx_payment_order_items_prize_code").on(t.tenantId, t.prizeCodeId),
+}));
+
+/** V2 订单项状态唯一权威定义（与 payment-status.ts 的 PAYMENT_ORDER_ITEM_STATUS 对齐）。 */
+export const PAYMENT_ORDER_ITEM_STATUS = {
+  PENDING: "pending",
+  FULFILLED: "fulfilled",
+  REFUNDED: "refunded",
+} as const;

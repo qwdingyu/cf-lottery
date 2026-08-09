@@ -21,6 +21,7 @@ import {
   lotteryEntries,
   paymentOrders,
   paymentOrderAttempts,
+  paymentOrderItems,
   prizeCodes,
   tenantConfigs,
 } from "../db/schema";
@@ -397,7 +398,13 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
       status: paymentOrders.status,
       provider: paymentOrders.provider,
       providerTradeNo: paymentOrders.providerTradeNo,
-      prizeCodeId: paymentOrders.prizeCodeId,
+      // V2：通过 order_items 子查询判断是否有已发卡密（docs/158）
+      hasPrizeCode: sql<number>`(
+        SELECT COUNT(*) FROM ${paymentOrderItems}
+        WHERE ${paymentOrderItems.paymentOrderId} = ${paymentOrders.id}
+          AND ${paymentOrderItems.tenantId} = ${tenantId}
+          AND ${paymentOrderItems.status} = 'fulfilled'
+      )`,
       paidAt: paymentOrders.paidAt,
       createdAt: paymentOrders.createdAt,
       updatedAt: paymentOrders.updatedAt,
@@ -424,7 +431,7 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
     .innerJoin(lotteryDraws, eq(lotteryDraws.id, paymentOrders.drawId))
     .innerJoin(lotteryEntries, eq(lotteryEntries.id, paymentOrders.entryId))
     .leftJoin(prizeCodes, and(
-      eq(prizeCodes.id, paymentOrders.prizeCodeId),
+      eq(prizeCodes.paymentOrderId, paymentOrders.id),
       eq(prizeCodes.tenantId, tenantId),
     ))
     .where(where)
@@ -444,7 +451,7 @@ adminPaymentConfigRoute.get("/payment-orders", async (c) => {
     orders: rows.map((row) => ({
       ...row,
       pendingRefundAttemptCount: Number(row.pendingRefundAttemptCount || 0),
-      hasPrizeCode: Boolean(row.prizeCodeId),
+      hasPrizeCode: Number(row.hasPrizeCode || 0) > 0,
     })),
     total: Number(total || 0),
   });
@@ -474,7 +481,6 @@ adminPaymentConfigRoute.post("/payment-orders/:id/retry-fulfillment", async (c) 
 
   await recordTenantAudit(c, "tenant.payment_order.retry_fulfillment", "payment_order", orderId, {
     status: result.order?.status,
-    prizeCodeId: result.order?.prizeCodeId || null,
   });
 
   return ok(c, { order: result.order });

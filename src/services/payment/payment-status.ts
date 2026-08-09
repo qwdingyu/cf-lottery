@@ -79,3 +79,19 @@ export function isPaidPaymentAttemptStatus(status: string): boolean {
     || status === PAYMENT_ATTEMPT_STATUS.LATE_NEEDS_REFUND
     || status === PAYMENT_ATTEMPT_STATUS.REFUNDED;
 }
+
+/**
+ * V2 订单项（payment_order_items）状态（docs/158）。
+ * 与 payment_orders.status 解耦：订单整体是 paid 但某一项可能 refunded（售后/换码）。
+ */
+export const PAYMENT_ORDER_ITEM_STATUS = {
+  PENDING: "pending",
+  FULFILLED: "fulfilled",
+  REFUNDED: "refunded",
+} as const;
+
+export type PaymentOrderItemStatus = typeof PAYMENT_ORDER_ITEM_STATUS[keyof typeof PAYMENT_ORDER_ITEM_STATUS];
+
+export function isFulfilledOrderItemStatus(status: string): boolean {
+  return status === PAYMENT_ORDER_ITEM_STATUS.FULFILLED;
+}

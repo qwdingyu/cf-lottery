@@ -10,11 +10,11 @@
  * 回调处理模式：GET query / POST form → provider.verifyCallback → 发卡。
  */
 import { Hono } from "hono";
-import { eq, and, desc, inArray, or } from "drizzle-orm";
+import { eq, and, desc, inArray, sql } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, fail, ok, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts, prizeCodes, prizes, systemConfig } from "../db/schema";
+import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts, paymentOrderItems, prizeCodes, prizes, systemConfig } from "../db/schema";
 import { checkPublicIdentityRateLimit, checkPublicRateLimit, verifyEmailAccessCode } from "./public-lottery-helpers";
 import {
   loadTenantConfig,
@@ -97,26 +97,23 @@ async function listPaymentOrderPrizeCodes(
   db: ReturnType<typeof getDb>,
   tenantId: string,
   orderId: string,
-  fallbackPrizeCodeId?: string | null,
 ): Promise<Array<{ code: string; secret: string }>> {
-  const conditions = [eq(prizeCodes.paymentOrderId, orderId)];
-  if (fallbackPrizeCodeId) conditions.push(eq(prizeCodes.id, fallbackPrizeCodeId));
+  // V2（docs/158）：通过 order_items 关联查卡密，不再依赖 order.prize_code_id。
   const rows = await db
-    .select({ id: prizeCodes.id, code: prizeCodes.code, secret: prizeCodes.secret })
-    .from(prizeCodes)
-    .where(and(
+    .select({ code: prizeCodes.code, secret: prizeCodes.secret })
+    .from(paymentOrderItems)
+    .innerJoin(prizeCodes, and(
+      eq(prizeCodes.id, paymentOrderItems.prizeCodeId),
       eq(prizeCodes.tenantId, tenantId),
-      conditions.length === 1 ? conditions[0] : or(...conditions),
     ))
-    .orderBy(prizeCodes.id);
-  const seen = new Set<string>();
-  const result: Array<{ code: string; secret: string }> = [];
-  for (const row of rows) {
-    if (seen.has(row.id)) continue;
-    seen.add(row.id);
-    result.push({ code: row.code, secret: row.secret });
-  }
-  return result;
+    .where(and(
+      eq(paymentOrderItems.tenantId, tenantId),
+      eq(paymentOrderItems.paymentOrderId, orderId),
+      eq(paymentOrderItems.status, "fulfilled"),
+      sql`${paymentOrderItems.prizeCodeId} IS NOT NULL`,
+    ))
+    .orderBy(paymentOrderItems.id);
+  return rows;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -176,7 +173,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     return fail(c, "支付请求与参与身份不匹配", 403);
   }
 
-  // 检查是否已有订单（一参与一订单）
+  // V2（docs/158）：不再以"已有订单"作为终止条件。
+  // 查最近一笔订单判断是否处于 pending 或可重试，用于 resume/retry 而非阻断。
   const [existing] = await db
     .select()
     .from(paymentOrders)
@@ -185,25 +183,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
       eq(paymentOrders.drawId, draw.id),
       eq(paymentOrders.entryId, entry.id),
     ))
+    .orderBy(desc(paymentOrders.createdAt))
     .limit(1);
-  if (
-    existing &&
-    !isRetryablePaymentOrderStatus(existing.status) &&
-    existing.status !== PAYMENT_ORDER_STATUS.PENDING
-  ) {
-    const accessToken = await issuePaymentOrderAccessToken(db, draw.tenantId, existing.id, existing.entryId);
-    return ok(c, {
-      orderNo: existing.id,
-      status: existing.status,
-      entryId: existing.entryId,
-      amountCents: existing.amountCents,
-      quantity: existing.quantity,
-      unitPriceCents: existing.unitPriceCents,
-      currency: existing.currency,
-      provider: existing.provider,
-      accessToken,
-    });
-  }
 
   // 活动关闭后不允许凭旧 entry 新建或重试订单；暂停期间仍允许恢复已经
   // 发起的 pending 支付，避免用户已经付款途中因运营暂停活动而失去合法支付入口。
@@ -223,6 +204,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   if (existing?.status === PAYMENT_ORDER_STATUS.PENDING && entry.paymentStatus !== PAYMENT_ENTRY_STATUS.PENDING) {
     return fail(c, "订单与参与记录状态不一致，请联系客服处理", 409);
   }
+  // V2：已有订单时 entry 可以是 paid/pending/reserved；无订单时仍需 reserved
   if (!existing && entry.paymentStatus !== PAYMENT_ENTRY_STATUS.RESERVED) {
     return fail(c, "参与预约已失效，请重新参与", 409);
   }
@@ -286,7 +268,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
       ))
       .limit(1);
     if (!attempt) return fail(c, "订单支付尝试已失效，请联系客服处理", 409);
-    const accessToken = await issuePaymentOrderAccessToken(db, draw.tenantId, existing.id, existing.entryId);
+    const accessToken = await issuePaymentOrderAccessToken(db, draw.tenantId, existing.id);
     let payResult: CreatePaymentResult;
     try {
       const resumed = await resumePendingPaymentOrder(
@@ -295,6 +277,9 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
           tenantId: draw.tenantId,
           drawId: draw.id,
           entryId: existing.entryId,
+          buyerIdentityType: existing.buyerIdentityType || "email",
+          buyerIdentityValue: existing.buyerIdentityValue || "",
+          buyerDisplayName: existing.buyerDisplayName || "",
           quantity: existing.quantity,
           unitPriceCents: existing.unitPriceCents,
           pricingSnapshotJson: existing.pricingSnapshotJson || "{}",
@@ -332,6 +317,10 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     tenantId: draw.tenantId,
     drawId: draw.id,
     entryId: entry.id,
+    // V2：购买身份快照，下单时从 entry 拷贝到订单（docs/158）。
+    buyerIdentityType: entry.identityType || "email",
+    buyerIdentityValue: entry.identityValue || "",
+    buyerDisplayName: entry.displayName || "",
     quantity,
     unitPriceCents,
     pricingSnapshotJson: pricingSnapshot,
@@ -347,8 +336,8 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   let payResult: CreatePaymentResult;
   let accessToken = "";
   try {
-    const created = retryable
-      ? await retryPaymentOrder(db, orderInput, provider)
+    const created = retryable && existing
+      ? await retryPaymentOrder(db, orderInput, provider, existing.id)
       : await createPaymentOrder(db, orderInput, provider);
     order = created.order;
     payResult = created.payResult;
@@ -445,7 +434,6 @@ paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
       currency: paymentOrders.currency,
       provider: paymentOrders.provider,
       paidAt: paymentOrders.paidAt,
-      prizeCodeId: paymentOrders.prizeCodeId,
     })
     .from(paymentOrders)
     .where(and(
@@ -456,29 +444,29 @@ paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
     .orderBy(desc(paymentOrders.createdAt))
     .limit(10);
 
+  // V2：通过 order_items 关联查卡密，不再依赖 order.prize_code_id（docs/158）。
   const orderIds = rows.map((row) => row.orderNo);
-  const fallbackCodeIds = rows.map((row) => row.prizeCodeId).filter(Boolean) as string[];
-  const codeRows = rows.length > 0
+  const itemRows = orderIds.length > 0
     ? await db
       .select({
-        id: prizeCodes.id,
-        paymentOrderId: prizeCodes.paymentOrderId,
+        paymentOrderId: paymentOrderItems.paymentOrderId,
         code: prizeCodes.code,
         secret: prizeCodes.secret,
       })
-      .from(prizeCodes)
-      .where(and(
+      .from(paymentOrderItems)
+      .innerJoin(prizeCodes, and(
+        eq(prizeCodes.id, paymentOrderItems.prizeCodeId),
         eq(prizeCodes.tenantId, draw.tenantId),
-        or(
-          inArray(prizeCodes.paymentOrderId, orderIds),
-          fallbackCodeIds.length > 0 ? inArray(prizeCodes.id, fallbackCodeIds) : eq(prizeCodes.id, "__never__"),
-        ),
       ))
+      .where(and(
+        eq(paymentOrderItems.tenantId, draw.tenantId),
+        inArray(paymentOrderItems.paymentOrderId, orderIds),
+        eq(paymentOrderItems.status, "fulfilled"),
+      ))
+      .orderBy(paymentOrderItems.id)
     : [];
-  const fallbackCodeById = new Map(codeRows.map((row) => [row.id, { code: row.code, secret: row.secret }]));
   const codesByOrderId = new Map<string, Array<{ code: string; secret: string }>>();
-  for (const row of codeRows) {
-    if (!row.paymentOrderId) continue;
+  for (const row of itemRows) {
     const list = codesByOrderId.get(row.paymentOrderId) || [];
     list.push({ code: row.code, secret: row.secret });
     codesByOrderId.set(row.paymentOrderId, list);
@@ -486,8 +474,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
 
   return ok(c, {
     orders: rows.map((row) => {
-      const codes = codesByOrderId.get(row.orderNo)
-        || (row.prizeCodeId && fallbackCodeById.has(row.prizeCodeId) ? [fallbackCodeById.get(row.prizeCodeId)!] : []);
+      const codes = codesByOrderId.get(row.orderNo) || [];
       return {
         orderNo: row.orderNo,
         entryId: row.entryId,
@@ -530,7 +517,7 @@ paymentPublicRoute.get("/draws/:slug/payment-orders/:orderId", async (c) => {
   const order = await findPaymentOrderByAccessToken(db, draw.tenantId, draw.id, orderId, accessToken);
   if (!order) return fail(c, "订单不存在或访问已失效", 404);
 
-  const codes = await listPaymentOrderPrizeCodes(db, draw.tenantId, order.id, order.prizeCodeId);
+  const codes = await listPaymentOrderPrizeCodes(db, draw.tenantId, order.id);
 
   return ok(c, {
     order: {
@@ -639,8 +626,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
     .catch(() => true); // 默认开启
   const fulfilledOrder = result.order;
   if (
-    fulfilledOrder?.prizeCodeId &&
-    fulfilledOrder.status === PAYMENT_ORDER_STATUS.PAID &&
+    fulfilledOrder?.status === PAYMENT_ORDER_STATUS.PAID &&
     notifyWinnerEnabled
   ) {
     void (async () => {
@@ -665,14 +651,21 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         .where(and(eq(lotteryDraws.id, fulfilledOrder.drawId), eq(lotteryDraws.tenantId, fulfilledOrder.tenantId)))
         .limit(1);
 
-      // 查卡密信息（同时取 code 和 secret，分别用于展示账号和交付密钥）
-      const [codeInfo] = fulfilledOrder.prizeCodeId
-        ? await db
-          .select({ code: prizeCodes.code, secret: prizeCodes.secret, prizeId: prizeCodes.prizeId })
-          .from(prizeCodes)
-          .where(and(eq(prizeCodes.id, fulfilledOrder.prizeCodeId), eq(prizeCodes.tenantId, fulfilledOrder.tenantId)))
-          .limit(1)
-        : [];
+      // V2：通过 order_items 查已发卡密（docs/158），不再依赖 order.prize_code_id。
+      const [codeInfo] = await db
+        .select({ code: prizeCodes.code, secret: prizeCodes.secret, prizeId: prizeCodes.prizeId })
+        .from(paymentOrderItems)
+        .innerJoin(prizeCodes, and(
+          eq(prizeCodes.id, paymentOrderItems.prizeCodeId),
+          eq(prizeCodes.tenantId, fulfilledOrder.tenantId),
+        ))
+        .where(and(
+          eq(paymentOrderItems.tenantId, fulfilledOrder.tenantId),
+          eq(paymentOrderItems.paymentOrderId, fulfilledOrder.id),
+          eq(paymentOrderItems.status, "fulfilled"),
+        ))
+        .orderBy(paymentOrderItems.id)
+        .limit(1);
 
       // 查奖品名称（productName 应为奖品名，而非卡密值）
       const productName = codeInfo?.prizeId

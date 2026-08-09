@@ -3,7 +3,7 @@
  *
  * 职责：
  * - 按租户加载/解密支付配置（tenant_configs.providers JSON，多租户隔离）
- * - 创建订单（payment_orders，entryId UNIQUE 一参与一订单）
+ * - 创建订单（payment_orders + payment_order_items，entryId 只做参与归属）
  * - 调用 cf-core Provider 创建支付（易支付/支付宝/Stripe）
  * - 支付回调验签 + 幂等 + 发卡密（prizeCodes available → issued 原子取卡）
  *
@@ -18,6 +18,7 @@ import {
   tenantConfigs,
   paymentOrders,
   paymentOrderAttempts,
+  paymentOrderItems,
   prizeCodes,
   lotteryPrizeTiers,
   prizes,
@@ -32,6 +33,7 @@ import {
   isRetryablePaymentOrderStatus,
   PAYMENT_ATTEMPT_STATUS,
   PAYMENT_ENTRY_STATUS,
+  PAYMENT_ORDER_ITEM_STATUS,
   PAYMENT_ORDER_STATUS,
 } from "./payment-status";
 
@@ -62,12 +64,11 @@ function paymentAccessTokenExpiresAt(now = Date.now()): string {
   return new Date(now + PAYMENT_ACCESS_TOKEN_TTL_MS).toISOString();
 }
 
-/** 为公开订单签发访问令牌；调用方必须先完成 entry/email 绑定校验。 */
+/** 为公开订单签发访问令牌；调用方必须先完成 buyer+email 绑定校验。 */
 export async function issuePaymentOrderAccessToken(
   db: DbType,
   tenantId: string,
   orderId: string,
-  entryId: string,
 ): Promise<string> {
   const token = createPaymentAccessToken();
   const updated = await db
@@ -80,7 +81,6 @@ export async function issuePaymentOrderAccessToken(
     .where(and(
       eq(paymentOrders.id, orderId),
       eq(paymentOrders.tenantId, tenantId),
-      eq(paymentOrders.entryId, entryId),
     ))
     .returning({ id: paymentOrders.id });
   if (updated.length === 0) throw new Error("订单不存在");
@@ -254,7 +254,6 @@ async function cancelPaymentOrder(
         eq(paymentOrders.id, orderId),
         eq(paymentOrders.tenantId, input.tenantId),
         eq(paymentOrders.drawId, input.drawId),
-        eq(paymentOrders.entryId, input.entryId),
         eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
       ))
       .returning({ id: paymentOrders.id, quantity: paymentOrders.quantity });
@@ -269,18 +268,41 @@ async function cancelPaymentOrder(
         eq(paymentOrderAttempts.status, PAYMENT_ATTEMPT_STATUS.PENDING),
       ));
 
-    const released = await tx
-      .update(lotteryEntries)
-      .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
+    // V2：取消订单时标记所有 pending 明细为 refunded（docs/158）。
+    await tx
+      .update(paymentOrderItems)
+      .set({ status: PAYMENT_ORDER_ITEM_STATUS.REFUNDED, updatedAt: sql`(datetime('now'))` })
       .where(and(
-        eq(lotteryEntries.id, input.entryId),
-        eq(lotteryEntries.tenantId, input.tenantId),
-        eq(lotteryEntries.drawId, input.drawId),
-        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
+        eq(paymentOrderItems.tenantId, input.tenantId),
+        eq(paymentOrderItems.paymentOrderId, orderId),
+        eq(paymentOrderItems.status, PAYMENT_ORDER_ITEM_STATUS.PENDING),
       ));
-    if ((released.rowsAffected ?? 0) > 0) {
-      const quantity = Math.max(1, Math.floor(Number(cancelled[0]?.quantity || 1)));
-      await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, quantity);
+
+    // 释放该订单占用的名额
+    const quantity = Math.max(1, Math.floor(Number(cancelled[0]?.quantity || 1)));
+    await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, quantity);
+
+    // V2：若该 entry 没有其他活跃订单，才释放 entry 的 pending 状态
+    const [otherActive] = await tx
+      .select({ id: paymentOrders.id })
+      .from(paymentOrders)
+      .where(and(
+        eq(paymentOrders.tenantId, input.tenantId),
+        eq(paymentOrders.drawId, input.drawId),
+        eq(paymentOrders.entryId, input.entryId),
+        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
+      ))
+      .limit(1);
+    if (!otherActive) {
+      await tx
+        .update(lotteryEntries)
+        .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
+        .where(and(
+          eq(lotteryEntries.id, input.entryId),
+          eq(lotteryEntries.tenantId, input.tenantId),
+          eq(lotteryEntries.drawId, input.drawId),
+          eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
+        ));
     }
   });
 }
@@ -308,7 +330,6 @@ async function armPaymentOrderForRetry(
         eq(paymentOrders.id, orderId),
         eq(paymentOrders.tenantId, input.tenantId),
         eq(paymentOrders.drawId, input.drawId),
-        eq(paymentOrders.entryId, input.entryId),
       ))
       .limit(1);
     if (!current || !isRetryablePaymentOrderStatus(current.status)) {
@@ -407,7 +428,6 @@ async function armPaymentOrderForRetry(
         currentAttemptId: attemptId,
         accessTokenHash,
         accessTokenExpiresAt: paymentAccessTokenExpiresAt(),
-        prizeCodeId: null,
         paidAt: null,
         createdAt: sql`(datetime('now'))`,
         updatedAt: sql`(datetime('now'))`,
@@ -559,6 +579,10 @@ export interface CreateOrderInput {
   tenantId: string;
   drawId: string;
   entryId: string;
+  /** V2 购买身份快照：下单时从 entry 拷贝，订单独立保存购买者身份（docs/158）。 */
+  buyerIdentityType: string;
+  buyerIdentityValue: string;
+  buyerDisplayName?: string;
   quantity?: number;
   unitPriceCents?: number;
   pricingSnapshotJson?: string;
@@ -587,8 +611,21 @@ export async function createPaymentOrder(
   // 事务只含数据库写入；provider.createPayment 是网络调用，放事务外避免长时间占锁
   await withDbTransaction(db, async (tx) => {
     const quantity = Math.max(1, Math.floor(Number(input.quantity || 1)));
-    const extraQuantity = quantity - 1;
-    if (extraQuantity > 0) {
+    // V2：查 entry 当前状态，决定是否已有前置订单（docs/158）。
+    // - reserved（首次下单）：base=1 已在 joinDraw 时计入，需补 reserveQuantity = qty - 1
+    // - paid/pending（再次购买）：base=1 已被之前订单消费，全额预约 reserveQuantity = qty
+    const [entryRow] = await tx
+      .select({ paymentStatus: lotteryEntries.paymentStatus })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.id, input.entryId), eq(lotteryEntries.tenantId, input.tenantId)))
+      .limit(1);
+    if (!entryRow) throw new Error("参与记录不存在");
+    const hasPriorOrder = entryRow.paymentStatus !== PAYMENT_ENTRY_STATUS.RESERVED
+      && entryRow.paymentStatus !== PAYMENT_ENTRY_STATUS.NONE;
+    // 需预约件数：有前置订单时全额预约，否则只预约超出 base 1 的部分
+    const reserveQuantity = hasPriorOrder ? quantity : (quantity - 1);
+
+    if (reserveQuantity > 0) {
       const [draw] = await tx
         .select({
           maxParticipants: lotteryDraws.maxParticipants,
@@ -605,34 +642,34 @@ export async function createPaymentOrder(
       if (!isFlashSale || capacity == null || capacity <= 0) {
         throw new Error("秒杀活动未配置可用名额");
       }
-      // joinDraw 已经为 entry 预约 1 件；这里在建单事务内补占额外件数。
-      // 不能只在路由层预检，否则两个批量订单并发时会同时看到相同剩余库存。
+      // 事务内 CAS 预约：不能只在路由层预检，否则两个批量订单并发时会同时看到相同剩余库存
       const reserved = await tx
         .update(lotteryDraws)
         .set({
-          activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + ${extraQuantity}`,
+          activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + ${reserveQuantity}`,
           updatedAt: sql`(datetime('now'))`,
         })
         .where(and(
           eq(lotteryDraws.id, input.drawId),
           eq(lotteryDraws.tenantId, input.tenantId),
-          sql`${lotteryDraws.activeParticipantCount} + ${extraQuantity} <= ${capacity}`,
+          sql`${lotteryDraws.activeParticipantCount} + ${reserveQuantity} <= ${capacity}`,
         ))
         .returning({ id: lotteryDraws.id });
       if (reserved.length === 0) {
-        // joinDraw 已经占住 1 件。如果批量额外件数无法预约，必须立刻释放
-        // 这 1 件基础预约，否则失败下单会把库存卡到懒清理超时。
-        const released = await tx
-          .update(lotteryEntries)
-          .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
-          .where(and(
-            eq(lotteryEntries.id, input.entryId),
-            eq(lotteryEntries.tenantId, input.tenantId),
-            eq(lotteryEntries.drawId, input.drawId),
-            eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.RESERVED),
-          ));
-        if ((released.rowsAffected ?? 0) > 0) {
-          await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, 1);
+        if (!hasPriorOrder) {
+          // 首次下单且批量额外件数预约失败：释放 base 1
+          const released = await tx
+            .update(lotteryEntries)
+            .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
+            .where(and(
+              eq(lotteryEntries.id, input.entryId),
+              eq(lotteryEntries.tenantId, input.tenantId),
+              eq(lotteryEntries.drawId, input.drawId),
+              eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.RESERVED),
+            ));
+          if ((released.rowsAffected ?? 0) > 0) {
+            await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, 1);
+          }
         }
         reservationFailedMessage = "秒杀名额已被其他用户占用";
         return;
@@ -641,6 +678,10 @@ export async function createPaymentOrder(
 
     if (reservationFailedMessage) return;
 
+    // V2：允许从 reserved（首次）或 paid/pending（再次购买）进入 pending 状态
+    const allowedPriorStatuses = hasPriorOrder
+      ? [PAYMENT_ENTRY_STATUS.PAID, PAYMENT_ENTRY_STATUS.PENDING]
+      : [PAYMENT_ENTRY_STATUS.RESERVED];
     const armedEntry = await tx
       .update(lotteryEntries)
       .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PENDING })
@@ -648,11 +689,9 @@ export async function createPaymentOrder(
         eq(lotteryEntries.id, input.entryId),
         eq(lotteryEntries.tenantId, input.tenantId),
         eq(lotteryEntries.drawId, input.drawId),
-        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.RESERVED),
+        inArray(lotteryEntries.paymentStatus, allowedPriorStatuses),
       ))
       .returning({ id: lotteryEntries.id });
-    // 直付秒杀必须先经过 joinDraw 的 reserved 预约；不接受普通活动的空状态 entry，
-    // 避免绕过活动级名额 CAS 直接创建支付订单。
     if (armedEntry.length === 0) {
       throw new Error("参与预约已失效，请重新参与");
     }
@@ -662,6 +701,10 @@ export async function createPaymentOrder(
       tenantId: input.tenantId,
       drawId: input.drawId,
       entryId: input.entryId,
+      // V2：购买身份快照，下单时从 entry 拷贝到订单（docs/158）。
+      buyerIdentityType: input.buyerIdentityType || "email",
+      buyerIdentityValue: input.buyerIdentityValue || "",
+      buyerDisplayName: input.buyerDisplayName || "",
       quantity,
       unitPriceCents: Math.max(0, Math.floor(Number(input.unitPriceCents || 0))),
       pricingSnapshotJson: input.pricingSnapshotJson || "{}",
@@ -673,6 +716,17 @@ export async function createPaymentOrder(
       accessTokenHash,
       accessTokenExpiresAt: paymentAccessTokenExpiresAt(),
     });
+    // V2：创建 order_items（quantity 件，每件一条 pending 记录，docs/158）。
+    const orderItemValues = Array.from({ length: quantity }, (_, i) => ({
+      id: `${id}-item-${i + 1}`,
+      tenantId: input.tenantId,
+      drawId: input.drawId,
+      paymentOrderId: id,
+      prizeCodeId: null,
+      status: PAYMENT_ORDER_ITEM_STATUS.PENDING,
+      unitPriceCents: Math.max(0, Math.floor(Number(input.unitPriceCents || 0))),
+    }));
+    await tx.insert(paymentOrderItems).values(orderItemValues);
     await tx.insert(paymentOrderAttempts).values({
       id: attemptId,
       paymentOrderId: id,
@@ -756,14 +810,15 @@ export async function retryPaymentOrder(
   db: DbType,
   input: CreateOrderInput,
   provider: PaymentProvider,
+  orderId: string,
 ): Promise<{ order: typeof paymentOrders.$inferSelect; payResult: CreatePaymentResult; accessToken: string }> {
   const [existing] = await db
     .select()
     .from(paymentOrders)
     .where(and(
+      eq(paymentOrders.id, orderId),
       eq(paymentOrders.tenantId, input.tenantId),
       eq(paymentOrders.drawId, input.drawId),
-      eq(paymentOrders.entryId, input.entryId),
     ))
     .limit(1);
   if (!existing) {
@@ -915,7 +970,6 @@ export async function handlePaymentCallback(
 
     const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
     const acquiredPrizeCodeIds = await acquirePrizeCodes(tx, tenantId, current.drawId, current.entryId, current.id, quantity);
-    const prizeCodeId = acquiredPrizeCodeIds[0] ?? null;
 
     // 卡密不足：标记 paid_fulfillment_failed（运营后台可见，docs/131 §7），不静默 null
     const newStatus = acquiredPrizeCodeIds.length === quantity
@@ -938,12 +992,17 @@ export async function handlePaymentCallback(
       throw new Error("支付尝试状态已变化，请重试回调");
     }
 
+    // V2：把已领取的卡密依次绑定到订单明细（order_items），每件一条 fulfilled（docs/158）。
+    // 卡密不足时 acquirePrizeCodes 已原子回滚本次试领并返回 []，明细保持 pending。
+    if (acquiredPrizeCodeIds.length > 0) {
+      await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
+    }
+
     const paidOrder = await tx
       .update(paymentOrders)
       .set({
         status: newStatus,
         providerTradeNo: callback.providerTradeNo,
-        prizeCodeId: prizeCodeId ?? null,
         paidAt: callback.paidAt,
         updatedAt: sql`(datetime('now'))`,
       })
@@ -1000,7 +1059,7 @@ export async function retryPaymentFulfillment(
       .where(and(eq(paymentOrders.id, orderId), eq(paymentOrders.tenantId, tenantId)))
       .limit(1);
     if (!current) return { error: "订单不存在" };
-    if (current.status === PAYMENT_ORDER_STATUS.PAID && current.prizeCodeId) return { order: current };
+    if (current.status === PAYMENT_ORDER_STATUS.PAID) return { order: current };
     if (current.status !== PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED) {
       return { error: "订单状态不允许补发" };
     }
@@ -1008,7 +1067,8 @@ export async function retryPaymentFulfillment(
     const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
     const acquiredPrizeCodeIds = await acquirePrizeCodes(tx, tenantId, current.drawId, current.entryId, current.id, quantity);
     if (acquiredPrizeCodeIds.length !== quantity) return { error: "没有足够可用卡密，请先补充码池" };
-    const prizeCodeId = acquiredPrizeCodeIds[0] ?? null;
+    // V2：把补发的卡密绑定到订单明细（docs/158）。
+    await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
 
     const paidEntry = await tx
       .update(lotteryEntries)
@@ -1028,7 +1088,6 @@ export async function retryPaymentFulfillment(
       .update(paymentOrders)
       .set({
         status: PAYMENT_ORDER_STATUS.PAID,
-        prizeCodeId,
         updatedAt: sql`(datetime('now'))`,
       })
       .where(and(
@@ -1110,6 +1169,44 @@ async function acquirePrizeCodes(
     ids.push(id);
   }
   return ids;
+}
+
+/**
+ * V2：把已领取的卡密依次绑定到订单的 pending 明细（payment_order_items）。
+ * 必须在 acquirePrizeCodes 成功（返回非空数组）后调用，且在同一事务内。
+ * 如果领取的卡密数量与订单 pending 明细数量不一致，只会绑定到 min(领取数, 明细数) 件，
+ * 余下的明细保持 pending（由人工补发/退款流程处理）。
+ */
+async function fulfillOrderItems(
+  db: DbType,
+  tenantId: string,
+  orderId: string,
+  prizeCodeIds: string[],
+): Promise<void> {
+  const pendingItems = await db
+    .select({ id: paymentOrderItems.id })
+    .from(paymentOrderItems)
+    .where(and(
+      eq(paymentOrderItems.tenantId, tenantId),
+      eq(paymentOrderItems.paymentOrderId, orderId),
+      eq(paymentOrderItems.status, PAYMENT_ORDER_ITEM_STATUS.PENDING),
+    ))
+    .orderBy(paymentOrderItems.id);
+  const bindCount = Math.min(prizeCodeIds.length, pendingItems.length);
+  for (let i = 0; i < bindCount; i++) {
+    await db
+      .update(paymentOrderItems)
+      .set({
+        prizeCodeId: prizeCodeIds[i],
+        status: PAYMENT_ORDER_ITEM_STATUS.FULFILLED,
+        updatedAt: sql`(datetime('now'))`,
+      })
+      .where(and(
+        eq(paymentOrderItems.id, pendingItems[i].id),
+        eq(paymentOrderItems.tenantId, tenantId),
+        eq(paymentOrderItems.status, PAYMENT_ORDER_ITEM_STATUS.PENDING),
+      ));
+  }
 }
 
 /**
