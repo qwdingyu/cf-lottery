@@ -547,7 +547,7 @@ describe("payment route", () => {
       .set({ quantity: 2, unitPriceCents: 8900, amountCents: 17800 })
       .where(eq(paymentOrders.id, ORDER_ID));
     await db.update(paymentOrderItems)
-      .set({ prizeCodeId: PRIZE_CODE_ID, status: "fulfilled" })
+      .set({ prizeCodeId: PRIZE_CODE_ID, status: "fulfilled", lineNo: 10 })
       .where(eq(paymentOrderItems.paymentOrderId, ORDER_ID));
     await db.insert(prizeCodes).values({
       id: `${PRIZE_CODE_ID}-2`,
@@ -598,10 +598,10 @@ describe("payment route", () => {
     };
     expect(body.order.quantity).toBe(2);
     expect(body.order.amountCents).toBe(17800);
-    expect(body.order.prizeCode).toEqual({ code: "CODE-123", secret: "SECRET-123" });
+    expect(body.order.prizeCode).toEqual({ code: "CODE-456", secret: "SECRET-456" });
     expect(body.order.prizeCodes).toEqual([
-      { code: "CODE-123", secret: "SECRET-123" },
       { code: "CODE-456", secret: "SECRET-456" },
+      { code: "CODE-123", secret: "SECRET-123" },
     ]);
 
     await db.insert(emailAccessCodes).values({
@@ -628,8 +628,8 @@ describe("payment route", () => {
     expect(recovered.status).toBe(200);
     expect(recoveredBody.orders[0].quantity).toBe(2);
     expect(recoveredBody.orders[0].prizeCodes).toEqual([
-      { code: "CODE-123", secret: "SECRET-123" },
       { code: "CODE-456", secret: "SECRET-456" },
+      { code: "CODE-123", secret: "SECRET-123" },
     ]);
   });
 

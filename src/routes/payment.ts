@@ -112,7 +112,7 @@ async function listPaymentOrderPrizeCodes(
       eq(paymentOrderItems.status, "fulfilled"),
       sql`${paymentOrderItems.prizeCodeId} IS NOT NULL`,
     ))
-    .orderBy(paymentOrderItems.id);
+    .orderBy(paymentOrderItems.lineNo);
   return rows;
 }
 
@@ -456,7 +456,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders/recover", async (c) => {
         inArray(paymentOrderItems.paymentOrderId, orderIds),
         eq(paymentOrderItems.status, "fulfilled"),
       ))
-      .orderBy(paymentOrderItems.id)
+      .orderBy(paymentOrderItems.lineNo)
     : [];
   const codesByOrderId = new Map<string, Array<{ code: string; secret: string }>>();
   for (const row of itemRows) {
@@ -657,7 +657,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
           eq(paymentOrderItems.paymentOrderId, fulfilledOrder.id),
           eq(paymentOrderItems.status, "fulfilled"),
         ))
-        .orderBy(paymentOrderItems.id)
+        .orderBy(paymentOrderItems.lineNo)
         .limit(1);
 
       // 查奖品名称（productName 应为奖品名，而非卡密值）
