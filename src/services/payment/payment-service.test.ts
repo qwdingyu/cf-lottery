@@ -1255,6 +1255,72 @@ it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
     expect(codes.map((c) => c.code).sort()).toEqual(["BULK-1", "BULK-2", "BULK-3"]);
     expect(codes.every((c) => c.status === "issued")).toBe(true);
   });
+
+  it("retryPaymentFulfillment 当 entry 已因其他订单 paid 时，补发仍成功且不抛异常", async () => {
+    const { drawId, entryId } = await seedBatchFlow(5, 3);
+    // 订单 A：已支付（quantity=2），entry → paid
+    await db.insert(paymentOrders).values({
+      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, entryId,
+      quantity: 2, amountCents: 17800, currency: "cny",
+      status: "paid", provider: "easypay",
+    });
+    await db.update(lotteryEntries).set({ paymentStatus: "paid" }).where(eq(lotteryEntries.id, entryId));
+
+    // 订单 B：已支付但发卡失败（quantity=3）
+    const orderBId = crypto.randomUUID();
+    const attemptBId = crypto.randomUUID();
+    const prizeId = crypto.randomUUID();
+    await db.insert(paymentOrders).values({
+      id: orderBId, tenantId: TENANT_ID, drawId, entryId,
+      quantity: 3, amountCents: 26700, currency: "cny",
+      status: "paid_fulfillment_failed", provider: "easypay", currentAttemptId: attemptBId,
+    });
+    await db.insert(paymentOrderItems).values(
+      [1, 2, 3].map((i) => ({
+        id: `${orderBId}-item-${i}`,
+        tenantId: TENANT_ID,
+        drawId,
+        paymentOrderId: orderBId,
+        lineNo: i,
+        itemType: "flash_sale",
+        title: "批发奖品",
+        quantity: 1,
+        amountCents: 8900,
+        currency: "cny",
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        status: "pending",
+        unitPriceCents: 8900,
+      })),
+    );
+    await db.insert(paymentOrderAttempts).values({
+      id: attemptBId, paymentOrderId: orderBId, tenantId: TENANT_ID, drawId,
+      attemptNo: 1, provider: "easypay", amountCents: 26700, currency: "cny", status: "paid",
+    });
+    await db.insert(prizes).values({ id: prizeId, tenantId: TENANT_ID, name: "批发奖品", prizeType: "code", active: 1, totalCount: 3, usedCount: 0 });
+    await db.insert(lotteryPrizeTiers).values({ id: `tier-${drawId}`, tenantId: TENANT_ID, drawId, prizeId, tierName: "中奖", winnerCount: 1, sortOrder: 100, weight: 100 });
+    await db.insert(prizeCodes).values(
+      [1, 2, 3].map((i) => ({
+        id: `${prizeId}-${i}`,
+        tenantId: TENANT_ID,
+        prizeId,
+        code: `BULK-${i}`,
+        secret: `S${i}`,
+        status: "available",
+      })),
+    );
+
+    // entry 当前是 PAID（来自订单 A），订单 B 补发应成功且不抛异常
+    const result = await retryPaymentFulfillment(db, TENANT_ID, orderBId);
+    expect(result.ok).toBe(true);
+    expect(result.order?.status).toBe("paid");
+
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(entry?.paymentStatus).toBe("paid");
+
+    // 订单 B 的 3 件卡密已绑定
+    const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.paymentOrderId, orderBId));
+    expect(codes).toHaveLength(3);
+  });
 it("smoke: 批量直付全链路 创建(qty=3) → 回调 → 发 3 卡 → entry paid", async () => {
     const { drawId, entryId } = await seedBatchFlow(5, 3);
     // 准备 3 张可用卡密 + 奖品绑定

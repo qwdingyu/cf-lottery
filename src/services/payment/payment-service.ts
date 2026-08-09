@@ -224,7 +224,7 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
           ));
       }
 
-      // 2) 还有其它有效订单（非超时的 PENDING）的 entry：保持 pending，不释放
+      // 2) 还有其它有效订单（非超时、非终态）的 entry：阻止释放（保持 pending 或已由 step 1 恢复为 paid）
       const otherActiveRows = await tx
         .select({ entryId: paymentOrders.entryId })
         .from(paymentOrders)
@@ -238,10 +238,10 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
             PAYMENT_ORDER_STATUS.REFUNDED,
           ]),
         ));
-      const keepPendingEntryIds = new Set(otherActiveRows.map((r) => r.entryId));
+      const keepActiveEntryIds = new Set(otherActiveRows.map((r) => r.entryId));
 
       // 3) 其余 entry（无其他有效订单，也非 paid 恢复）释放为 expired
-      const toRelease = entryIds.filter((id) => !paidEntryIds.has(id) && !keepPendingEntryIds.has(id));
+      const toRelease = entryIds.filter((id) => !paidEntryIds.has(id) && !keepActiveEntryIds.has(id));
       if (toRelease.length > 0) {
         await tx
           .update(lotteryEntries)
@@ -331,46 +331,59 @@ async function cancelPaymentOrder(
     // V2：释放 entry 时必须考虑该 entry 是否有其他有效订单（PAID / FULFILLMENT_FAILED / PENDING），
     // 而不仅是检查其他 pending 订单。否则用户已有 PAID 订单 A、正在创建订单 B 时 B 取消，
     // 会把 entry 误释放为 expired，掩盖 A 的已发卡履约并导致再次下单被"参与预约已失效"拦截。
-    const [otherActive] = await tx
-      .select({ status: paymentOrders.status })
+    //
+    // 采用与 expireOverdueOrders 一致的两步策略：优先检查 PAID/FULFILLMENT_FAILED，再检查 PENDING，
+    // 避免 limit(1) 在同时存在 PAID 和 PENDING 订单时非确定性地选择 PENDING 掩盖履约。
+    //
+    // 1) 有 PAID/FULFILLMENT_FAILED 订单 → entry 恢复为 paid
+    const [paidOrder] = await tx
+      .select({ id: paymentOrders.id })
       .from(paymentOrders)
       .where(and(
         eq(paymentOrders.tenantId, input.tenantId),
         eq(paymentOrders.drawId, input.drawId),
         eq(paymentOrders.entryId, input.entryId),
         ne(paymentOrders.id, orderId),
-        notInArray(paymentOrders.status, [
-          PAYMENT_ORDER_STATUS.CANCELLED,
-          PAYMENT_ORDER_STATUS.EXPIRED,
-          PAYMENT_ORDER_STATUS.REFUNDED,
-        ]),
+        inArray(paymentOrders.status, [PAYMENT_ORDER_STATUS.PAID, PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED]),
       ))
       .limit(1);
-    if (otherActive) {
-      // 有 PAID / FULFILLMENT_FAILED 订单时，entry 应恢复为 paid（该 entry 仍有有效履约）
-      if (otherActive.status === PAYMENT_ORDER_STATUS.PAID || otherActive.status === PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED) {
-        await tx
-          .update(lotteryEntries)
-          .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
-          .where(and(
-            eq(lotteryEntries.id, input.entryId),
-            eq(lotteryEntries.tenantId, input.tenantId),
-            eq(lotteryEntries.drawId, input.drawId),
-            eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
-          ));
-      }
-      // 其他 pending 订单时保持 entry 为 pending，不做改动
-    } else {
+    if (paidOrder) {
       await tx
         .update(lotteryEntries)
-        .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
+        .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
         .where(and(
           eq(lotteryEntries.id, input.entryId),
           eq(lotteryEntries.tenantId, input.tenantId),
           eq(lotteryEntries.drawId, input.drawId),
           eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
         ));
+      return;
     }
+
+    // 2) 有其他 PENDING 订单 → 保持 entry pending，不做改动
+    const [otherPending] = await tx
+      .select({ id: paymentOrders.id })
+      .from(paymentOrders)
+      .where(and(
+        eq(paymentOrders.tenantId, input.tenantId),
+        eq(paymentOrders.drawId, input.drawId),
+        eq(paymentOrders.entryId, input.entryId),
+        ne(paymentOrders.id, orderId),
+        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
+      ))
+      .limit(1);
+    if (otherPending) return;
+
+    // 3) 无其他有效订单 → 释放为 expired
+    await tx
+      .update(lotteryEntries)
+      .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
+      .where(and(
+        eq(lotteryEntries.id, input.entryId),
+        eq(lotteryEntries.tenantId, input.tenantId),
+        eq(lotteryEntries.drawId, input.drawId),
+        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
+      ));
   });
 }
 
@@ -1179,18 +1192,35 @@ export async function retryPaymentFulfillment(
     // V2：补发只绑定尚未履约的订单项，不能按订单总 quantity 重复领取卡密。
     await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
 
-    const paidEntry = await tx
-      .update(lotteryEntries)
-      .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
+    // 如果 entry 已因其他订单 PAID（例如用户同时创建了多个订单，其中一个先补发成功），
+    // 则跳过 entry 更新；只有 PENDING 状态才需要推进。避免"参与记录状态已变化"异常。
+    const [entryCheck] = await tx
+      .select({ paymentStatus: lotteryEntries.paymentStatus })
+      .from(lotteryEntries)
       .where(and(
         eq(lotteryEntries.id, current.entryId),
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.drawId, current.drawId),
-        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
       ))
-      .returning({ id: lotteryEntries.id });
-    if (paidEntry.length === 0) {
-      throw new Error("参与记录状态已变化，请刷新后重试");
+      .limit(1);
+    if (entryCheck?.paymentStatus === PAYMENT_ENTRY_STATUS.PAID) {
+      // 已 paid → 只更新订单，跳过 entry 更新
+    } else if (entryCheck?.paymentStatus === PAYMENT_ENTRY_STATUS.PENDING) {
+      const paidEntry = await tx
+        .update(lotteryEntries)
+        .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
+        .where(and(
+          eq(lotteryEntries.id, current.entryId),
+          eq(lotteryEntries.tenantId, tenantId),
+          eq(lotteryEntries.drawId, current.drawId),
+          eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
+        ))
+        .returning({ id: lotteryEntries.id });
+      if (paidEntry.length === 0) {
+        throw new Error("参与记录状态已变化，请刷新后重试");
+      }
+    } else {
+      throw new Error("参与记录状态异常，无法补发");
     }
 
     const updatedOrder = await tx
