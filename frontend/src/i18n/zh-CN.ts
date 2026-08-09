@@ -883,6 +883,7 @@ export default {
     adminDrawNowNeedEntries: "暂无参与者，请先分享链接；有人参与后再开奖",
     adminUnknown: "未知",
     adminReload: "重新加载",
+    adminExportCsv: "导出 CSV",
     adminCancel: "取消",
     adminClose: "关闭",
     adminCreating: "创建中…",

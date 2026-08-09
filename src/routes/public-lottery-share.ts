@@ -262,10 +262,15 @@ route.post("/draws/:slug/share", async (c) => {
   if (!entry) return fail(c, "参与记录不存在或不属于本活动", 404);
 
   // 已有码：复用最新一条（主链接稳定；历史多码的 joined 仍在 stats 里 SUM）
+  // 纵深防御：同时限定 tenantId + drawId + sharerEntryId，防止跨租户复用分享码
   const existing = await db
     .select({ shareCode: shareRecords.shareCode })
     .from(shareRecords)
-    .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.sharerEntryId, entryId)))
+    .where(and(
+      eq(shareRecords.tenantId, draw.tenantId),
+      eq(shareRecords.drawId, draw.id),
+      eq(shareRecords.sharerEntryId, entryId),
+    ))
     .orderBy(desc(shareRecords.createdAt))
     .limit(1);
   if (existing.length > 0) {

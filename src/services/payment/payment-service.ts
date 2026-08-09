@@ -636,7 +636,8 @@ export async function createPaymentOrder(
   }
 
   await persistProviderTradeNo(db, id, attemptId, payResult);
-  const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, id)).limit(1);
+  // 纵深防御：同时限定 id + tenantId，防止初次创建后跨租户查询
+  const [order] = await db.select().from(paymentOrders).where(and(eq(paymentOrders.id, id), eq(paymentOrders.tenantId, input.tenantId))).limit(1);
   return { order: order!, payResult, accessToken };
 }
 
@@ -672,7 +673,8 @@ export async function resumePendingPaymentOrder(
   }
 
   await persistProviderTradeNo(db, orderId, attemptId, payResult);
-  const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, orderId)).limit(1);
+  // 纵深防御：同时限定 id + tenantId，防止恢复订单时跨租户查询
+  const [order] = await db.select().from(paymentOrders).where(and(eq(paymentOrders.id, orderId), eq(paymentOrders.tenantId, input.tenantId))).limit(1);
   if (!order) throw new Error("订单不存在");
   return { order, payResult };
 }
@@ -719,7 +721,8 @@ export async function retryPaymentOrder(
   }
 
   await persistProviderTradeNo(db, existing.id, retryState.attemptId, payResult);
-  const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, existing.id)).limit(1);
+  // 纵深防御：同时限定 id + tenantId，防止重试时跨租户查询
+  const [order] = await db.select().from(paymentOrders).where(and(eq(paymentOrders.id, existing.id), eq(paymentOrders.tenantId, input.tenantId))).limit(1);
   return { order: order!, payResult, accessToken: retryState.accessToken };
 }
 
@@ -743,10 +746,11 @@ export async function handlePaymentCallback(
   }
   if (!callback) return { processed: false, error: "验签失败" };
 
+  // 纵深防御：同时限定 attemptId + tenantId，回调未验租户前即排除跨租户 attempt
   const [preAttempt] = await db
     .select()
     .from(paymentOrderAttempts)
-    .where(eq(paymentOrderAttempts.id, callback.orderNo))
+    .where(and(eq(paymentOrderAttempts.id, callback.orderNo), eq(paymentOrderAttempts.tenantId, tenantId)))
     .limit(1);
   if (!preAttempt) return { processed: false, error: "支付尝试不存在" };
   if (preAttempt.tenantId !== tenantId) return { processed: false, error: "租户不匹配" };
@@ -761,7 +765,7 @@ export async function handlePaymentCallback(
     const [attempt] = await tx
       .select()
       .from(paymentOrderAttempts)
-      .where(eq(paymentOrderAttempts.id, preAttempt.id))
+      .where(and(eq(paymentOrderAttempts.id, preAttempt.id), eq(paymentOrderAttempts.tenantId, tenantId)))
       .limit(1);
     const [current] = await tx
       .select()
@@ -808,7 +812,7 @@ export async function handlePaymentCallback(
             eq(paymentOrders.status, current.status),
           ));
       }
-      const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
+      const [updated] = await tx.select().from(paymentOrders).where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.tenantId, tenantId))).limit(1);
       return { order: updated ?? current, handled: true };
     }
 
@@ -833,7 +837,7 @@ export async function handlePaymentCallback(
           updatedAt: sql`(datetime('now'))`,
         })
         .where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING)));
-      const [late] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
+      const [late] = await tx.select().from(paymentOrders).where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.tenantId, tenantId))).limit(1);
       return { order: late ?? current, handled: true };
     }
 
@@ -898,7 +902,7 @@ export async function handlePaymentCallback(
       }
     }
 
-    const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
+    const [updated] = await tx.select().from(paymentOrders).where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.tenantId, tenantId))).limit(1);
     return { order: updated ?? current, handled: true };
   });
 
@@ -960,7 +964,7 @@ export async function retryPaymentFulfillment(
       throw new Error("订单状态已变化，请刷新后重试");
     }
 
-    const [updated] = await tx.select().from(paymentOrders).where(eq(paymentOrders.id, current.id)).limit(1);
+    const [updated] = await tx.select().from(paymentOrders).where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.tenantId, tenantId))).limit(1);
     return { order: updated ?? current };
   });
 

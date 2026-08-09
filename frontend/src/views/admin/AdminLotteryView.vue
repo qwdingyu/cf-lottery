@@ -38,6 +38,9 @@
         <button class="btn btn-ghost btn-sm" type="button" :disabled="loading" @click="loadData">
           {{ $t('lottery.adminReload') }}
         </button>
+        <button class="btn btn-ghost btn-sm" type="button" @click="exportCsv">
+          {{ $t('lottery.adminExportCsv') }}
+        </button>
         <button
           v-if="hasListFilter"
           class="btn btn-ghost btn-sm"
@@ -1636,6 +1639,7 @@ import { useTablePagination } from '@usethink/cf-admin-fe/composables'
 import { useAdminListLoader } from '@usethink/cf-admin-fe/composables'
 import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
 import { adminRequest } from '@/composables/useAdminRequest'
+import { readAdminToken } from '@/composables/useAdminAuth'
 import {
   defaultExperienceForActivity,
   defaultResultModeForActivity,
@@ -2523,6 +2527,32 @@ function clearListFilters() {
 function showAllStatuses() {
   statusFilter.value = ''
   reloadFromFirstPage()
+}
+
+/** CSV 导出：复用当前筛选条件，下载 UTF-8 BOM CSV */
+async function exportCsv() {
+  const params = new URLSearchParams()
+  if (statusFilter.value) params.set('status', statusFilter.value)
+  if (activityKindFilter.value) params.set('activityKind', activityKindFilter.value)
+  if (listQuery.value) params.set('query', listQuery.value)
+  const url = `/api/admin/draws/export?${params.toString()}`
+  try {
+    const token = readAdminToken()
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const res = await fetch(url, { headers })
+    if (!res.ok) throw new Error(`导出失败 (${res.status})`)
+    const blob = await res.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `activities_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(a.href)
+  } catch (e: any) {
+    showToast(`导出失败: ${e.message}`, 'error')
+  }
 }
 
 function emailStatusLabel(w: LotteryWinner): string {

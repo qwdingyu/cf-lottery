@@ -660,10 +660,15 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   }
 
   // 检查是否已参与（按统一身份键判重）
+  // 纵深防御：同时限定 tenantId + drawId，即使 drawId 泄露也无法跨租户查询参与记录
   const [existing] = await db
     .select({ id: lotteryEntries.id, paymentStatus: lotteryEntries.paymentStatus })
     .from(lotteryEntries)
-    .where(and(eq(lotteryEntries.drawId, draw.id), eq(lotteryEntries.identityValue, identity.identityValue)))
+    .where(and(
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+      eq(lotteryEntries.identityValue, identity.identityValue),
+    ))
     .limit(1);
   // join 意图：已参与 → 409 + entryId（裂变身份可恢复，docs/110）；query 仍可发码
   const directFlashSale = parseFlashSaleConfig(draw.promotionConfig).config?.paymentRequired === true;
@@ -686,7 +691,11 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
     const [inRoster] = await db
       .select({ id: lotteryRosterMembers.id })
       .from(lotteryRosterMembers)
-      .where(and(eq(lotteryRosterMembers.drawId, draw.id), eq(lotteryRosterMembers.identityValue, email)))
+      .where(and(
+        eq(lotteryRosterMembers.tenantId, draw.tenantId),
+        eq(lotteryRosterMembers.drawId, draw.id),
+        eq(lotteryRosterMembers.identityValue, email),
+      ))
       .limit(1);
     if (!inRoster) return fail(c, "您不在本次活动名单中", 403);
   }
@@ -1234,13 +1243,14 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
     }
 
     // instant 次数字段（delayed entry 上为 0，仍可回传便于前端统一）
+    // 纵深防御：同时限定 id + tenantId，防止 entry.id 被跨租户枚举
     const [entrySpins] = await db
       .select({
         spinsLeft: lotteryEntries.spinsLeft,
         spinsTotalGranted: lotteryEntries.spinsTotalGranted,
       })
       .from(lotteryEntries)
-      .where(eq(lotteryEntries.id, entry.id))
+      .where(and(eq(lotteryEntries.id, entry.id), eq(lotteryEntries.tenantId, draw.tenantId)))
       .limit(1);
     if (entrySpins) {
       spinsLeft = Number(entrySpins.spinsLeft ?? 0);
@@ -1665,10 +1675,12 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
   const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
   if (!validCode) return fail(c, "验证码无效或已过期", 400);
 
+  // 纵深防御：同时限定 tenantId + drawId，防止跨租户查询参与记录
   const [entry] = await db
     .select()
     .from(lotteryEntries)
     .where(and(
+      eq(lotteryEntries.tenantId, draw.tenantId),
       eq(lotteryEntries.drawId, draw.id),
       eq(lotteryEntries.identityValue, email.toLowerCase().trim()),
     ))
@@ -1691,10 +1703,15 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
       decidedAt: outcome.decidedAt,
     } : undefined;
   } else if (draw.status === "drawn") {
+    // 纵深防御：同时限定 tenantId + drawId + entryId，防止跨租户查询中奖结果
     const [winner] = await db
       .select()
       .from(lotteryWinners)
-      .where(and(eq(lotteryWinners.drawId, draw.id), eq(lotteryWinners.entryId, entry.id)))
+      .where(and(
+        eq(lotteryWinners.tenantId, draw.tenantId),
+        eq(lotteryWinners.drawId, draw.id),
+        eq(lotteryWinners.entryId, entry.id),
+      ))
       .limit(1);
     result.won = !!winner;
     if (winner) result.drawnAt = winner.drawnAt;

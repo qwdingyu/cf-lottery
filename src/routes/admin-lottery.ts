@@ -431,6 +431,70 @@ adminLotteryRoute.get("/draws", async (c) => {
   return ok(c, { draws, total: Number(totalRow?.total ?? 0), nextCursor, hasMore });
 });
 
+/** 活动列表 CSV 导出 — 复用列表查询条件，不限制数量，输出 UTF-8 BOM CSV */
+adminLotteryRoute.get("/draws/export", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const status = c.req.query("status") || "";
+  const query = c.req.query("query") || "";
+  const activityKind = c.req.query("activityKind") || "";
+
+  // 复用活动列表的查询条件（不含游标和分页限制）
+  const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
+  const ALLOWED_DRAW_STATUS = new Set(["active", "draft", "open", "paused", "drawing", "drawn", "cancelled"]);
+  if (status && ALLOWED_DRAW_STATUS.has(status)) {
+    conditions.push(eq(lotteryDraws.status, status));
+  }
+  if (query) {
+    conditions.push(sql`${lotteryDraws.title} LIKE ${"%" + query + "%"}`);
+  }
+  if (activityKind) {
+    conditions.push(eq(lotteryDraws.activityKind, activityKind));
+  }
+
+  const rows = await db
+    .select({
+      id: lotteryDraws.id,
+      title: lotteryDraws.title,
+      status: lotteryDraws.status,
+      activityKind: lotteryDraws.activityKind,
+      participationMode: lotteryDraws.participationMode,
+      resultMode: lotteryDraws.resultMode,
+      startAt: lotteryDraws.startAt,
+      endAt: lotteryDraws.endAt,
+      createdAt: lotteryDraws.createdAt,
+      updatedAt: lotteryDraws.updatedAt,
+    })
+    .from(lotteryDraws)
+    .where(and(...conditions))
+    .orderBy(desc(lotteryDraws.createdAt));
+
+  // 构建 CSV（UTF-8 BOM，确保 Excel 正确识别中文）
+  const BOM = "\uFEFF";
+  const csv = [
+    "标题,状态,类型,参与模式,开奖模式,开始时间,结束时间,创建时间,更新时间",
+    ...rows.map((r) => {
+      const escape = (s: string | null) => s ? `"${String(s).replace(/"/g, '""')}"` : "";
+      return [
+        escape(r.title),
+        r.status,
+        r.activityKind || "",
+        r.participationMode || "",
+        r.resultMode || "",
+        escape(r.startAt),
+        escape(r.endAt),
+        escape(r.createdAt),
+        escape(r.updatedAt),
+      ].join(",");
+    }),
+  ].join("\n");
+
+  c.header("Content-Type", "text/csv; charset=utf-8");
+  c.header("Content-Disposition", `attachment; filename="activities_${new Date().toISOString().slice(0, 10)}.csv"`);
+  c.header("Cache-Control", "no-store");
+  return c.body(BOM + csv);
+});
+
 /** 活动详情 */
 adminLotteryRoute.get("/draws/:id", async (c) => {
   const db = getDb(c);

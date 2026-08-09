@@ -461,7 +461,8 @@ async function buildSpinResultFromRow(
       })
       .from(lotteryPrizeTiers)
       .leftJoin(prizes, and(eq(prizes.id, lotteryPrizeTiers.prizeId), eq(prizes.tenantId, draw.tenantId)))
-      .where(eq(lotteryPrizeTiers.id, spin.tierId))
+      // 纵深防御：同时限定 tierId + tenantId，防止跨租户枚举奖项
+      .where(and(eq(lotteryPrizeTiers.id, spin.tierId), eq(lotteryPrizeTiers.tenantId, draw.tenantId)))
       .limit(1);
     if (tierRow) {
       tierName = tierRow.tierName || null;

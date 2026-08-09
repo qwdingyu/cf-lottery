@@ -911,6 +911,7 @@ export default {
     adminDrawNowNeedEntries: "No participants yet — share the link first, then draw",
     adminUnknown: "Unknown",
     adminReload: "Reload",
+    adminExportCsv: "Export CSV",
     adminCancel: "Cancel",
     adminClose: "Close",
     adminCreating: "Creating…",
