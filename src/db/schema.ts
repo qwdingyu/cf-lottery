@@ -831,7 +831,7 @@ export const platformTargets = sqliteTable("platform_targets", {
    * - tenant_hosted：租户自托管 NapCat/OneBot，只把回调 URL 和密钥配置到自己的实例。
    */
   adapterDeploymentMode: text("adapter_deployment_mode").notNull().default("tenant_hosted"),
-  /** 每个租户/群自己的适配器来源。P0 为 napcat，后续可切官方 QQ Bot。 */
+  /** 每个租户/目标自己的适配器来源。QQ 为 napcat，Telegram 等其他平台可不设置或存储其他值。 */
   adapterProvider: text("adapter_provider").notNull().default("napcat"),
   /**
    * 每个租户/群自己的连接配置。P0 只保存 baseUrl；token 等敏感字段必须等租户级加密闭环完成后再接入。

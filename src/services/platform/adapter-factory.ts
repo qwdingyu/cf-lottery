@@ -60,6 +60,7 @@ export function getSupportedPlatforms(): string[] {
 /** 已注册的适配器提供方列表（用于管理端校验等场景） */
 export function getSupportedProviders(): string[] {
   // 提供方白名单：每个平台可注册自己的适配器提供方
-  // TODO: Telegram 接入后需在此扩展 telegram 的提供方
+  // QQ 使用 napcat（OneBot 协议），Telegram 直接调用 Bot API（不需要中间件提供方）
+  // Telegram 目标创建时 adapterProvider 可留空
   return ["napcat"];
 }

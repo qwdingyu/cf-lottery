@@ -3,7 +3,7 @@
  *
  * 提供 platformTargets 的完整 CRUD：
  * - 列表/详情/创建/更新/删除
- * - 创建时自动生成每群独立入站密钥（明文只返回一次，库中只存 SHA-256 哈希）
+ * - 创建时自动生成每目标独立入站密钥（明文只返回一次，库中只存 SHA-256 哈希）
  * - 编辑时可填写新入站密钥覆盖；留空不更新；也支持系统生成重置入站密钥
  *
  * 设计约束：
@@ -144,8 +144,8 @@ function parseAdapterConfigJson(rawJson: string): Record<string, unknown> {
 }
 
 function buildPlatformTestMessage(platform: string, targetName: string) {
-  const name = targetName.trim() || "当前群组";
-  return `【cf-lottery 群助手】${name} 连接测试成功。收到这条消息说明 ${platform} 出站配置可用。`;
+  const name = targetName.trim() || "当前目标";
+  return `【cf-lottery 平台助手】${name} 连接测试成功。收到这条消息说明 ${platform} 出站配置可用。`;
 }
 
 /** 校验 activeDrawId 归属当前租户，返回活动（含 publicSlug） */
@@ -210,7 +210,7 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       return fail(c, `平台类型无效，当前支持的平台: ${supported}`);
     }
     const targetId = String(body.targetId || "").trim();
-    if (!targetId) return fail(c, "缺少群号 targetId");
+    if (!targetId) return fail(c, "缺少 targetId");
     const targetName = String(body.targetName || "").trim().slice(0, 120);
 
     const activeDrawId = String(body.activeDrawId || "").trim();
@@ -219,7 +219,9 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
 
     const deploymentMode = String(body.adapterDeploymentMode || "tenant_hosted");
     if (!VALID_DEPLOYMENT_MODES.has(deploymentMode)) return fail(c, "部署模式无效，仅支持 tenant_hosted/managed");
-    const provider = String(body.adapterProvider || "napcat");
+    // 适配器提供方默认值平台感知：QQ 默认 napcat，Telegram 等平台不需要中间件提供方
+    const defaultProvider = platform === "qq" ? "napcat" : "";
+    const provider = String(body.adapterProvider || defaultProvider);
     if (provider && !VALID_PROVIDERS.has(provider)) {
       const providers = Array.from(VALID_PROVIDERS).join(", ");
       return fail(c, `适配器提供方无效，当前支持的提供方: ${providers}`);
@@ -242,7 +244,7 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       .from(platformTargets)
       .where(and(eq(platformTargets.platform, platform), eq(platformTargets.targetId, targetId)))
       .limit(1);
-    if (existing && existing.id) return fail(c, "该群已绑定，请勿重复添加");
+    if (existing && existing.id) return fail(c, "该目标已绑定，请勿重复添加");
 
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -368,7 +370,7 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     return ok(c, { inboundSecret });
   });
 
-  // ── 发送测试消息：用于租户自托管 NapCat/OneBot 上线前联调 ──
+  // ── 发送测试消息：用于租户自托管适配器上线前联调 ──
   route.post("/platform-targets/:id/test-message", async (c) => {
     const db = getDb(c);
     const tenantId = c.get("tenantId") as string;

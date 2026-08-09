@@ -1,8 +1,8 @@
 /**
  * 平台适配层类型（docs/167）。
  *
- * P0 聚焦 QQ 群增长助手，平台类型保留扩展位。业务层只依赖 qq-adapter
- * 抽象，不把 NapCat 作为领域概念写进命令服务。
+ * 平台类型保留扩展位（qq/telegram/...）。业务层只依赖适配器抽象，
+ * 不把具体适配器实现（如 NapCat/OneBot）作为领域概念写进命令服务。
  */
 
 export type PlatformType = "qq" | "telegram";

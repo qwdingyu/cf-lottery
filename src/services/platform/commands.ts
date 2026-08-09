@@ -182,7 +182,7 @@ function renderPlatformDisplayName(entry: { displayName: string; identityValue: 
   const name = String(entry.displayName || "").trim();
   if (name) return name.length > 16 ? `${name.slice(0, 16)}...` : name;
   // displayName 为空时使用 identityValue 脱敏展示
-  // identityValue 为纯数字 QQ 号（如 "123456789"），输出 "123***789"
+  // identityValue 为平台用户 ID（QQ 号 / Telegram user id 等），脱敏输出 "123***789"
   const value = String(entry.identityValue || "").trim();
   if (!value) return "***";
   return value.length <= 6 ? "***" : `${value.slice(0, 3)}***${value.slice(-3)}`;
@@ -411,7 +411,7 @@ async function executeCheckinCommand(
  *
  * 流程：
  * 1. 校验活动 activityKind=lottery 且 resultMode=instant
- * 2. 构建幂等键（优先使用 QQ messageId，防止同一条消息重试被重复扣次）
+ * 2. 构建幂等键（优先使用平台 messageId，防止同一条消息重试被重复扣次）
  * 3. 调用 performInstantSpin 执行即时抽奖
  * 4. 根据结果返回中奖/未中奖消息
  */

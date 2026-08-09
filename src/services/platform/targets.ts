@@ -1,8 +1,8 @@
 /**
  * 平台目标绑定读取（docs/167）。
  *
- * QQ 群消息先通过 platform + targetId 找到租户与当前活动，再进入内置命令服务。
- * 未绑定群不写业务表，避免脏数据进入参与/分享/开奖模型。
+ * 入站消息先通过 platform + targetId 找到租户与当前活动，再进入内置命令服务。
+ * 未绑定目标不写业务表，避免脏数据进入参与/分享/开奖模型。
  */
 import { and, eq } from "drizzle-orm";
 import type { DbType } from "../../db/client";
@@ -97,7 +97,9 @@ export async function getActivePlatformTarget(
     activePublicSlug: row.activePublicSlug,
     assistantEnabled: row.assistantEnabled === 1,
     adapterDeploymentMode: normalizeDeploymentMode(row.adapterDeploymentMode),
-    adapterProvider: row.adapterProvider || "napcat",
+    // 适配器提供方：QQ 目标存储 "napcat"，Telegram 等平台可不设置或存储其他值
+    // 业务逻辑使用 platform 字段选择适配器，adapterProvider 仅用于配置展示
+    adapterProvider: row.adapterProvider || "",
     adapterConfig: parseJsonObject(row.adapterConfigJson),
     inboundSecretHash: row.inboundSecretHash || "",
     builtinCommands: parseBuiltinCommandConfig(row.builtinCommandsJson),
