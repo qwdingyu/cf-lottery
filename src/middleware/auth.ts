@@ -4,6 +4,8 @@
  * 从请求头 Authorization: Bearer <token> 中提取 JWT，
  * 验证签名后将 userId 和 tenantId 注入上下文。
  * 所有管理端路由必须通过此中间件。
+ *
+ * 自 v0.5.0 起：verifyJwt/signJwt 委托 @usethink/cf-core/auth/jwt（统一实现）。
  */
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../bindings";
@@ -11,6 +13,7 @@ import { getDb } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { tenantMembers, platformMembers, users, tenants } from "../db/schema";
 import { eq, and } from "drizzle-orm";
+import { verifyJwtClaims as coreVerifyJwtClaims, signJwtWithClaims } from "@usethink/cf-core/auth/jwt";
 
 export async function requireAuth(c: Context<AppEnv>, next: Next) {
   const authHeader = c.req.header("Authorization") || "";
@@ -26,7 +29,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
   }
 
   try {
-    const payload = await verifyJwt(token, jwtSecret);
+    const payload = await coreVerifyJwtClaims(token, jwtSecret);
     if (!payload || !payload.sub) {
       return c.json({ ok: false, message: "登录已过期" }, 401);
     }
@@ -39,7 +42,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
       const [row] = await db
         .select({ status: users.status })
         .from(users)
-        .where(eq(users.id, payload.sub))
+        .where(eq(users.id, payload.sub as string))
         .limit(1);
       if (!row) {
         return c.json({ ok: false, message: "登录已过期" }, 401);
@@ -52,8 +55,8 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
       console.error("[auth] requireAuth user status check failed:", err);
       return c.json({ ok: false, message: "权限验证失败" }, 500);
     }
-    c.set("userId", payload.sub);
-    c.set("tenantId", payload.tenantId || "");
+    c.set("userId", payload.sub as string);
+    c.set("tenantId", (payload.tenantId as string | undefined) || "");
   } catch {
     return c.json({ ok: false, message: "登录已过期" }, 401);
   }
@@ -154,51 +157,19 @@ export function requirePlatformMember(allowedRoles: string[] = ["platform_owner"
 }
 
 /**
- * JWT 签名和验证（使用 Web Crypto API，Cloudflare Workers 原生支持）
+ * JWT 验证 — 委托 @usethink/cf-core/auth/jwt（统一实现）。
+ * 返回 Record<string, any> | null 兼容旧调用方。
  */
 export async function verifyJwt(token: string, secret: string): Promise<Record<string, any> | null> {
-  try {
-    const [headerB64, payloadB64, signatureB64] = token.split(".");
-    if (!headerB64 || !payloadB64 || !signatureB64) return null;
-
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw", encoder.encode(secret),
-      { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
-    );
-    const data = encoder.encode(`${headerB64}.${payloadB64}`);
-    const signature = Uint8Array.from(atob(signatureB64.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
-    const valid = await crypto.subtle.verify("HMAC", key, signature, data);
-    if (!valid) return null;
-
-    const payloadJson = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
-    const payload = JSON.parse(payloadJson);
-
-    if (payload.exp && payload.exp * 1000 < Date.now()) return null;
-
-    return payload;
-  } catch {
-    return null;
-  }
+  const claims = await coreVerifyJwtClaims(token, secret);
+  if (!claims) return null;
+  return claims as unknown as Record<string, any>;
 }
 
+/**
+ * JWT 签发 — 委托 @usethink/cf-core/auth/jwt（统一实现）。
+ * 接受任意 Record<string, any> payload，兼容旧调用方。
+ */
 export async function signJwt(payload: Record<string, any>, secret: string, ttlSeconds: number): Promise<string> {
-  const header = { alg: "HS256", typ: "JWT" };
-  const now = Math.floor(Date.now() / 1000);
-  const fullPayload = { ...payload, iat: now, exp: now + ttlSeconds };
-
-  const encoder = new TextEncoder();
-  const headerB64 = btoa(JSON.stringify(header)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-  const payloadB64 = btoa(JSON.stringify(fullPayload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-  const data = encoder.encode(`${headerB64}.${payloadB64}`);
-
-  const key = await crypto.subtle.importKey(
-    "raw", encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, data);
-  const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
-    .replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-
-  return `${headerB64}.${payloadB64}.${signatureB64}`;
+  return signJwtWithClaims(payload as Record<string, string | number | boolean>, secret, ttlSeconds);
 }

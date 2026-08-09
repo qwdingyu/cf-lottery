@@ -11,34 +11,7 @@
  * - 一个失败不影响其他任务（每个任务独立 try/catch）
  * - 队列为空时 Worker 自然退出，不保留未完成的 Promise
  * - 不保证处理顺序（FIFO 取任务但 Worker 完成顺序不确定）
+ *
+ * 自 v0.5.0 起：委托 @usethink/cf-core/concurrency（统一实现）。
  */
-
-/** 有界并发执行单个任务，收集每个任务的结果 */
-export async function runBounded<T, R = void>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<{ ok: boolean; value?: R; error?: unknown }[]> {
-  if (concurrency < 1) concurrency = 1;
-  const results: { ok: boolean; value?: R; error?: unknown }[] = new Array(items.length);
-  let cursor = 0;
-
-  async function worker(): Promise<void> {
-    while (cursor < items.length) {
-      const idx = cursor++;
-      const item = items[idx]!;
-      try {
-        const value = await fn(item, idx);
-        results[idx] = { ok: true, value };
-      } catch (error) {
-        results[idx] = { ok: false, error };
-      }
-    }
-  }
-
-  const workerCount = Math.min(concurrency, items.length);
-  if (workerCount <= 0) return [];
-  const workers = Array.from({ length: workerCount }, () => worker());
-  await Promise.all(workers);
-  return results;
-}
+export { runBounded } from "@usethink/cf-core/concurrency";
