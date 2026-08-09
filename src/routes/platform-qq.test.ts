@@ -11,8 +11,9 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { platformQQRoute } from "./platform-qq";
 import { clearTestData, getTestDb } from "../test-setup";
-import { platformTargets, tenants } from "../db/schema";
+import { activityEvents, lotteryDraws, lotteryEntries, platformTargets, tenants } from "../db/schema";
 import { hashPlatformInboundSecret } from "../services/platform/security";
+import { and, eq } from "drizzle-orm";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
@@ -62,6 +63,24 @@ async function seedTarget(builtinCommandsJson = "{}") {
     adapterConfigJson: JSON.stringify({ baseUrl: "http://tenant.example:3000" }),
     inboundSecretHash: await hashPlatformInboundSecret(INBOUND_SECRET),
     builtinCommandsJson,
+  });
+}
+
+async function seedCheckinDraw(status = "open") {
+  const now = new Date();
+  await db.insert(lotteryDraws).values({
+    id: "draw-qq-1",
+    tenantId: TENANT_ID,
+    title: "QQ 签到活动",
+    publicSlug: "qq-lottery",
+    status,
+    activityKind: "checkin",
+    participationMode: "open",
+    experienceType: "submit",
+    resultMode: "manual",
+    startAt: new Date(now.getTime() - 3600000).toISOString(),
+    endAt: new Date(now.getTime() + 3600000).toISOString(),
+    activityConfig: "{}",
   });
 }
 
@@ -153,5 +172,94 @@ describe("POST /api/platform/qq/message", () => {
     const body = await res.json() as { handled?: boolean; reply?: string };
     expect(body.handled).toBe(true);
     expect(body.reply).toContain("未启用 /分享");
+  });
+
+  it("/签到 使用 QQ 身份创建参与记录并记录群来源事件", async () => {
+    await seedTarget();
+    await seedCheckinDraw();
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/签到" })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("签到成功");
+
+    const entries = await db
+      .select()
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.tenantId, TENANT_ID),
+        eq(lotteryEntries.drawId, "draw-qq-1"),
+        eq(lotteryEntries.identityType, "qq"),
+      ));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.identityValue).toContain("998877");
+    expect(entries[0]?.displayName).toBe("测试用户");
+
+    const events = await db
+      .select()
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT_ID),
+        eq(activityEvents.drawId, "draw-qq-1"),
+        eq(activityEvents.eventType, "participation_completed"),
+        eq(activityEvents.source, "qq_group"),
+        eq(activityEvents.medium, "platform_command"),
+      ));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.entryId).toBe(entries[0]?.id);
+  });
+
+  it("/签到 同一天重复调用不重复创建参与记录", async () => {
+    await seedTarget();
+    await seedCheckinDraw();
+    const app = createTestApp();
+    const request = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/签到" })),
+    };
+
+    const first = await app.request("/api/platform/qq/message", request, TEST_ENV);
+    expect(first.status).toBe(200);
+    const second = await app.request("/api/platform/qq/message", request, TEST_ENV);
+    expect(second.status).toBe(200);
+    const secondBody = await second.json() as { reply?: string };
+    expect(secondBody.reply).toContain("已参与");
+
+    const entries = await db
+      .select({ id: lotteryEntries.id })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, "draw-qq-1")));
+    expect(entries).toHaveLength(1);
+  });
+
+  it("/签到 绑定活动未开启时返回业务失败提示", async () => {
+    await seedTarget();
+    await seedCheckinDraw("draft");
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/签到" })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { reply?: string };
+    expect(body.reply).toContain("活动未开启");
   });
 });

@@ -4,12 +4,14 @@
  * 当前文件先落地安全边界和可测试骨架：
  * - 固定命令集合，不允许租户动态新增任意命令。
  * - 只接受平台服务层解析出的 QQ 身份。
- * - 未接入正式业务函数前返回明确提示，不写入参与/开奖数据。
+ * - 每个命令必须复用正式业务函数，禁止拼公开 email/OTP HTTP API。
  *
- * 后续实现 `/签到` `/抽奖` `/分享` `/排行榜` `/我的奖品` 时，应在这里复用
- * joinDraw / performInstantSpin / shareRecords / my-result 同源查询逻辑。
+ * P0 当前先接 `/签到`。其它命令仍 fail closed，等逐个补测试后再打开。
  */
 import type { DbType } from "../../db/client";
+import { and, eq } from "drizzle-orm";
+import { lotteryEntries } from "../../db/schema";
+import { joinDraw, recordActivityEvent } from "../lottery-service";
 import type {
   BuiltinCommandConfig,
   BuiltinPlatformCommand,
@@ -77,7 +79,7 @@ export function renderHelpReply(config: BuiltinCommandConfig): string {
 }
 
 export async function executeBuiltinPlatformCommand(
-  _db: DbType,
+  db: DbType,
   input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
 ): Promise<PlatformCommandResult> {
   if (!isBuiltinCommandEnabled(input.command, input.builtinCommands)) {
@@ -91,6 +93,10 @@ export async function executeBuiltinPlatformCommand(
     return { handled: true, reply: renderHelpReply(input.builtinCommands) };
   }
 
+  if (input.command === "checkin") {
+    return executeCheckinCommand(db, input);
+  }
+
   /**
    * 这里有意 fail closed。
    * 平台身份接入活动数据前，必须逐个命令接正式业务函数并补测试；
@@ -100,4 +106,55 @@ export async function executeBuiltinPlatformCommand(
     handled: true,
     reply: `${COMMAND_LABELS[input.command]} 已识别，平台命令服务正在接入活动「${input.publicSlug}」。`,
   };
+}
+
+async function executeCheckinCommand(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
+): Promise<PlatformCommandResult> {
+  try {
+    const result = await joinDraw(db, input.publicSlug, input.user.identityValue, input.user.identityType, {
+      ipHash: `qq:${input.source.groupId}`,
+      userAgent: "cf-lottery-platform-qq",
+    });
+
+    if (result.joined && result.entryId) {
+      if (input.user.displayName) {
+        await db
+          .update(lotteryEntries)
+          .set({ displayName: input.user.displayName.slice(0, 80) })
+          .where(and(
+            eq(lotteryEntries.id, result.entryId),
+            eq(lotteryEntries.tenantId, input.tenantId),
+          ));
+      }
+      await recordActivityEvent(db, {
+        tenantId: input.tenantId,
+        drawId: input.drawId,
+        entryId: result.entryId,
+        eventType: "participation_completed",
+        source: "qq_group",
+        medium: "platform_command",
+        campaign: input.platformTargetId,
+        metadata: {
+          command: "checkin",
+          platform: input.source.platform,
+          groupId: input.source.groupId,
+          deployment: "platform_target",
+        },
+      });
+      return { handled: true, reply: "签到成功，已记录你的参与。" };
+    }
+
+    if (result.alreadyJoined) {
+      return { handled: true, reply: result.message || "你今天已经签到过了。" };
+    }
+
+    return { handled: true, reply: result.message || "签到失败，请稍后再试。" };
+  } catch (err) {
+    return {
+      handled: true,
+      reply: err instanceof Error ? err.message : "签到失败，请稍后再试。",
+    };
+  }
 }
