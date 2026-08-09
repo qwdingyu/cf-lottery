@@ -830,29 +830,29 @@
                       </label>
                       <div class="field-span-2 flash-sale-tier-editor">
                         <div class="flash-sale-tier-editor__head">
-                          <span>阶梯价</span>
+                          <span>{{ $t('lottery.adminFlashSalePricingTiers') }}</span>
                           <button type="button" class="btn btn-ghost btn-xs" :disabled="form.flashSalePricingTiers.length >= 8" @click="addFlashSalePricingTier">
-                            添加阶梯
+                            {{ $t('lottery.adminFlashSaleAddPricingTier') }}
                           </button>
                         </div>
                         <div v-if="form.flashSalePricingTiers.length" class="flash-sale-tier-list">
                           <div v-for="(tier, idx) in form.flashSalePricingTiers" :key="idx" class="flash-sale-tier-row">
                             <label>
-                              <span>起购件数</span>
+                              <span>{{ $t('lottery.adminFlashSaleTierMinQuantity') }}</span>
                               <input v-model.number="tier.minQuantity" type="number" min="1" :max="form.flashSaleMaxPerUser || 100" />
                             </label>
                             <label>
-                              <span>单价(元)</span>
+                              <span>{{ $t('lottery.adminFlashSaleTierUnitPriceYuan') }}</span>
                               <input :value="flashSaleTierPriceYuan(idx)" type="number" min="0.01" step="0.01" max="1000000" @input="onFlashSaleTierPriceInput(idx, $event)" />
                             </label>
                             <label>
-                              <span>标签</span>
-                              <input v-model="tier.label" maxlength="32" placeholder="批发价" />
+                              <span>{{ $t('lottery.adminFlashSaleTierLabel') }}</span>
+                              <input v-model="tier.label" maxlength="32" :placeholder="$t('lottery.adminFlashSaleTierLabelPlaceholder')" />
                             </label>
-                            <button type="button" class="btn btn-ghost btn-xs" @click="removeFlashSalePricingTier(idx)">删除</button>
+                            <button type="button" class="btn btn-ghost btn-xs" @click="removeFlashSalePricingTier(idx)">{{ $t('lottery.adminFlashSaleRemovePricingTier') }}</button>
                           </div>
                         </div>
-                        <small class="field-hint">达到起购件数后，整笔订单全部件数按该档单价计算。</small>
+                        <small class="field-hint">{{ $t('lottery.adminFlashSalePricingTierHint') }}</small>
                       </div>
                       <label>
                         <span>{{ $t('lottery.adminFlashSaleCurrency') }}</span>

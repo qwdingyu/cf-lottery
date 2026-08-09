@@ -127,9 +127,7 @@ function parsePricingTiers(node: Record<string, unknown>, issues: FlashSaleParse
       label: textValue(row.label, 32),
     });
   }
-  const unique = new Map<number, { minQuantity: number; unitPriceCents: number; label: string }>();
-  for (const tier of tiers) unique.set(tier.minQuantity, tier);
-  return Array.from(unique.values()).sort((a, b) => a.minQuantity - b.minQuantity);
+  return tiers.sort((a, b) => a.minQuantity - b.minQuantity);
 }
 
 /**

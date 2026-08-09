@@ -217,7 +217,7 @@
                 <span v-if="flashSaleMerchCard(draw)?.remaining != null" class="lottery-flash-merch-stock">{{ $t('lottery.flashRemaining', { n: flashSaleMerchCard(draw)?.remaining }) }}</span>
               </div>
               <label v-if="isDirectPaymentDraw(draw) && Number(draw.flashSale?.maxPerUser || 1) > 1" class="lottery-flash-quantity" @click.stop>
-                <span>购买件数</span>
+                <span>{{ $t('lottery.flashPurchaseQuantity') }}</span>
                 <input
                   :value="flashSaleQuantityFor(draw)"
                   type="number"
@@ -622,7 +622,7 @@
             <strong class="lottery-payment-value">{{ paymentAmountText }}</strong>
           </div>
           <div v-if="paymentState?.quantity && paymentState.quantity > 1" class="lottery-payment-row">
-            <span class="lottery-payment-label">购买件数</span>
+            <span class="lottery-payment-label">{{ $t('lottery.paymentQuantity') }}</span>
             <strong class="lottery-payment-value">{{ paymentState.quantity }}</strong>
           </div>
           <div class="lottery-payment-row">

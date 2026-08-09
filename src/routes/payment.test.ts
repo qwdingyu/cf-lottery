@@ -273,6 +273,58 @@ describe("payment route", () => {
     expect(await db.select().from(paymentOrders)).toHaveLength(0);
   });
 
+  it("创建批量直付订单时拒绝超过单笔购买上限的数量", async () => {
+    await db.insert(tenants).values({ id: TENANT_ID, name: "payment-route" });
+    await db.insert(lotteryDraws).values({
+      id: DRAW_ID,
+      tenantId: TENANT_ID,
+      publicSlug: "payment-route",
+      title: "批量数量上限测试",
+      status: "open",
+      activityKind: "claim",
+      participationMode: "open",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 60_000).toISOString(),
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          maxPerUser: 2,
+          priceCents: 9900,
+          currency: "cny",
+          pricingTiers: [{ minQuantity: 2, unitPriceCents: 8900, label: "批发价" }],
+        },
+      }),
+    });
+    await db.insert(lotteryEntries).values({
+      id: ENTRY_ID,
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "email",
+      identityValue: EMAIL,
+      displayName: "buyer",
+      paymentStatus: "reserved",
+    });
+
+    const app = createTestApp();
+    const res = await app.request("/api/public/draws/payment-route/payment-orders", {
+      method: "POST",
+      body: JSON.stringify({ entryId: ENTRY_ID, email: EMAIL, quantity: 3 }),
+      headers: { "Content-Type": "application/json" },
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ message: "单笔最多可购买 2 件" });
+    expect(await db.select().from(paymentOrders)).toHaveLength(0);
+  });
+
   it("活动已开奖时不能恢复 pending 支付，避免结束后继续收款", async () => {
     await db.insert(tenants).values({ id: TENANT_ID, name: "payment-route" });
     await db.insert(lotteryDraws).values({
@@ -507,4 +559,3 @@ describe("payment route", () => {
     });
   });
 });
-
