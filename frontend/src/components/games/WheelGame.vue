@@ -5,7 +5,7 @@
       <span v-for="i in 12" :key="i" class="light-dot" :class="{ active: lightsActive }" :style="{ transform: `rotate(${i * 30}deg) translateY(-${canvasSize/2 + 8}px)` }" />
     </div>
     <!-- 转盘 -->
-    <canvas ref="wheelCanvasRef" class="wheel-canvas" :width="canvasSize" :height="canvasSize" />
+    <canvas ref="wheelCanvasRef" class="wheel-canvas" :width="canvasSize * dpr" :height="canvasSize * dpr" />
     <!-- 指针按钮：点击只发 play；旋转仅在 celebrateKey 递增后 -->
     <div
       class="wheel-pointer-wrap"
@@ -37,6 +37,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import type { GameProps, GameEmits } from './types'
+import { cappedDevicePixelRatio } from './canvas-utils'
 
 const props = withDefaults(defineProps<GameProps>(), {
   disabled: false,
@@ -49,6 +50,13 @@ const emit = defineEmits<GameEmits>()
 const wheelCanvasRef = ref<HTMLCanvasElement>()
 const spinning = ref(false)
 const canvasSize = 320
+/**
+ * docs/162 P2-2：WheelGame 原来 canvasSize 固定 320 bitmap，CSS 拉满到 82vw，
+ * Retina 屏（devicePixelRatio ≥ 2）上扇面文字明显模糊。
+ * 用 cappedDevicePixelRatio（上限 2）放缩 bitmap 后 ctx.setTransform，
+ * 所有 drawWheel 坐标仍用逻辑 320，绘制结果高清扫清。
+ */
+const dpr = cappedDevicePixelRatio()
 /** 避免 celebrateKey 初始 0 触发一次空庆祝 */
 let lastCelebrate = 0
 /** loading 期间慢速 idle 旋转的 rAF id */
@@ -75,7 +83,9 @@ function currentRot(): number {
 function drawWheel(rotation: number) {
   const cvs = wheelCanvasRef.value; if (!cvs) return
   const ctx = cvs.getContext('2d'); if (!ctx) return
-  const cx = cvs.width / 2, cy = cvs.height / 2, r = cx - 6
+  // docs/162 P2-2：Retina 高清适配；逻辑坐标不变（0..canvasSize）
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const cx = cvs.width / 2 / dpr, cy = cvs.height / 2 / dpr, r = cx - 6
   ctx.clearRect(0, 0, cvs.width, cvs.height)
 
   const n = Math.max(props.prizes.length, 1)

@@ -33,31 +33,39 @@ const KEYS = [
   'adminViralMaxLabel',
 ] as const
 
+/**
+ * 从 i18n lottery 对象中安全读取字符串键值。
+ * lottery 对象含嵌套的 tpl 字段，不能整体断言为 Record<string, string>，
+ * 用此辅助函数按需读取已知的字符串键。
+ */
+function lotString(lottery: typeof zh.lottery, key: string): string {
+  const v = (lottery as Record<string, unknown>)[key]
+  return typeof v === 'string' ? v : ''
+}
+
 describe('裂变文案加权票语义（docs/115）', () => {
   it('zh-CN 关键键不含「机会/再参与」类误导', () => {
-    const L = zh.lottery as Record<string, string>
     for (const key of KEYS) {
-      const text = String(L[key] ?? '')
+      const text = lotString(zh.lottery, key)
       expect(text.length, key).toBeGreaterThan(0)
       for (const re of ZH_FORBIDDEN) {
         expect(text, `${key} matches ${re}`).not.toMatch(re)
       }
     }
     // 上限后缀必须是「票」不是「次」
-    expect(L.adminViralMaxSuffix).toMatch(/票/)
-    expect(L.adminViralMaxSuffix).not.toMatch(/次（/)
+    expect(lotString(zh.lottery, 'adminViralMaxSuffix')).toMatch(/票/)
+    expect(lotString(zh.lottery, 'adminViralMaxSuffix')).not.toMatch(/次（/)
   })
 
   it('en 关键键用 weight/tickets，不用 extra entries 当再参与', () => {
-    const L = en.lottery as Record<string, string>
     for (const key of KEYS) {
-      const text = String(L[key] ?? '')
+      const text = lotString(en.lottery, key)
       expect(text.length, key).toBeGreaterThan(0)
       for (const re of EN_FORBIDDEN) {
         expect(text, `${key} matches ${re}`).not.toMatch(re)
       }
     }
-    expect(L.adminViralMaxSuffix.toLowerCase()).toMatch(/ticket/)
-    expect(L.adminViralSectionDesc.toLowerCase()).toMatch(/weight|ticket/)
+    expect(lotString(en.lottery, 'adminViralMaxSuffix').toLowerCase()).toMatch(/ticket/)
+    expect(lotString(en.lottery, 'adminViralSectionDesc').toLowerCase()).toMatch(/weight|ticket/)
   })
 })
