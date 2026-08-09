@@ -3,13 +3,13 @@
  *
  * 覆盖：创建/列表/更新/删除/重置密钥/重复群号/敏感配置拒绝/未登录 401
  */
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt } from "../middleware/auth";
 import { clearTestData, getTestDb } from "../test-setup";
-import { tenants, users, tenantMembers, lotteryDraws, platformTargets } from "../db/schema";
+import { tenants, users, tenantMembers, lotteryDraws, platformTargets, platformDeliveries } from "../db/schema";
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { eq } from "drizzle-orm";
 
@@ -77,6 +77,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await clearTestData(client);
   await seedBase();
 });
@@ -181,7 +182,7 @@ describe("platform-targets CRUD", () => {
     expect(data.message).toContain("暂不支持保存 NapCat token");
   });
 
-  it("P0 拒绝非 QQ 平台绑定", async () => {
+  it("P0 拒绝未注册的平台绑定", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {
       method: "POST",
@@ -195,7 +196,7 @@ describe("platform-targets CRUD", () => {
     });
     const data = await res.json() as Record<string, unknown>;
     expect(data.ok).toBe(false);
-    expect(data.message).toContain("P0 仅支持 qq");
+    expect(data.message).toContain("qq");
   });
 
   it("更新成功", async () => {
@@ -309,6 +310,109 @@ describe("platform-targets CRUD", () => {
     const newSecret = String(resetData.inboundSecret || "");
     expect(newSecret).toMatch(/^pin_/);
     expect(newSecret).not.toBe(originalSecret);
+  });
+
+  it("测试发送使用租户绑定的 NapCat baseUrl 并记录投递审计", async () => {
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "888888",
+        targetName: "联调群",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { baseUrl: "http://napcat.local:3000" },
+      }),
+    });
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: { message_id: 12345 } }), { status: 200 }),
+    );
+    const res = await app.request(`/api/admin/platform-targets/${id}/test-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ text: "测试消息" }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect(data.ok).toBe(true);
+    expect(data.providerMessageId).toBe("12345");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, requestInit] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("http://napcat.local:3000/send_group_msg");
+    expect((requestInit?.headers as Record<string, string>).Authorization).toBeUndefined();
+    expect(JSON.parse(String(requestInit?.body || "{}"))).toEqual({
+      group_id: "888888",
+      message: "测试消息",
+    });
+
+    const deliveries = await db
+      .select()
+      .from(platformDeliveries)
+      .where(eq(platformDeliveries.platformTargetId, id));
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.status).toBe("sent");
+    expect(deliveries[0]?.eventType).toBe("platform.test");
+    expect(deliveries[0]?.command).toBe("test_message");
+  });
+
+  it("测试发送缺少 baseUrl 时返回明确错误且不发起外部请求", async () => {
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetId: "999000", targetName: "未配置群", activeDrawId: DRAW_ID }),
+    });
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const res = await app.request(`/api/admin/platform-targets/${id}/test-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(res.status).toBe(400);
+    expect(data.ok).toBe(false);
+    expect(String(data.message || "")).toContain("baseUrl");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("测试发送失败时写入 failed 投递记录", async () => {
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "999111",
+        targetName: "失败群",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { baseUrl: "http://napcat.local:3000" },
+      }),
+    });
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("bad gateway", { status: 502 }));
+
+    const res = await app.request(`/api/admin/platform-targets/${id}/test-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(res.status).toBe(502);
+    expect(data.ok).toBe(false);
+
+    const deliveries = await db
+      .select()
+      .from(platformDeliveries)
+      .where(eq(platformDeliveries.platformTargetId, id));
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.status).toBe("failed");
+    expect(deliveries[0]?.lastError).toContain("HTTP 502");
   });
 
   it("未登录时返回 401", async () => {

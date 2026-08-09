@@ -59,6 +59,7 @@ export function getSupportedPlatforms(): string[] {
 
 /** 已注册的适配器提供方列表（用于管理端校验等场景） */
 export function getSupportedProviders(): string[] {
-  // 当前仅 QQ 有 NapCat 实现，Telegram 接入后扩展
+  // 提供方白名单：每个平台可注册自己的适配器提供方
+  // TODO: Telegram 接入后需在此扩展 telegram 的提供方
   return ["napcat"];
 }

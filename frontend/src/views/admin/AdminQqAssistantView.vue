@@ -52,6 +52,7 @@
             </td>
             <td class="col-actions">
               <button class="btn btn-ghost btn-xs" :title="$t('adminQqAssistant.edit')" @click="openEditModal(t)">{{ $t('adminQqAssistant.edit') }}</button>
+              <button class="btn btn-ghost btn-xs" :title="$t('adminQqAssistant.testMessage')" @click="testMessage(t)" :disabled="testingId === t.id">{{ $t('adminQqAssistant.testMessage') }}</button>
               <button class="btn btn-ghost btn-xs" :title="$t('adminQqAssistant.resetSecret')" @click="resetSecret(t)" :disabled="resettingId === t.id">{{ $t('adminQqAssistant.resetSecret') }}</button>
               <button class="btn btn-danger btn-xs" :title="$t('adminQqAssistant.delete')" @click="deleteTarget(t)">{{ $t('adminQqAssistant.delete') }}</button>
             </td>
@@ -155,6 +156,7 @@ const targets = ref<PlatformTarget[]>([])
 const draws = ref<Draw[]>([])
 const selectedId = ref('')
 const resettingId = ref('')
+const testingId = ref('')
 const saving = ref(false)
 const showModal = ref(false)
 const editingTarget = ref<PlatformTarget | null>(null)
@@ -327,6 +329,19 @@ async function resetSecret(target: PlatformTarget) {
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
   } finally { resettingId.value = '' }
+}
+
+async function testMessage(target: PlatformTarget) {
+  testingId.value = target.id
+  try {
+    await api(`/platform-targets/${target.id}/test-message`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    showToast(t('adminQqAssistant.toastTestSent'), 'success')
+  } catch (err) {
+    showToast(String(err instanceof Error ? err.message : err), 'error')
+  } finally { testingId.value = '' }
 }
 
 async function copyInboundConfig() {

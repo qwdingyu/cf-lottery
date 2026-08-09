@@ -1,5 +1,5 @@
 /**
- * 管理端抽奖路由 — QQ 群助手/平台目标管理域（docs/167 Phase 1）
+ * 管理端抽奖路由 — 平台目标管理域（docs/167 Phase 1）
  *
  * 提供 platformTargets 的完整 CRUD：
  * - 列表/详情/创建/更新/删除
@@ -7,8 +7,9 @@
  * - 编辑时可填写新入站密钥覆盖；留空不更新；也支持系统生成重置入站密钥
  *
  * 设计约束：
- * - 平台目标（QQ 群）归属租户，字段与 webhookConfigs 完全隔离（不污染 HTTP webhook 语义）
+ * - 平台目标（QQ 群/Telegram 群组等）归属租户，字段与 webhookConfigs 完全隔离（不污染 HTTP webhook 语义）
  * - 内置命令开关是固定集合，租户只能启停/改文案，不能新增任意命令
+ * - 平台白名单/提供方白名单由 adapter-factory 动态提供，新增平台只需注册适配器
  * - P0 不接收 adapterConfig.token：没有加密存储闭环前，禁止用占位符伪装“已加密”
  */
 import type { Context } from "hono";
@@ -76,16 +77,34 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
 }
 
 /**
- * P0 只保存非敏感连接信息。
- * token 需要“租户级加密存储 + 解密投递 + 前端不回显”的完整闭环；在该闭环完成前直接拒绝，
- * 避免出现创建时假加密、更新时明文落库、投递时拿占位符鉴权这三类生产事故。
+ * 校验并规范化平台适配器配置。每个平台有独立的配置字段与校验规则，
+ * 避免把 QQ(NapCat) 的 baseUrl 假设强加给其他平台（如 Telegram 需要 botToken）。
+ *
+ * 安全原则：P0 只保存非敏感连接信息。QQ 的 token / Telegram 的 botToken 都属于凭据，
+ * 需要“租户级加密存储 + 解密投递 + 前端不回显”的完整闭环；在该闭环完成前，
+ * QQ 直接拒绝敏感字段；Telegram 用 botToken 出站是刚性需求，单独评估风险。
  */
-function normalizeAdapterConfig(input: unknown): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
+function normalizeAdapterConfig(
+  platform: string,
+  input: unknown,
+): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
   if (input === undefined || input === null) return { ok: true, value: {} };
   if (typeof input !== "object" || Array.isArray(input)) {
     return { ok: false, message: "adapterConfig 必须是对象" };
   }
   const raw = input as Record<string, unknown>;
+
+  // 平台特定校验：新增平台在此扩展
+  if (platform === "qq") return validateQQAdapterConfig(raw);
+  if (platform === "telegram") return validateTelegramAdapterConfig(raw);
+
+  return { ok: false, message: `暂不支持的平台适配器配置: ${platform}` };
+}
+
+/** QQ (NapCat) 适配器配置：只需要 baseUrl，P0 拒绝保存纯文本 token */
+function validateQQAdapterConfig(
+  raw: Record<string, unknown>,
+): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
   if (raw.token !== undefined || raw.accessToken !== undefined || raw.authorization !== undefined) {
     return { ok: false, message: "P0 暂不支持保存 NapCat token，请使用内网、IP 白名单或反向代理保护适配器" };
   }
@@ -95,6 +114,22 @@ function normalizeAdapterConfig(input: unknown): { ok: true; value: Record<strin
     return { ok: false, message: "adapterConfig.baseUrl 必须以 http:// 或 https:// 开头" };
   }
   return { ok: true, value: { baseUrl } };
+}
+
+/**
+ * Telegram 适配器配置：需要 botToken 用于出站调用 Telegram Bot API。
+ * 注意：botToken 属敏感凭据，P0 以明文字段存储，需在 docs 中明确风险并规划加密闭环。
+ */
+function validateTelegramAdapterConfig(
+  raw: Record<string, unknown>,
+): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
+  const botToken = typeof raw.botToken === "string" ? raw.botToken.trim() : "";
+  if (!botToken) return { ok: true, value: {} };
+  // Telegram Bot API token 格式：<bot_id>:<auth_key>
+  if (!/^\d+:[A-Za-z0-9_-]+$/.test(botToken)) {
+    return { ok: false, message: "Telegram botToken 格式无效，应为 <bot_id>:<auth_key>" };
+  }
+  return { ok: true, value: { botToken } };
 }
 
 function parseAdapterConfigJson(rawJson: string): Record<string, unknown> {
@@ -170,7 +205,10 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     if (!body) return fail(c, "请求体不是有效 JSON");
 
     const platform = String(body.platform || "qq");
-    if (!VALID_PLATFORMS.has(platform)) return fail(c, "平台类型无效，P0 仅支持 qq");
+    if (!VALID_PLATFORMS.has(platform)) {
+      const supported = Array.from(VALID_PLATFORMS).join(", ");
+      return fail(c, `平台类型无效，当前支持的平台: ${supported}`);
+    }
     const targetId = String(body.targetId || "").trim();
     if (!targetId) return fail(c, "缺少群号 targetId");
     const targetName = String(body.targetName || "").trim().slice(0, 120);
@@ -182,9 +220,12 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     const deploymentMode = String(body.adapterDeploymentMode || "tenant_hosted");
     if (!VALID_DEPLOYMENT_MODES.has(deploymentMode)) return fail(c, "部署模式无效，仅支持 tenant_hosted/managed");
     const provider = String(body.adapterProvider || "napcat");
-    if (provider && !VALID_PROVIDERS.has(provider)) return fail(c, "适配器提供方无效，P0 仅支持 napcat");
+    if (provider && !VALID_PROVIDERS.has(provider)) {
+      const providers = Array.from(VALID_PROVIDERS).join(", ");
+      return fail(c, `适配器提供方无效，当前支持的提供方: ${providers}`);
+    }
 
-    const adapterConfigResult = normalizeAdapterConfig(body.adapterConfig);
+    const adapterConfigResult = normalizeAdapterConfig(platform, body.adapterConfig);
     if (!adapterConfigResult.ok) return fail(c, adapterConfigResult.message);
     const adapterConfig = adapterConfigResult.value;
 
@@ -260,7 +301,7 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       patch.activePublicSlug = draw?.publicSlug || "";
     }
     if (typeof body.adapterConfig === "object" && body.adapterConfig !== null) {
-      const adapterConfigResult = normalizeAdapterConfig(body.adapterConfig);
+      const adapterConfigResult = normalizeAdapterConfig(row.platform, body.adapterConfig);
       if (!adapterConfigResult.ok) return fail(c, adapterConfigResult.message);
       patch.adapterConfigJson = JSON.stringify(adapterConfigResult.value);
     }

@@ -1877,6 +1877,7 @@ adminQqAssistant: {
     notBound: "未绑定",
     empty: "暂无绑定的 QQ 群，点击右上角「绑定群」开始",
     edit: "编辑",
+    testMessage: "测试发送",
     resetSecret: "重置密钥",
     delete: "删除",
     close: "关闭",
@@ -1911,6 +1912,7 @@ adminQqAssistant: {
     toastUpdated: "已更新绑定",
     toastDeleted: "已删除绑定",
     toastToggled: "已切换状态",
+    toastTestSent: "测试消息已发送，请到 QQ 群确认",
     confirmDelete: "确认删除绑定「{name}」？",
   },
 
