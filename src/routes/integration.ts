@@ -16,6 +16,7 @@ import {
   computePenaltyTargets,
   recordActivityEvent,
 } from "../services/lottery-service";
+import { enqueuePlatformEvent } from "../services/platform/delivery";
 import {
   lotteryEntries,
   lotteryDraws,
@@ -270,6 +271,19 @@ integrationRoute.post("/events", async (c) => {
         groupId: payload.groupId,
         idempotencyKey,
       },
+    });
+
+    // 出站平台消息（QQ 群）：退群处罚通知。失败不影响处罚业务。
+    void enqueuePlatformEvent(db, {
+      tenantId: apiKey.tenantId,
+      drawId: draw.id,
+      eventType: "penalty.requested",
+      data: {
+        penaltyDetail: `退群成员 ${penaltyTargets.leaver} 已触发处理`
+          + (payload.groupId ? `，群号 ${String(payload.groupId)}` : ""),
+      },
+    }).catch((err) => {
+      console.error(`[integration] enqueuePlatformEvent penalty.requested failed:`, err);
     });
 
     return ok(c, {

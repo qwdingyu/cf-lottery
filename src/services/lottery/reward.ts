@@ -20,6 +20,7 @@ import { and, eq } from "drizzle-orm";
 import { lotteryDraws, lotteryEntries } from "../../db/schema";
 import { checkDbRateLimit } from "../../lib/rate-limit";
 import { recordActivityEvent, enqueueWebhookEvent } from "./integration";
+import { enqueuePlatformEvent } from "../platform/delivery";
 
 const REWARD_QUOTA_WINDOW_MS = 24 * 3600 * 1000;  // 配额窗口：24 小时
 
@@ -135,6 +136,23 @@ export async function triggerRewardEarned(
       drawId,
     },
   });
+
+  // 出站平台消息（QQ 群）：这里只做事务内入队，不做外部 HTTP 投递。
+  // tx 不能 fire-and-forget 到函数返回后再用，否则事务生命周期已结束；因此 await 入队并吞掉失败。
+  try {
+    await enqueuePlatformEvent(tx, {
+      tenantId,
+      drawId,
+      eventType: "reward.earned",
+      data: {
+        userName: inviterIdentityValue,
+        rewardLabel: perInviteAmount > 0 ? `${perInviteAmount} ${rewardConfig.currency || "USD"}` : "奖励",
+        rewardValue: perInviteAmount > 0 ? `${perInviteAmount} ${rewardConfig.currency || "USD"}` : "",
+      },
+    });
+  } catch (err) {
+    console.error(`[lottery] enqueuePlatformEvent reward.earned failed for ${drawId}:`, err);
+  }
 
   return { triggered: true, reason: "reward_sent", sharerEntryId, deliveryIds: webhookResult.deliveryIds };
 }

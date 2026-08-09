@@ -23,6 +23,7 @@ import {
 } from "../../db/schema";
 import { randomSelect, hashDrawSeed } from "./utils";
 import { enqueueWebhookEvent, dispatchWebhookDelivery } from "./integration";
+import { enqueuePlatformEvent } from "../platform/delivery";
 import { sendEmail, buildLotteryWinnerTemplateData, type EmailEnv } from "../email-service";
 import { runBounded } from "../../lib/concurrency";
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
@@ -365,6 +366,19 @@ export async function performDraw(
         console.error(`[lottery] dispatchWebhookDelivery failed for ${deliveryId}:`, err);
       });
     }
+
+    // 出站平台消息（QQ 群）：活动开奖完成通知。失败不影响开奖结果（与 webhook 相同语义）。
+    void enqueuePlatformEvent(db, {
+      tenantId,
+      drawId,
+      eventType: "draw.completed",
+      data: {
+        drawName: draw.title,
+        winnerSummary: `共 ${entryIndex} 人获奖，${candidateCount} 人参与`,
+      },
+    }).catch((err) => {
+      console.error(`[lottery] enqueuePlatformEvent draw.completed failed for ${drawId}:`, err);
+    });
 
     // 活动后承接：未中奖自动发券（需在活动配置中启用 loserReward.enabled）
     // 在开奖状态更新之后执行，保证"是否中奖"已尘埃落定；不阻塞主流程，失败不影响开奖结果。

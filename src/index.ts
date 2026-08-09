@@ -33,6 +33,7 @@ import {
   sendDrawReminders,
   type WebhookFetch,
 } from "./services/lottery-service";
+import { processPendingPlatformDeliveriesForAllTenants } from "./services/platform/delivery";
 
 const app = new Hono<AppEnv>();
 
@@ -65,6 +66,10 @@ export async function runScheduledMaintenance(
     tenantLimit: options?.webhookTenantLimit ?? 25,
     perTenantLimit: options?.webhookPerTenantLimit ?? 20,
   });
+  // 平台出站消息投递（QQ 群消息）：异步发送 pending 的平台消息，3 次重试
+  const platformDeliveries = await processPendingPlatformDeliveriesForAllTenants(db, {
+    perTenantLimit: 20,
+  });
   // 限流日志只服务短窗口判断，定时清理避免 Turso 免费层 rows/storage 被长期无价值日志拖垮。
   const cleanedRateLimitLogs = await cleanExpiredRateLimits(db);
   // 平台运营后台依赖快照展示租户用量；放进统一维护任务，保证 scheduled 和手动入口行为一致。
@@ -77,7 +82,7 @@ export async function runScheduledMaintenance(
     emailFrom: env.EMAIL_FROM || "",
   });
 
-  return { draws, webhooks, cleanedRateLimitLogs, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
+  return { draws, webhooks, platformDeliveries, cleanedRateLimitLogs, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
 }
 
 /**
