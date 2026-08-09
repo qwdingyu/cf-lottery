@@ -720,8 +720,8 @@ export const paymentOrders = sqliteTable("payment_orders", {
   currentAttemptIdx: index("idx_payment_orders_current_attempt").on(t.currentAttemptId),
   // V2：entry_id 从唯一约束改为普通索引，支持一参与多订单（docs/158）。
   entryIdx: index("idx_payment_orders_entry").on(t.tenantId, t.entryId),
-  // V2：购买身份快照索引，公开找回按身份列直接匹配（不再回查 entry）。
-  buyerIdentityIdx: index("idx_payment_orders_buyer_identity").on(t.tenantId, t.drawId, t.buyerIdentityValue),
+  // V2：购买身份快照复合索引，公开找回按 type + value 直接匹配（不再回查 entry）。
+  buyerIdentityIdx: index("idx_payment_orders_buyer_identity").on(t.tenantId, t.drawId, t.buyerIdentityType, t.buyerIdentityValue),
   // 支付平台交易号是外部事实键；同一租户同一渠道必须唯一，避免重复通知或脏数据串单。
   providerTradeNoUnique: uniqueIndex("idx_payment_orders_provider_trade_no")
     .on(t.tenantId, t.provider, t.providerTradeNo)

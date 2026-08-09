@@ -37,8 +37,35 @@ CREATE INDEX IF NOT EXISTS idx_payment_order_items_order ON payment_order_items(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_order_items_order_line ON payment_order_items(payment_order_id, line_no);
 CREATE INDEX IF NOT EXISTS idx_payment_order_items_prize_code ON payment_order_items(tenant_id, prize_code_id);
 
+-- 1.1 fail closed：如果历史订单无法精确还原 item 级履约，不允许伪造回填
+-- - quantity > 1 的已支付/已发卡历史单，没有足够信息精确还原每件卡密
+-- - 已支付/已发卡单若连订单头 prize_code_id 都没有，也无法证明任何一件已履约
+-- 注：SQLite 中 RAISE(ABORT) 只能在触发器内使用，但迁移解析器按分号拆分
+-- 会截断 CREATE TRIGGER 体，因此改用 CASE WHEN 除零触发错误替代。
+SELECT 1 / CASE WHEN (SELECT COUNT(*) FROM payment_orders
+  WHERE quantity > 1
+    AND status IN ('paid', 'paid_fulfillment_failed')) > 0
+  THEN 0 ELSE 1 END;
+
+SELECT 1 / CASE WHEN (SELECT COUNT(*) FROM payment_orders
+  WHERE status IN ('paid', 'paid_fulfillment_failed')
+    AND (prize_code_id IS NULL OR prize_code_id = '')) > 0
+  THEN 0 ELSE 1 END;
+
+
+
 -- 2. 迁移存量订单：对每笔已支付/已发卡订单，按 quantity 创建订单项（绑定已发卡密）
 -- 必须在重建 payment_orders 之前执行，因为旧表仍持有 prize_code_id。
+WITH RECURSIVE seq_gen(i) AS (
+  SELECT 1
+  UNION ALL
+  SELECT i + 1
+  FROM seq_gen
+  WHERE i < (
+    SELECT COALESCE(MAX(quantity), 0)
+    FROM payment_orders
+  )
+)
 INSERT INTO payment_order_items (
   id, tenant_id, draw_id, payment_order_id, line_no, item_type, title, quantity, prize_code_id, amount_cents, currency,
   pricing_snapshot_json, status, unit_price_cents, created_at, updated_at
@@ -50,7 +77,7 @@ SELECT
   po.id,
   seq.i,
   'flash_sale',
-  COALESCE(e.display_name, ''),
+  COALESCE(ld.title, ''),
   1,
   CASE WHEN seq.i = 1 THEN po.prize_code_id ELSE NULL END,
   po.unit_price_cents,
@@ -61,19 +88,8 @@ SELECT
   po.created_at,
   po.updated_at
 FROM payment_orders po
-LEFT JOIN lottery_entries e ON e.id = po.entry_id AND e.tenant_id = po.tenant_id
--- 递归 CTE 生成 1..max(quantity) 序列，支持任意 quantity（docs/158 §4.3）
--- 先查最大 quantity 确定递归深度，避免无限制递归
-CROSS JOIN (
-  WITH RECURSIVE seq_gen(i) AS (
-    SELECT 1
-    UNION ALL
-    SELECT i + 1 FROM seq_gen
-    WHERE i < (SELECT COALESCE(MAX(quantity), 0) FROM payment_orders)
-  )
-  SELECT i FROM seq_gen
-) seq
-WHERE seq.i <= po.quantity;
+LEFT JOIN lottery_draws ld ON ld.id = po.draw_id AND ld.tenant_id = po.tenant_id
+JOIN seq_gen seq ON seq.i <= po.quantity;
 
 -- 3. 重建 payment_orders：去掉 entry_id UNIQUE，新增 buyer snapshot，移除 prize_code_id
 CREATE TABLE IF NOT EXISTS payment_orders_new (
@@ -126,7 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_status ON payment_orders(status, c
 CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant_status_created ON payment_orders(tenant_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_current_attempt ON payment_orders(current_attempt_id);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_entry ON payment_orders(tenant_id, entry_id);
-CREATE INDEX IF NOT EXISTS idx_payment_orders_buyer_identity ON payment_orders(tenant_id, draw_id, buyer_identity_value);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_buyer_identity ON payment_orders(tenant_id, draw_id, buyer_identity_type, buyer_identity_value);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_orders_provider_trade_no
   ON payment_orders(tenant_id, provider, provider_trade_no)
   WHERE provider_trade_no IS NOT NULL AND provider_trade_no <> '';
