@@ -60,7 +60,9 @@ export type ActivityEventType =
   /** 外部事件：中转站回传处罚执行确认 */
   | "ext:penalty.executed"
   /** 外部事件：中转站回传兑换码核销确认（标记 prizeCode redeemed，docs/114 §4） */
-  | "ext:reward.redeemed";
+  | "ext:reward.redeemed"
+  /** 平台签到：群助手每日签到奖励（docs/171） */
+  | "daily_checkin";
 
 export type RecordActivityEventInput = {
   tenantId: string;
@@ -139,6 +141,7 @@ export const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "ext:reward.issued",
   "ext:penalty.executed",
   "ext:reward.redeemed",
+  "daily_checkin",
 ]);
 
 export const WEBHOOK_EVENT_TYPES = new Set<WebhookEventType>([

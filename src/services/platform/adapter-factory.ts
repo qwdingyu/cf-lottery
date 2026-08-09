@@ -6,6 +6,7 @@
  */
 import type { PlatformAdapter, PlatformMessage } from "./types";
 import { createQQAdapter } from "./qq-adapter";
+import { createTelegramAdapter } from "./telegram-adapter";
 
 /**
  * 适配器工厂映射表：平台标识 → 构造工厂。
@@ -20,6 +21,8 @@ const PLATFORM_ADAPTER_FACTORIES: Record<
   (config: Record<string, unknown>, fetcher: typeof fetch) => PlatformAdapter
 > = {
   qq: (config, fetcher) => createQQAdapter({ baseUrl: String(config.baseUrl || "") }, fetcher),
+  telegram: (config, fetcher) =>
+    createTelegramAdapter({ botToken: String(config.botToken || "") }, fetcher),
 };
 
 /**

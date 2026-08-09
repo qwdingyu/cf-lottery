@@ -16,6 +16,17 @@ describe("adapter-factory", () => {
     expect(adapter.platform).toBe("qq");
   });
 
+  it("能通过工厂构造 Telegram 适配器", () => {
+    const adapter = getPlatformAdapter("telegram", { botToken: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" });
+    expect(adapter.platform).toBe("telegram");
+  });
+
+  it("getSupportedPlatforms 包含 telegram", () => {
+    const platforms = getSupportedPlatforms();
+    expect(platforms).toContain("telegram");
+  });
+
+
   it("未注册平台抛出明确错误", () => {
     expect(() => getPlatformAdapter("unknown-platform", {}))
       .toThrow("不支持的平台类型: unknown-platform");

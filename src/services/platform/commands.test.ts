@@ -7,8 +7,9 @@
  */
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearTestData, getTestDb } from "../../test-setup";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
+  activityEvents,
   lotteryDraws,
   lotteryEntries,
   lotteryWinners,
@@ -433,5 +434,136 @@ describe("executeBuiltinPlatformCommand 通用兜底", () => {
     const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "unknown_cmd" as never } as never));
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("暂不支持");
+  });
+});
+
+// ── /签到 签到奖励测试 ──
+
+describe("/签到 (executeCheckinCommand) 签到奖励", () => {
+  it("未配置 grantSpinCount 时保持原有行为（只参与记录）", async () => {
+    await seedInstantDraw();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: undefined },
+    }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("签到成功");
+  });
+
+  it("签到奖励：首次签到增加 spinsLeft", async () => {
+    await seedInstantDraw();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: {
+        ...DEFAULT_BUILTIN_COMMANDS,
+        dailyCheckinPolicy: { grantSpinCount: 1 },
+      },
+    }));
+    expect(result.handled).toBe(true);
+    // 回复包含奖励提示
+    expect(result.reply).toContain("获得 1 次抽奖机会");
+    // 验证 entry 的 spinsLeft 增加了
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    // initialSpinsOnJoin(1, 来自 joinDraw 的初始发放) + grantSpinCount(1) = 2
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(2);
+  });
+
+  it("同一天重复签到不增加次数", async () => {
+    await seedInstantDraw();
+    // 第一次签到
+    await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
+    }));
+    // 第二次签到（同一天）
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
+    }));
+    expect(result.reply).toContain("今日已签到");
+    // 验证 spinsLeft 没有额外增加
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(2); // 没有变成 3
+  });
+
+  it("grantSpinCount=0 时保持原有行为", async () => {
+    await seedInstantDraw();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 0 } },
+    }));
+    expect(result.reply).toContain("签到成功");
+    // 只获得 initialSpinsOnJoin(1)，没有额外奖励
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(1);
+  });
+
+  it("签到奖励 grantSpinCount=2 时增加 2 次", async () => {
+    await seedInstantDraw();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: {
+        ...DEFAULT_BUILTIN_COMMANDS,
+        dailyCheckinPolicy: { grantSpinCount: 2 },
+      },
+    }));
+    expect(result.reply).toContain("获得 2 次抽奖机会");
+    // initialSpinsOnJoin(1) + grantSpinCount(2) = 3
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(3);
+  });
+
+  it("签到后 activity_events 记录当天签到事件", async () => {
+    await seedInstantDraw();
+    await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: {
+        ...DEFAULT_BUILTIN_COMMANDS,
+        dailyCheckinPolicy: { grantSpinCount: 1 },
+      },
+    }));
+    const todayStartIso = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+    const [entry] = await db
+      .select({ id: lotteryEntries.id })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    const [event] = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT_ID),
+        eq(activityEvents.drawId, DRAW_ID),
+        eq(activityEvents.entryId, entry!.id),
+        eq(activityEvents.eventType, "daily_checkin"),
+        sql`${activityEvents.createdAt} >= ${todayStartIso}`,
+      ))
+      .limit(1);
+    expect(event).toBeDefined();
+  });
+
+  it("命令关闭时返回禁用提示", async () => {
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, checkinEnabled: false },
+    }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("未启用");
   });
 });

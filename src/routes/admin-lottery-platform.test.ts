@@ -165,6 +165,42 @@ describe("platform-targets CRUD", () => {
     expect(data.message).toContain("活动不存在");
   });
 
+  it("创建 Telegram 平台目标并校验 botToken 格式", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        platform: "telegram",
+        targetId: "-1001234567890",
+        targetName: "Telegram 群",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { botToken: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    expect(String(data.inboundSecret || "")).toMatch(/^pin_/);
+  });
+
+  it("Telegram 目标 botToken 格式无效时返回错误", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        platform: "telegram",
+        targetId: "-100999",
+        targetName: "Invalid Bot",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { botToken: "invalid-token-format" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(false);
+    expect(data.message).toContain("botToken");
+  });
+
   it("拒绝保存 NapCat 明文 token", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {
@@ -182,21 +218,22 @@ describe("platform-targets CRUD", () => {
     expect(data.message).toContain("暂不支持保存 NapCat token");
   });
 
-  it("P0 拒绝未注册的平台绑定", async () => {
+  it("拒绝未注册的平台绑定", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
-        platform: "telegram",
-        targetId: "tg-1",
-        targetName: "Telegram",
+        platform: "discord",
+        targetId: "dc-1",
+        targetName: "Discord",
         activeDrawId: DRAW_ID,
       }),
     });
     const data = await res.json() as Record<string, unknown>;
     expect(data.ok).toBe(false);
     expect(data.message).toContain("qq");
+    expect(data.message).toContain("telegram");
   });
 
   it("更新成功", async () => {
@@ -312,7 +349,7 @@ describe("platform-targets CRUD", () => {
     expect(newSecret).not.toBe(originalSecret);
   });
 
-  it("测试发送使用租户绑定的 NapCat baseUrl 并记录投递审计", async () => {
+  it("测试发送使用租户绑定的适配器 baseUrl 并记录投递审计", async () => {
     const app = await createApp();
     const createRes = await app.request("/api/admin/platform-targets", {
       method: "POST",
@@ -358,7 +395,7 @@ describe("platform-targets CRUD", () => {
     expect(deliveries[0]?.command).toBe("test_message");
   });
 
-  it("测试发送缺少 baseUrl 时返回明确错误且不发起外部请求", async () => {
+  it("测试发送缺少适配器配置时返回明确错误且不发起外部请求", async () => {
     const app = await createApp();
     const createRes = await app.request("/api/admin/platform-targets", {
       method: "POST",

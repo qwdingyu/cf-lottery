@@ -12,8 +12,8 @@
  * 涉及卡密的回复必须默认群内脱敏，不能把完整码发到公开群聊里。
  */
 import type { DbType } from "../../db/client";
-import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
-import { lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, shareRecords } from "../../db/schema";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { activityEvents, lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, shareRecords } from "../../db/schema";
 import { joinDraw, recordActivityEvent } from "../lottery-service";
 import { performInstantSpin, SpinBusinessError } from "../lottery/spin-execution";
 import {
@@ -396,14 +396,90 @@ async function executeLeaderboardCommand(
   };
 }
 
+/**
+ * 执行 /签到 命令（docs/171）。
+ *
+ * 流程：
+ * 1. 通过 ensurePlatformEntry 确保用户有抽奖活动的 entry
+ * 2. 如配置了 dailyCheckinPolicy.grantSpinCount > 0：
+ *    a. 查今天是否已签到（activity_events 查 eventType=daily_checkin:YYYY-MM-DD）
+ *    b. 未签到：增加 entry 的 spinsLeft += grantSpinCount，记录签到事件
+ *    c. 已签到：返回"今日已签到"
+ * 3. 未配置 grantSpinCount：保持原有行为（仅参与记录）
+ *
+ * 签到奖励不更新 spinsTotalGranted（签到奖励不是活动额度，是平台奖励），
+ * 避免与裂变邀请的 maxSpinsPerEntry 限制冲突。
+ */
 async function executeCheckinCommand(
   db: DbType,
   input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
 ): Promise<PlatformCommandResult> {
+  // 1. 确保有抽奖活动的 entry
   const result = await ensurePlatformEntry(db, input);
-  if (result.ok && result.joinedNow) return { handled: true, reply: "签到成功，已记录你的参与。" };
-  if (result.ok) return { handled: true, reply: "您已参与此活动" };
-  return { handled: true, reply: result.message || "签到失败，请稍后再试。" };
+  if (!result.ok) {
+    return { handled: true, reply: result.message || "签到失败，请稍后再试。" };
+  }
+
+  // 2. 检查是否配置了签到奖励次数
+  const grantSpinCount = input.builtinCommands.dailyCheckinPolicy?.grantSpinCount;
+  if (grantSpinCount && grantSpinCount > 0) {
+    // 使用固定 eventType=daily_checkin，通过 createdAt 日期范围判断是否今日已签到
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const todayStartIso = `${today}T00:00:00.000Z`;
+    const eventType = "daily_checkin";
+
+    const [existing] = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, input.tenantId),
+        eq(activityEvents.drawId, input.drawId),
+        eq(activityEvents.entryId, result.entryId),
+        eq(activityEvents.eventType, eventType),
+        // createdAt 存储为 ISO 字符串，用字符串比较等效于时间比较
+        sql`${activityEvents.createdAt} >= ${todayStartIso}`,
+      ))
+      .limit(1);
+
+    if (existing) {
+      return { handled: true, reply: "今日已签到，明天再来吧！" };
+    }
+
+    // 增加抽奖次数（原子 UPDATE，SQLite 行锁保证并发安全）
+    await db
+      .update(lotteryEntries)
+      .set({ spinsLeft: sql`${lotteryEntries.spinsLeft} + ${grantSpinCount}` })
+      .where(and(
+        eq(lotteryEntries.id, result.entryId),
+        eq(lotteryEntries.tenantId, input.tenantId),
+      ));
+
+    // 记录签到事件
+    await recordActivityEvent(db, {
+      tenantId: input.tenantId,
+      drawId: input.drawId,
+      entryId: result.entryId,
+      eventType,
+      source: `${input.source.platform}_group`,
+      medium: "platform_command",
+      campaign: input.platformTargetId,
+      metadata: {
+        command: input.command,
+        grantSpinCount,
+        platform: input.source.platform,
+        groupId: input.source.groupId,
+      },
+    });
+
+    return {
+      handled: true,
+      reply: `✅ 签到成功！获得 ${grantSpinCount} 次抽奖机会，快去 /抽奖 试试手气吧！`,
+    };
+  }
+
+  // 3. 未配置 grantSpinCount：保持原有行为
+  if (result.joinedNow) return { handled: true, reply: "签到成功，已记录你的参与。" };
+  return { handled: true, reply: "您已参与此活动" };
 }
 
 /**
