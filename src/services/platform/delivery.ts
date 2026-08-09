@@ -122,6 +122,20 @@ export async function dispatchPlatformDeliveries(
       continue;
     }
 
+    if (target.platform !== "qq") {
+      await db
+        .update(platformDeliveries)
+        .set({
+          status: "failed",
+          lastError: `暂不支持的平台: ${target.platform}`,
+          updatedAt: now,
+        })
+        .where(eq(platformDeliveries.id, delivery.id));
+      failed++;
+      errors.push(`delivery ${delivery.id}: 暂不支持的平台 ${target.platform}`);
+      continue;
+    }
+
     // 从 adapterConfigJson 解析适配器连接配置
     let adapterConfig: Record<string, unknown> = {};
     try {
@@ -151,7 +165,7 @@ export async function dispatchPlatformDeliveries(
     }
 
     try {
-      const adapter = createQQAdapter({ baseUrl, token: String(adapterConfig.token || "") }, fetcher);
+      const adapter = createQQAdapter({ baseUrl }, fetcher);
       const message: PlatformMessage = {
         platform: "qq",
         targetId: target.targetId,

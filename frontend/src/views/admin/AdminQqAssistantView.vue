@@ -83,9 +83,9 @@
               </select>
             </div>
             <div v-if="!editingTarget" class="form-group">
-              <label>{{ $t('adminQqAssistant.labelAdapterConfig') }}</label>
-              <div class="form-hint">{{ $t('adminQqAssistant.hintAdapterConfig') }}</div>
-              <textarea v-model="form.adapterConfig" class="form-textarea" rows="3" :placeholder="$t('adminQqAssistant.placeholderAdapterConfig')" />
+              <label>{{ $t('adminQqAssistant.labelAdapterBaseUrl') }}</label>
+              <div class="form-hint">{{ $t('adminQqAssistant.hintAdapterBaseUrl') }}</div>
+              <input v-model="form.adapterBaseUrl" class="form-input" :placeholder="$t('adminQqAssistant.placeholderAdapterBaseUrl')" />
             </div>
             <fieldset class="form-fieldset">
               <legend>{{ $t('adminQqAssistant.builtinCommands') }}</legend>
@@ -103,6 +103,8 @@
             <p class="secret-label">{{ $t('adminQqAssistant.inboundSecretLabel') }}</p>
             <div class="secret-value">{{ inboundSecret }}</div>
             <p class="secret-hint">{{ $t('adminQqAssistant.inboundSecretHint') }}</p>
+            <pre class="config-value">{{ napcatInboundConfig }}</pre>
+            <button class="btn btn-ghost btn-xs" type="button" @click="copyInboundConfig">{{ $t('adminQqAssistant.copyConfig') }}</button>
           </div>
           <div class="modal-footer">
             <button class="btn btn-ghost" @click="closeModal" type="button">{{ $t('adminQqAssistant.cancel') }}</button>
@@ -114,14 +116,13 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
+import { adminRequest } from '@/composables/useAdminRequest'
 
 const { t } = useI18n()
 const { showToast } = useToast()
-
-const API_BASE = '/api/admin'
 
 interface PlatformTarget {
   id: string
@@ -155,7 +156,7 @@ const form = ref({
   targetId: '',
   targetName: '',
   activeDrawId: '',
-  adapterConfig: '',
+  adapterBaseUrl: '',
   checkinEnabled: true,
   spinEnabled: true,
   shareEnabled: true,
@@ -164,21 +165,24 @@ const form = ref({
   helpEnabled: true,
 })
 
-async function api(path: string, options?: RequestInit) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  const data = await res.json() as Record<string, unknown>
-  if (!data.ok) throw new Error(String(data.message || data.error || '请求失败'))
-  return data
+const napcatInboundConfig = computed(() => {
+  const callbackUrl = `${window.location.origin}/api/platform/qq/message`
+  return [
+    `HTTP 上报地址: ${callbackUrl}`,
+    `请求头 Authorization: Bearer ${inboundSecret.value}`,
+    `请求头 X-CF-Lottery-Platform-Token: ${inboundSecret.value}`,
+  ].join('\n')
+})
+
+async function api<T = Record<string, unknown>>(path: string, options?: RequestInit) {
+  return adminRequest<T>(`/api/admin${path}`, options)
 }
 
 async function loadTargets() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await api('/platform-targets')
+    const data = await api<{ items: PlatformTarget[] }>('/platform-targets')
     targets.value = (data.items as PlatformTarget[]) || []
   } catch (err) {
     loadError.value = String(err instanceof Error ? err.message : err)
@@ -189,14 +193,14 @@ async function loadTargets() {
 
 async function loadDraws() {
   try {
-    const data = await api('/draws?limit=200')
-    draws.value = (data.items as Draw[]) || []
+    const data = await api<{ draws: Draw[] }>('/draws?limit=200')
+    draws.value = data.draws || []
   } catch { /* 活动列表加载失败不影响主功能 */ }
 }
 
 function resetForm() {
   form.value = {
-    targetId: '', targetName: '', activeDrawId: '', adapterConfig: '',
+    targetId: '', targetName: '', activeDrawId: '', adapterBaseUrl: '',
     checkinEnabled: true, spinEnabled: true, shareEnabled: true,
     leaderboardEnabled: true, myPrizeEnabled: true, helpEnabled: true,
   }
@@ -249,16 +253,17 @@ async function saveTarget() {
       })
       showToast(t('adminQqAssistant.toastUpdated'), 'success')
     } else {
-      let adapterConfig = {}
-      try { adapterConfig = JSON.parse(form.value.adapterConfig || '{}') } catch { /* 留空 */ }
-      const data = await api('/platform-targets', {
+      const adapterConfig = form.value.adapterBaseUrl.trim()
+        ? { baseUrl: form.value.adapterBaseUrl.trim() }
+        : {}
+      const data = await api<{ inboundSecret?: string }>('/platform-targets', {
         method: 'POST',
         body: JSON.stringify({ targetId: form.value.targetId, targetName: form.value.targetName, activeDrawId: form.value.activeDrawId, adapterConfig, ...builtinCommands }),
       })
       inboundSecret.value = String(data.inboundSecret || '')
       showToast(t('adminQqAssistant.toastCreated'), 'success')
     }
-    closeModal()
+    if (!inboundSecret.value) closeModal()
     await loadTargets()
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
@@ -291,13 +296,22 @@ async function toggleEnabled(target: PlatformTarget) {
 async function resetSecret(target: PlatformTarget) {
   resettingId.value = target.id
   try {
-    const data = await api(`/platform-targets/${target.id}/reset-secret`, { method: 'POST' })
+    const data = await api<{ inboundSecret?: string }>(`/platform-targets/${target.id}/reset-secret`, { method: 'POST' })
     inboundSecret.value = String(data.inboundSecret || '')
     editingTarget.value = target
     showModal.value = true
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
   } finally { resettingId.value = '' }
+}
+
+async function copyInboundConfig() {
+  try {
+    await navigator.clipboard.writeText(napcatInboundConfig.value)
+    showToast(t('adminQqAssistant.toastCopied'), 'success')
+  } catch (err) {
+    showToast(String(err instanceof Error ? err.message : err), 'error')
+  }
 }
 
 onMounted(() => { void loadTargets() })
@@ -322,5 +336,4 @@ onMounted(() => { void loadTargets() })
 .secret-value { font-family: monospace; font-size: 14px; padding: 8px; background: #0a1a0a; border-radius: 4px; word-break: break-all; user-select: all; }
 .secret-hint { font-size: 11px; color: #888; margin-top: 4px; }
 .required { color: #e53935; }
-</style>
-    </div>
+	</style>

@@ -9,7 +9,7 @@
  * 设计约束：
  * - 平台目标（QQ 群）归属租户，字段与 webhookConfigs 完全隔离（不污染 HTTP webhook 语义）
  * - 内置命令开关是固定集合，租户只能启停/改文案，不能新增任意命令
- * - adapterConfig 中的敏感字段（token）P0 落库前以占位符落库，避免明文存储
+ * - P0 不接收 adapterConfig.token：没有加密存储闭环前，禁止用占位符伪装“已加密”
  */
 import type { Context } from "hono";
 import type { Hono } from "hono";
@@ -20,7 +20,7 @@ import { platformTargets, lotteryDraws, auditLogs } from "../db/schema";
 import { createPlatformInboundSecret, hashPlatformInboundSecret } from "../services/platform/security";
 import { DEFAULT_BUILTIN_COMMANDS, type BuiltinCommandConfig } from "../services/platform/types";
 
-const VALID_PLATFORMS = new Set(["qq", "telegram"]);
+const VALID_PLATFORMS = new Set(["qq"]);
 const VALID_DEPLOYMENT_MODES = new Set(["tenant_hosted", "managed"]);
 const VALID_PROVIDERS = new Set(["napcat"]);
 
@@ -65,6 +65,28 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
     myPrizeEnabled: enabled("myPrizeEnabled", DEFAULT_BUILTIN_COMMANDS.myPrizeEnabled),
     helpEnabled: enabled("helpEnabled", DEFAULT_BUILTIN_COMMANDS.helpEnabled),
   };
+}
+
+/**
+ * P0 只保存非敏感连接信息。
+ * token 需要“租户级加密存储 + 解密投递 + 前端不回显”的完整闭环；在该闭环完成前直接拒绝，
+ * 避免出现创建时假加密、更新时明文落库、投递时拿占位符鉴权这三类生产事故。
+ */
+function normalizeAdapterConfig(input: unknown): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
+  if (input === undefined || input === null) return { ok: true, value: {} };
+  if (typeof input !== "object" || Array.isArray(input)) {
+    return { ok: false, message: "adapterConfig 必须是对象" };
+  }
+  const raw = input as Record<string, unknown>;
+  if (raw.token !== undefined || raw.accessToken !== undefined || raw.authorization !== undefined) {
+    return { ok: false, message: "P0 暂不支持保存 NapCat token，请使用内网、IP 白名单或反向代理保护适配器" };
+  }
+  const baseUrl = typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : "";
+  if (!baseUrl) return { ok: true, value: {} };
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    return { ok: false, message: "adapterConfig.baseUrl 必须以 http:// 或 https:// 开头" };
+  }
+  return { ok: true, value: { baseUrl } };
 }
 
 /** 校验 activeDrawId 归属当前租户，返回活动（含 publicSlug） */
@@ -124,7 +146,7 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     if (!body) return fail(c, "请求体不是有效 JSON");
 
     const platform = String(body.platform || "qq");
-    if (!VALID_PLATFORMS.has(platform)) return fail(c, "平台类型无效，仅支持 qq/telegram");
+    if (!VALID_PLATFORMS.has(platform)) return fail(c, "平台类型无效，P0 仅支持 qq");
     const targetId = String(body.targetId || "").trim();
     if (!targetId) return fail(c, "缺少群号 targetId");
     const targetName = String(body.targetName || "").trim().slice(0, 120);
@@ -138,11 +160,9 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     const provider = String(body.adapterProvider || "napcat");
     if (provider && !VALID_PROVIDERS.has(provider)) return fail(c, "适配器提供方无效，P0 仅支持 napcat");
 
-    // 创建时禁止通过 adapterConfig 直接写明文 token：P0 安全兜底，落库前以占位符替换
-    const adapterConfig = body.adapterConfig && typeof body.adapterConfig === "object"
-      ? body.adapterConfig as Record<string, unknown>
-      : {};
-    if (adapterConfig.token) adapterConfig.token = "[encrypted]";
+    const adapterConfigResult = normalizeAdapterConfig(body.adapterConfig);
+    if (!adapterConfigResult.ok) return fail(c, adapterConfigResult.message);
+    const adapterConfig = adapterConfigResult.value;
 
     const builtinCommands = parseBuiltinCommandsInput(body as Record<string, unknown>);
     const assistantEnabled = body.assistantEnabled === false ? 0 : 1;
@@ -216,7 +236,9 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       patch.activePublicSlug = draw?.publicSlug || "";
     }
     if (typeof body.adapterConfig === "object" && body.adapterConfig !== null) {
-      patch.adapterConfigJson = JSON.stringify(body.adapterConfig);
+      const adapterConfigResult = normalizeAdapterConfig(body.adapterConfig);
+      if (!adapterConfigResult.ok) return fail(c, adapterConfigResult.message);
+      patch.adapterConfigJson = JSON.stringify(adapterConfigResult.value);
     }
     if (body.builtinCommands && typeof body.builtinCommands === "object") {
       const merged = parseBuiltinCommandsInput(body.builtinCommands as Record<string, unknown>);

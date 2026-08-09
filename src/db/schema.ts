@@ -834,8 +834,8 @@ export const platformTargets = sqliteTable("platform_targets", {
   /** 每个租户/群自己的适配器来源。P0 为 napcat，后续可切官方 QQ Bot。 */
   adapterProvider: text("adapter_provider").notNull().default("napcat"),
   /**
-   * 每个租户/群自己的连接配置。敏感字段在正式管理端落库前应加密或只存密文。
-   * 示例：{ "baseUrl": "http://x.x.x.x:3000", "token": "..." }
+   * 每个租户/群自己的连接配置。P0 只保存 baseUrl；token 等敏感字段必须等租户级加密闭环完成后再接入。
+   * 示例：{ "baseUrl": "http://x.x.x.x:3000" }
    */
   adapterConfigJson: text("adapter_config_json").notNull().default("{}"),
   /** NapCat/OneBot 上报该群消息时使用的共享密钥哈希，明文只在绑定向导中展示/下发一次。 */
