@@ -84,7 +84,7 @@ async function seedCheckinDraw(status = "open") {
   });
 }
 
-async function seedViralDraw(viralEnabled = true) {
+async function seedViralDraw(viralEnabled = true, leaderboardEnabled: boolean | undefined = undefined) {
   const now = new Date();
   await db.insert(lotteryDraws).values({
     id: "draw-qq-1",
@@ -104,8 +104,29 @@ async function seedViralDraw(viralEnabled = true) {
         enabled: viralEnabled,
         extraEntriesPerInvite: 1,
         maxExtraEntries: 10,
+        ...(leaderboardEnabled === undefined ? {} : { leaderboardEnabled }),
       },
     }),
+  });
+}
+
+async function seedLeaderboardEntry(id: string, identityValue: string, displayName: string, joinedCount: number) {
+  await db.insert(lotteryEntries).values({
+    id,
+    tenantId: TENANT_ID,
+    drawId: "draw-qq-1",
+    identityType: "qq",
+    identityValue,
+    displayName,
+    joinedAt: new Date().toISOString(),
+  });
+  await db.insert(shareRecords).values({
+    id: `share-${id}`,
+    tenantId: TENANT_ID,
+    drawId: "draw-qq-1",
+    sharerEntryId: id,
+    shareCode: `code-${id}`,
+    joinedCount,
   });
 }
 
@@ -400,5 +421,85 @@ describe("POST /api/platform/qq/message", () => {
       .from(shareRecords)
       .where(and(eq(shareRecords.tenantId, TENANT_ID), eq(shareRecords.drawId, "draw-qq-1")));
     expect(shares).toHaveLength(0);
+  });
+
+  it("/排行榜 按现有裂变邀请数展示 Top5 和我的真实排名", async () => {
+    await seedTarget();
+    await seedViralDraw(true);
+    await seedLeaderboardEntry("entry-a", "100001", "冠军用户", 8);
+    await seedLeaderboardEntry("entry-me", "998877", "测试用户", 5);
+    await seedLeaderboardEntry("entry-c", "100003", "第三名", 4);
+    await seedLeaderboardEntry("entry-d", "100004", "第四名", 3);
+    await seedLeaderboardEntry("entry-e", "100005", "第五名", 2);
+    await seedLeaderboardEntry("entry-f", "100006", "第六名", 1);
+
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/排行榜" })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("邀请排行榜 Top5");
+    expect(body.reply).toContain("1. 冠军用户 邀请8人");
+    expect(body.reply).toContain("2. 测试用户 邀请5人");
+    expect(body.reply).toContain("我的排名：第2名，邀请5人");
+    expect(body.reply).not.toContain("第六名");
+  });
+
+  it("/排行榜 未参与用户只看榜不自动创建 QQ 参与记录", async () => {
+    await seedTarget();
+    await seedViralDraw(true);
+    await seedLeaderboardEntry("entry-a", "100001", "冠军用户", 3);
+
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/排行榜", user_id: 222333 })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("你还未参与本活动");
+
+    const entries = await db
+      .select()
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.tenantId, TENANT_ID),
+        eq(lotteryEntries.drawId, "draw-qq-1"),
+        eq(lotteryEntries.identityValue, "222333"),
+      ));
+    expect(entries).toHaveLength(0);
+  });
+
+  it("/排行榜 在裂变排行榜关闭时返回配置提示", async () => {
+    await seedTarget();
+    await seedViralDraw(true, false);
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/排行榜" })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("未开启裂变排行榜");
   });
 });

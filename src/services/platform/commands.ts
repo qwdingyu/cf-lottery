@@ -6,13 +6,19 @@
  * - 只接受平台服务层解析出的 QQ 身份。
  * - 每个命令必须复用正式业务函数，禁止拼公开 email/OTP HTTP API。
  *
- * P0 当前已接 `/签到`、`/分享`。其它命令仍 fail closed，等逐个补测试后再打开。
+ * P0 当前已接 `/签到`、`/分享`、`/排行榜`。其它命令仍 fail closed，等逐个补测试后再打开。
  */
 import type { DbType } from "../../db/client";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { lotteryDraws, lotteryEntries, shareRecords } from "../../db/schema";
 import { joinDraw, recordActivityEvent } from "../lottery-service";
-import { buildPublicSharePath } from "../lottery/viral-weight";
+import {
+  aggregateViralInviteCounts,
+  buildPublicSharePath,
+  buildViralLeaderboardRanking,
+  isViralLeaderboardEnabled,
+  type ViralWeightConfig,
+} from "../lottery/viral-weight";
 import type {
   BuiltinCommandConfig,
   BuiltinPlatformCommand,
@@ -102,6 +108,10 @@ export async function executeBuiltinPlatformCommand(
     return executeShareCommand(db, input);
   }
 
+  if (input.command === "leaderboard") {
+    return executeLeaderboardCommand(db, input);
+  }
+
   /**
    * 这里有意 fail closed。
    * 平台身份接入活动数据前，必须逐个命令接正式业务函数并补测试；
@@ -130,6 +140,42 @@ function isViralEnabled(promotionConfig: string): boolean {
     ? config.viral as Record<string, unknown>
     : null;
   return viral?.enabled === true;
+}
+
+function parseViralConfig(promotionConfig: string): ViralWeightConfig | null {
+  const config = parseJsonObject(promotionConfig);
+  const viral = config.viral && typeof config.viral === "object"
+    ? config.viral as ViralWeightConfig
+    : null;
+  return viral;
+}
+
+function renderPlatformDisplayName(entry: { displayName: string; identityValue: string }): string {
+  const name = String(entry.displayName || "").trim();
+  if (name) return name.length > 16 ? `${name.slice(0, 16)}...` : name;
+  const value = String(entry.identityValue || "").trim();
+  if (!value) return "***";
+  if (value.startsWith("qq:")) {
+    const qq = value.slice(3).split(":")[0] || "";
+    if (qq.length <= 4) return "QQ用户";
+    return `QQ${qq.slice(0, 2)}***${qq.slice(-2)}`;
+  }
+  return value.length <= 6 ? "***" : `${value.slice(0, 3)}***${value.slice(-3)}`;
+}
+
+async function findPlatformEntryId(db: DbType, input: ExecuteBuiltinCommandInput): Promise<string> {
+  const [entry] = await db
+    .select({ id: lotteryEntries.id })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.tenantId, input.tenantId),
+      eq(lotteryEntries.drawId, input.drawId),
+      eq(lotteryEntries.identityType, input.user.identityType),
+      eq(lotteryEntries.identityValue, input.user.identityValue),
+    ))
+    .orderBy(desc(lotteryEntries.joinedAt))
+    .limit(1);
+  return entry?.id || "";
 }
 
 async function ensurePlatformEntry(
@@ -244,6 +290,81 @@ async function executeShareCommand(
   return {
     handled: true,
     reply: `你的专属邀请链接：${shareUrl}`,
+  };
+}
+
+async function executeLeaderboardCommand(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
+): Promise<PlatformCommandResult> {
+  const [draw] = await db
+    .select({
+      id: lotteryDraws.id,
+      tenantId: lotteryDraws.tenantId,
+      promotionConfig: lotteryDraws.promotionConfig,
+    })
+    .from(lotteryDraws)
+    .where(and(
+      eq(lotteryDraws.id, input.drawId),
+      eq(lotteryDraws.tenantId, input.tenantId),
+    ))
+    .limit(1);
+  if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定 QQ 群助手。" };
+
+  const viral = parseViralConfig(draw.promotionConfig);
+  if (!isViralLeaderboardEnabled(viral)) {
+    return { handled: true, reply: "当前活动未开启裂变排行榜，请管理员先在活动推广配置中开启。" };
+  }
+
+  const myEntryId = await findPlatformEntryId(db, input);
+  const shareRows = await db
+    .select({
+      sharerEntryId: shareRecords.sharerEntryId,
+      joinedCount: shareRecords.joinedCount,
+    })
+    .from(shareRecords)
+    .where(and(eq(shareRecords.tenantId, input.tenantId), eq(shareRecords.drawId, input.drawId)));
+
+  const ranking = buildViralLeaderboardRanking(aggregateViralInviteCounts(shareRows), {
+    entryId: myEntryId,
+    topN: 5,
+  });
+  if (ranking.entries.length === 0) {
+    return {
+      handled: true,
+      reply: myEntryId
+        ? "当前还没有邀请排行，发送 /分享 获取专属邀请链接。"
+        : "当前还没有邀请排行，先发送 /分享 获取专属邀请链接。",
+    };
+  }
+
+  const entryIds = Array.from(new Set([
+    ...ranking.entries.map((entry) => entry.entryId),
+    ...(myEntryId ? [myEntryId] : []),
+  ]));
+  const entryRows = entryIds.length > 0
+    ? await db
+      .select({
+        id: lotteryEntries.id,
+        displayName: lotteryEntries.displayName,
+        identityValue: lotteryEntries.identityValue,
+      })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, input.tenantId), inArray(lotteryEntries.id, entryIds)))
+    : [];
+  const nameMap = new Map(entryRows.map((entry) => [entry.id, renderPlatformDisplayName(entry)]));
+
+  const lines = ranking.entries.map((entry) => {
+    const name = nameMap.get(entry.entryId) || "***";
+    return `${entry.rank}. ${name} 邀请${entry.invitedCount}人`;
+  });
+  const myRank = ranking.myRank
+    ? `我的排名：${ranking.myRank.rank > 0 ? `第${ranking.myRank.rank}名` : "暂未上榜"}，邀请${ranking.myRank.invitedCount}人`
+    : "你还未参与本活动，发送 /分享 获取专属邀请链接。";
+
+  return {
+    handled: true,
+    reply: `邀请排行榜 Top5\n${lines.join("\n")}\n${myRank}`,
   };
 }
 

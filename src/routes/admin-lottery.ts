@@ -32,6 +32,7 @@ import { setupPrizeRoutes } from "./admin-lottery-prizes";
 import { setupTenantOpsRoutes } from "./admin-lottery-tenant-ops";
 import { setupIntegrationRoutes } from "./admin-lottery-integrations";
 import { setupDrawOpsRoutes } from "./admin-lottery-draw-ops";
+import { setupPlatformRoutes } from "./admin-lottery-platform";
 import {
   requireTenantRouteCapability,
   recordTenantAudit,
@@ -86,6 +87,7 @@ setupPrizeRoutes(adminLotteryRoute);
 setupTenantOpsRoutes(adminLotteryRoute);
 setupIntegrationRoutes(adminLotteryRoute);
 setupDrawOpsRoutes(adminLotteryRoute);
+setupPlatformRoutes(adminLotteryRoute);
 
 // ═════════════════════════════════════════════════════════
 // 运营台概览
