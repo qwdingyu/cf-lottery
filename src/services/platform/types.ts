@@ -7,6 +7,8 @@
 
 export type PlatformType = "qq" | "telegram";
 
+export type AdapterDeploymentMode = "managed" | "tenant_hosted";
+
 export type BuiltinPlatformCommand =
   | "checkin"
   | "spin"
@@ -37,6 +39,10 @@ export type PlatformTargetBinding = {
   activeDrawId: string;
   activePublicSlug: string;
   assistantEnabled: boolean;
+  adapterDeploymentMode: AdapterDeploymentMode;
+  adapterProvider: string;
+  adapterConfig: Record<string, unknown>;
+  inboundSecretHash: string;
   builtinCommands: BuiltinCommandConfig;
 };
 

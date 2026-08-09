@@ -8,9 +8,10 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { fail, getDb, ok } from "../lib/http";
-import { getEnv } from "../lib/platform";
 import { timingSafeEqualString } from "../lib/crypto-compare";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
+import { getActivePlatformTarget } from "../services/platform/targets";
+import { hashPlatformInboundSecret } from "../services/platform/security";
 
 export const platformQQRoute = new Hono<AppEnv>();
 
@@ -44,13 +45,6 @@ function extractSenderDisplayName(body: Record<string, unknown>): string {
 }
 
 platformQQRoute.post("/message", async (c) => {
-  const configuredToken = getEnv(c, "QQ_INBOUND_TOKEN");
-  if (!configuredToken) return fail(c, "QQ_INBOUND_TOKEN 未配置", 503);
-  const token = readInboundToken(c);
-  if (!token || !timingSafeEqualString(token, configuredToken)) {
-    return fail(c, "未授权", 403);
-  }
-
   const body = await c.req.json<Record<string, unknown>>().catch(() => null);
   if (!body) return fail(c, "请求体不是有效 JSON", 400);
 
@@ -60,7 +54,18 @@ platformQQRoute.post("/message", async (c) => {
   if (messageType && messageType !== "group") return ok(c, { handled: false, reason: "非群消息" });
   if (!groupId || !userId) return fail(c, "缺少 group_id 或 user_id", 400);
 
-  const result = await handleInboundPlatformEvent(getDb(c), {
+  const db = getDb(c);
+  const target = await getActivePlatformTarget(db, { platform: "qq", targetId: groupId });
+  if (!target) return fail(c, "QQ群未绑定", 404);
+  if (!target.inboundSecretHash) return fail(c, "QQ群入站密钥未配置", 503);
+  const token = readInboundToken(c);
+  if (!token) return fail(c, "未授权", 403);
+  const tokenHash = await hashPlatformInboundSecret(token);
+  if (!timingSafeEqualString(tokenHash, target.inboundSecretHash)) {
+    return fail(c, "未授权", 403);
+  }
+
+  const result = await handleInboundPlatformEvent(db, {
     platform: "qq",
     sourceId: groupId,
     userId,

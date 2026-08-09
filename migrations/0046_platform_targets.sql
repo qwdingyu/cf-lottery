@@ -16,6 +16,10 @@ CREATE TABLE IF NOT EXISTS platform_targets (
   active_draw_id TEXT NOT NULL,
   active_public_slug TEXT NOT NULL DEFAULT '',
   assistant_enabled INTEGER NOT NULL DEFAULT 1,
+  adapter_deployment_mode TEXT NOT NULL DEFAULT 'tenant_hosted',
+  adapter_provider TEXT NOT NULL DEFAULT 'napcat',
+  adapter_config_json TEXT NOT NULL DEFAULT '{}',
+  inbound_secret_hash TEXT NOT NULL DEFAULT '',
   builtin_commands_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))

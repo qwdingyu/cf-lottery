@@ -9,6 +9,7 @@ import type { DbType } from "../../db/client";
 import { platformTargets } from "../../db/schema";
 import {
   DEFAULT_BUILTIN_COMMANDS,
+  type AdapterDeploymentMode,
   type BuiltinCommandConfig,
   type PlatformTargetBinding,
   type PlatformType,
@@ -56,6 +57,22 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
   };
 }
 
+function parseJsonObject(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeDeploymentMode(value: string): AdapterDeploymentMode {
+  return value === "managed" ? "managed" : "tenant_hosted";
+}
+
 export async function getActivePlatformTarget(
   db: DbType,
   input: { platform: PlatformType; targetId: string },
@@ -79,6 +96,10 @@ export async function getActivePlatformTarget(
     activeDrawId: row.activeDrawId,
     activePublicSlug: row.activePublicSlug,
     assistantEnabled: row.assistantEnabled === 1,
+    adapterDeploymentMode: normalizeDeploymentMode(row.adapterDeploymentMode),
+    adapterProvider: row.adapterProvider || "napcat",
+    adapterConfig: parseJsonObject(row.adapterConfigJson),
+    inboundSecretHash: row.inboundSecretHash || "",
     builtinCommands: parseBuiltinCommandConfig(row.builtinCommandsJson),
   };
 }

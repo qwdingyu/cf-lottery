@@ -825,6 +825,21 @@ export const platformTargets = sqliteTable("platform_targets", {
   activeDrawId: text("active_draw_id").notNull(),
   activePublicSlug: text("active_public_slug").notNull().default(""),
   assistantEnabled: integer("assistant_enabled").notNull().default(1),
+  /**
+   * 部署模式：
+   * - managed：平台托管 QQ 机器人实例。适合低门槛试用，但平台承担账号风控和运维责任。
+   * - tenant_hosted：租户自托管 NapCat/OneBot，只把回调 URL 和密钥配置到自己的实例。
+   */
+  adapterDeploymentMode: text("adapter_deployment_mode").notNull().default("tenant_hosted"),
+  /** 每个租户/群自己的适配器来源。P0 为 napcat，后续可切官方 QQ Bot。 */
+  adapterProvider: text("adapter_provider").notNull().default("napcat"),
+  /**
+   * 每个租户/群自己的连接配置。敏感字段在正式管理端落库前应加密或只存密文。
+   * 示例：{ "baseUrl": "http://x.x.x.x:3000", "token": "..." }
+   */
+  adapterConfigJson: text("adapter_config_json").notNull().default("{}"),
+  /** NapCat/OneBot 上报该群消息时使用的共享密钥哈希，明文只在绑定向导中展示/下发一次。 */
+  inboundSecretHash: text("inbound_secret_hash").notNull().default(""),
   /** 内置命令开关与文案覆盖。命令语义固定，不支持租户动态新增任意命令。 */
   builtinCommandsJson: text("builtin_commands_json").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),

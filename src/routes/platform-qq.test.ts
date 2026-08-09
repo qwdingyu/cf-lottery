@@ -12,6 +12,7 @@ import type { AppEnv } from "../bindings";
 import { platformQQRoute } from "./platform-qq";
 import { clearTestData, getTestDb } from "../test-setup";
 import { platformTargets, tenants } from "../db/schema";
+import { hashPlatformInboundSecret } from "../services/platform/security";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
@@ -20,8 +21,8 @@ const TENANT_ID = "tenant-platform-qq";
 const TEST_ENV = {
   TURSO_URL: "",
   ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
-  QQ_INBOUND_TOKEN: "qq-inbound-secret",
 };
+const INBOUND_SECRET = "qq-inbound-secret";
 
 function createTestApp() {
   const app = new Hono<AppEnv>();
@@ -56,6 +57,10 @@ async function seedTarget(builtinCommandsJson = "{}") {
     activeDrawId: "draw-qq-1",
     activePublicSlug: "qq-lottery",
     assistantEnabled: 1,
+    adapterDeploymentMode: "tenant_hosted",
+    adapterProvider: "napcat",
+    adapterConfigJson: JSON.stringify({ baseUrl: "http://tenant.example:3000" }),
+    inboundSecretHash: await hashPlatformInboundSecret(INBOUND_SECRET),
     builtinCommandsJson,
   });
 }
@@ -70,6 +75,7 @@ beforeEach(async () => {
 
 describe("POST /api/platform/qq/message", () => {
   it("缺少入站 token 返回 403", async () => {
+    await seedTarget();
     const app = createTestApp();
     const res = await app.request("/api/platform/qq/message", {
       method: "POST",
@@ -86,7 +92,7 @@ describe("POST /api/platform/qq/message", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-CF-Lottery-Platform-Token": TEST_ENV.QQ_INBOUND_TOKEN,
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
       },
       body: JSON.stringify(qqMessage({ message_type: "private", group_id: undefined })),
     }, TEST_ENV);
@@ -97,21 +103,18 @@ describe("POST /api/platform/qq/message", () => {
     expect(body.reason).toBe("非群消息");
   });
 
-  it("未绑定群识别内置命令但不进入业务写入", async () => {
+  it("未绑定群返回 404，不进入业务写入", async () => {
     const app = createTestApp();
     const res = await app.request("/api/platform/qq/message", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${TEST_ENV.QQ_INBOUND_TOKEN}`,
+        Authorization: `Bearer ${INBOUND_SECRET}`,
       },
       body: JSON.stringify(qqMessage({ message: "/签到" })),
     }, TEST_ENV);
 
-    expect(res.status).toBe(200);
-    const body = await res.json() as { handled?: boolean; reply?: string };
-    expect(body.handled).toBe(true);
-    expect(body.reply).toContain("未绑定活动");
+    expect(res.status).toBe(404);
   });
 
   it("已绑定群返回当前启用的内置命令帮助", async () => {
@@ -121,7 +124,7 @@ describe("POST /api/platform/qq/message", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-CF-Lottery-Platform-Token": TEST_ENV.QQ_INBOUND_TOKEN,
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
       },
       body: JSON.stringify(qqMessage()),
     }, TEST_ENV);
@@ -141,7 +144,7 @@ describe("POST /api/platform/qq/message", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-CF-Lottery-Platform-Token": TEST_ENV.QQ_INBOUND_TOKEN,
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
       },
       body: JSON.stringify(qqMessage({ message: "/分享" })),
     }, TEST_ENV);
