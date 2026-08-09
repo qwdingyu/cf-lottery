@@ -632,6 +632,10 @@ export default {
     paymentEntryMissing: "缺少参与记录，无法发起支付",
     paymentEmailMissing: "缺少邮箱，无法继续支付",
     paymentLinkOpened: "支付链接已打开",
+    flashPurchaseUnitPrice: "单价：",
+    flashPurchaseTotalPrice: "总价：",
+    flashPurchaseTierApplied: "当前档位：{label}",
+    flashPurchaseQuantityHint: "仅支持正整数，超出上限会自动收缩到 {max} 件",
     // 管理端
     adminDrawCreate: "创建活动",
     adminDrawOpen: "开启活动",

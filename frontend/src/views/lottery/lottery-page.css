@@ -350,6 +350,20 @@
   font-size: 12px;
   white-space: nowrap;
 }
+.lottery-flash-pricing {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+.lottery-flash-pricing-line {
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255,255,255,.7);
+}
+.lottery-flash-pricing-line--tier {
+  color: var(--brand-bright);
+}
 .lottery-flash-quantity {
   display: flex;
   align-items: center;
@@ -368,6 +382,11 @@
   color: rgba(255,255,255,.94);
   padding: 4px 8px;
   font: inherit;
+}
+.lottery-flash-quantity-hint {
+  color: rgba(255,255,255,.45);
+  font-size: 12px;
+  line-height: 1.45;
 }
 .lottery-empty-hint {
   margin: 8px auto 0;

@@ -23,6 +23,8 @@ import {
   random01Csprng,
   weightedPickTier,
 } from "./spin-quota";
+import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
+import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
 
 export class SpinBusinessError extends Error {
   constructor(
@@ -124,6 +126,18 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
 
   if (!entry) {
     throw new SpinBusinessError("请先参与活动再抽奖", 400, "spin.entry.required");
+  }
+
+  // 纵深防御：直付秒杀（paymentRequired）必须已付款才能 spin，防止未付款即中奖。
+  // 发布预检（publish-check-service）已阻断 instant + paymentRequired 组合发布，
+  // 但对已存在的存量数据仍需运行时校验（docs/166）。
+  const flashSale = parseFlashSaleConfig(draw.promotionConfig);
+  if (flashSale.config?.paymentRequired === true) {
+    // entry 状态域只有 PAID 表示已付款（paid_fulfillment_failed 属 order/attempt 状态域）。
+    // 非 PAID（NONE/RESERVED/PENDING/EXPIRED）一律拒绝 spin。
+    if (entry.paymentStatus !== PAYMENT_ENTRY_STATUS.PAID) {
+      throw new SpinBusinessError("请先完成支付再抽奖", 402, "spin.payment.required");
+    }
   }
 
   const [existing] = await db

@@ -648,6 +648,20 @@ async function validatePromotion(
     add(result.errors, "promotion", item.code, item.message);
   }
   if (flashParsed.config) {
+    // docs/166 红线：lottery + instant 禁止与 paymentRequired 组合。
+    // lottery 的 instant 走 spin 结果机，而 spin 路径只按 identity 取 entry、不校验 paymentStatus；
+    // 若允许组合，用户可 join 生成 PENDING entry 后不付款直接 spin 中奖（白嫖卡密）。
+    // claim 活动（activityKind=claim）的 instant 是「即时分配」语义，不涉及 spin，不受此限。
+    const isInstant = String(draw.resultMode || "") === "instant";
+    if (draw.activityKind === "lottery" && isInstant && flashParsed.config.paymentRequired === true) {
+      add(
+        result.errors,
+        "promotion",
+        "promotion.instant_payment.conflict",
+        "直付秒杀（需付款）不能设为即时开奖：instant 走 spin 不校验付款状态，会导致未付款即中奖；请改用手动/定时开奖，由支付回调发卡",
+      );
+    }
+
     const effective = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
     if (effective == null) {
       add(

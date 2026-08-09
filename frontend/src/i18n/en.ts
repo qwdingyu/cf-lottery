@@ -673,6 +673,10 @@ export default {
     paymentEntryMissing: "Missing entry record; cannot start payment",
     paymentEmailMissing: "Missing email; cannot continue payment",
     paymentLinkOpened: "Payment link opened",
+    flashPurchaseUnitPrice: "Unit price: ",
+    flashPurchaseTotalPrice: "Total: ",
+    flashPurchaseTierApplied: "Current tier: {label}",
+    flashPurchaseQuantityHint: "Integers only. Values above the limit will be clamped to {max} item(s).",
     // Admin
     adminDrawCreate: "Create Draw",
     adminDrawOpen: "Open",

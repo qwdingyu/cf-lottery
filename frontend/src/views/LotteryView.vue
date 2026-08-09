@@ -216,15 +216,31 @@
                 <span v-else class="lottery-flash-merch-price lottery-flash-merch-price--missing">{{ $t('lottery.flashPriceMissing') }}</span>
                 <span v-if="flashSaleMerchCard(draw)?.remaining != null" class="lottery-flash-merch-stock">{{ $t('lottery.flashRemaining', { n: flashSaleMerchCard(draw)?.remaining }) }}</span>
               </div>
+              <div v-if="flashSalePurchaseSummary(draw)" class="lottery-flash-pricing" aria-live="polite">
+                <small class="lottery-flash-pricing-line">
+                  {{ $t('lottery.flashPurchaseUnitPrice') }}{{ flashSalePurchaseSummary(draw)?.unitPriceText }}
+                </small>
+                <small class="lottery-flash-pricing-line">
+                  {{ $t('lottery.flashPurchaseTotalPrice') }}{{ flashSalePurchaseSummary(draw)?.totalPriceText }}
+                </small>
+                <small
+                  v-if="flashSalePurchaseSummary(draw)?.tierLabel"
+                  class="lottery-flash-pricing-line lottery-flash-pricing-line--tier"
+                >
+                  {{ $t('lottery.flashPurchaseTierApplied', { label: flashSalePurchaseSummary(draw)?.tierLabel }) }}
+                </small>
+              </div>
               <label v-if="isDirectPaymentDraw(draw) && Number(draw.flashSale?.maxPerUser || 1) > 1" class="lottery-flash-quantity" @click.stop>
                 <span>{{ $t('lottery.flashPurchaseQuantity') }}</span>
                 <input
                   :value="flashSaleQuantityFor(draw)"
                   type="number"
+                  step="1"
                   min="1"
                   :max="draw.flashSale?.maxPerUser || 1"
                   @input="onFlashSaleQuantityInput(draw, $event)"
                 />
+                <small class="lottery-flash-quantity-hint">{{ $t('lottery.flashPurchaseQuantityHint', { max: Number(draw.flashSale?.maxPerUser || 1) }) }}</small>
               </label>
             </div>
           </div>
@@ -1033,7 +1049,12 @@ import {
   resultModeTagI18nKey,
 } from './lottery/public-helpers'
 import { buildPublicPrizeShellPayload } from './lottery/prize-shell-display'
-import { buildFlashSaleMerchCard, type FlashSaleMerchCard } from './lottery/flash-sale-merchandising'
+import {
+  buildFlashSaleMerchCard,
+  buildFlashSalePurchaseSummary,
+  type FlashSaleMerchCard,
+  type FlashSalePurchaseSummary,
+} from './lottery/flash-sale-merchandising'
 import {
   entryIdFromAlreadyJoined,
   isAlreadyJoinedResponse,
@@ -1135,6 +1156,14 @@ const flashSaleMerchByDrawId = computed<Record<string, FlashSaleMerchCard>>(() =
   for (const draw of draws.value) {
     const card = buildFlashSaleMerchCard(draw, formatPaymentAmount)
     if (card) map[draw.id] = card
+  }
+  return map
+})
+const flashSalePurchaseSummaryByDrawId = computed<Record<string, FlashSalePurchaseSummary>>(() => {
+  const map: Record<string, FlashSalePurchaseSummary> = {}
+  for (const draw of draws.value) {
+    const summary = buildFlashSalePurchaseSummary(draw, flashSaleQuantityFor(draw), formatPaymentAmount)
+    if (summary) map[draw.id] = summary
   }
   return map
 })
@@ -1753,6 +1782,10 @@ function handleGamePlay(draw: LotteryDraw) {
 
 function flashSaleMerchCard(draw: LotteryDraw) {
   return flashSaleMerchByDrawId.value[draw.id] || null
+}
+
+function flashSalePurchaseSummary(draw: LotteryDraw) {
+  return flashSalePurchaseSummaryByDrawId.value[draw.id] || null
 }
 
 // ── 查询我的结果（中奖卡密/安慰奖券） ──

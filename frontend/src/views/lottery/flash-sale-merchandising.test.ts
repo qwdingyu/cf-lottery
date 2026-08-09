@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { formatPaymentAmount } from './payment-ux'
-import { buildFlashSaleMerchCard } from './flash-sale-merchandising'
+import { buildFlashSaleMerchCard, buildFlashSalePurchaseSummary } from './flash-sale-merchandising'
 
 describe('flash-sale-merchandising', () => {
   it('直付秒杀用支付金额作为商品价格，避免公开页没有价格', () => {
@@ -60,5 +60,29 @@ describe('flash-sale-merchandising', () => {
 
   it('未启用秒杀壳时不渲染商品化抢购卡', () => {
     expect(buildFlashSaleMerchCard({ title: '普通活动' } as any, formatPaymentAmount)).toBeNull()
+  })
+
+  it('直付秒杀会按当前件数给出阶梯总价预览', () => {
+    const summary = buildFlashSalePurchaseSummary({
+      flashSale: {
+        enabled: true,
+        paymentRequired: true,
+        maxPerUser: 20,
+        priceCents: 9900,
+        currency: 'cny',
+        pricingTiers: [
+          { minQuantity: 1, unitPriceCents: 9900, label: '零售价' },
+          { minQuantity: 3, unitPriceCents: 8900, label: '小批量' },
+          { minQuantity: 10, unitPriceCents: 7900, label: '批发价' },
+        ],
+      },
+    } as any, 10, formatPaymentAmount)
+
+    expect(summary).toMatchObject({
+      quantity: 10,
+      unitPriceText: '¥79.00',
+      totalPriceText: '¥790.00',
+      tierLabel: '批发价',
+    })
   })
 })

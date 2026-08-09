@@ -864,4 +864,63 @@ describe("performInstantSpin", () => {
     expect(entries.length).toBe(1);
     expect(entries[0]!.paymentStatus).toBe("reserved");
   });
+
+  it("直付秒杀（paymentRequired）+ instant：未付款 spin 被拒（纵深防御）", async () => {
+    // docs/166：发布预检已阻断该组合，这里锁定运行时纵深防御——
+    // 对存量/被绕过数据，未付款 entry 不能 spin 中奖。
+    const id = crypto.randomUUID();
+    const slug = `fs-pay-${id.slice(0, 6)}`;
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 86400_000 * 7).toISOString();
+
+    await db.insert(lotteryDraws).values({
+      id,
+      tenantId: TENANT,
+      publicSlug: slug,
+      title: "直付秒杀 instant spin 防御",
+      description: "",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "flash_sale",
+      drawTrigger: "manual",
+      resultMode: "instant",
+      startAt,
+      endAt,
+      maxSpinsPerEntry: 3,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 10, priceCents: 9900, currency: "cny" },
+      }),
+      maxParticipants: 10,
+      activeParticipantCount: 0,
+    });
+
+    // 建一个 code 奖档，保证若防御失效能真正中奖
+    const prizeId = crypto.randomUUID();
+    await db.insert(prizes).values({
+      id: prizeId, tenantId: TENANT, name: "付费奖", prizeType: "code", totalCount: 1, active: 1,
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId: id, prizeId,
+      tierName: "一等奖", winnerCount: 1, sortOrder: 100, weight: 100,
+    });
+    await db.insert(prizeCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, prizeId, code: "PAYCODE-1", secret: "s", status: "available",
+    });
+
+    // 未付款身份 join → entry 为 reserved（尚未下单）
+    const joined = await joinDraw(db, slug, "buyer-nopay@test.com");
+    expect(joined.joined).toBe(true);
+
+    // spin 必须被纵深防御拒绝
+    await expect(
+      performInstantSpin(db, {
+        slug,
+        identityType: "email",
+        identityValue: "buyer-nopay@test.com",
+        idempotencyKey: "k1",
+      }),
+    ).rejects.toMatchObject({ httpStatus: 402, code: "spin.payment.required" });
+  });
 });

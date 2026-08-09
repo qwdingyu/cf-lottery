@@ -20,6 +20,13 @@ export interface FlashSaleMerchCard {
   progressPercent: number
 }
 
+export interface FlashSalePurchaseSummary {
+  quantity: number
+  unitPriceText: string
+  totalPriceText: string
+  tierLabel: string
+}
+
 export function buildFlashSaleMerchCard(
   draw: Pick<LotteryDraw, 'name' | 'title' | 'productTitle' | 'productLink' | 'flashSale' | 'prizes'> | null | undefined,
   formatAmount: (amountMinor: number | null | undefined, currency: string | null | undefined) => string,
@@ -58,5 +65,40 @@ export function buildFlashSaleMerchCard(
         ? null
         : Math.max(0, Math.floor(Number(flashSale.effectiveStockLimit) || 0)),
     progressPercent: Math.min(100, Math.max(0, Math.floor(Number(flashSale.progressPercent) || 0))),
+  }
+}
+
+export function buildFlashSalePurchaseSummary(
+  draw: Pick<LotteryDraw, 'flashSale'> | null | undefined,
+  quantityRaw: number,
+  formatAmount: (amountMinor: number | null | undefined, currency: string | null | undefined) => string,
+): FlashSalePurchaseSummary | null {
+  const flashSale = draw?.flashSale
+  if (!flashSale?.enabled || flashSale.paymentRequired !== true) return null
+
+  const maxPerUser = Math.max(1, Math.floor(Number(flashSale.maxPerUser || 1)))
+  const quantity = Math.min(maxPerUser, Math.max(1, Math.floor(Number(quantityRaw || 1))))
+  const baseUnitPrice = Math.max(0, Math.floor(Number(flashSale.priceCents || 0)))
+  const tiers = Array.isArray(flashSale.pricingTiers)
+    ? [...flashSale.pricingTiers]
+        .filter((tier) => tier && typeof tier.minQuantity === 'number' && typeof tier.unitPriceCents === 'number')
+        .sort((a, b) => Number(a.minQuantity || 0) - Number(b.minQuantity || 0))
+    : []
+
+  let matchedUnitPrice = baseUnitPrice
+  let tierLabel = ''
+  for (const tier of tiers) {
+    const minQuantity = Math.max(1, Math.floor(Number(tier.minQuantity || 0)))
+    if (minQuantity <= quantity) {
+      matchedUnitPrice = Math.max(0, Math.floor(Number(tier.unitPriceCents || baseUnitPrice)))
+      tierLabel = String(tier.label || '').trim()
+    }
+  }
+
+  return {
+    quantity,
+    unitPriceText: formatAmount(matchedUnitPrice, flashSale.currency || 'cny'),
+    totalPriceText: formatAmount(matchedUnitPrice * quantity, flashSale.currency || 'cny'),
+    tierLabel,
   }
 }
