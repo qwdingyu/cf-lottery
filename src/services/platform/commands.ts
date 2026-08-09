@@ -1,13 +1,15 @@
 /**
  * 租户内置平台命令服务（docs/167）。
  *
- * 当前文件先落地安全边界和可测试骨架：
+ * 设计约束：
  * - 固定命令集合，不允许租户动态新增任意命令。
- * - 只接受平台服务层解析出的 QQ 身份。
+ * - 只接受平台服务层解析出的身份（identityType 由入站层从 event.platform 推导）。
  * - 每个命令必须复用正式业务函数，禁止拼公开 email/OTP HTTP API。
+ * - 命令服务不硬编码任何平台名；所有平台特定值（ipHash、userAgent、source 等）
+ *   均从 input.source.platform 动态派生。
  *
  * P0 当前已接 `/签到`、`/分享`、`/排行榜`、`/抽奖`、`/我的奖品`。
- * 涉及卡密的回复必须默认群内脱敏，不能把完整码发到 QQ 群里。
+ * 涉及卡密的回复必须默认群内脱敏，不能把完整码发到公开群聊里。
  */
 import type { DbType } from "../../db/client";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
@@ -83,7 +85,7 @@ export function renderHelpReply(config: BuiltinCommandConfig): string {
   const enabled = (Object.keys(COMMAND_LABELS) as BuiltinPlatformCommand[])
     .filter((command) => isBuiltinCommandEnabled(command, config))
     .map((command) => COMMAND_LABELS[command]);
-  if (enabled.length === 0) return "当前群未启用 QQ 群助手命令。";
+  if (enabled.length === 0) return "当前群未启用群助手命令。";
   return `当前可用命令：${enabled.join(" ")}`;
 }
 
@@ -194,8 +196,10 @@ async function ensurePlatformEntry(
 ): Promise<{ ok: true; entryId: string; joinedNow: boolean } | { ok: false; message: string }> {
   try {
     const result = await joinDraw(db, input.publicSlug, input.user.identityValue, input.user.identityType, {
-      ipHash: `qq:${input.source.groupId}`,
-      userAgent: "cf-lottery-platform-qq",
+      // ipHash 使用平台前缀 + 群组 ID 构建，确保不同平台/群组之间隔离
+      ipHash: `${input.source.platform}:${input.source.groupId}`,
+      // userAgent 标记来源平台，用于审计和频率控制
+      userAgent: `cf-lottery-platform-${input.source.platform}`,
     });
     if (result.joined && result.entryId) {
       if (input.user.displayName) {
@@ -209,7 +213,8 @@ async function ensurePlatformEntry(
         drawId: input.drawId,
         entryId: result.entryId,
         eventType: "participation_completed",
-        source: "qq_group",
+        // source 使用平台名 + _group 标识群组来源，用于审计分析
+        source: `${input.source.platform}_group`,
         medium: "platform_command",
         campaign: input.platformTargetId,
         metadata: {
@@ -246,7 +251,7 @@ async function executeShareCommand(
       eq(lotteryDraws.tenantId, input.tenantId),
     ))
     .limit(1);
-  if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定 QQ 群助手。" };
+  if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定群助手。" };
   if (!isViralEnabled(draw.promotionConfig)) {
     return { handled: true, reply: "当前活动未开启裂变分享，请管理员先在活动推广配置中开启。" };
   }
@@ -284,7 +289,7 @@ async function executeShareCommand(
     drawId: input.drawId,
     entryId: entry.entryId,
     eventType: "share_created",
-    source: "qq_group",
+    source: `${input.source.platform}_group`,
     medium: "platform_command",
     campaign: input.platformTargetId,
     refCode: shareCode,
@@ -319,7 +324,7 @@ async function executeLeaderboardCommand(
       eq(lotteryDraws.tenantId, input.tenantId),
     ))
     .limit(1);
-  if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定 QQ 群助手。" };
+  if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定群助手。" };
 
   const viral = parseViralConfig(draw.promotionConfig);
   if (!isViralLeaderboardEnabled(viral)) {
@@ -401,7 +406,7 @@ async function executeSpinCommand(
   db: DbType,
   input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
 ): Promise<PlatformCommandResult> {
-  // 命令层先明确收口：只有 lottery + instant 可以从 QQ 群直接触发抽奖。
+  // 命令层先明确收口：只有 lottery + instant 可以从公开群聊直接触发抽奖。
   // 虽然 performInstantSpin 也有纵深校验，这里提前返回更符合 SaaS 用户可理解的群内提示。
   const [draw] = await db
     .select({
@@ -414,7 +419,7 @@ async function executeSpinCommand(
       eq(lotteryDraws.tenantId, input.tenantId),
     ))
     .limit(1);
-  if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定 QQ 群助手。" };
+  if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定群助手。" };
 
   if (String(draw.activityKind || "") !== "lottery") {
     return { handled: true, reply: "当前绑定活动不是抽奖活动，不能使用 /抽奖。请管理员绑定即时抽奖活动。" };
@@ -427,7 +432,7 @@ async function executeSpinCommand(
   const entry = await ensurePlatformEntry(db, input);
   if (!entry.ok) return { handled: true, reply: entry.message };
 
-  // 优先使用平台消息 ID 做幂等：同一条 QQ 消息重试只回放一次，不会阻止用户后续发送新消息继续消耗抽奖次数。
+  // 优先使用平台消息 ID 做幂等：同一条消息重试只回放一次，不会阻止用户后续发送新消息继续消耗抽奖次数。
   const idempotencyKey = buildPlatformSpinIdempotencyKey(input);
 
   try {
@@ -436,7 +441,8 @@ async function executeSpinCommand(
       identityType: input.user.identityType,
       identityValue: input.user.identityValue,
       idempotencyKey,
-      ipHash: `qq:${input.source.groupId}`,
+      // ipHash 使用平台前缀 + 群组 ID，确保不同平台/群组之间抽奖隔离
+      ipHash: `${input.source.platform}:${input.source.groupId}`,
     });
 
     if (result.won) {
@@ -463,12 +469,19 @@ async function executeSpinCommand(
   }
 }
 
+/**
+ * 构建平台抽奖幂等键。
+ * 使用平台前缀 + targetId + messageId 确保跨平台不冲突：
+ *   - qq:pt-xxx:msg-123   → QQ 平台某群某消息
+ *   - telegram:pt-yyy:msg-456 → Telegram 平台某群某消息
+ * 缺失 messageId 时使用随机 UUID 兜底，确保幂等性。
+ */
 function buildPlatformSpinIdempotencyKey(input: ExecuteBuiltinCommandInput): string {
   const messageId = String(input.source.messageId || "").trim();
   if (messageId) {
-    return `qq:${input.platformTargetId}:${messageId}`.slice(0, 128);
+    return `${input.source.platform}:${input.platformTargetId}:${messageId}`.slice(0, 128);
   }
-  return `qq:${input.platformTargetId}:no-message:${crypto.randomUUID()}`.slice(0, 128);
+  return `${input.source.platform}:${input.platformTargetId}:no-message:${crypto.randomUUID()}`.slice(0, 128);
 }
 
 /**

@@ -13,8 +13,8 @@
 import { asc, and, eq, sql } from "drizzle-orm";
 import type { DbType, DbWriteScope } from "../../db/client";
 import { platformTargets, platformDeliveries } from "../../db/schema";
-import { createQQAdapter } from "./qq-adapter";
-import type { PlatformMessage } from "./types";
+import { getPlatformAdapter } from "./adapter-factory";
+import type { PlatformMessage, PlatformType } from "./types";
 import { PLATFORM_EVENT_TYPES_SET, type PlatformEventType, renderPlatformEventMessage } from "./templates";
 
 export interface EnqueuePlatformEventInput {
@@ -122,20 +122,6 @@ export async function dispatchPlatformDeliveries(
       continue;
     }
 
-    if (target.platform !== "qq") {
-      await db
-        .update(platformDeliveries)
-        .set({
-          status: "failed",
-          lastError: `暂不支持的平台: ${target.platform}`,
-          updatedAt: now,
-        })
-        .where(eq(platformDeliveries.id, delivery.id));
-      failed++;
-      errors.push(`delivery ${delivery.id}: 暂不支持的平台 ${target.platform}`);
-      continue;
-    }
-
     // 从 adapterConfigJson 解析适配器连接配置
     let adapterConfig: Record<string, unknown> = {};
     try {
@@ -144,30 +130,12 @@ export async function dispatchPlatformDeliveries(
       adapterConfig = {};
     }
 
-    const baseUrl = String(adapterConfig.baseUrl || "").trim();
-    if (!baseUrl) {
-      const newAttempt = delivery.attemptCount + 1;
-      const maxRetries = 3;
-      const nextRetry = newAttempt >= maxRetries ? null : new Date(Date.now() + 60000 * newAttempt).toISOString();
-      await db
-        .update(platformDeliveries)
-        .set({
-          status: newAttempt >= maxRetries ? "failed" : "pending",
-          attemptCount: newAttempt,
-          lastError: "未配置适配器 baseUrl",
-          nextRetryAt: nextRetry,
-          updatedAt: now,
-        })
-        .where(eq(platformDeliveries.id, delivery.id));
-      failed++;
-      errors.push(`delivery ${delivery.id}: platformTarget ${target.id} 未配置 baseUrl`);
-      continue;
-    }
-
+    // 使用适配器工厂获取平台对应的适配器，不硬编码平台名
+    // 新增平台只需在 adapter-factory.ts 注册工厂，无需改动 delivery.ts
     try {
-      const adapter = createQQAdapter({ baseUrl }, fetcher);
+      const adapter = getPlatformAdapter(target.platform, adapterConfig, fetcher);
       const message: PlatformMessage = {
-        platform: "qq",
+        platform: target.platform as PlatformType,
         targetId: target.targetId,
         type: "text",
         text: extractRenderedMessage(delivery.payloadJson, delivery.eventType),

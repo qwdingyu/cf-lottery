@@ -27,7 +27,7 @@ export async function handleInboundPlatformEvent(
   if (!target || !target.assistantEnabled) {
     return {
       handled: true,
-      reply: "当前群未绑定活动，请管理员先在后台启用 QQ 群助手。",
+      reply: "当前群未绑定活动，请管理员先在后台启用群助手。",
     };
   }
 
@@ -39,7 +39,8 @@ export async function handleInboundPlatformEvent(
     command,
     builtinCommands: target.builtinCommands,
     user: {
-      identityType: "qq",
+      // identityType 从 event.platform 推导，不硬编码具体平台名
+      identityType: event.platform,
       identityValue: event.userId,
       displayName: event.senderDisplayName,
     },

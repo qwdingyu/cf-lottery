@@ -59,7 +59,11 @@ function readProviderMessageId(response: unknown): string {
 }
 
 export function createQQAdapter(env: NapCatEnv, fetcher: typeof fetch = fetch): PlatformAdapter {
-  const client = createNapCatClient(env, fetcher);
+  const baseUrl = String(env.baseUrl || "").trim();
+  if (!baseUrl) {
+    throw new Error("QQ 适配器缺少 baseUrl 配置");
+  }
+  const client = createNapCatClient({ baseUrl, token: env.token }, fetcher);
   return {
     platform: "qq",
     async send(message: PlatformMessage) {

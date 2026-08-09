@@ -16,13 +16,21 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
 import { and, eq, desc, count } from "drizzle-orm";
-import { platformTargets, lotteryDraws, auditLogs } from "../db/schema";
+import { platformTargets, platformDeliveries, lotteryDraws, auditLogs } from "../db/schema";
 import { createPlatformInboundSecret, hashPlatformInboundSecret } from "../services/platform/security";
 import { DEFAULT_BUILTIN_COMMANDS, type BuiltinCommandConfig } from "../services/platform/types";
+import { getPlatformAdapter, getSupportedPlatforms, getSupportedProviders } from "../services/platform/adapter-factory";
 
-const VALID_PLATFORMS = new Set(["qq"]);
+/**
+ * 有效平台列表动态从适配器工厂获取，新增平台只需在 adapter-factory.ts 注册，
+ * 无需修改此处白名单。
+ */
+const VALID_PLATFORMS = new Set(getSupportedPlatforms());
 const VALID_DEPLOYMENT_MODES = new Set(["tenant_hosted", "managed"]);
-const VALID_PROVIDERS = new Set(["napcat"]);
+/**
+ * 有效提供方列表动态从适配器工厂获取。
+ */
+const VALID_PROVIDERS = new Set(getSupportedProviders());
 
 function parsePagination(c: Context<AppEnv>) {
   return {
@@ -87,6 +95,22 @@ function normalizeAdapterConfig(input: unknown): { ok: true; value: Record<strin
     return { ok: false, message: "adapterConfig.baseUrl 必须以 http:// 或 https:// 开头" };
   }
   return { ok: true, value: { baseUrl } };
+}
+
+function parseAdapterConfigJson(rawJson: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(rawJson || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildPlatformTestMessage(platform: string, targetName: string) {
+  const name = targetName.trim() || "当前群组";
+  return `【cf-lottery 群助手】${name} 连接测试成功。收到这条消息说明 ${platform} 出站配置可用。`;
 }
 
 /** 校验 activeDrawId 归属当前租户，返回活动（含 publicSlug） */
@@ -301,5 +325,78 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
 
     await recordPlatformAudit(c, "platform_target.reset_secret", id);
     return ok(c, { inboundSecret });
+  });
+
+  // ── 发送测试消息：用于租户自托管 NapCat/OneBot 上线前联调 ──
+  route.post("/platform-targets/:id/test-message", async (c) => {
+    const db = getDb(c);
+    const tenantId = c.get("tenantId") as string;
+    const id = c.req.param("id");
+    const [target] = await db
+      .select()
+      .from(platformTargets)
+      .where(and(eq(platformTargets.tenantId, tenantId), eq(platformTargets.id, id)))
+      .limit(1);
+    if (!target) return fail(c, "绑定不存在", 404);
+    const adapterConfig = parseAdapterConfigJson(target.adapterConfigJson);
+    const baseUrl = String(adapterConfig.baseUrl || "").trim();
+    if (!baseUrl) return fail(c, "请先配置适配器 baseUrl 后再测试发送");
+
+    const body: Record<string, unknown> = await c.req.json<Record<string, unknown>>().catch(() => ({}));
+    const customText = typeof body?.text === "string" ? body.text.trim().slice(0, 200) : "";
+    const text = customText || buildPlatformTestMessage(target.platform, target.targetName);
+    const deliveryId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const payloadJson = JSON.stringify({ eventType: "platform.test", renderedMessage: text });
+
+    try {
+      const adapter = getPlatformAdapter(target.platform, adapterConfig, fetch);
+      const result = await adapter.send({
+        platform: target.platform as "qq" | "telegram",
+        targetId: target.targetId,
+        type: "text",
+        text,
+      });
+      await db.insert(platformDeliveries).values({
+        id: deliveryId,
+        tenantId,
+        platformTargetId: target.id,
+        platform: target.platform,
+        targetId: target.targetId,
+        eventId: `ptest_${crypto.randomUUID().replace(/-/g, "")}`,
+        eventType: "platform.test",
+        command: "test_message",
+        payloadJson,
+        status: "sent",
+        attemptCount: 1,
+        providerMessageId: result.messageId,
+        responseBody: JSON.stringify(result.response || {}),
+        sentAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await recordPlatformAudit(c, "platform_target.test_message", id, { ok: true });
+      return ok(c, { deliveryId, providerMessageId: result.messageId });
+    } catch (err) {
+      const errorMsg = String(err instanceof Error ? err.message : err);
+      await db.insert(platformDeliveries).values({
+        id: deliveryId,
+        tenantId,
+        platformTargetId: target.id,
+        platform: target.platform,
+        targetId: target.targetId,
+        eventId: `ptest_${crypto.randomUUID().replace(/-/g, "")}`,
+        eventType: "platform.test",
+        command: "test_message",
+        payloadJson,
+        status: "failed",
+        attemptCount: 1,
+        lastError: errorMsg.slice(0, 500),
+        createdAt: now,
+        updatedAt: now,
+      });
+      await recordPlatformAudit(c, "platform_target.test_message", id, { ok: false, error: errorMsg.slice(0, 200) });
+      return fail(c, `测试发送失败：${errorMsg.slice(0, 200)}`, 502);
+    }
   });
 }

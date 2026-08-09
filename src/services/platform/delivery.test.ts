@@ -200,7 +200,7 @@ describe("dispatchPlatformDeliveries", () => {
       .from(platformDeliveries)
       .where(eq(platformDeliveries.id, "dlv-no-baseurl"));
     expect(delivery.status).toBe("pending");
-    expect(delivery.lastError).toContain("未配置适配器 baseUrl");
+    expect(delivery.lastError).toContain("baseUrl");
   });
 
   it("目标已删除时标记失败", async () => {

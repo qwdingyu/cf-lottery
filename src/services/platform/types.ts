@@ -72,8 +72,13 @@ export type InboundPlatformEvent = {
   raw?: unknown;
 };
 
+/**
+ * 平台命令用户身份。
+ * identityType 对应 lotteryEntries.identity_type 的字符串值（email/qq/telegram/...），
+ * 由入站层从 event.platform 推导，命令服务不硬编码具体平台。
+ */
 export type PlatformCommandUser = {
-  identityType: "qq";
+  identityType: string;
   identityValue: string;
   displayName?: string;
 };
