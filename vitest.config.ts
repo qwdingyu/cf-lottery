@@ -61,6 +61,12 @@ export default defineConfig({
       "frontend/src/i18n/viral-copy-honesty.test.ts",
       // docs/128：delayed 仪式壳 / instant 真奖上壳
       "frontend/src/views/lottery/prize-shell-display.test.ts",
+      // docs/145 P2：模板差异字段可见性白名单（此前漏登记，从未被执行）
+      "frontend/src/views/admin/lottery/template-field-visibility.test.ts",
+      // 平台路由门禁 fail-closed 纯函数（此前漏登记，从未被执行）
+      "frontend/src/composables/platform-access.test.ts",
+      // docs/162：模板文案 i18n 兜底 / 参数 chips
+      "frontend/src/views/admin/lottery/template-i18n.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

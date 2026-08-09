@@ -2,9 +2,15 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      viewport 说明：
+      - 输入框已全局 16px（lottery-page.css 防 iOS 聚焦缩放），无需再禁双指缩放；
+        保留 maximum-scale/user-scalable=no 会阻断视障用户放大（WCAG 1.4.4）。
+      - viewport-fit=cover：激活 env(safe-area-inset-*)，页面各处的 safe-area  padding 才生效。
+    -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="format-detection" content="telephone=no" />
     <meta name="description" content="抽奖活动平台 — 创建公平透明的抽奖活动" />
@@ -20,7 +26,40 @@
     <meta name="twitter:description" content="创建公平透明的抽奖活动，支持大转盘、刮刮卡、报名接龙、资料领取等多种玩法" />
   </head>
   <body>
-    <div id="app"></div>
+    <!--
+      首屏启动占位：JS bundle 下载/执行期间（Vue 挂载前）展示品牌色背景 + 转圈，
+      避免白屏感知。Vue createApp().mount('#app') 会替换 #app 内部内容，无需手动清除。
+      背景色与 base.css --tg-bg (#0a0e17) 一致；全部内联，不依赖外部 CSS 到达。
+    -->
+    <style>
+      html, body { margin: 0; background: #0a0e17; }
+      #app:has(.boot-loader) { min-height: 100vh; }
+      .boot-loader {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+      }
+      .boot-spinner {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: 3px solid rgba(245, 158, 11, 0.25);
+        border-top-color: #f59e0b;
+        animation: boot-spin 0.8s linear infinite;
+      }
+      .boot-text { color: rgba(255, 255, 255, 0.45); font-size: 13px; font-family: system-ui, sans-serif; }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .boot-spinner { animation: none; opacity: 0.7; } }
+    </style>
+    <div id="app">
+      <div class="boot-loader" aria-hidden="true">
+        <div class="boot-spinner"></div>
+        <div class="boot-text">加载中…</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

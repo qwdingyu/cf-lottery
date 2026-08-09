@@ -1387,6 +1387,92 @@ export default {
     adminCreateReadyHint: "Main path looks ready — save draft; server publish-check still runs before open",
     adminCreateMissingHint: "Before saving, consider: {items}",
     adminTemplateApplied: "Template “{name}” applied; schedule prefilled",
+    // docs/162: template picker loading/failure states + blank creation entry
+    adminTemplatesLoading: "Loading templates…",
+    adminTemplatesLoadFailed: "Failed to load templates. Retry, or start with a blank form.",
+    adminTemplateBlankName: "Blank",
+    adminTemplateBlankDesc: "Skip templates — start from an empty form and configure everything yourself",
+    adminTemplateHintsTitle: "Checklist",
+    tplChipNeedsPrize: "Needs prizes",
+    tplChipPayment: "Online payment",
+    /**
+     * docs/162 P1-D: per-template name/desc/hints overlay keyed by template id
+     * (aligned with src/lib/activity-templates.ts). Missing keys fall back to
+     * the API-provided Chinese strings (template-i18n.ts).
+     * desc is picker-only; it is never prefilled into the public activity description.
+     */
+    tpl: {
+      "lottery-wheel": {
+        name: "Lucky Wheel (Draw Later)",
+        desc: "The wheel is an interaction shell: tapping completes registration into the candidate pool. Winners are drawn by the host or on schedule — not the slice the wheel stops on. Great for giveaways, fan engagement, and holiday campaigns.",
+        hints: [
+          "Set prizes and winner counts (drawn from the participant pool)",
+          "Set start/end time; switch to scheduled mode for automatic draws",
+          "The wheel animation means “joined”, not “won right now”",
+          "Optional password or invite-code protection",
+        ],
+      },
+      "lottery-scratch": {
+        name: "Scratch Card",
+        desc: "Scratching is the pre-join interaction; confirming submits the entry into the candidate pool. Winning is decided by host or scheduled draw — not at the scratch moment. Great for offline traffic, product promos, and holiday marketing.",
+        hints: [
+          "Set prizes and winner counts",
+          "Hide participant count to keep the suspense",
+          "Users must still tap join after scratching; results via “Check result” after the draw",
+          "Optional one-entry-per-user limit",
+        ],
+      },
+      "lottery-wheel-instant": {
+        name: "Instant Wheel",
+        desc: "Users spin right after joining and win or miss on the spot; spins per user are configurable (1 = single spin). Great for live events and referral boosts. No unified draw.",
+        hints: [
+          "Set maxSpinsPerEntry (≥1)",
+          "Tiers need weight>0 and quotas; keep enough code stock for code prizes",
+          "Do not use “Draw now / Scheduled draw” — results come from user spins",
+          "With referral on, successful invites add spins (double-capped); leaderboard still counts invites",
+        ],
+      },
+      "signup-chain": {
+        name: "Signup Chain",
+        desc: "Users sign up in order; overflow goes to a waitlist. Great for class enrollment, event check-in lists, and community recruiting.",
+        hints: ["Set the capacity limit", "Enable the waitlist to avoid wasted spots", "Use roster mode to control eligibility"],
+      },
+      "claim-download": {
+        name: "Resource Claim",
+        desc: "Users leave their info to claim resources / whitepapers / coupons. Great for B2B leads, course materials, and product trials.",
+        hints: ["Name the claimable resource", "Add a follow-up link via the CTA settings", "Optional password protection"],
+      },
+      "survey-feedback": {
+        name: "Survey",
+        desc: "Users fill in a questionnaire and submit feedback. Great for user research, satisfaction collection, and signup supplements.",
+        hints: ["Adjust fields in the content section after applying", "Add a completion link via CTA settings", "Consider hiding the participant count"],
+      },
+      "vote-pick": {
+        name: "Vote",
+        desc: "Users vote among options. Great for community awards, work contests, and opinion collection.",
+        hints: ["Adjust options in the content section after applying", "View tallies in the admin console after it ends", "One vote per person"],
+      },
+      "checkin-daily": {
+        name: "Daily Check-in",
+        desc: "Users check in once per day and accumulate records. Great for bootcamp attendance and community engagement.",
+        hints: ["Set the activity duration", "One check-in per user per day", "View check-in records in the admin console"],
+      },
+      "approval-apply": {
+        name: "Approval Application",
+        desc: "Users submit applications; admins approve or reject. Great for beta invites, whitelist applications, and group-entry review.",
+        hints: ["Review submissions in the admin console", "Notify users via Webhook on approval", "State the review criteria in the description"],
+      },
+      "flash-sale-rush": {
+        name: "Flash Sale",
+        desc: "Merchandised limited-time limited-stock rush: product image, price, countdown, claimed progress, and a Grab button. Route to cf-shop/external stores, or enable EasyPay/ZPay direct payment with code delivery. Great for token cards, collab goods, and community hot sessions.",
+        hints: [
+          "Fill product link, name, display price and image first; outbound mode must point to a purchasable page",
+          "Confirm start/end time, maxParticipants and flashSale.stockLimit",
+          "Direct payment requires priceCents, EasyPay/ZPay settings, and a single code pool",
+          "Charge amount follows flashSale.priceCents; productLink.price is display-only for outbound",
+        ],
+      },
+    },
     adminCreatedNeedPrizeHint: "Draft created and link copied — edit to add prize tiers before publishing",
     adminCreateDoneWithPreview: "Activity created; link copied. Confirm to open the public page (uncheck below to skip).",
     adminCreateNeedPrizeWithPreview: "Draft created; link copied. Add prizes before publishing — confirm to preview public page (uncheck below to skip).",

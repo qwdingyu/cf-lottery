@@ -44,14 +44,15 @@ describe('resolveEditorFieldVisibility', () => {
     expect(v.tiers).toBe(true)
   })
 
-  it('限时抢购：展示秒杀+商品，隐藏奖项壳/裂变/安慰奖', () => {
+  it('限时抢购：展示秒杀+商品+社交传播，隐藏奖项壳/安慰奖', () => {
     const v = resolveEditorFieldVisibility('flash-sale-rush')
     expect(v.flashSale).toBe(true)
     expect(v.productLink).toBe(true)
     expect(v.cta).toBe(true)
     expect(v.prizeShell).toBe(false)
     expect(v.tiers).toBe(false)
-    expect(v.viral).toBe(false)
+    // 9f0bc7f：秒杀邀请配置改为「社交传播」后 viral 保留可见（不影响购买优先级）
+    expect(v.viral).toBe(true)
     expect(v.loserReward).toBe(false)
     expect(v.experienceType).toBe(false)
   })

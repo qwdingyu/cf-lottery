@@ -507,6 +507,16 @@
             </button>
           </nav>
           <p v-if="createPathHint" class="create-path-hint" role="status">{{ createPathHint }}</p>
+          <!-- docs/162 P1-C：套用模板后展示配置要点（hints），新手也能知道关键前置条件 -->
+          <ul v-if="activeTemplateHints.length" class="template-hints" :aria-label="$t('lottery.adminTemplateHintsTitle')">
+            <li v-for="(h, hi) in activeTemplateHints" :key="hi">{{ h }}</li>
+          </ul>
+          <!-- docs/145 P2 接线（docs/162 发现此前从未接入 UI）：已按模板收敛的诚实提示 -->
+          <p
+            v-if="isFieldScopedTemplate(activeTemplateId) && !isEditing"
+            class="create-path-hint create-path-hint--scoped"
+            role="note"
+          >{{ $t('lottery.adminTemplateFieldScopedHint') }}</p>
           <div class="lottery-editor-scroll">
             <section id="lottery-basic" class="form-section" aria-labelledby="lottery-basic-title">
             <header class="form-section-head">
@@ -1241,7 +1251,28 @@
 
     <!-- 模板选择弹窗 -->
     <AdminModal v-model="showTemplateModal" :title="$t('lottery.adminSelectTemplate')" max-width="720px">
-      <div class="template-grid">
+      <!-- 加载中：骨架卡（docs/162 P1-A：弹窗先开，必须给反馈，不能空网格） -->
+      <div v-if="templatesLoading" class="template-grid" aria-busy="true">
+        <div v-for="i in 6" :key="i" class="template-card template-card--skeleton" aria-hidden="true">
+          <span class="template-skel-icon" />
+          <span class="template-skel-line" />
+          <span class="template-skel-line template-skel-line--short" />
+        </div>
+      </div>
+      <!-- 加载失败：诚实提示 + 重试 + 空白创建兜底（恢复 1f8e6a0 丢失的空白入口） -->
+      <div
+        v-else-if="templatesLoadFailed"
+        class="template-load-failed"
+        role="alert"
+      >
+        <p class="template-load-failed-text">{{ $t('lottery.adminTemplatesLoadFailed') }}</p>
+        <div class="template-load-failed-actions">
+          <button type="button" class="btn btn-primary btn-sm" @click="fetchTemplates">{{ $t('lottery.retry') }}</button>
+          <button type="button" class="btn btn-ghost btn-sm" @click="startBlankCreate">{{ $t('lottery.adminTemplateBlankName') }}</button>
+        </div>
+      </div>
+      <!-- 模板网格（docs/162 P1-D / P2-B）：名称/描述按语言解析 + 参数 chips + 末尾空白卡始终可见 -->
+      <div v-else class="template-grid">
         <button
           v-for="tpl in templates"
           :key="tpl.id"
@@ -1249,9 +1280,22 @@
           @click="applyTemplate(tpl)"
         >
           <span class="template-icon">{{ tpl.icon }}</span>
-          <span class="template-name">{{ tpl.name }}</span>
-          <span class="template-desc">{{ tpl.description }}</span>
+          <span class="template-name">{{ templateDisplayName(tpl, tplI18n) }}</span>
+          <span class="template-desc">{{ templateDisplayDesc(tpl, tplI18n) }}</span>
+          <span v-if="templateChips(tpl).length" class="template-chips">
+            <span v-for="(chip, ci) in templateChips(tpl)" :key="ci" class="template-chip">{{ $t(chip) }}</span>
+          </span>
           <span class="template-category tag" :class="'tag-' + tpl.category">{{ categoryLabel(tpl.category) }}</span>
+        </button>
+        <!-- docs/162 P1-B：空白创建（1f8e6a0 大重构丢失，CSS .template-card--blank 仍在） -->
+        <button
+          type="button"
+          class="template-card template-card--blank"
+          @click="startBlankCreate"
+        >
+          <span class="template-icon">🆕</span>
+          <span class="template-name">{{ $t('lottery.adminTemplateBlankName') }}</span>
+          <span class="template-desc">{{ $t('lottery.adminTemplateBlankDesc') }}</span>
         </button>
       </div>
     </AdminModal>
@@ -1711,6 +1755,18 @@ import { emptyLotteryEditorForm } from './lottery/form-defaults'
 import { buildFlashSaleDirectChecklist } from './lottery/flash-sale-readiness'
 import { buildPromotionConfigPayload, growthFieldsFromDraw, sanitizeRitualPhrasesForSave } from './lottery/growth-config'
 import {
+  isFieldScopedTemplate,
+  resolveEditorFieldVisibility,
+  shouldAutoExpandAdvancedForTemplate,
+} from './lottery/template-field-visibility'
+import {
+  templateChips,
+  templateDisplayDesc,
+  templateDisplayHints,
+  templateDisplayName,
+  type TemplateI18nSource,
+} from './lottery/template-i18n'
+import {
   buildLotteryDrawConfirmMessage,
   buildLotteryDuplicateDraft as buildLotteryDuplicateDraftRaw,
   buildLotteryWinnersCsvRows,
@@ -1748,7 +1804,18 @@ import { usePosterQr } from './lottery/usePosterQr'
 import { useDrawAnalytics } from './lottery/useDrawAnalytics'
 
 
-const { t, locale } = useI18n()
+const { t, locale, te, tm } = useI18n()
+
+/**
+ * 模板文案 i18n 适配器（docs/162 P1-D）：
+ * 以结构子集注入纯函数 template-i18n.ts，模板名/描述/要点按当前语言解析，
+ * key 缺失时回退 API 中文（后端新模板无需等前端发版）。
+ */
+const tplI18n: TemplateI18nSource = {
+  t: (key) => t(key),
+  te: (key) => te(key),
+  tm: (key) => tm(key),
+}
 const route = useRoute()
 const router = useRouter()
 const { showToast } = useToast()
@@ -1937,8 +2004,13 @@ function runMoreAction(action: (draw: LotteryDraw) => void | Promise<void>) {
 /** 055a P1：当前创建来自哪个模板（仅提示用，不参与提交） */
 const activeTemplateId = ref('')
 const activeTemplateName = ref('')
+/** docs/162 P1-C：套用模板后展示在创建表单顶部的配置要点（按当前语言解析） */
+const activeTemplateHints = ref<string[]>([])
 const showTemplateModal = ref(false)
 const templates = ref<any[]>([])
+/** docs/162 P1-A：模板弹窗加载/失败态——弹窗先开、请求后回，必须给用户可见反馈 */
+const templatesLoading = ref(false)
+const templatesLoadFailed = ref(false)
 // 启用的活动类型列表（从系统配置 enabled_activity_kinds 获取，由 L3 平台运营者配置）
 const enabledKinds = ref<string[]>([])
 const enabledParticipationModes = ref<string[]>([])
@@ -2360,6 +2432,15 @@ const createPathHint = computed(() => {
   }
   return t('lottery.adminCreatePathBlank')
 })
+
+/**
+ * docs/145 P2 接线（docs/162 发现此前从未接入 UI）：
+ * 高频模板只展示相关区块；编辑已有活动/空白创建 → 全量可见。
+ * 隐藏仅影响 UI 展示，不改提交 payload（开关关闭时保存仍写默认关）。
+ */
+const editorVisibility = computed(() =>
+  resolveEditorFieldVisibility(activeTemplateId.value, { isEditing: isEditing.value }),
+)
 
 /** 当前高亮步骤（点击步骤条时更新；不强制线性 Wizard） */
 const createStepFocus = ref(1)
@@ -2807,6 +2888,7 @@ function handleDuplicate(draw: LotteryDraw) {
   showAdvancedGrowth.value = false
   activeTemplateId.value = ''
   activeTemplateName.value = ''
+  activeTemplateHints.value = []
   showCreateModal.value = true
   showToast(t('lottery.adminDuplicatedToast'), 'success')
 }
@@ -2865,6 +2947,7 @@ function closeEditor() {
   showAdvancedGrowth.value = false
   activeTemplateId.value = ''
   activeTemplateName.value = ''
+  activeTemplateHints.value = []
   rosterInput.value = ''
   inviteCodeCount.value = 10
   createStepFocus.value = 1
@@ -2911,25 +2994,49 @@ function onMoreMenuKeydown(e: KeyboardEvent) {
 }
 
 function openTemplatePicker() {
-  // 加载模板列表（首次打开时）
-  if (templates.value.length === 0) {
-    fetchTemplates()
+  // 加载模板列表（首次打开或上次失败重试时）；弹窗立即打开，由 loading/失败态承接等待
+  if (templates.value.length === 0 && !templatesLoading.value) {
+    void fetchTemplates()
   }
   showTemplateModal.value = true
 }
 
 async function fetchTemplates() {
+  templatesLoading.value = true
+  templatesLoadFailed.value = false
   try {
     const data = await adminRequest<any>('/api/admin/templates')
     templates.value = data.templates || []
     enabledKinds.value = data.enabledKinds || []
     enabledParticipationModes.value = data.enabledParticipationModes || []
   } catch {
-    // 加载失败时允许用户直接创建空白活动
+    // 加载失败：弹窗展示重试 + 空白创建出口（docs/162 P1-A），不再静默空网格
     templates.value = []
     enabledKinds.value = []
     enabledParticipationModes.value = []
+    templatesLoadFailed.value = true
+  } finally {
+    templatesLoading.value = false
   }
+}
+
+/**
+ * 空白创建（docs/162 P1-B）：
+ * 1f8e6a0 大重构时模板弹窗里的「空白创建」卡丢失（CSS 仍在），
+ * 导致所有创建必须过模板——误选「限时抢购」会默认带入 paymentRequired=true 直付配置。
+ * 恢复入口：空白 = emptyForm + activeTemplateId 为空 → 字段可见性 FULL（不藏能力）。
+ */
+function startBlankCreate() {
+  showTemplateModal.value = false
+  form.value = emptyForm()
+  isEditing.value = false
+  showAdvancedGrowth.value = false
+  activeTemplateId.value = ''
+  activeTemplateName.value = ''
+  activeTemplateHints.value = []
+  createStepFocus.value = 1
+  showCreateModal.value = true
+  nextTick(() => focusCreateStep(1))
 }
 
 function categoryLabel(cat: string): string {
@@ -2953,9 +3060,12 @@ function applyTemplate(tpl: any) {
   form.value = {
     ...base,
     id: '',
-    // 预填可改标题，避免「空名 + 时间已填」却仍无法保存的落差；运营者一改即可
-    name: String(tpl.name || '').trim(),
-    description: String(tpl.description || '').trim().slice(0, 500),
+    // 预填可改标题，避免「空名 + 时间已填」却仍无法保存的落差；使用当前语言解析名称
+    name: templateDisplayName(tpl, tplI18n),
+    // docs/162 P1-E：模板 description 是写给运营者的说明文，不再预填为公开活动描述
+    // （线上 af8fec27 实测证实运营未改直接发布，C 端看到的就是运营向文档原文）。
+    // 描述留空，placeholder 引导运营者写面向参与者的文案。
+    description: '',
     activityKind: kind,
     experienceType: tpl.defaults.experienceType,
     resultMode: tpl.defaults.resultMode || defaultResultModeForActivity(kind),
@@ -3020,9 +3130,11 @@ function applyTemplate(tpl: any) {
     }
   }
   isEditing.value = false
-  showAdvancedGrowth.value = false
+  // docs/162 P1-C：模板配置要点展示在创建表单顶部；docs/145：flash-sale 自动展开高级区
+  showAdvancedGrowth.value = shouldAutoExpandAdvancedForTemplate(tpl.id)
   activeTemplateId.value = String(tpl.id || '')
-  activeTemplateName.value = String(tpl.name || '')
+  activeTemplateName.value = templateDisplayName(tpl, tplI18n)
+  activeTemplateHints.value = templateDisplayHints(tpl, tplI18n)
   // 时间：抽奖/接龙偏「一天活动」；短互动（签到试跑）仍 1d 可改，统一 1d 降低认知分支
   applyTimePreset('1d')
   // 模板已带标题/时间时，焦点落到第 4 步（奖项/名额），缩短 TTV 扫视
@@ -3490,6 +3602,7 @@ async function handleEdit(draw: LotteryDraw) {
   showAdvancedGrowth.value = growth.hasGrowthConfig
   activeTemplateId.value = ''
   activeTemplateName.value = ''
+  activeTemplateHints.value = []
   // 缺奖项时焦点落在步骤 4，方便门禁失败后的补齐路径
   const needPrizes = (draw.activityKind || 'lottery') === 'lottery'
     && !tiers.some((tier) => Boolean(tier.prizeId))
