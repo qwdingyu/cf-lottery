@@ -111,7 +111,11 @@ route.post("/prizes/:id/codes/import", async (c) => {
     return fail(c, "请提供至少一个码", 400);
   }
 
-  await importPrizeCodes(db, tenantId, prizeId, body.codes);
+  try {
+    await importPrizeCodes(db, tenantId, prizeId, body.codes);
+  } catch (err: any) {
+    return fail(c, err?.message || "导入码失败", 400);
+  }
   return ok(c, { imported: body.codes.length });
 });
 

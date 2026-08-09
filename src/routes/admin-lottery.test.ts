@@ -237,7 +237,7 @@ describe("PC: Prize Code Pool (admin-lottery-prizes.ts)", () => {
       expect(res.status).toBe(400);
     });
 
-    it("不存在的奖品抛出 500（路由未捕获 importPrizeCodes 异常，需改进）", async () => {
+    it("不存在的奖品返回 400", async () => {
       await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
       const app = createTestApp();
       const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
@@ -246,7 +246,9 @@ describe("PC: Prize Code Pool (admin-lottery-prizes.ts)", () => {
         method: "POST", headers,
         body: JSON.stringify({ codes: [{ code: "X" }] }),
       }, TEST_ENV);
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(400);
+      const body = await res.json() as { message?: string };
+      expect(body.message).toContain("奖品不存在");
     });
   });
 
