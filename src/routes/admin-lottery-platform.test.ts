@@ -9,7 +9,9 @@ import type { AppEnv } from "../bindings";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt } from "../middleware/auth";
 import { clearTestData, getTestDb } from "../test-setup";
-import { tenants, users, tenantMembers, lotteryDraws } from "../db/schema";
+import { tenants, users, tenantMembers, lotteryDraws, platformTargets } from "../db/schema";
+import { hashPlatformInboundSecret } from "../services/platform/security";
+import { eq } from "drizzle-orm";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
@@ -219,6 +221,49 @@ describe("platform-targets CRUD", () => {
     const getData = await getRes.json() as Record<string, unknown>;
     expect((getData.item as Record<string, unknown>).targetName).toBe("新名称");
     expect((getData.item as Record<string, unknown>).assistantEnabled).toBe(0);
+  });
+
+  it("编辑时入站密钥留空不更新，填写则覆盖", async () => {
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetId: "777777", targetName: "密钥编辑", activeDrawId: DRAW_ID }),
+    });
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+    const [created] = await db
+      .select({ inboundSecretHash: platformTargets.inboundSecretHash })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+
+    const emptyUpdateRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetName: "密钥编辑-留空", inboundSecret: "" }),
+    });
+    expect(emptyUpdateRes.status).toBe(200);
+    const [afterEmptyUpdate] = await db
+      .select({ inboundSecretHash: platformTargets.inboundSecretHash })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    expect(afterEmptyUpdate?.inboundSecretHash).toBe(created?.inboundSecretHash);
+
+    const newSecret = "tenant-input-secret-123";
+    const overwriteRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ inboundSecret: newSecret }),
+    });
+    expect(overwriteRes.status).toBe(200);
+    const [afterOverwrite] = await db
+      .select({ inboundSecretHash: platformTargets.inboundSecretHash })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    expect(afterOverwrite?.inboundSecretHash).toBe(await hashPlatformInboundSecret(newSecret));
   });
 
   it("删除成功", async () => {

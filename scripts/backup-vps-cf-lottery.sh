@@ -76,7 +76,7 @@ info "  ✓ cf-lottery.service ($(wc -l < "$BACKUP_DIR/cf-lottery.service") 行)
 
 # ── 2. 备份 Nginx 完整配置 ────────────────────────────────────────────────────
 info "备份 Nginx 完整配置..."
-ssh -i "$SSH_KEY" "$VPS_HOST" "nginx -T 2>/dev/null" > "$BACKUP_DIR/nginx-full.conf"
+ssh -i "$SSH_KEY" -o ServerAliveInterval=5 "$VPS_HOST" "nginx -T 2>/dev/null" > "$BACKUP_DIR/nginx-full.conf"
 if [ ! -s "$BACKUP_DIR/nginx-full.conf" ]; then
   fail "Nginx 配置备份失败或为空"
 fi
@@ -102,11 +102,11 @@ ssh -i "$SSH_KEY" "$VPS_HOST" "cat $VPS_CF_DIR/package-lock.json" > "$BACKUP_DIR
 [ -s "$BACKUP_DIR/package-lock.json" ] && info "  ✓ package-lock.json" || warn "  ✗ package-lock.json 不存在"
 
 # 3.4 configs/ 目录（如有 Nginx 或其他配置）
-if ssh -i "$SSH_KEY" "$VPS_HOST" "test -d $VPS_CF_DIR/configs"; then
-  ssh -i "$SSH_KEY" "$VPS_HOST" "tar -czf /tmp/cf-lottery-configs.tar.gz -C $VPS_CF_DIR configs"
-  scp -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new "$VPS_HOST:/tmp/cf-lottery-configs.tar.gz" "$BACKUP_DIR/configs.tar.gz" 2>/dev/null || true
+if ssh -i "$SSH_KEY" -o ServerAliveInterval=5 "$VPS_HOST" "test -d $VPS_CF_DIR/configs"; then
+  ssh -i "$SSH_KEY" -o ServerAliveInterval=5 "$VPS_HOST" "tar -czf /tmp/cf-lottery-configs.tar.gz -C $VPS_CF_DIR configs"
+  scp -i "$SSH_KEY" -o ServerAliveInterval=5 -o StrictHostKeyChecking=accept-new "$VPS_HOST:/tmp/cf-lottery-configs.tar.gz" "$BACKUP_DIR/configs.tar.gz" 2>/dev/null || true
   [ -s "$BACKUP_DIR/configs.tar.gz" ] && info "  ✓ configs.tar.gz" || warn "  ✗ configs 备份失败"
-  ssh -i "$SSH_KEY" "$VPS_HOST" "rm -f /tmp/cf-lottery-configs.tar.gz" 2>/dev/null || true
+  ssh -i "$SSH_KEY" -o ServerAliveInterval=5 "$VPS_HOST" "rm -f /tmp/cf-lottery-configs.tar.gz" 2>/dev/null || true
 else
   warn "  ✗ configs/ 目录不存在"
 fi

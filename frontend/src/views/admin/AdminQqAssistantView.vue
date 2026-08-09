@@ -90,6 +90,11 @@
               <div v-if="!editingTarget" class="form-hint">{{ $t('adminQqAssistant.hintAdapterBaseUrl') }}</div>
               <input v-model="form.adapterBaseUrl" class="form-input" :placeholder="editingTarget ? $t('adminQqAssistant.placeholderAdapterBaseUrlEdit') : $t('adminQqAssistant.placeholderAdapterBaseUrl')" />
             </div>
+            <div v-if="editingTarget" class="form-group">
+              <label>{{ $t('adminQqAssistant.labelNewInboundSecret') }}</label>
+              <div class="form-hint">{{ $t('adminQqAssistant.hintNewInboundSecret') }}</div>
+              <input v-model="form.inboundSecret" class="form-input" autocomplete="new-password" :placeholder="$t('adminQqAssistant.placeholderNewInboundSecret')" />
+            </div>
             <fieldset class="form-fieldset">
               <legend>{{ $t('adminQqAssistant.builtinCommands') }}</legend>
               <div class="checkbox-group">
@@ -160,6 +165,7 @@ const form = ref({
   targetName: '',
   activeDrawId: '',
   adapterBaseUrl: '',
+  inboundSecret: '',
   checkinEnabled: true,
   spinEnabled: true,
   shareEnabled: true,
@@ -203,12 +209,29 @@ async function loadDraws() {
 
 function resetForm() {
   form.value = {
-    targetId: '', targetName: '', activeDrawId: '', adapterBaseUrl: '',
+    targetId: '', targetName: '', activeDrawId: '', adapterBaseUrl: '', inboundSecret: '',
     checkinEnabled: true, spinEnabled: true, shareEnabled: true,
     leaderboardEnabled: true, myPrizeEnabled: true, helpEnabled: true,
   }
   inboundSecret.value = ''
   editingTarget.value = null
+}
+
+function fillFormFromTarget(t: PlatformTarget) {
+  editingTarget.value = t
+  form.value.targetId = t.targetId
+  form.value.targetName = t.targetName
+  form.value.activeDrawId = t.activeDrawId
+  form.value.inboundSecret = ''
+  try {
+    const cmds = JSON.parse(t.builtinCommandsJson || '{}')
+    form.value.checkinEnabled = cmds.checkinEnabled !== false
+    form.value.spinEnabled = cmds.spinEnabled !== false
+    form.value.shareEnabled = cmds.shareEnabled !== false
+    form.value.leaderboardEnabled = cmds.leaderboardEnabled !== false
+    form.value.myPrizeEnabled = cmds.myPrizeEnabled !== false
+    form.value.helpEnabled = cmds.helpEnabled !== false
+  } catch { /* 使用默认值 */ }
 }
 
 function openCreateModal() {
@@ -219,19 +242,7 @@ function openCreateModal() {
 
 function openEditModal(t: PlatformTarget) {
   resetForm()
-  editingTarget.value = t
-  form.value.targetId = t.targetId
-  form.value.targetName = t.targetName
-  form.value.activeDrawId = t.activeDrawId
-  try {
-    const cmds = JSON.parse(t.builtinCommandsJson || '{}')
-    form.value.checkinEnabled = cmds.checkinEnabled !== false
-    form.value.spinEnabled = cmds.spinEnabled !== false
-    form.value.shareEnabled = cmds.shareEnabled !== false
-    form.value.leaderboardEnabled = cmds.leaderboardEnabled !== false
-    form.value.myPrizeEnabled = cmds.myPrizeEnabled !== false
-    form.value.helpEnabled = cmds.helpEnabled !== false
-  } catch { /* 使用默认值 */ }
+  fillFormFromTarget(t)
   showModal.value = true
   void loadDraws()
 }
@@ -258,6 +269,8 @@ async function saveTarget() {
       }
       const baseUrl = form.value.adapterBaseUrl.trim()
       if (baseUrl) editPayload.adapterConfig = { baseUrl }
+      const newInboundSecret = form.value.inboundSecret.trim()
+      if (newInboundSecret) editPayload.inboundSecret = newInboundSecret
       await api(`/platform-targets/${editingTarget.value.id}`, {
         method: 'PUT',
         body: JSON.stringify(editPayload),
@@ -309,7 +322,7 @@ async function resetSecret(target: PlatformTarget) {
   try {
     const data = await api<{ inboundSecret?: string }>(`/platform-targets/${target.id}/reset-secret`, { method: 'POST' })
     inboundSecret.value = String(data.inboundSecret || '')
-    editingTarget.value = target
+    fillFormFromTarget(target)
     showModal.value = true
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')

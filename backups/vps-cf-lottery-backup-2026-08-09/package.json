@@ -1,0 +1,57 @@
+{
+  "name": "cf-lottery",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "dev:local": "tsx src/server.ts",
+    "db:export": "node scripts/export-turso-to-local.mjs",
+    "deploy": "bash local-deploy-vps.sh",
+    "deploy:cloudflare": "bash local-deploy-cloudeflare.sh",
+    "deps:ci": "npm ci",
+    "type-check": "tsc --noEmit",
+    "type-check:frontend": "npm --workspace frontend run type-check",
+    "type-check:all": "npm run type-check && npm run type-check:frontend",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke:lottery": "node scripts/04-smoke-lottery.mjs",
+    "smoke:flash-sale": "node scripts/05-smoke-flash-sale.mjs",
+    "benchmark:sqlite": "node scripts/benchmark-sqlite-capacity.mjs",
+    "smoke:better-auth": "vitest run src/better-auth-smoke.test.ts",
+    "frontend:build": "npm --workspace frontend run build",
+    "db:generate": "npx drizzle-kit generate",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:studio": "npx drizzle-kit studio",
+    "verify:delivery": "npm run type-check && npm run test && npm run frontend:build",
+    "build:vps": "bash scripts/build-for-vps.sh",
+    "build:vps:obfuscate": "bash scripts/build-for-vps.sh --obfuscate",
+    "build:vps:package": "bash scripts/build-for-vps.sh --package",
+    "build:vps:all": "bash scripts/build-for-vps.sh --obfuscate --package",
+    "deploy:vps": "bash local-deploy-vps.sh",
+    "deploy:vps:remote": "bash scripts/deploy-to-vps.sh"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.12",
+    "@libsql/client": "^0.14.0",
+    "@usethink/cf-core": "^0.5.1",
+    "better-auth": "^1.6.25",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "0.45.2",
+    "hono": "^4.13.0",
+    "tsx": "^4.23.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260726.1",
+    "@vitest/coverage-v8": "4.1.7",
+    "drizzle-kit": "^0.31.10",
+    "javascript-obfuscator": "^5.5.0",
+    "typescript": "5.7.3",
+    "vite": "6.4.3",
+    "vitest": "4.1.7",
+    "wrangler": "4.114.0"
+  }
+}
