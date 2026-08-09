@@ -244,7 +244,7 @@ export function calculateFlashSalePrice(
   for (const tier of flashSale.pricingTiers) {
     if (tier.minQuantity <= quantity) matched = tier;
   }
-  const unitPriceCents = Math.max(0, Math.floor(Number(matched.unitPriceCents || basePrice)));
+  const unitPriceCents = Math.max(0, Math.floor(Number(matched.unitPriceCents ?? basePrice)));
   return {
     quantity,
     unitPriceCents,

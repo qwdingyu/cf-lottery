@@ -138,6 +138,34 @@ describe('payment-ux', () => {
     expect(restored?.amountCents).toBe(19800)
   })
 
+  it('buildPaymentSessionSnapshot 保留批量订单的 quantity 和 unitPriceCents', () => {
+    const snapshot = buildPaymentSessionSnapshot({
+      drawId: 'draw-1',
+      entryId: 'entry-1',
+      email: 'buyer@example.com',
+      orderNo: 'order-1',
+      status: 'pending',
+      amountCents: 26700,
+      quantity: 3,
+      unitPriceCents: 8900,
+      currency: 'cny',
+      provider: 'easypay',
+      accessToken: 'token-1',
+      redirectUrl: 'https://pay.example.com',
+    } as any, 1000)
+
+    expect(snapshot?.quantity).toBe(3)
+    expect(snapshot?.unitPriceCents).toBe(8900)
+    expect(snapshot?.amountCents).toBe(26700)
+  })
+
+  it('formatPaymentAmount 展示批量总价与单价逻辑一致', () => {
+    // 3 件 * 8900 分 = 26700 分
+    expect(formatPaymentAmount(26700, 'cny')).toBe('¥267.00')
+    // 单价 8900 分 = 89.00 元
+    expect(formatPaymentAmount(8900, 'cny')).toBe('¥89.00')
+  })
+
   it('parsePaymentSessionSnapshot 向后兼容：旧数据（无 quantity）恢复为 1', () => {
     const restored = parsePaymentSessionSnapshot(JSON.stringify({
       drawId: 'draw-1',

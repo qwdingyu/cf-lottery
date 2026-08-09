@@ -22,6 +22,7 @@ import {
   handlePaymentCallback,
   loadTenantConfig,
   persistProviderTradeNo,
+  resumePendingPaymentOrder,
   retryPaymentOrder,
   retryPaymentFulfillment,
 } from "./payment-service";
@@ -885,6 +886,256 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 批量数量生命周期（docs/141 §3）：数量在创建/重试/过期/补发各环节的正确传递与释放。
+// 这些是「数量不能漂移」的回归测试——订单保存了 quantity，后续状态机必须沿用同一数量。
+// ═══════════════════════════════════════════════════════════════════════════
+describe("批量数量生命周期", () => {
+  /**
+   * 构造一个支持批量直付的秒杀活动 + 一张 reserved 的 entry。
+   * 返回 drawId/entryId，activeParticipantCount 已置为 1 模拟 join 阶段预约。
+   */
+  async function seedBatchFlow(maxParticipants = 5, quantity = 3) {
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT_ID, publicSlug: `batch-lifecycle-${drawId}`, title: "批量生命周期",
+      status: "open", experienceType: "flash_sale",
+      maxParticipants, activeParticipantCount: 1,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: maxParticipants, priceCents: 9900, currency: "cny" },
+      }),
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 600_000).toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT_ID, drawId,
+      identityType: "email", identityValue: "batch-lifecycle@example.com",
+      paymentStatus: "reserved",
+    });
+    return { drawId, entryId };
+  }
+
+  it("resumePendingPaymentOrder 恢复批量 pending 订单时沿用 quantity", async () => {
+    const { drawId, entryId } = await seedBatchFlow();
+    // 先创建批量订单（quantity=3），模拟支付入口已生成但用户刷新后恢复
+    const created = await createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      quantity: 3, unitPriceCents: 8900,
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      amountCents: 26700, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "批量秒杀",
+    }, providerMock);
+    expect(created.order.quantity).toBe(3);
+
+    // 恢复同一 pending 订单：再请求 provider.createPayment，但数量/金额沿用订单快照
+    const attemptId = created.order.currentAttemptId!;
+    const resumed = await resumePendingPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      amountCents: 26700, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "批量秒杀恢复",
+    }, providerMock, created.order.id, attemptId);
+
+    expect(resumed.order.id).toBe(created.order.id);
+    expect(resumed.order.quantity).toBe(3);
+    expect(resumed.order.amountCents).toBe(26700);
+    // 恢复后订单仍为 pending（未支付），且 provider.createPayment 被再次调用
+    expect(providerMock.createPayment).toHaveBeenCalledTimes(2);
+  });
+
+it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
+    const { drawId, entryId } = await seedBatchFlow(5, 3);
+    // 先创建批量订单，再模拟确定性失败 → 取消
+    await expect(createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      quantity: 3, unitPriceCents: 8900,
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      amountCents: 26700, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "批量秒杀",
+    }, {
+      ...providerMock,
+      createPayment: vi.fn(async () => {
+        throw new Error("gateway down");
+      }),
+    })).rejects.toThrow("gateway down");
+
+    // 确定性失败 → 订单 cancelled，entry 回退 expired，名额被释放
+    let [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    let [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    expect(entry?.paymentStatus).toBe("expired");
+    expect(draw?.activeParticipantCount).toBe(0);
+
+    // 重试：应恢复 quantity=3，重新预约 3 件名额，并复用同一逻辑订单
+    const retried = await retryPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      amountCents: 26700, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "批量秒杀重试",
+    }, providerMock);
+
+    expect(retried.order.quantity).toBe(3);
+    expect(retried.order.amountCents).toBe(26700);
+    [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    expect(entry?.paymentStatus).toBe("pending");
+    expect(draw?.activeParticipantCount).toBe(3);
+  });
+
+  it("expireOverdueOrders 批量过期释放对应件数名额", async () => {
+    const { drawId, entryId } = await seedBatchFlow(5, 3);
+    // 构造一张已锁定 3 件、且已超时的 pending 订单
+    const orderId = crypto.randomUUID();
+    const attemptId = crypto.randomUUID();
+    await db.insert(paymentOrders).values({
+      id: orderId, tenantId: TENANT_ID, drawId, entryId,
+      quantity: 3, amountCents: 26700, currency: "cny",
+      status: "pending", provider: "easypay", currentAttemptId: attemptId,
+      createdAt: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: attemptId, paymentOrderId: orderId, tenantId: TENANT_ID, drawId,
+      attemptNo: 1, provider: "easypay", amountCents: 26700, currency: "cny", status: "pending",
+      createdAt: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    // entry 置为 pending，draw 计数为 3（1 基础 + 2 额外）
+    await db.update(lotteryEntries).set({ paymentStatus: "pending" }).where(eq(lotteryEntries.id, entryId));
+    await db.update(lotteryDraws).set({ activeParticipantCount: 3 }).where(eq(lotteryDraws.id, drawId));
+
+    const expired = await expireOverdueOrders(db, TENANT_ID);
+    expect(expired).toBeGreaterThanOrEqual(1);
+
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    expect(entry?.paymentStatus).toBe("expired");
+    // 批量过期必须释放全部 3 件，而不是只释放 1 件
+    expect(draw?.activeParticipantCount).toBe(0);
+  });
+
+  it("retryPaymentFulfillment 批量补发一次性补齐订单数量对应卡密", async () => {
+    const { drawId, entryId } = await seedBatchFlow(5, 3);
+    const orderId = crypto.randomUUID();
+    const attemptId = crypto.randomUUID();
+    const prizeId = crypto.randomUUID();
+    // 已支付但码池不足 → paid_fulfillment_failed
+    await db.update(lotteryEntries).set({ paymentStatus: "pending" }).where(eq(lotteryEntries.id, entryId));
+    await db.insert(paymentOrders).values({
+      id: orderId, tenantId: TENANT_ID, drawId, entryId,
+      quantity: 3, amountCents: 26700, currency: "cny",
+      status: "paid_fulfillment_failed", provider: "easypay", currentAttemptId: attemptId,
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: attemptId, paymentOrderId: orderId, tenantId: TENANT_ID, drawId,
+      attemptNo: 1, provider: "easypay", amountCents: 26700, currency: "cny", status: "paid",
+    });
+    await db.insert(prizes).values({ id: prizeId, tenantId: TENANT_ID, name: "批量奖品", prizeType: "code", active: 1, totalCount: 3, usedCount: 0 });
+    await db.insert(lotteryPrizeTiers).values({ id: `tier-${drawId}`, tenantId: TENANT_ID, drawId, prizeId, tierName: "中奖", winnerCount: 1, sortOrder: 100, weight: 100 });
+    // 只有 2 张可用卡密 → 补发应失败（不部分发放）
+    await db.insert(prizeCodes).values([
+      { id: `${prizeId}-1`, tenantId: TENANT_ID, prizeId, code: "BULK-1", secret: "S1", status: "available" },
+      { id: `${prizeId}-2`, tenantId: TENANT_ID, prizeId, code: "BULK-2", secret: "S2", status: "available" },
+    ]);
+
+    const failed = await retryPaymentFulfillment(db, TENANT_ID, orderId);
+    expect(failed.ok).toBe(false);
+    expect(failed.error).toContain("没有足够可用卡密");
+
+    // 补齐第 3 张后重试成功，且一次性发放 3 张
+    await db.insert(prizeCodes).values({
+      id: `${prizeId}-3`, tenantId: TENANT_ID, prizeId, code: "BULK-3", secret: "S3", status: "available",
+    });
+    const ok = await retryPaymentFulfillment(db, TENANT_ID, orderId);
+    expect(ok.ok).toBe(true);
+    expect(ok.order?.status).toBe("paid");
+    const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.paymentOrderId, orderId));
+    expect(codes.map((c) => c.code).sort()).toEqual(["BULK-1", "BULK-2", "BULK-3"]);
+    expect(codes.every((c) => c.status === "issued")).toBe(true);
+  });
+it("smoke: 批量直付全链路 创建(qty=3) → 回调 → 发 3 卡 → entry paid", async () => {
+    const { drawId, entryId } = await seedBatchFlow(5, 3);
+    // 准备 3 张可用卡密 + 奖品绑定
+    const prizeId = crypto.randomUUID();
+    await db.insert(prizes).values({ id: prizeId, tenantId: TENANT_ID, name: "批量奖品", prizeType: "code", active: 1, totalCount: 5, usedCount: 0 });
+    await db.insert(lotteryPrizeTiers).values({ id: `tier-${drawId}`, tenantId: TENANT_ID, drawId, prizeId, tierName: "中奖", winnerCount: 1, sortOrder: 100, weight: 100 });
+    await db.insert(prizeCodes).values([
+      { id: `${prizeId}-1`, tenantId: TENANT_ID, prizeId, code: "FULL-1", secret: "S1", status: "available" },
+      { id: `${prizeId}-2`, tenantId: TENANT_ID, prizeId, code: "FULL-2", secret: "S2", status: "available" },
+      { id: `${prizeId}-3`, tenantId: TENANT_ID, prizeId, code: "FULL-3", secret: "S3", status: "available" },
+    ]);
+
+    // 1) 创建批量订单，quantity=3
+    const created = await createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      quantity: 3, unitPriceCents: 8900,
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      amountCents: 26700, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "批量全链路",
+    }, providerMock);
+    expect(created.order.quantity).toBe(3);
+    expect(created.order.amountCents).toBe(26700);
+
+    // 2) 支付回调 → 一次性发 3 卡
+    const attemptId = created.order.currentAttemptId!;
+    const cb = {
+      ...providerMock,
+      name: "easypay" as const,
+      verifyCallback: vi.fn().mockResolvedValue({
+        orderNo: attemptId, amountCents: 26700, currency: "CNY",
+        providerTradeNo: "FULL-OK", paidAt: new Date().toISOString(),
+      }),
+    };
+    const result = await handlePaymentCallback(db, TENANT_ID, cb, {});
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("paid");
+
+    // 3) 验证 3 张卡都发给了该订单，entry 进入 paid
+    const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.paymentOrderId, created.order.id));
+    expect(codes).toHaveLength(3);
+    expect(codes.every((c) => c.status === "issued" && c.winnerId === entryId)).toBe(true);
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(entry?.paymentStatus).toBe("paid");
+  });
+
+  it("批量回调重复到达（多渠道重试）→ 只发一次卡，数量不重复累加", async () => {
+    const { drawId, entryId } = await seedBatchFlow(5, 3);
+    const prizeId = crypto.randomUUID();
+    await db.insert(prizes).values({ id: prizeId, tenantId: TENANT_ID, name: "批量奖品", prizeType: "code", active: 1, totalCount: 5, usedCount: 0 });
+    await db.insert(lotteryPrizeTiers).values({ id: `tier-${drawId}`, tenantId: TENANT_ID, drawId, prizeId, tierName: "中奖", winnerCount: 1, sortOrder: 100, weight: 100 });
+    await db.insert(prizeCodes).values([
+      { id: `${prizeId}-1`, tenantId: TENANT_ID, prizeId, code: "DUP-1", secret: "S1", status: "available" },
+      { id: `${prizeId}-2`, tenantId: TENANT_ID, prizeId, code: "DUP-2", secret: "S2", status: "available" },
+      { id: `${prizeId}-3`, tenantId: TENANT_ID, prizeId, code: "DUP-3", secret: "S3", status: "available" },
+    ]);
+
+    const created = await createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      quantity: 3, unitPriceCents: 8900,
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      amountCents: 26700, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "批量重复回调",
+    }, providerMock);
+    const attemptId = created.order.currentAttemptId!;
+
+    const makeCb = (tradeNo: string) => ({
+      ...providerMock,
+      name: "easypay" as const,
+      verifyCallback: vi.fn().mockResolvedValue({
+        orderNo: attemptId, amountCents: 26700, currency: "cny",
+        providerTradeNo: tradeNo, paidAt: new Date().toISOString(),
+      }),
+    });
+
+    // 同一 attempt 的两个回调（网关重试/多渠道）
+    const r1 = await handlePaymentCallback(db, TENANT_ID, makeCb("DUP-OK-1"), {});
+    const r2 = await handlePaymentCallback(db, TENANT_ID, makeCb("DUP-OK-2"), {});
+    expect(r1.processed).toBe(true);
+    expect(r2.processed).toBe(true); // 幂等：已处理则直接返回成功
+
+    // 只发 3 张卡，不因重复回调多发
+    const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.paymentOrderId, created.order.id));
+    expect(codes).toHaveLength(3);
+    expect(codes.filter((c) => c.status === "issued")).toHaveLength(3);
+  });
+});
 // ═══════════════════════════════════════════════════════════════════════════
 // 并发安全性测试（docs/148 §五 缺口 1 补充）
 //

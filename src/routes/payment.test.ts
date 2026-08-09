@@ -502,6 +502,82 @@ describe("payment route", () => {
     expect(body.order.prizeCode).toEqual({ code: "CODE-123", secret: "SECRET-123" });
   });
 
+  it("批量直付订单查单返回订单关联的多张卡密，并保留 prizeCode 兼容字段", async () => {
+    await seedOrder();
+    await db.update(paymentOrders)
+      .set({ quantity: 2, unitPriceCents: 8900, amountCents: 17800 })
+      .where(eq(paymentOrders.id, ORDER_ID));
+    await db.update(prizeCodes)
+      .set({ paymentOrderId: ORDER_ID })
+      .where(eq(prizeCodes.id, PRIZE_CODE_ID));
+    await db.insert(prizeCodes).values({
+      id: `${PRIZE_CODE_ID}-2`,
+      tenantId: TENANT_ID,
+      prizeId: PRIZE_ID,
+      code: "CODE-456",
+      secret: "SECRET-456",
+      status: "issued",
+      winnerId: ENTRY_ID,
+      paymentOrderId: ORDER_ID,
+    });
+    const accessToken = await issuePaymentOrderAccessToken(db, TENANT_ID, ORDER_ID, ENTRY_ID);
+    const app = createTestApp();
+
+    const okRes = await app.request(`/api/public/draws/payment-route/payment-orders/${ORDER_ID}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+
+    expect(okRes.status).toBe(200);
+    const body = await okRes.json() as {
+      ok: boolean;
+      order: {
+        quantity: number;
+        amountCents: number;
+        prizeCode: { code: string; secret: string } | null;
+        prizeCodes: Array<{ code: string; secret: string }>;
+      };
+    };
+    expect(body.order.quantity).toBe(2);
+    expect(body.order.amountCents).toBe(17800);
+    expect(body.order.prizeCode).toEqual({ code: "CODE-123", secret: "SECRET-123" });
+    expect(body.order.prizeCodes).toEqual([
+      { code: "CODE-123", secret: "SECRET-123" },
+      { code: "CODE-456", secret: "SECRET-456" },
+    ]);
+
+    await db.insert(emailAccessCodes).values({
+      id: "payment-bulk-recovery-code",
+      email: EMAIL,
+      drawId: DRAW_ID,
+      codeHash: await hashCode("654321"),
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      used: 0,
+    });
+    const recovered = await app.request("/api/public/draws/payment-route/payment-orders/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: EMAIL, code: "654321" }),
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+    const recoveredBody = await recovered.json() as {
+      ok: boolean;
+      orders: Array<{ quantity: number; prizeCodes: Array<{ code: string; secret: string }> }>;
+    };
+    expect(recovered.status).toBe(200);
+    expect(recoveredBody.orders[0].quantity).toBe(2);
+    expect(recoveredBody.orders[0].prizeCodes).toEqual([
+      { code: "CODE-123", secret: "SECRET-123" },
+      { code: "CODE-456", secret: "SECRET-456" },
+    ]);
+  });
+
   it("不再公开裸邮箱订单列表；OTP 找回可恢复已支付订单和卡密", async () => {
     await seedOrder();
     const app = createTestApp();

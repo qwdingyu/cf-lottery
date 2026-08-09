@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildFlashSaleRuntime,
   calculateFlashSalePrice,
+  normalizeFlashSaleQuantity,
   parseFlashSaleConfig,
   resolveEffectiveStockLimit,
   shouldExposeFlashSale,
@@ -177,5 +178,167 @@ describe("shouldExposeFlashSale", () => {
     expect(shouldExposeFlashSale({ flashSale: { enabled: true } })).toBe(true);
     expect(shouldExposeFlashSale({ flashSale: { enabled: false } })).toBe(false);
     expect(shouldExposeFlashSale("{}")).toBe(false);
+  });
+});
+
+/**
+ * normalizeFlashSaleQuantity：购买数量清洗函数。
+ * 策略：无效输入 → 1；低于 1 → 1；高于 maxPerUser → 截断到 maxPerUser。
+ */
+describe("normalizeFlashSaleQuantity", () => {
+  const makeCfg = (maxPerUser: number) =>
+    parseFlashSaleConfig({
+      flashSale: { enabled: true, maxPerUser, paymentRequired: true, priceCents: 9900, currency: "cny" },
+    }).config!;
+
+  it("无效输入（NaN / null / undefined / 对象）→ 默认 1", () => {
+    const cfg = makeCfg(10);
+    expect(normalizeFlashSaleQuantity(NaN, cfg)).toBe(1);
+    expect(normalizeFlashSaleQuantity(null, cfg)).toBe(1);
+    expect(normalizeFlashSaleQuantity(undefined, cfg)).toBe(1);
+    expect(normalizeFlashSaleQuantity({}, cfg)).toBe(1);
+  });
+
+  it("数字字符串 → 解析为整数", () => {
+    const cfg = makeCfg(10);
+    expect(normalizeFlashSaleQuantity("5", cfg)).toBe(5);
+    expect(normalizeFlashSaleQuantity("3.9", cfg)).toBe(3);
+  });
+
+  it("超过 maxPerUser → 截断到 maxPerUser", () => {
+    const cfg = makeCfg(5);
+    expect(normalizeFlashSaleQuantity(10, cfg)).toBe(5);
+    expect(normalizeFlashSaleQuantity(6, cfg)).toBe(5);
+  });
+
+  it("低于 1 → 截断到 1", () => {
+    const cfg = makeCfg(10);
+    expect(normalizeFlashSaleQuantity(0, cfg)).toBe(1);
+    expect(normalizeFlashSaleQuantity(-1, cfg)).toBe(1);
+    expect(normalizeFlashSaleQuantity(-999, cfg)).toBe(1);
+  });
+
+  it("maxPerUser=0 时安全截断到 1（防御性兜底）", () => {
+    const cfg = makeCfg(0);
+    // maxPerUser=0 在 parse 阶段会被 positiveInt 拒绝并置为 1
+    expect(cfg.maxPerUser).toBe(1);
+    expect(normalizeFlashSaleQuantity(5, cfg)).toBe(1);
+  });
+
+  it("正常范围内保留原值", () => {
+    const cfg = makeCfg(100);
+    expect(normalizeFlashSaleQuantity(1, cfg)).toBe(1);
+    expect(normalizeFlashSaleQuantity(50, cfg)).toBe(50);
+    expect(normalizeFlashSaleQuantity(100, cfg)).toBe(100);
+  });
+});
+
+/**
+ * calculateFlashSalePrice：阶梯价格计算，覆盖无阶梯、零/负数量、截断、边界命中等场景。
+ */
+describe("calculateFlashSalePrice", () => {
+  const makeCfg = (tiers: Array<{ minQuantity: number; unitPriceCents: number; label: string }>, maxPerUser = 20, priceCents = 9900) =>
+    parseFlashSaleConfig({
+      flashSale: {
+        enabled: true, paymentRequired: true, priceCents, maxPerUser, currency: "cny",
+        pricingTiers: tiers,
+      },
+    }).config!;
+
+  it("无阶梯时使用 basePrice", () => {
+    const cfg = makeCfg([], 20, 9900);
+    const result = calculateFlashSalePrice(cfg, 5);
+    expect(result).toMatchObject({ quantity: 5, unitPriceCents: 9900, amountCents: 49500, tierLabel: "" });
+  });
+
+  it("数量为 0 → 截断到 1，basePrice 计算", () => {
+    const cfg = makeCfg([{ minQuantity: 3, unitPriceCents: 8000, label: "批发" }], 20, 9900);
+    const result = calculateFlashSalePrice(cfg, 0);
+    expect(result).toMatchObject({ quantity: 1, unitPriceCents: 9900, amountCents: 9900 });
+  });
+
+  it("负数数量 → 截断到 1", () => {
+    const cfg = makeCfg([{ minQuantity: 3, unitPriceCents: 8000, label: "批发" }], 20, 9900);
+    const result = calculateFlashSalePrice(cfg, -5);
+    expect(result).toMatchObject({ quantity: 1, unitPriceCents: 9900, amountCents: 9900 });
+  });
+
+  it("数量超过所有阶梯 → 取最高阶梯单价", () => {
+    const cfg = makeCfg([
+      { minQuantity: 1, unitPriceCents: 9900, label: "原价" },
+      { minQuantity: 10, unitPriceCents: 7900, label: "批发" },
+    ], 50, 9900);
+    const result = calculateFlashSalePrice(cfg, 50);
+    expect(result).toMatchObject({ quantity: 50, unitPriceCents: 7900, amountCents: 395000, tierLabel: "批发" });
+  });
+
+  it("数量恰好等于阶梯边界 → 命中该阶梯", () => {
+    const cfg = makeCfg([
+      { minQuantity: 1, unitPriceCents: 9900, label: "原价" },
+      { minQuantity: 5, unitPriceCents: 8900, label: "中批量" },
+      { minQuantity: 10, unitPriceCents: 7900, label: "批发" },
+    ], 50, 9900);
+    expect(calculateFlashSalePrice(cfg, 5)).toMatchObject({ unitPriceCents: 8900, amountCents: 44500, tierLabel: "中批量" });
+    expect(calculateFlashSalePrice(cfg, 10)).toMatchObject({ unitPriceCents: 7900, amountCents: 79000, tierLabel: "批发" });
+  });
+
+  it("数量在两个阶梯之间 → 取较低（满足条件）的阶梯", () => {
+    const cfg = makeCfg([
+      { minQuantity: 1, unitPriceCents: 9900, label: "原价" },
+      { minQuantity: 5, unitPriceCents: 8900, label: "中批量" },
+      { minQuantity: 10, unitPriceCents: 7900, label: "批发" },
+    ], 50, 9900);
+    // 数量 7 满足 minQuantity=5，不满足 minQuantity=10 → 应命中中批量
+    expect(calculateFlashSalePrice(cfg, 7)).toMatchObject({ unitPriceCents: 8900, amountCents: 62300, tierLabel: "中批量" });
+  });
+
+  it("阶梯单价为 0 时（防御性）不静默回退 basePrice，应按 0 计算", () => {
+    // 0 分阶梯在发布预检会被 `price_invalid` 阻断，但运行时不应因 `0 || base` 的 falsy
+    // 陷阱把免费档错误回退成 basePrice。直接构造 config 隔离 test 运行时行为。
+    const cfg = {
+      enabled: true, sessionLabel: "", stockLimit: null, maxPerUser: 100,
+      showCountdown: true, showProgress: true, showStock: true, ctaLabel: "抢",
+      paymentRequired: true, priceCents: 9900, currency: "cny", title: "",
+      pricingTiers: [
+        { minQuantity: 1, unitPriceCents: 9900, label: "原价" },
+        { minQuantity: 100, unitPriceCents: 0, label: "免费" },
+      ],
+    };
+    const result = calculateFlashSalePrice(cfg, 100);
+    expect(result).toMatchObject({ quantity: 100, unitPriceCents: 0, amountCents: 0, tierLabel: "免费" });
+  });
+
+  it("null/undefined 数量 → 默认 1", () => {
+    const cfg = makeCfg([], 20, 9900);
+    expect(calculateFlashSalePrice(cfg, null).quantity).toBe(1);
+    expect(calculateFlashSalePrice(cfg, undefined).quantity).toBe(1);
+  });
+
+  it("maxPerUser 截断后按截断后数量匹配阶梯", () => {
+    const cfg = makeCfg([
+      { minQuantity: 1, unitPriceCents: 9900, label: "原价" },
+      { minQuantity: 10, unitPriceCents: 5000, label: "批发" },
+    ], 3, 9900); // maxPerUser=3，请求 10 会被截断到 3
+    const result = calculateFlashSalePrice(cfg, 10);
+    expect(result).toMatchObject({ quantity: 3, unitPriceCents: 9900, amountCents: 29700 });
+    // 截断后 quantity=3，不满足 minQuantity=10，所以用 basePrice
+  });
+
+  it("超过 MAX_TIERS 的阶梯被忽略，但前 8 个仍然可用", () => {
+    const tiers = Array.from({ length: 10 }, (_, i) => ({
+      minQuantity: i + 1,
+      unitPriceCents: 10000 - i * 500,
+      label: `阶梯${i + 1}`,
+    }));
+    const { config } = parseFlashSaleConfig({
+      flashSale: {
+        enabled: true, paymentRequired: true, priceCents: 9900, maxPerUser: 20, currency: "cny",
+        pricingTiers: tiers,
+      },
+    });
+    expect(config!.pricingTiers.length).toBeLessThanOrEqual(8);
+    // 第 9 个及以后被忽略，但前 8 个仍正确排序
+    expect(config!.pricingTiers[0].minQuantity).toBe(1);
+    expect(config!.pricingTiers[7].minQuantity).toBe(8);
   });
 });
