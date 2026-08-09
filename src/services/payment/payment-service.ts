@@ -583,6 +583,7 @@ export async function createPaymentOrder(
   const attemptId = crypto.randomUUID();
   const accessToken = createPaymentAccessToken();
   const accessTokenHash = await sha256Hex(accessToken);
+  let reservationFailedMessage = "";
   // 事务只含数据库写入；provider.createPayment 是网络调用，放事务外避免长时间占锁
   await withDbTransaction(db, async (tx) => {
     const quantity = Math.max(1, Math.floor(Number(input.quantity || 1)));
@@ -619,9 +620,26 @@ export async function createPaymentOrder(
         ))
         .returning({ id: lotteryDraws.id });
       if (reserved.length === 0) {
-        throw new Error("秒杀名额已被其他用户占用");
+        // joinDraw 已经占住 1 件。如果批量额外件数无法预约，必须立刻释放
+        // 这 1 件基础预约，否则失败下单会把库存卡到懒清理超时。
+        const released = await tx
+          .update(lotteryEntries)
+          .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
+          .where(and(
+            eq(lotteryEntries.id, input.entryId),
+            eq(lotteryEntries.tenantId, input.tenantId),
+            eq(lotteryEntries.drawId, input.drawId),
+            eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.RESERVED),
+          ));
+        if ((released.rowsAffected ?? 0) > 0) {
+          await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, 1);
+        }
+        reservationFailedMessage = "秒杀名额已被其他用户占用";
+        return;
       }
     }
+
+    if (reservationFailedMessage) return;
 
     const armedEntry = await tx
       .update(lotteryEntries)
@@ -667,6 +685,9 @@ export async function createPaymentOrder(
       status: PAYMENT_ATTEMPT_STATUS.PENDING,
     });
   });
+  if (reservationFailedMessage) {
+    throw new Error(reservationFailedMessage);
+  }
 
   let payResult: CreatePaymentResult;
   try {

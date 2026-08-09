@@ -769,6 +769,52 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
     expect(drawAfter?.activeParticipantCount).toBe(3);
   });
 
+  it("createPaymentOrder 批量额外库存不足时立即释放 join 阶段基础预约", async () => {
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" });
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT_ID,
+      publicSlug: `bulk-full-${drawId}`,
+      title: "批量库存不足",
+      status: "open",
+      experienceType: "flash_sale",
+      maxParticipants: 2,
+      activeParticipantCount: 2,
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 2, priceCents: 9900, currency: "cny" } }),
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT_ID,
+      drawId,
+      identityType: "email",
+      identityValue: "bulk-full@example.com",
+      paymentStatus: "reserved",
+    });
+
+    await expect(createPaymentOrder(db, {
+      tenantId: TENANT_ID,
+      drawId,
+      entryId,
+      quantity: 2,
+      unitPriceCents: 9900,
+      pricingSnapshotJson: "{}",
+      amountCents: 19800,
+      currency: "cny",
+      provider: "easypay",
+      notifyUrl: "https://cb",
+    }, providerMock)).rejects.toThrow("名额");
+
+    const [entryAfter] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    const [drawAfter] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    expect(entryAfter?.paymentStatus).toBe("expired");
+    expect(drawAfter?.activeParticipantCount).toBe(1);
+    expect(await db.select().from(paymentOrders).where(eq(paymentOrders.entryId, entryId))).toHaveLength(0);
+  });
+
   it("createPaymentOrder 拒绝绕过 reserved 预约的空状态 entry", async () => {
     const drawId = crypto.randomUUID();
     const entryId = crypto.randomUUID();
