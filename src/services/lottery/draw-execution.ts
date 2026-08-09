@@ -25,6 +25,8 @@ import { randomSelect, hashDrawSeed } from "./utils";
 import { enqueueWebhookEvent, dispatchWebhookDelivery } from "./integration";
 import { sendEmail, buildLotteryWinnerTemplateData, type EmailEnv } from "../email-service";
 import { runBounded } from "../../lib/concurrency";
+import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
+import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
 import {
   aggregateViralInviteCounts,
   computeViralDrawWeight,
@@ -139,17 +141,6 @@ export async function performDraw(
       .set({ drawSeedHash: seedHash, drawSeed: seed, algorithmVersion: "uniform_v1", updatedAt: now })
       .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
 
-    // 3. 读取候选池（所有参与者）
-    const entries = await db
-      .select()
-      .from(lotteryEntries)
-      .where(and(eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)));
-
-    const candidateCount = entries.length;
-    if (candidateCount === 0) {
-      throw new Error("候选池为空，无参与者");
-    }
-
     // 获取活动配置（读取最新状态）
     const [draw] = await db
       .select()
@@ -157,6 +148,28 @@ export async function performDraw(
       .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
       .limit(1);
     if (!draw) throw new Error("活动不存在");
+
+    // 3. 读取候选池（所有参与者）。
+    //    docs/166 纵深防御：直付秒杀（paymentRequired）下，未付款 entry（RESERVED/PENDING）
+    //    不得进入候选池——否则未付款用户可能被抽中（白嫖卡密）。发布预检已阻断该组合，
+    //    此处对存量/历史数据二次兜底，只允许 PAID entry 参与抽奖。
+    const flashSale = parseFlashSaleConfig(draw.promotionConfig).config;
+    const paymentRequired = flashSale?.paymentRequired === true;
+    const entries = await db
+      .select()
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.drawId, drawId),
+        eq(lotteryEntries.tenantId, tenantId),
+        ...(paymentRequired
+          ? [eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PAID)]
+          : []),
+      ));
+
+    const candidateCount = entries.length;
+    if (candidateCount === 0) {
+      throw new Error("候选池为空，无参与者");
+    }
 
     // 获取多奖项配置（一等奖、二等奖等）
     const tiers = await db

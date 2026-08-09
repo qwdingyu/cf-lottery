@@ -558,6 +558,55 @@ describe("开奖核心流程", () => {
     expect(result.winnerCount).toBeGreaterThanOrEqual(0);
     expect(result.candidateCount).toBe(2);
   });
+
+  it("docs/166：lottery + paymentRequired 时 performDraw 只选 PAID entry（纵深防御）", async () => {
+    // 发布预检已阻断 lottery + paymentRequired；但存量/历史数据可能绕过。
+    // 运行时纵深防御：performDraw 必须只允许 PAID entry 进入候选池。
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "直付抽奖纵深防御",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      activityKind: "lottery",
+      experienceType: "flash_sale",
+      resultMode: "manual",
+      winnerCount: 1,
+      maxParticipants: 10,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, priceCents: 9900, stockLimit: 10, maxPerUser: 1, currency: "cny" },
+      }),
+    });
+    // 手工配置奖项，绕过 publish 门禁
+    await configureManualTier(id, 1);
+    // 直接设置状态为 open（绕过 publish 预检，模拟存量数据）
+    await db.update(lotteryDraws).set({ status: "open" }).where(eq(lotteryDraws.id, id));
+
+    // 创建两个参与者：一个 PAID，一个 RESERVED（未付款）
+    const paidEmail = "paid@test.com";
+    const freeEmail = "free@test.com";
+    const paidJoin = await joinDraw(db, publicSlug, paidEmail);
+    const freeJoin = await joinDraw(db, publicSlug, freeEmail);
+    expect(paidJoin.joined).toBe(true);
+    expect(freeJoin.joined).toBe(true);
+
+    // 手动将 paid entry 标记为 PAID，模拟支付回调
+    await db
+      .update(lotteryEntries)
+      .set({ paymentStatus: "paid" })
+      .where(and(eq(lotteryEntries.drawId, id), eq(lotteryEntries.identityValue, paidEmail)));
+
+    // 执行开奖
+    const result = await performDraw(db, TENANT, id, USER);
+    // 候选池只包含 PAID entry（1 个），不包含 RESERVED entry
+    expect(result.candidateCount).toBe(1);
+    expect(result.winnerCount).toBe(1);
+
+    // 验证中奖者身份（使用 getDrawWinners 确保租户隔离）
+    const winners = await getDrawWinners(db, id, TENANT);
+    expect(winners).toHaveLength(1);
+    expect(winners[0]?.identityValue).toBe(paidEmail);
+  });
 });
 
 describe("租户隔离", () => {

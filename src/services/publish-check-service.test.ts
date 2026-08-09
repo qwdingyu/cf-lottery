@@ -282,31 +282,34 @@ describe("发布预检 — instant 结果机闸门", () => {
     expect(goodResult.canPublish).toBe(true);
   });
 
-  it("instant + 直付秒杀（paymentRequired）阻断，防止未付款即 spin 中奖", async () => {
-    // docs/166：spin 结果机不校验 paymentStatus；若 instant 与 paymentRequired 组合，
-    // 用户 join 生成 PENDING entry 后不付款即可 spin 中奖（白嫖卡密）。发布门禁必须阻断。
-    const draw = makeDraw({
-      resultMode: "instant",
-      drawTrigger: "manual",
-      maxSpinsPerEntry: 3,
-      experienceType: "flash_sale",
-      promotionConfig: JSON.stringify({
-        flashSale: { enabled: true, paymentRequired: true, priceCents: 9900, stockLimit: 10, maxPerUser: 1, currency: "cny" },
-        destination: { url: "https://shop.example.com/p/1", title: "去购买" },
-      }),
-    });
-    await addCodeTier(draw.id, 1, 1);
-    await client.execute({
-      sql: "UPDATE lottery_prize_tiers SET weight = 100 WHERE draw_id = ?",
-      args: [draw.id],
-    });
-    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
-    expect(result.errors.some((item) => item.code === "promotion.instant_payment.conflict")).toBe(true);
-    expect(result.canPublish).toBe(false);
+  it("lottery + 直付秒杀（paymentRequired）阻断，任何 resultMode 均不允许", async () => {
+    // docs/166：lottery 的 performDraw 不校验 entry.paymentStatus，所有 entry 都在候选池中；
+    // 若允许组合，未付款用户可进入候选池并被抽中（白嫖卡密），且支付回调已通过 direct fulfillment
+    // 发卡导致 double-issuance。发布门禁必须阻断所有 resultMode。
+    for (const resultMode of ["instant", "manual", "scheduled"] as const) {
+      const draw = makeDraw({
+        resultMode,
+        ...(resultMode === "instant" ? { drawTrigger: "manual", maxSpinsPerEntry: 3 } : { drawTrigger: "manual" }),
+        experienceType: "flash_sale",
+        promotionConfig: JSON.stringify({
+          flashSale: { enabled: true, paymentRequired: true, priceCents: 9900, stockLimit: 10, maxPerUser: 1, currency: "cny" },
+          destination: { url: "https://shop.example.com/p/1", title: "去购买" },
+        }),
+      });
+      await addCodeTier(draw.id, 1, 1);
+      await client.execute({
+        sql: "UPDATE lottery_prize_tiers SET weight = 100 WHERE draw_id = ?",
+        args: [draw.id],
+      });
+      const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+      expect(result.errors.some((item) => item.code === "promotion.lottery_payment.conflict")).toBe(true);
+      expect(result.canPublish).toBe(false);
+      await clearTestData(client);
+    }
   });
 
-  it("instant + 展示型秒杀（非 paymentRequired）不受该红线阻断", async () => {
-    // 展示型秒杀（paymentRequired=false）仍是免费参与，spin 不需付款，允许通过。
+  it("lottery + 展示型秒杀（非 paymentRequired）不受该红线阻断", async () => {
+    // 展示型秒杀（paymentRequired=false）仍是免费参与，允许通过。
     const draw = makeDraw({
       resultMode: "instant",
       drawTrigger: "manual",
@@ -323,7 +326,7 @@ describe("发布预检 — instant 结果机闸门", () => {
       args: [draw.id],
     });
     const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
-    expect(result.errors.some((item) => item.code === "promotion.instant_payment.conflict")).toBe(false);
+    expect(result.errors.some((item) => item.code === "promotion.lottery_payment.conflict")).toBe(false);
   });
 });
 
