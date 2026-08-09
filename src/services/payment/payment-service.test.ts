@@ -1095,6 +1095,80 @@ it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
     expect(draw?.activeParticipantCount).toBe(0);
   });
 
+  it("expireOverdueOrders 保护已支付名额：entry 有 PAID 订单时只释放超时订单容量，entry 恢复 paid", async () => {
+    const { drawId, entryId } = await seedBatchFlow(5);
+    // 订单 A：已支付（quantity=2），entry → paid
+    await db.insert(paymentOrders).values({
+      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, entryId,
+      quantity: 2, amountCents: 17800, currency: "cny",
+      status: "paid", provider: "easypay",
+    });
+    await db.update(lotteryEntries).set({ paymentStatus: "paid" }).where(eq(lotteryEntries.id, entryId));
+    // 订单 B：超时未支付（quantity=3），entry → pending
+    const orderBId = crypto.randomUUID();
+    const attemptBId = crypto.randomUUID();
+    await db.insert(paymentOrders).values({
+      id: orderBId, tenantId: TENANT_ID, drawId, entryId,
+      quantity: 3, amountCents: 26700, currency: "cny",
+      status: "pending", provider: "easypay", currentAttemptId: attemptBId,
+      createdAt: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: attemptBId, paymentOrderId: orderBId, tenantId: TENANT_ID, drawId,
+      attemptNo: 1, provider: "easypay", amountCents: 26700, currency: "cny", status: "pending",
+      createdAt: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    await db.update(lotteryEntries).set({ paymentStatus: "pending" }).where(eq(lotteryEntries.id, entryId));
+    // 活动计数：订单 A 占 2 件 + 订单 B 占 3 件 = 5
+    await db.update(lotteryDraws).set({ activeParticipantCount: 5 }).where(eq(lotteryDraws.id, drawId));
+
+    const expired = await expireOverdueOrders(db, TENANT_ID);
+    expect(expired).toBeGreaterThanOrEqual(1);
+
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    const [orderB] = await db.select({ status: paymentOrders.status }).from(paymentOrders).where(eq(paymentOrders.id, orderBId));
+    // 关键断言：仅超时订单 B 被释放，entry 因仍有 PAID 订单 A 恢复为 paid（不是 expired）
+    expect(orderB?.status).toBe("expired");
+    expect(entry?.paymentStatus).toBe("paid");
+    // 只释放订单 B 的 3 件，订单 A 的 2 件仍占用
+    expect(draw?.activeParticipantCount).toBe(2);
+  });
+
+  it("createPaymentOrder 新订单创建失败时不掩盖已支付名额：entry 恢复为 paid", async () => {
+    const { drawId, entryId } = await seedBatchFlow(5);
+    // 订单 A：已支付（quantity=2），entry → paid
+    await db.insert(paymentOrders).values({
+      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, entryId,
+      quantity: 2, amountCents: 17800, currency: "cny",
+      status: "paid", provider: "easypay",
+    });
+    await db.update(lotteryEntries).set({ paymentStatus: "paid" }).where(eq(lotteryEntries.id, entryId));
+    // 活动计数：订单 A 占 2 件
+    await db.update(lotteryDraws).set({ activeParticipantCount: 2 }).where(eq(lotteryDraws.id, drawId));
+
+    const failingProvider: PaymentProvider = {
+      ...providerMock,
+      createPayment: vi.fn(async () => { throw new Error("gateway down"); }),
+    };
+
+    await expect(createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email", buyerIdentityValue: "test@example.com",
+      quantity: 3, unitPriceCents: 8900,
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      amountCents: 26700, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "新增批发单",
+    }, failingProvider)).rejects.toThrow("gateway down");
+
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    // 关键断言：新订单 B 取消后，entry 因仍有 PAID 订单 A 恢复为 paid（不是 expired）
+    expect(entry?.paymentStatus).toBe("paid");
+    // 新订单 B 的 3 件被释放，订单 A 的 2 件仍占用
+    expect(draw?.activeParticipantCount).toBe(2);
+  });
+
   it("retryPaymentFulfillment 批量补发一次性补齐订单数量对应卡密", async () => {
     const { drawId, entryId } = await seedBatchFlow(5, 3);
     const orderId = crypto.randomUUID();

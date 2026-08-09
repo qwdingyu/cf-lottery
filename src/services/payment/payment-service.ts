@@ -11,7 +11,7 @@
  */
 import { createProviderRegistry, isAmbiguousEasyPayProviderError } from "@usethink/cf-core/features/payment";
 import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
-import { eq, and, desc, sql, inArray, isNull, max } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, isNull, max, ne, notInArray } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
 import {
@@ -199,19 +199,64 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
     const entryIds = overdue.map((o) => o.entryId).filter(Boolean);
     const releaseByDraw = new Map<string, number>();
     if (entryIds.length > 0) {
-      const releasedPending = await tx
-        .update(lotteryEntries)
-        .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
+      // 超时订单本身即将被置为 expired，不能算作 entry 的"其他有效订单"。
+      const overdueOrderIds = overdue.map((o) => o.id).filter(Boolean);
+
+      // 1) 有 PAID/FULFILLMENT_FAILED 订单的 entry：恢复为 paid（仍有有效履约，不能整体释放名额）
+      //    例如用户已有 PAID 订单 A、正在创建订单 B（PENDING）超时，entry 应回到 PAID 而非 EXPIRED。
+      const paidOrderRows = await tx
+        .select({ entryId: paymentOrders.entryId })
+        .from(paymentOrders)
         .where(and(
-          eq(lotteryEntries.tenantId, tenantId),
-          inArray(lotteryEntries.id, entryIds),
-          eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
-        ))
-        .returning({ id: lotteryEntries.id, drawId: lotteryEntries.drawId });
-      for (const entry of releasedPending) {
-        const order = overdue.find((item) => item.entryId === entry.id);
-        const quantity = Math.max(1, Math.floor(Number(order?.quantity || 1)));
-        releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + quantity);
+          eq(paymentOrders.tenantId, tenantId),
+          inArray(paymentOrders.entryId, entryIds),
+          inArray(paymentOrders.status, [PAYMENT_ORDER_STATUS.PAID, PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED]),
+        ));
+      const paidEntryIds = new Set(paidOrderRows.map((r) => r.entryId));
+      if (paidEntryIds.size > 0) {
+        await tx
+          .update(lotteryEntries)
+          .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
+          .where(and(
+            eq(lotteryEntries.tenantId, tenantId),
+            inArray(lotteryEntries.id, [...paidEntryIds]),
+            eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
+          ));
+      }
+
+      // 2) 还有其它有效订单（非超时的 PENDING）的 entry：保持 pending，不释放
+      const otherActiveRows = await tx
+        .select({ entryId: paymentOrders.entryId })
+        .from(paymentOrders)
+        .where(and(
+          eq(paymentOrders.tenantId, tenantId),
+          inArray(paymentOrders.entryId, entryIds),
+          notInArray(paymentOrders.id, overdueOrderIds),
+          notInArray(paymentOrders.status, [
+            PAYMENT_ORDER_STATUS.CANCELLED,
+            PAYMENT_ORDER_STATUS.EXPIRED,
+            PAYMENT_ORDER_STATUS.REFUNDED,
+          ]),
+        ));
+      const keepPendingEntryIds = new Set(otherActiveRows.map((r) => r.entryId));
+
+      // 3) 其余 entry（无其他有效订单，也非 paid 恢复）释放为 expired
+      const toRelease = entryIds.filter((id) => !paidEntryIds.has(id) && !keepPendingEntryIds.has(id));
+      if (toRelease.length > 0) {
+        await tx
+          .update(lotteryEntries)
+          .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
+          .where(and(
+            eq(lotteryEntries.tenantId, tenantId),
+            inArray(lotteryEntries.id, toRelease),
+            eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
+          ));
+      }
+
+      // 4) 所有超时订单的容量都需释放（计数器独立于 entry 状态，decrement 用 MAX(0) 防下溢）
+      for (const order of overdue) {
+        const quantity = Math.max(1, Math.floor(Number(order.quantity || 1)));
+        releaseByDraw.set(order.drawId, (releaseByDraw.get(order.drawId) || 0) + quantity);
       }
     }
 
@@ -283,18 +328,39 @@ async function cancelPaymentOrder(
     const quantity = Math.max(1, Math.floor(Number(cancelled[0]?.quantity || 1)));
     await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, quantity);
 
-    // V2：若该 entry 没有其他活跃订单，才释放 entry 的 pending 状态
+    // V2：释放 entry 时必须考虑该 entry 是否有其他有效订单（PAID / FULFILLMENT_FAILED / PENDING），
+    // 而不仅是检查其他 pending 订单。否则用户已有 PAID 订单 A、正在创建订单 B 时 B 取消，
+    // 会把 entry 误释放为 expired，掩盖 A 的已发卡履约并导致再次下单被"参与预约已失效"拦截。
     const [otherActive] = await tx
-      .select({ id: paymentOrders.id })
+      .select({ status: paymentOrders.status })
       .from(paymentOrders)
       .where(and(
         eq(paymentOrders.tenantId, input.tenantId),
         eq(paymentOrders.drawId, input.drawId),
         eq(paymentOrders.entryId, input.entryId),
-        eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
+        ne(paymentOrders.id, orderId),
+        notInArray(paymentOrders.status, [
+          PAYMENT_ORDER_STATUS.CANCELLED,
+          PAYMENT_ORDER_STATUS.EXPIRED,
+          PAYMENT_ORDER_STATUS.REFUNDED,
+        ]),
       ))
       .limit(1);
-    if (!otherActive) {
+    if (otherActive) {
+      // 有 PAID / FULFILLMENT_FAILED 订单时，entry 应恢复为 paid（该 entry 仍有有效履约）
+      if (otherActive.status === PAYMENT_ORDER_STATUS.PAID || otherActive.status === PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED) {
+        await tx
+          .update(lotteryEntries)
+          .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
+          .where(and(
+            eq(lotteryEntries.id, input.entryId),
+            eq(lotteryEntries.tenantId, input.tenantId),
+            eq(lotteryEntries.drawId, input.drawId),
+            eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
+          ));
+      }
+      // 其他 pending 订单时保持 entry 为 pending，不做改动
+    } else {
       await tx
         .update(lotteryEntries)
         .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
