@@ -671,6 +671,134 @@ describe("handlePaymentCallback", () => {
     expect(oldAttempt?.status).toBe("paid_late_needs_refund");
     expect(result.order?.currentAttemptId).not.toBe(ATTEMPT_ID);
   });
+
+  it("多租户隔离：A 租户回调不消耗 B 租户卡密池", async () => {
+    await seedCallbackRows();
+    const tenantB = "tenant-payment-service-B";
+    const drawB = "draw-payment-service-B";
+    const prizeB = "prize-payment-service-B";
+    await db.insert(tenants).values({ id: tenantB, name: "tenant B" });
+    await db.insert(lotteryDraws).values({
+      id: drawB, tenantId: tenantB, publicSlug: "payment-service-draw-b",
+      title: "B 活动", status: "open", maxParticipants: 1, activeParticipantCount: 0,
+      experienceType: "flash_sale",
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 1, priceCents: 9900, currency: "cny" } }),
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await db.insert(prizes).values({ id: prizeB, tenantId: tenantB, name: "B 卡密", prizeType: "code", active: 1, totalCount: 1, usedCount: 0 });
+    await db.insert(lotteryPrizeTiers).values({ id: "tier-payment-service-b", tenantId: tenantB, drawId: drawB, prizeId: prizeB });
+    await db.insert(prizeCodes).values({ id: "code-b-1", tenantId: tenantB, prizeId: prizeB, code: "B-1", secret: "S-B1", status: "available" });
+
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: ATTEMPT_ID, providerTradeNo: "EP-ISO", amountCents: 9900, currency: "cny", paidAt: "2026-08-08T00:00:00.000Z",
+      })),
+    };
+    const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("paid");
+
+    const aCodes = await db.select().from(prizeCodes).where(eq(prizeCodes.paymentOrderId, ORDER_ID));
+    expect(aCodes).toHaveLength(1);
+    expect(aCodes[0].tenantId).toBe(TENANT_ID);
+
+    // B 租户卡密不受影响，仍 available 且未被绑定订单
+    const [bCode] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, "code-b-1"));
+    expect(bCode?.status).toBe("available");
+    expect(bCode?.paymentOrderId).toBeNull();
+  });
+
+  it("混合状态码池：只领取 available，跳过 issued/revoked/redeemed", async () => {
+    await seedCallbackRows();
+    await db.insert(prizeCodes).values([
+      { id: `${PRIZE_CODE_ID}-issued`, tenantId: TENANT_ID, prizeId: PRIZE_ID, code: "CODE-ISSUED", secret: "S", status: "issued", winnerId: "other-entry", paymentOrderId: "other-order" },
+      { id: `${PRIZE_CODE_ID}-revoked`, tenantId: TENANT_ID, prizeId: PRIZE_ID, code: "CODE-REVOKED", secret: "S", status: "revoked" },
+      { id: `${PRIZE_CODE_ID}-redeemed`, tenantId: TENANT_ID, prizeId: PRIZE_ID, code: "CODE-REDEEMED", secret: "S", status: "redeemed" },
+    ]);
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: ATTEMPT_ID, providerTradeNo: "EP-MIXED", amountCents: 9900, currency: "cny", paidAt: "2026-08-08T00:00:00.000Z",
+      })),
+    };
+    const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("paid");
+
+    const issued = await db.select().from(prizeCodes).where(eq(prizeCodes.paymentOrderId, ORDER_ID));
+    expect(issued).toHaveLength(1);
+    expect(issued[0].id).toBe(PRIZE_CODE_ID);
+
+    // 非 available 状态码未被改写
+    const check = async (id: string, expected: string) => {
+      const [row] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, id));
+      expect(row?.status).toBe(expected);
+    };
+    await check(`${PRIZE_CODE_ID}-issued`, "issued");
+    await check(`${PRIZE_CODE_ID}-revoked`, "revoked");
+    await check(`${PRIZE_CODE_ID}-redeemed`, "redeemed");
+  });
+
+  it("领取顺序确定性：按 id 升序领取（min id 优先）", async () => {
+    await seedCallbackRows();
+    // PRIZE_CODE_ID = "prize-code-payment-service"；插入 id 更小的可用码
+    await db.insert(prizeCodes).values({
+      id: "aaa-zzz", tenantId: TENANT_ID, prizeId: PRIZE_ID, code: "CODE-AAA", secret: "S-AAA", status: "available",
+    });
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: ATTEMPT_ID, providerTradeNo: "EP-ORDER", amountCents: 9900, currency: "cny", paidAt: "2026-08-08T00:00:00.000Z",
+      })),
+    };
+    const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("paid");
+
+    // min id（aaa-zzz < prize-code-payment-service）应被优先领取
+    const issued = await db.select().from(prizeCodes).where(eq(prizeCodes.paymentOrderId, ORDER_ID));
+    expect(issued).toHaveLength(1);
+    expect(issued[0].id).toBe("aaa-zzz");
+  });
+
+  it("多卡密奖品 fail-closed：有两个 code 奖品时不发卡，订单进入履约失败", async () => {
+    await seedCallbackRows();
+    const prize2 = "prize-payment-service-2";
+    await db.insert(prizes).values({ id: prize2, tenantId: TENANT_ID, name: "卡密奖品2", prizeType: "code", active: 1 });
+    await db.insert(lotteryPrizeTiers).values({ id: "tier-payment-service-2", tenantId: TENANT_ID, drawId: DRAW_ID, prizeId: prize2 });
+    await db.insert(prizeCodes).values({ id: "code-2-1", tenantId: TENANT_ID, prizeId: prize2, code: "CODE-2-1", secret: "S", status: "available" });
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: ATTEMPT_ID, providerTradeNo: "EP-MULTI-PRIZE", amountCents: 9900, currency: "cny", paidAt: "2026-08-08T00:00:00.000Z",
+      })),
+    };
+    const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
+    // findCodePrize 返回 null（rows.length !== 1）→ acquirePrizeCodes 返回 [] → 履约失败
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("paid_fulfillment_failed");
+    const allIssued = await db.select().from(prizeCodes).where(eq(prizeCodes.status, "issued"));
+    expect(allIssued).toHaveLength(0);
+  });
+
+  it("卡密奖品未激活（active=0）时 fail-closed：不发卡，订单履约失败", async () => {
+    await seedCallbackRows();
+    // findCodePrize 内联查询 prizes.active=1 过滤
+    await db.update(prizes).set({ active: 0 }).where(eq(prizes.id, PRIZE_ID));
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: ATTEMPT_ID, providerTradeNo: "EP-INACTIVE", amountCents: 9900, currency: "cny", paidAt: "2026-08-08T00:00:00.000Z",
+      })),
+    };
+    const result = await handlePaymentCallback(db, TENANT_ID, callbackProvider, {});
+    expect(result.processed).toBe(true);
+    expect(result.order?.status).toBe("paid_fulfillment_failed");
+    const codes = await db.select().from(prizeCodes).where(eq(prizeCodes.status, "issued"));
+    expect(codes).toHaveLength(0);
+  });
 });
 
 describe("ambiguous payment creation", () => {

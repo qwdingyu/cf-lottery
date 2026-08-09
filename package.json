@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke:lottery": "node scripts/04-smoke-lottery.mjs",
+    "smoke:flash-sale": "node scripts/05-smoke-flash-sale.mjs",
     "benchmark:sqlite": "node scripts/benchmark-sqlite-capacity.mjs",
     "smoke:better-auth": "vitest run src/better-auth-smoke.test.ts",
     "frontend:build": "npm --workspace frontend run build",
