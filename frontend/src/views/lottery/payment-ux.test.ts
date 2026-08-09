@@ -117,4 +117,41 @@ describe('payment-ux', () => {
       savedAt: 70_000,
     }), 1000)).toBeNull()
   })
+
+  it('parsePaymentSessionSnapshot 恢复批量订单时保留 quantity 和 unitPriceCents', () => {
+    const restored = parsePaymentSessionSnapshot(JSON.stringify({
+      drawId: 'draw-1',
+      entryId: 'entry-1',
+      email: 'buyer@example.com',
+      orderNo: 'order-1',
+      status: 'pending',
+      amountCents: 19800,
+      quantity: 3,
+      unitPriceCents: 6600,
+      currency: 'cny',
+      provider: 'easypay',
+      accessToken: 'token-1',
+      savedAt: 1000,
+    }), 2000)
+    expect(restored?.quantity).toBe(3)
+    expect(restored?.unitPriceCents).toBe(6600)
+    expect(restored?.amountCents).toBe(19800)
+  })
+
+  it('parsePaymentSessionSnapshot 向后兼容：旧数据（无 quantity）恢复为 1', () => {
+    const restored = parsePaymentSessionSnapshot(JSON.stringify({
+      drawId: 'draw-1',
+      entryId: 'entry-1',
+      email: 'buyer@example.com',
+      orderNo: 'order-1',
+      status: 'pending',
+      amountCents: 9900,
+      currency: 'cny',
+      provider: 'easypay',
+      accessToken: 'token-1',
+      savedAt: 1000,
+    }), 2000)
+    expect(restored?.quantity).toBe(1)
+    expect(restored?.unitPriceCents).toBe(0)
+  })
 })

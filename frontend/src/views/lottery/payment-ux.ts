@@ -141,6 +141,8 @@ export function parsePaymentSessionSnapshot(
     const savedAt = Number(parsed.savedAt || 0)
     if (!Number.isFinite(savedAt) || savedAt <= 0 || nowMs - savedAt > maxAgeMs) return null
     if (savedAt - nowMs > PAYMENT_SESSION_CLOCK_SKEW_MS) return null
+    // 恢复会话时必须原样带回 quantity / unitPriceCents，否则批量订单从本地
+    // 恢复后会把件数误显示为 1（金额以 amountCents 为准，功能不受影响，仅展示偏差）。
     const snapshot = buildPaymentSessionSnapshot({
       drawId: String(parsed.drawId || ''),
       entryId: String(parsed.entryId || ''),
@@ -148,6 +150,8 @@ export function parsePaymentSessionSnapshot(
       orderNo: String(parsed.orderNo || ''),
       status: String(parsed.status || 'pending'),
       amountCents: Number(parsed.amountCents || 0),
+      quantity: Math.max(1, Math.floor(Number(parsed.quantity || 1))),
+      unitPriceCents: Math.max(0, Math.floor(Number(parsed.unitPriceCents || 0))),
       currency: String(parsed.currency || 'cny'),
       provider: String(parsed.provider || ''),
       accessToken: String(parsed.accessToken || ''),

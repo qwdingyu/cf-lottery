@@ -171,6 +171,16 @@ async function validateFlashSalePayment(
       );
     }
   }
+  // 首档阶梯起购数量必须为 1，否则用户购买件数低于第一档时会按 basePrice 计价
+  // （非预期价格）。例：[{minQuantity:5, unitPriceCents:500}] → 买 3 件按 basePrice。
+  if (flashSale.pricingTiers.length > 0 && flashSale.pricingTiers[0].minQuantity !== 1) {
+    add(
+      result.errors,
+      "payment",
+      "flash_sale.payment.pricing_tier.first_min_quantity_not_one",
+      "阶梯价首档起购数量必须为 1（覆盖所有购买件数），否则用户买不到首档价格",
+    );
+  }
 
   const currency = String(flashSale.currency || "cny").trim().toLowerCase();
   const catalogCurrencyProviders = PAYMENT_PROVIDER_CATALOG.filter((meta) => providerSupportsCurrency(meta, currency));

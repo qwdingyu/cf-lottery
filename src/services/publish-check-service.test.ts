@@ -511,6 +511,67 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.errors.some((item) => item.code === "flash_sale.payment.pricing_tier.exceeds_max")).toBe(true);
   });
 
+  it("docs/141：重复起购数量的阶梯价发布前阻断，避免运营以为两档同时生效", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          maxPerUser: 10,
+          priceCents: 9900,
+          currency: "cny",
+          pricingTiers: [
+            { minQuantity: 3, unitPriceCents: 8900, label: "小批量" },
+            { minQuantity: 3, unitPriceCents: 7900, label: "重复档" },
+          ],
+        },
+      }),
+    });
+    await addEasyPayConfig();
+    await addCodeTier(draw.id, 1, 10);
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any, {
+      credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY,
+    });
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.payment.pricing_tier.duplicate")).toBe(true);
+  });
+
+  it("docs/141：首档阶梯起购数量不为 1 时阻断发布，避免用户买不到首档价格", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          maxPerUser: 10,
+          priceCents: 9900,
+          currency: "cny",
+          pricingTiers: [
+            { minQuantity: 5, unitPriceCents: 8900, label: "首档不从 1 开始" },
+          ],
+        },
+      }),
+    });
+    await addEasyPayConfig();
+    await addCodeTier(draw.id, 1, 10);
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any, {
+      credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY,
+    });
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.payment.pricing_tier.first_min_quantity_not_one")).toBe(true);
+  });
+
   it("docs/131：进行中活动不能共享同一卡密池，避免发布后竞争库存", async () => {
     const sharedPrizeId = crypto.randomUUID();
     await client.execute({
