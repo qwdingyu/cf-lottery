@@ -324,13 +324,13 @@ describe("calculateFlashSalePrice", () => {
     // 截断后 quantity=3，不满足 minQuantity=10，所以用 basePrice
   });
 
-  it("超过 MAX_TIERS 的阶梯被忽略，但前 8 个仍然可用", () => {
+  it("超过 MAX_TIERS 会产生 issues，运行时仅保留前 8 档", () => {
     const tiers = Array.from({ length: 10 }, (_, i) => ({
       minQuantity: i + 1,
       unitPriceCents: 10000 - i * 500,
       label: `阶梯${i + 1}`,
     }));
-    const { config } = parseFlashSaleConfig({
+    const { config, issues } = parseFlashSaleConfig({
       flashSale: {
         enabled: true, paymentRequired: true, priceCents: 9900, maxPerUser: 20, currency: "cny",
         pricingTiers: tiers,
@@ -340,5 +340,6 @@ describe("calculateFlashSalePrice", () => {
     // 第 9 个及以后被忽略，但前 8 个仍正确排序
     expect(config!.pricingTiers[0].minQuantity).toBe(1);
     expect(config!.pricingTiers[7].minQuantity).toBe(8);
+    expect(issues.some((i) => i.code === "flash_sale.pricing_tier.too_many")).toBe(true);
   });
 });

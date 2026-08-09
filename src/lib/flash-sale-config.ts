@@ -110,6 +110,12 @@ function positiveInt(value: unknown, max: number): number | null {
 function parsePricingTiers(node: Record<string, unknown>, issues: FlashSaleParseResult["issues"]) {
   const raw = node.pricingTiers ?? node.pricing_tiers;
   if (!Array.isArray(raw)) return [];
+  if (raw.length > MAX_TIERS) {
+    issues.push({
+      code: "flash_sale.pricing_tier.too_many",
+      message: `阶梯价最多只允许 ${MAX_TIERS} 档，超出部分必须删减后再发布`,
+    });
+  }
   const tiers: Array<{ minQuantity: number; unitPriceCents: number; label: string }> = [];
   for (const item of raw.slice(0, MAX_TIERS)) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
@@ -194,7 +200,7 @@ export function parseFlashSaleConfig(promotionConfig: unknown): FlashSaleParseRe
     if (Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= MAX_PRICE_CENTS) {
       priceCents = n;
     } else {
-      issues.push({ code: "flash_sale.price.invalid", message: "秒杀价格必须是 0～1000000 元内的整数（分）" });
+      issues.push({ code: "flash_sale.price.invalid", message: "秒杀价格必须是 0～100000000 分内的整数" });
     }
   }
   const currency = String(node.currency || "cny").toLowerCase().slice(0, 8);

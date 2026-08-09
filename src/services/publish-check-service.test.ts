@@ -572,6 +572,38 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.errors.some((item) => item.code === "flash_sale.payment.pricing_tier.first_min_quantity_not_one")).toBe(true);
   });
 
+  it("docs/141：阶梯档位超过 MAX_TIERS 时阻断发布，避免静默截断尾部档位", async () => {
+    const draw = makeDraw({
+      maxParticipants: 10,
+      experienceType: "flash_sale",
+      activityKind: "claim",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          maxPerUser: 10,
+          priceCents: 9900,
+          currency: "cny",
+          pricingTiers: Array.from({ length: 9 }, (_, i) => ({
+            minQuantity: i + 1,
+            unitPriceCents: 9900 - i * 100,
+            label: `档位${i + 1}`,
+          })),
+        },
+      }),
+    });
+    await addEasyPayConfig();
+    await addCodeTier(draw.id, 1, 10);
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any, {
+      credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY,
+    });
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.pricing_tier.too_many")).toBe(true);
+  });
+
   it("docs/131：进行中活动不能共享同一卡密池，避免发布后竞争库存", async () => {
     const sharedPrizeId = crypto.randomUUID();
     await client.execute({
