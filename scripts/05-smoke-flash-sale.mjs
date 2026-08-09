@@ -13,23 +13,28 @@ import { randomUUID, webcrypto as nodeCrypto } from "node:crypto";
  * 默认不启用 paymentRequired，避免把支付配置测试提前引入。
  *
  * 用法：
+ *   SMOKE_BASE_URL='http://localhost:8787' \
+ *   SMOKE_DATABASE_URL='file:./data/flash-sale-smoke.db' \
  *   ADMIN_PASS='...' node scripts/05-smoke-flash-sale.mjs
  *
  * 环境变量：
- *   BASE_URL                    — API 地址，默认 http://localhost:8787
+ *   SMOKE_BASE_URL              — API 地址，默认 http://localhost:8787
+ *   SMOKE_DATABASE_URL          — 本地烟测 SQLite 地址，默认 file:./data/lottery.db
  *   ADMIN_USER                  — 登录用户名，默认 admin
- *   ADMIN_PASS                  — 登录密码，必填
+ *   ADMIN_PASS                  — 登录密码；未提供时本地库可自动 bootstrap
+ *   SMOKE_BOOTSTRAP_PASS        — 本地 bootstrap 口令，默认 Smoke1234A!
  *   FLASH_SALE_PAYMENT_REQUIRED — 是否顺便测直付支付前提，默认 false
  *   FLASH_SALE_DESTINATION_URL  — 秒杀导流链接，默认 https://example.com/flash-sale
  */
 
-const BASE_URL = process.env.BASE_URL || "http://localhost:8787";
+const BASE_URL = process.env.SMOKE_BASE_URL || "http://localhost:8787";
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASS = process.env.ADMIN_PASS || "";
 const PAYMENT_REQUIRED = ["1", "true", "yes"].includes(String(process.env.FLASH_SALE_PAYMENT_REQUIRED || "").toLowerCase());
 const DESTINATION_URL = process.env.FLASH_SALE_DESTINATION_URL || "https://example.com/flash-sale";
-const DB_URL = process.env.DATABASE_URL || process.env.TURSO_URL || "file:./data/lottery.db";
+const DB_URL = process.env.SMOKE_DATABASE_URL || "file:./data/lottery.db";
 const LOCAL_BOOTSTRAP_ALLOWED = isLocalBaseUrl(BASE_URL) && DB_URL.startsWith("file:");
+const LOCAL_SMOKE_PASSWORD = process.env.SMOKE_BOOTSTRAP_PASS || "Smoke1234A!";
 
 let passed = 0;
 let failed = 0;
@@ -122,7 +127,7 @@ async function bootstrapLocalUser(username, email, password) {
 
 async function loginOrBootstrap() {
   const loginUsername = ADMIN_USER;
-  const loginPassword = ADMIN_PASS || `Smoke${Date.now()}A1!`;
+  const loginPassword = ADMIN_PASS || LOCAL_SMOKE_PASSWORD;
   try {
     const login = await request("/api/auth/login", {
       method: "POST",
