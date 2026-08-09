@@ -1558,6 +1558,75 @@ describe("最大参与人数和参与时间", () => {
     expect(attempt?.status).toBe("expired");
   });
 
+  it("取消活动不掩盖已支付履约：entry 有 PAID 订单时保持 paid，只释放批发未支付订单容量", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "取消不掩盖已支付",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      participationMode: "open",
+      winnerCount: 0,
+      maxParticipants: 5,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 5,
+          priceCents: 8900,
+          currency: "cny",
+        },
+      }),
+    });
+    await db.update(lotteryDraws)
+      .set({ status: "open" })
+      .where(eq(lotteryDraws.id, id));
+    const first = await joinDraw(db, publicSlug, "paid-then-wholesale@test.com");
+    expect(first.joined).toBe(true);
+    const entryId = first.entryId!;
+
+    // 订单 A：首次购买已支付（qty=1），entry → paid
+    const orderAId = crypto.randomUUID();
+    await db.insert(paymentOrders).values({
+      id: orderAId, tenantId: TENANT, drawId: id, entryId,
+      quantity: 1, amountCents: 8900, currency: "cny",
+      status: "paid", provider: "easypay",
+    });
+    await db.update(lotteryEntries).set({ paymentStatus: "paid" }).where(eq(lotteryEntries.id, entryId));
+    // 订单 B：批发续购未支付（qty=3），entry → pending
+    const orderBId = crypto.randomUUID();
+    const attemptBId = crypto.randomUUID();
+    await db.insert(paymentOrders).values({
+      id: orderBId, tenantId: TENANT, drawId: id, entryId,
+      quantity: 3, amountCents: 26700, currency: "cny",
+      status: "pending", provider: "easypay", currentAttemptId: attemptBId,
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: attemptBId, paymentOrderId: orderBId, tenantId: TENANT, drawId: id,
+      attemptNo: 1, provider: "easypay", amountCents: 26700, currency: "cny", status: "pending",
+    });
+    await db.update(lotteryEntries).set({ paymentStatus: "pending" }).where(eq(lotteryEntries.id, entryId));
+    // 容量：join base 1 + 订单 B 续购 3 = 4（订单 A 首购 qty=1 无额外 reserve）
+    await db.update(lotteryDraws).set({ activeParticipantCount: 4 }).where(eq(lotteryDraws.id, id));
+
+    const cancelled = await cancelDraw(db, TENANT, id);
+    expect(cancelled).toBe(true);
+
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, id));
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    const [orderA] = await db.select({ status: paymentOrders.status }).from(paymentOrders).where(eq(paymentOrders.id, orderAId));
+    const [orderB] = await db.select({ status: paymentOrders.status }).from(paymentOrders).where(eq(paymentOrders.id, orderBId));
+    // 关键断言：entry 因仍有 PAID 订单 A 保持 paid（不是 expired），订单 B 被过期
+    expect(draw?.status).toBe("cancelled");
+    expect(entry?.paymentStatus).toBe("paid");
+    expect(orderA?.status).toBe("paid");
+    expect(orderB?.status).toBe("expired");
+    // 只释放订单 B 的 3 件，订单 A 的 1 件仍占用
+    expect(draw?.activeParticipantCount).toBe(1);
+  });
+
   it("docs/130：秒杀仅 maxParticipants、无 flashSale 节点时仍按 max 截单", async () => {
     const now = new Date();
     const future = new Date(now.getTime() + 3600000);

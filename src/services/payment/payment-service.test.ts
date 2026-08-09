@@ -1209,6 +1209,37 @@ it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
     expect(draw?.activeParticipantCount).toBe(2);
   });
 
+  it("paid_fulfillment_failed 订单未补发完成前不允许用户再次创建新单", async () => {
+    const { drawId, entryId } = await seedBatchFlow(5, 3);
+    await db.insert(paymentOrders).values({
+      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, entryId,
+      quantity: 3, amountCents: 26700, currency: "cny",
+      status: "paid_fulfillment_failed", provider: "easypay",
+    });
+    await db.update(lotteryEntries).set({ paymentStatus: "pending" }).where(eq(lotteryEntries.id, entryId));
+
+    const provider: PaymentProvider = {
+      ...providerMock,
+      createPayment: vi.fn(),
+    };
+
+    await expect(createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email", buyerIdentityValue: "test@example.com",
+      quantity: 2, unitPriceCents: 8900,
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      amountCents: 17800, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "补发未完成新单",
+    }, provider)).rejects.toThrow("订单仍在处理中");
+
+    expect(provider.createPayment).not.toHaveBeenCalled();
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    // 容量未被预约（FULFILLMENT_FAILED 检查在预约之前），初始容量为 seedBatchFlow 的 1
+    expect(draw?.activeParticipantCount).toBe(1);
+    expect(entry?.paymentStatus).toBe("pending");
+  });
+
   it("retryPaymentFulfillment 批量补发一次性补齐订单数量对应卡密", async () => {
     const { drawId, entryId } = await seedBatchFlow(5, 3);
     const orderId = crypto.randomUUID();

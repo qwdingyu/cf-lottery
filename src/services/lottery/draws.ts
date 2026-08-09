@@ -7,7 +7,7 @@
  */
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
-import { and, eq, count, inArray, sql } from "drizzle-orm";
+import { and, eq, count, inArray, notInArray, sql } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
@@ -479,8 +479,14 @@ export async function cancelDraw(db: DbType, tenantId: string, drawId: string): 
     // 取消是终止运营，不允许继续为未支付订单重新生成支付入口。
     // 外部网关可能仍在途，订单先落 expired；迟到回调会被支付服务转为
     // paid_late_needs_refund，保留可退款审计链，而不是静默丢失付款事实。
+    //
+    // ⚠️ 多订单模型下，entry 的 paymentStatus 为 PENDING 不代表「未收款」：
+    //    用户可能已有 PAID 订单（首次购买）+ 新批发订单 PENDING。
+    //    释放 entry 前必须检查是否存在 PAID/FULFILLMENT_FAILED 订单，
+    //    避免掩盖已支付履约（与 payment-service 中 Bug1/Bug2 同类问题）。
+    // 1) 先查 PENDING 订单及其数量（用于后续容量释放）
     const pendingOrders = await tx
-      .select({ id: paymentOrders.id })
+      .select({ id: paymentOrders.id, quantity: paymentOrders.quantity, entryId: paymentOrders.entryId })
       .from(paymentOrders)
       .where(and(
         eq(paymentOrders.tenantId, tenantId),
@@ -488,6 +494,8 @@ export async function cancelDraw(db: DbType, tenantId: string, drawId: string): 
         eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
       ));
     const pendingOrderIds = pendingOrders.map((order) => order.id);
+    const pendingEntryIds = new Set(pendingOrders.map((o) => o.entryId));
+    const expiredQty = pendingOrders.reduce((sum, o) => sum + o.quantity, 0);
     if (pendingOrderIds.length > 0) {
       await tx
         .update(paymentOrders)
@@ -507,25 +515,62 @@ export async function cancelDraw(db: DbType, tenantId: string, drawId: string): 
         ));
     }
 
+    // 2) 查找有 PAID/FULFILLMENT_FAILED 订单的 entry → 恢复为 paid（不能释放）
+    const paidEntryRows = await tx
+      .select({ entryId: paymentOrders.entryId })
+      .from(paymentOrders)
+      .where(and(
+        eq(paymentOrders.tenantId, tenantId),
+        eq(paymentOrders.drawId, drawId),
+        inArray(paymentOrders.status, [
+          PAYMENT_ORDER_STATUS.PAID,
+          PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED,
+        ]),
+      ));
+    const paidEntryIds = new Set(paidEntryRows.map((r) => r.entryId));
+    if (paidEntryIds.size > 0) {
+      await tx
+        .update(lotteryEntries)
+        .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
+        .where(and(
+          eq(lotteryEntries.tenantId, tenantId),
+          eq(lotteryEntries.drawId, drawId),
+          notInArray(lotteryEntries.paymentStatus, [PAYMENT_ENTRY_STATUS.PAID]),
+          inArray(lotteryEntries.id, [...paidEntryIds]),
+        ));
+    }
+
+    // 3) 释放未受 PAID 订单保护的 entry（RESERVED 或 PENDING，且无 PAID 订单）
     const releasedEntries = await tx
       .update(lotteryEntries)
       .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
       .where(and(
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.drawId, drawId),
-        // 取消活动只释放尚未收款的 reserved/pending；已收款待补发不能被释放，
-        // 否则会重新占用名额并丢失退款/补发审计链。
+        ...(paidEntryIds.size > 0
+          ? [notInArray(lotteryEntries.id, [...paidEntryIds])]
+          : []),
         inArray(lotteryEntries.paymentStatus, [
           PAYMENT_ENTRY_STATUS.RESERVED,
           PAYMENT_ENTRY_STATUS.PENDING,
         ]),
       ))
       .returning({ id: lotteryEntries.id });
-    if (releasedEntries.length > 0) {
+
+    // 4) 释放容量：
+    //    - expiredQty = 所有过期 PENDING 订单的 quantity 之和（含 base 1 与额外件数）
+    //    - reservedOnly = 被释放的纯 RESERVED entry（无 PENDING 订单），每个释放 base 1
+    //    原理：capacity = 1(join base) + sum((qty-1) 首单) + sum(qty 续单)
+    //    释放 sum(qty 过期订单) + 1(无订单 RESERVED) = 正确回收全部容量
+    const releaseEntryIds = new Set(releasedEntries.map((e) => e.id));
+    const reservedOnlyCount = [...releaseEntryIds].filter((id) => !pendingEntryIds.has(id)).length;
+    const totalCapacityRelease = expiredQty + reservedOnlyCount;
+
+    if (totalCapacityRelease > 0) {
       await tx
         .update(lotteryDraws)
         .set({
-          activeParticipantCount: sql`MAX(0, ${lotteryDraws.activeParticipantCount} - ${releasedEntries.length})`,
+          activeParticipantCount: sql`MAX(0, ${lotteryDraws.activeParticipantCount} - ${totalCapacityRelease})`,
           updatedAt: sql`(datetime('now'))`,
         })
         .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));

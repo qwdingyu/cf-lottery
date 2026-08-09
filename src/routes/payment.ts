@@ -344,7 +344,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     accessToken = created.accessToken;
   } catch (err) {
     const message = err instanceof Error ? err.message : "";
-    if (message.includes("名额")) {
+    if (message.includes("名额") || message.includes("处理中")) {
       return fail(c, message, 409);
     }
     return fail(c, "支付下单失败，请稍后重试", 502);

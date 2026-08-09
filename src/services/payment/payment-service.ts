@@ -704,6 +704,13 @@ export async function createPaymentOrder(
       ))
       .orderBy(desc(paymentOrders.createdAt))
       .limit(1);
+    if (
+      existingOrder &&
+      (existingOrder.status === PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED ||
+        existingOrder.status === PAYMENT_ORDER_STATUS.LATE_NEEDS_REFUND)
+    ) {
+      throw new Error("订单仍在处理中，请联系客服处理");
+    }
     if (existingOrder?.status === PAYMENT_ORDER_STATUS.PENDING) {
       throw new Error("订单已存在，请刷新后重试");
     }
