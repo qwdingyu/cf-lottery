@@ -141,7 +141,10 @@ route.get("/draws/:id/stats", async (c) => {
   const draw = await getDraw(db, drawId, tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  const [entryRow] = await db.select({ total: count() }).from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId));
+  const [entryRow] = await db
+    .select({ total: count() })
+    .from(lotteryEntries)
+    .where(and(eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)));
   const entryCount = Number(entryRow?.total ?? 0);
   const events = await getActivityEventSummary(db, tenantId, drawId);
   const externalConversions = await getExternalConversionSummary(db, tenantId, drawId);
@@ -267,7 +270,10 @@ route.get("/draws/:id/export", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
 
   // 先检查总参与人数，超出限制时提示
-  const [exportCountRow] = await db.select({ total: count() }).from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId));
+  const [exportCountRow] = await db
+    .select({ total: count() })
+    .from(lotteryEntries)
+    .where(and(eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)));
   const entryCount = Number(exportCountRow?.total ?? 0);
   if (entryCount > MAX_EXPORT_ROWS) {
     return fail(c, `参与人数超出单次导出上限（${MAX_EXPORT_ROWS}），请分批导出或联系平台运营`, 400);
@@ -605,7 +611,11 @@ route.post("/draws/:id/winners/:winnerId/resend", async (c) => {
   await db
     .update(lotteryWinners)
     .set({ notificationStatus: "pending", notificationError: "", notificationRetryCount: 0 })
-    .where(eq(lotteryWinners.id, winner.id));
+    .where(and(
+      eq(lotteryWinners.id, winner.id),
+      eq(lotteryWinners.tenantId, tenantId),
+      eq(lotteryWinners.drawId, drawId),
+    ));
 
   // 同步发送：无独立「pending 邮件」cron，只重置状态等于空操作
   const result = await sendWinnerNotifications(db, tenantId, drawId, {

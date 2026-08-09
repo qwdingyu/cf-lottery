@@ -879,6 +879,43 @@ describe("管理端补发卡密", () => {
   });
 });
 
+describe("管理端统计租户隔离", () => {
+  it("活动 stats 只统计当前租户参与记录，忽略异常跨租户同 drawId 脏数据", async () => {
+    const app = createTestApp();
+    await seedOwner();
+    const { id } = await createDraft(app, "lottery");
+    await configureManualPrizeTier(app, id);
+    await publishDraft(app, id);
+
+    await db.insert(lotteryEntries).values([
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT_ID,
+        drawId: id,
+        identityType: "email",
+        identityValue: "local@test.com",
+        joinedAt: new Date().toISOString(),
+      },
+      {
+        id: crypto.randomUUID(),
+        tenantId: "tenant-dirty-other",
+        drawId: id,
+        identityType: "email",
+        identityValue: "other@test.com",
+        joinedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const res = await app.request(`/api/admin/draws/${id}/stats`, {
+      method: "GET",
+      headers: { ...(await authHeader()) },
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.entryCount).toBe(1);
+  });
+});
+
 /**
  * docs/078：管理端重发邮件 / drawing 恢复 — 前端已接线，后端此前缺路由 → 404。
  * 不依赖真实 Resend：mock fetch；校验状态迁移与 sent/failed 契约。

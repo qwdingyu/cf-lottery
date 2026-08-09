@@ -561,7 +561,11 @@ export async function sendWinnerNotifications(
           // 发送成功重置重试计数；失败则 +1（累计到 maxRetryAttempts 即停止）
           notificationRetryCount: result.ok ? 0 : sql`notification_retry_count + 1`,
         })
-        .where(eq(lotteryWinners.id, winner.winnerId));
+        .where(and(
+          eq(lotteryWinners.id, winner.winnerId),
+          eq(lotteryWinners.tenantId, tenantId),
+          eq(lotteryWinners.drawId, drawId),
+        ));
       return result.ok ? "sent" : "failed";
     } catch (err) {
       await db
@@ -572,7 +576,11 @@ export async function sendWinnerNotifications(
           // 异常场景也递增重试计数，保证与正常失败路径一致
           notificationRetryCount: sql`notification_retry_count + 1`,
         })
-        .where(eq(lotteryWinners.id, winner.winnerId));
+        .where(and(
+          eq(lotteryWinners.id, winner.winnerId),
+          eq(lotteryWinners.tenantId, tenantId),
+          eq(lotteryWinners.drawId, drawId),
+        ));
       return "failed";
     }
   });
