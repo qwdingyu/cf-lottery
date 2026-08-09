@@ -2161,9 +2161,9 @@ function onFlashSaleTierPriceInput(index: number, event: Event) {
 function addFlashSalePricingTier() {
   if (form.value.flashSalePricingTiers.length >= 8) return
   const lastMin = form.value.flashSalePricingTiers
-    .reduce((max, tier) => Math.max(max, Number(tier.minQuantity || 0)), 1)
+    .reduce((max, tier) => Math.max(max, Number(tier.minQuantity || 0)), 0)
   form.value.flashSalePricingTiers.push({
-    minQuantity: Math.min(100, lastMin + 1),
+    minQuantity: form.value.flashSalePricingTiers.length === 0 ? 1 : Math.min(100, lastMin + 1),
     unitPriceCents: form.value.flashSalePriceCents || 0,
     label: '',
   })
