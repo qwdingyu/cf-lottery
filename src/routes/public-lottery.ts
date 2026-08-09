@@ -348,6 +348,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
       .from(lotteryEntries)
       .where(and(
         eq(lotteryEntries.drawId, draw.id),
+        eq(lotteryEntries.tenantId, draw.tenantId),
         inArray(lotteryEntries.paymentStatus, [
           PAYMENT_ENTRY_STATUS.NONE,
           ...PAYMENT_ENTRY_CAPACITY_STATUSES,
@@ -465,7 +466,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     const winners = await db
       .select({ identityValue: lotteryWinners.identityValue })
       .from(lotteryWinners)
-      .where(eq(lotteryWinners.drawId, draw.id));
+      .where(and(eq(lotteryWinners.drawId, draw.id), eq(lotteryWinners.tenantId, draw.tenantId)));
     result.winners = winners.map(w => ({ identity: maskIdentity(w.identityValue) }));
   }
 
