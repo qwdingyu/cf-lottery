@@ -11,7 +11,19 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { platformQQRoute } from "./platform-qq";
 import { clearTestData, getTestDb } from "../test-setup";
-import { activityEvents, lotteryDraws, lotteryEntries, platformTargets, shareRecords, tenants } from "../db/schema";
+import {
+  activityEvents,
+  lotteryDraws,
+  lotteryEntries,
+  lotteryPrizeTiers,
+  lotterySpins,
+  lotteryWinners,
+  platformTargets,
+  prizeCodes,
+  prizes,
+  shareRecords,
+  tenants,
+} from "../db/schema";
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { and, eq } from "drizzle-orm";
 
@@ -108,6 +120,63 @@ async function seedViralDraw(viralEnabled = true, leaderboardEnabled: boolean | 
       },
     }),
   });
+}
+
+async function seedInstantDraw() {
+  const now = new Date();
+  const prizeId = "prize-qq-instant";
+  await db.insert(lotteryDraws).values({
+    id: "draw-qq-1",
+    tenantId: TENANT_ID,
+    title: "QQ 即时抽奖",
+    publicSlug: "qq-lottery",
+    status: "open",
+    activityKind: "lottery",
+    participationMode: "open",
+    experienceType: "wheel",
+    resultMode: "instant",
+    maxSpinsPerEntry: 2,
+    startAt: new Date(now.getTime() - 3600000).toISOString(),
+    endAt: new Date(now.getTime() + 3600000).toISOString(),
+    activityConfig: "{}",
+    promotionConfig: "{}",
+  });
+  await db.insert(prizes).values({
+    id: prizeId,
+    tenantId: TENANT_ID,
+    name: "QQ 卡密奖品",
+    prizeType: "code",
+    totalCount: 2,
+    active: 1,
+  });
+  await db.insert(lotteryPrizeTiers).values({
+    id: "tier-qq-instant",
+    tenantId: TENANT_ID,
+    drawId: "draw-qq-1",
+    prizeId,
+    tierName: "一等奖",
+    winnerCount: 2,
+    weight: 100,
+    sortOrder: 1,
+  });
+  await db.insert(prizeCodes).values([
+    {
+      id: "code-qq-1",
+      tenantId: TENANT_ID,
+      prizeId,
+      code: "QQ-CODE-1",
+      secret: "SECRET-1",
+      status: "available",
+    },
+    {
+      id: "code-qq-2",
+      tenantId: TENANT_ID,
+      prizeId,
+      code: "QQ-CODE-2",
+      secret: "SECRET-2",
+      status: "available",
+    },
+  ]);
 }
 
 async function seedLeaderboardEntry(id: string, identityValue: string, displayName: string, joinedCount: number) {
@@ -501,5 +570,126 @@ describe("POST /api/platform/qq/message", () => {
     const body = await res.json() as { handled?: boolean; reply?: string };
     expect(body.handled).toBe(true);
     expect(body.reply).toContain("未开启裂变排行榜");
+  });
+
+  it("/抽奖 直接用 QQ 身份参与并即时抽奖，群内不泄露卡密", async () => {
+    await seedTarget();
+    await seedInstantDraw();
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/抽奖", message_id: 9001 })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("恭喜你抽中了");
+    expect(body.reply).not.toContain("QQ-CODE-1");
+    expect(body.reply).not.toContain("SECRET-1");
+    expect(body.reply).toContain("群内泄露");
+
+    const entries = await db
+      .select()
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.tenantId, TENANT_ID),
+        eq(lotteryEntries.drawId, "draw-qq-1"),
+        eq(lotteryEntries.identityType, "qq"),
+        eq(lotteryEntries.identityValue, "998877"),
+      ));
+    expect(entries).toHaveLength(1);
+
+    const winners = await db
+      .select()
+      .from(lotteryWinners)
+      .where(and(eq(lotteryWinners.tenantId, TENANT_ID), eq(lotteryWinners.drawId, "draw-qq-1")));
+    expect(winners).toHaveLength(1);
+  });
+
+  it("/抽奖 同一消息回放不重复扣次，新消息可继续抽", async () => {
+    await seedTarget();
+    await seedInstantDraw();
+    const app = createTestApp();
+    const request = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/抽奖", message_id: 9101 })),
+    };
+
+    const first = await app.request("/api/platform/qq/message", request, TEST_ENV);
+    expect(first.status).toBe(200);
+    const replay = await app.request("/api/platform/qq/message", request, TEST_ENV);
+    expect(replay.status).toBe(200);
+
+    let spins = await db
+      .select()
+      .from(lotterySpins)
+      .where(and(eq(lotterySpins.tenantId, TENANT_ID), eq(lotterySpins.drawId, "draw-qq-1")));
+    expect(spins).toHaveLength(1);
+
+    await db
+      .update(lotteryEntries)
+      .set({ spinsLeft: 1, spinsTotalGranted: 2 })
+      .where(and(
+        eq(lotteryEntries.tenantId, TENANT_ID),
+        eq(lotteryEntries.drawId, "draw-qq-1"),
+        eq(lotteryEntries.identityType, "qq"),
+        eq(lotteryEntries.identityValue, "998877"),
+      ));
+
+    const secondMessage = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/抽奖", message_id: 9102 })),
+    }, TEST_ENV);
+    expect(secondMessage.status).toBe(200);
+
+    spins = await db
+      .select()
+      .from(lotterySpins)
+      .where(and(eq(lotterySpins.tenantId, TENANT_ID), eq(lotterySpins.drawId, "draw-qq-1")));
+    expect(spins).toHaveLength(2);
+  });
+
+  it("/我的奖品 只展示奖品摘要，不在群内展示卡密", async () => {
+    await seedTarget();
+    await seedInstantDraw();
+    const app = createTestApp();
+    const spinRes = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/抽奖", message_id: 9201 })),
+    }, TEST_ENV);
+    expect(spinRes.status).toBe(200);
+
+    const prizeRes = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/我的奖品", message_id: 9202 })),
+    }, TEST_ENV);
+    expect(prizeRes.status).toBe(200);
+    const body = await prizeRes.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("QQ 卡密奖品");
+    expect(body.reply).toContain("群内不展示");
+    expect(body.reply).not.toContain("QQ-CODE-1");
+    expect(body.reply).not.toContain("SECRET-1");
   });
 });

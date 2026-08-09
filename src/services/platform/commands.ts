@@ -6,12 +6,14 @@
  * - 只接受平台服务层解析出的 QQ 身份。
  * - 每个命令必须复用正式业务函数，禁止拼公开 email/OTP HTTP API。
  *
- * P0 当前已接 `/签到`、`/分享`、`/排行榜`。其它命令仍 fail closed，等逐个补测试后再打开。
+ * P0 当前已接 `/签到`、`/分享`、`/排行榜`、`/抽奖`、`/我的奖品`。
+ * 涉及卡密的回复必须默认群内脱敏，不能把完整码发到 QQ 群里。
  */
 import type { DbType } from "../../db/client";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { lotteryDraws, lotteryEntries, shareRecords } from "../../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, shareRecords } from "../../db/schema";
 import { joinDraw, recordActivityEvent } from "../lottery-service";
+import { performInstantSpin, SpinBusinessError } from "../lottery/spin-execution";
 import {
   aggregateViralInviteCounts,
   buildPublicSharePath,
@@ -110,6 +112,14 @@ export async function executeBuiltinPlatformCommand(
 
   if (input.command === "leaderboard") {
     return executeLeaderboardCommand(db, input);
+  }
+
+  if (input.command === "spin") {
+    return executeSpinCommand(db, input);
+  }
+
+  if (input.command === "my_prize") {
+    return executeMyPrizeCommand(db, input);
   }
 
   /**
@@ -376,4 +386,135 @@ async function executeCheckinCommand(
   if (result.ok && result.joinedNow) return { handled: true, reply: "签到成功，已记录你的参与。" };
   if (result.ok) return { handled: true, reply: "您已参与此活动" };
   return { handled: true, reply: result.message || "签到失败，请稍后再试。" };
+}
+
+/**
+ * 执行 /抽奖 命令（instant 即时抽奖）。
+ *
+ * 流程：
+ * 1. 校验活动 resultMode 是否为 instant
+ * 2. 构建幂等键（优先使用 QQ messageId，防止同一条消息重试被重复扣次）
+ * 3. 调用 performInstantSpin 执行即时抽奖
+ * 4. 根据结果返回中奖/未中奖消息
+ */
+async function executeSpinCommand(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
+): Promise<PlatformCommandResult> {
+  // 查询活动确认 resultMode=instant
+  const [draw] = await db
+    .select({ resultMode: lotteryDraws.resultMode })
+    .from(lotteryDraws)
+    .where(and(
+      eq(lotteryDraws.id, input.drawId),
+      eq(lotteryDraws.tenantId, input.tenantId),
+    ))
+    .limit(1);
+  if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定 QQ 群助手。" };
+
+  if (String(draw.resultMode || "") !== "instant") {
+    return { handled: true, reply: "当前活动不是即时抽奖模式，请在手动开奖后查看结果。发送 /帮助 查看更多命令。" };
+  }
+
+  const entry = await ensurePlatformEntry(db, input);
+  if (!entry.ok) return { handled: true, reply: entry.message };
+
+  // 优先使用平台消息 ID 做幂等：同一条 QQ 消息重试只回放一次，不会阻止用户后续发送新消息继续消耗抽奖次数。
+  const idempotencyKey = buildPlatformSpinIdempotencyKey(input);
+
+  try {
+    const result = await performInstantSpin(db, {
+      slug: input.publicSlug,
+      identityType: input.user.identityType,
+      identityValue: input.user.identityValue,
+      idempotencyKey,
+      ipHash: `qq:${input.source.groupId}`,
+    });
+
+    if (result.won) {
+      const prizeText = result.prizeName || result.tierName || "奖品";
+      const codeText = result.prizeCode
+        ? "\n卡密已发放。为避免群内泄露，请通过主办方后台核验或后续私聊/网页查看能力领取。"
+        : "";
+      return {
+        handled: true,
+        reply: `🎉 恭喜你抽中了「${prizeText}」！${codeText}\n剩余抽奖次数：${result.spinsLeft} 次`,
+      };
+    }
+
+    return {
+      handled: true,
+      reply: `😅 很遗憾，本次未中奖。剩余抽奖次数：${result.spinsLeft} 次`,
+    };
+  } catch (err) {
+    if (err instanceof SpinBusinessError) {
+      // SpinBusinessError 已经包含友好的中文错误消息
+      return { handled: true, reply: err.message };
+    }
+    return { handled: true, reply: "抽奖失败，请稍后再试。" };
+  }
+}
+
+function buildPlatformSpinIdempotencyKey(input: ExecuteBuiltinCommandInput): string {
+  const messageId = String(input.source.messageId || "").trim();
+  if (messageId) {
+    return `qq:${input.platformTargetId}:${messageId}`.slice(0, 128);
+  }
+  return `qq:${input.platformTargetId}:no-message:${crypto.randomUUID()}`.slice(0, 128);
+}
+
+/**
+ * 执行 /我的奖品 命令。
+ *
+ * 查询该用户在绑定活动中的所有中奖记录。群内只展示奖品摘要，不展示卡密明文。
+ */
+async function executeMyPrizeCommand(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
+): Promise<PlatformCommandResult> {
+  // 先查找用户在该活动的参与记录
+  const entry = await findPlatformEntryId(db, input);
+  if (!entry) {
+    return { handled: true, reply: "你还未参与本活动，发送 /抽奖 或 /签到 参与吧。" };
+  }
+
+  // 查询中奖记录，关联奖项名称。卡密明文不进入群消息响应，避免公开群泄露。
+  const winners = await db
+    .select({
+      id: lotteryWinners.id,
+      tierName: lotteryPrizeTiers.tierName,
+      prizeName: prizes.name,
+      prizeCodeId: lotteryWinners.prizeCodeId,
+      drawnAt: lotteryWinners.drawnAt,
+    })
+    .from(lotteryWinners)
+    .leftJoin(lotteryPrizeTiers, and(
+      eq(lotteryPrizeTiers.id, lotteryWinners.tierId),
+      eq(lotteryPrizeTiers.tenantId, input.tenantId),
+    ))
+    .leftJoin(prizes, and(
+      eq(prizes.id, lotteryPrizeTiers.prizeId),
+      eq(prizes.tenantId, input.tenantId),
+    ))
+    .where(and(
+      eq(lotteryWinners.tenantId, input.tenantId),
+      eq(lotteryWinners.drawId, input.drawId),
+      eq(lotteryWinners.entryId, entry),
+    ))
+    .orderBy(lotteryWinners.drawnAt);
+
+  if (winners.length === 0) {
+    return { handled: true, reply: "你还没有获得奖品，发送 /抽奖 试试手气吧！" };
+  }
+
+  const lines = winners.map((w, idx) => {
+    const name = w.prizeName || w.tierName || `奖品 #${idx + 1}`;
+    const code = w.prizeCodeId ? "（卡密已发放，群内不展示）" : "";
+    return `${idx + 1}. ${name}${code}`;
+  });
+
+  return {
+    handled: true,
+    reply: `🎁 你的奖品（共 ${winners.length} 件）：\n${lines.join("\n")}\n为避免泄露，卡密不在群内展示。`,
+  };
 }
