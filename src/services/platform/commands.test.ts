@@ -156,6 +156,24 @@ async function seedManualDraw() {
   });
 }
 
+/** 播种一个 instant 但非 lottery 的活动，验证 /抽奖 不会误接入其他玩法 */
+async function seedInstantNonLotteryDraw() {
+  const now = new Date();
+  await db.insert(lotteryDraws).values({
+    id: DRAW_ID,
+    tenantId: TENANT_ID,
+    publicSlug: "cmd-test-slug",
+    title: "即时非抽奖活动测试",
+    status: "open",
+    activityKind: "vote",
+    participationMode: "open",
+    experienceType: "submit",
+    resultMode: "instant",
+    startAt: new Date(now.getTime() - 3600_000).toISOString(),
+    endAt: new Date(now.getTime() + 86400_000 * 7).toISOString(),
+  });
+}
+
 /** 让用户加入活动（获得 entry） */
 async function ensureEntry() {
   await db.insert(lotteryEntries).values({
@@ -280,6 +298,13 @@ describe("/抽奖 (executeSpinCommand)", () => {
     const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "spin" }));
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("不是即时抽奖模式");
+  });
+
+  it("instant 但非 lottery 活动时提示绑定即时抽奖活动", async () => {
+    await seedInstantNonLotteryDraw();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "spin" }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("不是抽奖活动");
   });
 
   it("instant 活动未参与时自动创建 QQ 参与记录并抽奖", async () => {
