@@ -31,6 +31,11 @@ export type Bindings = {
   EMAIL_FROM_NAME?: string;
   // 生成公开活动链接时使用的正式站点域名
   APP_ORIGIN?: string;
+  // QQ 群助手（docs/167）：P0 底层使用 NapCat/OneBot，租户侧不直接配置这些值
+  QQ_ADAPTER_PROVIDER?: string;
+  QQ_ADAPTER_BASE_URL?: string;
+  QQ_ADAPTER_TOKEN?: string;
+  QQ_INBOUND_TOKEN?: string;
   // Cron 调用的认证密钥，防止未授权触发定时开奖
   CRON_SECRET?: string;
   // 敏感配置加密密钥（64 位 hex 字符串），用于加密存储敏感配置项

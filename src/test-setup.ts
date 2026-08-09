@@ -191,6 +191,8 @@ export async function clearTestData(client: Client) {
     "activity_outcomes",
     "external_conversions",
     "share_records",
+    "platform_deliveries",
+    "platform_targets",
     "webhook_deliveries",
     "webhook_configs",
     "api_keys",

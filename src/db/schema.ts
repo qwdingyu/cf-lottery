@@ -803,3 +803,65 @@ export const PAYMENT_ORDER_ITEM_STATUS = {
   FULFILLED: "fulfilled",
   REFUNDED: "refunded",
 } as const;
+
+/**
+ * 平台目标绑定（docs/167）：租户把一个 QQ 群绑定到一个当前活动。
+ *
+ * 为什么独立于 webhook_configs：
+ * - webhook_configs 的核心语义是 HTTP URL + HMAC 投递；
+ * - QQ 群是平台目标，不是 URL。混用会污染投递审计与失败重试模型。
+ *
+ * P0 只实现 platform='qq'，底层可由 NapCat/OneBot 提供；字段保留 platform
+ * 是为了未来官方 QQ Bot 或 Telegram 接入时不重写业务绑定模型。
+ */
+export const platformTargets = sqliteTable("platform_targets", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  platform: text("platform").notNull().default("qq"),
+  /** 平台侧目标 ID：QQ 群号 / 未来 Telegram chat_id。 */
+  targetId: text("target_id").notNull(),
+  targetName: text("target_name").notNull().default(""),
+  /** 当前绑定活动。群内内置命令围绕这一个活动执行，降低 SaaS 配置复杂度。 */
+  activeDrawId: text("active_draw_id").notNull(),
+  activePublicSlug: text("active_public_slug").notNull().default(""),
+  assistantEnabled: integer("assistant_enabled").notNull().default(1),
+  /** 内置命令开关与文案覆盖。命令语义固定，不支持租户动态新增任意命令。 */
+  builtinCommandsJson: text("builtin_commands_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  tenantIdx: index("idx_platform_targets_tenant").on(t.tenantId, t.platform, t.createdAt),
+  targetUnique: uniqueIndex("idx_platform_targets_target_unique").on(t.platform, t.targetId),
+  activeDrawIdx: index("idx_platform_targets_active_draw").on(t.tenantId, t.activeDrawId),
+}));
+
+/**
+ * 平台消息投递审计（docs/167）。
+ *
+ * HTTP webhook 继续使用 webhook_deliveries；QQ 群消息使用本表记录平台 target、
+ * provider message_id、命令或事件来源，方便后台排查“消息是否真正发到群里”。
+ */
+export const platformDeliveries = sqliteTable("platform_deliveries", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  platformTargetId: text("platform_target_id").notNull(),
+  platform: text("platform").notNull().default("qq"),
+  targetId: text("target_id").notNull(),
+  eventId: text("event_id").notNull().default(""),
+  eventType: text("event_type").notNull().default(""),
+  command: text("command").notNull().default(""),
+  payloadJson: text("payload_json").notNull().default("{}"),
+  status: text("status").notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  providerMessageId: text("provider_message_id").notNull().default(""),
+  responseBody: text("response_body").notNull().default(""),
+  lastError: text("last_error").notNull().default(""),
+  nextRetryAt: text("next_retry_at"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  sentAt: text("sent_at"),
+}, (t) => ({
+  tenantStatusIdx: index("idx_platform_deliveries_tenant_status").on(t.tenantId, t.status, t.createdAt),
+  targetIdx: index("idx_platform_deliveries_target").on(t.platformTargetId, t.createdAt),
+  eventIdx: index("idx_platform_deliveries_event").on(t.tenantId, t.eventType, t.createdAt),
+}));
