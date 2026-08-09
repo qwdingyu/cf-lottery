@@ -11,7 +11,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { platformQQRoute } from "./platform-qq";
 import { clearTestData, getTestDb } from "../test-setup";
-import { activityEvents, lotteryDraws, lotteryEntries, platformTargets, tenants } from "../db/schema";
+import { activityEvents, lotteryDraws, lotteryEntries, platformTargets, shareRecords, tenants } from "../db/schema";
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { and, eq } from "drizzle-orm";
 
@@ -81,6 +81,31 @@ async function seedCheckinDraw(status = "open") {
     startAt: new Date(now.getTime() - 3600000).toISOString(),
     endAt: new Date(now.getTime() + 3600000).toISOString(),
     activityConfig: "{}",
+  });
+}
+
+async function seedViralDraw(viralEnabled = true) {
+  const now = new Date();
+  await db.insert(lotteryDraws).values({
+    id: "draw-qq-1",
+    tenantId: TENANT_ID,
+    title: "QQ 裂变抽奖",
+    publicSlug: "qq-lottery",
+    status: "open",
+    activityKind: "lottery",
+    participationMode: "open",
+    experienceType: "submit",
+    resultMode: "manual",
+    startAt: new Date(now.getTime() - 3600000).toISOString(),
+    endAt: new Date(now.getTime() + 3600000).toISOString(),
+    activityConfig: "{}",
+    promotionConfig: JSON.stringify({
+      viral: {
+        enabled: viralEnabled,
+        extraEntriesPerInvite: 1,
+        maxExtraEntries: 10,
+      },
+    }),
   });
 }
 
@@ -261,5 +286,119 @@ describe("POST /api/platform/qq/message", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { reply?: string };
     expect(body.reply).toContain("活动未开启");
+  });
+
+  it("/分享 在开启裂变时用 QQ 身份创建参与记录和专属分享码", async () => {
+    await seedTarget();
+    await seedViralDraw(true);
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/分享" })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("/lottery/qq-lottery?ref=");
+
+    const entries = await db
+      .select()
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.tenantId, TENANT_ID),
+        eq(lotteryEntries.drawId, "draw-qq-1"),
+        eq(lotteryEntries.identityType, "qq"),
+      ));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.displayName).toBe("测试用户");
+
+    const shares = await db
+      .select()
+      .from(shareRecords)
+      .where(and(
+        eq(shareRecords.tenantId, TENANT_ID),
+        eq(shareRecords.drawId, "draw-qq-1"),
+        eq(shareRecords.sharerEntryId, entries[0]!.id),
+      ));
+    expect(shares).toHaveLength(1);
+    expect(body.reply).toContain(shares[0]!.shareCode);
+
+    const events = await db
+      .select()
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT_ID),
+        eq(activityEvents.drawId, "draw-qq-1"),
+        eq(activityEvents.eventType, "share_created"),
+        eq(activityEvents.source, "qq_group"),
+        eq(activityEvents.medium, "platform_command"),
+      ));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.entryId).toBe(entries[0]?.id);
+    expect(events[0]?.refCode).toBe(shares[0]?.shareCode);
+  });
+
+  it("/分享 重复调用复用同一个分享码，不重复创建 shareRecords", async () => {
+    await seedTarget();
+    await seedViralDraw(true);
+    const app = createTestApp();
+    const request = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/分享" })),
+    };
+
+    const first = await app.request("/api/platform/qq/message", request, TEST_ENV);
+    expect(first.status).toBe(200);
+    const firstBody = await first.json() as { reply?: string };
+    const second = await app.request("/api/platform/qq/message", request, TEST_ENV);
+    expect(second.status).toBe(200);
+    const secondBody = await second.json() as { reply?: string };
+
+    expect(secondBody.reply).toBe(firstBody.reply);
+    const shares = await db
+      .select()
+      .from(shareRecords)
+      .where(and(eq(shareRecords.tenantId, TENANT_ID), eq(shareRecords.drawId, "draw-qq-1")));
+    expect(shares).toHaveLength(1);
+  });
+
+  it("/分享 在活动未开启裂变时不创建参与记录和分享码", async () => {
+    await seedTarget();
+    await seedViralDraw(false);
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/分享" })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("未开启裂变分享");
+
+    const entries = await db
+      .select()
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, "draw-qq-1")));
+    expect(entries).toHaveLength(0);
+
+    const shares = await db
+      .select()
+      .from(shareRecords)
+      .where(and(eq(shareRecords.tenantId, TENANT_ID), eq(shareRecords.drawId, "draw-qq-1")));
+    expect(shares).toHaveLength(0);
   });
 });
