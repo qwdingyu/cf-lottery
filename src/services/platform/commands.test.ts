@@ -234,7 +234,7 @@ async function seedWinner(opts?: {
     tenantId: TENANT_ID,
     prizeId,
     code: opts?.code || "WIN-CODE-1",
-    secret: opts?.secret || "WIN-SEC-1",
+    secret: opts?.secret ?? "WIN-SEC-1",
     status: "issued",
     issuedAt: new Date().toISOString(),
   });
@@ -449,6 +449,8 @@ describe("/我的卡密 (executeCardCodeCommand)", () => {
     expect(result.privateMessages).toBeDefined();
     expect(result.privateMessages).toHaveLength(1);
     expect(result.privateMessages![0].text).toContain("CARD-CODE-001");
+    // 有 secret 时应包含完整卡密（code:secret），与 spin-execution.ts 的拼接规则一致
+    expect(result.privateMessages![0].text).toContain("CARD-CODE-001:CARD-SEC-001");
     expect(result.privateMessages![0].text).toContain("测试奖品");
     // 私聊对象是当前用户
     expect(result.privateMessages![0].userId).toBe(USER_ID);
@@ -480,6 +482,9 @@ describe("/我的卡密 (executeCardCodeCommand)", () => {
     expect(result.privateMessages).toHaveLength(2);
     expect(result.privateMessages![0].text).toContain("CARD-A");
     expect(result.privateMessages![1].text).toContain("CARD-B");
+    // 每条私聊都应包含完整卡密（code:secret）
+    expect(result.privateMessages![0].text).toContain("CARD-A:SEC-A");
+    expect(result.privateMessages![1].text).toContain("CARD-B:SEC-B");
   });
 
   it("命令关闭时返回禁用提示", async () => {
@@ -489,6 +494,17 @@ describe("/我的卡密 (executeCardCodeCommand)", () => {
     }));
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("未启用");
+  });
+  it("无 secret 的卡密只展示 code，不拼 secret", async () => {
+    // 只设 code，secret 显式传空字符串（对应 prize_codes.secret 默认空值场景）
+    await seedInstantDraw();
+    await seedWinner({ prizeName: "无密码奖品", code: "CODE-ONLY", secret: "" });
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "card_code" }));
+    expect(result.handled).toBe(true);
+    expect(result.privateMessages).toHaveLength(1);
+    // 应只包含 code，不拼 ":secret" 后缀
+    expect(result.privateMessages![0].text).toContain("CODE-ONLY");
+    expect(result.privateMessages![0].text).not.toContain("CODE-ONLY:");
   });
 });
 

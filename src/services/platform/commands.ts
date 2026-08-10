@@ -802,6 +802,8 @@ async function executeCardCodeCommand(
       tierName: lotteryPrizeTiers.tierName,
       prizeName: prizes.name,
       code: prizeCodes.code,
+      // 同时取 secret（密码）：有 secret 的卡密若只返回 code，用户拿到卡号却无密码无法核销
+      secret: prizeCodes.secret,
       drawnAt: lotteryWinners.drawnAt,
     })
     .from(lotteryWinners)
@@ -832,11 +834,16 @@ async function executeCardCodeCommand(
   // 3. 组装私聊消息：每条卡密一条私聊消息
   const privateMessages = winners.map((w) => {
     const name = w.prizeName || w.tierName || "奖品";
-    const code = w.code || "（卡密待补发，请联系管理员）";
+    // 卡密拼接规则与 spin-execution.ts 的 prizeCodePlain 保持一致：
+    // 有 secret（密码）时拼成 "code:secret"，确保用户拿到完整卡密用于核销
+    // 无 secret 的卡密（如纯数字兑换码）只返回 code，不拼接 ":secret" 后缀
+    const fullCard = w.code
+      ? (w.secret ? `${w.code}:${w.secret}` : w.code)
+      : "（卡密待补发，请联系管理员）";
     return {
       userId: input.user.identityValue,
       groupId: input.source.groupId,
-      text: `🔑 你的卡密：\n奖品：${name}\n卡密：${code}\n\n请妥善保管，勿将卡密泄露给他人。`,
+      text: `🔑 你的卡密：\n奖品：${name}\n卡密：${fullCard}\n\n请妥善保管，勿将卡密泄露给他人。`,
     };
   });
 
