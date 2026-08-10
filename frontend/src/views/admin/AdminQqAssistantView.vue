@@ -222,6 +222,8 @@ function resetForm() {
     targetId: '', targetName: '', activeDrawId: '', adapterBaseUrl: '', inboundSecret: '',
     checkinEnabled: true, spinEnabled: true, shareEnabled: true,
     leaderboardEnabled: true, myPrizeEnabled: true, helpEnabled: true,
+    // 签到奖励抽奖次数（docs/171）：重置时默认 0（不奖励），与 form 初始值保持一致
+    grantSpinCount: 0,
   }
   inboundSecret.value = ''
   editingTarget.value = null
