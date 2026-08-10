@@ -43,7 +43,7 @@ const BINDING_CODE_EXPIRY_MS = 10 * 60 * 1000; // 10 分钟
  *   crypto.getRandomValues() 是密码学安全 CSPRNG，与代码库既定规范
  *   （utils.ts:17-19、redemption-codes.ts:33、spin-quota.ts:156）保持一致。
  */
-function generateCode(): string {
+export function generateCode(): string {
   const chars = BINDING_CODE_CHARS;
   const bytes = new Uint8Array(BINDING_CODE_LENGTH);
   crypto.getRandomValues(bytes);

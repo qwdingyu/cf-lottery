@@ -1032,6 +1032,46 @@ describe("cleanExpiredSpins", () => {
     expect(deleted).toBeGreaterThanOrEqual(1);
   });
 
+  it("被 winner 引用的 spins 不被删除（引用完整性保护）", async () => {
+    // 准备：插入一条超旧的 spin（30 天前）
+    const oldSpinId = crypto.randomUUID();
+    const oldCreatedAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    await db.insert(lotterySpins).values({
+      id: oldSpinId,
+      tenantId: "t-clean",
+      drawId: crypto.randomUUID(),
+      entryId: crypto.randomUUID(),
+      idempotencyKey: "old-key",
+      won: 1,
+      createdAt: oldCreatedAt,
+    });
+
+    // 准备：插入一条 winner，引用该 spin（模拟 instant 中奖）
+    const winnerId = crypto.randomUUID();
+    await db.insert(lotteryWinners).values({
+      id: winnerId,
+      tenantId: "t-clean",
+      drawId: crypto.randomUUID(),
+      tierId: crypto.randomUUID(),
+      entryId: crypto.randomUUID(),
+      spinId: oldSpinId, // 引用旧 spin
+      identityType: "email",
+      identityValue: "test@test.com",
+      prizeCodeId: "",
+      drawnAt: new Date().toISOString(),
+    });
+
+    // 执行：保留 7 天（默认参数）
+    const deleted = await cleanExpiredSpins(db);
+
+    // 断言：被引用的旧 spin 未被删除
+    const oldRows = await db.select().from(lotterySpins).where(eq(lotterySpins.id, oldSpinId));
+    expect(oldRows).toHaveLength(1);
+
+    // 断言：删除数为 0（因为有 winner 引用）
+    expect(deleted).toBe(0);
+  });
+
   it("空表调用不影响", async () => {
     // 确保表为空
     await db.delete(lotterySpins);

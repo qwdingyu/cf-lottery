@@ -605,10 +605,14 @@ async function buildSpinResultFromRow(
  */
 export async function cleanExpiredSpins(db: DbType, maxAgeMs = 7 * 24 * 60 * 60 * 1000): Promise<number> {
   const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+  // 只清理不被 lottery_winners.spinId 引用的 spins（保留 instant 中奖记录可追溯性）
   const result = await db
     .delete(lotterySpins)
     .where(
-      sql`${lotterySpins.createdAt} < ${cutoff}`
+      and(
+        sql`${lotterySpins.createdAt} < ${cutoff}`,
+        sql`${lotterySpins.id} NOT IN (SELECT spin_id FROM lottery_winners WHERE spin_id != '')`,
+      ),
     );
   return result.rowsAffected ?? 0;
 }
