@@ -1911,7 +1911,7 @@ adminQqAssistant: {
     placeholderAdapterBaseUrlEdit: "留空保持当前地址不变",
     /* 公证人机器人账号（docs/177 批次2）：运营识别哪个机器人服务该群 */
     labelBotId: "公证人 QQ 号",
-    hintBotId: "用于识别哪个机器人服务该群。留空则不在列表中显示。",
+    hintBotId: "用于识别哪个机器人服务该群。留空则首次收到上报时自动记录实际 bot；若已填写而实际上报 bot 不一致，将自动覆盖。",
     placeholderBotId: "例如 123456789",
     colBotId: "公证人",
     labelNewInboundSecret: "新入站密钥",

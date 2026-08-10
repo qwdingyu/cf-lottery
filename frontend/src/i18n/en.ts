@@ -1935,7 +1935,7 @@ adminQqAssistant: {
     placeholderAdapterBaseUrlEdit: "Leave empty to keep the current value",
     /** Notary bot QQ account (docs/177 batch 2): identifies which bot services this group */
     labelBotId: "Notary QQ",
-    hintBotId: "Identifies which bot services this group. Leave empty to hide from the list.",
+    hintBotId: "Identifies which bot services this group. Leave empty to auto-record the actual bot on first report; if filled but the reporting bot differs, it will be overwritten automatically.",
     placeholderBotId: "e.g. 123456789",
     colBotId: "Notary",
     labelNewInboundSecret: "New inbound secret",

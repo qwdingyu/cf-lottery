@@ -120,3 +120,40 @@ export async function getActivePlatformTarget(
     builtinCommands: parseBuiltinCommandConfig(row.builtinCommandsJson),
   };
 }
+
+/**
+ * 将入站上报的 self_id（bot 自身 QQ 号）回填/覆盖到目标 adapterConfigJson.botId。
+ *
+ * 为什么：NapCat/OneBot 每个上报事件都携带 self_id = bot 登录账号（运行时权威真值，见
+ * NapCat `OneBotEvent.self_id = core.selfInfo.uin`）。运营手动填写的 botId 可能为空或过时，
+ * 这里以 self_id 为准自动回填/覆盖，保证管理端展示的是真正在服务该群的 bot，避免"填错号"。
+ *
+ * 触发时机：仅当 self_id 是合法纯数字 QQ 号（5~20 位）时才写库；已一致则无操作。
+ * 返回 true 表示发生了写库（botId 被回填或覆盖），false 表示无需变更。
+ */
+export async function syncInboundBotIdentity(
+  db: DbType,
+  target: PlatformTargetBinding,
+  selfId: string,
+): Promise<boolean> {
+  const normalized = String(selfId || "").trim();
+  // 防御：非法 self_id（非纯数字 / 位数不对）直接忽略，不写脏数据
+  if (!/^\d{5,20}$/.test(normalized)) return false;
+
+  const current = String(target.adapterConfig?.botId || "").trim();
+  if (current === normalized) return false; // 已一致，避免无谓写库
+
+  // 以 self_id 为准构造新 adapterConfig（保留既有 baseUrl 等字段）
+  const adapterConfig = { ...(target.adapterConfig || {}), botId: normalized };
+  await db
+    .update(platformTargets)
+    .set({
+      adapterConfigJson: JSON.stringify(adapterConfig),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(platformTargets.id, target.id));
+
+  // 同步内存对象，供本请求后续逻辑（如私聊发送）读取最新 botId
+  target.adapterConfig = adapterConfig;
+  return true;
+}

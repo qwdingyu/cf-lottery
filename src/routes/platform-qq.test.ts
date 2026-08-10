@@ -696,3 +696,108 @@ describe("POST /api/platform/qq/message", () => {
     expect(body.reply).not.toContain("SECRET-1");
   });
 });
+
+describe("入站 self_id 自动回填/覆盖 botId（docs/177 批次2）", () => {
+  it("空 botId 时首次上报自动回填 self_id", async () => {
+    await seedTarget();
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ self_id: 888111222 })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const [row] = await db.select().from(platformTargets).where(eq(platformTargets.id, "pt-qq-1"));
+    const cfg = JSON.parse(row.adapterConfigJson || "{}");
+    expect(cfg.botId).toBe("888111222");
+  });
+
+  it("已有 botId 与实际上报 self_id 不一致时覆盖为 self_id，并保留既有字段", async () => {
+    await db.insert(tenants).values({ id: TENANT_ID, name: "QQ 群助手测试租户" });
+    await db.insert(platformTargets).values({
+      id: "pt-qq-1",
+      tenantId: TENANT_ID,
+      platform: "qq",
+      targetId: "123456",
+      targetName: "测试群",
+      activeDrawId: "draw-qq-1",
+      activePublicSlug: "qq-lottery",
+      assistantEnabled: 1,
+      adapterDeploymentMode: "tenant_hosted",
+      adapterProvider: "napcat",
+      adapterConfigJson: JSON.stringify({ baseUrl: "http://tenant.example:3000", botId: "111111111" }),
+      inboundSecretHash: await hashPlatformInboundSecret(INBOUND_SECRET),
+      builtinCommandsJson: "{}",
+    });
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ self_id: 888111222 })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const [row] = await db.select().from(platformTargets).where(eq(platformTargets.id, "pt-qq-1"));
+    const cfg = JSON.parse(row.adapterConfigJson || "{}");
+    expect(cfg.botId).toBe("888111222");
+    expect(cfg.baseUrl).toBe("http://tenant.example:3000");
+  });
+
+  it("self_id 与已存 botId 一致时不写库", async () => {
+    await db.insert(tenants).values({ id: TENANT_ID, name: "QQ 群助手测试租户" });
+    await db.insert(platformTargets).values({
+      id: "pt-qq-1",
+      tenantId: TENANT_ID,
+      platform: "qq",
+      targetId: "123456",
+      targetName: "测试群",
+      activeDrawId: "draw-qq-1",
+      activePublicSlug: "qq-lottery",
+      assistantEnabled: 1,
+      adapterDeploymentMode: "tenant_hosted",
+      adapterProvider: "napcat",
+      adapterConfigJson: JSON.stringify({ baseUrl: "http://tenant.example:3000", botId: "888111222" }),
+      inboundSecretHash: await hashPlatformInboundSecret(INBOUND_SECRET),
+      builtinCommandsJson: "{}",
+    });
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ self_id: 888111222 })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const [row] = await db.select().from(platformTargets).where(eq(platformTargets.id, "pt-qq-1"));
+    const cfg = JSON.parse(row.adapterConfigJson || "{}");
+    expect(cfg.botId).toBe("888111222");
+  });
+
+  it("非法 self_id（非纯数字）不写库", async () => {
+    await seedTarget();
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ self_id: "not-a-number" })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const [row] = await db.select().from(platformTargets).where(eq(platformTargets.id, "pt-qq-1"));
+    const cfg = JSON.parse(row.adapterConfigJson || "{}");
+    expect(cfg.botId).toBeUndefined();
+  });
+});

@@ -11,7 +11,7 @@ import { fail, getDb, ok } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { timingSafeEqualString } from "../lib/crypto-compare";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
-import { getActivePlatformTarget } from "../services/platform/targets";
+import { getActivePlatformTarget, syncInboundBotIdentity } from "../services/platform/targets";
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { getPlatformAdapter } from "../services/platform/adapter-factory";
 
@@ -65,6 +65,18 @@ platformQQRoute.post("/message", async (c) => {
   const tokenHash = await hashPlatformInboundSecret(token);
   if (!timingSafeEqualString(tokenHash, target.inboundSecretHash)) {
     return fail(c, "未授权", 403);
+  }
+
+  // 自动回填/覆盖公证人 botId：NapCat/OneBot 上报事件自带 self_id = bot 登录 QQ 号（运行时权威真值）。
+  // 若运营手动填写的 botId 为空或与实际上报 bot 不一致，用 self_id 覆盖，保证展示的是真正干活的 bot。
+  // （docs/177 批次2）失败不阻断消息处理，仅静默跳过——botId 是展示性字段，不影响业务主流程。
+  const selfId = String(body.self_id || "").trim();
+  if (selfId) {
+    try {
+      await syncInboundBotIdentity(db, target, selfId);
+    } catch {
+      // 忽略写库异常，botId 回填失败不阻塞命令处理
+    }
   }
 
   const result = await handleInboundPlatformEvent(db, {
