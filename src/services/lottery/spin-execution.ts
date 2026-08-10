@@ -428,6 +428,17 @@ async function finalizeFreshResult(
 
   const spinsLeft = Number(freshEntry?.spinsLeft ?? 0);
   const granted = Number(freshEntry?.spinsTotalGranted ?? 0);
+  /**
+   * spinsUsed = granted - spinsLeft（活动额度 - 剩余次数）。
+   * 注意：签到奖励（dailyCheckinPolicy.grantSpinCount）只更新 spinsLeft，不更新 spinsTotalGranted。
+   * 因此当用户消耗了签到奖励发放的次数后，spinsUsed 可能小于实际消耗次数。
+   * 
+   * 为什么不做「完美计算」？因为签到奖励不是活动额度，不应计入 maxSpinsPerEntry 上限。
+   * 若更新 spinsTotalGranted，会与裂变邀请的 computeViralSpinGrant 中 roomTotal = max - granted 冲突。
+   * 
+   * 影响：spinsUsed 在群命令中不展示（仅展示 spinsLeft），前端也不渲染此字段。
+   * 这是一个内部不精确但无用户感知影响的设计决定（docs/171 §11.4.2）。
+   */
   const spinsUsed = Math.max(0, granted - spinsLeft);
 
   return {
