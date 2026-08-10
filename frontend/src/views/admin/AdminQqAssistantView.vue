@@ -105,12 +105,24 @@
                 <label class="checkbox-label"><input type="checkbox" v-model="form.leaderboardEnabled" /> {{ $t('adminQqAssistant.cmdLeaderboard') }}</label>
                 <label class="checkbox-label"><input type="checkbox" v-model="form.myPrizeEnabled" /> {{ $t('adminQqAssistant.cmdMyPrize') }}</label>
                 <label class="checkbox-label"><input type="checkbox" v-model="form.helpEnabled" /> {{ $t('adminQqAssistant.cmdHelp') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.flashEnabled" /> {{ $t('adminQqAssistant.cmdFlash') }}</label>
               </div>
               <!-- 每日签到奖励抽奖次数（docs/171）：仅在启用 /签到 时显示 -->
               <div v-if="form.checkinEnabled" class="form-group">
                 <label>{{ $t('adminQqAssistant.labelCheckinGrantSpin') }}</label>
                 <div class="form-hint">{{ $t('adminQqAssistant.hintCheckinGrantSpin') }}</div>
                 <input v-model.number="form.grantSpinCount" type="number" min="0" max="100" step="1" class="form-input" />
+              </div>
+              <!-- 购买引导（docs/171 §断层B）：配置 /秒杀 返回的购买链接；次数耗尽时也会自动附加引导 -->
+              <div class="form-group">
+                <label>{{ $t('adminQqAssistant.labelPurchaseUrl') }}</label>
+                <div class="form-hint">{{ $t('adminQqAssistant.hintPurchaseUrl') }}</div>
+                <input v-model="form.purchaseUrl" class="form-input" :placeholder="$t('adminQqAssistant.placeholderPurchaseUrl')" />
+              </div>
+              <div class="form-group">
+                <label>{{ $t('adminQqAssistant.labelPurchaseLabel') }}</label>
+                <div class="form-hint">{{ $t('adminQqAssistant.hintPurchaseLabel') }}</div>
+                <input v-model="form.purchaseLabel" class="form-input" :placeholder="$t('adminQqAssistant.placeholderPurchaseLabel')" />
               </div>
             </fieldset>
           </div>
@@ -182,6 +194,12 @@ const form = ref({
   helpEnabled: true,
   /** 每日签到奖励抽奖次数（docs/171）：0 表示不奖励，整数 1+ 则在 /签到 时增加 spinsLeft */
   grantSpinCount: 0,
+  /** /秒杀 命令开关（docs/171 §断层B）：群内用户可调用 /秒杀 获取购买链接 */
+  flashEnabled: true,
+  /** 购买链接 URL（公开活动页 URL），为空则 /秒杀 提示未配置 */
+  purchaseUrl: '',
+  /** 购买链接展示文案，为空时后端默认使用「立即购买」 */
+  purchaseLabel: '',
 })
 
 const napcatInboundConfig = computed(() => {
@@ -224,6 +242,10 @@ function resetForm() {
     leaderboardEnabled: true, myPrizeEnabled: true, helpEnabled: true,
     // 签到奖励抽奖次数（docs/171）：重置时默认 0（不奖励），与 form 初始值保持一致
     grantSpinCount: 0,
+    // /秒杀 命令开关 + 购买链接（docs/171 §断层B）：重置时默认开启但无链接
+    flashEnabled: true,
+    purchaseUrl: '',
+    purchaseLabel: '',
   }
   inboundSecret.value = ''
   editingTarget.value = null
@@ -244,6 +266,10 @@ function fillFormFromTarget(t: PlatformTarget) {
     form.value.myPrizeEnabled = cmds.myPrizeEnabled !== false
     form.value.helpEnabled = cmds.helpEnabled !== false
     form.value.grantSpinCount = cmds.dailyCheckinPolicy?.grantSpinCount || 0
+    // 购买引导（docs/171 §断层B）：回填 /秒杀 开关 + 购买链接
+    form.value.flashEnabled = cmds.flashEnabled !== false
+    form.value.purchaseUrl = cmds.purchaseConfig?.url || ''
+    form.value.purchaseLabel = cmds.purchaseConfig?.label || ''
   } catch { /* 使用默认值 */ }
 }
 
@@ -265,6 +291,7 @@ function closeModal() { showModal.value = false }
 async function saveTarget() {
   saving.value = true
   try {
+    const purchaseUrl = form.value.purchaseUrl.trim()
     const builtinCommands = {
       checkinEnabled: form.value.checkinEnabled,
       spinEnabled: form.value.spinEnabled,
@@ -272,9 +299,15 @@ async function saveTarget() {
       leaderboardEnabled: form.value.leaderboardEnabled,
       myPrizeEnabled: form.value.myPrizeEnabled,
       helpEnabled: form.value.helpEnabled,
+      /** 秒杀/购买命令开关（docs/171 §断层B）：后端默认 true */
+      flashEnabled: form.value.flashEnabled,
       /** 每日签到奖励次数（docs/171）：仅当 >0 时发送，后端 omit 0/非法值 */
       ...(form.value.grantSpinCount > 0
         ? { dailyCheckinPolicy: { grantSpinCount: form.value.grantSpinCount } }
+        : {}),
+      /** 购买链接配置（docs/171 §断层B）：有 url 时发送，后端省略空值 */
+      ...(purchaseUrl
+        ? { purchaseConfig: { url: purchaseUrl, label: form.value.purchaseLabel.trim() || '' } }
         : {}),
     }
     if (editingTarget.value) {
