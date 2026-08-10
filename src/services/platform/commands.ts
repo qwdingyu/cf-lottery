@@ -12,8 +12,8 @@
  * 涉及卡密的回复必须默认群内脱敏，不能把完整码发到公开群聊里。
  */
 import type { DbType } from "../../db/client";
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
-import { activityEvents, lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, shareRecords } from "../../db/schema";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, shareRecords } from "../../db/schema";
 import { joinDraw, recordActivityEvent } from "../lottery-service";
 import { performInstantSpin, SpinBusinessError } from "../lottery/spin-execution";
 import {
@@ -402,10 +402,14 @@ async function executeLeaderboardCommand(
  * 流程：
  * 1. 通过 ensurePlatformEntry 确保用户有抽奖活动的 entry
  * 2. 如配置了 dailyCheckinPolicy.grantSpinCount > 0：
- *    a. 查今天是否已签到（activity_events 查 eventType=daily_checkin:YYYY-MM-DD）
- *    b. 未签到：增加 entry 的 spinsLeft += grantSpinCount，记录签到事件
- *    c. 已签到：返回"今日已签到"
+ *    a. 用条件原子 UPDATE（lottery_entries.last_checkin_date < today 且 spins_left += grantSpinCount）
+ *    b. 影响 0 行 ⇒ 今日已签到，返回"今日已签到"
+ *    c. 影响 1 行 ⇒ 签到成功，记录 daily_checkin 事件（仅数据分析，不去重）
  * 3. 未配置 grantSpinCount：保持原有行为（仅参与记录）
+ *
+ * 并发安全：spins 累加与 last_checkin_date 在同一条 UPDATE 原子完成，
+ * WHERE 条件 (last_checkin_date IS NULL OR < today) 保证只有第一个并发请求命中，
+ * 第二个请求影响 0 行即判定已签到，spinsLeft 不会被重复发放。
  *
  * 签到奖励不更新 spinsTotalGranted（签到奖励不是活动额度，是平台奖励），
  * 避免与裂变邀请的 maxSpinsPerEntry 限制冲突。
@@ -423,38 +427,33 @@ async function executeCheckinCommand(
   // 2. 检查是否配置了签到奖励次数
   const grantSpinCount = input.builtinCommands.dailyCheckinPolicy?.grantSpinCount;
   if (grantSpinCount && grantSpinCount > 0) {
-    // 使用固定 eventType=daily_checkin，通过 createdAt 日期范围判断是否今日已签到
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const todayStartIso = `${today}T00:00:00.000Z`;
     const eventType = "daily_checkin";
 
-    const [existing] = await db
-      .select({ id: activityEvents.id })
-      .from(activityEvents)
-      .where(and(
-        eq(activityEvents.tenantId, input.tenantId),
-        eq(activityEvents.drawId, input.drawId),
-        eq(activityEvents.entryId, result.entryId),
-        eq(activityEvents.eventType, eventType),
-        // createdAt 存储为 ISO 字符串，用字符串比较等效于时间比较
-        sql`${activityEvents.createdAt} >= ${todayStartIso}`,
-      ))
-      .limit(1);
-
-    if (existing) {
-      return { handled: true, reply: "今日已签到，明天再来吧！" };
-    }
-
-    // 增加抽奖次数（原子 UPDATE，SQLite 行锁保证并发安全）
-    await db
+    // 原子条件 UPDATE：spins 累加与 last_checkin_date 在同一条语句完成。
+    // WHERE 条件 (last_checkin_date IS NULL OR last_checkin_date < today) 保证：
+    // - 只有第一个并发 /签到 请求能通过，第二个请求因 last_checkin_date 已被更新为 today 而影响 0 行
+    // - spinsLeft 绝不会被重复累加，无需额外锁或事务
+    const updateResult = await db
       .update(lotteryEntries)
-      .set({ spinsLeft: sql`${lotteryEntries.spinsLeft} + ${grantSpinCount}` })
+      .set({
+        spinsLeft: sql`${lotteryEntries.spinsLeft} + ${grantSpinCount}`,
+        lastCheckinDate: today,
+      })
       .where(and(
         eq(lotteryEntries.id, result.entryId),
         eq(lotteryEntries.tenantId, input.tenantId),
+        or(
+          isNull(lotteryEntries.lastCheckinDate),
+          sql`${lotteryEntries.lastCheckinDate} < ${today}`,
+        ),
       ));
 
-    // 记录签到事件
+    if ((updateResult.rowsAffected ?? 0) === 0) {
+      return { handled: true, reply: "今日已签到，明天再来吧！" };
+    }
+
+    // 记录签到事件（仅用于数据分析，不承担去重职责）
     await recordActivityEvent(db, {
       tenantId: input.tenantId,
       drawId: input.drawId,

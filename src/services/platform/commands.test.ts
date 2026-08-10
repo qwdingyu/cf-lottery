@@ -566,4 +566,104 @@ describe("/签到 (executeCheckinCommand) 签到奖励", () => {
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("未启用");
   });
+
+  it("lastCheckinDate 已是今天时，条件 UPDATE 影响 0 行，不重复发放", async () => {
+    await seedInstantDraw();
+    // 模拟今天已签到：先走一次正常签到，再手动校验幂等
+    await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
+    }));
+    const [entryAfterFirst] = await db
+      .select({
+        spinsLeft: lotteryEntries.spinsLeft,
+        lastCheckinDate: lotteryEntries.lastCheckinDate,
+      })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    const today = new Date().toISOString().slice(0, 10);
+    // lastCheckinDate 已写入今天
+    expect(entryAfterFirst?.lastCheckinDate).toBe(today);
+    expect(Number(entryAfterFirst?.spinsLeft ?? 0)).toBe(2);
+
+    // 再次签到：UPDATE 应影响 0 行，spinsLeft 不再增加
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
+    }));
+    expect(result.reply).toContain("今日已签到");
+    const [entryAfter] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    expect(Number(entryAfter?.spinsLeft ?? 0)).toBe(2);
+  });
+
+  it("lastCheckinDate 为昨天时，可再次签到并更新为今天", async () => {
+    await seedInstantDraw();
+    // 先让用户加入获得 entry
+    await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
+    }));
+    // 模拟跨天：把 last_checkin_date 改回昨天（等价于时间流逝到下一天）
+    const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+    await db
+      .update(lotteryEntries)
+      .set({ lastCheckinDate: yesterday })
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)));
+
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
+    }));
+    expect(result.reply).toContain("签到成功");
+    expect(result.reply).toContain("获得 1 次抽奖机会");
+
+    const [entry] = await db
+      .select({
+        spinsLeft: lotteryEntries.spinsLeft,
+        lastCheckinDate: lotteryEntries.lastCheckinDate,
+      })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    // 昨天那次(1) + 今天这次(1) + initialSpinsOnJoin(1) = 3
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(3);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(entry?.lastCheckinDate).toBe(today);
+  });
+
+  it("首次签到（lastCheckinDate 为 NULL）时条件 UPDATE 可命中", async () => {
+    await seedInstantDraw();
+    // 直接插入 entry，lastCheckinDate 保持 NULL（默认），spinsLeft=0 模拟从未签到
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "qq",
+      identityValue: USER_ID,
+      displayName: "测试用户",
+      joinedAt: new Date().toISOString(),
+      spinsLeft: 0,
+      spinsTotalGranted: 0,
+    });
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
+    }));
+    expect(result.reply).toContain("签到成功");
+    const [entry] = await db
+      .select({
+        spinsLeft: lotteryEntries.spinsLeft,
+        lastCheckinDate: lotteryEntries.lastCheckinDate,
+      })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(1); // 0 + grantSpinCount(1)
+    expect(entry?.lastCheckinDate).toBe(new Date().toISOString().slice(0, 10));
+  });
 });

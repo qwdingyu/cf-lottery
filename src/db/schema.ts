@@ -332,6 +332,11 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
    * services/payment/payment-status.ts。
    */
   paymentStatus: text("payment_status").notNull().default(""),
+  /** 最近一次签到日期（YYYY-MM-DD，NULL 表示从未签到）。用于并发安全的每日签到去重：
+   * UPDATE ... SET spins_left += ?, last_checkin_date = ?
+   * WHERE ... AND (last_checkin_date IS NULL OR last_checkin_date < today)
+   * 只有第一个并发请求能通过 WHERE 条件，第二个 UPDATE 影响 0 行即判定已签到。 */
+  lastCheckinDate: text("last_checkin_date"),
 }, (t) => ({
   unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
   identityIdx: index("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),
