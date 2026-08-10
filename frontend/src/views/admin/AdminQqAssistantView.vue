@@ -107,12 +107,67 @@
                 <label class="checkbox-label"><input type="checkbox" v-model="form.helpEnabled" /> {{ $t('adminQqAssistant.cmdHelp') }}</label>
                 <label class="checkbox-label"><input type="checkbox" v-model="form.flashEnabled" /> {{ $t('adminQqAssistant.cmdFlash') }}</label>
               </div>
-              <!-- 每日签到奖励抽奖次数（docs/171）：仅在启用 /签到 时显示 -->
+              <!-- 每日签到奖励（docs/172）：仅在启用 /签到 时显示。
+                   支持两种方式：简单固定值（grantSpinCount）或完整奖励模式（mode+baseRange） -->
               <div v-if="form.checkinEnabled" class="form-group">
                 <label>{{ $t('adminQqAssistant.labelCheckinGrantSpin') }}</label>
                 <div class="form-hint">{{ $t('adminQqAssistant.hintCheckinGrantSpin') }}</div>
                 <input v-model.number="form.grantSpinCount" type="number" min="0" max="100" step="1" class="form-input" />
               </div>
+              <div v-if="form.checkinEnabled" class="form-group">
+                <label>{{ $t('adminQqAssistant.labelCheckinMode') }}</label>
+                <div class="form-hint">{{ $t('adminQqAssistant.hintCheckinMode') }}</div>
+                <select v-model="form.checkinMode" class="form-input">
+                  <option value="">—</option>
+                  <option value="daily">{{ $t('adminQqAssistant.optionModeDaily') }}</option>
+                  <option value="linear">{{ $t('adminQqAssistant.optionModeLinear') }}</option>
+                  <option value="step">{{ $t('adminQqAssistant.optionModeStep') }}</option>
+                  <option value="cycle">{{ $t('adminQqAssistant.optionModeCycle') }}</option>
+                </select>
+              </div>
+              <template v-if="form.checkinEnabled && form.checkinMode">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>{{ $t('adminQqAssistant.labelBaseMin') }}</label>
+                    <div class="form-hint">{{ $t('adminQqAssistant.hintBaseMin') }}</div>
+                    <input v-model.number="form.baseMin" type="number" min="0" max="100" step="1" class="form-input" />
+                  </div>
+                  <div class="form-group">
+                    <label>{{ $t('adminQqAssistant.labelBaseMax') }}</label>
+                    <div class="form-hint">{{ $t('adminQqAssistant.hintBaseMax') }}</div>
+                    <input v-model.number="form.baseMax" type="number" min="0" max="100" step="1" class="form-input" />
+                  </div>
+                </div>
+                <div v-if="form.checkinMode === 'linear' || form.checkinMode === 'step'" class="form-row">
+                  <div class="form-group">
+                    <label>{{ $t('adminQqAssistant.labelIncrement') }}</label>
+                    <div class="form-hint">{{ $t('adminQqAssistant.hintIncrement') }}</div>
+                    <input v-model.number="form.increment" type="number" min="0" max="100" step="1" class="form-input" />
+                  </div>
+                  <div class="form-group">
+                    <label>{{ $t('adminQqAssistant.labelCap') }}</label>
+                    <div class="form-hint">{{ $t('adminQqAssistant.hintCap') }}</div>
+                    <input v-model.number="form.cap" type="number" min="0" max="100" step="1" class="form-input" />
+                  </div>
+                </div>
+                <div v-if="form.checkinMode === 'step'" class="form-group">
+                  <label>{{ $t('adminQqAssistant.labelStepDays') }}</label>
+                  <div class="form-hint">{{ $t('adminQqAssistant.hintStepDays') }}</div>
+                  <input v-model.number="form.stepDays" type="number" min="1" max="365" step="1" class="form-input" />
+                </div>
+                <div v-if="form.checkinMode === 'cycle'" class="form-row">
+                  <div class="form-group">
+                    <label>{{ $t('adminQqAssistant.labelCycleDays') }}</label>
+                    <div class="form-hint">{{ $t('adminQqAssistant.hintCycleDays') }}</div>
+                    <input v-model.number="form.cycleDays" type="number" min="1" max="365" step="1" class="form-input" />
+                  </div>
+                  <div class="form-group">
+                    <label>{{ $t('adminQqAssistant.labelCycleBonus') }}</label>
+                    <div class="form-hint">{{ $t('adminQqAssistant.hintCycleBonus') }}</div>
+                    <input v-model.number="form.cycleBonus" type="number" min="0" max="100" step="1" class="form-input" />
+                  </div>
+                </div>
+              </template>
               <!-- 购买引导（docs/171 §断层B）：配置 /秒杀 返回的购买链接；次数耗尽时也会自动附加引导 -->
               <div class="form-group">
                 <label>{{ $t('adminQqAssistant.labelPurchaseUrl') }}</label>
@@ -194,6 +249,21 @@ const form = ref({
   helpEnabled: true,
   /** 每日签到奖励抽奖次数（docs/171）：0 表示不奖励，整数 1+ 则在 /签到 时增加 spinsLeft */
   grantSpinCount: 0,
+  /** 签到奖励模式（docs/172）：''=不启用（仅 grantSpinCount），daily/linear/step/cycle */
+  checkinMode: '',
+  /** 基础奖励区间（所有模式通用） */
+  baseMin: 1,
+  baseMax: 1,
+  /** 每日递增量（linear/step 模式） */
+  increment: 1,
+  /** 封顶值（递增模式） */
+  cap: 10,
+  /** 阶梯天数（step 模式） */
+  stepDays: 7,
+  /** 周期天数（cycle 模式） */
+  cycleDays: 7,
+  /** 周期额外奖励（cycle 模式） */
+  cycleBonus: 5,
   /** /秒杀 命令开关（docs/171 §断层B）：群内用户可调用 /秒杀 获取购买链接 */
   flashEnabled: true,
   /** 购买链接 URL（公开活动页 URL），为空则 /秒杀 提示未配置 */
@@ -242,6 +312,11 @@ function resetForm() {
     leaderboardEnabled: true, myPrizeEnabled: true, helpEnabled: true,
     // 签到奖励抽奖次数（docs/171）：重置时默认 0（不奖励），与 form 初始值保持一致
     grantSpinCount: 0,
+    // 签到奖励模式（docs/172）：重置时默认不启用，保留旧字段 grantSpinCount
+    checkinMode: '',
+    baseMin: 1, baseMax: 1,
+    increment: 1, cap: 10,
+    stepDays: 7, cycleDays: 7, cycleBonus: 5,
     // /秒杀 命令开关 + 购买链接（docs/171 §断层B）：重置时默认开启但无链接
     flashEnabled: true,
     purchaseUrl: '',
@@ -265,7 +340,24 @@ function fillFormFromTarget(t: PlatformTarget) {
     form.value.leaderboardEnabled = cmds.leaderboardEnabled !== false
     form.value.myPrizeEnabled = cmds.myPrizeEnabled !== false
     form.value.helpEnabled = cmds.helpEnabled !== false
+    // 签到奖励（docs/172）：解析 rewardConfig 和 grantSpinCount
     form.value.grantSpinCount = cmds.dailyCheckinPolicy?.grantSpinCount || 0
+    const rc = cmds.dailyCheckinPolicy?.rewardConfig
+    if (rc && rc.mode) {
+      form.value.checkinMode = rc.mode
+      form.value.baseMin = rc.baseRange?.min ?? 1
+      form.value.baseMax = rc.baseRange?.max ?? 1
+      form.value.increment = rc.increment ?? 1
+      form.value.cap = rc.cap ?? 10
+      form.value.stepDays = rc.stepDays ?? 7
+      form.value.cycleDays = rc.cycleDays ?? 7
+      form.value.cycleBonus = rc.cycleBonus ?? 5
+    } else {
+      form.value.checkinMode = ''
+      form.value.baseMin = 1; form.value.baseMax = 1
+      form.value.increment = 1; form.value.cap = 10
+      form.value.stepDays = 7; form.value.cycleDays = 7; form.value.cycleBonus = 5
+    }
     // 购买引导（docs/171 §断层B）：回填 /秒杀 开关 + 购买链接
     form.value.flashEnabled = cmds.flashEnabled !== false
     form.value.purchaseUrl = cmds.purchaseConfig?.url || ''
@@ -292,6 +384,29 @@ async function saveTarget() {
   saving.value = true
   try {
     const purchaseUrl = form.value.purchaseUrl.trim()
+    // 构建 dailyCheckinPolicy（docs/172）：两种模式
+    // 1. 有 checkinMode: 构建完整 rewardConfig
+    // 2. 无 checkinMode: 使用旧字段 grantSpinCount
+    const dailyCheckinPolicy: Record<string, unknown> = {}
+    if (form.value.checkinMode) {
+      dailyCheckinPolicy.rewardConfig = {
+        mode: form.value.checkinMode,
+        baseRange: { min: form.value.baseMin, max: form.value.baseMax },
+      }
+      if (form.value.checkinMode === 'linear' || form.value.checkinMode === 'step') {
+        if (form.value.increment > 0) (dailyCheckinPolicy.rewardConfig as Record<string, unknown>).increment = form.value.increment
+        if (form.value.cap > 0) (dailyCheckinPolicy.rewardConfig as Record<string, unknown>).cap = form.value.cap
+      }
+      if (form.value.checkinMode === 'step' && form.value.stepDays > 0) {
+        (dailyCheckinPolicy.rewardConfig as Record<string, unknown>).stepDays = form.value.stepDays
+      }
+      if (form.value.checkinMode === 'cycle') {
+        if (form.value.cycleDays > 0) (dailyCheckinPolicy.rewardConfig as Record<string, unknown>).cycleDays = form.value.cycleDays
+        if (form.value.cycleBonus > 0) (dailyCheckinPolicy.rewardConfig as Record<string, unknown>).cycleBonus = form.value.cycleBonus
+      }
+    } else if (form.value.grantSpinCount > 0) {
+      dailyCheckinPolicy.grantSpinCount = form.value.grantSpinCount
+    }
     const builtinCommands = {
       checkinEnabled: form.value.checkinEnabled,
       spinEnabled: form.value.spinEnabled,
@@ -301,10 +416,8 @@ async function saveTarget() {
       helpEnabled: form.value.helpEnabled,
       /** 秒杀/购买命令开关（docs/171 §断层B）：后端默认 true */
       flashEnabled: form.value.flashEnabled,
-      /** 每日签到奖励次数（docs/171）：仅当 >0 时发送，后端 omit 0/非法值 */
-      ...(form.value.grantSpinCount > 0
-        ? { dailyCheckinPolicy: { grantSpinCount: form.value.grantSpinCount } }
-        : {}),
+      /** 签到奖励配置（docs/172）：有 rewardConfig 或 grantSpinCount 时发送 */
+      ...(Object.keys(dailyCheckinPolicy).length > 0 ? { dailyCheckinPolicy } : {}),
       /** 购买链接配置（docs/171 §断层B）：有 url 时发送，后端省略空值 */
       ...(purchaseUrl
         ? { purchaseConfig: { url: purchaseUrl, label: form.value.purchaseLabel.trim() || '' } }

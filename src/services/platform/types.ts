@@ -71,7 +71,22 @@ export type PlatformTargetBinding = {
 
 export type PlatformMessage = {
   platform: PlatformType;
+  /**
+   * 目标 ID：
+   * - targetType 为 "group"（或缺省）时 → 群 ID
+   * - targetType 为 "private" 时 → 用户 ID（user_id）
+   */
   targetId: string;
+  /**
+   * 目标类型：群聊 / 私聊（含非好友临时消息）。
+   * 缺省按 "group" 处理，保持对现有调用方的向后兼容。
+   */
+  targetType?: "group" | "private";
+  /**
+   * 私聊/临时消息时用于建立临时会话上下文的群 ID。
+   * NapCat 对非好友发送时，需传 group_id 以走 KCHATTYPETEMPC2CFROMGROUP 临时会话。
+   */
+  groupId?: string;
   type: "text" | "image" | "card";
   text?: string;
   imageUrl?: string;

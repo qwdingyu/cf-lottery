@@ -449,6 +449,107 @@ describe("platform-targets CRUD", () => {
     expect(Number(entry!.spinsLeft ?? 0)).toBe(3);
   });
 
+it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → checkinStreak 和 spinsLeft 递增", async () => {
+    const app = await createApp();
+    const e2eDrawId2 = crypto.randomUUID();
+    const e2eSlug2 = "e2e-streak-slug";
+    const now = new Date();
+    await db.insert(lotteryDraws).values({
+      id: e2eDrawId2,
+      tenantId: TENANT_ID,
+      title: "连续签到验证活动",
+      status: "open",
+      participationMode: "open",
+      experienceType: "wheel",
+      resultMode: "instant",
+      activityKind: "lottery",
+      drawTrigger: "manual",
+      allocationPolicy: "random",
+      publicSlug: e2eSlug2,
+      startAt: new Date(now.getTime() - 3600_000).toISOString(),
+      endAt: new Date(now.getTime() + 86400_000 * 7).toISOString(),
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    });
+
+    // Step 1: 通过 admin API 创建 target，配置 rewardConfig linear 模式
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "e2e-streak-888",
+        targetName: "连续签到验证群",
+        activeDrawId: e2eDrawId2,
+        checkinEnabled: true,
+        dailyCheckinPolicy: {
+          rewardConfig: { mode: "linear", baseRange: { min: 1, max: 1 }, increment: 2, cap: 10 },
+        },
+      }),
+    });
+    expect(createRes.status).toBe(200);
+    const createData = await createRes.json() as Record<string, unknown>;
+    expect(createData.ok).toBe(true);
+
+    // Step 2: 读取 target
+    const binding = await getActivePlatformTarget(db, { platform: "qq", targetId: "e2e-streak-888" });
+    expect(binding).not.toBeNull();
+    expect(binding!.builtinCommands.dailyCheckinPolicy?.rewardConfig?.mode).toBe("linear");
+
+    // Step 3: 第 1 次签到（首次，连续天数=0，奖励=base=1）
+    const checkin1 = await executeBuiltinPlatformCommand(db, {
+      tenantId: TENANT_ID,
+      platformTargetId: binding!.id,
+      drawId: e2eDrawId2,
+      publicSlug: e2eSlug2,
+      command: "checkin",
+      builtinCommands: binding!.builtinCommands,
+      user: { identityType: "qq", identityValue: "e2e_streak_user", displayName: "连续签到用户" },
+      source: { platform: "qq", groupId: "e2e-streak-888", messageId: "msg-streak-1" },
+    });
+    expect(checkin1.handled).toBe(true);
+    expect(checkin1.reply).toContain("获得 1 次抽奖机会");
+
+    // 验证 checkinStreak=1, spinsLeft=1
+    let [entry1] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft, checkinStreak: lotteryEntries.checkinStreak })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.identityValue, "e2e_streak_user")))
+      .limit(1);
+    expect(entry1).not.toBeUndefined();
+    expect(Number(entry1!.spinsLeft ?? 0)).toBe(1);
+    expect(entry1!.checkinStreak).toBe(1);
+
+    // 修改 lastCheckinDate 为昨天（模拟连续签到，避免日期限制）
+    const yesterday = new Date(now.getTime() - 86400_000).toISOString().slice(0, 10);
+    await db
+      .update(lotteryEntries)
+      .set({ lastCheckinDate: yesterday })
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.identityValue, "e2e_streak_user")));
+
+    // Step 4: 第 2 次签到（连续，streak=1→2，奖励=base+1*2=3）
+    const checkin2 = await executeBuiltinPlatformCommand(db, {
+      tenantId: TENANT_ID,
+      platformTargetId: binding!.id,
+      drawId: e2eDrawId2,
+      publicSlug: e2eSlug2,
+      command: "checkin",
+      builtinCommands: binding!.builtinCommands,
+      user: { identityType: "qq", identityValue: "e2e_streak_user", displayName: "连续签到用户" },
+      source: { platform: "qq", groupId: "e2e-streak-888", messageId: "msg-streak-2" },
+    });
+    expect(checkin2.handled).toBe(true);
+    // 第 2 天 = 1 + (2-1)*2 = 3
+    expect(checkin2.reply).toContain("获得 3 次抽奖机会");
+
+    // 验证 checkinStreak=2, spinsLeft=1+3=4
+    let [entry2] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft, checkinStreak: lotteryEntries.checkinStreak })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.identityValue, "e2e_streak_user")))
+      .limit(1);
+    expect(Number(entry2!.spinsLeft ?? 0)).toBe(4);
+    expect(entry2!.checkinStreak).toBe(2);
+  });
   it("创建时保存 purchaseConfig（秒杀购买闭环，docs/171 §断层B）", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {

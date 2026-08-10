@@ -422,19 +422,23 @@ async function executeLeaderboardCommand(
 }
 
 /**
- * 执行 /签到 命令（docs/171）。
+ * 执行 /签到 命令（docs/171, docs/172）。
  *
  * 流程：
  * 1. 通过 ensurePlatformEntry 确保用户有抽奖活动的 entry
- * 2. 如配置了 dailyCheckinPolicy.grantSpinCount > 0：
- *    a. 用条件原子 UPDATE（lottery_entries.last_checkin_date < today 且 spins_left += grantSpinCount）
- *    b. 影响 0 行 ⇒ 今日已签到，返回"今日已签到"
- *    c. 影响 1 行 ⇒ 签到成功，记录 daily_checkin 事件（仅数据分析，不去重）
- * 3. 未配置 grantSpinCount：保持原有行为（仅参与记录）
+ * 2. 读取当前 entry 的 lastCheckinDate 和 checkinStreak
+ * 3. 计算连续天数（断签/连续判断）
+ * 4. 根据奖励配置（daily/fixed/linear/step/cycle）计算应发放 spins 数
+ * 5. 原子条件 UPDATE：spins 累加 + 连续天数 + 签到日期在同一条语句完成
+ *    WHERE (last_checkin_date IS NULL OR last_checkin_date < today)
+ *    保证只有第一个并发请求命中，第二个请求影响 0 行即判定已签到。
+ * 6. 记录签到事件（仅用于数据分析，不承担去重职责）
  *
- * 并发安全：spins 累加与 last_checkin_date 在同一条 UPDATE 原子完成，
- * WHERE 条件 (last_checkin_date IS NULL OR < today) 保证只有第一个并发请求命中，
- * 第二个请求影响 0 行即判定已签到，spinsLeft 不会被重复发放。
+ * 奖励计算（checkin-reward.ts）：
+ *   daily  : 每日固定值或区间随机（min===max 固定，min<max 区间随机）
+ *   linear : 第 N 天 = base + (N-1) * increment，封顶 cap
+ *   step   : 每 stepDays 天提升一次，base + floor((N-1)/stepDays) * increment
+ *   cycle  : 第 cycleDays 天额外发放 cycleBonus，之后重置连续天数
  *
  * 签到奖励不更新 spinsTotalGranted（签到奖励不是活动额度，是平台奖励），
  * 避免与裂变邀请的 maxSpinsPerEntry 限制冲突。
@@ -449,21 +453,65 @@ async function executeCheckinCommand(
     return { handled: true, reply: result.message || "签到失败，请稍后再试。" };
   }
 
-  // 2. 检查是否配置了签到奖励次数
-  const grantSpinCount = input.builtinCommands.dailyCheckinPolicy?.grantSpinCount;
-  if (grantSpinCount && grantSpinCount > 0) {
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const eventType = "daily_checkin";
+  // 2. 检查是否配置了签到奖励
+  const policy = input.builtinCommands.dailyCheckinPolicy;
+  const streakConfig = policy?.rewardConfig;
+  const grantSpinCount = policy?.grantSpinCount;
 
-    // 原子条件 UPDATE：spins 累加与 last_checkin_date 在同一条语句完成。
-    // WHERE 条件 (last_checkin_date IS NULL OR last_checkin_date < today) 保证：
-    // - 只有第一个并发 /签到 请求能通过，第二个请求因 last_checkin_date 已被更新为 today 而影响 0 行
-    // - spinsLeft 绝不会被重复累加，无需额外锁或事务
+  // 无奖励配置：保持原有行为（仅参与记录）
+  if (!streakConfig && (!grantSpinCount || grantSpinCount <= 0)) {
+    if (result.joinedNow) return { handled: true, reply: "签到成功，已记录你的参与。" };
+    return { handled: true, reply: "您已参与此活动" };
+  }
+
+  const today = todayStr();
+  const eventType = "daily_checkin";
+
+  // 3. 读取当前 entry 的连续签到信息，用于计算奖励
+  const [entry] = await db
+    .select({
+      lastCheckinDate: lotteryEntries.lastCheckinDate,
+      checkinStreak: lotteryEntries.checkinStreak,
+    })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.id, result.entryId),
+      eq(lotteryEntries.tenantId, input.tenantId),
+    ))
+    .limit(1);
+
+  if (!entry) {
+    return { handled: true, reply: "签到失败，未找到参与记录。" };
+  }
+
+  // 4. 计算连续天数与奖励
+  const currentStreak = entry.checkinStreak ?? 0;
+  const nextStreak = nextStreakAfterCheckin(entry.lastCheckinDate, currentStreak, today);
+
+  // 计算奖励：传入 streakDays = currentStreak（签到前的连续天数）
+  const reward = computeCheckinReward(
+    streakConfig,
+    grantSpinCount,
+    currentStreak,
+    nextStreak,
+  );
+
+  // 5. 确定要写入的连续天数（cycle 模式达到 cycleDays 后重置）
+  let finalStreak = nextStreak;
+  if (streakConfig?.mode === "cycle" && streakConfig.cycleDays) {
+    if (nextStreak >= streakConfig.cycleDays) {
+      finalStreak = 1; // 周期重置，下一天重新开始
+    }
+  }
+
+  if (reward > 0) {
+    // 有奖励：原子 UPDATE 包括 spins 累加
     const updateResult = await db
       .update(lotteryEntries)
       .set({
-        spinsLeft: sql`${lotteryEntries.spinsLeft} + ${grantSpinCount}`,
+        spinsLeft: sql`${lotteryEntries.spinsLeft} + ${reward}`,
         lastCheckinDate: today,
+        checkinStreak: finalStreak,
       })
       .where(and(
         eq(lotteryEntries.id, result.entryId),
@@ -477,33 +525,55 @@ async function executeCheckinCommand(
     if ((updateResult.rowsAffected ?? 0) === 0) {
       return { handled: true, reply: "今日已签到，明天再来吧！" };
     }
+  } else {
+    // 奖励为 0：仅更新签到日期和连续天数，不发放 spins
+    const updateResult = await db
+      .update(lotteryEntries)
+      .set({
+        lastCheckinDate: today,
+        checkinStreak: finalStreak,
+      })
+      .where(and(
+        eq(lotteryEntries.id, result.entryId),
+        eq(lotteryEntries.tenantId, input.tenantId),
+        or(
+          isNull(lotteryEntries.lastCheckinDate),
+          sql`${lotteryEntries.lastCheckinDate} < ${today}`,
+        ),
+      ));
 
-    // 记录签到事件（仅用于数据分析，不承担去重职责）
-    await recordActivityEvent(db, {
-      tenantId: input.tenantId,
-      drawId: input.drawId,
-      entryId: result.entryId,
-      eventType,
-      source: `${input.source.platform}_group`,
-      medium: "platform_command",
-      campaign: input.platformTargetId,
-      metadata: {
-        command: input.command,
-        grantSpinCount,
-        platform: input.source.platform,
-        groupId: input.source.groupId,
-      },
-    });
-
-    return {
-      handled: true,
-      reply: `✅ 签到成功！获得 ${grantSpinCount} 次抽奖机会，快去 /抽奖 试试手气吧！`,
-    };
+    if ((updateResult.rowsAffected ?? 0) === 0) {
+      return { handled: true, reply: "今日已签到，明天再来吧！" };
+    }
   }
 
-  // 3. 未配置 grantSpinCount：保持原有行为
-  if (result.joinedNow) return { handled: true, reply: "签到成功，已记录你的参与。" };
-  return { handled: true, reply: "您已参与此活动" };
+  // 6. 记录签到事件（仅用于数据分析，不承担去重职责）
+  await recordActivityEvent(db, {
+    tenantId: input.tenantId,
+    drawId: input.drawId,
+    entryId: result.entryId,
+    eventType,
+    source: `${input.source.platform}_group`,
+    medium: "platform_command",
+    campaign: input.platformTargetId,
+    metadata: {
+      command: input.command,
+      reward,
+      streakDays: finalStreak,
+      mode: streakConfig?.mode ?? "fixed",
+      platform: input.source.platform,
+      groupId: input.source.groupId,
+    },
+  });
+
+  // 7. 构建回复文案
+  const streakMsg = finalStreak > 1
+    ? ` (连续签到 ${finalStreak} 天)`
+    : "";
+  return {
+    handled: true,
+    reply: `✅ 签到成功！获得 ${reward} 次抽奖机会${streakMsg}，快去 /抽奖 试试手气吧！`,
+  };
 }
 
 /**

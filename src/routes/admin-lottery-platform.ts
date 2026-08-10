@@ -82,7 +82,6 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
     ? body.dailyCheckinPolicy as Record<string, unknown>
     : undefined;
   const checkinPolicy = daily ? parseStoredCheckinPolicy(daily) : undefined;
-  const grantSpinCount = checkinPolicy?.grantSpinCount;
 
   // 购买链接配置：解析 purchaseConfig.url 和 purchaseConfig.label。
   // url 必须为非空字符串，label 为空时使用默认文案"立即购买"。

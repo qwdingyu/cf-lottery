@@ -62,7 +62,8 @@ export function parseStoredCheckinPolicy(raw: unknown): BuiltinCommandConfig["da
   if (streak) {
     return { ...(grantSpinCount !== undefined ? { grantSpinCount } : {}), rewardConfig: streak };
   }
-  if (grantSpinCount !== undefined) {
+  // grantSpinCount=0 视为"不奖励"，与旧语义一致（parseBuiltinCommandsInput 原逻辑）
+  if (grantSpinCount !== undefined && grantSpinCount > 0) {
     return { grantSpinCount };
   }
   return undefined;
@@ -222,5 +223,4 @@ export function todayStr(): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
-}
 }
