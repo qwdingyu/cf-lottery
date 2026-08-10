@@ -193,6 +193,8 @@ export async function clearTestData(client: Client) {
     "share_records",
     "platform_deliveries",
     "platform_targets",
+    "community_members",
+    "tenant_community_overrides",
     "webhook_deliveries",
     "webhook_configs",
     "api_keys",

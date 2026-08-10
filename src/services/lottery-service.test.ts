@@ -771,6 +771,36 @@ describe("SaaS 套餐配额", () => {
     const usage = await getTenantUsage(db, TENANT);
     expect(usage.limits.maxParticipantsPerActivity).toBe(200); // 基础值，不加额外
   });
+
+  // ── 社群功能套餐配额（docs/180）──
+  it("不同套餐返回社群功能默认配额（free=1群×200人）", async () => {
+    await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["free", TENANT] });
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.limits.communityEnabled).toBe(true);
+    expect(usage.limits.maxPlatformTargets).toBe(1);
+    expect(usage.limits.maxGroupMembers).toBe(200);
+  });
+
+  it("pro：3 群 × 2000 人", async () => {
+    await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["pro", TENANT] });
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.limits.maxPlatformTargets).toBe(3);
+    expect(usage.limits.maxGroupMembers).toBe(2000);
+  });
+
+  it("team：10 群 × 3000 人", async () => {
+    await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["team", TENANT] });
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.limits.maxPlatformTargets).toBe(10);
+    expect(usage.limits.maxGroupMembers).toBe(3000);
+  });
+
+  it("enterprise：社群功能不设限（null）", async () => {
+    await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["enterprise", TENANT] });
+    const usage = await getTenantUsage(db, TENANT);
+    expect(usage.limits.maxPlatformTargets).toBeNull();
+    expect(usage.limits.maxGroupMembers).toBeNull();
+  });
 });
 
 describe("活动引擎默认规则", () => {

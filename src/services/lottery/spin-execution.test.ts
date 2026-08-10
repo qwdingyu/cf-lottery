@@ -566,6 +566,8 @@ describe("performInstantSpin", () => {
     expect(exhausted).toBeDefined();
     expect(exhausted!.value.businessError).toBe("抽奖次数已用完");
     expect(exhausted!.value.spinId).toBe("");
+    // 剩余次数必须反映库内真实值（并发下事务内重读，不接受预读旧值虚高）
+    expect(exhausted!.value.spinsLeft).toBe(0);
 
     const spins = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, id));
     expect(spins.length).toBe(1);

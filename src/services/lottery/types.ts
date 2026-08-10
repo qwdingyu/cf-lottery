@@ -35,6 +35,10 @@ export type TenantPlanLimits = {
   maxParticipantsPerActivity: number;
   maxMembers: number | null;
   maxWebhooks: number | null;
+  /* 社群功能（docs/180）：差异化开放社群绑定能力 */
+  communityEnabled: boolean;          // 套餐是否开放社群功能（布尔硬门）
+  maxPlatformTargets: number | null;  // 最大群绑定数（null=不限，软配额，POST/PUT 拦增量）
+  maxGroupMembers: number | null;     // 每群最大成员数（null=不限，运行时硬配额，跨活动累计）
 };
 
 export type ActivityEventType =

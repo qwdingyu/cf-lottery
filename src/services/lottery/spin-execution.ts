@@ -191,9 +191,18 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         // 次数耗尽：CAS 未命中（WHERE spinsLeft>=1 无行），因此本次绝对未扣次。
         // 返回业务失败结果而非抛异常，避免调用方误判「已扣次需补偿」。
         // 返回值路径保证外部无需在 catch 中做扣次补偿（P0 防无限消耗）。
+        // ⚠️ 关键：此处不能使用事务外预读的 entry.spinsLeft 回填剩余次数——
+        // 并发场景下预读可能读到较高的旧值（如两人同时读到 1），导致返回的剩余次数虚高、
+        // 与实际已扣减后的值不一致。因此事务内重新读取当前真实余额，保证响应与库内一致。
+        // 事务内（BEGIN IMMEDIATE 串行化写锁）能读到竞争者已提交的扣减结果。
+        const [fresh] = await tx
+          .select({ spinsLeft: lotteryEntries.spinsLeft })
+          .from(lotteryEntries)
+          .where(eq(lotteryEntries.id, entry.id))
+          .limit(1);
         return {
           kind: "quotaExhausted" as const,
-          spinsLeft: Math.max(0, Number(entry.spinsLeft ?? 0)),
+          spinsLeft: Math.max(0, Number(fresh?.spinsLeft ?? 0)),
         };
       }
 

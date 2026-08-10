@@ -965,6 +965,40 @@ export const platformTargets = sqliteTable("platform_targets", {
 }));
 
 /**
+ * 租户社群功能覆写表（docs/180）。
+ * 1:1 关联 tenants；存在即覆盖套餐默认值。
+ * 由平台运营者（L3）通过 PATCH /api/platform/tenants/:id/community 维护。
+ */
+export const tenantCommunityOverrides = sqliteTable("tenant_community_overrides", {
+  tenantId: text("tenant_id").primaryKey(),                    // 1:1 主键
+  communityEnabled: integer("community_enabled").notNull().default(1), // 0/1
+  maxPlatformTargets: integer("max_platform_targets"),          // null=不限（群数）
+  maxGroupMembers: integer("max_group_members"),               // null=不限（群人数）
+  note: text("note").notNull().default(""),                     // 运营备注（如"违约观察期"）
+  updatedBy: text("updated_by").notNull().default(""),          // 操作者 userId
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+/**
+ * 群绑定成员注册表（docs/180 §3.3）。
+ * 记录每个群绑定下已服务过的去重成员。
+ * 用于运行时强制 maxGroupMembers 上限，跨活动累计。
+ * 注意：表名 community_members 而非 platform_members，
+ * 避免与现有平台运营者表（schema.ts:148）冲突。
+ */
+export const communityMembers = sqliteTable("community_members", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  platformTargetId: text("platform_target_id").notNull(),
+  userId: text("user_id").notNull(),          // users.id（Phase B 稳定 ID）
+  identityValue: text("identity_value").notNull(), // 平台用户 ID（QQ号），兜底
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (table) => ({
+  uniqTargetUser: uniqueIndex("uq_community_members_target_user").on(table.platformTargetId, table.userId),
+  tenantIdx: index("idx_community_members_tenant").on(table.tenantId),
+}));
+
+/**
  * 平台消息投递审计（docs/167）。
  *
  * HTTP webhook 继续使用 webhook_deliveries；QQ 群消息使用本表记录平台 target、

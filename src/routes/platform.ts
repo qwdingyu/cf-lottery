@@ -10,7 +10,7 @@ import { withDbTransaction } from "../db/client";
 import { fail, getDb, ok } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { requireAuth, requirePlatformMember, signJwt } from "../middleware/auth";
-import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig } from "../db/schema";
+import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig, tenantCommunityOverrides, communityMembers, platformTargets } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
 import { dispatchWebhookDelivery } from "../services/lottery-service";
@@ -371,6 +371,157 @@ platformRoute.patch("/tenants/:id", requirePlatformMember(["platform_owner"]), a
   });
 
   return ok(c, { updated: true });
+});
+
+// ═════════════════════════════════════════════════════════
+// 社群功能覆写管理（docs/180 §3.4）
+// ═════════════════════════════════════════════════════════
+
+/**
+ * PATCH /api/platform/tenants/:id/community — 覆写租户社群功能策略
+ *
+ * 平台运营者（platform_owner）可调整：communityEnabled、maxPlatformTargets、maxGroupMembers。
+ * 防灾难红线：拒绝设 maxGroupMembers 低于任一群当前成员数。
+ */
+platformRoute.patch("/tenants/:id/community", requirePlatformMember(["platform_owner"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
+  const tenantId = c.req.param("id");
+  if (!tenantId) return fail(c, "缺少租户 ID", 400);
+
+  // 校验租户存在
+  const [tenant] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+  if (!tenant) return fail(c, "租户不存在", 404);
+
+  const body = await c.req.json<{
+    communityEnabled?: boolean;
+    maxPlatformTargets?: number | null;
+    maxGroupMembers?: number | null;
+    note?: string;
+  }>();
+
+  const hasMeaningfulUpdate = body.communityEnabled !== undefined
+    || body.maxPlatformTargets !== undefined
+    || body.maxGroupMembers !== undefined
+    || body.note !== undefined;
+  if (!hasMeaningfulUpdate) return fail(c, "请提供至少一个可覆写的字段", 400);
+
+  // ── 防灾难校验：拒绝设 maxGroupMembers 低于任一群当前成员数 ──
+  if (body.maxGroupMembers !== undefined && body.maxGroupMembers !== null) {
+    const targets = await db
+      .select({ id: platformTargets.id })
+      .from(platformTargets)
+      .where(eq(platformTargets.tenantId, tenantId));
+    for (const target of targets) {
+      const [{ total: memberCount }] = await db
+        .select({ total: count() })
+        .from(communityMembers)
+        .where(eq(communityMembers.platformTargetId, target.id));
+      if (Number(memberCount || 0) > body.maxGroupMembers) {
+        return fail(
+          c,
+          `目标群 ${target.id} 当前已有 ${memberCount} 名成员，不能设低于 ${memberCount} 的群人数上限`,
+          400,
+        );
+      }
+    }
+  }
+
+  // 清理 null 语义：写入 DB 时，null 表示不限，0 或负数视为无效
+  // maxPlatformTargets/maxGroupMembers 只接受 null 或 >= 1 的整数
+  if (body.maxPlatformTargets !== undefined && body.maxPlatformTargets !== null) {
+    if (!Number.isInteger(body.maxPlatformTargets) || body.maxPlatformTargets < 1) {
+      return fail(c, "maxPlatformTargets 必须为 null 或 ≥1 的整数", 400);
+    }
+  }
+  if (body.maxGroupMembers !== undefined && body.maxGroupMembers !== null) {
+    if (!Number.isInteger(body.maxGroupMembers) || body.maxGroupMembers < 1) {
+      return fail(c, "maxGroupMembers 必须为 null 或 ≥1 的整数", 400);
+    }
+  }
+
+  const now = new Date().toISOString();
+  await withDbTransaction(db, async (tx) => {
+    // UPSERT：存在则更新，不存在则插入
+    const [existing] = await tx
+      .select({ tenantId: tenantCommunityOverrides.tenantId })
+      .from(tenantCommunityOverrides)
+      .where(eq(tenantCommunityOverrides.tenantId, tenantId))
+      .limit(1);
+
+    if (existing) {
+      const updates: Record<string, unknown> = { updatedAt: now, updatedBy: actorUserId };
+      if (body.communityEnabled !== undefined) updates.communityEnabled = body.communityEnabled ? 1 : 0;
+      if (body.maxPlatformTargets !== undefined) updates.maxPlatformTargets = body.maxPlatformTargets;
+      if (body.maxGroupMembers !== undefined) updates.maxGroupMembers = body.maxGroupMembers;
+      if (body.note !== undefined) updates.note = body.note;
+      await tx.update(tenantCommunityOverrides).set(updates).where(eq(tenantCommunityOverrides.tenantId, tenantId));
+    } else {
+      await tx.insert(tenantCommunityOverrides).values({
+        tenantId,
+        communityEnabled: body.communityEnabled !== undefined ? (body.communityEnabled ? 1 : 0) : 1,
+        maxPlatformTargets: body.maxPlatformTargets ?? null,
+        maxGroupMembers: body.maxGroupMembers ?? null,
+        note: body.note || "",
+        updatedBy: actorUserId,
+        updatedAt: now,
+      });
+    }
+
+    // 平台审计
+    await writePlatformAudit(tx, {
+      actorUserId,
+      actorRole,
+      action: "platform.tenant.community.override",
+      targetType: "tenant_community_overrides",
+      targetId: tenantId,
+      tenantId,
+      metadata: {
+        communityEnabled: body.communityEnabled,
+        maxPlatformTargets: body.maxPlatformTargets,
+        maxGroupMembers: body.maxGroupMembers,
+        note: body.note,
+      },
+    });
+  });
+
+  return ok(c, { updated: true });
+});
+
+/**
+ * DELETE /api/platform/tenants/:id/community — 删除租户社群功能覆写（恢复套餐默认）
+ */
+platformRoute.delete("/tenants/:id/community", requirePlatformMember(["platform_owner"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
+  const tenantId = c.req.param("id");
+  if (!tenantId) return fail(c, "缺少租户 ID", 400);
+
+  const [existing] = await db
+    .select({ tenantId: tenantCommunityOverrides.tenantId })
+    .from(tenantCommunityOverrides)
+    .where(eq(tenantCommunityOverrides.tenantId, tenantId))
+    .limit(1);
+  if (!existing) return fail(c, "该租户没有社群功能覆写记录", 404);
+
+  await withDbTransaction(db, async (tx) => {
+    await tx.delete(tenantCommunityOverrides).where(eq(tenantCommunityOverrides.tenantId, tenantId));
+
+    // 平台审计
+    await writePlatformAudit(tx, {
+      actorUserId,
+      actorRole,
+      action: "platform.tenant.community.override.delete",
+      targetType: "tenant_community_overrides",
+      targetId: tenantId,
+      tenantId,
+      metadata: { deleted: true },
+    });
+  });
+
+  return ok(c, { deleted: true });
 });
 
 // ═════════════════════════════════════════════════════════

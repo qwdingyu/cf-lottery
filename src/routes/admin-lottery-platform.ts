@@ -23,6 +23,8 @@ import { DEFAULT_BUILTIN_COMMANDS, type BuiltinCommandConfig } from "../services
 import { parseStoredCheckinPolicy } from "../services/platform/checkin-reward";
 import { getPlatformAdapter, getSupportedPlatforms, getSupportedProviders } from "../services/platform/adapter-factory";
 import { isCommunityFeatureEnabled } from "../lib/system-config-registry";
+/** 社群功能套餐配额校验（docs/180） */
+import { canTenantCreatePlatformTarget } from "../services/platform/community-policy";
 
 /**
  * 有效平台列表动态从适配器工厂获取，新增平台只需在 adapter-factory.ts 注册，
@@ -258,6 +260,12 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     // 社群功能全局开关校验：平台运营者关闭后，所有租户禁止新建群绑定
     if (!(await isCommunityFeatureEnabled(db))) {
       return fail(c, "社群功能已被平台运营者关闭，暂无法创建群绑定", 403);
+    }
+
+    // 社群功能套餐配额校验（docs/180）：按套餐限制群绑定数，拦新增不阻断存量
+    const quotaCheck = await canTenantCreatePlatformTarget(db, tenantId);
+    if (!quotaCheck.ok) {
+      return fail(c, quotaCheck.message, 403);
     }
 
     const platform = String(body.platform || "qq");

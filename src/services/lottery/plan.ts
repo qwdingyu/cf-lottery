@@ -15,24 +15,40 @@ const PLAN_LIMITS: Record<string, Omit<TenantPlanLimits, "plan">> = {
     maxParticipantsPerActivity: 200,
     maxMembers: 2,
     maxWebhooks: 0,
+    /* 社群功能（docs/180）：免费 1 群 × 200 人，促升级 */
+    communityEnabled: true,
+    maxPlatformTargets: 1,
+    maxGroupMembers: 200,
   },
   pro: {
     maxActivities: 200,
     maxParticipantsPerActivity: 5000,
     maxMembers: 10,
     maxWebhooks: 3,
+    /* 社群功能（docs/180）：pro 3 群 × 2000 人 */
+    communityEnabled: true,
+    maxPlatformTargets: 3,
+    maxGroupMembers: 2000,
   },
   team: {
     maxActivities: 1000,
     maxParticipantsPerActivity: 20000,
     maxMembers: 50,
     maxWebhooks: 10,
+    /* 社群功能（docs/180）：team 10 群 × 3000 人 */
+    communityEnabled: true,
+    maxPlatformTargets: 10,
+    maxGroupMembers: 3000,
   },
   enterprise: {
     maxActivities: null,
     maxParticipantsPerActivity: 100000,
     maxMembers: null,
     maxWebhooks: null,
+    /* 社群功能（docs/180）：企业版不设限 */
+    communityEnabled: true,
+    maxPlatformTargets: null,
+    maxGroupMembers: null,
   },
 };
 
