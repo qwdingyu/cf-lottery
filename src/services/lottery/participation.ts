@@ -256,13 +256,32 @@ export async function joinDraw(
               code: "flash_sale.sold_out" as const,
             };
           }
-          await tx
+          // 把 EXPIRED 软释放的 entry 重新占位为 RESERVED。
+          // 必须先做活动级 CAS（activeParticipantCount+1）成功，再尝试把 entry 改 RESERVED；
+          // 但两步之间可能有并发：另一个请求也通过 CAS 抢到名额并先把 entry 改成了 RESERVED。
+          // 因此这里必须检查 rowsAffected：若命中 0 行（entry 已被并发方抢占），
+          // 说明本请求白占了一个活动名额，必须回滚 activeParticipantCount 并让用户恢复已有 entry，
+          // 否则会产生"一条 entry 计作两个名额"的计数虚高，且该名额永久泄漏无法回收（F3）。
+          const occupy = await tx
             .update(lotteryEntries)
             .set({ paymentStatus: PAYMENT_ENTRY_STATUS.RESERVED, joinedAt: nowIso })
             .where(and(
               eq(lotteryEntries.id, existingPaymentEntry.id),
               eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.EXPIRED),
             ));
+          if ((occupy.rowsAffected ?? 0) === 0) {
+            // 名额已被并发请求抢占：回滚本请求刚占用的活动级计数，避免虚拟占用泄漏。
+            await tx
+              .update(lotteryDraws)
+              .set({ activeParticipantCount: sql`MAX(0, ${lotteryDraws.activeParticipantCount} - 1)` })
+              .where(and(eq(lotteryDraws.id, draw.id), eq(lotteryDraws.tenantId, draw.tenantId)));
+            return {
+              joined: false,
+              message: "您已参与此活动",
+              alreadyJoined: true as const,
+              entryId: existingPaymentEntry.id,
+            };
+          }
           return {
             joined: true,
             entryId: existingPaymentEntry.id,

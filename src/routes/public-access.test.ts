@@ -4,7 +4,7 @@
  * 核心测试目标：
  * 1. P0-1 跨租户隔离：令牌绑定了 drawId，则只返回该 draw 下的卡密。
  *    防止同一 userId 因跨租户有多个活动时，凭一个令牌看到其他租户活动的卡密。
- * 2. 向后兼容：drawId 为空字符串时不做过滤，返回所有卡密。
+ * 2. 旧令牌：drawId 为空字符串时拒绝使用，避免跨租户返回所有卡密。
  * 3. 令牌安全：无效/过期令牌返回 404，一次性令牌不可复用。
  */
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -232,18 +232,12 @@ describe("GET /api/public/access/card-codes", () => {
     expect(res.status).toBe(404);
   });
 
-  it("正常返回卡密列表（no drawId 过滤，向后兼容）", async () => {
+  it("拒绝缺少活动范围的旧令牌", async () => {
     await seedTwoTenantDraws();
     const token = await createValidToken({ drawId: "" });
     const app = createTestApp();
     const res = await app.request(`/api/public/access/card-codes?token=${token}`, {}, TEST_ENV);
-    expect(res.status).toBe(200);
-    const body = await res.json() as { cardCodes?: Array<unknown>; total?: number };
-    // drawId 为空字符串时不过滤，应返回所有租户的卡密
-    expect(body.total).toBe(2);
-    expect(body.cardCodes).toHaveLength(2);
-    expect(body.cardCodes!.some((c: any) => c.cardCode === "CODE-A:SECRET-A")).toBe(true);
-    expect(body.cardCodes!.some((c: any) => c.cardCode === "CODE-B:SECRET-B")).toBe(true);
+    expect(res.status).toBe(400);
   });
 
   it("P0-1 跨租户隔离：drawId 绑定 draw-a 只返回租户A的卡密", async () => {
@@ -278,9 +272,35 @@ describe("GET /api/public/access/card-codes", () => {
     });
   });
 
+  it("跨平台身份绑定后，多个身份使用 OR 查询同一活动卡密", async () => {
+    await seedTwoTenantDraws();
+    await db.insert(authIdentities).values({
+      id: crypto.randomUUID(),
+      userId: TEST_USER_ID,
+      provider: "telegram",
+      providerUserId: "998877",
+    });
+    await db.insert(lotteryEntries).values({
+      id: "entry-a-telegram",
+      tenantId: "tenant-a",
+      drawId: "draw-a",
+      identityType: "telegram",
+      identityValue: "998877",
+      displayName: "Telegram 用户",
+      joinedAt: new Date().toISOString(),
+    });
+    const token = await createValidToken({ drawId: "draw-a" });
+    const app = createTestApp();
+    const res = await app.request(`/api/public/access/card-codes?token=${token}`, {}, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { cardCodes?: Array<{ cardCode?: string }>; total?: number };
+    expect(body.total).toBe(1);
+    expect(body.cardCodes?.[0]?.cardCode).toBe("CODE-A:SECRET-A");
+  });
+
   it("令牌一次性：使用后再次请求返回 404", async () => {
     await seedTwoTenantDraws();
-    const token = await createValidToken({ drawId: "" });
+    const token = await createValidToken({ drawId: "draw-a" });
     const app = createTestApp();
     const first = await app.request(`/api/public/access/card-codes?token=${token}`, {}, TEST_ENV);
     expect(first.status).toBe(200);
@@ -289,7 +309,7 @@ describe("GET /api/public/access/card-codes", () => {
   });
 
   it("未找到用户身份时返回 404", async () => {
-    const token = await createValidToken({ userId: "non-existent-user" });
+    const token = await createValidToken({ userId: "non-existent-user", drawId: "draw-a" });
     const app = createTestApp();
     const res = await app.request(`/api/public/access/card-codes?token=${token}`, {}, TEST_ENV);
     expect(res.status).toBe(404);

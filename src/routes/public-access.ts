@@ -21,7 +21,7 @@ import {
   prizeCodes,
   lotteryDraws,
 } from "../db/schema";
-import { and, eq, inArray, isNotNull, desc } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, desc, or } from "drizzle-orm";
 
 export const publicAccessRoute = new Hono<AppEnv>();
 
@@ -44,6 +44,9 @@ publicAccessRoute.get("/card-codes", async (c) => {
     return fail(c, "令牌无效或已过期。请重新在群内发送 /我的卡密 获取新的链接。", 404);
   }
   const { userId, drawId } = tokenData;
+  if (!drawId) {
+    return fail(c, "令牌缺少活动范围，请重新在群内发送 /我的卡密 获取新的链接。", 400);
+  }
 
   // 查找该用户的所有平台身份
   const identities = await db
@@ -70,8 +73,9 @@ publicAccessRoute.get("/card-codes", async (c) => {
   const entries = await db
     .select({ id: lotteryEntries.id })
     .from(lotteryEntries)
-    .where(identityConditions.length === 1 ? identityConditions[0] : and(
-      ...identityConditions.map((c) => c),
+    .where(and(
+      eq(lotteryEntries.drawId, drawId),
+      identityConditions.length === 1 ? identityConditions[0] : or(...identityConditions),
     ));
 
   if (entries.length === 0) {
@@ -80,22 +84,13 @@ publicAccessRoute.get("/card-codes", async (c) => {
 
   const entryIds = entries.map((e) => e.id);
 
-  // P0-1 跨租户隔离：令牌绑定了 drawId，则只返回该 draw 下的卡密。
-  // 防止同一 userId 因跨租户有多个活动时，凭一个令牌看到其他租户活动的卡密。
-  //
-  // drawId 为空字符串时的行为：
-  // 如果 drawId 为空字符串，则不做 drawId 过滤（向后兼容已存令牌）。
-  // 空字符串表示「不限制」（schema 中 default("")），生产环境中可能存在大量
-  // 升级前已生成的旧令牌，其 drawId 为空字符串。此时返回该用户所有租户下的卡密。
-  // 性能说明：少量旧令牌不会造成性能问题，但大量旧 token 同时使用同一用户 ID
-  // 查询时，因缺少 drawId 索引可能导致全表扫描。后续可安排定时任务为旧 token 补全 drawId。
+  // 令牌必须绑定 drawId，只返回该活动下的卡密。
+  // 旧版空 drawId 令牌已在入口处拒绝，避免同一 users.id 横跨多个租户时泄露其他活动卡密。
   const winnerConditions = [
     inArray(lotteryWinners.entryId, entryIds),
     isNotNull(lotteryWinners.prizeCodeId),
+    eq(lotteryWinners.drawId, drawId),
   ];
-  if (drawId) {
-    winnerConditions.push(eq(lotteryWinners.drawId, drawId));
-  }
 
   // 查询中奖卡密（通过 entryId 关联 winner）
   const winners = await db

@@ -1,0 +1,13 @@
+[Unit]
+Description=cf-lottery scheduled maintenance trigger
+Wants=network-online.target
+After=network-online.target cf-lottery.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/root/cf-lottery/.env
+ExecStart=/bin/sh -c 'curl -fsS -X POST -H "Authorization: Bearer ${CRON_SECRET}" http://127.0.0.1:${PORT:-8787}/api/cron/maintenance >/dev/null'
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=full

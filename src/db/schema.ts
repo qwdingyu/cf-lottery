@@ -79,7 +79,8 @@ export const accessTokens = sqliteTable("access_tokens", {
   /**
    * 令牌所属 drawId（P0-1 安全修复：跨租户隔离）。
    * 非空时，public-access.ts 查询 winner 时按 drawId 过滤，防止同一 userId 跨租户看到其他租户的卡密。
-   * 空字符串表示不限制（向后兼容已存令牌）。
+   * 空字符串表示旧版本令牌；公共卡密访问接口会拒绝此类令牌，
+   * 必须重新生成带活动范围的令牌。
    */
   drawId: text("draw_id").notNull().default(""),
   /** 过期时间（ISO 字符串） */
@@ -925,8 +926,8 @@ export const PAYMENT_ORDER_ITEM_STATUS = {
  * - webhook_configs 的核心语义是 HTTP URL + HMAC 投递；
  * - QQ 群是平台目标，不是 URL。混用会污染投递审计与失败重试模型。
  *
- * P0 只实现 platform='qq'，底层可由 NapCat/OneBot 提供；字段保留 platform
- * 是为了未来官方 QQ Bot 或 Telegram 接入时不重写业务绑定模型。
+ * QQ 底层可由 NapCat/OneBot 提供；Telegram 直接使用 Bot API。
+ * 字段保留 platform 是为了不同平台共用同一绑定模型。
  */
 export const platformTargets = sqliteTable("platform_targets", {
   id: text("id").primaryKey(),
@@ -948,7 +949,7 @@ export const platformTargets = sqliteTable("platform_targets", {
   /** 每个租户/目标自己的适配器来源。QQ 为 napcat，Telegram 等其他平台可不设置或存储其他值。 */
   adapterProvider: text("adapter_provider").notNull().default("napcat"),
   /**
-   * 每个租户/群自己的连接配置。P0 只保存 baseUrl；token 等敏感字段必须等租户级加密闭环完成后再接入。
+   * 每个租户/群自己的连接配置。敏感凭据不得明文写入此字段；
    * 示例：{ "baseUrl": "http://x.x.x.x:3000" }
    */
   adapterConfigJson: text("adapter_config_json").notNull().default("{}"),

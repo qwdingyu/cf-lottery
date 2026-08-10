@@ -30,7 +30,7 @@ export type AccessTokenResult = {
  * @param userId 目标 users.id
  * @param purpose 令牌用途
  * @param opts 可选参数
- * @param opts.drawId 令牌所属 drawId（P0-1 跨租户隔离）：非空时 public-access.ts 按 drawId 过滤 winner
+ * @param opts.drawId 令牌所属 drawId（必填业务约束）：公共访问接口按活动范围过滤 winner
  * @param opts.expiresInMs 过期时间（毫秒），默认 5 分钟
  */
 export async function generateAccessToken(

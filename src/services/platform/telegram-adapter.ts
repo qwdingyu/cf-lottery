@@ -23,6 +23,16 @@ const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
 
 /**
+ * 单次 Telegram Bot API 请求的超时上限（毫秒）。
+ *
+ * 为什么必须设置超时：Telegram 出站现在由 platform_deliveries 异步投递，
+ * 但维护任务仍会逐条等待 Bot API 结果；若第三方 API 长时间不返回，会拖住整轮维护任务，
+ * 导致后续开奖通知、私聊卡密和重试队列延迟。8s 超时把单条投递失败有界化，
+ * 失败后进入 delivery 重试状态机，而不是把整轮 maintenance 卡死。
+ */
+const TELEGRAM_API_TIMEOUT_MS = 8000;
+
+/**
  * 构建 Telegram Bot API 的完整 URL。
  * 例如：https://api.telegram.org/bot123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11/sendMessage
  */
@@ -116,10 +126,15 @@ async function callTelegramApi(
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
+      // 每轮请求都挂一个新的 AbortSignal 超时器（AbortSignal.timeout 在
+      // Cloudflare Workers / Node 18+ / 现代浏览器均可用）。
+      // 超时后 fetch reject（AbortError），落入下方 catch 的网络错误分支，
+      // 按 MAX_RETRIES 退避重试，全部失败后抛出——保证第三方 API 故障总是有界收敛。
       const res = await fetcher(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(TELEGRAM_API_TIMEOUT_MS),
       });
 
       // 尝试解析 JSON 响应，失败时使用原始文本

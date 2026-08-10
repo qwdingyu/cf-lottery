@@ -231,11 +231,18 @@ export async function performDraw(
 
     // 4. 事务内写入中奖记录 + 原子锁码
     //    使用事务保证：锁码和写入中奖记录要么全部成功，要么全部回滚
-    let entryIndex = 0;  // 已处理的中奖者数量（在事务外声明，用于审计日志）
-    // selected 在裂变路径已是唯一 entry；等权路径 randomSelect 也不重复。
-    // 仍保留 seen 作纵深防御（异常数据/历史调用约定）。
-    const seenEntryIds = new Set<string>();
-    await withDbTransaction(db, async (tx) => {
+    //
+    // F2 修复：entryIndex / seenEntryIds 必须声明在事务回调【内部】。
+    // 原因：cf-core 的 withDbTransaction 在 SQLite BUSY 时会【整体重跑】事务回调，
+    // 但外部闭包变量不会随重跑回滚。若声明在回调外，重试时 entryIndex 会从上次
+    // 失败位置继续、seenEntryIds 保留旧集合 → selected[0..k-1] 永远不会被处理，
+    // 造成【静默漏发中奖者】且审计计数与实际不一致。声明在回调内，每次重跑都从零开始，
+    // 保证所有候选池 entry 都被公平处理一遍，且最终 entryIndex 通过返回值取回。
+    const { entryIndex } = await withDbTransaction(db, async (tx) => {
+      let entryIndex = 0;  // 已处理的中奖者数量（回调内局部，BUSY 重试时归零重来）
+      // selected 在裂变路径已是唯一 entry；等权路径 randomSelect 也不重复。
+      // 仍保留 seen 作纵深防御（异常数据/历史调用约定）。
+      const seenEntryIds = new Set<string>();
       // 如果没有配置多奖项，创建默认奖项"中奖"
       const effectiveTiers = tiers.length > 0 ? tiers : [{
         id: crypto.randomUUID(),
@@ -322,6 +329,9 @@ export async function performDraw(
         .update(lotteryDraws)
         .set({ status: "drawn", drawnAt: now, updatedAt: now, failureReason: "" })
         .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
+
+      // 返回本次实际发放的中奖者数，供事务外审计/webhook/返回值使用（F2）
+      return { entryIndex };
     });
 
     // 6. 写审计日志（记录谁在什么时候开奖、结果如何）

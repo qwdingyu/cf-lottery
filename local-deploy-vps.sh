@@ -27,6 +27,10 @@
 #   cd /root/cf-lottery
 #   tar -xzf /root/cf-lottery-deploy-YYYYMMDD-HHMMSS.tar.gz
 #   npm ci --omit=dev        # 若 SSH 不稳定，改用: nohup bash -c "npm ci --omit=dev && systemctl restart cf-lottery" > /tmp/deploy.log 2>&1 &
+#   install -m 0644 configs/cf-lottery-maintenance.service /etc/systemd/system/cf-lottery-maintenance.service
+#   install -m 0644 configs/cf-lottery-maintenance.timer /etc/systemd/system/cf-lottery-maintenance.timer
+#   systemctl daemon-reload
+#   systemctl enable --now cf-lottery-maintenance.timer
 #   systemctl restart cf-lottery
 # 注意：server.js 启动时自动执行数据库迁移，无需单独 npm run db:migrate
 # ═══════════════════════════════════════════════════════════════════════════════

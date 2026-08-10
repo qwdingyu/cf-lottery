@@ -33,6 +33,7 @@ import {
 // ── 拆分模块（docs/049 #17：除奖品/定时兜底外已全部迁至 services/lottery/） ──
 // 内部使用：定时兜底（processDueDraws）复用开奖核心域
 import { performDraw, healDrawingState } from "./lottery/draw-execution";
+import { runBounded } from "./../lib/concurrency";
 
 // re-export：保持既有导出 API 不变（外部 import 本文件的符号继续可用）
 export * from "./lottery/types";
@@ -274,16 +275,23 @@ export async function sendDrawReminders(
 
       const shareUrl = draw.publicSlug ? `${draw.publicSlug}` : "";
       const reminderText = minutes >= 120 ? `${Math.round(minutes / 60)} 小时` : `${minutes} 分钟`;
-      for (const entry of entries) {
-        if (!entry.identityValue.includes("@")) continue;
-        try {
-          await sendEmail(emailEnv, {
-            to: entry.identityValue,
-            template: "draw_reminder",
-            templateData: { drawName: draw.title, shareUrl, reminderText },
-          });
-          emailsSent++;
-        } catch { failed++; }
+      // E4 修复：批量开奖提醒邮件用有界并发（5 路）发送，替代逐条串行 await。
+      // 最坏场景 20 个活动 × 500 人 = 1 万封邮件，串行发送在 Workers 单次调用 CPU/时长
+      // 限制下极易超时中断；且与 sendWinnerNotifications / sendLoserConsolationEmails 的
+      // 并发度保持一致（有界并发避免打爆下游发信 API 限流）。失败仅计数不中断。
+      const results = await runBounded(entries, 5, async (entry) => {
+        if (!entry.identityValue.includes("@")) return "skip";
+        await sendEmail(emailEnv, {
+          to: entry.identityValue,
+          template: "draw_reminder",
+          templateData: { drawName: draw.title, shareUrl, reminderText },
+        });
+        return "sent";
+      });
+      for (const r of results) {
+        if (r.ok && r.value === "sent") emailsSent++;
+        else if (r.ok && r.value === "skip") { /* 无邮箱地址，跳过不计 */ }
+        else failed++;
       }
     } catch { /* 单个活动失败不影响其他 */ }
   }

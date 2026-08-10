@@ -1463,8 +1463,11 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
     });
 
     // 业务层失败（如 quota exhausted）：返回错误信息，不进入后续流程
+    // 用 409（Conflict）而非 400（Bad Request）表示"资源状态冲突（次数已用完）"：
+    // 前端 LotteryView.vue 依赖 res.status === 409 将该活动剩余次数置 0，
+    // 并避免误判为"验证码失效"（400 分支会打开登录弹窗）。这是发布契约，不可擅自改状态码。
     if (result.businessError) {
-      return fail(c, result.businessError, 400);
+      return fail(c, result.businessError, 409);
     }
 
     // 首次成功（含未中）核销 OTP；回放不核销（通常已在上方 early-return）

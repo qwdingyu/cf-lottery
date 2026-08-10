@@ -262,12 +262,6 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       return fail(c, "社群功能已被平台运营者关闭，暂无法创建群绑定", 403);
     }
 
-    // 社群功能套餐配额校验（docs/180）：按套餐限制群绑定数，拦新增不阻断存量
-    const quotaCheck = await canTenantCreatePlatformTarget(db, tenantId);
-    if (!quotaCheck.ok) {
-      return fail(c, quotaCheck.message, 403);
-    }
-
     const platform = String(body.platform || "qq");
     if (!VALID_PLATFORMS.has(platform)) {
       const supported = Array.from(VALID_PLATFORMS).join(", ");
@@ -276,6 +270,21 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     const targetId = String(body.targetId || "").trim();
     if (!targetId) return fail(c, "缺少 targetId");
     const targetName = String(body.targetName || "").trim().slice(0, 120);
+
+    // targetId 全租户唯一（schema 唯一索引 platform+targetId）。重复绑定是更具体的业务错误，
+    // 必须先于套餐配额返回，否则第二次添加同一群会被误报为"套餐群数已满"。
+    const [existing] = await db
+      .select({ id: platformTargets.id })
+      .from(platformTargets)
+      .where(and(eq(platformTargets.platform, platform), eq(platformTargets.targetId, targetId)))
+      .limit(1);
+    if (existing && existing.id) return fail(c, "该目标已绑定，请勿重复添加");
+
+    // 社群功能套餐配额校验（docs/180）：按套餐限制群绑定数，拦新增不阻断存量
+    const quotaCheck = await canTenantCreatePlatformTarget(db, tenantId);
+    if (!quotaCheck.ok) {
+      return fail(c, quotaCheck.message, 403);
+    }
 
     const activeDrawId = String(body.activeDrawId || "").trim();
     const draw = activeDrawId ? await resolveDraw(db, tenantId, activeDrawId) : null;
@@ -301,14 +310,6 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     // 每群独立入站密钥：明文只返回一次，库中只存哈希
     const inboundSecret = createPlatformInboundSecret();
     const inboundSecretHash = await hashPlatformInboundSecret(inboundSecret);
-
-    // targetId 全租户唯一（schema 唯一索引 platform+targetId）
-    const [existing] = await db
-      .select({ id: platformTargets.id })
-      .from(platformTargets)
-      .where(and(eq(platformTargets.platform, platform), eq(platformTargets.targetId, targetId)))
-      .limit(1);
-    if (existing && existing.id) return fail(c, "该目标已绑定，请勿重复添加");
 
     const id = crypto.randomUUID();
     const now = new Date().toISOString();

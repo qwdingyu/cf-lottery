@@ -10,7 +10,7 @@
  * - 发送失败不回滚业务：delivery 标记 failed/max_retries，不影响开奖/参与/签到
  * - 适配器连接失败时，记录 lastError 和 nextRetryAt，下次 cron 轮询重试
  */
-import { asc, and, eq, sql } from "drizzle-orm";
+import { asc, and, eq, or, sql } from "drizzle-orm";
 import type { DbType, DbWriteScope } from "../../db/client";
 import { platformTargets, platformDeliveries } from "../../db/schema";
 import { getPlatformAdapter } from "./adapter-factory";
@@ -25,6 +25,16 @@ export interface EnqueuePlatformEventInput {
   data: Record<string, string>;
   /** 可选的全局事件 ID（用于去重） */
   eventId?: string;
+}
+
+export interface EnqueuePrivatePlatformMessageInput {
+  tenantId: string;
+  platformTargetId: string;
+  platform: string;
+  targetId: string;
+  targetUserId: string;
+  groupId?: string;
+  text: string;
 }
 
 /** 匹配某租户/活动的所有已启用平台目标，为每个目标创建一条投递记录 */
@@ -80,17 +90,59 @@ export async function enqueuePlatformEvent(db: DbWriteScope, input: EnqueuePlatf
   return { eventId, deliveryIds, targetCount: targets.length };
 }
 
+/** 将私聊/临时消息写入统一平台投递队列，避免 webhook 热路径同步等待第三方 Bot API。 */
+export async function enqueuePrivatePlatformMessage(
+  db: DbWriteScope,
+  input: EnqueuePrivatePlatformMessageInput,
+): Promise<{ deliveryId: string }> {
+  const now = new Date().toISOString();
+  const deliveryId = crypto.randomUUID();
+  await db.insert(platformDeliveries).values({
+    id: deliveryId,
+    tenantId: input.tenantId,
+    platformTargetId: input.platformTargetId,
+    platform: input.platform,
+    targetId: input.targetId,
+    eventId: `pmsg_${crypto.randomUUID().replace(/-/g, "")}`,
+    eventType: "private_message",
+    command: "private_message",
+    payloadJson: JSON.stringify({
+      renderedMessage: input.text,
+      targetType: "private",
+      privateTargetId: input.targetUserId,
+      groupId: input.groupId || "",
+    }),
+    status: "pending",
+    attemptCount: 0,
+    providerMessageId: "",
+    responseBody: "",
+    lastError: "",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { deliveryId };
+}
+
 /** 拾取并投递待处理的平台消息（由维护 cron 触发） */
 export async function dispatchPlatformDeliveries(
   db: DbType,
   limit: number,
   fetcher: typeof fetch = fetch,
 ) {
+  // 数据库存储的是 ISO 8601 字符串；统一在应用层计算 ISO 截止时间，
+  // 避免 SQLite `datetime('now')` 的空格格式与 ISO `T` 格式做字符串比较时失真。
+  const staleProcessingCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const rows = await db
     .select()
     .from(platformDeliveries)
     .where(and(
-      eq(platformDeliveries.status, "pending"),
+      or(
+        eq(platformDeliveries.status, "pending"),
+        and(
+          eq(platformDeliveries.status, "processing"),
+          sql`${platformDeliveries.updatedAt} <= ${staleProcessingCutoff}`,
+        ),
+      ),
       sql`(${platformDeliveries.nextRetryAt} IS NULL OR ${platformDeliveries.nextRetryAt} <= ${new Date().toISOString()})`,
     ))
     .orderBy(asc(platformDeliveries.createdAt))
@@ -102,6 +154,24 @@ export async function dispatchPlatformDeliveries(
   const now = new Date().toISOString();
 
   for (const delivery of rows) {
+    // 先领取再发送：防止两个维护任务同时看到同一条 pending 记录并重复发消息。
+    // processing 超过 10 分钟会被上面的查询重新捞起，避免进程崩溃后永久卡住。
+    const claimed = await db
+      .update(platformDeliveries)
+      .set({ status: "processing", updatedAt: now })
+      .where(and(
+        eq(platformDeliveries.id, delivery.id),
+        or(
+          eq(platformDeliveries.status, "pending"),
+          and(
+            eq(platformDeliveries.status, "processing"),
+            sql`${platformDeliveries.updatedAt} <= ${staleProcessingCutoff}`,
+          ),
+        ),
+      ))
+      .returning({ id: platformDeliveries.id });
+    if (claimed.length === 0) continue;
+
     const [target] = await db
       .select()
       .from(platformTargets)
@@ -134,11 +204,16 @@ export async function dispatchPlatformDeliveries(
     // 新增平台只需在 adapter-factory.ts 注册工厂，无需改动 delivery.ts
     try {
       const adapter = getPlatformAdapter(target.platform, adapterConfig, fetcher);
+      const payload = parseDeliveryPayload(delivery.payloadJson);
       const message: PlatformMessage = {
         platform: target.platform as PlatformType,
-        targetId: target.targetId,
+        targetId: payload.targetType === "private" && payload.privateTargetId
+          ? payload.privateTargetId
+          : target.targetId,
+        targetType: payload.targetType,
+        groupId: payload.groupId,
         type: "text",
-        text: extractRenderedMessage(delivery.payloadJson, delivery.eventType),
+        text: payload.renderedMessage || delivery.eventType,
       };
       const result = await adapter.send(message);
       await db
@@ -176,6 +251,26 @@ export async function dispatchPlatformDeliveries(
   return { sent, failed, errors };
 }
 
+function parseDeliveryPayload(payloadJson: string): {
+  renderedMessage: string;
+  targetType?: "group" | "private";
+  privateTargetId?: string;
+  groupId?: string;
+} {
+  try {
+    const parsed = JSON.parse(payloadJson) as Record<string, unknown>;
+    const targetType = parsed.targetType === "private" ? "private" : undefined;
+    return {
+      renderedMessage: typeof parsed.renderedMessage === "string" ? parsed.renderedMessage : "",
+      targetType,
+      privateTargetId: typeof parsed.privateTargetId === "string" ? parsed.privateTargetId : undefined,
+      groupId: typeof parsed.groupId === "string" ? parsed.groupId : undefined,
+    };
+  } catch {
+    return { renderedMessage: "" };
+  }
+}
+
 /**
  * 记录私聊发送失败到 platformDeliveries 审计表（P1-1）。
  *
@@ -211,18 +306,6 @@ export async function logPrivateMessageFailure(
     });
   } catch {
     // 审计日志写入失败不阻塞主流程
-  }
-}
-
-/** 从 payloadJson 中提取渲染后的消息文本 */
-function extractRenderedMessage(payloadJson: string, fallback: string): string {
-  try {
-    const parsed = JSON.parse(payloadJson);
-    return typeof parsed.renderedMessage === "string" && parsed.renderedMessage
-      ? parsed.renderedMessage
-      : fallback;
-  } catch {
-    return fallback;
   }
 }
 

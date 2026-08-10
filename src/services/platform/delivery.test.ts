@@ -9,7 +9,12 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearTestData, getTestDb } from "../../test-setup";
 import { platformTargets, platformDeliveries, tenants } from "../../db/schema";
 import { and, eq } from "drizzle-orm";
-import { enqueuePlatformEvent, dispatchPlatformDeliveries, logPrivateMessageFailure } from "./delivery";
+import {
+  enqueuePlatformEvent,
+  enqueuePrivatePlatformMessage,
+  dispatchPlatformDeliveries,
+  logPrivateMessageFailure,
+} from "./delivery";
 
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -251,7 +256,114 @@ describe("dispatchPlatformDeliveries", () => {
     expect(result.sent).toBe(0);
     expect(result.failed).toBe(0);
   });
+
+  it("跳过未超时的 processing 投递，避免维护任务并发重复发送", async () => {
+    const now = new Date().toISOString();
+    await db.insert(platformDeliveries).values({
+      id: "dlv-processing-fresh",
+      tenantId: TENANT_ID,
+      platformTargetId: TARGET_ID,
+      platform: "qq",
+      targetId: "999999",
+      eventId: "evt-processing-fresh",
+      eventType: "draw.completed",
+      payloadJson: JSON.stringify({ renderedMessage: "处理中消息" }),
+      status: "processing",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    let called = 0;
+    const result = await dispatchPlatformDeliveries(db, 10, async () => {
+      called++;
+      return new Response("{}", { status: 200 });
+    });
+
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(called).toBe(0);
+  });
+
+  it("重新领取超时 processing 投递，避免进程崩溃后永久卡住", async () => {
+    const old = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    await db.insert(platformDeliveries).values({
+      id: "dlv-processing-stale",
+      tenantId: TENANT_ID,
+      platformTargetId: TARGET_ID,
+      platform: "qq",
+      targetId: "999999",
+      eventId: "evt-processing-stale",
+      eventType: "draw.completed",
+      payloadJson: JSON.stringify({ renderedMessage: "超时恢复消息" }),
+      status: "processing",
+      createdAt: old,
+      updatedAt: old,
+    });
+
+    const result = await dispatchPlatformDeliveries(db, 10, async () => {
+      return new Response(JSON.stringify({ data: { message_id: 123 } }), { status: 200 });
+    });
+
+    expect(result.sent).toBe(1);
+    const [delivery] = await db
+      .select()
+      .from(platformDeliveries)
+      .where(eq(platformDeliveries.id, "dlv-processing-stale"));
+    expect(delivery.status).toBe("sent");
+    expect(delivery.providerMessageId).toBe("123");
+  });
+
+  it("私聊队列投递调用 QQ 临时私聊接口，并传递用户 ID 与群上下文", async () => {
+    await enqueuePrivatePlatformMessage(db, {
+      tenantId: TENANT_ID,
+      platformTargetId: TARGET_ID,
+      platform: "qq",
+      targetId: "999999",
+      targetUserId: "123456",
+      groupId: "999999",
+      text: "你的卡密是 CODE-001",
+    });
+
+    let requestUrl = "";
+    let requestBody: Record<string, unknown> = {};
+    const result = await dispatchPlatformDeliveries(db, 10, async (input, init) => {
+      requestUrl = String(input);
+      requestBody = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+      return new Response(JSON.stringify({ data: { message_id: "pm-1" } }), { status: 200 });
+    });
+
+    expect(result.sent).toBe(1);
+    expect(requestUrl).toContain("/send_private_msg");
+    expect(requestBody.user_id).toBe("123456");
+    expect(requestBody.group_id).toBe("999999");
+    expect(requestBody.message).toBe("你的卡密是 CODE-001");
+  });
 });
+
+describe("enqueuePrivatePlatformMessage", () => {
+  it("将私聊消息写入 pending 队列并保留临时会话群 ID", async () => {
+    const result = await enqueuePrivatePlatformMessage(db, {
+      tenantId: TENANT_ID,
+      platformTargetId: TARGET_ID,
+      platform: "telegram",
+      targetId: "999999",
+      targetUserId: "123456",
+      groupId: "999999",
+      text: "卡密内容",
+    });
+
+    const [delivery] = await db
+      .select()
+      .from(platformDeliveries)
+      .where(eq(platformDeliveries.id, result.deliveryId));
+    expect(delivery?.status).toBe("pending");
+    const payload = JSON.parse(delivery?.payloadJson || "{}") as Record<string, unknown>;
+    expect(payload.targetType).toBe("private");
+    expect(payload.privateTargetId).toBe("123456");
+    expect(payload.groupId).toBe("999999");
+  });
+});
+
 describe("logPrivateMessageFailure", () => {
   it("私聊发送失败时写入一条 platformDeliveries 审计记录", async () => {
     await logPrivateMessageFailure(

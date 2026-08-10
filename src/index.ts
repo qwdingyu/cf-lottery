@@ -10,7 +10,7 @@ import { createClient } from "@libsql/client";
 import { createDb } from "./db/client";
 import { and, sql } from "drizzle-orm";
 import { getEnv } from "./lib/platform";
-import { systemConfig, auditLogs, lotteryDraws, paymentOrders } from "./db/schema";
+import { systemConfig, auditLogs, lotteryDraws, paymentOrders, rateLimitLog } from "./db/schema";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
@@ -27,7 +27,6 @@ import { platformTelegramRoute } from "./routes/platform-telegram";
 import { adminMediaRoute, mediaRoute } from "./routes/media";
 import { enforceRequestBodyLimit } from "./lib/body-limit";
 import { timingSafeEqualString } from "./lib/crypto-compare";
-import { cleanExpiredRateLimits } from "./lib/rate-limit";
 import { refreshAllTenantSnapshots } from "./services/admin/usage-snapshots";
 import {
   processDueDraws,
@@ -41,6 +40,11 @@ import { cleanExpiredBindings } from "./services/platform/binding";
 import { cleanExpiredSpins } from "./services/lottery/spin-execution";
 
 const app = new Hono<AppEnv>();
+
+/** 通用登录/验证码/公开查询等短窗口限流日志最多保留 1 小时。 */
+const SHORT_RATE_LIMIT_RETENTION_MS = 3600 * 1000;
+/** 邀请奖励配额依赖 24 小时窗口计数，额外保留 10 分钟避免边界时间漂移误删。 */
+const REWARD_RATE_LIMIT_RETENTION_MS = 24 * 3600 * 1000 + 10 * 60 * 1000;
 
 function createDbFromEnv(env: Bindings) {
   if (!env.TURSO_URL) return undefined;
@@ -76,7 +80,11 @@ export async function runScheduledMaintenance(
     perTenantLimit: 20,
   });
   // 限流日志只服务短窗口判断，定时清理避免 Turso 免费层 rows/storage 被长期无价值日志拖垮。
-  const cleanedRateLimitLogs = await cleanExpiredRateLimits(db);
+  // F1 修复：reward 邀请奖励配额是【24 小时窗口】（reward.ts REWARD_QUOTA_WINDOW_MS），
+  // 而通用登录/验证码限流是【1 小时窗口】。若统一按 1h 清理，会把 reward 的 24h 计数记录
+  // 一并删掉，导致「每日每邀请人/每日全局」配额退化为「每小时」，奖励可刷到日上限的数倍（超发击穿）。
+  // 因此按 key 前缀差异化清理：`reward:` 前缀保留 24h+（保护每日上限），其余短窗口限流保留 1h。
+  const cleanedRateLimitLogs = await cleanRateLimitLogsSafely(db);
   // P2-2 清理：已过期/已使用的访问令牌，最长保留 24 小时
   const cleanedTokens = await cleanExpiredTokens(db);
   // P2-2 清理：已过期/已使用的绑定码，最长保留 24 小时
@@ -94,6 +102,38 @@ export async function runScheduledMaintenance(
   });
 
   return { draws, webhooks, platformDeliveries, cleanedRateLimitLogs, cleanedTokens, cleanedBindings, cleanedSpins, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
+}
+
+/**
+ * 按 key 前缀差异化清理限流日志（F1 修复）。
+ *
+ * 背景：rate_limit_log 表承载两种语义完全不同的限流：
+ * 1. 通用短窗口限流（登录/验证码/注册等），窗口通常 1 分钟~1 小时；
+ * 2. reward 邀请奖励配额（reward.ts），窗口固定 24 小时（REWARD_QUOTA_WINDOW_MS）。
+ *
+ * 若统一用「1 小时前全部删除」清理，会把 reward 的 24h 计数记录删掉，
+ * 使「每日每邀请人上限 / 每日全局上限」退化为「每小时上限」，羊毛党可把奖励刷到日上限的数倍。
+ *
+ * 处理：
+ * - `reward:` 前缀的记录按 REWARD_QUOTA_WINDOW_MS（24h）+ 余量保留；
+ * - 其余短窗口限流记录按 1h 保留（与旧行为一致，防止无界增长）。
+ *
+ * @returns 删除的总行数
+ */
+export async function cleanRateLimitLogsSafely(db: ReturnType<typeof createDb>): Promise<number> {
+  // 1) 清理 reward 前缀的过期记录（仅删超过 24h+ 的）
+  const rewardCutoff = new Date(Date.now() - REWARD_RATE_LIMIT_RETENTION_MS).toISOString();
+  const rewardDeleted = await db
+    .delete(rateLimitLog)
+    .where(sql`${rateLimitLog.key} LIKE 'reward:%' AND ${rateLimitLog.createdAt} < ${rewardCutoff}`);
+
+  // 2) 清理非 reward 前缀的短窗口限流记录（超过 1h 即删）
+  const shortCutoff = new Date(Date.now() - SHORT_RATE_LIMIT_RETENTION_MS).toISOString();
+  const shortDeleted = await db
+    .delete(rateLimitLog)
+    .where(sql`(${rateLimitLog.key} NOT LIKE 'reward:%') AND ${rateLimitLog.createdAt} < ${shortCutoff}`);
+
+  return (rewardDeleted.rowsAffected ?? 0) + (shortDeleted.rowsAffected ?? 0);
 }
 
 /**

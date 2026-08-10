@@ -37,7 +37,7 @@
 #   dist/server.js         后端单文件 bundle（esbuild 编译+minify）
 #   public/                前端静态资源（npm run frontend:build）
 #   cf-lottery-deploy-YYYYMMDD-HHMMSS.tar.gz  VPS 部署包（--package）
-#     内含：dist/server.js  public/  package.json  package-lock.json
+#     内含：dist/server.js  public/  package.json  package-lock.json  configs/  migrations/
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -149,6 +149,7 @@ if [ "$DO_PACKAGE" = true ]; then
     public/ \
     package.json \
     package-lock.json \
+    configs/ \
     migrations/
   PACKAGE_SIZE=$(du -h "$PACKAGE" | cut -f1)
   info "打包完成 → $PACKAGE ($PACKAGE_SIZE)"

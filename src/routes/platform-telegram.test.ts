@@ -3,11 +3,11 @@
  *
  * 这组测试与 platform-qq.test.ts 共用同一套业务逻辑（handleInboundPlatformEvent），
  * 差异在于：
- * - Telegram 通过 ?secret= 鉴权（不支持自定义请求头）
+ * - Telegram 优先通过官方 X-Telegram-Bot-Api-Secret-Token header 鉴权，?secret= 仅兼容旧 webhook
  * - Telegram 消息结构不同（update.message.chat.id / update.message.from.id）
  * - 平台类型为 "telegram"，身份类型为 "telegram"
  */
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi, afterAll } from "vitest";
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { platformTelegramRoute } from "./platform-telegram";
@@ -218,6 +218,18 @@ async function seedLeaderboardEntry(id: string, identityValue: string, displayNa
 
 beforeAll(async () => {
   ({ client, db } = await getTestDb());
+  // 测试环境无真实 Telegram Bot API 服务：全局拦截 fetch，让任何出站 Telegram 请求
+  // 立即抛网络错误（触发 adapter 的指数退避重试后进入"私聊发送失败"降级分支）。
+  // 这样 /抽奖 等命令的私聊发送不会被真实网络挂起（此前导致 30s 超时），
+  // 同时验证了"私聊失败 → 群内追加 accessUrl/降级提示"的容错路径。
+  vi.stubGlobal("fetch", async () => {
+    throw new Error("NetworkError: Telegram API 不可达（测试环境无真实服务）");
+  });
+});
+
+afterAll(() => {
+  // 恢复全局 fetch，避免污染其它测试文件
+  vi.unstubAllGlobals();
 });
 
 beforeEach(async () => {
@@ -279,6 +291,24 @@ describe("POST /api/platform/telegram/message", () => {
     }, TEST_ENV);
 
     expect(res.status).toBe(401);
+  });
+
+  it("支持 Telegram 官方 secret_token header 鉴权，避免密钥进入 URL", async () => {
+    await seedTarget(JSON.stringify({ spinEnabled: false }));
+    const app = createTestApp();
+    const res = await app.request("/api/platform/telegram/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Telegram-Bot-Api-Secret-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(telegramUpdate()),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("/签到");
   });
 
   it("已绑定目标返回当前启用的内置命令帮助", async () => {
@@ -587,8 +617,8 @@ describe("POST /api/platform/telegram/message", () => {
     expect(body.reply).not.toContain("SECRET-1");
     // 卡密奖品不再在群内展示"群内泄露"提示，而是改为私聊发送
     expect(body.reply).toContain("卡密已私聊发送");
-    // 由于测试环境没有真实 Telegram Bot API 服务，私聊发送会失败，回复中应包含降级提示
-    expect(body.reply).toContain("私聊发送失败");
+    // 私聊不在 webhook 热路径同步调用 Bot API，而是进入异步投递队列。
+    expect(body.reply).toContain("私聊消息已进入发送队列");
 
     const entries = await db
       .select()
@@ -607,7 +637,7 @@ describe("POST /api/platform/telegram/message", () => {
       .where(and(eq(lotteryWinners.tenantId, TENANT_ID), eq(lotteryWinners.drawId, "draw-tg-1")));
     expect(winners).toHaveLength(1);
 
-    // P1-1 审计：私聊发送失败应记录到 platformDeliveries
+    // 私聊消息应进入平台投递队列，后续由 maintenance 发送。
     const deliveries = await db
       .select()
       .from(platformDeliveries)
@@ -615,10 +645,11 @@ describe("POST /api/platform/telegram/message", () => {
         eq(platformDeliveries.tenantId, TENANT_ID),
         eq(platformDeliveries.platformTargetId, "pt-tg-1"),
         eq(platformDeliveries.eventType, "private_message"),
-        eq(platformDeliveries.status, "failed"),
+        eq(platformDeliveries.status, "pending"),
       ));
     expect(deliveries.length).toBeGreaterThanOrEqual(1);
-    expect(deliveries[0].lastError).toContain("私聊发送失败");
+    expect(JSON.parse(deliveries[0].payloadJson).targetType).toBe("private");
+    expect(JSON.parse(deliveries[0].payloadJson).privateTargetId).toBe("998877");
   });
 
   it("/抽奖 同一消息回放不重复扣次，新消息可继续抽", async () => {

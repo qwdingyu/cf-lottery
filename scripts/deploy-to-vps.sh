@@ -61,6 +61,7 @@ fi
 #   package.json      依赖声明（VPS 上 npm ci --omit=dev）
 #   package-lock.json 锁定版本
 #   migrations/       启动自动迁移所需 SQL 文件
+#   configs/          systemd 服务与维护 timer 模板
 info "步骤 1/3：打包部署产物..."
 PACKAGE_FILE="cf-lottery-deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
 tar -czf "$PACKAGE_FILE" \
@@ -68,6 +69,7 @@ tar -czf "$PACKAGE_FILE" \
   public/ \
   package.json \
   package-lock.json \
+  configs/ \
   migrations/ \
   --exclude='.DS_Store'
 info "打包完成 → $PACKAGE_FILE ($(du -h "$PACKAGE_FILE" | cut -f1))"
@@ -95,6 +97,12 @@ rm $(shell_quote "$PACKAGE_FILE")
 
 # 安装运行时依赖（仅 production，不装 devDependencies）
 npm ci --omit=dev
+
+# 安装维护定时器：VPS 模式没有 Cloudflare scheduled handler，必须由 systemd timer 触发维护闭环。
+install -m 0644 configs/cf-lottery-maintenance.service /etc/systemd/system/cf-lottery-maintenance.service
+install -m 0644 configs/cf-lottery-maintenance.timer /etc/systemd/system/cf-lottery-maintenance.timer
+systemctl daemon-reload
+systemctl enable --now cf-lottery-maintenance.timer
 
 # 重启 systemd 服务（启动时自动执行数据库迁移）
 systemctl restart cf-lottery
