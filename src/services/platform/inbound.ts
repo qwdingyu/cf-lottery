@@ -12,6 +12,7 @@ import { executeBuiltinPlatformCommand, recognizeBuiltinCommand } from "./comman
 import { getActivePlatformTarget } from "./targets";
 import type { InboundPlatformEvent, PlatformCommandResult, PlatformTargetBinding } from "./types";
 import { isCommunityFeatureEnabled } from "../../lib/system-config-registry";
+import { provisionPlatformUser } from "./user-provision";
 
 /**
  * 处理入站平台事件（如 QQ 群消息）。
@@ -53,6 +54,22 @@ export async function handleInboundPlatformEvent(
     };
   }
 
+  // Phase B（docs/176 §3.4）：自动将平台身份关联到本地 users 表。
+  // 确保每个 QQ/Telegram 用户都有对应的 users + authIdentities 记录。
+  // 失败时降级（不阻断命令执行），userId 留空。
+  let userId: string | undefined;
+  try {
+    const result = await provisionPlatformUser(db, {
+      provider: event.platform as "qq" | "telegram",
+      providerUserId: event.userId,
+      displayName: event.senderDisplayName,
+    });
+    userId = result.userId;
+  } catch (err) {
+    // 降级：记录错误但不阻断命令执行；userId 留空，命令走 identityType/identityValue
+    console.error(`[platform] provisionPlatformUser 失败: ${String(err)}`);
+  }
+
   return executeBuiltinPlatformCommand(db, {
     tenantId: target.tenantId,
     platformTargetId: target.id,
@@ -65,6 +82,8 @@ export async function handleInboundPlatformEvent(
       identityType: event.platform,
       identityValue: event.userId,
       displayName: event.senderDisplayName,
+      // Phase B：本地 users.id，可为空
+      userId,
     },
     source: {
       platform: event.platform,

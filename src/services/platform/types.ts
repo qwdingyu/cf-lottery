@@ -121,11 +121,17 @@ export type InboundPlatformEvent = {
  * 平台命令用户身份。
  * identityType 对应 lotteryEntries.identity_type 的字符串值（email/qq/telegram/...），
  * 由入站层从 event.platform 推导，命令服务不硬编码具体平台。
+ *
+ * userId：平台身份关联到的本地 users.id（Phase B，docs/176 §3）。
+ * 由入站层通过 provisionPlatformUser 解析填充；命令服务可据此做跨平台关联，
+ * 但参与/查询仍以 identityType + identityValue 为主键（向后兼容）。
  */
 export type PlatformCommandUser = {
   identityType: string;
   identityValue: string;
   displayName?: string;
+  /** Phase B：本地 users.id（若已关联）。可能为空（关联失败时降级）。 */
+  userId?: string;
 };
 
 export type ExecuteBuiltinCommandInput = {
