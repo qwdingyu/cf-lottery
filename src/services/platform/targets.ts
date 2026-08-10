@@ -59,7 +59,9 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
       ? {
         purchaseConfig: {
           url: String(purchase.url).trim(),
-          label: String(purchase.label || "立即购买").trim(),
+          // label 清洗：null/undefined/空串/纯空白 → 回退默认文案「立即购买」。
+          // 与 admin API parseBuiltinCommandsInput 的语义一致，防止直接写库时 label 恒为空串。
+          label: String(purchase.label || "").trim() || "立即购买",
         },
       }
       : {}),

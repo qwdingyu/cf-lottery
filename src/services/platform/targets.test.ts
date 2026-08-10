@@ -171,6 +171,17 @@ describe("parseBuiltinCommandConfig", () => {
     });
   });
 
+  it("purchaseConfig.label 为纯空白时回退默认文案「立即购买」（对齐 admin API 语义）", () => {
+    const raw = JSON.stringify({
+      purchaseConfig: { url: "https://example.com/buy", label: "   " },
+    });
+    const result = parseBuiltinCommandConfig(raw);
+    expect(result.purchaseConfig).toEqual({
+      url: "https://example.com/buy",
+      label: "立即购买",
+    });
+  });
+
   it("purchaseConfig.url 为空时省略 purchaseConfig", () => {
     const raw = JSON.stringify({
       flashEnabled: true,
