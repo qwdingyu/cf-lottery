@@ -22,6 +22,22 @@ export type CheckinRewardMode = "daily" | "linear" | "step" | "cycle";
 /** 奖励基础值范围：min===max 为固定值，min<max 为区间随机 */
 export type CheckinBaseRange = { min: number; max: number };
 
+/**
+ * 随机签到奖励配置（P2 randomBonus，docs/175 §2.4）。
+ *
+ * 在基础奖励（固定 + 递增）之上，额外用小概率增加惊喜感。
+ * 设计原则：不影响基础奖励的稳定性，仅作为"彩蛋"。
+ * 参考真寻 Bot 的随机事件机制（docs/172 §1.3）。
+ */
+export type RandomBonusConfig = {
+  /** 是否启用随机奖励 */
+  enabled: boolean;
+  /** 触发概率（0.0~1.0，例如 0.2 = 20%） */
+  probability: number;
+  /** 触发时额外 spins 的区间 [min, max] */
+  bonusRange: CheckinBaseRange;
+};
+
 /** 连续签到递增配置（docs/172） */
 export type CheckinStreakConfig = {
   /** 奖励模式 */
@@ -58,14 +74,22 @@ export function parseStoredCheckinPolicy(raw: unknown): BuiltinCommandConfig["da
     : undefined;
   const streak = rc ? parseStreakConfig(rc) : undefined;
 
-  // 3. 组装：rewardConfig 优先；否则回退 grantSpinCount
-  if (streak) {
-    return { ...(grantSpinCount !== undefined ? { grantSpinCount } : {}), rewardConfig: streak };
-  }
+  // 3. 解析随机奖励（P2 randomBonus，docs/175 §2.4）
+  const rb = obj.randomBonus && typeof obj.randomBonus === "object"
+    ? obj.randomBonus as Record<string, unknown>
+    : undefined;
+  const randomBonus = rb ? parseRandomBonus(rb) : undefined;
+
+  // 4. 组装：rewardConfig 优先；否则回退 grantSpinCount
+  const base = {} as Record<string, unknown>;
   // grantSpinCount=0 视为"不奖励"，与旧语义一致（parseBuiltinCommandsInput 原逻辑）
-  if (grantSpinCount !== undefined && grantSpinCount > 0) {
-    return { grantSpinCount };
-  }
+  // 但如果有 rewardConfig 或 randomBonus，即使 grantSpinCount=0 也要保留
+  if (grantSpinCount !== undefined && grantSpinCount > 0) base.grantSpinCount = grantSpinCount;
+  if (streak) base.rewardConfig = streak;
+  if (randomBonus) base.randomBonus = randomBonus;
+  // 如果只有 grantSpinCount:0 且无其他配置，返回 undefined
+  if (grantSpinCount !== undefined && grantSpinCount <= 0 && !streak && !randomBonus) return undefined;
+  if (Object.keys(base).length > 0) return base as BuiltinCommandConfig["dailyCheckinPolicy"];
   return undefined;
 }
 
@@ -101,6 +125,32 @@ function parseStreakConfig(rc: Record<string, unknown>): CheckinStreakConfig | u
   return cfg;
 }
 
+/**
+ * 解析随机签到奖励配置（P2 randomBonus）。
+ * 非法值 → undefined，保证防御式解析。
+ */
+function parseRandomBonus(rb: Record<string, unknown>): RandomBonusConfig | undefined {
+  const enabled = Boolean(rb.enabled);
+  const probability = toProbability(rb.probability);
+  const range = rb.bonusRange && typeof rb.bonusRange === "object"
+    ? rb.bonusRange as { min?: unknown; max?: unknown }
+    : undefined;
+  const min = range ? toNonNegInt(range.min) : undefined;
+  const max = range ? toNonNegInt(range.max) : undefined;
+  const bonusMin = min !== undefined ? min : 1;
+  const bonusMax = max !== undefined ? max : 1;
+  // 非法范围或概率：返回 undefined
+  if (bonusMax < bonusMin || probability === undefined) return undefined;
+  return { enabled, probability, bonusRange: { min: bonusMin, max: bonusMax } };
+}
+
+/** 解析概率（0.0~1.0），非法 → undefined */
+function toProbability(value: unknown): number | undefined {
+  if (!Number.isFinite(Number(value))) return undefined;
+  const n = Number(value);
+  return n >= 0 && n <= 1 ? n : undefined;
+}
+
 function isValidMode(mode: unknown): mode is CheckinRewardMode {
   return mode === "daily" || mode === "linear" || mode === "step" || mode === "cycle";
 }
@@ -127,6 +177,7 @@ function toPositiveInt(value: unknown): number | undefined {
  * @param streakDays 本次签到前的连续签到天数（0 = 首次）
  * @param _nextStreakDays 本次签到后的连续天数（由调用方根据断签/周期计算）
  * @param random01 随机源（可注入便于测试；默认 Math.random）
+ * @param randomBonus 随机签到奖励配置（P2 randomBonus，docs/175 §2.4）
  * @returns 本次应发放的 spins 数（≥0）
  */
 export function computeCheckinReward(
@@ -135,6 +186,24 @@ export function computeCheckinReward(
   streakDays: number,
   _nextStreakDays: number,
   random01: () => number = Math.random,
+  randomBonus?: RandomBonusConfig,
+): number {
+  // 计算基础奖励（固定值 + 递增）
+  const baseReward = computeBaseReward(streakConfig, grantSpinCount, streakDays, random01);
+
+  // 在基础奖励之上应用随机 bonus（P2 randomBonus）
+  return applyRandomBonus(baseReward, randomBonus, random01);
+}
+
+/**
+ * 计算基础奖励（无随机 bonus）。
+ * 抽出为独立函数，避免 computeCheckinReward 函数体过长。
+ */
+function computeBaseReward(
+  streakConfig: CheckinStreakConfig | undefined,
+  grantSpinCount: number | undefined,
+  streakDays: number,
+  random01: () => number,
 ): number {
   // 无递增配置：直接返回固定值（或 0）
   if (!streakConfig) return grantSpinCount && grantSpinCount > 0 ? grantSpinCount : 0;
@@ -173,6 +242,23 @@ export function computeCheckinReward(
     default:
       return base;
   }
+}
+
+/**
+ * 在基础奖励之上应用随机 bonus（P2 randomBonus）。
+ * 如果配置启用且随机命中，额外增加 spins，增加签到惊喜感。
+ */
+function applyRandomBonus(
+  baseReward: number,
+  randomBonus: RandomBonusConfig | undefined,
+  random01: () => number,
+): number {
+  if (!randomBonus?.enabled || randomBonus.probability <= 0) return baseReward;
+  if (random01() >= randomBonus.probability) return baseReward;
+
+  const { min, max } = randomBonus.bonusRange;
+  const bonus = min === max ? min : randInt(min, max, random01);
+  return baseReward + bonus;
 }
 
 /** 对 non-neg 结果应用封顶（cap 未配置则原样返回） */

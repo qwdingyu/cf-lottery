@@ -77,6 +77,53 @@ describe("parseStoredCheckinPolicy", () => {
   it("忽略不合法的 baseRange", () => {
     expect(parseStoredCheckinPolicy({ rewardConfig: { mode: "daily", baseRange: { min: 5, max: 1 } } })).toBeUndefined();
   });
+
+  describe("randomBonus（P2 随机签到事件）", () => {
+    it("解析 randomBonus 与 rewardConfig 共存", () => {
+      const result = parseStoredCheckinPolicy({
+        rewardConfig: { mode: "daily", baseRange: { min: 2, max: 2 } },
+        randomBonus: { enabled: true, probability: 0.2, bonusRange: { min: 1, max: 3 } },
+      });
+      expect(result?.rewardConfig?.mode).toBe("daily");
+      expect(result?.randomBonus).toEqual({ enabled: true, probability: 0.2, bonusRange: { min: 1, max: 3 } });
+    });
+
+    it("解析 randomBonus 与 grantSpinCount 共存", () => {
+      const result = parseStoredCheckinPolicy({
+        grantSpinCount: 3,
+        randomBonus: { enabled: true, probability: 0.15, bonusRange: { min: 1, max: 2 } },
+      });
+      expect(result?.grantSpinCount).toBe(3);
+      expect(result?.randomBonus).toEqual({ enabled: true, probability: 0.15, bonusRange: { min: 1, max: 2 } });
+    });
+
+    it("忽略非法概率（超出 0~1 范围）", () => {
+      const result = parseStoredCheckinPolicy({
+        grantSpinCount: 1,
+        randomBonus: { enabled: true, probability: 1.5, bonusRange: { min: 1, max: 3 } },
+      });
+      expect(result?.grantSpinCount).toBe(1);
+      expect(result?.randomBonus).toBeUndefined();
+    });
+
+    it("忽略非法范围（max < min）", () => {
+      const result = parseStoredCheckinPolicy({
+        grantSpinCount: 1,
+        randomBonus: { enabled: true, probability: 0.2, bonusRange: { min: 5, max: 3 } },
+      });
+      expect(result?.grantSpinCount).toBe(1);
+      expect(result?.randomBonus).toBeUndefined();
+    });
+
+    it("忽略不完整的 randomBonus（无 probability）", () => {
+      const result = parseStoredCheckinPolicy({
+        grantSpinCount: 1,
+        randomBonus: { enabled: true, bonusRange: { min: 1, max: 3 } },
+      });
+      expect(result?.grantSpinCount).toBe(1);
+      expect(result?.randomBonus).toBeUndefined();
+    });
+  });
 });
 
 describe("computeCheckinReward", () => {
@@ -148,6 +195,42 @@ describe("computeCheckinReward", () => {
 
     it("第 8 天 = base（周期重置，新周期第 1 天）", () => {
       expect(computeCheckinReward(cfg, 0, 0, 1)).toBe(2);
+    });
+  });
+
+  describe("randomBonus（P2 随机签到事件）", () => {
+    const rb = { enabled: true, probability: 0.5, bonusRange: { min: 2, max: 2 } };
+
+    it("固定奖励 + 随机命中：random01<概率则加 bonus", () => {
+      // 基础=3（固定），random01()=0.0 < 0.5 → 触发，bonus=2，合计 5
+      expect(computeCheckinReward(undefined, 3, 0, 1, () => 0.0, rb)).toBe(5);
+    });
+
+    it("固定奖励 + 随机未命中：random01>=概率则不加", () => {
+      // 基础=3，random01()=0.9 >= 0.5 → 不触发，保持 3
+      expect(computeCheckinReward(undefined, 3, 0, 1, () => 0.9, rb)).toBe(3);
+    });
+
+    it("区间 bonus：随机命中时在 [min,max] 内取值", () => {
+      const rbRange = { enabled: true, probability: 1.0, bonusRange: { min: 1, max: 5 } };
+      // 概率 1.0 必触发；random01 第一次用于 bonus 命中判断（0.0<1.0），第二次用于区间取值
+      expect(computeCheckinReward(undefined, 1, 0, 1, () => 0.5, rbRange)).toBe(1 + 3);
+      expect(computeCheckinReward(undefined, 1, 0, 1, () => 0.0, rbRange)).toBe(1 + 1);
+      expect(computeCheckinReward(undefined, 1, 0, 1, () => 0.999, rbRange)).toBe(1 + 5);
+    });
+
+    it("未启用 randomBonus 时不影响基础奖励", () => {
+      expect(computeCheckinReward(undefined, 3, 0, 1, () => 0.0, { ...rb, enabled: false })).toBe(3);
+    });
+
+    it("与递增模式叠加：linear + 随机 bonus", () => {
+      const cfg = { mode: "linear" as const, baseRange: { min: 1, max: 1 }, increment: 2, cap: 10 };
+      // 第 3 天基础 = 1 + 2*2 = 5，random01()=0.0 触发 bonus=2 → 7
+      expect(computeCheckinReward(cfg, 0, 2, 3, () => 0.0, rb)).toBe(7);
+    });
+
+    it("不传 randomBonus 时行为不变（向后兼容）", () => {
+      expect(computeCheckinReward(undefined, 5, 0, 1)).toBe(5);
     });
   });
 });

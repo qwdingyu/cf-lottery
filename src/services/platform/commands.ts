@@ -466,6 +466,7 @@ async function executeCheckinCommand(
   const policy = input.builtinCommands.dailyCheckinPolicy;
   const streakConfig = policy?.rewardConfig;
   const grantSpinCount = policy?.grantSpinCount;
+  const randomBonus = policy?.randomBonus;
 
   // 无奖励配置：保持原有行为（仅参与记录）
   if (!streakConfig && (!grantSpinCount || grantSpinCount <= 0)) {
@@ -499,11 +500,14 @@ async function executeCheckinCommand(
   const nextStreak = nextStreakAfterCheckin(entry.lastCheckinDate, currentStreak, today);
 
   // 计算奖励：传入 streakDays = currentStreak（签到前的连续天数）
+  // 随机 bonus（P2 randomBonus）在基础奖励之上额外增加 spins，增加签到惊喜感
   const reward = computeCheckinReward(
     streakConfig,
     grantSpinCount,
     currentStreak,
     nextStreak,
+    undefined, // random01 — 使用默认 Math.random
+    randomBonus,
   );
 
   // 5. 确定要写入的连续天数（cycle 模式达到 cycleDays 后重置）

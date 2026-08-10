@@ -169,6 +169,31 @@
                   </div>
                 </div>
               </template>
+              <!-- P2 randomBonus 随机签到事件（docs/175 §2.4）：在基础奖励之上小概率额外增加 spins -->
+              <div v-if="form.checkinEnabled" class="form-group">
+                <label>{{ $t('adminQqAssistant.labelRandomBonus') }}</label>
+                <div class="form-hint">{{ $t('adminQqAssistant.hintRandomBonus') }}</div>
+                <label class="checkbox-label">
+                  <input type="checkbox" v-model="form.randomBonusEnabled" /> {{ $t('adminQqAssistant.labelRandomBonusEnabled') }}
+                </label>
+              </div>
+              <div v-if="form.checkinEnabled && form.randomBonusEnabled" class="form-row">
+                <div class="form-group">
+                  <label>{{ $t('adminQqAssistant.labelRandomBonusProbability') }}</label>
+                  <div class="form-hint">{{ $t('adminQqAssistant.hintRandomBonusProbability') }}</div>
+                  <input v-model.number="form.randomBonusProbability" type="number" min="0" max="1" step="0.05" class="form-input" />
+                </div>
+                <div class="form-group">
+                  <label>{{ $t('adminQqAssistant.labelRandomBonusMin') }}</label>
+                  <div class="form-hint">{{ $t('adminQqAssistant.hintRandomBonusMin') }}</div>
+                  <input v-model.number="form.randomBonusMin" type="number" min="0" max="100" step="1" class="form-input" />
+                </div>
+                <div class="form-group">
+                  <label>{{ $t('adminQqAssistant.labelRandomBonusMax') }}</label>
+                  <div class="form-hint">{{ $t('adminQqAssistant.hintRandomBonusMax') }}</div>
+                  <input v-model.number="form.randomBonusMax" type="number" min="0" max="100" step="1" class="form-input" />
+                </div>
+              </div>
               <!-- 购买引导（docs/171 §断层B）：配置 /秒杀 返回的购买链接；次数耗尽时也会自动附加引导 -->
               <div class="form-group">
                 <label>{{ $t('adminQqAssistant.labelPurchaseUrl') }}</label>
@@ -266,6 +291,11 @@ const form = ref({
   cycleDays: 7,
   /** 周期额外奖励（cycle 模式） */
   cycleBonus: 5,
+  /** P2 randomBonus 随机签到事件（docs/175 §2.4）：在基础奖励之上小概率额外增加 spins */
+  randomBonusEnabled: false,
+  randomBonusProbability: 0.2,
+  randomBonusMin: 1,
+  randomBonusMax: 3,
   /** /秒杀 命令开关（docs/171 §断层B）：群内用户可调用 /秒杀 获取购买链接 */
   flashEnabled: true,
   /** 购买链接 URL（公开活动页 URL），为空则 /秒杀 提示未配置 */
@@ -319,6 +349,11 @@ function resetForm() {
     baseMin: 1, baseMax: 1,
     increment: 1, cap: 10,
     stepDays: 7, cycleDays: 7, cycleBonus: 5,
+    // P2 randomBonus 随机签到事件（docs/175 §2.4）：重置时默认不启用
+    randomBonusEnabled: false,
+    randomBonusProbability: 0.2,
+    randomBonusMin: 1,
+    randomBonusMax: 3,
     // /秒杀 命令开关 + 购买链接（docs/171 §断层B）：重置时默认开启但无链接
     flashEnabled: true,
     purchaseUrl: '',
@@ -361,6 +396,11 @@ function fillFormFromTarget(t: PlatformTarget) {
       form.value.increment = 1; form.value.cap = 10
       form.value.stepDays = 7; form.value.cycleDays = 7; form.value.cycleBonus = 5
     }
+    // P2 randomBonus 随机签到事件（docs/175 §2.4）：回填随机奖励配置
+    form.value.randomBonusEnabled = cmds.dailyCheckinPolicy?.randomBonus?.enabled ?? false
+    form.value.randomBonusProbability = cmds.dailyCheckinPolicy?.randomBonus?.probability ?? 0.2
+    form.value.randomBonusMin = cmds.dailyCheckinPolicy?.randomBonus?.bonusRange?.min ?? 1
+    form.value.randomBonusMax = cmds.dailyCheckinPolicy?.randomBonus?.bonusRange?.max ?? 3
     // 购买引导（docs/171 §断层B）：回填 /秒杀 开关 + 购买链接
     form.value.flashEnabled = cmds.flashEnabled !== false
     form.value.purchaseUrl = cmds.purchaseConfig?.url || ''
@@ -409,6 +449,14 @@ async function saveTarget() {
       }
     } else if (form.value.grantSpinCount > 0) {
       dailyCheckinPolicy.grantSpinCount = form.value.grantSpinCount
+    }
+    // P2 randomBonus 随机签到事件（docs/175 §2.4）：与 rewardConfig/grantSpinCount 独立叠加
+    if (form.value.randomBonusEnabled) {
+      dailyCheckinPolicy.randomBonus = {
+        enabled: true,
+        probability: form.value.randomBonusProbability,
+        bonusRange: { min: form.value.randomBonusMin, max: form.value.randomBonusMax },
+      }
     }
     const builtinCommands = {
       checkinEnabled: form.value.checkinEnabled,
