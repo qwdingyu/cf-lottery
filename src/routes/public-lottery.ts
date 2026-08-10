@@ -1404,6 +1404,11 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
   if (identity.identityType === "email" && !(await checkPublicIdentityRateLimit(db, "spin", draw.id, email, 20, 60000))) {
     return fail(c, "抽奖过于频繁，请稍后再试", 429);
   }
+  // 幂等键是 spin 的业务必需字段；必须在 OTP 核销前先拒绝明显无效请求，
+  // 避免用户因缺 header/前端 bug 白白消耗验证码。
+  if (!idempotencyKey || idempotencyKey.length > 128) {
+    return fail(c, "缺少有效的幂等键", 400);
+  }
 
   /**
    * 幂等回放提前：同 Idempotency-Key 已有 spin 时免 OTP。
@@ -1441,13 +1446,16 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
     }
   }
 
-  // 弱会话首次 spin：必须 OTP（成功后核销；失败不核销以便改网重试）
-  let otpToConsumeId: string | null = null;
+  // 弱会话首次 spin：必须 OTP，且在进入抽奖事务前先 CAS 核销。
+  // 为什么不等成功后再核销：verify→spin→consume 会留下竞态窗口，同一验证码可被两个不同
+  // Idempotency-Key 并发验证通过并各自完成一次 spin。先 used=0→1 领取验证码，只有第一个请求
+  // 能继续抽奖；若后续业务失败，用户可重新获取验证码，优先保证“不重复扣次/发奖”的资金安全。
   if (identity.identityType === "email" && !bearerEmailVerified) {
     if (!code) return fail(c, "请输入邮箱和验证码", 400);
     const validCode = await verifyEmailAccessCode(db, email, draw.id, code);
     if (!validCode) return fail(c, "验证码无效或已过期", 400);
-    otpToConsumeId = validCode.id;
+    const consumed = await consumeEmailAccessCode(db, validCode.id);
+    if (!consumed) return fail(c, "验证码已被使用，请重新获取验证码", 400);
   }
 
   const identityValue = identity.identityType === "email" ? email : identity.identityValue;
@@ -1468,11 +1476,6 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
     // 并避免误判为"验证码失效"（400 分支会打开登录弹窗）。这是发布契约，不可擅自改状态码。
     if (result.businessError) {
       return fail(c, result.businessError, 409);
-    }
-
-    // 首次成功（含未中）核销 OTP；回放不核销（通常已在上方 early-return）
-    if (otpToConsumeId && !result.replayed) {
-      await consumeEmailAccessCode(db, otpToConsumeId);
     }
 
     // 中奖邮件：fire-and-forget，失败不回滚 spin；回放不重发（notificationStatus=sent 跳过）

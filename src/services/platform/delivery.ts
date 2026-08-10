@@ -16,6 +16,7 @@ import { platformTargets, platformDeliveries } from "../../db/schema";
 import { getPlatformAdapter } from "./adapter-factory";
 import type { PlatformMessage, PlatformType } from "./types";
 import { PLATFORM_EVENT_TYPES_SET, type PlatformEventType, renderPlatformEventMessage } from "./templates";
+import { parsePlatformAdapterConfigJson, resolvePlatformAdapterConfigForRuntime } from "./adapter-config";
 
 export interface EnqueuePlatformEventInput {
   tenantId: string;
@@ -128,6 +129,7 @@ export async function dispatchPlatformDeliveries(
   db: DbType,
   limit: number,
   fetcher: typeof fetch = fetch,
+  options?: { credentialsEncryptionKey?: string },
 ) {
   // 数据库存储的是 ISO 8601 字符串；统一在应用层计算 ISO 截止时间，
   // 避免 SQLite `datetime('now')` 的空格格式与 ISO `T` 格式做字符串比较时失真。
@@ -192,17 +194,13 @@ export async function dispatchPlatformDeliveries(
       continue;
     }
 
-    // 从 adapterConfigJson 解析适配器连接配置
-    let adapterConfig: Record<string, unknown> = {};
-    try {
-      adapterConfig = JSON.parse(target.adapterConfigJson || "{}");
-    } catch {
-      adapterConfig = {};
-    }
-
     // 使用适配器工厂获取平台对应的适配器，不硬编码平台名
     // 新增平台只需在 adapter-factory.ts 注册工厂，无需改动 delivery.ts
     try {
+      const adapterConfig = await resolvePlatformAdapterConfigForRuntime(
+        parsePlatformAdapterConfigJson(target.adapterConfigJson),
+        options?.credentialsEncryptionKey,
+      );
       const adapter = getPlatformAdapter(target.platform, adapterConfig, fetcher);
       const payload = parseDeliveryPayload(delivery.payloadJson);
       const message: PlatformMessage = {
@@ -312,7 +310,9 @@ export async function logPrivateMessageFailure(
 /** 遍历所有租户处理待投递平台消息（由维护 cron 调用） */
 export async function processPendingPlatformDeliveriesForAllTenants(
   db: DbType,
-  options?: { perTenantLimit?: number; fetcher?: typeof fetch },
+  options?: { perTenantLimit?: number; fetcher?: typeof fetch; credentialsEncryptionKey?: string },
 ) {
-  return dispatchPlatformDeliveries(db, options?.perTenantLimit ?? 20, options?.fetcher);
+  return dispatchPlatformDeliveries(db, options?.perTenantLimit ?? 20, options?.fetcher, {
+    credentialsEncryptionKey: options?.credentialsEncryptionKey,
+  });
 }

@@ -3,7 +3,7 @@
  *
  * 提供三个核心函数：
  * 1. getTenantCommunityPolicy — 获取租户生效的社群策略（套餐默认 + 租户覆写合并）
- * 2. canTenantCreatePlatformTarget — 校验群绑定数上限（POST/PUT 拦增量）
+ * 2. canTenantCreatePlatformTarget — 校验群绑定数上限（POST 创建拦增量）
  * 3. enforceGroupMemberCap — 运行时强制群人数上限（inbound 命令层校验）
  *
  * 防灾难红线：
@@ -71,7 +71,8 @@ export async function getTenantCommunityPolicy(
 /**
  * 校验租户是否可新建群绑定（docs/180 §3.2）。
  *
- * 在 POST/PUT 创建绑定时调用，拦新增不阻断存量。
+ * 在 POST 创建绑定时调用，拦新增不阻断存量；调用方应把本函数和实际 INSERT 放在同一写事务内，
+ * 否则两个并发创建请求可能同时读到“未满”并穿透套餐群数上限。
  * 返回 { ok: true } 或 { ok: false, message }。
  */
 export async function canTenantCreatePlatformTarget(

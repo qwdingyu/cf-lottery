@@ -20,7 +20,10 @@ const PLATFORM_ADAPTER_FACTORIES: Record<
   string,
   (config: Record<string, unknown>, fetcher: typeof fetch) => PlatformAdapter
 > = {
-  qq: (config, fetcher) => createQQAdapter({ baseUrl: String(config.baseUrl || "") }, fetcher),
+  qq: (config, fetcher) => createQQAdapter({
+    baseUrl: String(config.baseUrl || ""),
+    token: String(config.token || ""),
+  }, fetcher),
   telegram: (config, fetcher) =>
     createTelegramAdapter({ botToken: String(config.botToken || "") }, fetcher),
 };

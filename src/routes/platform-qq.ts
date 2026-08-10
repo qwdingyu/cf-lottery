@@ -13,8 +13,7 @@ import { timingSafeEqualString } from "../lib/crypto-compare";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { getActivePlatformTarget, syncInboundBotIdentity } from "../services/platform/targets";
 import { hashPlatformInboundSecret } from "../services/platform/security";
-import { getPlatformAdapter } from "../services/platform/adapter-factory";
-import { logPrivateMessageFailure } from "../services/platform/delivery";
+import { enqueuePrivatePlatformMessage, logPrivateMessageFailure } from "../services/platform/delivery";
 
 export const platformQQRoute = new Hono<AppEnv>();
 
@@ -95,42 +94,42 @@ platformQQRoute.post("/message", async (c) => {
   if (!result) return ok(c, { handled: false });
 
   // 处理命令侧写的私聊消息（如卡密私发）。
-  // 私聊发送失败时在群回复中追加降级提示，不阻塞主流程。
-  // 若命令同时返回了 accessUrl（一次性 Web 链接），降级提示中附加该链接（docs/179）。
+  // QQ webhook 必须尽快返回，否则 NapCat/OneBot 会阻塞上报链路；
+  // 私聊统一写入 platform_deliveries，由 maintenance 异步调用 /send_private_msg 并重试。
+  // 只有“入队失败”才在群回复中追加一次性 Web 链接降级，避免卡密泄露到群内。
   if (result.privateMessages?.length) {
     const adapterConfig = target.adapterConfig as Record<string, unknown>;
     const baseUrl = String(adapterConfig.baseUrl || "").trim();
     if (baseUrl) {
-      const adapter = getPlatformAdapter("qq", adapterConfig);
       for (const pm of result.privateMessages) {
         try {
-          await adapter.send({
+          await enqueuePrivatePlatformMessage(db, {
+            tenantId: target.tenantId,
+            platformTargetId: target.id,
             platform: "qq",
-            targetType: "private",
-            targetId: pm.userId,
+            targetId: target.targetId,
+            targetUserId: pm.userId,
             groupId: pm.groupId,
-            type: "text",
             text: pm.text,
           });
         } catch {
-          // 私发失败，在群回复中追加降级提示
-          // 如果命令已生成一次性 Web 链接，附上链接供用户 Web 查看（docs/179）
+          // 入队失败才降级；发送失败由平台投递队列记录 lastError 并按重试策略处理。
           if (result.accessUrl) {
-            result.reply += `\n\n⚠️ 私聊发送失败，可点击下方链接网页查看（5 分钟内有效，仅可查看一次，请勿泄露）：\n${result.accessUrl}`;
+            result.reply += `\n\n⚠️ 私聊消息入队失败，可点击下方链接网页查看（5 分钟内有效，仅可查看一次，请勿泄露）：\n${result.accessUrl}`;
           } else {
-            result.reply += "\n\n⚠️ 私聊发送失败，可能是您关闭了临时会话权限。请检查QQ隐私设置（设置→隐私→临时会话），或联系管理员。";
+            result.reply += "\n\n⚠️ 私聊消息入队失败，请通过网页后台查看卡密。";
           }
-          // P1-1 审计：私聊发送失败记录到 platformDeliveries，方便后台排查
           await logPrivateMessageFailure(
             db,
             target,
             "qq",
             pm.userId,
             pm.text,
-            "私聊发送失败（QQ 临时会话受限或适配器异常）",
+            "私聊消息入队失败（数据库异常）",
           );
         }
       }
+      result.reply += "\n\n私聊消息已进入发送队列，如未收到可稍后发送 /我的卡密 重试。";
     } else {
       // 适配器未配置 baseUrl，无法发送私聊，追加降级提示
       if (result.accessUrl) {

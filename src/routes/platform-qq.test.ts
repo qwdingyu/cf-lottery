@@ -594,8 +594,8 @@ describe("POST /api/platform/qq/message", () => {
     expect(body.reply).not.toContain("SECRET-1");
     // 卡密奖品不再在群内展示"群内泄露"提示，而是改为私聊发送
     expect(body.reply).toContain("卡密已私聊发送");
-    // 由于测试环境没有真实 NapCat 服务，私聊发送会失败，回复中应包含降级提示
-    expect(body.reply).toContain("私聊发送失败");
+    // QQ 私聊不再阻塞 webhook 热路径，而是进入平台投递队列由 maintenance 异步发送。
+    expect(body.reply).toContain("私聊消息已进入发送队列");
 
     const entries = await db
       .select()
@@ -614,7 +614,7 @@ describe("POST /api/platform/qq/message", () => {
       .where(and(eq(lotteryWinners.tenantId, TENANT_ID), eq(lotteryWinners.drawId, "draw-qq-1")));
     expect(winners).toHaveLength(1);
 
-    // P1-1 审计：私聊发送失败应记录到 platformDeliveries
+    // 私聊消息应进入平台投递队列，后续由 maintenance 调用 NapCat /send_private_msg。
     const deliveries = await db
       .select()
       .from(platformDeliveries)
@@ -622,10 +622,13 @@ describe("POST /api/platform/qq/message", () => {
         eq(platformDeliveries.tenantId, TENANT_ID),
         eq(platformDeliveries.platformTargetId, "pt-qq-1"),
         eq(platformDeliveries.eventType, "private_message"),
-        eq(platformDeliveries.status, "failed"),
+        eq(platformDeliveries.status, "pending"),
       ));
     expect(deliveries.length).toBeGreaterThanOrEqual(1);
-    expect(deliveries[0].lastError).toContain("私聊发送失败");
+    const payload = JSON.parse(deliveries[0].payloadJson || "{}") as Record<string, unknown>;
+    expect(payload.targetType).toBe("private");
+    expect(payload.privateTargetId).toBe("998877");
+    expect(payload.groupId).toBe("123456");
   });
 
   it("/抽奖 同一消息回放不重复扣次，新消息可继续抽", async () => {

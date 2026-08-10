@@ -3,7 +3,7 @@
  *
  * 覆盖：
  * 1. getTenantCommunityPolicy — 套餐默认 + 租户覆写合并
- * 2. canTenantCreatePlatformTarget — 群绑定数上限（POST/PUT 拦增量）
+ * 2. canTenantCreatePlatformTarget — 群绑定数上限（POST 创建拦增量）
  * 3. enforceGroupMemberCap — 运行时强制群人数上限
  */
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";

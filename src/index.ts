@@ -78,6 +78,7 @@ export async function runScheduledMaintenance(
   // 平台出站消息投递（QQ 群消息）：异步发送 pending 的平台消息，3 次重试
   const platformDeliveries = await processPendingPlatformDeliveriesForAllTenants(db, {
     perTenantLimit: 20,
+    credentialsEncryptionKey: env.CREDENTIALS_ENCRYPTION_KEY || "",
   });
   // 限流日志只服务短窗口判断，定时清理避免 Turso 免费层 rows/storage 被长期无价值日志拖垮。
   // F1 修复：reward 邀请奖励配额是【24 小时窗口】（reward.ts REWARD_QUOTA_WINDOW_MS），

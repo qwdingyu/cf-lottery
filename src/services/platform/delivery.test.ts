@@ -15,6 +15,7 @@ import {
   dispatchPlatformDeliveries,
   logPrivateMessageFailure,
 } from "./delivery";
+import { encryptPlatformAdapterConfig } from "./adapter-config";
 
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -22,6 +23,7 @@ let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 const TENANT_ID = "tenant-delivery-test";
 const DRAW_ID = "draw-delivery-1";
 const TARGET_ID = "pt-delivery-1";
+const ENCRYPTION_KEY = process.env.CREDENTIALS_ENCRYPTION_KEY || "";
 
 beforeAll(async () => {
   const ctx = await getTestDb();
@@ -337,6 +339,73 @@ describe("dispatchPlatformDeliveries", () => {
     expect(requestBody.user_id).toBe("123456");
     expect(requestBody.group_id).toBe("999999");
     expect(requestBody.message).toBe("你的卡密是 CODE-001");
+  });
+
+  it("投递时解密 QQ token 并写入 Authorization 头", async () => {
+    const encrypted = await encryptPlatformAdapterConfig({
+      baseUrl: "http://localhost:3000",
+      token: "napcat-secret",
+    }, ENCRYPTION_KEY);
+    await db
+      .update(platformTargets)
+      .set({ adapterConfigJson: JSON.stringify(encrypted) })
+      .where(eq(platformTargets.id, TARGET_ID));
+    await enqueuePlatformEvent(db, {
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      eventType: "draw.completed",
+      data: { drawName: "加密 QQ", winnerSummary: "1 人获奖" },
+    });
+
+    let auth = "";
+    const result = await dispatchPlatformDeliveries(db, 10, async (_input, init) => {
+      auth = String((init?.headers as Record<string, string>)?.Authorization || "");
+      return new Response(JSON.stringify({ data: { message_id: "qq-enc-1" } }), { status: 200 });
+    }, { credentialsEncryptionKey: ENCRYPTION_KEY });
+
+    expect(result.sent).toBe(1);
+    expect(auth).toBe("Bearer napcat-secret");
+  });
+
+  it("投递时解密 Telegram botToken 并调用 Bot API", async () => {
+    const encrypted = await encryptPlatformAdapterConfig({
+      botToken: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+    }, ENCRYPTION_KEY);
+    await db.insert(platformTargets).values({
+      id: "pt-delivery-tg",
+      tenantId: TENANT_ID,
+      platform: "telegram",
+      targetId: "-1001234567890",
+      targetName: "Telegram 投递群",
+      activeDrawId: DRAW_ID,
+      assistantEnabled: 1,
+      adapterConfigJson: JSON.stringify(encrypted),
+      builtinCommandsJson: "{}",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(platformDeliveries).values({
+      id: "dlv-tg-encrypted",
+      tenantId: TENANT_ID,
+      platformTargetId: "pt-delivery-tg",
+      platform: "telegram",
+      targetId: "-1001234567890",
+      eventId: "evt-tg-encrypted",
+      eventType: "draw.completed",
+      payloadJson: JSON.stringify({ renderedMessage: "Telegram 加密投递" }),
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    let requestUrl = "";
+    const result = await dispatchPlatformDeliveries(db, 10, async (input) => {
+      requestUrl = String(input);
+      return new Response(JSON.stringify({ ok: true, result: { message_id: 9988 } }), { status: 200 });
+    }, { credentialsEncryptionKey: ENCRYPTION_KEY });
+
+    expect(result.sent).toBe(1);
+    expect(requestUrl).toContain("/bot123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11/sendMessage");
   });
 });
 

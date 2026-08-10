@@ -10,19 +10,28 @@
  * - 平台目标（QQ 群/Telegram 群组等）归属租户，字段与 webhookConfigs 完全隔离（不污染 HTTP webhook 语义）
  * - 内置命令开关是固定集合，租户只能启停/改文案，不能新增任意命令
  * - 平台白名单/提供方白名单由 adapter-factory 动态提供，新增平台只需注册适配器
- * - P0 不接收 adapterConfig.token：没有加密存储闭环前，禁止用占位符伪装“已加密”
+ * - adapterConfig 中的 botToken/token 类字段必须加密存储，列表/详情只返回脱敏占位符
  */
 import type { Context } from "hono";
 import type { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
+import { withDbTransaction } from "../db/client";
 import { and, eq, desc, count } from "drizzle-orm";
 import { platformTargets, platformDeliveries, lotteryDraws, auditLogs } from "../db/schema";
 import { createPlatformInboundSecret, hashPlatformInboundSecret } from "../services/platform/security";
 import { DEFAULT_BUILTIN_COMMANDS, type BuiltinCommandConfig } from "../services/platform/types";
 import { parseStoredCheckinPolicy } from "../services/platform/checkin-reward";
 import { getPlatformAdapter, getSupportedPlatforms, getSupportedProviders } from "../services/platform/adapter-factory";
+import {
+  encryptPlatformAdapterConfig,
+  parsePlatformAdapterConfigJson,
+  PLATFORM_SECRET_PLACEHOLDER,
+  resolvePlatformAdapterConfigForRuntime,
+  sanitizePlatformAdapterConfigForAdmin,
+} from "../services/platform/adapter-config";
 import { isCommunityFeatureEnabled } from "../lib/system-config-registry";
+import { getEnv } from "../lib/platform";
 /** 社群功能套餐配额校验（docs/180） */
 import { canTenantCreatePlatformTarget } from "../services/platform/community-policy";
 
@@ -124,9 +133,8 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
  * 校验并规范化平台适配器配置。每个平台有独立的配置字段与校验规则，
  * 避免把 QQ(NapCat) 的 baseUrl 假设强加给其他平台（如 Telegram 需要 botToken）。
  *
- * 安全原则：P0 只保存非敏感连接信息。QQ 的 token / Telegram 的 botToken 都属于凭据，
- * 需要“租户级加密存储 + 解密投递 + 前端不回显”的完整闭环；在该闭环完成前，
- * QQ 直接拒绝敏感字段；Telegram 用 botToken 出站是刚性需求，单独评估风险。
+ * 安全原则：botToken / NapCat token 属于凭据，必须由调用方在写库前加密。
+ * 本函数只做平台字段校验和规范化，不接触环境密钥。
  */
 function normalizeAdapterConfig(
   platform: string,
@@ -145,13 +153,10 @@ function normalizeAdapterConfig(
   return { ok: false, message: `暂不支持的平台适配器配置: ${platform}` };
 }
 
-/** QQ (NapCat) 适配器配置：只需要 baseUrl，P0 拒绝保存纯文本 token。botId 为入站自动写入的只读字段，不接受运营手动输入 */
+/** QQ (NapCat) 适配器配置：baseUrl 必填于发送前；token 可选但必须在写库前加密。botId 为入站自动写入的只读字段，不接受运营手动输入 */
 function validateQQAdapterConfig(
   raw: Record<string, unknown>,
 ): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
-  if (raw.token !== undefined || raw.accessToken !== undefined || raw.authorization !== undefined) {
-    return { ok: false, message: "P0 暂不支持保存 NapCat token，请使用内网、IP 白名单或反向代理保护适配器" };
-  }
   const value: Record<string, string> = {};
 
   const baseUrl = typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : "";
@@ -161,6 +166,8 @@ function validateQQAdapterConfig(
     }
     value.baseUrl = baseUrl;
   }
+  const token = typeof raw.token === "string" ? raw.token.trim() : "";
+  if (token && token !== PLATFORM_SECRET_PLACEHOLDER) value.token = token;
 
   // 注意：不再接受手动输入 botId（docs/177 方案升级）。botId = bot 自身 QQ 号是运行时已知值，
   // 由入站 `self_id` 自动写入（syncInboundBotIdentity），运营手动填会引入 typo/过时号等错误源。
@@ -169,29 +176,18 @@ function validateQQAdapterConfig(
 
 /**
  * Telegram 适配器配置：需要 botToken 用于出站调用 Telegram Bot API。
- * 注意：botToken 属敏感凭据，P0 以明文字段存储，需在 docs 中明确风险并规划加密闭环。
  */
 function validateTelegramAdapterConfig(
   raw: Record<string, unknown>,
 ): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
   const botToken = typeof raw.botToken === "string" ? raw.botToken.trim() : "";
   if (!botToken) return { ok: true, value: {} };
+  if (botToken === PLATFORM_SECRET_PLACEHOLDER) return { ok: true, value: { botToken } };
   // Telegram Bot API token 格式：<bot_id>:<auth_key>
   if (!/^\d+:[A-Za-z0-9_-]+$/.test(botToken)) {
     return { ok: false, message: "Telegram botToken 格式无效，应为 <bot_id>:<auth_key>" };
   }
   return { ok: true, value: { botToken } };
-}
-
-function parseAdapterConfigJson(rawJson: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(rawJson || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
-  }
 }
 
 function buildPlatformTestMessage(platform: string, targetName: string) {
@@ -216,6 +212,41 @@ function validateAdapterConfigForTest(platform: string, adapterConfig: Record<st
     return botToken ? null : "请先配置 Telegram botToken 后再测试发送";
   }
   return `暂不支持 ${platform} 平台测试发送`;
+}
+
+function sanitizePlatformTargetRow<T extends { adapterConfigJson: string }>(row: T): T {
+  return {
+    ...row,
+    adapterConfigJson: sanitizePlatformAdapterConfigForAdmin(row.adapterConfigJson),
+  };
+}
+
+async function normalizeAdapterConfigForStorage(
+  platform: string,
+  input: unknown,
+  existingRawJson: string,
+  encryptionKey: string,
+): Promise<{ ok: true; value: Record<string, string> } | { ok: false; message: string }> {
+  const adapterConfigResult = normalizeAdapterConfig(platform, input);
+  if (!adapterConfigResult.ok) return adapterConfigResult;
+
+  const existing = parsePlatformAdapterConfigJson(existingRawJson);
+  const value = { ...adapterConfigResult.value };
+
+  // 脱敏占位符表示保留原密文/明文值，避免前端保存表单时把真实凭据覆盖成占位符。
+  for (const key of ["botToken", "token"]) {
+    if (value[key] === PLATFORM_SECRET_PLACEHOLDER) {
+      const prior = typeof existing[key] === "string" ? String(existing[key]) : "";
+      if (prior) value[key] = prior;
+      else delete value[key];
+    }
+  }
+
+  try {
+    return { ok: true, value: await encryptPlatformAdapterConfig(value, encryptionKey) };
+  } catch (err) {
+    return { ok: false, message: String(err instanceof Error ? err.message : err) };
+  }
 }
 
 /** 校验 activeDrawId 归属当前租户，返回活动（含 publicSlug） */
@@ -252,7 +283,7 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
 
     return ok(c, {
       total: Number(totalRow?.total || 0),
-      items: rows,
+      items: rows.map(sanitizePlatformTargetRow),
     });
   });
 
@@ -266,7 +297,7 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       .where(and(eq(platformTargets.tenantId, tenantId), eq(platformTargets.id, c.req.param("id"))))
       .limit(1);
     if (!row) return fail(c, "绑定不存在", 404);
-    return ok(c, { item: row });
+    return ok(c, { item: sanitizePlatformTargetRow(row) });
   });
 
   // ── 创建 ──
@@ -290,20 +321,14 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     if (!targetId) return fail(c, "缺少 targetId");
     const targetName = String(body.targetName || "").trim().slice(0, 120);
 
-    // targetId 全租户唯一（schema 唯一索引 platform+targetId）。重复绑定是更具体的业务错误，
-    // 必须先于套餐配额返回，否则第二次添加同一群会被误报为"套餐群数已满"。
+    // targetId 全租户唯一（schema 唯一索引 platform+targetId）。这里先做一次快速友好校验；
+    // 真正防并发的校验会在下面写事务内再次执行，避免两个 POST 同时穿透套餐群数上限。
     const [existing] = await db
       .select({ id: platformTargets.id })
       .from(platformTargets)
       .where(and(eq(platformTargets.platform, platform), eq(platformTargets.targetId, targetId)))
       .limit(1);
     if (existing && existing.id) return fail(c, "该目标已绑定，请勿重复添加");
-
-    // 社群功能套餐配额校验（docs/180）：按套餐限制群绑定数，拦新增不阻断存量
-    const quotaCheck = await canTenantCreatePlatformTarget(db, tenantId);
-    if (!quotaCheck.ok) {
-      return fail(c, quotaCheck.message, 403);
-    }
 
     const activeDrawId = String(body.activeDrawId || "").trim();
     const draw = activeDrawId ? await resolveDraw(db, tenantId, activeDrawId) : null;
@@ -319,7 +344,12 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       return fail(c, `适配器提供方无效，当前支持的提供方: ${providers}`);
     }
 
-    const adapterConfigResult = normalizeAdapterConfig(platform, body.adapterConfig);
+    const adapterConfigResult = await normalizeAdapterConfigForStorage(
+      platform,
+      body.adapterConfig,
+      "{}",
+      getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "",
+    );
     if (!adapterConfigResult.ok) return fail(c, adapterConfigResult.message);
     const adapterConfig = adapterConfigResult.value;
 
@@ -332,23 +362,52 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
 
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    await db.insert(platformTargets).values({
-      id,
-      tenantId,
-      platform,
-      targetId,
-      targetName,
-      activeDrawId: draw?.id || "",
-      activePublicSlug: draw?.publicSlug || "",
-      assistantEnabled,
-      adapterDeploymentMode: deploymentMode,
-      adapterProvider: provider,
-      adapterConfigJson: JSON.stringify(adapterConfig),
-      inboundSecretHash,
-      builtinCommandsJson: JSON.stringify(builtinCommands),
-      createdAt: now,
-      updatedAt: now,
+    const createResult = await withDbTransaction(db, async (tx) => {
+      // 创建群绑定是套餐资源分配动作，必须在同一个写事务内完成：
+      // 1. 复查目标是否已被其他并发请求绑定；
+      // 2. 复查当前租户套餐群数是否仍有余量；
+      // 3. 通过后立即插入 platform_targets。
+      //
+      // 若把 COUNT 校验放在事务外，两个不同 targetId 的并发 POST 都可能读到“未满”，
+      // 最终免费租户创建出超过上限的群绑定，形成典型检查-使用竞态。
+      const scopedTx = tx as ReturnType<typeof getDb>;
+      const [existingInTx] = await scopedTx
+        .select({ id: platformTargets.id })
+        .from(platformTargets)
+        .where(and(eq(platformTargets.platform, platform), eq(platformTargets.targetId, targetId)))
+        .limit(1);
+      if (existingInTx && existingInTx.id) {
+        return { ok: false as const, message: "该目标已绑定，请勿重复添加", status: 400 };
+      }
+
+      // 社群功能套餐配额校验（docs/180）：按套餐限制群绑定数，拦新增不阻断存量。
+      // 这里传入事务对象，确保 count 与 insert 共享同一个 SQLite 写锁。
+      const quotaCheck = await canTenantCreatePlatformTarget(scopedTx, tenantId);
+      if (!quotaCheck.ok) {
+        return { ok: false as const, message: quotaCheck.message, status: 403 };
+      }
+
+      await scopedTx.insert(platformTargets).values({
+        id,
+        tenantId,
+        platform,
+        targetId,
+        targetName,
+        activeDrawId: draw?.id || "",
+        activePublicSlug: draw?.publicSlug || "",
+        assistantEnabled,
+        adapterDeploymentMode: deploymentMode,
+        adapterProvider: provider,
+        adapterConfigJson: JSON.stringify(adapterConfig),
+        inboundSecretHash,
+        builtinCommandsJson: JSON.stringify(builtinCommands),
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      return { ok: true as const };
     });
+    if (!createResult.ok) return fail(c, createResult.message, createResult.status);
 
     await recordPlatformAudit(c, "platform_target.create", id, { platform, targetId });
 
@@ -392,12 +451,17 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       patch.activePublicSlug = draw?.publicSlug || "";
     }
     if (typeof body.adapterConfig === "object" && body.adapterConfig !== null) {
-      const adapterConfigResult = normalizeAdapterConfig(row.platform, body.adapterConfig);
+      const adapterConfigResult = await normalizeAdapterConfigForStorage(
+        row.platform,
+        body.adapterConfig,
+        row.adapterConfigJson,
+        getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "",
+      );
       if (!adapterConfigResult.ok) return fail(c, adapterConfigResult.message);
       // 保留入站自动写入的 botId（只读字段，docs/177 方案升级）：更新 baseUrl 时不覆盖 botId
       let existingBotId: string | undefined;
       try {
-        const existing = JSON.parse(row.adapterConfigJson || "{}");
+        const existing = parsePlatformAdapterConfigJson(row.adapterConfigJson);
         if (existing.botId && typeof existing.botId === "string") existingBotId = existing.botId;
       } catch { /* 忽略解析异常 */ }
       if (existingBotId) {
@@ -479,7 +543,10 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       .where(and(eq(platformTargets.tenantId, tenantId), eq(platformTargets.id, id)))
       .limit(1);
     if (!target) return fail(c, "绑定不存在", 404);
-    const adapterConfig = parseAdapterConfigJson(target.adapterConfigJson);
+    const adapterConfig = await resolvePlatformAdapterConfigForRuntime(
+      parsePlatformAdapterConfigJson(target.adapterConfigJson),
+      getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "",
+    );
     const configError = validateAdapterConfigForTest(target.platform, adapterConfig);
     if (configError) return fail(c, configError);
 

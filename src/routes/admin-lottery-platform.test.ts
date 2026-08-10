@@ -14,6 +14,7 @@ import { hashPlatformInboundSecret } from "../services/platform/security";
 import { getActivePlatformTarget } from "../services/platform/targets";
 import { executeBuiltinPlatformCommand } from "../services/platform/commands";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
+import { isEncryptedPlatformSecret, PLATFORM_SECRET_PLACEHOLDER } from "../services/platform/adapter-config";
 import { and, eq } from "drizzle-orm";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -144,6 +145,31 @@ describe("platform-targets CRUD", () => {
     expect(data.message).toContain("已绑定");
   });
 
+  it("并发创建不同群时按套餐群数上限只落库一个", async () => {
+    const app = await createApp();
+    const makeCreateRequest = (targetId: string) => app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetId, targetName: `并发群 ${targetId}`, activeDrawId: DRAW_ID }),
+    });
+
+    // free 套餐默认最多 1 个群。两个不同 targetId 的并发创建如果只在事务外 COUNT，
+    // 会出现两个请求都读到 0 并最终超发；事务内复查应保证最终只有一个成功。
+    const responses = await Promise.all([
+      makeCreateRequest("race-group-a"),
+      makeCreateRequest("race-group-b"),
+    ]);
+    const bodies = await Promise.all(responses.map((res) => res.json() as Promise<Record<string, unknown>>));
+    expect(bodies.filter((body) => body.ok === true)).toHaveLength(1);
+    expect(bodies.filter((body) => body.ok === false)).toHaveLength(1);
+
+    const rows = await db
+      .select({ id: platformTargets.id })
+      .from(platformTargets)
+      .where(eq(platformTargets.tenantId, TENANT_ID));
+    expect(rows).toHaveLength(1);
+  });
+
   it("缺少 targetId 时返回错误", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {
@@ -168,7 +194,7 @@ describe("platform-targets CRUD", () => {
     expect(data.message).toContain("活动不存在");
   });
 
-  it("创建 Telegram 平台目标并校验 botToken 格式", async () => {
+  it("创建 Telegram 平台目标时加密保存 botToken，详情只返回脱敏占位符", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {
       method: "POST",
@@ -184,6 +210,23 @@ describe("platform-targets CRUD", () => {
     const data = await res.json() as Record<string, unknown>;
     expect(data.ok).toBe(true);
     expect(String(data.inboundSecret || "")).toMatch(/^pin_/);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const [row] = await db
+      .select({ json: platformTargets.adapterConfigJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const stored = JSON.parse(row?.json || "{}") as Record<string, string>;
+    expect(isEncryptedPlatformSecret(stored.botToken || "")).toBe(true);
+    expect(stored.botToken).not.toContain("ABC-DEF");
+
+    const detailRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      headers: { ...authHeaders() },
+    });
+    const detail = await detailRes.json() as Record<string, unknown>;
+    const item = detail.item as Record<string, unknown>;
+    const publicCfg = JSON.parse(String(item.adapterConfigJson || "{}")) as Record<string, string>;
+    expect(publicCfg.botToken).toBe(PLATFORM_SECRET_PLACEHOLDER);
   });
 
   it("Telegram 目标 botToken 格式无效时返回错误", async () => {
@@ -204,7 +247,7 @@ describe("platform-targets CRUD", () => {
     expect(data.message).toContain("botToken");
   });
 
-  it("拒绝保存 NapCat 明文 token", async () => {
+  it("QQ NapCat token 加密保存且测试发送时作为 Authorization 使用", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {
       method: "POST",
@@ -217,8 +260,27 @@ describe("platform-targets CRUD", () => {
       }),
     });
     const data = await res.json() as Record<string, unknown>;
-    expect(data.ok).toBe(false);
-    expect(data.message).toContain("暂不支持保存 NapCat token");
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const [row] = await db
+      .select({ json: platformTargets.adapterConfigJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const stored = JSON.parse(row?.json || "{}") as Record<string, string>;
+    expect(isEncryptedPlatformSecret(stored.token || "")).toBe(true);
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: { message_id: 777 } }), { status: 200 }),
+    );
+    const testRes = await app.request(`/api/admin/platform-targets/${id}/test-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ text: "token 测试" }),
+    });
+    expect(testRes.status).toBe(200);
+    const [, requestInit] = fetchMock.mock.calls[0]!;
+    expect((requestInit?.headers as Record<string, string>).Authorization).toBe("Bearer secret-token");
   });
 
   it("拒绝未注册的平台绑定", async () => {

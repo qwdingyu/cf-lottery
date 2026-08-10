@@ -196,6 +196,8 @@ export const rateLimitLog = sqliteTable("rate_limit_log", {
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   keyActionIdx: index("idx_rate_limit_key_action").on(t.key, t.action, t.createdAt),
+  /** maintenance 清理按 key 前缀 + created_at 判断保留窗口，补 key+created_at 索引降低大表扫描。 */
+  keyCreatedIdx: index("idx_rate_limit_key_created").on(t.key, t.createdAt),
 }));
 
 /**
@@ -411,6 +413,8 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
 }, (t) => ({
   unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
   identityIdx: index("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),
+  /** 公开卡密找回/平台身份映射按活动 + 身份查 entry，避免跨活动全表扫描。 */
+  drawIdentityIdx: index("idx_entries_identity_lookup").on(t.drawId, t.identityType, t.identityValue),
   /** 直付秒杀热路径：容量 COUNT 与公开进度都按活动和支付软释放状态过滤。 */
   drawPaymentIdx: index("idx_entries_tenant_draw_payment_status").on(t.tenantId, t.drawId, t.paymentStatus),
 }));
@@ -475,6 +479,8 @@ export const lotterySpins = sqliteTable("lottery_spins", {
   idempotencyUnique: uniqueIndex("idx_spins_idempotency").on(t.tenantId, t.drawId, t.idempotencyKey),
   entryIdx: index("idx_spins_entry").on(t.tenantId, t.drawId, t.entryId, t.createdAt),
   drawIdx: index("idx_spins_draw").on(t.tenantId, t.drawId, t.createdAt),
+  /** maintenance 清理过期幂等 spin 时按 created_at 扫描。 */
+  createdIdx: index("idx_spins_created").on(t.createdAt),
 }));
 
 export const lotteryWinners = sqliteTable("lottery_winners", {
@@ -631,6 +637,8 @@ export const webhookDeliveries = sqliteTable("webhook_deliveries", {
   sentAt: text("sent_at"),
 }, (t) => ({
   deliveryTenantIdx: index("idx_webhook_deliveries_tenant").on(t.tenantId, t.status, t.createdAt),
+  /** maintenance 重试扫描按 status + next_retry_at + created_at 取待投递任务。 */
+  deliveryRetryIdx: index("idx_webhook_deliveries_status_retry_created").on(t.status, t.nextRetryAt, t.createdAt),
   deliveryEventIdx: uniqueIndex("idx_webhook_deliveries_event").on(t.webhookConfigId, t.eventId),
 }));
 
@@ -992,7 +1000,8 @@ export const communityMembers = sqliteTable("community_members", {
   tenantId: text("tenant_id").notNull(),
   platformTargetId: text("platform_target_id").notNull(),
   userId: text("user_id").notNull(),          // users.id（Phase B 稳定 ID）
-  identityValue: text("identity_value").notNull(), // 平台用户 ID（QQ号），兜底
+  // 当前实现写入 users.id 作为冗余身份值，用于排障和未来迁移；真实去重依赖 user_id 唯一索引。
+  identityValue: text("identity_value").notNull(),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 }, (table) => ({
   uniqTargetUser: uniqueIndex("uq_community_members_target_user").on(table.platformTargetId, table.userId),
@@ -1026,6 +1035,8 @@ export const platformDeliveries = sqliteTable("platform_deliveries", {
   sentAt: text("sent_at"),
 }, (t) => ({
   tenantStatusIdx: index("idx_platform_deliveries_tenant_status").on(t.tenantId, t.status, t.createdAt),
+  /** maintenance 平台投递队列按 status + next_retry_at + created_at 领取任务。 */
+  retryIdx: index("idx_platform_deliveries_status_retry_created").on(t.status, t.nextRetryAt, t.createdAt),
   targetIdx: index("idx_platform_deliveries_target").on(t.platformTargetId, t.createdAt),
   eventIdx: index("idx_platform_deliveries_event").on(t.tenantId, t.eventType, t.createdAt),
 }));
