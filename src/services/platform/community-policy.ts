@@ -13,7 +13,7 @@
 import type { DbType } from "../../db/client";
 import { and, eq, count } from "drizzle-orm";
 import { withDbTransaction } from "../../db/client";
-import { getTenantPlanLimits, getTenantUsage } from "../lottery/plan";
+import { getTenantUsage } from "../lottery/plan";
 import { tenantCommunityOverrides, communityMembers, platformTargets } from "../../db/schema";
 
 /**
@@ -29,14 +29,20 @@ export type CommunityPolicy = {
 /**
  * 获取租户生效的社群功能策略（docs/180 §3.1）。
  *
- * 优先级：租户覆写（tenant_community_overrides）> 套餐默认（PLAN_LIMITS）
+ * 优先级：租户覆写（tenant_community_overrides）> 套餐默认（PLAN_LIMITS + system_config 动态覆盖）
  * 覆写只覆盖传入字段，未覆写的字段仍用套餐默认。
+ *
+ * 自 P1 修复（docs/188）：改用 getTenantUsage 获取动态套餐 limits（含 system_config 覆盖），
+ * 替代静态 getTenantPlanLimits。社群配额现在与活动配额统一配置来源，L3 可在 /platform/config
+ * 调整群数/群人数上限。
  */
 export async function getTenantCommunityPolicy(
   db: DbType,
   tenantId: string,
 ): Promise<CommunityPolicy> {
-  const planLimits = getTenantPlanLimits(await getTenantPlanName(db, tenantId));
+  // 获取动态套餐 limits（含 system_config 覆盖 + 社区配额字段）
+  const usage = await getTenantUsage(db, tenantId);
+  const planLimits = usage.limits;
 
   // 读取覆写记录
   const [override] = await db
@@ -60,14 +66,6 @@ export async function getTenantCommunityPolicy(
     maxGroupMembers: override.maxGroupMembers,
     source: "override",
   };
-}
-
-/**
- * 获取租户的套餐名称（从 getTenantUsage 中提取，避免重复查询）。
- */
-async function getTenantPlanName(db: DbType, tenantId: string): Promise<string | undefined> {
-  const usage = await getTenantUsage(db, tenantId);
-  return usage.plan;
 }
 
 /**

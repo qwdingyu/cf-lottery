@@ -38,7 +38,7 @@ export const SYSTEM_CONFIG_SECTIONS: readonly SystemConfigSectionDef[] = [
   {
     id: 'plans',
     label: '套餐额度',
-    description: '各套餐的活动次数上限和单活动参与人数上限；活动次数填 0 表示不限，单活动参与上限必须大于 0。',
+    description: '各套餐的活动次数、单活动参与人数、群绑定数、每群成员数上限；填 0 表示不限，单活动参与上限必须大于 0。',
     groups: ['套餐额度'],
   },
 ] as const

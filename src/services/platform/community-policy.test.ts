@@ -9,7 +9,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearTestData, getTestDb } from "../../test-setup";
 import { and, eq } from "drizzle-orm";
-import { tenantCommunityOverrides, communityMembers } from "../../db/schema";
+import { tenantCommunityOverrides, communityMembers, systemConfig } from "../../db/schema";
 import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
 import {
@@ -382,6 +382,47 @@ describe("enforceGroupMemberCap", () => {
         eq(communityMembers.userId, "dup-user"),
       ));
     expect(rows.length).toBe(1);
+  });
+
+  it("P1 动态覆盖：system_config 覆盖 free 群人数上限为 50", async () => {
+    // 写入系统配置：free 套餐群人数上限降为 50（0 表示不限，50 为具体上限）
+    await db.insert(systemConfig).values({
+      key: "plan_free_max_group_members",
+      value: "50",
+    });
+    // 占满 50 人
+    for (let i = 0; i < 50; i++) {
+      await db.insert(communityMembers).values({
+        id: `cm-cfg-${i}`,
+        tenantId: TENANT,
+        platformTargetId: TARGET_A,
+        userId: `cfg-user-${i}`,
+        identityValue: `cfg-user-${i}`,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    // 第 51 人应被拒绝（动态覆盖 50 生效，而非硬编码 200）
+    const over = await enforceGroupMemberCap(db, {
+      tenantId: TENANT,
+      platformTargetId: TARGET_A,
+      userId: "cfg-over",
+    });
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.reply).toContain("50");
+  });
+
+  it("P1 动态覆盖：system_config 覆盖 free 群数为 2", async () => {
+    await db.insert(systemConfig).values({
+      key: "plan_free_max_platform_targets",
+      value: "2",
+    });
+    // 已有 2 个群绑定
+    await insertTarget("pt-cfg-a", TENANT);
+    await insertTarget("pt-cfg-b", TENANT);
+    // 第 3 个群应被拒绝（动态覆盖 2 生效，而非硬编码 1）
+    const third = await canTenantCreatePlatformTarget(db, TENANT);
+    expect(third.ok).toBe(false);
+    if (!third.ok) expect(third.message).toContain("2");
   });
 });
 });

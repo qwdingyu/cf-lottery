@@ -73,6 +73,15 @@ const PLAN_LIMITS_CONFIG_KEYS: string[] = [
   "plan_enterprise_max_participants_per_activity",
   // MVP 推广期允许平台运营者单独调整 Free 套餐的 Webhook 数量，给用户试用体验。
   "free_plan_max_webhooks",
+  // 社群功能配额（docs/180）：free/pro/team 的群绑定数上限与每群成员数上限走动态覆盖，
+  // 与活动配额统一配置来源，使 L3 运营能在 /platform/config 调整社群容量（docs/188 P1）。
+  // 语义：0 = null（不限）；≥1 为具体上限。enterprise 不设 key（保持不限，避免被覆盖）。
+  "plan_free_max_platform_targets",
+  "plan_free_max_group_members",
+  "plan_pro_max_platform_targets",
+  "plan_pro_max_group_members",
+  "plan_team_max_platform_targets",
+  "plan_team_max_group_members",
 ] as const;
 
 /**
@@ -113,6 +122,24 @@ async function loadDynamicPlanLimits(db: DbType): Promise<Record<string, Omit<Te
       const parsed = parseInt(maxParticipantsVal, 10);
       if (!Number.isNaN(parsed) && parsed > 0) {
         merged[planName].maxParticipantsPerActivity = parsed;
+      }
+    }
+
+    // 社群配额动态覆盖（docs/188 P1）：0 = 不限（null），≥1 为具体上限。
+    // 与 maxActivities 的 0→null 约定保持一致，使 L3 能在 /platform/config 调整社群容量。
+    // enterprise 不配置这些 key（configMap 里无值），保持硬编码的 null（不限），不会被误覆盖。
+    const maxPlatformTargetsVal = configMap[`plan_${planName}_max_platform_targets`];
+    const maxGroupMembersVal = configMap[`plan_${planName}_max_group_members`];
+    if (maxPlatformTargetsVal !== undefined && merged[planName]) {
+      const parsed = parseInt(maxPlatformTargetsVal, 10);
+      if (!Number.isNaN(parsed) && parsed >= 0) {
+        merged[planName].maxPlatformTargets = parsed === 0 ? null : parsed;
+      }
+    }
+    if (maxGroupMembersVal !== undefined && merged[planName]) {
+      const parsed = parseInt(maxGroupMembersVal, 10);
+      if (!Number.isNaN(parsed) && parsed >= 0) {
+        merged[planName].maxGroupMembers = parsed === 0 ? null : parsed;
       }
     }
   }
