@@ -205,6 +205,11 @@ const router = createRouter({
           component: () => import('@/views/platform/PlatformWebhookDeliveriesView.vue'),
         },
         {
+          path: 'email-deliveries',
+          name: 'PlatformEmailDeliveries',
+          component: () => import('@/views/platform/PlatformEmailDeliveriesView.vue'),
+        },
+        {
           path: 'data-cleanup',
           name: 'PlatformDataCleanup',
           component: () => import('@/views/platform/PlatformDataCleanupView.vue'),

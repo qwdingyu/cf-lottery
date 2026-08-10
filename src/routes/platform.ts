@@ -10,10 +10,11 @@ import { withDbTransaction } from "../db/client";
 import { fail, getDb, ok } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { requireAuth, requirePlatformMember, signJwt } from "../middleware/auth";
-import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig, tenantCommunityOverrides, communityMembers, platformTargets } from "../db/schema";
+import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, emailDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig, tenantCommunityOverrides, communityMembers, platformTargets } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
 import { dispatchWebhookDelivery } from "../services/lottery-service";
+import { dispatchEmailDeliveries } from "../services/email-delivery";
 
 export const platformRoute = new Hono<AppEnv>();
 
@@ -651,6 +652,109 @@ platformRoute.post("/webhook-deliveries/:id/retry", requirePlatformMember(["plat
     targetId: delivery.id,
     tenantId: delivery.tenantId,
     metadata: { previousStatus: delivery.status, eventType: delivery.eventType, result },
+  });
+
+  return ok(c, result);
+});
+
+/** 邮件投递列表（分页，支持按租户、状态、模板筛选）。
+ *
+ * support 角色必须指定 tenantId，避免只读支持人员默认看到全站邮箱地址。
+ */
+platformRoute.get("/email-deliveries", async (c) => {
+  const db = getDb(c);
+  const limit = clampInteger(c.req.query("limit"), 50, 1, 200);
+  const offset = clampInteger(c.req.query("offset"), 0, 0, 100_000);
+  const tenantId = c.req.query("tenantId") || "";
+  const status = c.req.query("status") || "";
+  const template = c.req.query("template") || "";
+
+  if (c.get("platformRole") === "platform_support" && !tenantId) {
+    return ok(c, { deliveries: [] });
+  }
+
+  const conditions: SQL[] = [];
+  if (tenantId) conditions.push(eq(emailDeliveries.tenantId, tenantId));
+  if (status) conditions.push(eq(emailDeliveries.status, status));
+  if (template) conditions.push(eq(emailDeliveries.template, template));
+
+  const rows = await db
+    .select({
+      id: emailDeliveries.id,
+      tenantId: emailDeliveries.tenantId,
+      drawId: emailDeliveries.drawId,
+      sourceType: emailDeliveries.sourceType,
+      sourceId: emailDeliveries.sourceId,
+      recipientEmail: emailDeliveries.recipientEmail,
+      template: emailDeliveries.template,
+      status: emailDeliveries.status,
+      attemptCount: emailDeliveries.attemptCount,
+      nextRetryAt: emailDeliveries.nextRetryAt,
+      providerMessageId: emailDeliveries.providerMessageId,
+      lastError: emailDeliveries.lastError,
+      createdAt: emailDeliveries.createdAt,
+      updatedAt: emailDeliveries.updatedAt,
+      sentAt: emailDeliveries.sentAt,
+    })
+    .from(emailDeliveries)
+    .where(combinedWhere(conditions))
+    .orderBy(desc(emailDeliveries.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  return ok(c, { deliveries: rows });
+});
+
+/** 平台手动重试邮件投递。
+ *
+ * 重试会真实调用邮件网关，权限与 Webhook 重试一致：support 只读，operator/owner 可执行。
+ * 对 failed 记录先恢复为 pending，再交给统一发送器；sent 记录不重复发送。
+ */
+platformRoute.post("/email-deliveries/:id/retry", requirePlatformMember(["platform_owner", "platform_operator"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
+  const deliveryId = c.req.param("id");
+  if (!deliveryId) return fail(c, "缺少邮件投递记录 ID", 400);
+
+  const [delivery] = await db
+    .select({
+      id: emailDeliveries.id,
+      tenantId: emailDeliveries.tenantId,
+      status: emailDeliveries.status,
+      template: emailDeliveries.template,
+      sourceType: emailDeliveries.sourceType,
+    })
+    .from(emailDeliveries)
+    .where(eq(emailDeliveries.id, deliveryId))
+    .limit(1);
+  if (!delivery) return fail(c, "邮件投递记录不存在", 404);
+  if (delivery.status === "sent") return fail(c, "已发送邮件不能重复重试", 400);
+
+  await db
+    .update(emailDeliveries)
+    .set({ status: "pending", nextRetryAt: null, lastError: "", updatedAt: new Date().toISOString() })
+    .where(eq(emailDeliveries.id, delivery.id));
+
+  const result = await dispatchEmailDeliveries(db, {
+    resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+    emailFrom: getEnv(c, "EMAIL_FROM") || "",
+    cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
+    cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
+    cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
+  }, {
+    deliveryIds: [delivery.id],
+    limit: 1,
+  });
+
+  await writePlatformAudit(db, {
+    actorUserId,
+    actorRole,
+    action: "platform.email_delivery.retry",
+    targetType: "email_delivery",
+    targetId: delivery.id,
+    tenantId: delivery.tenantId,
+    metadata: { previousStatus: delivery.status, template: delivery.template, sourceType: delivery.sourceType, result },
   });
 
   return ok(c, result);

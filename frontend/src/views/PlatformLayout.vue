@@ -78,6 +78,7 @@ const menuItems = computed(() => [
   { name: 'PlatformRedemptionCodes', to: '/platform/redemption-codes', label: t('platformLayout.menuRedemptionCodes'), icon: '🎵' },
   { name: 'PlatformAuditLogs', to: '/platform/audit-logs', label: t('platformLayout.menuAuditLogs'), icon: '📝' },
   { name: 'PlatformWebhookDeliveries', to: '/platform/webhook-deliveries', label: t('platformLayout.menuWebhookDeliveries'), icon: '📨' },
+  { name: 'PlatformEmailDeliveries', to: '/platform/email-deliveries', label: t('platformLayout.menuEmailDeliveries'), icon: '✉️' },
   { name: 'PlatformDataCleanup', to: '/platform/data-cleanup', label: t('platformLayout.menuDataCleanup'), icon: '🧹' },
 ])
 
