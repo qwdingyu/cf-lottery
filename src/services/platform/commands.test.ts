@@ -22,7 +22,7 @@ import {
 } from "../../db/schema";
 import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
-import { executeBuiltinPlatformCommand, recognizeBuiltinCommand } from "./commands";
+import { executeBuiltinPlatformCommand, recognizeBuiltinCommand, renderHelpReply } from "./commands";
 import type { ExecuteBuiltinCommandInput, BuiltinCommandConfig } from "./types";
 
 let db: DbType;
@@ -782,6 +782,49 @@ describe("/秒杀 (executeFlashCommand)", () => {
     expect(recognizeBuiltinCommand("/秒杀")).toBe("flash");
     expect(recognizeBuiltinCommand("秒杀")).toBe("flash");
     expect(recognizeBuiltinCommand("购买")).toBe("flash");
+  });
+});
+
+// ── /帮助 渲染测试（docs/171 §断层B：帮助列表与购买配置的联动）──
+describe("renderHelpReply", () => {
+  it("默认配置下显示所有命令（含 /秒杀）", () => {
+    const reply = renderHelpReply({
+      ...DEFAULT_BUILTIN_COMMANDS,
+      purchaseConfig: { url: "https://example.com/buy", label: "立即购买" },
+    });
+    expect(reply).toContain("/秒杀");
+    expect(reply).toContain("/签到");
+    expect(reply).toContain("/抽奖");
+  });
+
+  it("未配置 purchaseConfig.url 时帮助列表不显示 /秒杀", () => {
+    const reply = renderHelpReply(DEFAULT_BUILTIN_COMMANDS);
+    expect(reply).not.toContain("/秒杀");
+    // 其他命令不受影响
+    expect(reply).toContain("/签到");
+    expect(reply).toContain("/抽奖");
+  });
+
+  it("flashEnabled=false 时帮助列表不显示 /秒杀（即使有购买链接）", () => {
+    const reply = renderHelpReply({
+      ...DEFAULT_BUILTIN_COMMANDS,
+      flashEnabled: false,
+      purchaseConfig: { url: "https://example.com/buy", label: "立即购买" },
+    });
+    expect(reply).not.toContain("/秒杀");
+  });
+
+  it("所有命令关闭时返回空提示", () => {
+    const reply = renderHelpReply({
+      checkinEnabled: false,
+      spinEnabled: false,
+      shareEnabled: false,
+      leaderboardEnabled: false,
+      myPrizeEnabled: false,
+      helpEnabled: false,
+      flashEnabled: false,
+    });
+    expect(reply).toBe("当前群未启用群助手命令。");
   });
 });
 

@@ -87,9 +87,22 @@ export function isBuiltinCommandEnabled(command: BuiltinPlatformCommand, config:
   return config[COMMAND_ENABLED_KEYS[command]] !== false;
 }
 
+/**
+ * 渲染 /帮助 回复。
+ *
+ * 注意：`flash`（/秒杀）命令即使 `flashEnabled` 为 true，
+ * 若 `purchaseConfig.url` 未配置也视为「不可用」，不在帮助列表中展示。
+ * 避免「提示可用 → 执行时提示管理员未配置」的体验断层（与 executeSpinCommand 耗尽引导的策略一致）。
+ */
 export function renderHelpReply(config: BuiltinCommandConfig): string {
   const enabled = (Object.keys(COMMAND_LABELS) as BuiltinPlatformCommand[])
-    .filter((command) => isBuiltinCommandEnabled(command, config))
+    .filter((command) => {
+      // flash 命令需要同时满足：开关开启 + 购买链接已配置，否则不在帮助中展示
+      if (command === "flash") {
+        return config.flashEnabled !== false && !!config.purchaseConfig?.url;
+      }
+      return isBuiltinCommandEnabled(command, config);
+    })
     .map((command) => COMMAND_LABELS[command]);
   if (enabled.length === 0) return "当前群未启用群助手命令。";
   return `当前可用命令：${enabled.join(" ")}`;
