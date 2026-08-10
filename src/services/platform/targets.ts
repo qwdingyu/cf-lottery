@@ -44,6 +44,7 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
     shareEnabled: asBoolean(parsed.shareEnabled, DEFAULT_BUILTIN_COMMANDS.shareEnabled),
     leaderboardEnabled: asBoolean(parsed.leaderboardEnabled, DEFAULT_BUILTIN_COMMANDS.leaderboardEnabled),
     myPrizeEnabled: asBoolean(parsed.myPrizeEnabled, DEFAULT_BUILTIN_COMMANDS.myPrizeEnabled),
+    myCardCodeEnabled: asBoolean(parsed.myCardCodeEnabled, DEFAULT_BUILTIN_COMMANDS.myCardCodeEnabled),
     helpEnabled: asBoolean(parsed.helpEnabled, DEFAULT_BUILTIN_COMMANDS.helpEnabled),
     flashEnabled: asBoolean(parsed.flashEnabled, DEFAULT_BUILTIN_COMMANDS.flashEnabled),
     // 签到奖励配置：使用 checkin-reward 的 parseStoredCheckinPolicy 统一解析

@@ -1929,6 +1929,8 @@ adminQqAssistant: {
     cmdMyPrize: "My Prize",
     cmdHelp: "Help",
     cmdFlash: "Flash Sale / Purchase",
+    /* Card code re-delivery command toggle (docs/173) */
+    cmdCardCode: "My Card Code",
     labelCheckinGrantSpin: "Daily check-in reward spins",
     hintCheckinGrantSpin: "Extra spins granted on the first /checkin each day; 0 disables the reward",
     labelCheckinMode: "Reward mode",

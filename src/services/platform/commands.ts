@@ -13,7 +13,7 @@
  */
 import type { DbType } from "../../db/client";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
-import { lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, shareRecords } from "../../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, shareRecords } from "../../db/schema";
 import { joinDraw, recordActivityEvent } from "../lottery-service";
 import { performInstantSpin, SpinBusinessError } from "../lottery/spin-execution";
 import { recordSpinLog } from "../lottery/spins-log";
@@ -44,6 +44,7 @@ const COMMAND_LABELS: Record<BuiltinPlatformCommand, string> = {
   my_prize: "/我的奖品",
   help: "/帮助",
   flash: "/秒杀",
+  card_code: "/我的卡密",
 };
 
 const COMMAND_ENABLED_KEYS: Record<Exclude<BuiltinPlatformCommand, "help">, keyof BuiltinCommandConfig> = {
@@ -53,6 +54,7 @@ const COMMAND_ENABLED_KEYS: Record<Exclude<BuiltinPlatformCommand, "help">, keyo
   leaderboard: "leaderboardEnabled",
   my_prize: "myPrizeEnabled",
   flash: "flashEnabled",
+  card_code: "myCardCodeEnabled",
 };
 
 export function recognizeBuiltinCommand(text: string): BuiltinPlatformCommand | null {
@@ -79,6 +81,11 @@ export function recognizeBuiltinCommand(text: string): BuiltinPlatformCommand | 
     case "帮助":
     case "/help":
       return "help";
+    case "/我的卡密":
+    case "我的卡密":
+    case "/卡密":
+    case "卡密":
+      return "card_code";
     case "/秒杀":
     case "秒杀":
     case "购买":
@@ -128,6 +135,7 @@ const COMMAND_HANDLERS: Record<string, (
   spin: executeSpinCommand,
   my_prize: executeMyPrizeCommand,
   flash: executeFlashCommand,
+  card_code: executeCardCodeCommand,
 };
 
 export async function executeBuiltinPlatformCommand(
@@ -758,6 +766,80 @@ async function executeMyPrizeCommand(
   return {
     handled: true,
     reply: `🎁 你的奖品（共 ${winners.length} 件）：\n${lines.join("\n")}\n为避免泄露，卡密不在群内展示。`,
+  };
+}
+
+/**
+ * 执行 /我的卡密 命令（docs/173 卡密闭环断裂修复）。
+ *
+ * 卡密奖品通过私聊投递，但私聊可能因用户关闭临时会话/适配器异常而失败。
+ * 本命令允许用户通过群内指令主动请求卡密重发，私聊发送失败时群内追加降级提示。
+ *
+ * 设计决策：
+ * - 只查询 prizeCodeId IS NOT NULL 的 winner，与 /我的奖品 的 hasCode 标记一致。
+ * - 卡密明文通过 privateMessages 侧写私聊发送，群内回复不包含卡密。
+ * - 无卡密奖品时给予明确提示，引导用户使用 /我的奖品 查看全部奖品。
+ * - 群内回复明确告知卡密数量，使用户能确认是否全部收到。
+ */
+async function executeCardCodeCommand(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
+): Promise<PlatformCommandResult> {
+  // 1. 查找用户在该活动的参与记录
+  const entry = await findPlatformEntryId(db, input);
+  if (!entry) {
+    return { handled: true, reply: "你还未参与本活动，发送 /抽奖 参与吧。" };
+  }
+
+  // 2. 查询该用户所有带卡密的中奖记录，关联 prizeCodes 表取出卡密明文
+  // 只查询 prizeCodeId IS NOT NULL 的 winner（有卡密的中奖记录）
+  const winners = await db
+    .select({
+      tierName: lotteryPrizeTiers.tierName,
+      prizeName: prizes.name,
+      code: prizeCodes.code,
+      drawnAt: lotteryWinners.drawnAt,
+    })
+    .from(lotteryWinners)
+    .leftJoin(lotteryPrizeTiers, and(
+      eq(lotteryPrizeTiers.id, lotteryWinners.tierId),
+      eq(lotteryPrizeTiers.tenantId, input.tenantId),
+    ))
+    .leftJoin(prizes, and(
+      eq(prizes.id, lotteryPrizeTiers.prizeId),
+      eq(prizes.tenantId, input.tenantId),
+    ))
+    .leftJoin(prizeCodes, and(
+      eq(prizeCodes.id, lotteryWinners.prizeCodeId),
+      eq(prizeCodes.tenantId, input.tenantId),
+    ))
+    .where(and(
+      eq(lotteryWinners.tenantId, input.tenantId),
+      eq(lotteryWinners.drawId, input.drawId),
+      eq(lotteryWinners.entryId, entry),
+      isNotNull(lotteryWinners.prizeCodeId),
+    ))
+    .orderBy(lotteryWinners.drawnAt);
+
+  if (winners.length === 0) {
+    return { handled: true, reply: "你还没有获得卡密奖品。发送 /我的奖品 查看全部奖品。" };
+  }
+
+  // 3. 组装私聊消息：每条卡密一条私聊消息
+  const privateMessages = winners.map((w) => {
+    const name = w.prizeName || w.tierName || "奖品";
+    const code = w.code || "（卡密待补发，请联系管理员）";
+    return {
+      userId: input.user.identityValue,
+      groupId: input.source.groupId,
+      text: `🔑 你的卡密：\n奖品：${name}\n卡密：${code}\n\n请妥善保管，勿将卡密泄露给他人。`,
+    };
+  });
+
+  return {
+    handled: true,
+    reply: `🔑 你有 ${winners.length} 条卡密，已通过私聊发送，请查看私聊消息。`,
+    privateMessages,
   };
 }
 

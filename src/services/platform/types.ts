@@ -17,7 +17,9 @@ export type BuiltinPlatformCommand =
   | "my_prize"
   | "help"
   /** 秒杀/购买：返回配置的购买链接，打通免费→付费转化漏斗（docs/171 §断层B） */
-  | "flash";
+  | "flash"
+  /** 卡密重发：将已中奖但未收到的卡密通过私聊重新发送（docs/173 卡密闭环断裂修复） */
+  | "card_code";
 
 export type BuiltinCommandConfig = {
   checkinEnabled: boolean;
@@ -25,6 +27,8 @@ export type BuiltinCommandConfig = {
   shareEnabled: boolean;
   leaderboardEnabled: boolean;
   myPrizeEnabled: boolean;
+  /** 我的卡密重发命令开关（docs/173 卡密闭环断裂修复） */
+  myCardCodeEnabled: boolean;
   helpEnabled: boolean;
   /** 秒杀/购买命令开关（docs/171 §断层B） */
   flashEnabled: boolean;
@@ -39,9 +43,12 @@ export type BuiltinCommandConfig = {
    *     - cycle: 周期循环，第 cycleDays 天额外奖励后重置
    *  解析统一由 checkin-reward.ts 的 parseStoredCheckinPolicy 完成。
    */
+  /** 签到奖励配置（docs/172）。具体结构见 checkin-reward.ts */
   dailyCheckinPolicy?: {
     grantSpinCount?: number;
     rewardConfig?: import("./checkin-reward").CheckinStreakConfig;
+    /** 随机签到奖励（P2 randomBonus）：在基础奖励之上，小概率额外增加 spins（docs/175 §2.4） */
+    randomBonus?: import("./checkin-reward").RandomBonusConfig;
   };
   replyOverrides?: Record<string, string>;
   /** 购买链接配置：群内 /秒杀 时返回此链接，引导用户从免费积分→付费购买（docs/171 §断层B） */
@@ -160,6 +167,7 @@ export const DEFAULT_BUILTIN_COMMANDS: BuiltinCommandConfig = {
   shareEnabled: true,
   leaderboardEnabled: true,
   myPrizeEnabled: true,
+  myCardCodeEnabled: true,
   helpEnabled: true,
   flashEnabled: true,
 };

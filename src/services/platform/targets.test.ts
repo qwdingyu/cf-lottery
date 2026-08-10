@@ -21,6 +21,7 @@ const DEFAULT: BuiltinCommandConfig = {
   shareEnabled: true,
   leaderboardEnabled: true,
   myPrizeEnabled: true,
+  myCardCodeEnabled: true,
   helpEnabled: true,
   flashEnabled: true,
 };

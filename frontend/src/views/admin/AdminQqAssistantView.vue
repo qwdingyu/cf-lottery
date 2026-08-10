@@ -104,6 +104,7 @@
                 <label class="checkbox-label"><input type="checkbox" v-model="form.shareEnabled" /> {{ $t('adminQqAssistant.cmdShare') }}</label>
                 <label class="checkbox-label"><input type="checkbox" v-model="form.leaderboardEnabled" /> {{ $t('adminQqAssistant.cmdLeaderboard') }}</label>
                 <label class="checkbox-label"><input type="checkbox" v-model="form.myPrizeEnabled" /> {{ $t('adminQqAssistant.cmdMyPrize') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.myCardCodeEnabled" /> {{ $t('adminQqAssistant.cmdCardCode') }}</label>
                 <label class="checkbox-label"><input type="checkbox" v-model="form.helpEnabled" /> {{ $t('adminQqAssistant.cmdHelp') }}</label>
                 <label class="checkbox-label"><input type="checkbox" v-model="form.flashEnabled" /> {{ $t('adminQqAssistant.cmdFlash') }}</label>
               </div>
@@ -246,6 +247,7 @@ const form = ref({
   shareEnabled: true,
   leaderboardEnabled: true,
   myPrizeEnabled: true,
+  myCardCodeEnabled: true,
   helpEnabled: true,
   /** 每日签到奖励抽奖次数（docs/171）：0 表示不奖励，整数 1+ 则在 /签到 时增加 spinsLeft */
   grantSpinCount: 0,
@@ -309,7 +311,7 @@ function resetForm() {
   form.value = {
     targetId: '', targetName: '', activeDrawId: '', adapterBaseUrl: '', inboundSecret: '',
     checkinEnabled: true, spinEnabled: true, shareEnabled: true,
-    leaderboardEnabled: true, myPrizeEnabled: true, helpEnabled: true,
+    leaderboardEnabled: true, myPrizeEnabled: true, myCardCodeEnabled: true, helpEnabled: true,
     // 签到奖励抽奖次数（docs/171）：重置时默认 0（不奖励），与 form 初始值保持一致
     grantSpinCount: 0,
     // 签到奖励模式（docs/172）：重置时默认不启用，保留旧字段 grantSpinCount
@@ -339,6 +341,7 @@ function fillFormFromTarget(t: PlatformTarget) {
     form.value.shareEnabled = cmds.shareEnabled !== false
     form.value.leaderboardEnabled = cmds.leaderboardEnabled !== false
     form.value.myPrizeEnabled = cmds.myPrizeEnabled !== false
+    form.value.myCardCodeEnabled = cmds.myCardCodeEnabled !== false
     form.value.helpEnabled = cmds.helpEnabled !== false
     // 签到奖励（docs/172）：解析 rewardConfig 和 grantSpinCount
     form.value.grantSpinCount = cmds.dailyCheckinPolicy?.grantSpinCount || 0
@@ -413,6 +416,7 @@ async function saveTarget() {
       shareEnabled: form.value.shareEnabled,
       leaderboardEnabled: form.value.leaderboardEnabled,
       myPrizeEnabled: form.value.myPrizeEnabled,
+      myCardCodeEnabled: form.value.myCardCodeEnabled,
       helpEnabled: form.value.helpEnabled,
       /** 秒杀/购买命令开关（docs/171 §断层B）：后端默认 true */
       flashEnabled: form.value.flashEnabled,

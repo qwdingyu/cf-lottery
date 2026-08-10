@@ -1905,6 +1905,8 @@ adminQqAssistant: {
     cmdMyPrize: "我的奖品",
     cmdHelp: "帮助",
     cmdFlash: "秒杀/购买",
+    /* 我的卡密重发命令开关（docs/173 卡密闭环断裂修复） */
+    cmdCardCode: "我的卡密",
     labelCheckinGrantSpin: "每日签到奖励次数",
     hintCheckinGrantSpin: "用户每日首次 /签到 获得的额外抽奖次数，0 表示不奖励",
     labelCheckinMode: "签到奖励模式",

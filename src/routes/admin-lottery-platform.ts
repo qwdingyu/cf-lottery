@@ -104,6 +104,7 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
     shareEnabled: enabled("shareEnabled", DEFAULT_BUILTIN_COMMANDS.shareEnabled),
     leaderboardEnabled: enabled("leaderboardEnabled", DEFAULT_BUILTIN_COMMANDS.leaderboardEnabled),
     myPrizeEnabled: enabled("myPrizeEnabled", DEFAULT_BUILTIN_COMMANDS.myPrizeEnabled),
+    myCardCodeEnabled: enabled("myCardCodeEnabled", DEFAULT_BUILTIN_COMMANDS.myCardCodeEnabled),
     helpEnabled: enabled("helpEnabled", DEFAULT_BUILTIN_COMMANDS.helpEnabled),
     flashEnabled: enabled("flashEnabled", DEFAULT_BUILTIN_COMMANDS.flashEnabled),
     ...(checkinPolicy

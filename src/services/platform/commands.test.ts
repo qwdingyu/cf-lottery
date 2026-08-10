@@ -41,6 +41,7 @@ const DEFAULT_BUILTIN_COMMANDS: BuiltinCommandConfig = {
   shareEnabled: true,
   leaderboardEnabled: true,
   myPrizeEnabled: true,
+  myCardCodeEnabled: true,
   helpEnabled: true,
   flashEnabled: true,
 };
@@ -408,6 +409,83 @@ describe("/我的奖品 (executeMyPrizeCommand)", () => {
     const result = await executeBuiltinPlatformCommand(db, makeInput({
       command: "my_prize",
       builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, myPrizeEnabled: false },
+    }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("未启用");
+  });
+});
+
+// ── /我的卡密 测试 ──
+
+describe("/我的卡密 (executeCardCodeCommand)", () => {
+  it("未参与活动时提示先参与", async () => {
+    await seedInstantDraw();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "card_code" }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("还未参与");
+  });
+
+  it("已参与但无卡密奖品时提示无卡密", async () => {
+    await seedInstantDraw();
+    await ensureEntry();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "card_code" }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("还没有获得卡密奖品");
+  });
+
+  it("有卡密奖品时通过私聊发送卡密，群内不展示明文", async () => {
+    await seedInstantDraw();
+    await seedWinner({ prizeName: "测试奖品", code: "CARD-CODE-001", secret: "CARD-SEC-001" });
+
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "card_code" }));
+    expect(result.handled).toBe(true);
+    // 群内回复应告知卡密数量和私聊发送
+    expect(result.reply).toContain("1 条卡密");
+    expect(result.reply).toContain("私聊消息");
+    // 群内回复不应包含卡密明文
+    expect(result.reply).not.toContain("CARD-CODE-001");
+    expect(result.reply).not.toContain("CARD-SEC-001");
+    // 私聊消息中应包含卡密明文
+    expect(result.privateMessages).toBeDefined();
+    expect(result.privateMessages).toHaveLength(1);
+    expect(result.privateMessages![0].text).toContain("CARD-CODE-001");
+    expect(result.privateMessages![0].text).toContain("测试奖品");
+    // 私聊对象是当前用户
+    expect(result.privateMessages![0].userId).toBe(USER_ID);
+    expect(result.privateMessages![0].groupId).toBe(GROUP_ID);
+  });
+
+  it("有多个卡密奖品时逐条私聊发送", async () => {
+    await seedInstantDraw();
+    // 第一个奖品会新建 entry，第二个复用同一 entry
+    const first = await seedWinner({ prizeName: "奖品A", code: "CARD-A", secret: "SEC-A" });
+    await seedWinner({
+      prizeName: "奖品B",
+      tierName: "奖品B",
+      code: "CARD-B",
+      secret: "SEC-B",
+      sortOrder: 200,
+      entryId: first.entryId,
+    });
+
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "card_code" }));
+    expect(result.handled).toBe(true);
+    // 群内回复应告知卡密数量
+    expect(result.reply).toContain("2 条卡密");
+    // 群内不应包含任何卡密明文
+    expect(result.reply).not.toContain("CARD-A");
+    expect(result.reply).not.toContain("CARD-B");
+    // 私聊消息应为 2 条
+    expect(result.privateMessages).toBeDefined();
+    expect(result.privateMessages).toHaveLength(2);
+    expect(result.privateMessages![0].text).toContain("CARD-A");
+    expect(result.privateMessages![1].text).toContain("CARD-B");
+  });
+
+  it("命令关闭时返回禁用提示", async () => {
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "card_code",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, myCardCodeEnabled: false },
     }));
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("未启用");
@@ -833,6 +911,7 @@ describe("renderHelpReply", () => {
       shareEnabled: false,
       leaderboardEnabled: false,
       myPrizeEnabled: false,
+      myCardCodeEnabled: false,
       helpEnabled: false,
       flashEnabled: false,
     });
