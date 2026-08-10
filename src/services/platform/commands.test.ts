@@ -28,6 +28,7 @@ import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
 import { executeBuiltinPlatformCommand, recognizeBuiltinCommand, renderHelpReply } from "./commands";
 import type { ExecuteBuiltinCommandInput, BuiltinCommandConfig } from "./types";
+import { todayStr } from "./checkin-reward";
 
 let db: DbType;
 let client: Client;
@@ -62,6 +63,12 @@ function makeInput(overrides?: Partial<ExecuteBuiltinCommandInput & { builtinCom
     source: { platform: "qq", groupId: GROUP_ID },
     ...overrides,
   } as ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig };
+}
+
+function previousDateStr(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 beforeAll(async () => {
@@ -814,7 +821,7 @@ describe("/签到 (executeCheckinCommand) 签到奖励", () => {
       .from(lotteryEntries)
       .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
       .limit(1);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     // lastCheckinDate 已写入今天
     expect(entryAfterFirst?.lastCheckinDate).toBe(today);
     expect(Number(entryAfterFirst?.spinsLeft ?? 0)).toBe(2);
@@ -841,7 +848,7 @@ describe("/签到 (executeCheckinCommand) 签到奖励", () => {
       builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
     }));
     // 模拟跨天：把 last_checkin_date 改回昨天（等价于时间流逝到下一天）
-    const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+    const yesterday = previousDateStr(todayStr());
     await db
       .update(lotteryEntries)
       .set({ lastCheckinDate: yesterday })
@@ -864,7 +871,7 @@ describe("/签到 (executeCheckinCommand) 签到奖励", () => {
       .limit(1);
     // 昨天那次(1) + 今天这次(1) + initialSpinsOnJoin(1) = 3
     expect(Number(entry?.spinsLeft ?? 0)).toBe(3);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     expect(entry?.lastCheckinDate).toBe(today);
   });
 
@@ -896,7 +903,7 @@ describe("/签到 (executeCheckinCommand) 签到奖励", () => {
       .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
       .limit(1);
     expect(Number(entry?.spinsLeft ?? 0)).toBe(1); // 0 + grantSpinCount(1)
-    expect(entry?.lastCheckinDate).toBe(new Date().toISOString().slice(0, 10));
+    expect(entry?.lastCheckinDate).toBe(todayStr());
   });
 it("并发签到原子性：两个并发 /签到 只有第一个增加 spinsLeft（原子 UPDATE 消除 TOCTOU）", async () => {
     // 先播种活动并创建 entry，spinsLeft=0, lastCheckinDate=NULL

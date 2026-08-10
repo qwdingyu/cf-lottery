@@ -492,6 +492,154 @@ describe("DP: Draw Operations (admin-lottery-draw-ops.ts)", () => {
       expect(body.entries.length).toBeGreaterThanOrEqual(2);
     });
   });
+
+  describe("统一导出", () => {
+    it("活动列表导出复用 active 虚拟筛并防 CSV 公式注入", async () => {
+      await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+      const app = createTestApp();
+      const headers = await authHeader(OWNER_A, TENANT_A);
+      const now = new Date().toISOString();
+      await db.insert(lotteryDraws).values([
+        {
+          id: "export-active-open",
+          tenantId: TENANT_A,
+          publicSlug: "export-active-open",
+          title: "=HYPERLINK(\"https://bad.example\")",
+          status: "open",
+          activityKind: "lottery",
+          participationMode: "open",
+          experienceType: "wheel",
+          resultMode: "scheduled",
+          startAt: now,
+          endAt: now,
+        },
+        {
+          id: "export-active-drawn",
+          tenantId: TENANT_A,
+          publicSlug: "export-active-drawn",
+          title: "已结束活动",
+          status: "drawn",
+          activityKind: "lottery",
+          participationMode: "open",
+          experienceType: "wheel",
+          resultMode: "scheduled",
+          startAt: now,
+          endAt: now,
+        },
+      ]);
+
+      const res = await app.request("/api/admin/draws/export?status=active", { headers }, TEST_ENV);
+      expect(res.status).toBe(200);
+      const bytes = new Uint8Array(await res.clone().arrayBuffer());
+      expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
+      const text = await res.text();
+      expect(text).toContain("'=HYPERLINK");
+      expect(text).not.toContain("已结束活动");
+    });
+
+    it("活动列表导出超过单批上限时拒绝，要求运营分批", async () => {
+      await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+      const app = createTestApp();
+      const headers = await authHeader(OWNER_A, TENANT_A);
+      const now = new Date().toISOString();
+      await db.insert(lotteryDraws).values([
+        {
+          id: "export-limit-1",
+          tenantId: TENANT_A,
+          publicSlug: "export-limit-1",
+          title: "导出 1",
+          status: "open",
+          activityKind: "lottery",
+          participationMode: "open",
+          experienceType: "wheel",
+          resultMode: "scheduled",
+          startAt: now,
+          endAt: now,
+        },
+        {
+          id: "export-limit-2",
+          tenantId: TENANT_A,
+          publicSlug: "export-limit-2",
+          title: "导出 2",
+          status: "open",
+          activityKind: "lottery",
+          participationMode: "open",
+          experienceType: "wheel",
+          resultMode: "scheduled",
+          startAt: now,
+          endAt: now,
+        },
+      ]);
+
+      const res = await app.request("/api/admin/draws/export?status=active&limit=1", { headers }, TEST_ENV);
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toContain("分批导出");
+    });
+
+    it("按活动导出中奖名单走后端完整数据且保持租户隔离", async () => {
+      await seedDraw();
+      const app = createTestApp();
+      const headers = await authHeader(OWNER_A, TENANT_A);
+
+      const res = await app.request(`/api/admin/draws/${DRAW_ID}/export?scope=winners`, { headers }, TEST_ENV);
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).toContain("中奖者,奖品,档位,履约类型,卡密,中奖时间,邮件状态");
+      expect(text).toContain("winner@test.com");
+      expect(text).toContain("测试中奖奖品");
+      expect(text).not.toContain("b@test.com");
+    });
+
+    it("按活动导出参与名单支持 limit/offset 分批", async () => {
+      await seedDraw();
+      const app = createTestApp();
+      const headers = await authHeader(OWNER_A, TENANT_A);
+
+      const res = await app.request(`/api/admin/draws/${DRAW_ID}/export?scope=entries&limit=1`, { headers }, TEST_ENV);
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toContain("offset/limit");
+
+      const pageRes = await app.request(`/api/admin/draws/${DRAW_ID}/export?scope=entries&limit=1&offset=1`, { headers }, TEST_ENV);
+      expect(pageRes.status).toBe(200);
+      const pageText = await pageRes.text();
+      expect(pageText).toContain("参与者,参与时间");
+    });
+
+    it("scope=all 按整份 CSV 总行数限制，避免多个分区叠加撑爆导出", async () => {
+      await seedDraw();
+      const app = createTestApp();
+      const headers = await authHeader(OWNER_A, TENANT_A);
+
+      const res = await app.request(`/api/admin/draws/${DRAW_ID}/export?scope=all&limit=2`, { headers }, TEST_ENV);
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toContain("单次导出超过 2 行");
+    });
+  });
+
+  describe("大表查询计划", () => {
+    it("参与名单导出查询使用 tenant+draw+joined_at 索引", async () => {
+      const plan = await client.execute({
+        sql: "EXPLAIN QUERY PLAN SELECT * FROM lottery_entries WHERE tenant_id = ? AND draw_id = ? ORDER BY joined_at LIMIT 100",
+        args: [TENANT_A, DRAW_ID],
+      });
+      const detail = plan.rows.map((row) => String(row.detail || "")).join("\n");
+      expect(detail).toContain("idx_entries_tenant_draw_joined");
+      expect(detail).not.toContain("SCAN lottery_entries");
+    });
+
+    it("中奖名单导出查询使用 tenant+draw+drawn_at 索引", async () => {
+      const plan = await client.execute({
+        sql: "EXPLAIN QUERY PLAN SELECT * FROM lottery_winners WHERE tenant_id = ? AND draw_id = ? ORDER BY drawn_at DESC LIMIT 100",
+        args: [TENANT_A, DRAW_ID],
+      });
+      const detail = plan.rows.map((row) => String(row.detail || "")).join("\n");
+      expect(detail).toContain("idx_winners_draw");
+      expect(detail).not.toContain("SCAN lottery_winners");
+    });
+  });
 describe("审核申请", () => {
     const APPROVAL_DRAW_ID = "draw-approval";
     const APP_ENTRY_ID = "entry-approval";

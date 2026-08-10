@@ -1793,7 +1793,6 @@ import {
 import {
   buildLotteryDrawConfirmMessage,
   buildLotteryDuplicateDraft as buildLotteryDuplicateDraftRaw,
-  buildLotteryWinnersCsvRows,
   buildSelectedDrawsCsvRows,
   canBatchHideDraw as canBatchHideDrawByFields,
   canDeleteDraw as canDeleteDrawByStatus,
@@ -2714,6 +2713,8 @@ async function exportCsv() {
   if (statusFilter.value) params.set('status', statusFilter.value)
   if (activityKindFilter.value) params.set('activityKind', activityKindFilter.value)
   if (listQuery.value) params.set('query', listQuery.value)
+  if (createdFromFilter.value) params.set('createdFrom', createdFromFilter.value)
+  if (createdToFilter.value) params.set('createdTo', createdToFilter.value)
   const url = `/api/admin/draws/export?${params.toString()}`
   try {
     const token = readAdminToken()
@@ -2870,25 +2871,30 @@ async function copyWinnerCode(w: LotteryWinner) {
   })
 }
 
-function handleExportWinners() {
+async function handleExportWinners() {
   if (winners.value.length === 0) {
     showToast(t('lottery.adminExportWinnersEmpty'), 'error')
     return
   }
-  const rows = buildLotteryWinnersCsvRows(winners.value, {
-    email: t('lottery.adminEmail'),
-    prize: t('lottery.adminPrizeCol'),
-    fulfillment: t('lottery.adminFulfillmentCol'),
-    emailStatus: t('lottery.adminEmailStatus'),
-    sent: t('lottery.adminEmailSent'),
-    pending: t('lottery.adminEmailPending'),
-    failed: t('lottery.adminEmailFailed'),
-    manual: t('lottery.adminFulfillManual'),
-    codeMissing: t('lottery.adminFulfillCodeMissing'),
-  })
   const idPart = (winnersModalDrawId.value || 'winners').slice(0, 40)
-  downloadCsv(`lottery-winners-${idPart}-${new Date().toISOString().slice(0, 10)}.csv`, rows)
-  showToast(t('lottery.adminExportWinnersDone'), 'success')
+  try {
+    const token = readAdminToken()
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    const res = await fetch(`/api/admin/draws/${encodeURIComponent(winnersModalDrawId.value)}/export?scope=winners`, { headers })
+    if (!res.ok) throw new Error(`导出失败 (${res.status})`)
+    const blob = await res.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `lottery-winners-${idPart}-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(a.href)
+    showToast(t('lottery.adminExportWinnersDone'), 'success')
+  } catch (e: any) {
+    showToast(`导出失败: ${e.message}`, 'error')
+  }
 }
 
 function handleDuplicate(draw: LotteryDraw) {

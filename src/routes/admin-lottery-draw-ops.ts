@@ -6,6 +6,7 @@
  * 通过 setupDrawOpsRoutes 挂载，中间件已在主路由 use("*") 覆盖。
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
@@ -49,6 +50,17 @@ import {
 } from "./admin-lottery-helpers";
 
 export function setupDrawOpsRoutes(route: Hono<AppEnv>) {
+  const DRAW_EXPORT_MAX_ROWS = 10_000;
+
+  function buildCsvResponse(c: Context<AppEnv>, filename: string, lines: string[]) {
+    const encodedName = encodeURIComponent(filename);
+    return c.body("\uFEFF" + lines.join("\n"), 200, {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodedName}`,
+      "Cache-Control": "no-store",
+    });
+  }
+
 /** 中奖名单 */
 route.get("/draws/:id/winners", async (c) => {
   const db = getDb(c);
@@ -264,24 +276,35 @@ route.get("/draws/:id/export", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const drawId = c.req.param("id");
-  const MAX_EXPORT_ROWS = 10000;
+  const scope = String(c.req.query("scope") || "all");
+  const limit = clampInteger(c.req.query("limit"), DRAW_EXPORT_MAX_ROWS, 1, DRAW_EXPORT_MAX_ROWS);
+  const offset = clampInteger(c.req.query("offset"), 0, 0, 1_000_000);
 
   const draw = await getDraw(db, drawId, tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
-
-  // 先检查总参与人数，超出限制时提示
-  const [exportCountRow] = await db
-    .select({ total: count() })
-    .from(lotteryEntries)
-    .where(and(eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)));
-  const entryCount = Number(exportCountRow?.total ?? 0);
-  if (entryCount > MAX_EXPORT_ROWS) {
-    return fail(c, `参与人数超出单次导出上限（${MAX_EXPORT_ROWS}），请分批导出或联系平台运营`, 400);
+  if (!["all", "entries", "winners", "outcomes"].includes(scope)) {
+    return fail(c, "导出范围无效", 400);
   }
 
-  const winners = await getDrawWinners(db, drawId, tenantId);
-  const entries = await getEntries(db, tenantId, drawId, MAX_EXPORT_ROWS);
-  const outcomes = draw.activityKind === "lottery" ? [] : await getActivityOutcomes(db, tenantId, drawId, MAX_EXPORT_ROWS);
+  // 同步 CSV 严格限制单次行数；大活动通过 offset/limit 分批拉取，避免 Worker 内存和 Turso rows read 失控。
+  const winners = (scope === "all" || scope === "winners") && draw.activityKind === "lottery"
+    ? await getDrawWinners(db, drawId, tenantId, { limit: limit + 1, offset })
+    : [];
+  const entries = scope === "all" || scope === "entries"
+    ? await getEntries(db, tenantId, drawId, limit + 1, offset)
+    : [];
+  const outcomes = (scope === "all" || scope === "outcomes") && draw.activityKind !== "lottery"
+    ? await getActivityOutcomes(db, tenantId, drawId, limit + 1, offset)
+    : [];
+  const exportedBusinessRows = entries.length + winners.length + outcomes.length;
+  if (
+    entries.length > limit
+    || winners.length > limit
+    || outcomes.length > limit
+    || exportedBusinessRows > limit
+  ) {
+    return fail(c, `单次导出超过 ${limit} 行，请使用 offset/limit 分批导出`, 400);
+  }
   // L2 可读性：CSV 中的参与者/中奖者用可读身份（registered 用户显示用户名(邮箱)）
   await decorateIdentityDisplay(db, winners);
   await decorateIdentityDisplay(db, entries);
@@ -290,12 +313,17 @@ route.get("/draws/:id/export", async (c) => {
   const lines: string[] = [
     "活动名称,状态,参与人数,中奖人数",
     `${csvEscape(draw.title)},${csvEscape(draw.status)},${entries.length},${draw.activityKind === "lottery" ? winners.length : outcomes.length}`,
-    "",
-    "参与者,参与时间",
-    ...entries.map((e) => `${csvEscape((e as any).identityDisplay || e.identityValue)},${csvEscape(e.joinedAt)}`),
   ];
 
-  if (draw.activityKind === "lottery") {
+  if (scope === "all" || scope === "entries") {
+    lines.push(
+      "",
+      "参与者,参与时间",
+      ...entries.map((e) => `${csvEscape((e as any).identityDisplay || e.identityValue)},${csvEscape(e.joinedAt)}`),
+    );
+  }
+
+  if ((scope === "all" || scope === "winners") && draw.activityKind === "lottery") {
     // docs/102：导出含奖品/卡密/履约，避免只有身份+时间、运营以为没发码
     lines.push(
       "",
@@ -313,7 +341,7 @@ route.get("/draws/:id/export", async (c) => {
         ].join(",");
       }),
     );
-  } else {
+  } else if ((scope === "all" || scope === "outcomes") && draw.activityKind !== "lottery") {
     lines.push(
       "",
       "参与记录ID,状态,参与顺序,名额序号,结果说明,确认时间",
@@ -321,10 +349,7 @@ route.get("/draws/:id/export", async (c) => {
     );
   }
 
-  return c.text(lines.join("\n"), 200, {
-    "Content-Type": "text/csv; charset=utf-8",
-    "Content-Disposition": `attachment; filename="draw-${drawId}.csv"`,
-  });
+  return buildCsvResponse(c, `draw-${drawId}-${scope}.csv`, lines);
 });
 
 /**

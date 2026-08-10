@@ -7,7 +7,7 @@
  */
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
-import { and, eq, count, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, count, desc, inArray, notInArray, sql } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
@@ -63,11 +63,22 @@ export async function getDrawEntriesCount(db: DbType, drawId: string, tenantId?:
  * 旧 UI 读 `cardAccountLabel` / `cardDeliverySecret`；若不 join `prize_codes`，
  * 即便开奖已锁码，结果表也会显示「订单号/卡密全是 -」——运营会误以为没发码。
  */
-export async function getDrawWinners(db: DbType, drawId: string, tenantId: string) {
+export async function getDrawWinners(
+  db: DbType,
+  drawId: string,
+  tenantId: string,
+  options: { limit?: number; offset?: number } = {},
+) {
+  const limit = Math.max(1, Math.min(10_001, Math.floor(Number(options.limit ?? 10_000))));
+  const offset = Math.max(0, Math.floor(Number(options.offset ?? 0)));
   const winners = await db
     .select()
     .from(lotteryWinners)
-    .where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
+    .where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)))
+    // 导出和后台展示都必须稳定排序；否则分页导出会在同一活动内重复或遗漏。
+    .orderBy(desc(lotteryWinners.drawnAt), desc(lotteryWinners.id))
+    .limit(limit)
+    .offset(offset);
 
   if (winners.length === 0) return [];
 

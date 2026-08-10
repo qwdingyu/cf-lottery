@@ -415,6 +415,8 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
   identityIdx: index("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),
   /** 公开卡密找回/平台身份映射按活动 + 身份查 entry，避免跨活动全表扫描。 */
   drawIdentityIdx: index("idx_entries_identity_lookup").on(t.drawId, t.identityType, t.identityValue),
+  /** 管理端参与名单分页/CSV 分批导出按租户+活动+参与时间顺序读取，避免大活动 OFFSET 前置全扫。 */
+  drawJoinedIdx: index("idx_entries_tenant_draw_joined").on(t.tenantId, t.drawId, t.joinedAt),
   /** 直付秒杀热路径：容量 COUNT 与公开进度都按活动和支付软释放状态过滤。 */
   drawPaymentIdx: index("idx_entries_tenant_draw_payment_status").on(t.tenantId, t.drawId, t.paymentStatus),
 }));

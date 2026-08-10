@@ -13,6 +13,7 @@ import { tenants, users, tenantMembers, lotteryDraws, lotteryEntries, platformTa
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { getActivePlatformTarget } from "../services/platform/targets";
 import { executeBuiltinPlatformCommand } from "../services/platform/commands";
+import { todayStr } from "../services/platform/checkin-reward";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { isEncryptedPlatformSecret, PLATFORM_SECRET_PLACEHOLDER } from "../services/platform/adapter-config";
 import { and, eq } from "drizzle-orm";
@@ -39,6 +40,12 @@ async function createApp() {
 
 function authHeaders() {
   return { Authorization: `Bearer ${token}` };
+}
+
+function previousDateStr(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 async function seedBase() {
@@ -642,7 +649,7 @@ it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → ch
     expect(entry1!.checkinStreak).toBe(1);
 
     // 修改 lastCheckinDate 为昨天（模拟连续签到，避免日期限制）
-    const yesterday = new Date(now.getTime() - 86400_000).toISOString().slice(0, 10);
+    const yesterday = previousDateStr(todayStr());
     await db
       .update(lotteryEntries)
       .set({ lastCheckinDate: yesterday })

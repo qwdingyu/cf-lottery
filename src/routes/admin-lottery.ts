@@ -8,7 +8,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
-import { getDb, ok, fail } from "../lib/http";
+import { getDb, ok, fail, clampInteger } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig } from "../db/schema";
 import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
@@ -37,6 +37,7 @@ import {
   requireTenantRouteCapability,
   recordTenantAudit,
   escapeLike,
+  csvEscape,
   parseAdminPagination,
   encodeDrawCursor,
   decodeDrawCursor,
@@ -78,6 +79,31 @@ const RESULT_MODES = new Set([
   "no_result",
 ]);
 const ALLOCATION_POLICIES = new Set(["capacity", "waitlist", "fifo", "priority", "random", "weighted_random", "approval"]);
+const DRAW_EXPORT_MAX_ROWS = 10_000;
+const DRAW_STATUSES = new Set(["active", "draft", "open", "paused", "drawing", "drawn", "cancelled"]);
+
+function applyDrawListFilters(
+  tenantId: string,
+  input: {
+    status?: string;
+    query?: string;
+    activityKind?: string;
+    createdFrom?: string;
+    createdTo?: string;
+  },
+) {
+  const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
+  if (input.status === "active") {
+    conditions.push(inArray(lotteryDraws.status, ["draft", "open", "paused", "drawing"]));
+  } else if (input.status && DRAW_STATUSES.has(input.status)) {
+    conditions.push(eq(lotteryDraws.status, input.status));
+  }
+  if (input.query) conditions.push(sql`${lotteryDraws.title} LIKE ${"%" + escapeLike(input.query) + "%"}`);
+  if (input.activityKind) conditions.push(eq(lotteryDraws.activityKind, input.activityKind));
+  if (input.createdFrom) conditions.push(sql`${lotteryDraws.createdAt} >= ${input.createdFrom}`);
+  if (input.createdTo) conditions.push(sql`${lotteryDraws.createdAt} <= ${input.createdTo}`);
+  return conditions;
+}
 
 // 所有租户后台路由都必须同时满足：已登录 + 仍是当前租户成员 + 命中轻量能力门禁。
 adminLotteryRoute.use("*", requireAuth, requireTenantMember(), requireTenantRouteCapability);
@@ -355,27 +381,9 @@ adminLotteryRoute.get("/draws", async (c) => {
   const createdFrom = c.req.query("createdFrom") || "";
   const createdTo = c.req.query("createdTo") || "";
 
-  const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
-  // docs/083 P1：status=active 虚拟筛 = 进行中视角（draft/open/paused/drawing），排除 drawn/cancelled
-  // 未知 status 忽略，避免拼错 query 得到空列表误以为无活动
-  const ALLOWED_DRAW_STATUS = new Set([
-    "active",
-    "draft",
-    "open",
-    "paused",
-    "drawing",
-    "drawn",
-    "cancelled",
-  ]);
-  if (status === "active") {
-    conditions.push(inArray(lotteryDraws.status, ["draft", "open", "paused", "drawing"]));
-  } else if (status && ALLOWED_DRAW_STATUS.has(status)) {
-    conditions.push(eq(lotteryDraws.status, status));
-  }
-  if (query) conditions.push(sql`${lotteryDraws.title} LIKE ${'%' + escapeLike(query) + '%'}`);
-  if (activityKind) conditions.push(eq(lotteryDraws.activityKind, activityKind));
-  if (createdFrom) conditions.push(sql`${lotteryDraws.createdAt} >= ${createdFrom}`);
-  if (createdTo) conditions.push(sql`${lotteryDraws.createdAt} <= ${createdTo}`);
+  // docs/083 P1：status=active 虚拟筛 = 进行中视角（draft/open/paused/drawing），排除 drawn/cancelled。
+  // 列表与 CSV 导出共用同一套条件，避免页面看到 A、导出得到 B。
+  const conditions = applyDrawListFilters(tenantId, { status, query, activityKind, createdFrom, createdTo });
 
   // 游标解码：当 cursor 参数有效时，添加 keyset 分页条件
   // 复合游标 (createdAt, id) 确保排序确定性和唯一性，避免同一毫秒创建多个活动时重复/遗漏
@@ -433,26 +441,19 @@ adminLotteryRoute.get("/draws", async (c) => {
   return ok(c, { draws, total: Number(totalRow?.total ?? 0), nextCursor, hasMore });
 });
 
-/** 活动列表 CSV 导出 — 复用列表查询条件，不限制数量，输出 UTF-8 BOM CSV */
+/** 活动列表 CSV 导出 — 复用列表查询条件，强制上限，输出 UTF-8 BOM CSV */
 adminLotteryRoute.get("/draws/export", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
   const status = c.req.query("status") || "";
   const query = c.req.query("query") || "";
   const activityKind = c.req.query("activityKind") || "";
+  const createdFrom = c.req.query("createdFrom") || "";
+  const createdTo = c.req.query("createdTo") || "";
+  const limit = clampInteger(c.req.query("limit"), DRAW_EXPORT_MAX_ROWS, 1, DRAW_EXPORT_MAX_ROWS);
+  const offset = clampInteger(c.req.query("offset"), 0, 0, 1_000_000);
 
-  // 复用活动列表的查询条件（不含游标和分页限制）
-  const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
-  const ALLOWED_DRAW_STATUS = new Set(["active", "draft", "open", "paused", "drawing", "drawn", "cancelled"]);
-  if (status && ALLOWED_DRAW_STATUS.has(status)) {
-    conditions.push(eq(lotteryDraws.status, status));
-  }
-  if (query) {
-    conditions.push(sql`${lotteryDraws.title} LIKE ${"%" + query + "%"}`);
-  }
-  if (activityKind) {
-    conditions.push(eq(lotteryDraws.activityKind, activityKind));
-  }
+  const conditions = applyDrawListFilters(tenantId, { status, query, activityKind, createdFrom, createdTo });
 
   const rows = await db
     .select({
@@ -469,24 +470,29 @@ adminLotteryRoute.get("/draws/export", async (c) => {
     })
     .from(lotteryDraws)
     .where(and(...conditions))
-    .orderBy(desc(lotteryDraws.createdAt));
+    .orderBy(desc(lotteryDraws.createdAt), desc(lotteryDraws.id))
+    .limit(limit + 1)
+    .offset(offset);
+
+  if (rows.length > limit) {
+    return fail(c, `活动导出超过单次上限（${limit}），请缩小筛选条件或使用 offset 分批导出`, 400);
+  }
 
   // 构建 CSV（UTF-8 BOM，确保 Excel 正确识别中文）
   const BOM = "\uFEFF";
   const csv = [
     "标题,状态,类型,参与模式,开奖模式,开始时间,结束时间,创建时间,更新时间",
     ...rows.map((r) => {
-      const escape = (s: string | null) => s ? `"${String(s).replace(/"/g, '""')}"` : "";
       return [
-        escape(r.title),
-        r.status,
-        r.activityKind || "",
-        r.participationMode || "",
-        r.resultMode || "",
-        escape(r.startAt),
-        escape(r.endAt),
-        escape(r.createdAt),
-        escape(r.updatedAt),
+        csvEscape(r.title),
+        csvEscape(r.status),
+        csvEscape(r.activityKind || ""),
+        csvEscape(r.participationMode || ""),
+        csvEscape(r.resultMode || ""),
+        csvEscape(r.startAt),
+        csvEscape(r.endAt),
+        csvEscape(r.createdAt),
+        csvEscape(r.updatedAt),
       ].join(",");
     }),
   ].join("\n");
