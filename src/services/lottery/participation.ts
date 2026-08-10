@@ -785,7 +785,7 @@ async function grantViralSpinsToSharer(
   });
   if (grant.actual <= 0) return;
 
-  await tx
+  const updateResult = await tx
     .update(lotteryEntries)
     .set({
       spinsTotalGranted: grant.nextGranted,
@@ -799,6 +799,12 @@ async function grantViralSpinsToSharer(
       // 乐观：granted 未在并发下被他人改到超过预期时再写（纵深）
       eq(lotteryEntries.spinsTotalGranted, Number(sharer.spinsTotalGranted || 0)),
     ));
+  if ((updateResult.rowsAffected ?? 0) === 0) {
+    // 并发邀请奖励已先一步修改该邀请人的 spinsTotalGranted。
+    // 此时不能继续写 spins_log，否则会产生"流水有奖励、余额未增加"的审计错账；
+    // 直接放弃本次附加奖励，参与主流程仍按 maybeTriggerReward 的容错语义继续提交。
+    return;
+  }
 
   // 写入 spins 流水日志（docs/172 §5.5 P1）：记录裂变邀请奖励
   await recordSpinLog(tx, {

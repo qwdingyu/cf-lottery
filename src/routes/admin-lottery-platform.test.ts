@@ -883,6 +883,79 @@ it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → ch
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("Telegram 测试发送使用 botToken 调用 Bot API 并记录投递审计", async () => {
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        platform: "telegram",
+        targetId: "-1009988776655",
+        targetName: "Telegram 联调群",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { botToken: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" },
+      }),
+    });
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { message_id: 54321 } }), { status: 200 }),
+    );
+    const res = await app.request(`/api/admin/platform-targets/${id}/test-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ text: "Telegram 测试消息" }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(data.providerMessageId).toBe("54321");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, requestInit] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toContain("https://api.telegram.org/bot123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11/sendMessage");
+    expect(JSON.parse(String(requestInit?.body || "{}"))).toMatchObject({
+      chat_id: "-1009988776655",
+      text: "Telegram 测试消息",
+    });
+
+    const deliveries = await db
+      .select()
+      .from(platformDeliveries)
+      .where(eq(platformDeliveries.platformTargetId, id));
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.status).toBe("sent");
+    expect(deliveries[0]?.platform).toBe("telegram");
+  });
+
+  it("Telegram 测试发送缺少 botToken 时返回明确错误且不发起外部请求", async () => {
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        platform: "telegram",
+        targetId: "-1001122334455",
+        targetName: "未配置 Telegram 群",
+        activeDrawId: DRAW_ID,
+      }),
+    });
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const res = await app.request(`/api/admin/platform-targets/${id}/test-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json() as Record<string, unknown>;
+
+    expect(res.status).toBe(400);
+    expect(String(data.message || "")).toContain("botToken");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("测试发送失败时写入 failed 投递记录", async () => {
     const app = await createApp();
     const createRes = await app.request("/api/admin/platform-targets", {

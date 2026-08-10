@@ -199,6 +199,25 @@ function buildPlatformTestMessage(platform: string, targetName: string) {
   return `【cf-lottery 平台助手】${name} 连接测试成功。收到这条消息说明 ${platform} 出站配置可用。`;
 }
 
+/**
+ * 平台测试发送的最小配置门禁。
+ *
+ * 这里不能只检查 QQ/NapCat 的 baseUrl：Telegram 的出站闭环依赖 botToken，
+ * 如果后台误用 baseUrl 门禁，会导致 Telegram 目标已经能创建、webhook 也能入站，
+ * 但运营无法在管理后台完成“配置 → 测试发送 → 上线”的闭环。
+ */
+function validateAdapterConfigForTest(platform: string, adapterConfig: Record<string, unknown>): string | null {
+  if (platform === "qq") {
+    const baseUrl = String(adapterConfig.baseUrl || "").trim();
+    return baseUrl ? null : "请先配置 QQ 适配器 baseUrl 后再测试发送";
+  }
+  if (platform === "telegram") {
+    const botToken = String(adapterConfig.botToken || "").trim();
+    return botToken ? null : "请先配置 Telegram botToken 后再测试发送";
+  }
+  return `暂不支持 ${platform} 平台测试发送`;
+}
+
 /** 校验 activeDrawId 归属当前租户，返回活动（含 publicSlug） */
 async function resolveDraw(db: ReturnType<typeof getDb>, tenantId: string, activeDrawId: string) {
   if (!activeDrawId) return null;
@@ -461,8 +480,8 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       .limit(1);
     if (!target) return fail(c, "绑定不存在", 404);
     const adapterConfig = parseAdapterConfigJson(target.adapterConfigJson);
-    const baseUrl = String(adapterConfig.baseUrl || "").trim();
-    if (!baseUrl) return fail(c, "请先配置适配器 baseUrl 后再测试发送");
+    const configError = validateAdapterConfigForTest(target.platform, adapterConfig);
+    if (configError) return fail(c, configError);
 
     const body: Record<string, unknown> = await c.req.json<Record<string, unknown>>().catch(() => ({}));
     const customText = typeof body?.text === "string" ? body.text.trim().slice(0, 200) : "";
