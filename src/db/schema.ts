@@ -642,6 +642,40 @@ export const webhookDeliveries = sqliteTable("webhook_deliveries", {
   deliveryEventIdx: uniqueIndex("idx_webhook_deliveries_event").on(t.webhookConfigId, t.eventId),
 }));
 
+/**
+ * 统一邮件投递队列。
+ *
+ * 验证码邮件保持同步发送（用户正在等待验证码）；中奖、成交发卡、开奖提醒、安慰券这类
+ * 业务通知必须先落库，再由 maintenance/管理端重发路径发送，避免进程崩溃导致通知丢失。
+ */
+export const emailDeliveries = sqliteTable("email_deliveries", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().default(""),
+  drawId: text("draw_id").notNull().default(""),
+  /** 幂等来源：lottery_winner/payment_order/draw_reminder/loser_consolation。 */
+  sourceType: text("source_type").notNull(),
+  /** 来源业务 ID：winnerId/orderId 或 drawId:email 等合成键。 */
+  sourceId: text("source_id").notNull(),
+  recipientEmail: text("recipient_email").notNull(),
+  template: text("template").notNull(),
+  templateDataJson: text("template_data_json").notNull().default("{}"),
+  status: text("status").notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextRetryAt: text("next_retry_at"),
+  providerMessageId: text("provider_message_id").notNull().default(""),
+  responseBody: text("response_body").notNull().default(""),
+  lastError: text("last_error").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  sentAt: text("sent_at"),
+}, (t) => ({
+  /** maintenance 邮件发送按 status + next_retry_at + created_at 领取任务。 */
+  retryIdx: index("idx_email_deliveries_status_retry_created").on(t.status, t.nextRetryAt, t.createdAt),
+  tenantStatusIdx: index("idx_email_deliveries_tenant_status").on(t.tenantId, t.status, t.createdAt),
+  /** 同一业务来源只允许一封队列任务，防止 retry/cron 重复入队。 */
+  sourceUnique: uniqueIndex("idx_email_deliveries_source_unique").on(t.tenantId, t.sourceType, t.sourceId),
+}));
+
 // ── 优惠券码池（唯一码，支持核销） ──
 export const couponCodes = sqliteTable("coupon_codes", {
   id: text("id").primaryKey(),

@@ -367,6 +367,35 @@ describe("dispatchPlatformDeliveries", () => {
     expect(auth).toBe("Bearer napcat-secret");
   });
 
+  it("投递时拒绝使用明文 QQ token，避免未发布阶段留下凭据兼容债", async () => {
+    await db
+      .update(platformTargets)
+      .set({ adapterConfigJson: JSON.stringify({ baseUrl: "http://localhost:3000", token: "plain-token" }) })
+      .where(eq(platformTargets.id, TARGET_ID));
+    await enqueuePlatformEvent(db, {
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      eventType: "draw.completed",
+      data: { drawName: "明文拒绝", winnerSummary: "1 人获奖" },
+    });
+
+    let called = false;
+    const result = await dispatchPlatformDeliveries(db, 10, async () => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    }, { credentialsEncryptionKey: ENCRYPTION_KEY });
+
+    expect(called).toBe(false);
+    expect(result.failed).toBe(1);
+    const [delivery] = await db
+      .select()
+      .from(platformDeliveries)
+      .where(eq(platformDeliveries.eventType, "draw.completed"))
+      .limit(1);
+    expect(delivery?.status).toBe("pending");
+    expect(delivery?.lastError).toContain("必须以密文存储");
+  });
+
   it("投递时解密 Telegram botToken 并调用 Bot API", async () => {
     const encrypted = await encryptPlatformAdapterConfig({
       botToken: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",

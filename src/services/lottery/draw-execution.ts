@@ -24,8 +24,8 @@ import {
 import { randomSelect, hashDrawSeed } from "./utils";
 import { enqueueWebhookEvent, dispatchWebhookDelivery } from "./integration";
 import { enqueuePlatformEvent } from "../platform/delivery";
-import { sendEmail, buildLotteryWinnerTemplateData, type EmailEnv } from "../email-service";
-import { runBounded } from "../../lib/concurrency";
+import { buildLotteryWinnerTemplateData, type EmailEnv } from "../email-service";
+import { enqueueEmailDelivery, dispatchEmailDeliveries } from "../email-delivery";
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
 import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
 import {
@@ -351,7 +351,8 @@ export async function performDraw(
       createdAt: now,
     });
 
-    // 异步发送中奖通知邮件（不阻塞主流程，失败不影响开奖结果）
+    // 开奖后只负责把中奖通知写入持久化邮件队列；实际投递由 maintenance 统一处理。
+    // 项目尚未发布，不保留 fire-and-forget 发送路径，避免进程崩溃造成漏发且无队列审计。
     // 由 platform system_config.notify_winner_email_enabled 控制（默认开启）
     if (emailEnv && (emailEnv.resendApiKey || emailEnv.email || (emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret))) {
       const [notifyCfg] = await db
@@ -360,7 +361,7 @@ export async function performDraw(
         .where(eq(systemConfig.key, "notify_winner_email_enabled"))
         .limit(1);
       if (notifyCfg?.value !== "false") {
-        void sendWinnerNotifications(db, tenantId, drawId, emailEnv).catch((err) => {
+        void enqueueWinnerNotificationDeliveries(db, tenantId, drawId).catch((err) => {
           console.error(`[lottery] sendWinnerNotifications failed for ${drawId}:`, err);
         });
       }
@@ -445,12 +446,27 @@ export async function sendWinnerNotifications(
   emailEnv: EmailEnv,
   options?: { winnerIds?: string[] },
 ): Promise<{ sent: number; failed: number }> {
+  const queued = await enqueueWinnerNotificationDeliveries(db, tenantId, drawId, options);
+  if (queued.deliveryIds.length === 0) return { sent: 0, failed: 0 };
+  const result = await dispatchEmailDeliveries(db, emailEnv, {
+    deliveryIds: queued.deliveryIds,
+    limit: queued.deliveryIds.length,
+  });
+  return { sent: result.sent, failed: result.failed };
+}
+
+export async function enqueueWinnerNotificationDeliveries(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  options?: { winnerIds?: string[] },
+): Promise<{ deliveryIds: string[] }> {
   const [draw] = await db
     .select()
     .from(lotteryDraws)
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
     .limit(1);
-  if (!draw) return { sent: 0, failed: 0 };
+  if (!draw) return { deliveryIds: [] };
 
   const winnerIdFilter = (options?.winnerIds || [])
     .map((id) => String(id || "").trim())
@@ -543,7 +559,8 @@ export async function sendWinnerNotifications(
     }
   }
 
-  // 读取邮件通知最大重试次数配置，默认 3 次
+  // 读取邮件通知最大重试次数配置，默认 3 次。这里控制是否继续入队；
+  // 具体发送失败后的 retry 间隔由 email_deliveries 统一处理。
   const [retryCfg] = await db
     .select({ value: systemConfig.value })
     .from(systemConfig)
@@ -552,13 +569,10 @@ export async function sendWinnerNotifications(
   // 未配置时默认 3 次；使用 != null 而非 ||，避免合法值 "0" 被误判为假值降级为 3
   const maxRetryAttempts = retryCfg?.value != null ? Number(retryCfg.value) : 3;
 
-  // 有界并发发送邮件（默认 5 路并发）：Resend free 计划约 2 req/s，5 路足以保持吞吐
-  // 同时避免打爆下游 API 限流。每个 winner 独立处理自己的错误，一个失败不影响其他。
-  // 跳过已发送和超过重试次数的 winner。
-  const results = await runBounded(winners, 5, async (winner) => {
-    if (winner.notificationStatus === "sent") return null;
-    // 超过最大重试次数 → 跳过，不再尝试发送
-    if (winner.notificationRetryCount >= maxRetryAttempts) return null;
+  const deliveryIds: string[] = [];
+  for (const winner of winners) {
+    if (winner.notificationStatus === "sent") continue;
+    if (winner.notificationRetryCount >= maxRetryAttempts) continue;
 
     let accountLabel = "";
     let deliverySecret = "";
@@ -577,62 +591,26 @@ export async function sendWinnerNotifications(
     // 收件人解析：user_id 身份的 winner 用 users 表关联的真实邮箱（见上方 userEmailMap）
     const toEmail = winner.identityType === "user_id" ? (userEmailMap.get(winner.email) || "") : winner.email;
 
-    try {
-      const result = await sendEmail(emailEnv, {
-        to: toEmail,
-        template: "lottery_winner",
-        templateData: buildLotteryWinnerTemplateData({
-          drawName: draw.title,
-          productName,
-          accountLabel,
-          deliverySecret,
-          deliveryNote,
-        }),
-      });
-
-      await db
-        .update(lotteryWinners)
-        .set({
-          notificationStatus: result.ok ? "sent" : "failed",
-          notificationError: result.ok ? "" : (result.message || "").slice(0, 500),
-          // 发送成功重置重试计数；失败则 +1（累计到 maxRetryAttempts 即停止）
-          notificationRetryCount: result.ok ? 0 : sql`notification_retry_count + 1`,
-        })
-        .where(and(
-          eq(lotteryWinners.id, winner.winnerId),
-          eq(lotteryWinners.tenantId, tenantId),
-          eq(lotteryWinners.drawId, drawId),
-        ));
-      return result.ok ? "sent" : "failed";
-    } catch (err) {
-      await db
-        .update(lotteryWinners)
-        .set({
-          notificationStatus: "failed",
-          notificationError: (err as Error).message.slice(0, 500),
-          // 异常场景也递增重试计数，保证与正常失败路径一致
-          notificationRetryCount: sql`notification_retry_count + 1`,
-        })
-        .where(and(
-          eq(lotteryWinners.id, winner.winnerId),
-          eq(lotteryWinners.tenantId, tenantId),
-          eq(lotteryWinners.drawId, drawId),
-        ));
-      return "failed";
-    }
-  });
-
-  let sent = 0;
-  let failed = 0;
-  for (const r of results) {
-    if (r.ok && r.value === "sent") sent++;
-    else if (r.ok && r.value === "failed") failed++;
-    // null 表示「已发送或超过重试次数」的跳过，不计入 sent/failed
-    // !r.ok 表示意外异常（如 DB 连接断开），也计为失败
-    else if (!r.ok) failed++;
+    if (!toEmail || !toEmail.includes("@")) continue;
+    const queued = await enqueueEmailDelivery(db, {
+      tenantId,
+      drawId,
+      sourceType: "lottery_winner",
+      sourceId: winner.winnerId,
+      recipientEmail: toEmail,
+      template: "lottery_winner",
+      templateData: buildLotteryWinnerTemplateData({
+        drawName: draw.title,
+        productName,
+        accountLabel,
+        deliverySecret,
+        deliveryNote,
+      }),
+    });
+    if (queued.enqueued) deliveryIds.push(queued.deliveryId);
   }
 
-  return { sent, failed };
+  return { deliveryIds };
 }
 
 /**
@@ -860,33 +838,30 @@ export async function sendLoserConsolationEmails(
 
   const origin = "";  // APP_ORIGIN 由调用方传入，这里用相对路径
 
-  // 有界并发发送安慰邮件（默认 5 路并发），过滤无有效邮箱的失效记录
-  const results = await runBounded(issuedCoupons, 5, async (coupon) => {
-    if (!coupon.recipientEmail || !coupon.recipientEmail.includes("@")) return null;
-    try {
-      await sendEmail(emailEnv, {
-        to: coupon.recipientEmail,
-        template: "loser_consolation",
-        templateData: {
-          drawName: drawTitle,
-          couponCode: coupon.code,
-          couponLabel: coupon.label || "",
-          nextActivityUrl: origin || "",
-        },
-      });
-      return "sent";
-    } catch {
-      return "failed";
-    }
-  });
-
-  let sent = 0;
-  let failed = 0;
-  for (const r of results) {
-    if (r.ok && r.value === "sent") sent++;
-    else if (r.ok && r.value === "failed") failed++;
-    else if (!r.ok) failed++;
+  const deliveryIds: string[] = [];
+  for (const coupon of issuedCoupons) {
+    if (!coupon.recipientEmail || !coupon.recipientEmail.includes("@")) continue;
+    const queued = await enqueueEmailDelivery(db, {
+      tenantId,
+      drawId,
+      sourceType: "loser_consolation",
+      sourceId: `${drawId}:${coupon.recipientEmail}:${coupon.code}`,
+      recipientEmail: coupon.recipientEmail,
+      template: "loser_consolation",
+      templateData: {
+        drawName: drawTitle,
+        couponCode: coupon.code,
+        couponLabel: coupon.label || "",
+        nextActivityUrl: origin || "",
+      },
+    });
+    if (queued.enqueued) deliveryIds.push(queued.deliveryId);
   }
 
-  return { sent, failed };
+  if (deliveryIds.length === 0) return { sent: 0, failed: 0 };
+  const result = await dispatchEmailDeliveries(db, emailEnv, {
+    deliveryIds,
+    limit: deliveryIds.length,
+  });
+  return { sent: result.sent, failed: result.failed };
 }

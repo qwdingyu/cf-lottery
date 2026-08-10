@@ -191,6 +191,7 @@ export async function clearTestData(client: Client) {
     "activity_outcomes",
     "external_conversions",
     "share_records",
+    "email_deliveries",
     "platform_deliveries",
     "platform_targets",
     "community_members",

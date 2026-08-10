@@ -670,13 +670,14 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
           .then((rows) => rows[0]?.name || "奖品")
         : "奖品";
 
-      const { sendEmail, buildLotteryWinnerTemplateData } = await import("../services/email-service");
-      await sendEmail({
-        cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
-        cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
-        cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
-      }, {
-        to: winner.email,
+      const { buildLotteryWinnerTemplateData } = await import("../services/email-service");
+      const { enqueueEmailDelivery, dispatchEmailDeliveries } = await import("../services/email-delivery");
+      const queued = await enqueueEmailDelivery(db, {
+        tenantId: fulfilledOrder.tenantId,
+        drawId: fulfilledOrder.drawId,
+        sourceType: "payment_order",
+        sourceId: fulfilledOrder.id,
+        recipientEmail: winner.email,
         template: "lottery_winner",
         templateData: buildLotteryWinnerTemplateData({
           drawName: drawInfo?.title || "活动",
@@ -688,6 +689,15 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
             ? `支付已完成，本订单共 ${fulfilledOrder.quantity} 件；请在活动页订单详情查看全部卡密。`
             : "支付已完成，卡密已发放。如有疑问请联系主办方。",
         }),
+      });
+      if (!queued.enqueued) return;
+      await dispatchEmailDeliveries(db, {
+        cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
+        cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
+        cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
+      }, {
+        deliveryIds: [queued.deliveryId],
+        limit: 1,
       });
     })().catch((err) => {
       console.error(`[payment] 中奖邮件发送失败 for order ${fulfilledOrder.id}:`, err);

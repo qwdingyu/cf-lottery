@@ -21,7 +21,7 @@
  */
 import type { DbType } from "../db/client";
 import { and, eq, sql } from "drizzle-orm";
-import { sendEmail } from "./email-service";
+import { enqueueEmailDelivery, dispatchEmailDeliveries } from "./email-delivery";
 import {
   lotteryDraws,          // 抽奖活动表
   lotteryEntries,        // 候选池表
@@ -275,27 +275,34 @@ export async function sendDrawReminders(
 
       const shareUrl = draw.publicSlug ? `${draw.publicSlug}` : "";
       const reminderText = minutes >= 120 ? `${Math.round(minutes / 60)} 小时` : `${minutes} 分钟`;
-      // E4 修复：批量开奖提醒邮件用有界并发（5 路）发送，替代逐条串行 await。
-      // 最坏场景 20 个活动 × 500 人 = 1 万封邮件，串行发送在 Workers 单次调用 CPU/时长
-      // 限制下极易超时中断；且与 sendWinnerNotifications / sendLoserConsolationEmails 的
-      // 并发度保持一致（有界并发避免打爆下游发信 API 限流）。失败仅计数不中断。
-      const results = await runBounded(entries, 5, async (entry) => {
+      // 开奖提醒先写统一邮件队列，再由邮件发送器领取处理。
+      // sourceId 使用 drawId:identityValue 幂等去重，避免 cron 窗口重叠时重复提醒。
+      const queueResults = await runBounded(entries, 5, async (entry) => {
         if (!entry.identityValue.includes("@")) return "skip";
-        await sendEmail(emailEnv, {
-          to: entry.identityValue,
+        const queued = await enqueueEmailDelivery(db, {
+          tenantId: draw.tenantId,
+          drawId: draw.id,
+          sourceType: "draw_reminder",
+          sourceId: `${draw.id}:${entry.identityValue}`,
+          recipientEmail: entry.identityValue,
           template: "draw_reminder",
           templateData: { drawName: draw.title, shareUrl, reminderText },
         });
-        return "sent";
+        return queued.enqueued ? queued.deliveryId : "skip";
       });
-      for (const r of results) {
-        if (r.ok && r.value === "sent") emailsSent++;
-        else if (r.ok && r.value === "skip") { /* 无邮箱地址，跳过不计 */ }
-        else failed++;
+      const deliveryIds = queueResults
+        .filter((r): r is { ok: true; value: string } => r.ok && r.value !== "skip")
+        .map((r) => r.value);
+      const sentResult = deliveryIds.length > 0
+        ? await dispatchEmailDeliveries(db, emailEnv, { deliveryIds, limit: deliveryIds.length })
+        : { sent: 0, failed: 0 };
+      emailsSent += sentResult.sent;
+      failed += sentResult.failed;
+      for (const r of queueResults) {
+        if (!r.ok) failed++;
       }
     } catch { /* 单个活动失败不影响其他 */ }
   }
 
   return { drawsProcessed, emailsSent, failed };
 }
-

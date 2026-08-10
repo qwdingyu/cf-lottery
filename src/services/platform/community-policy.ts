@@ -167,7 +167,7 @@ export async function enforceGroupMemberCap(
   if (over) {
     return {
       ok: false,
-      reply: `当前群参与人数已达上限（${maxMembers} 人），升级套餐可扩容群人数。`,
+      reply: `当前群服务人数已达上限（${maxMembers} 人），升级套餐可扩容群人数。`,
     };
   }
   return { ok: true };

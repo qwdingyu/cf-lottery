@@ -5,7 +5,8 @@
  * - 管理端展示：必须脱敏，不能把 botToken / NapCat token 回传给浏览器；
  * - 运行时出站：必须解密后交给具体适配器，否则 Telegram / QQ 私聊无法发送。
  *
- * 兼容策略：历史明文 botToken/token 仍可运行读取，但任何新保存都会写 cf-core v2 密文。
+ * 发布前策略：敏感字段只允许密文参与运行。项目尚未发布，不保留历史明文兼容分支，
+ * 避免“能跑但库中有明文凭据”的隐性维护债。
  */
 import {
   decryptSecretConfigResult,
@@ -63,7 +64,7 @@ export async function encryptPlatformAdapterConfig(
 /**
  * 运行时解密适配器配置。
  *
- * 明文历史值直接返回，保证旧数据不因升级立刻不可用；密文解密失败则抛明确错误，
+ * 明文敏感值直接视为配置错误；密文解密失败也抛明确错误。
  * delivery 会进入重试/失败状态，管理端测试发送会返回 502。
  */
 export async function resolvePlatformAdapterConfigForRuntime(
@@ -73,7 +74,10 @@ export async function resolvePlatformAdapterConfigForRuntime(
   const output: Record<string, unknown> = { ...rawConfig };
   for (const key of Object.keys(output)) {
     const value = typeof output[key] === "string" ? String(output[key]) : "";
-    if (!isSensitiveKey(key) || !value || !isEncryptedPlatformSecret(value)) continue;
+    if (!isSensitiveKey(key) || !value) continue;
+    if (!isEncryptedPlatformSecret(value)) {
+      throw new Error(`平台适配器凭据 ${key} 必须以密文存储，请在管理端重新保存配置`);
+    }
     const result = await decryptSecretConfigResult(value, encryptionKey);
     if (!result.ok) {
       throw new Error(`平台适配器凭据 ${key} 解密失败：${result.reason}`);
