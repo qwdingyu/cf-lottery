@@ -143,7 +143,7 @@ function normalizeAdapterConfig(
   return { ok: false, message: `暂不支持的平台适配器配置: ${platform}` };
 }
 
-/** QQ (NapCat) 适配器配置：只需要 baseUrl + 可选公证人 botId，P0 拒绝保存纯文本 token */
+/** QQ (NapCat) 适配器配置：只需要 baseUrl，P0 拒绝保存纯文本 token。botId 为入站自动写入的只读字段，不接受运营手动输入 */
 function validateQQAdapterConfig(
   raw: Record<string, unknown>,
 ): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
@@ -160,15 +160,8 @@ function validateQQAdapterConfig(
     value.baseUrl = baseUrl;
   }
 
-  // 公证人 QQ 号：可选，必须是纯数字（QQ 号为 5~20 位）
-  const botId = typeof raw.botId === "string" ? raw.botId.trim() : "";
-  if (botId) {
-    if (!/^\d{5,20}$/.test(botId)) {
-      return { ok: false, message: "adapterConfig.botId 必须是纯数字 QQ 号（5~20 位）" };
-    }
-    value.botId = botId;
-  }
-
+  // 注意：不再接受手动输入 botId（docs/177 方案升级）。botId = bot 自身 QQ 号是运行时已知值，
+  // 由入站 `self_id` 自动写入（syncInboundBotIdentity），运营手动填会引入 typo/过时号等错误源。
   return { ok: true, value };
 }
 
@@ -373,6 +366,15 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     if (typeof body.adapterConfig === "object" && body.adapterConfig !== null) {
       const adapterConfigResult = normalizeAdapterConfig(row.platform, body.adapterConfig);
       if (!adapterConfigResult.ok) return fail(c, adapterConfigResult.message);
+      // 保留入站自动写入的 botId（只读字段，docs/177 方案升级）：更新 baseUrl 时不覆盖 botId
+      let existingBotId: string | undefined;
+      try {
+        const existing = JSON.parse(row.adapterConfigJson || "{}");
+        if (existing.botId && typeof existing.botId === "string") existingBotId = existing.botId;
+      } catch { /* 忽略解析异常 */ }
+      if (existingBotId) {
+        adapterConfigResult.value.botId = existingBotId;
+      }
       patch.adapterConfigJson = JSON.stringify(adapterConfigResult.value);
     }
     if (body.builtinCommands && typeof body.builtinCommands === "object") {

@@ -221,72 +221,6 @@ describe("platform-targets CRUD", () => {
     expect(data.message).toContain("暂不支持保存 NapCat token");
   });
 
-  it("接受公证人 QQ 号（botId）并保存到 adapterConfig", async () => {
-    const app = await createApp();
-    const res = await app.request("/api/admin/platform-targets", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        targetId: "777777",
-        targetName: "botId 测试",
-        activeDrawId: DRAW_ID,
-        adapterConfig: { baseUrl: "http://127.0.0.1:3000", botId: "123456789" },
-      }),
-    });
-    const data = await res.json() as Record<string, unknown>;
-    expect(data.ok).toBe(true);
-    const id = (data.item as Record<string, unknown>).id as string;
-    const detailRes = await app.request(`/api/admin/platform-targets/${id}`, {
-      headers: { ...authHeaders() },
-    });
-    const detail = await detailRes.json() as Record<string, unknown>;
-    const item = detail.item as Record<string, unknown>;
-    expect(JSON.parse(String(item.adapterConfigJson || "{}"))).toMatchObject({
-      baseUrl: "http://127.0.0.1:3000",
-      botId: "123456789",
-    });
-  });
-
-  it("拒绝非法 botId（非纯数字）", async () => {
-    const app = await createApp();
-    const res = await app.request("/api/admin/platform-targets", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        targetId: "888888",
-        targetName: "非法 botId 测试",
-        activeDrawId: DRAW_ID,
-        adapterConfig: { botId: "not-a-number" },
-      }),
-    });
-    const data = await res.json() as Record<string, unknown>;
-    expect(data.ok).toBe(false);
-    expect(data.message).toContain("botId");
-  });
-
-  it("仅提供 botId 不带 baseUrl 也能创建成功", async () => {
-    const app = await createApp();
-    const res = await app.request("/api/admin/platform-targets", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        targetId: "999999",
-        targetName: "仅 botId 测试",
-        activeDrawId: DRAW_ID,
-        adapterConfig: { botId: "987654321" },
-      }),
-    });
-    const data = await res.json() as Record<string, unknown>;
-    expect(data.ok).toBe(true);
-    const id = (data.item as Record<string, unknown>).id as string;
-    const detailRes = await app.request(`/api/admin/platform-targets/${id}`, {
-      headers: { ...authHeaders() },
-    });
-    const detail = await detailRes.json() as Record<string, unknown>;
-    const item = detail.item as Record<string, unknown>;
-    expect(JSON.parse(String(item.adapterConfigJson || "{}"))).toEqual({ botId: "987654321" });
-  });
-
   it("拒绝未注册的平台绑定", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {
@@ -303,6 +237,65 @@ describe("platform-targets CRUD", () => {
     expect(data.ok).toBe(false);
     expect(data.message).toContain("qq");
     expect(data.message).toContain("telegram");
+  });
+
+  it("手动输入 botId 被忽略（docs/177 方案升级：botId 为入站 self_id 自动写入的只读字段）", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "777777",
+        targetName: "botId 忽略测试",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { baseUrl: "http://127.0.0.1:3000", botId: "123456789" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const [row] = await db.select({ json: platformTargets.adapterConfigJson }).from(platformTargets).where(eq(platformTargets.id, id)).limit(1);
+    const cfg = JSON.parse(row?.json || "{}");
+    expect(cfg.baseUrl).toBe("http://127.0.0.1:3000");
+    expect(cfg.botId).toBeUndefined(); // 手工传入的 botId 不应被存储
+  });
+
+  it("更新 baseUrl 时保留入站自动写入的 botId（botId 是只读字段，不随编辑覆盖）", async () => {
+    const app = await createApp();
+    // 用 DB 直接写入一个含 botId 的 target（模拟入站已写入 botId 的场景）
+    const targetId = "botid-patch-test";
+    const targetRowId = "pt-botid-patch";
+    await db.insert(platformTargets).values({
+      id: targetRowId,
+      tenantId: TENANT_ID,
+      platform: "qq",
+      targetId,
+      targetName: "botId 保留测试",
+      activeDrawId: DRAW_ID,
+      activePublicSlug: "test-slug",
+      assistantEnabled: 1,
+      adapterDeploymentMode: "tenant_hosted",
+      adapterProvider: "napcat",
+      adapterConfigJson: JSON.stringify({ baseUrl: "http://old.example:3000", botId: "888111222" }),
+      inboundSecretHash: "test-hash",
+      builtinCommandsJson: "{}",
+    });
+    // 直接用预定义的 targetRowId，无需从列表查找
+    const id = targetRowId;
+
+    // PATCH 更新 baseUrl
+    const updateRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ adapterConfig: { baseUrl: "http://new.example:3000" } }),
+    });
+    expect(updateRes.status).toBe(200);
+
+    // 验证 botId 未被覆盖丢失
+    const [row] = await db.select({ json: platformTargets.adapterConfigJson }).from(platformTargets).where(eq(platformTargets.id, id)).limit(1);
+    const cfg = JSON.parse(row?.json || "{}");
+    expect(cfg.baseUrl).toBe("http://new.example:3000");
+    expect(cfg.botId).toBe("888111222");
   });
 
   it("更新成功", async () => {

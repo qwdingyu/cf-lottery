@@ -1909,10 +1909,7 @@ adminQqAssistant: {
     placeholderAdapterBaseUrl: "例如 http://127.0.0.1:3000",
     hintAdapterBaseUrlEdit: "留空则不修改现有地址",
     placeholderAdapterBaseUrlEdit: "留空保持当前地址不变",
-    /* 公证人机器人账号（docs/177 批次2）：运营识别哪个机器人服务该群 */
-    labelBotId: "公证人 QQ 号",
-    hintBotId: "用于识别哪个机器人服务该群。留空则首次收到上报时自动记录实际 bot；若已填写而实际上报 bot 不一致，将自动覆盖。",
-    placeholderBotId: "例如 123456789",
+    /* 公证人 QQ 号（docs/177 批次2）：入站自动写入的只读字段，不手动输入 */
     colBotId: "公证人",
     labelNewInboundSecret: "新入站密钥",
     hintNewInboundSecret: "不会显示旧密钥。留空则不修改；填写至少 16 位的新密钥会覆盖当前密钥。",

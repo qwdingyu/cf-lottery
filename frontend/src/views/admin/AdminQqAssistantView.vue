@@ -93,11 +93,6 @@
               <div v-if="!editingTarget" class="form-hint">{{ $t('adminQqAssistant.hintAdapterBaseUrl') }}</div>
               <input v-model="form.adapterBaseUrl" class="form-input" :placeholder="editingTarget ? $t('adminQqAssistant.placeholderAdapterBaseUrlEdit') : $t('adminQqAssistant.placeholderAdapterBaseUrl')" />
             </div>
-            <div class="form-group">
-              <label>{{ $t('adminQqAssistant.labelBotId') }}</label>
-              <div class="form-hint">{{ $t('adminQqAssistant.hintBotId') }}</div>
-              <input v-model="form.botId" class="form-input" :placeholder="$t('adminQqAssistant.placeholderBotId')" />
-            </div>
             <div v-if="editingTarget" class="form-group">
               <label>{{ $t('adminQqAssistant.labelNewInboundSecret') }}</label>
               <div class="form-hint">{{ $t('adminQqAssistant.hintNewInboundSecret') }}</div>
@@ -279,8 +274,6 @@ const form = ref({
   activeDrawId: '',
   adapterBaseUrl: '',
   inboundSecret: '',
-  /** 公证人 QQ 号（docs/177 批次2）：识别哪个机器人服务该群 */
-  botId: '',
   checkinEnabled: true,
   spinEnabled: true,
   shareEnabled: true,
@@ -354,8 +347,6 @@ async function loadDraws() {
 function resetForm() {
   form.value = {
     targetId: '', targetName: '', activeDrawId: '', adapterBaseUrl: '', inboundSecret: '',
-    // 公证人 QQ 号（docs/177 批次2）：重置时默认空
-    botId: '',
     checkinEnabled: true, spinEnabled: true, shareEnabled: true,
     leaderboardEnabled: true, myPrizeEnabled: true, myCardCodeEnabled: true, helpEnabled: true,
     // 签到奖励抽奖次数（docs/171）：重置时默认 0（不奖励），与 form 初始值保持一致
@@ -422,11 +413,6 @@ function fillFormFromTarget(t: PlatformTarget) {
     form.value.purchaseUrl = cmds.purchaseConfig?.url || ''
     form.value.purchaseLabel = cmds.purchaseConfig?.label || ''
   } catch { /* 使用默认值 */ }
-  // 公证人 QQ 号（docs/177 批次2）：从 adapterConfigJson 回填，供编辑时展示
-  try {
-    const cfg = JSON.parse(t.adapterConfigJson || '{}')
-    form.value.botId = cfg.botId || ''
-  } catch { form.value.botId = '' }
 }
 
 function openCreateModal() {
@@ -497,7 +483,7 @@ async function saveTarget() {
         : {}),
     }
     if (editingTarget.value) {
-      /* 编辑时：baseUrl/botId 留空则不更新 adapterConfig，填写则覆盖 */
+      /* 编辑时：baseUrl 留空则不更新 adapterConfig，填写则覆盖（botId 为入站自动写入的只读字段，不可编辑） */
       const editPayload: Record<string, unknown> = {
         targetName: form.value.targetName,
         activeDrawId: form.value.activeDrawId,
@@ -506,8 +492,6 @@ async function saveTarget() {
       const editAdapterConfig: Record<string, string> = {}
       const baseUrl = form.value.adapterBaseUrl.trim()
       if (baseUrl) editAdapterConfig.baseUrl = baseUrl
-      const botId = form.value.botId.trim()
-      if (botId) editAdapterConfig.botId = botId
       if (Object.keys(editAdapterConfig).length > 0) editPayload.adapterConfig = editAdapterConfig
       const newInboundSecret = form.value.inboundSecret.trim()
       if (newInboundSecret) editPayload.inboundSecret = newInboundSecret
@@ -520,8 +504,6 @@ async function saveTarget() {
       const adapterConfig: Record<string, string> = {}
       const baseUrl = form.value.adapterBaseUrl.trim()
       if (baseUrl) adapterConfig.baseUrl = baseUrl
-      const botId = form.value.botId.trim()
-      if (botId) adapterConfig.botId = botId
       const data = await api<{ inboundSecret?: string }>('/platform-targets', {
         method: 'POST',
         body: JSON.stringify({ targetId: form.value.targetId, targetName: form.value.targetName, activeDrawId: form.value.activeDrawId, adapterConfig, ...builtinCommands }),

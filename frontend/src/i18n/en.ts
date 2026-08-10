@@ -1933,10 +1933,7 @@ adminQqAssistant: {
     placeholderAdapterBaseUrl: "e.g. http://127.0.0.1:3000",
     hintAdapterBaseUrlEdit: "Leave empty to keep the current URL",
     placeholderAdapterBaseUrlEdit: "Leave empty to keep the current value",
-    /** Notary bot QQ account (docs/177 batch 2): identifies which bot services this group */
-    labelBotId: "Notary QQ",
-    hintBotId: "Identifies which bot services this group. Leave empty to auto-record the actual bot on first report; if filled but the reporting bot differs, it will be overwritten automatically.",
-    placeholderBotId: "e.g. 123456789",
+    /** Notary bot QQ (docs/177 batch 2): auto-recorded readonly field from inbound self_id */
     colBotId: "Notary",
     labelNewInboundSecret: "New inbound secret",
     hintNewInboundSecret: "The existing secret is never shown. Leave empty to keep it; enter at least 16 characters to overwrite it.",
