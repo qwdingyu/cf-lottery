@@ -50,6 +50,17 @@ export type ActivityConfigValidationResult = {
   issues: ActivityConfigValidationIssue[];
 };
 
+export type ActivityOperationalConfig = {
+  /** 单活动每 IP 每分钟参与/发码上限；不配置时使用平台全局 rate_limit_join_per_minute。 */
+  joinIpLimitPerMinute?: number;
+  /** 单活动每身份每分钟参与上限；不配置时使用平台全局 rate_limit_join_per_minute。 */
+  joinIdentityLimitPerMinute?: number;
+  /** 单活动每邮箱每分钟验证码上限；不配置时使用平台全局 rate_limit_access_code。 */
+  accessCodeIdentityLimitPerMinute?: number;
+  /** 到开奖前 N 分钟停止新增参与；仅 drawAt 有值的定时活动生效。 */
+  lockJoinBeforeDrawMinutes?: number;
+};
+
 export type SubmissionValidationResult = {
   ok: boolean;
   payload?: Record<string, unknown>;
@@ -190,15 +201,49 @@ function validateVoteConfig(raw: Record<string, unknown> | null): ActivityConfig
   return { ok: issues.length === 0, config: { version: 1, kind: "vote", selection: "single", options }, issues };
 }
 
+function validateOperationalConfig(raw: Record<string, unknown> | null): ActivityConfigValidationIssue[] {
+  if (!raw?.operational) return [];
+  if (typeof raw.operational !== "object" || Array.isArray(raw.operational)) {
+    return [issue("activity.operational.invalid", "活动级运营参数必须是对象")];
+  }
+  const operational = raw.operational as Record<string, unknown>;
+  const specs: Array<{ key: keyof ActivityOperationalConfig; min: number; max: number; label: string }> = [
+    { key: "joinIpLimitPerMinute", min: 1, max: 1000, label: "每 IP 每分钟参与上限" },
+    { key: "joinIdentityLimitPerMinute", min: 1, max: 1000, label: "每身份每分钟参与上限" },
+    { key: "accessCodeIdentityLimitPerMinute", min: 1, max: 1000, label: "每邮箱每分钟验证码上限" },
+    { key: "lockJoinBeforeDrawMinutes", min: 0, max: 10080, label: "开奖前停止参与分钟数" },
+  ];
+  const issues: ActivityConfigValidationIssue[] = [];
+  for (const spec of specs) {
+    const rawValue = operational[spec.key];
+    if (rawValue === undefined || rawValue === null || rawValue === "") continue;
+    const parsed = Number(rawValue);
+    if (!Number.isInteger(parsed) || parsed < spec.min || parsed > spec.max) {
+      issues.push(issue(
+        `activity.operational.${spec.key}.invalid`,
+        `${spec.label} 必须是 ${spec.min} 到 ${spec.max} 之间的整数`,
+      ));
+    }
+  }
+  return issues;
+}
+
 export function validateActivityConfigForPublish(activityKind: string, rawConfig: unknown): ActivityConfigValidationResult {
-  if (activityKind !== "survey" && activityKind !== "vote") return { ok: true, issues: [] };
   const rawText = typeof rawConfig === "string" ? rawConfig : JSON.stringify(rawConfig || {});
   if (byteLength(rawText) > MAX_CONFIG_BYTES) {
     return { ok: false, issues: [issue(`${activityKind}.config.too_large`, "活动配置过大，请减少字段或选项")] };
   }
   const raw = parseJsonObject(rawConfig);
-  if (activityKind === "survey") return validateSurveyConfig(raw);
-  return validateVoteConfig(raw);
+  const operationalIssues = validateOperationalConfig(raw);
+  if (activityKind !== "survey" && activityKind !== "vote") {
+    return { ok: operationalIssues.length === 0, issues: operationalIssues };
+  }
+  const result = activityKind === "survey" ? validateSurveyConfig(raw) : validateVoteConfig(raw);
+  return {
+    ...result,
+    ok: result.ok && operationalIssues.length === 0,
+    issues: [...result.issues, ...operationalIssues],
+  };
 }
 
 export function normalizeActivityConfigForStorage(activityKind: string, rawConfig: unknown): string {
@@ -214,6 +259,36 @@ export function parseActivityConfig(rawConfig: unknown): ActivityConfigV1 | null
   if (!kind) return null;
   const result = validateActivityConfigForPublish(kind, raw);
   return result.ok && result.config ? result.config : null;
+}
+
+function optionalBoundedInteger(value: unknown, min: number, max: number): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const n = Math.trunc(parsed);
+  if (n < min || n > max) return undefined;
+  return n;
+}
+
+/**
+ * 解析活动级运营参数。
+ *
+ * 这些字段不是玩法配置的一部分，而是公开入口的运行时门禁：
+ * - 不影响 survey/vote 的结构化玩法校验；
+ * - 非法值 fail-soft 忽略，发布前校验/后台 UI 可再做更强提示；
+ * - 所有范围都有硬上限，避免运营误填导致限流失效或无限大窗口。
+ */
+export function parseActivityOperationalConfig(rawConfig: unknown): ActivityOperationalConfig {
+  const raw = parseJsonObject(rawConfig);
+  const operational = raw?.operational && typeof raw.operational === "object" && !Array.isArray(raw.operational)
+    ? raw.operational as Record<string, unknown>
+    : {};
+  return {
+    joinIpLimitPerMinute: optionalBoundedInteger(operational.joinIpLimitPerMinute, 1, 1000),
+    joinIdentityLimitPerMinute: optionalBoundedInteger(operational.joinIdentityLimitPerMinute, 1, 1000),
+    accessCodeIdentityLimitPerMinute: optionalBoundedInteger(operational.accessCodeIdentityLimitPerMinute, 1, 1000),
+    lockJoinBeforeDrawMinutes: optionalBoundedInteger(operational.lockJoinBeforeDrawMinutes, 0, 10080),
+  };
 }
 
 function validateEmail(value: string): boolean {
@@ -273,4 +348,3 @@ export function validateSubmissionPayload(activityKind: string, rawConfig: unkno
 
   return { ok: true, payload: { kind: "survey", fields: sanitized } };
 }
-

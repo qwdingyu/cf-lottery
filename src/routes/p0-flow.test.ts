@@ -1084,6 +1084,80 @@ describe("L2 运营闭环：retry-email 与 recover", () => {
   });
 });
 
+describe("活动级运营参数闭环", () => {
+  it("开奖前锁定参与：drawAt 前 N 分钟拒绝新增参与", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const drawId = crypto.randomUUID();
+    const slug = "ops-lock-before-draw";
+    const now = new Date().toISOString();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT_ID,
+      publicSlug: slug,
+      title: "开奖前锁定测试",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: futureIso(-60),
+      endAt: futureIso(60),
+      drawAt: futureIso(10),
+      drawTrigger: "scheduled",
+      winnerCount: 1,
+      activityConfig: JSON.stringify({ operational: { lockJoinBeforeDrawMinutes: 30 } }),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const res = await app.request(`/api/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.9.0.1" },
+      body: JSON.stringify({ email: "lock@test.com" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { ok: boolean; message: string };
+    expect(body.ok).toBe(false);
+    expect(body.message).toContain("开奖前 30 分钟");
+  });
+
+  it("活动级身份限流覆盖全局参与限流", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const drawId = crypto.randomUUID();
+    const slug = "ops-identity-rate-limit";
+    const now = new Date().toISOString();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT_ID,
+      publicSlug: slug,
+      title: "活动级限流测试",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: futureIso(-60),
+      endAt: futureIso(60),
+      winnerCount: 1,
+      activityConfig: JSON.stringify({ operational: { joinIdentityLimitPerMinute: 1 } }),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const first = await app.request(`/api/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.9.0.2" },
+      body: JSON.stringify({ email: "rate-limit@test.com" }),
+    }, TEST_ENV);
+    expect(first.status).toBe(200);
+
+    const second = await app.request(`/api/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.9.0.3" },
+      body: JSON.stringify({ email: "rate-limit@test.com" }),
+    }, TEST_ENV);
+    expect(second.status).toBe(429);
+  });
+});
+
 /**
  * docs/083：drawn 仅可切换 visible；公开详情拒绝 visible=0；open 不可靠 visible 下架。
  */

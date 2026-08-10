@@ -23,7 +23,7 @@ import {
 } from "../services/lottery-service";
 import { verifyJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
-import { parseActivityConfig, validateSubmissionPayload } from "../lib/activity-config";
+import { parseActivityConfig, parseActivityOperationalConfig, validateSubmissionPayload } from "../lib/activity-config";
 import {
   checkPublicRateLimit,
   checkPublicIdentityRateLimit,
@@ -106,6 +106,28 @@ function productFromPublicConfig(draw: {
     priceText: String(productLink?.price || productLink?.priceText || destination?.priceText || "").trim(),
     url: publicHttpUrl(productLink?.url || destination?.url),
   };
+}
+
+async function readGlobalJoinLimitPerMinute(db: ReturnType<typeof getDb>): Promise<number> {
+  const [row] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
+  return Math.min(Math.max(parseInt(row?.value || "", 10) || 10, 1), 100);
+}
+
+async function readGlobalAccessCodeLimitPerMinute(db: ReturnType<typeof getDb>): Promise<number> {
+  const [row] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_access_code")).limit(1);
+  return Math.min(Math.max(parseInt(row?.value || "", 10) || 5, 1), 100);
+}
+
+function activityJoinIpLimit(draw: { activityConfig?: string | null }, fallback: number): number {
+  return parseActivityOperationalConfig(draw.activityConfig).joinIpLimitPerMinute ?? fallback;
+}
+
+function activityJoinIdentityLimit(draw: { activityConfig?: string | null }, fallback: number): number {
+  return parseActivityOperationalConfig(draw.activityConfig).joinIdentityLimitPerMinute ?? fallback;
+}
+
+function activityAccessCodeIdentityLimit(draw: { activityConfig?: string | null }, fallback: number): number {
+  return parseActivityOperationalConfig(draw.activityConfig).accessCodeIdentityLimitPerMinute ?? fallback;
 }
 
 /**
@@ -611,10 +633,9 @@ publicLotteryRoute.post("/draws/:slug/events", async (c) => {
 publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   const ip = getClientIp(c);
   const db = getDb(c);
-  // 读取系统配置的验证码限流值（闭环：L3 配置 → 公开参与限流生效）
-  const [rlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_access_code")).limit(1);
-  const accessCodeLimit = Math.min(Math.max(parseInt(rlCfg?.value || "", 10) || 3, 1), 100);
-  if (!(await checkPublicRateLimit(db, `access-code:${ip}`, accessCodeLimit, 60000))) {
+  // 先用平台全局验证码限流挡住横向扫活动的请求；活动级覆盖在读取 draw 后再执行。
+  const globalAccessCodeLimit = await readGlobalAccessCodeLimitPerMinute(db);
+  if (!(await checkPublicRateLimit(db, `access-code:${ip}`, globalAccessCodeLimit, 60000))) {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
   const slug = c.req.param("slug");
@@ -655,6 +676,7 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   if (identity.identityType === "email" && !isValidEmail(email)) {
     return fail(c, "请输入有效的邮箱地址", 400);
   }
+  const accessCodeLimit = activityAccessCodeIdentityLimit(draw, globalAccessCodeLimit);
   if (identity.identityType === "email" && !(await checkPublicIdentityRateLimit(db, "access-code", draw.id, email, accessCodeLimit, 60000))) {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
@@ -866,12 +888,11 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
-  // 限流：同一 IP 每分钟最多 N 次参与（由 platform system_config.rate_limit_join_per_minute 控制）
+  // 先用平台全局参与限流挡住横向扫活动的请求；活动级覆盖在读取 draw 后再执行。
   const ip = getClientIp(c);
   const db = getDb(c);
-  const [joinRlCfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
-  const joinLimit = Math.min(Math.max(parseInt(joinRlCfg?.value || "", 10) || 10, 1), 100);
-  if (!(await checkPublicRateLimit(db, `join:${ip}`, joinLimit, 60000))) {
+  const globalJoinLimit = await readGlobalJoinLimitPerMinute(db);
+  if (!(await checkPublicRateLimit(db, `join:${ip}`, globalJoinLimit, 60000))) {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
   const slug = c.req.param("slug");
@@ -920,6 +941,11 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
 
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== "open") return fail(c, "活动已结束", 400);
+  const joinIpLimit = activityJoinIpLimit(draw, globalJoinLimit);
+  if (!(await checkPublicRateLimit(db, `join:${draw.id}:${ip}`, joinIpLimit, 60000))) {
+    return fail(c, "参与过于频繁，请稍后再试", 429);
+  }
+  const joinLimit = activityJoinIdentityLimit(draw, globalJoinLimit);
   if (!(await checkPublicIdentityRateLimit(db, "join", draw.id, email, joinLimit, 60000))) {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
@@ -1565,12 +1591,11 @@ publicLotteryRoute.post("/draws/:slug/cancel", async (c) => {
 // ═════════════════════════════════════════════════════════
 
 publicLotteryRoute.post("/draws/:slug/join", async (c) => {
-  // 限流：同一 IP 每分钟最多 N 次参与（由 platform system_config.rate_limit_join_per_minute 控制）
+  // 先用平台全局参与限流挡住横向扫活动的请求；活动级覆盖在读取 draw 后再执行。
   const ip = getClientIp(c);
   const db = getDb(c);
-  const [joinRlCfg2] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
-  const joinLimit2 = Math.min(Math.max(parseInt(joinRlCfg2?.value || "", 10) || 10, 1), 100);
-  if (!(await checkPublicRateLimit(db, `join:${ip}`, joinLimit2, 60000))) {
+  const globalJoinLimit = await readGlobalJoinLimitPerMinute(db);
+  if (!(await checkPublicRateLimit(db, `join:${ip}`, globalJoinLimit, 60000))) {
     return fail(c, "参与过于频繁，请稍后再试", 429);
   }
   const body = await c.req.json<{ email: string; refCode?: string; submission?: Record<string, unknown> }>();
@@ -1595,6 +1620,11 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
       .where(eq(lotteryDraws.publicSlug, c.req.param("slug")))
       .limit(1);
     if (!draw) return fail(c, "活动不存在", 404);
+    const joinIpLimit = activityJoinIpLimit(draw, globalJoinLimit);
+    if (!(await checkPublicRateLimit(db, `join:${draw.id}:${ip}`, joinIpLimit, 60000))) {
+      return fail(c, "参与过于频繁，请稍后再试", 429);
+    }
+    const joinLimit2 = activityJoinIdentityLimit(draw, globalJoinLimit);
     if (!(await checkPublicIdentityRateLimit(db, "join", draw.id, email, joinLimit2, 60000))) {
       return fail(c, "参与过于频繁，请稍后再试", 429);
     }

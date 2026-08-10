@@ -787,6 +787,21 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(vote.infos.some((item) => item.code === "vote.config.ready")).toBe(true);
   });
 
+  it("活动级运营参数非法时禁止发布，避免运行时静默忽略配置错误", async () => {
+    const draw = await buildPublishCheckForDraw(db, TENANT, makeDraw({
+      activityConfig: JSON.stringify({
+        operational: {
+          joinIpLimitPerMinute: 0,
+          lockJoinBeforeDrawMinutes: 20000,
+        },
+      }),
+    }) as any);
+
+    expect(draw.canPublish).toBe(false);
+    expect(draw.errors.some((item) => item.code === "activity.operational.joinIpLimitPerMinute.invalid")).toBe(true);
+    expect(draw.errors.some((item) => item.code === "activity.operational.lockJoinBeforeDrawMinutes.invalid")).toBe(true);
+  });
+
   it("裂变配置校验：非法值报错，排行榜关闭提示", async () => {
     // 每邀请次数为 0 → 报错
     const badPerInvite = makeDraw({

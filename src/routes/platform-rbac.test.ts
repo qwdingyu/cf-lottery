@@ -550,7 +550,13 @@ describe("RBAC-lite 路由分层", () => {
     expect(listBody.deliveries).toHaveLength(1);
     expect(listBody.deliveries[0]).toMatchObject({ id: "email-delivery-1", recipientEmail: "user@test.com" });
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "mail-rbac-1" }), { status: 200 }));
+    // mockImplementation 每次调用都新建 Response 实例：
+    // cf-core 的 fetchWithRetry 在超时/网络错误时可能重试同一 fetch，
+    // 若用 mockResolvedValue 共享单个 Response，重试时二次 res.json() 会抛
+    // "Body has already been read"，导致邮件被误判为发送失败。
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response(JSON.stringify({ id: "mail-rbac-1" }), { status: 200 }),
+    );
     const retryRes = await app.request("/api/platform/email-deliveries/email-delivery-1/retry", {
       method: "POST",
       headers: await authHeader(PLATFORM_ID),

@@ -31,6 +31,7 @@ import {
   parseFlashSaleConfig,
   resolveEffectiveStockLimit,
 } from "../../lib/flash-sale-config";
+import { parseActivityOperationalConfig } from "../../lib/activity-config";
 import {
   isRetryablePaymentOrderStatus,
   PAYMENT_ENTRY_STATUS,
@@ -169,6 +170,14 @@ export async function joinDraw(
   const now = new Date();
   if (now < new Date(draw.startAt) || now > new Date(draw.endAt)) {
     return { joined: false, message: "不在参与时间内" };
+  }
+  const operational = parseActivityOperationalConfig(draw.activityConfig);
+  const lockMinutes = operational.lockJoinBeforeDrawMinutes ?? 0;
+  if (lockMinutes > 0 && draw.drawAt) {
+    const drawAtMs = new Date(draw.drawAt).getTime();
+    if (Number.isFinite(drawAtMs) && now.getTime() >= drawAtMs - lockMinutes * 60000) {
+      return { joined: false, message: `开奖前 ${lockMinutes} 分钟已停止新增参与` };
+    }
   }
 
   const nowIso = now.toISOString();
