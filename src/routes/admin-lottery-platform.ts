@@ -107,6 +107,8 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
     myCardCodeEnabled: enabled("myCardCodeEnabled", DEFAULT_BUILTIN_COMMANDS.myCardCodeEnabled),
     helpEnabled: enabled("helpEnabled", DEFAULT_BUILTIN_COMMANDS.helpEnabled),
     flashEnabled: enabled("flashEnabled", DEFAULT_BUILTIN_COMMANDS.flashEnabled),
+    // 跨平台绑定命令始终可用（用户级工具，不随群开关关闭；docs/179）
+    bindEnabled: true,
     ...(checkinPolicy
       ? { dailyCheckinPolicy: checkinPolicy }
       : {}),

@@ -63,6 +63,12 @@ const router = createRouter({
       props: (route) => ({ id: route.params.slug || undefined }),
     },
     {
+      // 一次性卡密访问页（docs/179）：Bot 生成的 /我的卡密 链接指向此页
+      path: '/access/card-codes',
+      name: 'AccessCardCodes',
+      component: () => import('@/views/AccessCardCodesView.vue'),
+    },
+    {
       path: '/shop/:storeSlug',
       name: 'Shop',
       component: () => import('@/views/ShopView.vue'),

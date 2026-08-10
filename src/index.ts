@@ -14,6 +14,7 @@ import { systemConfig, auditLogs, lotteryDraws, paymentOrders } from "./db/schem
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
+import { publicAccessRoute } from "./routes/public-access";
 import { paymentPublicRoute, paymentCallbackRoute } from "./routes/payment";
 import { adminPaymentConfigRoute } from "./routes/admin-payment-config";
 import { integrationRoute } from "./routes/integration";
@@ -210,6 +211,7 @@ app.route("/api/admin/media", adminMediaRoute);
 app.route("/api/admin", adminLotteryRoute);
 app.route("/api/admin", adminPaymentConfigRoute);
 app.route("/api/public", publicLotteryRoute);
+app.route("/api/public/access", publicAccessRoute);
 app.route("/api/public", paymentPublicRoute);
 app.route("/api/payments", paymentCallbackRoute);
 app.route("/api/integration", integrationRoute);

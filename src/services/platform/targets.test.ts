@@ -24,6 +24,7 @@ const DEFAULT: BuiltinCommandConfig = {
   myCardCodeEnabled: true,
   helpEnabled: true,
   flashEnabled: true,
+  bindEnabled: true,
 };
 
 describe("parseBuiltinCommandConfig", () => {

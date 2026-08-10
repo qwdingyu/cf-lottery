@@ -35,6 +35,10 @@ import {
   nextStreakAfterCheckin,
   todayStr,
 } from "./checkin-reward";
+/** 一次性 Web 访问令牌（docs/179）：用于 Bot 生成卡密查看链接 */
+import { generateAccessToken } from "./access-token";
+/** 跨平台身份绑定（docs/179）：用于 QQ/Telegram 身份关联 */
+import { generateBindingCode, consumeBindingCode, parseBindingCode } from "./binding";
 
 const COMMAND_LABELS: Record<BuiltinPlatformCommand, string> = {
   checkin: "/签到",
@@ -45,9 +49,10 @@ const COMMAND_LABELS: Record<BuiltinPlatformCommand, string> = {
   help: "/帮助",
   flash: "/秒杀",
   card_code: "/我的卡密",
+  bind: "/绑定",
 };
 
-const COMMAND_ENABLED_KEYS: Record<Exclude<BuiltinPlatformCommand, "help">, keyof BuiltinCommandConfig> = {
+const COMMAND_ENABLED_KEYS: Record<Exclude<BuiltinPlatformCommand, "help" | "bind">, keyof BuiltinCommandConfig> = {
   checkin: "checkinEnabled",
   spin: "spinEnabled",
   share: "shareEnabled",
@@ -91,12 +96,16 @@ export function recognizeBuiltinCommand(text: string): BuiltinPlatformCommand | 
     case "购买":
       return "flash";
     default:
+      // /绑定 命令支持带参数：/绑定 XXXXXX（XX 为跨平台绑定码，docs/179）
+      if (trimmed === "/绑定" || trimmed === "绑定") return "bind";
+      if (trimmed.startsWith("/绑定 ") || trimmed.startsWith("绑定 ")) return "bind";
       return null;
   }
 }
 
 export function isBuiltinCommandEnabled(command: BuiltinPlatformCommand, config: BuiltinCommandConfig): boolean {
   if (command === "help") return config.helpEnabled !== false;
+  if (command === "bind") return true; // 绑定命令始终可用（用户级工具，docs/179）
   return config[COMMAND_ENABLED_KEYS[command]] !== false;
 }
 
@@ -136,6 +145,7 @@ const COMMAND_HANDLERS: Record<string, (
   my_prize: executeMyPrizeCommand,
   flash: executeFlashCommand,
   card_code: executeCardCodeCommand,
+  bind: executeBindCommand,
 };
 
 export async function executeBuiltinPlatformCommand(
@@ -831,7 +841,16 @@ async function executeCardCodeCommand(
     return { handled: true, reply: "你还没有获得卡密奖品。发送 /我的奖品 查看全部奖品。" };
   }
 
-  // 3. 组装私聊消息：每条卡密一条私聊消息
+  // 3. 组装私聊消息：每条卡密一条私聊消息（含 Web 访问链接兜底）
+  // 生成一次性 Web 访问链接：解决私聊失败后卡密无法 Web 找回的闭环（docs/179）
+  // 仅当 Phase B 已关联本地 userId（input.user.userId）时生成；否则降级为纯私聊。
+  // 安全：accessUrl 只在私聊消息中下发，不写进群回复；
+  // 仅当私聊发送失败时，路由层才把 accessUrl 追加到群回复作为降级（见路由层实现）。
+  const accessUrl = await buildCardCodeAccessUrl(db, input);
+  const accessHint = accessUrl
+    ? `\n\n💻 网页查看（5 分钟内有效，仅可查看一次）：\n${accessUrl}`
+    : "";
+
   const privateMessages = winners.map((w) => {
     const name = w.prizeName || w.tierName || "奖品";
     // 卡密拼接规则与 spin-execution.ts 的 prizeCodePlain 保持一致：
@@ -843,15 +862,42 @@ async function executeCardCodeCommand(
     return {
       userId: input.user.identityValue,
       groupId: input.source.groupId,
-      text: `🔑 你的卡密：\n奖品：${name}\n卡密：${fullCard}\n\n请妥善保管，勿将卡密泄露给他人。`,
+      text: `🔑 你的卡密：\n奖品：${name}\n卡密：${fullCard}\n\n请妥善保管，勿将卡密泄露给他人。${accessHint}`,
     };
   });
 
+  // 群内回复：只告知数量和私聊发送，不泄露卡密明文，也不放访问链接（防群内截胡）。
   return {
     handled: true,
     reply: `🔑 你有 ${winners.length} 条卡密，已通过私聊发送，请查看私聊消息。`,
     privateMessages,
+    accessUrl,
   };
+}
+
+/**
+ * 为卡密命令生成一次性 Web 访问链接。
+ *
+ * 前置条件：
+ * - input.user.userId 已存在（Phase B 已关联 users.id）
+ * - input.appOrigin 已配置（APP_ORIGIN 环境变量）
+ *
+ * 返回 null 表示无法生成（无 userId 或 appOrigin），命令降级为纯私聊。
+ */
+async function buildCardCodeAccessUrl(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput,
+): Promise<string | undefined> {
+  if (!input.user.userId || !input.appOrigin) return undefined;
+  try {
+    const { token } = await generateAccessToken(db, input.user.userId, "card_code");
+    const origin = input.appOrigin.replace(/\/+$/, "");
+    return `${origin}/access/card-codes?token=${encodeURIComponent(token)}`;
+  } catch (err) {
+    // 令牌生成失败不阻断卡密私聊主流程（降级为纯私聊）
+    console.error(`[platform] 生成卡密访问链接失败: ${String(err)}`);
+    return undefined;
+  }
 }
 
 /**
@@ -876,4 +922,81 @@ async function executeFlashCommand(
     handled: true,
     reply: `${cfg.label}\n${cfg.url}`,
   };
+}
+
+/**
+ * 执行 /绑定 命令（docs/179 跨平台身份绑定）。
+ *
+ * 两种模式：
+ * 1. 无参数（/绑定）：生成绑定码，返回给用户，用于在另一个平台完成绑定。
+ * 2. 带参数（/绑定 XXXXXX）：消费绑定码，将当前平台身份合并到发起方用户的 users.id。
+ *
+ * 安全约束：
+ * - 绑定码 6 位高熵字符，10 分钟有效期，一次性使用。
+ * - 禁止同一平台自我绑定（QQ 不能绑定 QQ）。
+ * - 必须存在 Phase B 关联的 userId（input.user.userId）。
+ */
+async function executeBindCommand(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
+): Promise<PlatformCommandResult> {
+  // 必须已关联本地 userId（Phase B 前置条件）
+  if (!input.user.userId) {
+    return { handled: true, reply: "绑定失败：系统未找到你的身份信息，请稍后再试。" };
+  }
+
+  // 解析命令文本中的绑定码
+  const raw = String(input.source.raw || "").trim();
+  const code = parseBindingCode(raw);
+
+  // 模式 1：无参数 → 生成绑定码
+  if (!code) {
+    try {
+      const { code: bindingCode, expiresAt } = await generateBindingCode(
+        db,
+        input.source.platform,
+        input.user.identityValue,
+        input.user.userId,
+      );
+      const expiresIn = Math.round((new Date(expiresAt).getTime() - Date.now()) / 1000 / 60);
+      return {
+        handled: true,
+        reply: `🔗 你的绑定码：${bindingCode}\n\n请在另一个平台（如 ${input.source.platform === "qq" ? "Telegram" : "QQ"} 群）发送 /绑定 ${bindingCode} 完成关联。\n⏰ 绑定码 ${expiresIn} 分钟内有效，请尽快操作。`,
+      };
+    } catch (err) {
+      console.error(`[platform] 生成绑定码失败: ${String(err)}`);
+      return { handled: true, reply: "生成绑定码失败，请稍后再试。" };
+    }
+  }
+
+  // 模式 2：带参数 → 消费绑定码，完成身份合并
+  try {
+    const result = await consumeBindingCode(
+      db,
+      code,
+      input.source.platform,
+      input.user.identityValue,
+      input.user.userId,
+    );
+
+    if (!result.ok) {
+      return { handled: true, reply: result.reason };
+    }
+
+    if (result.merged) {
+      return {
+        handled: true,
+        reply: "✅ 绑定成功！你的 QQ 和 Telegram 账号已关联到同一个账户。现在你可以在任一平台查看卡密、参与活动。",
+      };
+    }
+
+    // 已指向同一用户，无需重复合并
+    return {
+      handled: true,
+      reply: "你的 QQ 和 Telegram 账号已关联到同一个账户，无需重复绑定。",
+    };
+  } catch (err) {
+    console.error(`[platform] 消费绑定码失败: ${String(err)}`);
+    return { handled: true, reply: "绑定失败，请稍后再试。" };
+  }
 }

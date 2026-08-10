@@ -25,6 +25,7 @@ export async function handleInboundPlatformEvent(
   db: DbType,
   event: InboundPlatformEvent,
   preFetchedTarget?: PlatformTargetBinding | null,
+  appOrigin?: string,
 ): Promise<PlatformCommandResult | null> {
   if (event.eventType !== "message" || !event.text) return null;
   const command = recognizeBuiltinCommand(event.text);
@@ -91,5 +92,6 @@ export async function handleInboundPlatformEvent(
       messageId: event.messageId,
       raw: event.raw,
     },
+    appOrigin,
   });
 }

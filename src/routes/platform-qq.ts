@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { fail, getDb, ok } from "../lib/http";
+import { getEnv } from "../lib/platform";
 import { timingSafeEqualString } from "../lib/crypto-compare";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { getActivePlatformTarget } from "../services/platform/targets";
@@ -76,12 +77,13 @@ platformQQRoute.post("/message", async (c) => {
     senderDisplayName: extractSenderDisplayName(body),
     raw: body,
     // 传入已在路由层查到的 target，避免 inbound 内部再查一次 DB
-  }, target);
+  }, target, getEnv(c, "APP_ORIGIN"));
 
   if (!result) return ok(c, { handled: false });
 
   // 处理命令侧写的私聊消息（如卡密私发）。
   // 私聊发送失败时在群回复中追加降级提示，不阻塞主流程。
+  // 若命令同时返回了 accessUrl（一次性 Web 链接），降级提示中附加该链接（docs/179）。
   if (result.privateMessages?.length) {
     const adapterConfig = target.adapterConfig as Record<string, unknown>;
     const baseUrl = String(adapterConfig.baseUrl || "").trim();
@@ -98,13 +100,22 @@ platformQQRoute.post("/message", async (c) => {
             text: pm.text,
           });
         } catch {
-          // 私发失败，在群回复中追加降级提示，不中断整个请求
-          result.reply += "\n\n⚠️ 私聊发送失败，可能是您关闭了临时会话权限。请检查QQ隐私设置（设置→隐私→临时会话），或通过网页后台查看卡密。";
+          // 私发失败，在群回复中追加降级提示
+          // 如果命令已生成一次性 Web 链接，附上链接供用户 Web 查看（docs/179）
+          if (result.accessUrl) {
+            result.reply += `\n\n⚠️ 私聊发送失败，可点击下方链接网页查看（5 分钟内有效，仅可查看一次，请勿泄露）：\n${result.accessUrl}`;
+          } else {
+            result.reply += "\n\n⚠️ 私聊发送失败，可能是您关闭了临时会话权限。请检查QQ隐私设置（设置→隐私→临时会话），或联系管理员。";
+          }
         }
       }
     } else {
       // 适配器未配置 baseUrl，无法发送私聊，追加降级提示
-      result.reply += "\n\n⚠️ 系统未配置QQ适配器，无法私聊发送卡密。请通过网页后台查看。";
+      if (result.accessUrl) {
+        result.reply += `\n\n⚠️ 系统未配置QQ适配器，无法私聊发送卡密。可点击下方链接网页查看：\n${result.accessUrl}`;
+      } else {
+        result.reply += "\n\n⚠️ 系统未配置QQ适配器，无法私聊发送卡密。请通过网页后台查看。";
+      }
     }
   }
 

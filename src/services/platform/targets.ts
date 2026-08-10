@@ -47,6 +47,8 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
     myCardCodeEnabled: asBoolean(parsed.myCardCodeEnabled, DEFAULT_BUILTIN_COMMANDS.myCardCodeEnabled),
     helpEnabled: asBoolean(parsed.helpEnabled, DEFAULT_BUILTIN_COMMANDS.helpEnabled),
     flashEnabled: asBoolean(parsed.flashEnabled, DEFAULT_BUILTIN_COMMANDS.flashEnabled),
+    // 跨平台绑定命令始终可用（用户级工具，不随群开关关闭；docs/179）
+    bindEnabled: true,
     // 签到奖励配置：使用 checkin-reward 的 parseStoredCheckinPolicy 统一解析
     ...(parsed.dailyCheckinPolicy && typeof parsed.dailyCheckinPolicy === "object"
       ? (() => {

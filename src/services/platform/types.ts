@@ -19,7 +19,9 @@ export type BuiltinPlatformCommand =
   /** 秒杀/购买：返回配置的购买链接，打通免费→付费转化漏斗（docs/171 §断层B） */
   | "flash"
   /** 卡密重发：将已中奖但未收到的卡密通过私聊重新发送（docs/173 卡密闭环断裂修复） */
-  | "card_code";
+  | "card_code"
+  /** 跨平台身份绑定：将 QQ/Telegram 身份关联到同一 users.id（docs/179） */
+  | "bind";
 
 export type BuiltinCommandConfig = {
   checkinEnabled: boolean;
@@ -32,6 +34,8 @@ export type BuiltinCommandConfig = {
   helpEnabled: boolean;
   /** 秒杀/购买命令开关（docs/171 §断层B） */
   flashEnabled: boolean;
+  /** 跨平台身份绑定命令开关（docs/179） */
+  bindEnabled: boolean;
   /**
    * 签到奖励配置（docs/172）。
    * 支持两种模式：
@@ -147,6 +151,8 @@ export type ExecuteBuiltinCommandInput = {
     messageId?: string;
     raw?: unknown;
   };
+  /** 应用公开访问地址（用于生成临时访问链接，docs/179） */
+  appOrigin?: string;
 };
 
 export type PlatformCommandResult = {
@@ -165,6 +171,11 @@ export type PlatformCommandResult = {
     groupId: string;
     text: string;
   }>;
+  /**
+   * 临时访问链接（docs/179）：用于 Bot 群内回复中展示的 Web 访问链接。
+   * 路由层在私聊发送失败时，可将此链接追加到群回复中作为降级提示。
+   */
+  accessUrl?: string;
 };
 
 export const DEFAULT_BUILTIN_COMMANDS: BuiltinCommandConfig = {
@@ -176,4 +187,5 @@ export const DEFAULT_BUILTIN_COMMANDS: BuiltinCommandConfig = {
   myCardCodeEnabled: true,
   helpEnabled: true,
   flashEnabled: true,
+  bindEnabled: true,
 };

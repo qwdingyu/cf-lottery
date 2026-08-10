@@ -1518,6 +1518,21 @@ export default {
     drawNotLoaded: "活动未加载，请刷新页面后重试",
   },
 
+  // ── 一次性卡密访问页（docs/179）────────────────────────
+  accessCardCodes: {
+    title: "我的卡密",
+    loading: "正在加载卡密…",
+    invalidToken: "链接无效或已过期。请重新在群内发送 /我的卡密 获取新的链接。",
+    empty: "暂无卡密记录。",
+    total: "共 {count} 条卡密",
+    prize: "奖品",
+    cardCode: "卡密",
+    draw: "活动",
+    drawnAt: "中奖时间",
+    securityHint: "本页面仅可查看一次，请妥善保管卡密，勿泄露给他人。",
+    saveHint: "请复制并保存卡密，关闭本页后将无法再次查看。",
+  },
+
   // ── 奖品管理（AdminPrizesView）— 页面已用 $t，此前缺命名空间会导致 key 原文泄漏 ──
   adminPrizes: {
     loading: "加载中…",

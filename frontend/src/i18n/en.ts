@@ -1543,6 +1543,21 @@ export default {
     drawNotLoaded: "Activity not loaded, please refresh and retry",
   },
 
+  // ── Card Code Access Page (docs/179) ────────────────────
+  accessCardCodes: {
+    title: "My Card Codes",
+    loading: "Loading card codes…",
+    invalidToken: "Link is invalid or expired. Please send /我的卡密 again in the group to get a new link.",
+    empty: "No card codes yet.",
+    total: "{count} card code(s)",
+    prize: "Prize",
+    cardCode: "Card Code",
+    draw: "Activity",
+    drawnAt: "Awarded At",
+    securityHint: "This page can be viewed only once. Please keep your card codes safe and do not share them.",
+    saveHint: "Please copy and save your card codes. You will not be able to view them again after closing this page.",
+  },
+
   // ── Prizes (AdminPrizesView) — page already uses $t; namespace was missing ──
   adminPrizes: {
     loading: "Loading…",

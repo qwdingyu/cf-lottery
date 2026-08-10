@@ -44,6 +44,7 @@ const DEFAULT_BUILTIN_COMMANDS: BuiltinCommandConfig = {
   myCardCodeEnabled: true,
   helpEnabled: true,
   flashEnabled: true,
+  bindEnabled: true,
 };
 
 function makeInput(overrides?: Partial<ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig }>): ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig } {
@@ -920,7 +921,7 @@ describe("renderHelpReply", () => {
     expect(reply).not.toContain("/秒杀");
   });
 
-  it("所有命令关闭时返回空提示", () => {
+  it("所有命令关闭时只显示绑定命令", () => {
     const reply = renderHelpReply({
       checkinEnabled: false,
       spinEnabled: false,
@@ -930,8 +931,10 @@ describe("renderHelpReply", () => {
       myCardCodeEnabled: false,
       helpEnabled: false,
       flashEnabled: false,
+      bindEnabled: false, // bind 始终可用，此配置不影响
     });
-    expect(reply).toBe("当前群未启用群助手命令。");
+    // /绑定 命令始终启用（无开关），详见 COMMAND_ENABLED_KEYS 排除 bind
+    expect(reply).toBe("当前可用命令：/绑定");
   });
 });
 

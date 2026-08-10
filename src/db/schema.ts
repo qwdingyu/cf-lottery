@@ -58,6 +58,65 @@ export const authIdentities = sqliteTable("auth_identities", {
   userIdx: index("idx_auth_identities_user").on(t.userId),
 }));
 
+/**
+ * 临时访问令牌（docs/179）。
+ *
+ * 核心用途：Bot 在群内命令（如 /我的卡密）中生成一次性 Web 链接，
+ * 用户无需登录即可在浏览器查看卡密。解决「私聊失败后卡密无法 Web 找回」的闭环。
+ *
+ * 设计决策：
+ * - token_hash 存 SHA-256 哈希，不存明文（防库泄漏后直接窃取可用令牌）。
+ * - 一次性：used=1 后不可再复用；短时效：expires_at 到期作废。
+ * - purpose 预留扩展（card_code / my_prize / ...），当前仅 card_code。
+ */
+export const accessTokens = sqliteTable("access_tokens", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  /** 令牌明文 SHA-256 哈希（明文只在 Bot 私聊/群回复中下发一次） */
+  tokenHash: text("token_hash").notNull(),
+  /** 用途：card_code 等 */
+  purpose: text("purpose").notNull().default("card_code"),
+  /** 过期时间（ISO 字符串） */
+  expiresAt: text("expires_at").notNull(),
+  /** 是否已使用（一次性） */
+  used: integer("used").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  tokenHashUnique: uniqueIndex("idx_access_tokens_hash").on(t.tokenHash),
+  userPurposeIdx: index("idx_access_tokens_user").on(t.userId, t.purpose),
+}));
+
+/**
+ * 跨平台身份绑定（docs/179）。
+ *
+ * 核心用途：同一用户希望把 QQ 与 Telegram 两个平台身份关联到同一个 users.id，
+ * 从而在任一平台参与的卡密都能通过统一 Web 链接查看。
+ *
+ * 设计决策：
+ * - 绑定码（code）为 6 位短码，短时效（10 分钟）、一次性。
+ * - 用户在「第一平台」执行 /绑定 生成码，在「第二平台」执行 /绑定 <code> 完成关联，
+ *   从而证明用户同时拥有两个平台身份（ownership proof）。
+ * - 合并只重写 auth_identities.userId，不迁移 lottery_entries（保持存量约束）。
+ */
+export const platformBindings = sqliteTable("platform_bindings", {
+  id: text("id").primaryKey(),
+  /** 6 位绑定码（无需哈希：短时效 + 一次性 + 高熵，且需要明文回显给用户） */
+  code: text("code").notNull(),
+  /** 发起绑定码的平台：qq / telegram */
+  sourceProvider: text("source_provider").notNull(),
+  /** 发起方平台用户 ID */
+  sourceProviderUserId: text("source_provider_user_id").notNull(),
+  /** 发起方关联的 users.id（合并目标） */
+  sourceUserId: text("source_user_id").notNull(),
+  /** 过期时间（ISO 字符串） */
+  expiresAt: text("expires_at").notNull(),
+  /** 是否已使用（一次性） */
+  used: integer("used").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  codeUnique: uniqueIndex("idx_platform_bindings_code").on(t.code),
+}));
+
 export const tenantMembers = sqliteTable("tenant_members", {
   tenantId: text("tenant_id").notNull(),
   userId: text("user_id").notNull(),

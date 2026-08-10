@@ -12,6 +12,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { fail, getDb, ok } from "../lib/http";
+import { getEnv } from "../lib/platform";
 import { timingSafeEqualString } from "../lib/crypto-compare";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { getActivePlatformTarget } from "../services/platform/targets";
@@ -86,12 +87,13 @@ platformTelegramRoute.post("/message", async (c) => {
     raw: body,
   };
 
-  const result = await handleInboundPlatformEvent(db, event, target);
+  const result = await handleInboundPlatformEvent(db, event, target, getEnv(c, "APP_ORIGIN"));
   if (!result) return ok(c, { handled: false });
 
   // 处理命令侧写的私聊消息（如卡密私发）。
   // Telegram Bot API 使用 sendMessage 统一发送群聊和私聊消息，
   // chat_id 为用户 ID 即私聊，为群 ID 即群聊。
+  // 若命令同时返回了 accessUrl（一次性 Web 链接），降级提示中附加该链接（docs/179）。
   if (result.privateMessages?.length) {
     const adapterConfig = target.adapterConfig as Record<string, unknown>;
     const botToken = String(adapterConfig.botToken || "").trim();
@@ -107,13 +109,21 @@ platformTelegramRoute.post("/message", async (c) => {
             text: pm.text,
           });
         } catch {
-          // 私发失败，在群回复中追加降级提示，不中断整个请求
-          result.reply += "\n\n⚠️ 私聊发送失败，请通过网页后台查看卡密。";
+          // 私发失败，在群回复中追加降级提示
+          if (result.accessUrl) {
+            result.reply += `\n\n⚠️ 私聊发送失败，可点击下方链接网页查看（5 分钟内有效，仅可查看一次，请勿泄露）：\n${result.accessUrl}`;
+          } else {
+            result.reply += "\n\n⚠️ 私聊发送失败，请通过网页后台查看卡密。";
+          }
         }
       }
     } else {
       // 适配器未配置 botToken，无法发送私聊，追加降级提示
-      result.reply += "\n\n⚠️ 系统未配置 Telegram Bot Token，无法私聊发送卡密。请通过网页后台查看。";
+      if (result.accessUrl) {
+        result.reply += `\n\n⚠️ 系统未配置 Telegram Bot Token，无法私聊发送卡密。可点击下方链接网页查看：\n${result.accessUrl}`;
+      } else {
+        result.reply += "\n\n⚠️ 系统未配置 Telegram Bot Token，无法私聊发送卡密。请通过网页后台查看。";
+      }
     }
   }
 
