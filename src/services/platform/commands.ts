@@ -29,6 +29,11 @@ import type {
   ExecuteBuiltinCommandInput,
   PlatformCommandResult,
 } from "./types";
+import {
+  computeCheckinReward,
+  nextStreakAfterCheckin,
+  todayStr,
+} from "./checkin-reward";
 
 const COMMAND_LABELS: Record<BuiltinPlatformCommand, string> = {
   checkin: "/签到",

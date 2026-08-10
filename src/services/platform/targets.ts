@@ -7,6 +7,7 @@
 import { and, eq } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { platformTargets } from "../../db/schema";
+import { parseStoredCheckinPolicy } from "./checkin-reward";
 import {
   DEFAULT_BUILTIN_COMMANDS,
   type AdapterDeploymentMode,
@@ -33,10 +34,6 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
     }
   }
 
-  const daily = parsed.dailyCheckinPolicy && typeof parsed.dailyCheckinPolicy === "object"
-    ? parsed.dailyCheckinPolicy as Record<string, unknown>
-    : undefined;
-
   const purchase = parsed.purchaseConfig && typeof parsed.purchaseConfig === "object"
     ? parsed.purchaseConfig as Record<string, unknown>
     : undefined;
@@ -49,8 +46,12 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
     myPrizeEnabled: asBoolean(parsed.myPrizeEnabled, DEFAULT_BUILTIN_COMMANDS.myPrizeEnabled),
     helpEnabled: asBoolean(parsed.helpEnabled, DEFAULT_BUILTIN_COMMANDS.helpEnabled),
     flashEnabled: asBoolean(parsed.flashEnabled, DEFAULT_BUILTIN_COMMANDS.flashEnabled),
-    ...(daily && Number.isFinite(Number(daily.grantSpinCount)) && Math.max(0, Math.trunc(Number(daily.grantSpinCount))) > 0
-      ? { dailyCheckinPolicy: { grantSpinCount: Math.max(0, Math.trunc(Number(daily.grantSpinCount))) } }
+    // 签到奖励配置：使用 checkin-reward 的 parseStoredCheckinPolicy 统一解析
+    ...(parsed.dailyCheckinPolicy && typeof parsed.dailyCheckinPolicy === "object"
+      ? (() => {
+          const policy = parseStoredCheckinPolicy(parsed.dailyCheckinPolicy);
+          return policy ? { dailyCheckinPolicy: policy } : {};
+        })()
       : {}),
     ...(parsed.replyOverrides && typeof parsed.replyOverrides === "object"
       ? { replyOverrides: parsed.replyOverrides as Record<string, string> }

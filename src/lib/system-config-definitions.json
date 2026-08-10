@@ -565,5 +565,17 @@
     "group": "邮件通知",
     "order": 5,
     "difficulty": "advanced"
+  },
+  {
+    "key": "community_feature_enabled",
+    "label": "社群功能全局开关",
+    "description": "平台级一键启停所有租户的 QQ/Telegram 群助手（社群)功能。关闭后租户后台无法新建或修改群绑定，已存在的绑定停止响应命令。",
+    "effect": "配置关闭后，POST/PUT /api/admin/platform-targets 返回 403 拒绝写入；GET 列表仍可读（只读模式）。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "true",
+    "group": "平台运营",
+    "order": 35,
+    "difficulty": "basic"
   }
 ]

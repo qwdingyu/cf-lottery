@@ -28,8 +28,20 @@ export type BuiltinCommandConfig = {
   helpEnabled: boolean;
   /** 秒杀/购买命令开关（docs/171 §断层B） */
   flashEnabled: boolean;
+  /**
+   * 签到奖励配置（docs/172）。
+   * 支持两种模式：
+   *  1. grantSpinCount（旧字段）：简单固定值，保留向后兼容
+   *  2. rewardConfig（新字段）：完整奖励配置，支持 4 种模式：
+   *     - daily: 每日固定值或区间随机（min===max 为固定值）
+   *     - linear: 线性递增，第 N 天 = base + (N-1) * increment
+   *     - step: 阶梯递增，每 stepDays 天提升一次
+   *     - cycle: 周期循环，第 cycleDays 天额外奖励后重置
+   *  解析统一由 checkin-reward.ts 的 parseStoredCheckinPolicy 完成。
+   */
   dailyCheckinPolicy?: {
     grantSpinCount?: number;
+    rewardConfig?: import("./checkin-reward").CheckinStreakConfig;
   };
   replyOverrides?: Record<string, string>;
   /** 购买链接配置：群内 /秒杀 时返回此链接，引导用户从免费积分→付费购买（docs/171 §断层B） */

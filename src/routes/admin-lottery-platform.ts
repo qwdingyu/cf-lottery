@@ -17,9 +17,10 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
 import { and, eq, desc, count } from "drizzle-orm";
-import { platformTargets, platformDeliveries, lotteryDraws, auditLogs } from "../db/schema";
+import { platformTargets, platformDeliveries, lotteryDraws, auditLogs, systemConfig } from "../db/schema";
 import { createPlatformInboundSecret, hashPlatformInboundSecret } from "../services/platform/security";
 import { DEFAULT_BUILTIN_COMMANDS, type BuiltinCommandConfig } from "../services/platform/types";
+import { parseStoredCheckinPolicy } from "../services/platform/checkin-reward";
 import { getPlatformAdapter, getSupportedPlatforms, getSupportedProviders } from "../services/platform/adapter-factory";
 
 /**
@@ -74,14 +75,14 @@ async function recordPlatformAudit(
 function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinCommandConfig {
   const enabled = (key: string, fallback: boolean) =>
     typeof body[key] === "boolean" ? body[key] as boolean : fallback;
-  // 每日签到奖励次数：解析 dailyCheckinPolicy.grantSpinCount 为非负整数。
-  // 0 / 缺失 / 非法 → 视为不发放奖励（省略 dailyCheckinPolicy），与 targets.ts 语义一致。
+  // 每日签到奖励配置：解析 dailyCheckinPolicy（支持 grantSpinCount 与 rewardConfig）。
+  // 使用 checkin-reward 的 parseStoredCheckinPolicy 统一解析，避免与 targets.ts 语义漂移。
+  // 0 / 缺失 / 非法 → 视为不发放奖励（省略 dailyCheckinPolicy）。
   const daily = body.dailyCheckinPolicy && typeof body.dailyCheckinPolicy === "object"
     ? body.dailyCheckinPolicy as Record<string, unknown>
     : undefined;
-  const grantSpinCount = daily && Number.isFinite(Number(daily.grantSpinCount))
-    ? Math.max(0, Math.trunc(Number(daily.grantSpinCount)))
-    : undefined;
+  const checkinPolicy = daily ? parseStoredCheckinPolicy(daily) : undefined;
+  const grantSpinCount = checkinPolicy?.grantSpinCount;
 
   // 购买链接配置：解析 purchaseConfig.url 和 purchaseConfig.label。
   // url 必须为非空字符串，label 为空时使用默认文案"立即购买"。
@@ -105,8 +106,8 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
     myPrizeEnabled: enabled("myPrizeEnabled", DEFAULT_BUILTIN_COMMANDS.myPrizeEnabled),
     helpEnabled: enabled("helpEnabled", DEFAULT_BUILTIN_COMMANDS.helpEnabled),
     flashEnabled: enabled("flashEnabled", DEFAULT_BUILTIN_COMMANDS.flashEnabled),
-    ...(grantSpinCount !== undefined && grantSpinCount > 0
-      ? { dailyCheckinPolicy: { grantSpinCount } }
+    ...(checkinPolicy
+      ? { dailyCheckinPolicy: checkinPolicy }
       : {}),
     ...(purchaseUrl
       ? { purchaseConfig: { url: purchaseUrl, label: purchaseLabel } }
@@ -197,6 +198,22 @@ async function resolveDraw(db: ReturnType<typeof getDb>, tenantId: string, activ
   return draw || null;
 }
 
+/**
+ * 社群功能全局开关（docs/172）：
+ * 读取 system_config 的 community_feature_enabled（默认 "true"，平台运营者可在 L3 /platform/config 配置）。
+ * 当关闭时，租户后台禁止「创建/更新」平台目标绑定（QQ/Telegram 群助手），实现平台级一键停服。
+ * 读取 system_config 是后台管理操作，不在公开参与热路径。
+ */
+async function isCommunityFeatureEnabled(db: ReturnType<typeof getDb>): Promise<boolean> {
+  const [row] = await db
+    .select({ value: systemConfig.value })
+    .from(systemConfig)
+    .where(eq(systemConfig.key, "community_feature_enabled"))
+    .limit(1);
+  // 未配置（无记录）或值为 "true" 时视为启用，仅显式 "false" 关闭
+  return row ? row.value !== "false" : true;
+}
+
 export function setupPlatformRoutes(route: Hono<AppEnv>) {
   // ── 列表 ──
   route.get("/platform-targets", async (c) => {
@@ -241,6 +258,11 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     const tenantId = c.get("tenantId") as string;
     const body = await c.req.json<Record<string, unknown>>().catch(() => null);
     if (!body) return fail(c, "请求体不是有效 JSON");
+
+    // 社群功能全局开关校验：平台运营者关闭后，所有租户禁止新建群绑定
+    if (!(await isCommunityFeatureEnabled(db))) {
+      return fail(c, "社群功能已被平台运营者关闭，暂无法创建群绑定", 403);
+    }
 
     const platform = String(body.platform || "qq");
     if (!VALID_PLATFORMS.has(platform)) {
@@ -321,6 +343,11 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       .where(and(eq(platformTargets.tenantId, tenantId), eq(platformTargets.id, id)))
       .limit(1);
     if (!row) return fail(c, "绑定不存在", 404);
+
+    // 社群功能全局开关校验：平台运营者关闭后，禁止修改已存在的群绑定
+    if (!(await isCommunityFeatureEnabled(db))) {
+      return fail(c, "社群功能已被平台运营者关闭，暂无法修改群绑定", 403);
+    }
 
     const body = await c.req.json<Record<string, unknown>>().catch(() => null);
     if (!body) return fail(c, "请求体不是有效 JSON");

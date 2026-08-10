@@ -337,6 +337,11 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
    * WHERE ... AND (last_checkin_date IS NULL OR last_checkin_date < today)
    * 只有第一个并发请求能通过 WHERE 条件，第二个 UPDATE 影响 0 行即判定已签到。 */
   lastCheckinDate: text("last_checkin_date"),
+  /** 连续签到天数（docs/172）。用于连续签到递增奖励计算：
+   *  - 0 = 未签到（初始值）
+   *  - 1+ = 连续签到天数，断签重置为 1
+   *  与 lastCheckinDate 在同一个原子 UPDATE 中维护，无需额外事务。 */
+  checkinStreak: integer("checkin_streak").notNull().default(0),
 }, (t) => ({
   unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
   identityIdx: index("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),

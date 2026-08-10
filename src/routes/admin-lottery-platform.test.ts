@@ -9,7 +9,7 @@ import type { AppEnv } from "../bindings";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt } from "../middleware/auth";
 import { clearTestData, getTestDb } from "../test-setup";
-import { tenants, users, tenantMembers, lotteryDraws, lotteryEntries, platformTargets, platformDeliveries } from "../db/schema";
+import { tenants, users, tenantMembers, lotteryDraws, lotteryEntries, platformTargets, platformDeliveries, systemConfig } from "../db/schema";
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { getActivePlatformTarget } from "../services/platform/targets";
 import { executeBuiltinPlatformCommand } from "../services/platform/commands";
@@ -754,6 +754,63 @@ describe("platform-targets CRUD", () => {
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]?.status).toBe("failed");
     expect(deliveries[0]?.lastError).toContain("HTTP 502");
+  });
+
+  it("社群功能全局关闭时创建返回 403", async () => {
+    // 关闭社群功能
+    await db.insert(systemConfig).values({ key: "community_feature_enabled", value: "false" });
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetId: "g-403", targetName: "被禁群", activeDrawId: DRAW_ID }),
+    });
+    expect(res.status).toBe(403);
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.message).toContain("社群功能已被平台运营者关闭");
+  });
+
+  it("社群功能全局关闭时更新返回 403", async () => {
+    // 先创建一条绑定（社群功能默认开启）
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetId: "g-update-403", targetName: "待更新群", activeDrawId: DRAW_ID }),
+    });
+    expect(createRes.status).toBe(200);
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+
+    // 关闭社群功能
+    await db.insert(systemConfig).values({ key: "community_feature_enabled", value: "false" });
+
+    // 更新应被拒绝
+    const updateRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetName: "无权限改名" }),
+    });
+    expect(updateRes.status).toBe(403);
+    const data = await updateRes.json() as Record<string, unknown>;
+    expect(data.message).toContain("社群功能已被平台运营者关闭");
+  });
+
+  it("社群功能关闭后 GET 列表仍可读（只读模式）", async () => {
+    // 创建一条绑定
+    const app = await createApp();
+    await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetId: "g-readonly", targetName: "只读测试群", activeDrawId: DRAW_ID }),
+    });
+    // 关闭社群功能
+    await db.insert(systemConfig).values({ key: "community_feature_enabled", value: "false" });
+    // 列表仍可读
+    const listRes = await app.request("/api/admin/platform-targets", { headers: { ...authHeaders() } });
+    expect(listRes.status).toBe(200);
+    const data = await listRes.json() as Record<string, unknown>;
+    expect(data.items).toBeDefined();
   });
 
   it("未登录时返回 401", async () => {
