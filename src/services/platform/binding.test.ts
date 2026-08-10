@@ -119,9 +119,8 @@ describe("generateBindingCode + consumeBindingCode 端到端", () => {
 
     const consume = await consumeBindingCode(db, code, "telegram", "tg-999", "bind-target");
     expect(consume.ok).toBe(true);
-    if (consume.ok) {
-      expect(consume.merged).toBe(true);
-    }
+    // 用显式断言避免 discriminated union 收窄问题
+    expect(consume).toMatchObject({ ok: true, merged: true });
 
     // 验证码被标记为已使用
     const rows = await db.select().from(platformBindings).where(eq(platformBindings.code, code));
@@ -147,9 +146,9 @@ describe("generateBindingCode + consumeBindingCode 端到端", () => {
     // 二次消费：码已被标记 used=1，查询条件 used=0 匹配不到，返回"无效或已过期"
     const second = await consumeBindingCode(db, code, "telegram", "tg-222", "bind-user-3");
     expect(second.ok).toBe(false);
-    if (!second.ok) {
-      expect(second.reason).toContain("无效或已过期");
-    }
+    // 用显式断言避免 discriminated union 收窄问题
+    expect(second).toMatchObject({ ok: false });
+    expect((second as { ok: false; reason: string }).reason).toContain("无效或已过期");
 
     // 无效码消费失败
     const invalid = await consumeBindingCode(db, "INVALID", "telegram", "tg-333", "bind-user-3");
