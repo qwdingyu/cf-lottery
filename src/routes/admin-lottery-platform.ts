@@ -62,10 +62,24 @@ async function recordPlatformAudit(
   });
 }
 
-/** 从请求体中解析并校验内建命令开关（只接受布尔字段，未知键忽略） */
+/**
+ * 从请求体中解析并校验内建命令开关（布尔字段 + dailyCheckinPolicy 奖励次数）。
+ *
+ * 闭环要点（docs/171）：dailyCheckinPolicy.grantSpinCount 必须在此持久化，
+ * 否则 targets.ts 解析 builtinCommandsJson 时恒为 undefined，签到奖励永不生效。
+ * 这是「签到积分与抽奖次数打通」闭环中唯一缺失的一环，此前被完全忽略。
+ */
 function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinCommandConfig {
   const enabled = (key: string, fallback: boolean) =>
     typeof body[key] === "boolean" ? body[key] as boolean : fallback;
+  // 每日签到奖励次数：解析 dailyCheckinPolicy.grantSpinCount 为非负整数。
+  // 0 / 缺失 / 非法 → 视为不发放奖励（省略 dailyCheckinPolicy），与 targets.ts 语义一致。
+  const daily = body.dailyCheckinPolicy && typeof body.dailyCheckinPolicy === "object"
+    ? body.dailyCheckinPolicy as Record<string, unknown>
+    : undefined;
+  const grantSpinCount = daily && Number.isFinite(Number(daily.grantSpinCount))
+    ? Math.max(0, Math.trunc(Number(daily.grantSpinCount)))
+    : undefined;
   return {
     checkinEnabled: enabled("checkinEnabled", DEFAULT_BUILTIN_COMMANDS.checkinEnabled),
     spinEnabled: enabled("spinEnabled", DEFAULT_BUILTIN_COMMANDS.spinEnabled),
@@ -73,6 +87,10 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
     leaderboardEnabled: enabled("leaderboardEnabled", DEFAULT_BUILTIN_COMMANDS.leaderboardEnabled),
     myPrizeEnabled: enabled("myPrizeEnabled", DEFAULT_BUILTIN_COMMANDS.myPrizeEnabled),
     helpEnabled: enabled("helpEnabled", DEFAULT_BUILTIN_COMMANDS.helpEnabled),
+    flashEnabled: enabled("flashEnabled", DEFAULT_BUILTIN_COMMANDS.flashEnabled),
+    ...(grantSpinCount !== undefined && grantSpinCount > 0
+      ? { dailyCheckinPolicy: { grantSpinCount } }
+      : {}),
   };
 }
 

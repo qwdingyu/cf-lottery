@@ -106,6 +106,12 @@
                 <label class="checkbox-label"><input type="checkbox" v-model="form.myPrizeEnabled" /> {{ $t('adminQqAssistant.cmdMyPrize') }}</label>
                 <label class="checkbox-label"><input type="checkbox" v-model="form.helpEnabled" /> {{ $t('adminQqAssistant.cmdHelp') }}</label>
               </div>
+              <!-- 每日签到奖励抽奖次数（docs/171）：仅在启用 /签到 时显示 -->
+              <div v-if="form.checkinEnabled" class="form-group">
+                <label>{{ $t('adminQqAssistant.labelCheckinGrantSpin') }}</label>
+                <div class="form-hint">{{ $t('adminQqAssistant.hintCheckinGrantSpin') }}</div>
+                <input v-model.number="form.grantSpinCount" type="number" min="0" max="100" step="1" class="form-input" />
+              </div>
             </fieldset>
           </div>
           <div v-if="inboundSecret" class="modal-body secret-box">
@@ -174,6 +180,8 @@ const form = ref({
   leaderboardEnabled: true,
   myPrizeEnabled: true,
   helpEnabled: true,
+  /** 每日签到奖励抽奖次数（docs/171）：0 表示不奖励，整数 1+ 则在 /签到 时增加 spinsLeft */
+  grantSpinCount: 0,
 })
 
 const napcatInboundConfig = computed(() => {
@@ -233,6 +241,7 @@ function fillFormFromTarget(t: PlatformTarget) {
     form.value.leaderboardEnabled = cmds.leaderboardEnabled !== false
     form.value.myPrizeEnabled = cmds.myPrizeEnabled !== false
     form.value.helpEnabled = cmds.helpEnabled !== false
+    form.value.grantSpinCount = cmds.dailyCheckinPolicy?.grantSpinCount || 0
   } catch { /* 使用默认值 */ }
 }
 
@@ -261,6 +270,10 @@ async function saveTarget() {
       leaderboardEnabled: form.value.leaderboardEnabled,
       myPrizeEnabled: form.value.myPrizeEnabled,
       helpEnabled: form.value.helpEnabled,
+      /** 每日签到奖励次数（docs/171）：仅当 >0 时发送，后端 omit 0/非法值 */
+      ...(form.value.grantSpinCount > 0
+        ? { dailyCheckinPolicy: { grantSpinCount: form.value.grantSpinCount } }
+        : {}),
     }
     if (editingTarget.value) {
       /* 编辑时：baseUrl 留空则不更新 adapterConfig，填写则覆盖 */

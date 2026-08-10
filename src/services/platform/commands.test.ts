@@ -22,7 +22,7 @@ import {
 } from "../../db/schema";
 import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
-import { executeBuiltinPlatformCommand } from "./commands";
+import { executeBuiltinPlatformCommand, recognizeBuiltinCommand } from "./commands";
 import type { ExecuteBuiltinCommandInput, BuiltinCommandConfig } from "./types";
 
 let db: DbType;
@@ -41,6 +41,7 @@ const DEFAULT_BUILTIN_COMMANDS: BuiltinCommandConfig = {
   leaderboardEnabled: true,
   myPrizeEnabled: true,
   helpEnabled: true,
+  flashEnabled: true,
 };
 
 function makeInput(overrides?: Partial<ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig }>): ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig } {
@@ -665,5 +666,83 @@ describe("/签到 (executeCheckinCommand) 签到奖励", () => {
       .limit(1);
     expect(Number(entry?.spinsLeft ?? 0)).toBe(1); // 0 + grantSpinCount(1)
     expect(entry?.lastCheckinDate).toBe(new Date().toISOString().slice(0, 10));
+  });
+});
+
+// ── /秒杀 测试（docs/171 §断层B：打通免费→付费转化）──
+describe("/秒杀 (executeFlashCommand)", () => {
+  it("未配置购买链接时提示管理员未配置", async () => {
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "flash" }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("尚未配置购买链接");
+  });
+
+  it("配置购买链接时返回链接和展示文案", async () => {
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "flash",
+      builtinCommands: {
+        ...DEFAULT_BUILTIN_COMMANDS,
+        purchaseConfig: { url: "https://example.com/flash", label: "🔥 限时秒杀 ¥9.90" },
+      },
+    }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("🔥 限时秒杀 ¥9.90");
+    expect(result.reply).toContain("https://example.com/flash");
+  });
+
+  it("命令关闭时返回禁用提示", async () => {
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "flash",
+      builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, flashEnabled: false },
+    }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("未启用");
+  });
+
+  it("识别 /秒杀 和「购买」文本", () => {
+    expect(recognizeBuiltinCommand("/秒杀")).toBe("flash");
+    expect(recognizeBuiltinCommand("秒杀")).toBe("flash");
+    expect(recognizeBuiltinCommand("购买")).toBe("flash");
+  });
+});
+
+// ── 抽奖次数耗尽 → 购买引导（docs/171 §断层B）──
+describe("抽奖次数耗尽 → 购买引导", () => {
+  /** 播种一个 spinsLeft=0 的 entry，直接触发 spin.quota.exhausted */
+  async function seedExhaustedEntry() {
+    await seedInstantDraw();
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "qq",
+      identityValue: USER_ID,
+      displayName: "测试用户",
+      joinedAt: new Date().toISOString(),
+      spinsLeft: 0,
+      spinsTotalGranted: 5,
+    });
+  }
+
+  it("配置购买链接时，抽奖次数耗尽提示使用 /秒杀", async () => {
+    await seedExhaustedEntry();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "spin",
+      builtinCommands: {
+        ...DEFAULT_BUILTIN_COMMANDS,
+        purchaseConfig: { url: "https://example.com/flash", label: "🔥 限时秒杀" },
+      },
+    }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("抽奖次数已用完");
+    expect(result.reply).toContain("/秒杀");
+  });
+
+  it("未配置购买链接时，抽奖次数耗尽不误导用户", async () => {
+    await seedExhaustedEntry();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "spin" }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("抽奖次数已用完");
+    expect(result.reply).not.toContain("/秒杀");
   });
 });

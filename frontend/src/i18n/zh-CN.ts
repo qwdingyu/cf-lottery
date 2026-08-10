@@ -1904,6 +1904,8 @@ adminQqAssistant: {
     cmdLeaderboard: "排行榜",
     cmdMyPrize: "我的奖品",
     cmdHelp: "帮助",
+    labelCheckinGrantSpin: "每日签到奖励次数",
+    hintCheckinGrantSpin: "用户每日首次 /签到 获得的额外抽奖次数，0 表示不奖励",
     inboundSecretLabel: "入站密钥（仅显示一次，请立即复制）",
     inboundSecretHint: "将密钥配置到 NapCat/OneBot 回调中，用于校验群消息来源。",
     copyConfig: "复制回调配置",

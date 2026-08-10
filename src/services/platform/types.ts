@@ -15,7 +15,9 @@ export type BuiltinPlatformCommand =
   | "share"
   | "leaderboard"
   | "my_prize"
-  | "help";
+  | "help"
+  /** 秒杀/购买：返回配置的购买链接，打通免费→付费转化漏斗（docs/171 §断层B） */
+  | "flash";
 
 export type BuiltinCommandConfig = {
   checkinEnabled: boolean;
@@ -24,10 +26,19 @@ export type BuiltinCommandConfig = {
   leaderboardEnabled: boolean;
   myPrizeEnabled: boolean;
   helpEnabled: boolean;
+  /** 秒杀/购买命令开关（docs/171 §断层B） */
+  flashEnabled: boolean;
   dailyCheckinPolicy?: {
     grantSpinCount?: number;
   };
   replyOverrides?: Record<string, string>;
+  /** 购买链接配置：群内 /秒杀 时返回此链接，引导用户从免费积分→付费购买（docs/171 §断层B） */
+  purchaseConfig?: {
+    /** 购买链接（公开活动页 URL，用户点击后进入秒杀/购买流程） */
+    url: string;
+    /** 链接展示文案，如 "🔥 限时秒杀 ¥9.90" */
+    label: string;
+  };
 };
 
 export type PlatformTargetBinding = {
@@ -110,4 +121,5 @@ export const DEFAULT_BUILTIN_COMMANDS: BuiltinCommandConfig = {
   leaderboardEnabled: true,
   myPrizeEnabled: true,
   helpEnabled: true,
+  flashEnabled: true,
 };

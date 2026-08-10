@@ -37,6 +37,10 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
     ? parsed.dailyCheckinPolicy as Record<string, unknown>
     : undefined;
 
+  const purchase = parsed.purchaseConfig && typeof parsed.purchaseConfig === "object"
+    ? parsed.purchaseConfig as Record<string, unknown>
+    : undefined;
+
   return {
     checkinEnabled: asBoolean(parsed.checkinEnabled, DEFAULT_BUILTIN_COMMANDS.checkinEnabled),
     spinEnabled: asBoolean(parsed.spinEnabled, DEFAULT_BUILTIN_COMMANDS.spinEnabled),
@@ -44,6 +48,7 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
     leaderboardEnabled: asBoolean(parsed.leaderboardEnabled, DEFAULT_BUILTIN_COMMANDS.leaderboardEnabled),
     myPrizeEnabled: asBoolean(parsed.myPrizeEnabled, DEFAULT_BUILTIN_COMMANDS.myPrizeEnabled),
     helpEnabled: asBoolean(parsed.helpEnabled, DEFAULT_BUILTIN_COMMANDS.helpEnabled),
+    flashEnabled: asBoolean(parsed.flashEnabled, DEFAULT_BUILTIN_COMMANDS.flashEnabled),
     ...(daily ? {
       dailyCheckinPolicy: {
         grantSpinCount: Number.isFinite(Number(daily.grantSpinCount))
@@ -53,6 +58,14 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
     } : {}),
     ...(parsed.replyOverrides && typeof parsed.replyOverrides === "object"
       ? { replyOverrides: parsed.replyOverrides as Record<string, string> }
+      : {}),
+    ...(purchase && typeof purchase.url === "string" && purchase.url.trim()
+      ? {
+        purchaseConfig: {
+          url: String(purchase.url).trim(),
+          label: String(purchase.label || "立即购买").trim(),
+        },
+      }
       : {}),
   };
 }

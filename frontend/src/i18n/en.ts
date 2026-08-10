@@ -1928,6 +1928,8 @@ adminQqAssistant: {
     cmdLeaderboard: "Leaderboard",
     cmdMyPrize: "My Prize",
     cmdHelp: "Help",
+    labelCheckinGrantSpin: "Daily check-in reward spins",
+    hintCheckinGrantSpin: "Extra spins granted on the first /checkin each day; 0 disables the reward",
     inboundSecretLabel: "Inbound Secret (show once only)",
     inboundSecretHint: "Configure this secret in NapCat/OneBot callback to verify group messages.",
     copyConfig: "Copy callback config",

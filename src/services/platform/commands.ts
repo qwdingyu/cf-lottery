@@ -37,6 +37,7 @@ const COMMAND_LABELS: Record<BuiltinPlatformCommand, string> = {
   leaderboard: "/排行榜",
   my_prize: "/我的奖品",
   help: "/帮助",
+  flash: "/秒杀",
 };
 
 const COMMAND_ENABLED_KEYS: Record<Exclude<BuiltinPlatformCommand, "help">, keyof BuiltinCommandConfig> = {
@@ -45,6 +46,7 @@ const COMMAND_ENABLED_KEYS: Record<Exclude<BuiltinPlatformCommand, "help">, keyo
   share: "shareEnabled",
   leaderboard: "leaderboardEnabled",
   my_prize: "myPrizeEnabled",
+  flash: "flashEnabled",
 };
 
 export function recognizeBuiltinCommand(text: string): BuiltinPlatformCommand | null {
@@ -71,6 +73,10 @@ export function recognizeBuiltinCommand(text: string): BuiltinPlatformCommand | 
     case "帮助":
     case "/help":
       return "help";
+    case "/秒杀":
+    case "秒杀":
+    case "购买":
+      return "flash";
     default:
       return null;
   }
@@ -102,6 +108,7 @@ const COMMAND_HANDLERS: Record<string, (
   leaderboard: executeLeaderboardCommand,
   spin: executeSpinCommand,
   my_prize: executeMyPrizeCommand,
+  flash: executeFlashCommand,
 };
 
 export async function executeBuiltinPlatformCommand(
@@ -550,6 +557,14 @@ async function executeSpinCommand(
     };
   } catch (err) {
     if (err instanceof SpinBusinessError) {
+      // 次数耗尽时附加购买引导，打通「免费积分告急 → 秒杀购买」转化漏斗（docs/171 §断层B）。
+      // 仅当租户配置了购买链接才追加引导，避免误导无购买场景的用户。
+      if (err.code === "spin.quota.exhausted") {
+        const cfg = input.builtinCommands.purchaseConfig;
+        if (cfg && cfg.url) {
+          return { handled: true, reply: `${err.message}，可使用 /秒杀 购买更多机会。` };
+        }
+      }
       // SpinBusinessError 已经包含友好的中文错误消息
       return { handled: true, reply: err.message };
     }
@@ -625,5 +640,29 @@ async function executeMyPrizeCommand(
   return {
     handled: true,
     reply: `🎁 你的奖品（共 ${winners.length} 件）：\n${lines.join("\n")}\n为避免泄露，卡密不在群内展示。`,
+  };
+}
+
+/**
+ * 执行 /秒杀 命令（docs/171 §断层B）。
+ *
+ * 返回租户配置的购买链接，引导用户从免费积分→付费购买。
+ * 不处理支付（用户点击链接后在浏览器中完成支付流程）。
+ *
+ * 配置项（builtinCommandsJson）：
+ *   purchaseConfig.url  — 购买链接（公开活动页 URL）
+ *   purchaseConfig.label — 链接展示文案
+ */
+async function executeFlashCommand(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
+): Promise<PlatformCommandResult> {
+  const cfg = input.builtinCommands.purchaseConfig;
+  if (!cfg || !cfg.url) {
+    return { handled: true, reply: "管理员尚未配置购买链接，请联系管理员设置。可通过活动推广配置中的「购买链接」进行配置。" };
+  }
+  return {
+    handled: true,
+    reply: `${cfg.label}\n${cfg.url}`,
   };
 }

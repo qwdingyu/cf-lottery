@@ -261,6 +261,117 @@ describe("platform-targets CRUD", () => {
     expect((getData.item as Record<string, unknown>).assistantEnabled).toBe(0);
   });
 
+  it("创建时保存 dailyCheckinPolicy.grantSpinCount（签到奖励闭环，docs/171）", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "888888",
+        targetName: "签到奖励群",
+        activeDrawId: DRAW_ID,
+        checkinEnabled: true,
+        dailyCheckinPolicy: { grantSpinCount: 3 },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const [row] = await db
+      .select({ builtinCommandsJson: platformTargets.builtinCommandsJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const cmds = JSON.parse(String(row?.builtinCommandsJson || "{}"));
+    expect(cmds.dailyCheckinPolicy).toEqual({ grantSpinCount: 3 });
+    expect(cmds.checkinEnabled).toBe(true);
+  });
+
+  it("grantSpinCount=0 时省略 dailyCheckinPolicy（视为不奖励）", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "999999",
+        targetName: "无奖励群",
+        activeDrawId: DRAW_ID,
+        dailyCheckinPolicy: { grantSpinCount: 0 },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const [row] = await db
+      .select({ builtinCommandsJson: platformTargets.builtinCommandsJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const cmds = JSON.parse(String(row?.builtinCommandsJson || "{}"));
+    expect(cmds.dailyCheckinPolicy).toBeUndefined();
+  });
+
+  it("非法 grantSpinCount 时省略 dailyCheckinPolicy", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "101010",
+        targetName: "非法奖励群",
+        activeDrawId: DRAW_ID,
+        dailyCheckinPolicy: { grantSpinCount: "abc" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const [row] = await db
+      .select({ builtinCommandsJson: platformTargets.builtinCommandsJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const cmds = JSON.parse(String(row?.builtinCommandsJson || "{}"));
+    expect(cmds.dailyCheckinPolicy).toBeUndefined();
+  });
+
+  it("更新时保存 dailyCheckinPolicy.grantSpinCount", async () => {
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetId: "121212", targetName: "更新奖励群", activeDrawId: DRAW_ID }),
+    });
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+
+    const updateRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        builtinCommands: {
+          checkinEnabled: true,
+          spinEnabled: true,
+          shareEnabled: true,
+          leaderboardEnabled: true,
+          myPrizeEnabled: true,
+          helpEnabled: true,
+          flashEnabled: true,
+          dailyCheckinPolicy: { grantSpinCount: 5 },
+        },
+      }),
+    });
+    expect(updateRes.status).toBe(200);
+
+    const [row] = await db
+      .select({ builtinCommandsJson: platformTargets.builtinCommandsJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const cmds = JSON.parse(String(row?.builtinCommandsJson || "{}"));
+    expect(cmds.dailyCheckinPolicy).toEqual({ grantSpinCount: 5 });
+  });
+
   it("编辑时入站密钥留空不更新，填写则覆盖", async () => {
     const app = await createApp();
     const createRes = await app.request("/api/admin/platform-targets", {
