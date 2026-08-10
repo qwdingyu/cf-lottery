@@ -41,6 +41,8 @@ import { generateAccessToken } from "./access-token";
 import { generateBindingCode, consumeBindingCode, parseBindingCode } from "./binding";
 /** 持久化限流（docs/049）：防止命令被高频滥用，与公开端点限流共用 rate_limit_log 表 */
 import { checkDbRateLimit } from "../../lib/rate-limit";
+/** 社群功能运行时强制群人数上限（docs/180 §3.3） */
+import { enforceGroupMemberCap } from "./community-policy";
 
 const COMMAND_LABELS: Record<BuiltinPlatformCommand, string> = {
   checkin: "/签到",
@@ -171,6 +173,17 @@ export async function executeBuiltinPlatformCommand(
 
   if (input.command === "help") {
     return { handled: true, reply: renderHelpReply(input.builtinCommands) };
+  }
+
+  // 社群功能运行时强制群人数上限（docs/180 §3.3）：
+  // 在命令分发前检查，新成员超限时拒绝，存量成员放行。
+  const capCheck = await enforceGroupMemberCap(db, {
+    tenantId: input.tenantId,
+    platformTargetId: input.platformTargetId,
+    userId: input.user?.userId,
+  });
+  if (!capCheck.ok) {
+    return { handled: true, reply: capCheck.reply };
   }
 
   const handler = COMMAND_HANDLERS[input.command];
@@ -667,6 +680,17 @@ async function executeSpinCommand(
       ipHash: `${input.source.platform}:${input.source.groupId}`,
     });
 
+    // 次数耗尽走正常返回值路径（businessError 非空），不再抛 SpinBusinessError。
+    // 这样调用方无需在 catch 中区分「是否已扣次」——返回 businessError 即代表未扣次、
+    // 未产生任何 spin/winner 写入，杜绝无限消耗（P0）。
+    if (result.businessError) {
+      const quotaGuide =
+        result.businessErrorCode === "spin.quota.exhausted"
+          ? buildQuotaPurchaseGuide(input.builtinCommands)
+          : "";
+      return { handled: true, reply: `${result.businessError}${quotaGuide}` };
+    }
+
     if (result.won) {
       const prizeText = result.prizeName || result.tierName || "奖品";
       // 卡密奖品：群内回复只告知已私聊发送，实际卡密通过私聊传递。
@@ -696,22 +720,31 @@ async function executeSpinCommand(
     };
   } catch (err) {
     if (err instanceof SpinBusinessError) {
-      // 次数耗尽时附加购买引导，打通「免费积分告急 → 秒杀购买」转化漏斗（docs/171 §断层B）。
-      // 仅当租户同时满足以下条件才追加引导：
-      // 1. 配置了购买链接（purchaseConfig.url 非空）
-      // 2. flashEnabled 为 true（/秒杀 命令处于启用状态）
-      // 避免闪购引导被禁用时仍提示用户使用 /秒杀，造成「提示可用 → 实际不可用」的体验断层。
-      if (err.code === "spin.quota.exhausted") {
-        const cfg = input.builtinCommands.purchaseConfig;
-        if (cfg && cfg.url && input.builtinCommands.flashEnabled !== false) {
-          return { handled: true, reply: `${err.message}，可使用 /秒杀 购买更多机会。` };
-        }
-      }
       // SpinBusinessError 已经包含友好的中文错误消息
+      // 注意：spin.quota.exhausted 已改为返回值路径（businessError），
+      // 不会进入此 catch 块。此处只处理前置校验错误（draw not found 等）。
       return { handled: true, reply: err.message };
     }
     return { handled: true, reply: "抽奖失败，请稍后再试。" };
   }
+}
+
+/**
+ * 构建抽奖次数耗尽时的购买引导文案。
+ *
+ * 打通「免费积分告急 → 秒杀购买」转化漏斗（docs/171 §断层B）。
+ * 仅当租户同时满足以下条件才追加引导，避免「提示可用 → 实际不可用」的体验断层：
+ * 1. 配置了购买链接（purchaseConfig.url 非空）
+ * 2. flashEnabled 为 true（/秒杀 命令处于启用状态）
+ *
+ * @returns 引导文案（含前导逗号）；不满足条件时返回空字符串
+ */
+function buildQuotaPurchaseGuide(builtinCommands: BuiltinCommandConfig): string {
+  const cfg = builtinCommands.purchaseConfig;
+  if (cfg && cfg.url && builtinCommands.flashEnabled !== false) {
+    return "，可使用 /秒杀 购买更多机会。";
+  }
+  return "";
 }
 
 /**

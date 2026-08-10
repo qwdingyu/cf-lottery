@@ -54,6 +54,13 @@ export type SpinResult = {
   resultMode: "instant";
   algorithmVersion: string;
   replayed?: boolean;
+  /**
+   * 业务层失败标记（P0 防滥用）：非空表示一次 spin 因业务规则被拒绝而未产生任何写入。
+   * 与 SpinBusinessError 不同，它不抛异常、走正常返回值路径，调用方无需在 catch 中区分
+   * 「是否已扣次」。当前仅 spin.quota.exhausted 使用；其余校验错误仍走 SpinBusinessError。
+   */
+  businessError?: string;
+  businessErrorCode?: string;
 };
 
 type SpinInput = {
@@ -181,7 +188,13 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         ));
 
       if ((deduct.rowsAffected ?? 0) === 0) {
-        throw new SpinBusinessError("抽奖次数已用完", 409, "spin.quota.exhausted");
+        // 次数耗尽：CAS 未命中（WHERE spinsLeft>=1 无行），因此本次绝对未扣次。
+        // 返回业务失败结果而非抛异常，避免调用方误判「已扣次需补偿」。
+        // 返回值路径保证外部无需在 catch 中做扣次补偿（P0 防无限消耗）。
+        return {
+          kind: "quotaExhausted" as const,
+          spinsLeft: Math.max(0, Number(entry.spinsLeft ?? 0)),
+        };
       }
 
       const tiers = await tx
@@ -400,6 +413,28 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
 
     if (outcome.kind === "replay") {
       return buildSpinResultFromRow(db, draw, entry, outcome.row, true);
+    }
+
+    // 次数耗尽：返回业务失败结果（won=false，无 spin 产生，未扣次）
+    if (outcome.kind === "quotaExhausted") {
+      return {
+        spinId: "",
+        entryId: entry.id,
+        won: false,
+        prizeIndex: -1,
+        tierId: null,
+        tierName: null,
+        prizeName: null,
+        prizeCode: null,
+        spinsLeft: outcome.spinsLeft,
+        spinsUsed: maxSpins,
+        maxSpinsPerEntry: maxSpins,
+        resultFamily: "lottery" as const,
+        resultMode: "instant" as const,
+        algorithmVersion: INSTANT_ALGORITHM_VERSION,
+        businessError: "抽奖次数已用完",
+        businessErrorCode: "spin.quota.exhausted",
+      };
     }
 
     return finalizeFreshResult(db, draw, entry, outcome.row, maxSpins);

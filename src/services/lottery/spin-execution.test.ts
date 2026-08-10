@@ -21,7 +21,7 @@ import {
   systemConfig,
   spinsLog,
 } from "../../db/schema";
-import { performInstantSpin, SpinBusinessError } from "./spin-execution";
+import { performInstantSpin } from "./spin-execution";
 import { performDraw, notifyInstantSpinWinner, sendWinnerNotifications } from "./draw-execution";
 import { joinDraw, type JoinDrawResult } from "./participation";
 
@@ -184,23 +184,30 @@ describe("performInstantSpin", () => {
     expect(spinLog).toMatchObject({ delta: -1, balanceAfter: 0, refId: r1.spinId });
   });
 
-  it("maxSpins=1 第二次 spin 409", async () => {
+  it("maxSpins=1 第二次 spin 返回业务失败（businessError），不抛异常", async () => {
     const { slug } = await seedInstantDraw(db, client, { maxSpins: 1 });
     await joinDraw(db, slug, "once@test.com");
-    await performInstantSpin(db, {
+    const first = await performInstantSpin(db, {
       slug,
       identityType: "email",
       identityValue: "once@test.com",
       idempotencyKey: "k1",
     });
-    await expect(
-      performInstantSpin(db, {
-        slug,
-        identityType: "email",
-        identityValue: "once@test.com",
-        idempotencyKey: "k2",
-      }),
-    ).rejects.toMatchObject({ httpStatus: 409, code: "spin.quota.exhausted" } satisfies Partial<SpinBusinessError>);
+    // 第一次正常返回（无 businessError，表示成功扣次）
+    expect(first.businessError).toBeUndefined();
+    // weight=100 有码 → 必中
+    const second = await performInstantSpin(db, {
+      slug,
+      identityType: "email",
+      identityValue: "once@test.com",
+      idempotencyKey: "k2",
+    });
+    // 第二次不抛异常，通过 businessError 告知调用方次数耗尽（P0 防无限消耗）
+    expect(second.businessError).toBe("抽奖次数已用完");
+    expect(second.businessErrorCode).toBe("spin.quota.exhausted");
+    expect(second.spinId).toBe("");       // 无 spin 写入
+    expect(second.spinsLeft).toBe(0);      // 确认未扣次
+    expect(second.won).toBe(false);
   });
 
   it("单档有码时确定性中奖并写 winners.spin_id；可二次中奖（多奖 UNIQUE）", async () => {
@@ -547,12 +554,18 @@ describe("performInstantSpin", () => {
       Awaited<ReturnType<typeof performInstantSpin>>
     >[];
     const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
-    expect(ok.length).toBe(1);
-    expect(rejected.length).toBe(1);
-    expect(ok[0]!.value.won).toBe(true);
-    expect(ok[0]!.value.spinsLeft).toBe(0);
-    const err = rejected[0]!.reason as SpinBusinessError;
-    expect(err).toMatchObject({ httpStatus: 409, code: "spin.quota.exhausted" });
+    // quotaExhausted 不再抛异常，两个都 resolve（一个成功，一个 businessError）
+    expect(ok.length).toBe(2);
+    expect(rejected.length).toBe(0);
+    // 第一个成功：中奖
+    const winner = ok.find((r) => r.value.won === true);
+    expect(winner).toBeDefined();
+    expect(winner!.value.spinsLeft).toBe(0);
+    // 第二个失败：businessError（未扣次，无 spin 写入）
+    const exhausted = ok.find((r) => r.value.businessErrorCode === "spin.quota.exhausted");
+    expect(exhausted).toBeDefined();
+    expect(exhausted!.value.businessError).toBe("抽奖次数已用完");
+    expect(exhausted!.value.spinId).toBe("");
 
     const spins = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, id));
     expect(spins.length).toBe(1);

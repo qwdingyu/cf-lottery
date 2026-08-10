@@ -1462,6 +1462,11 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
       ipHash,
     });
 
+    // 业务层失败（如 quota exhausted）：返回错误信息，不进入后续流程
+    if (result.businessError) {
+      return fail(c, result.businessError, 400);
+    }
+
     // 首次成功（含未中）核销 OTP；回放不核销（通常已在上方 early-return）
     if (otpToConsumeId && !result.replayed) {
       await consumeEmailAccessCode(db, otpToConsumeId);
