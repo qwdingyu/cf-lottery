@@ -686,7 +686,7 @@ it("并发签到原子性：两个并发 /签到 只有第一个增加 spinsLeft
     // 注意：同一 DB 连接的 Promise.all 无法复现真实并发（SQLite 单写者模型下，
     // UPDATE 序列化；但 JavaScript 微任务队列中两个 SELECT 可能都先完成）。
     // 此测试主要验证最终不变量：spinsLeft 只增加一次，而非两次。
-    const results = await Promise.all([
+    await Promise.all([
       executeBuiltinPlatformCommand(db, makeInput({
         command: "checkin",
         builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
