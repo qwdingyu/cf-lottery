@@ -574,3 +574,32 @@ async function buildSpinResultFromRow(
     replayed,
   };
 }
+
+/**
+ * 清理已过期（超出保留窗口）的幂等抽奖执行记录（lottery_spins）。
+ *
+ * 为什么需要清理：
+ * - lottery_spins.idempotency_key 是「同一消息回放不重复扣次」的幂等键
+ *   （docs/116），其唯一约束只对消息重试窗口（秒级~小时级）有意义，
+ *   超过窗口后旧记录已无幂等价值。
+ * - 用户中奖结果已固化到 lottery_winners 表（永久保留），抽奖执行流水
+ *   有独立 spins_log 表承载审计（docs/175），故 lottery_spins 表可安全清理。
+ * - 不做清理会导致 Turso 免费层 rows/storage 被无限增长的 spins 记录拖垮，
+ *   与 cleanExpiredTokens / cleanExpiredBindings 的短时效清理策略一致。
+ *
+ * 保留窗口默认 7 天：既覆盖任何延迟投递/补发场景，又避免无界增长。
+ * 删除只按 createdAt 过滤，不依赖租户/开奖维度，避免跨租户误删。
+ *
+ * @param db 数据库实例
+ * @param maxAgeMs 保留时长（默认 7 天）
+ * @returns 删除的行数
+ */
+export async function cleanExpiredSpins(db: DbType, maxAgeMs = 7 * 24 * 60 * 60 * 1000): Promise<number> {
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+  const result = await db
+    .delete(lotterySpins)
+    .where(
+      sql`${lotterySpins.createdAt} < ${cutoff}`
+    );
+  return result.rowsAffected ?? 0;
+}

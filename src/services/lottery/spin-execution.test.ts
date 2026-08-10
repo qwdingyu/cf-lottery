@@ -21,7 +21,7 @@ import {
   systemConfig,
   spinsLog,
 } from "../../db/schema";
-import { performInstantSpin } from "./spin-execution";
+import { performInstantSpin, cleanExpiredSpins } from "./spin-execution";
 import { performDraw, notifyInstantSpinWinner, sendWinnerNotifications } from "./draw-execution";
 import { joinDraw, type JoinDrawResult } from "./participation";
 
@@ -944,5 +944,120 @@ describe("performInstantSpin", () => {
         idempotencyKey: "k1",
       }),
     ).rejects.toMatchObject({ httpStatus: 402, code: "spin.payment.required" });
+  });
+});
+/**
+ * cleanExpiredSpins 幂等抽奖执行记录清理测试
+ *
+ * 覆盖：
+ * - 超出保留窗口的记录被删除
+ * - 保留窗口内的记录不受影响
+ * - 表为空时清理不影响（无报错）
+ * - 自定义保留窗口参数生效
+ */
+describe("cleanExpiredSpins", () => {
+  let db: DbType;
+  let client: Client;
+
+  beforeEach(async () => {
+    const t = await getTestDb();
+    db = t.db;
+    client = t.client;
+    await clearTestData(client);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("删除超出保留窗口的记录，保留窗口内的记录不受影响", async () => {
+    // 准备：插入一条超旧的记录（30 天前）
+    const oldSpinId = crypto.randomUUID();
+    const oldCreatedAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    await db.insert(lotterySpins).values({
+      id: oldSpinId,
+      tenantId: "t-clean",
+      drawId: crypto.randomUUID(),
+      entryId: crypto.randomUUID(),
+      idempotencyKey: "old-key",
+      won: 0,
+      createdAt: oldCreatedAt,
+    });
+
+    // 准备：插入一条较新的记录（1 小时前）
+    const recentSpinId = crypto.randomUUID();
+    const recentCreatedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    await db.insert(lotterySpins).values({
+      id: recentSpinId,
+      tenantId: "t-clean",
+      drawId: crypto.randomUUID(),
+      entryId: crypto.randomUUID(),
+      idempotencyKey: "recent-key",
+      won: 0,
+      createdAt: recentCreatedAt,
+    });
+
+    // 准备：插入一条刚好在边界上的记录（7 天前 - 1 秒，在窗口内）
+    const boundarySpinId = crypto.randomUUID();
+    const boundaryCreatedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000 + 1000).toISOString();
+    await db.insert(lotterySpins).values({
+      id: boundarySpinId,
+      tenantId: "t-clean",
+      drawId: crypto.randomUUID(),
+      entryId: crypto.randomUUID(),
+      idempotencyKey: "boundary-key",
+      won: 0,
+      createdAt: boundaryCreatedAt,
+    });
+
+    // 执行：保留 7 天（默认参数）
+    const deleted = await cleanExpiredSpins(db);
+
+    // 断言：旧记录被删除
+    const oldRows = await db.select().from(lotterySpins).where(eq(lotterySpins.id, oldSpinId));
+    expect(oldRows).toHaveLength(0);
+
+    // 断言：新记录保留
+    const recentRows = await db.select().from(lotterySpins).where(eq(lotterySpins.id, recentSpinId));
+    expect(recentRows).toHaveLength(1);
+
+    // 断言：边界记录保留（略小于 7 天，在窗口内）
+    const boundaryRows = await db.select().from(lotterySpins).where(eq(lotterySpins.id, boundarySpinId));
+    expect(boundaryRows).toHaveLength(1);
+
+    // 断言：删除数至少为 1（旧记录）
+    expect(deleted).toBeGreaterThanOrEqual(1);
+  });
+
+  it("空表调用不影响", async () => {
+    // 确保表为空
+    await db.delete(lotterySpins);
+
+    // 执行不应报错
+    const deleted = await cleanExpiredSpins(db);
+    expect(deleted).toBe(0);
+  });
+
+  it("自定义保留窗口参数生效", async () => {
+    // 准备：插入一条 2 小时前的记录
+    const spinId = crypto.randomUUID();
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    await db.insert(lotterySpins).values({
+      id: spinId,
+      tenantId: "t-clean",
+      drawId: crypto.randomUUID(),
+      entryId: crypto.randomUUID(),
+      idempotencyKey: "custom-key",
+      won: 0,
+      createdAt: twoHoursAgo,
+    });
+
+    // 执行：保留 1 小时（2 小时前的记录应被删除）
+    const deleted = await cleanExpiredSpins(db, 60 * 60 * 1000);
+    expect(deleted).toBe(1);
+
+    const rows = await db.select().from(lotterySpins).where(eq(lotterySpins.id, spinId));
+    expect(rows).toHaveLength(0);
   });
 });

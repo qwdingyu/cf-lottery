@@ -38,6 +38,7 @@ import {
 import { processPendingPlatformDeliveriesForAllTenants } from "./services/platform/delivery";
 import { cleanExpiredTokens } from "./services/platform/access-token";
 import { cleanExpiredBindings } from "./services/platform/binding";
+import { cleanExpiredSpins } from "./services/lottery/spin-execution";
 
 const app = new Hono<AppEnv>();
 
@@ -80,6 +81,8 @@ export async function runScheduledMaintenance(
   const cleanedTokens = await cleanExpiredTokens(db);
   // P2-2 清理：已过期/已使用的绑定码，最长保留 24 小时
   const cleanedBindings = await cleanExpiredBindings(db);
+  // P3 清理：已过期的幂等抽奖执行记录，最长保留 7 天
+  const cleanedSpins = await cleanExpiredSpins(db);
   // 平台运营后台依赖快照展示租户用量；放进统一维护任务，保证 scheduled 和手动入口行为一致。
   const usageSnapshots = await refreshAllTenantSnapshots(db);
   // 数据保留清理：根据系统配置定期删除过期数据（兜底：未配置 = 不清理）
@@ -90,7 +93,7 @@ export async function runScheduledMaintenance(
     emailFrom: env.EMAIL_FROM || "",
   });
 
-  return { draws, webhooks, platformDeliveries, cleanedRateLimitLogs, cleanedTokens, cleanedBindings, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
+  return { draws, webhooks, platformDeliveries, cleanedRateLimitLogs, cleanedTokens, cleanedBindings, cleanedSpins, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
 }
 
 /**
