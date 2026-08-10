@@ -63,11 +63,13 @@ async function recordPlatformAudit(
 }
 
 /**
- * 从请求体中解析并校验内建命令开关（布尔字段 + dailyCheckinPolicy 奖励次数）。
+ * 从请求体中解析并校验内建命令开关（布尔字段 + dailyCheckinPolicy 奖励次数 + purchaseConfig 购买链接）。
  *
- * 闭环要点（docs/171）：dailyCheckinPolicy.grantSpinCount 必须在此持久化，
- * 否则 targets.ts 解析 builtinCommandsJson 时恒为 undefined，签到奖励永不生效。
- * 这是「签到积分与抽奖次数打通」闭环中唯一缺失的一环，此前被完全忽略。
+ * 闭环要点（docs/171）：
+ * 1. dailyCheckinPolicy.grantSpinCount 必须在此持久化，
+ *    否则 targets.ts 解析 builtinCommandsJson 时恒为 undefined，签到奖励永不生效。
+ * 2. purchaseConfig 必须在此持久化，否则 /秒杀 命令恒返回"管理员未配置"。
+ *    两者都是「签到积分与抽奖次数打通」和「免费积分→付费购买转化漏斗」的闭环关键。
  */
 function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinCommandConfig {
   const enabled = (key: string, fallback: boolean) =>
@@ -80,6 +82,20 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
   const grantSpinCount = daily && Number.isFinite(Number(daily.grantSpinCount))
     ? Math.max(0, Math.trunc(Number(daily.grantSpinCount)))
     : undefined;
+
+  // 购买链接配置：解析 purchaseConfig.url 和 purchaseConfig.label。
+  // url 必须为非空字符串，label 为空时使用默认文案"立即购买"。
+  // 与 targets.ts 的 parseBuiltinCommandConfig 语义一致。
+  const purchase = body.purchaseConfig && typeof body.purchaseConfig === "object"
+    ? body.purchaseConfig as Record<string, unknown>
+    : undefined;
+  const purchaseUrl = purchase && typeof purchase.url === "string" && purchase.url.trim()
+    ? String(purchase.url).trim()
+    : "";
+  const purchaseLabel = purchaseUrl && typeof purchase.label === "string" && purchase.label.trim()
+    ? String(purchase.label).trim()
+    : (purchaseUrl ? "立即购买" : "");
+
   return {
     checkinEnabled: enabled("checkinEnabled", DEFAULT_BUILTIN_COMMANDS.checkinEnabled),
     spinEnabled: enabled("spinEnabled", DEFAULT_BUILTIN_COMMANDS.spinEnabled),
@@ -90,6 +106,9 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
     flashEnabled: enabled("flashEnabled", DEFAULT_BUILTIN_COMMANDS.flashEnabled),
     ...(grantSpinCount !== undefined && grantSpinCount > 0
       ? { dailyCheckinPolicy: { grantSpinCount } }
+      : {}),
+    ...(purchaseUrl
+      ? { purchaseConfig: { url: purchaseUrl, label: purchaseLabel } }
       : {}),
   };
 }

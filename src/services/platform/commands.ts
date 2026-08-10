@@ -558,10 +558,13 @@ async function executeSpinCommand(
   } catch (err) {
     if (err instanceof SpinBusinessError) {
       // 次数耗尽时附加购买引导，打通「免费积分告急 → 秒杀购买」转化漏斗（docs/171 §断层B）。
-      // 仅当租户配置了购买链接才追加引导，避免误导无购买场景的用户。
+      // 仅当租户同时满足以下条件才追加引导：
+      // 1. 配置了购买链接（purchaseConfig.url 非空）
+      // 2. flashEnabled 为 true（/秒杀 命令处于启用状态）
+      // 避免闪购引导被禁用时仍提示用户使用 /秒杀，造成「提示可用 → 实际不可用」的体验断层。
       if (err.code === "spin.quota.exhausted") {
         const cfg = input.builtinCommands.purchaseConfig;
-        if (cfg && cfg.url) {
+        if (cfg && cfg.url && input.builtinCommands.flashEnabled !== false) {
           return { handled: true, reply: `${err.message}，可使用 /秒杀 购买更多机会。` };
         }
       }
