@@ -13,7 +13,7 @@ import { tenants, users, tenantMembers, lotteryDraws, lotteryEntries, platformTa
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { getActivePlatformTarget } from "../services/platform/targets";
 import { executeBuiltinPlatformCommand } from "../services/platform/commands";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
@@ -372,6 +372,81 @@ describe("platform-targets CRUD", () => {
       .limit(1);
     const cmds = JSON.parse(String(row?.builtinCommandsJson || "{}"));
     expect(cmds.dailyCheckinPolicy).toEqual({ grantSpinCount: 5 });
+  });
+
+  /**
+   * 端到端闭环验证：admin API 持久化 → targets.ts 读取 → commands.ts 执行。
+   * 使用真实 admin API 创建 target，再通过 getActivePlatformTarget 和 executeBuiltinPlatformCommand
+   * 验证完整数据流，不依赖任何 mock 或模拟对象。
+   */
+  it("端到端闭环：admin API 创建 grantSpinCount → getActivePlatformTarget 读取 → /签到 执行 → spinsLeft 增加", async () => {
+    const app = await createApp();
+    // 创建独立抽奖活动，确保时间窗口有效（seedBase 的 startAt===endAt 会立即过期）
+    const e2eDrawId = crypto.randomUUID();
+    const e2eSlug = "e2e-closed-loop-slug";
+    const now = new Date();
+    await db.insert(lotteryDraws).values({
+      id: e2eDrawId,
+      tenantId: TENANT_ID,
+      title: "闭环验证活动",
+      status: "open",
+      participationMode: "open",
+      experienceType: "wheel",
+      resultMode: "instant",
+      activityKind: "lottery",
+      drawTrigger: "manual",
+      allocationPolicy: "random",
+      publicSlug: e2eSlug,
+      startAt: new Date(now.getTime() - 3600_000).toISOString(),
+      endAt: new Date(now.getTime() + 86400_000 * 7).toISOString(),
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    });
+
+    // Step 1: 通过 admin API 创建 target，配置 dailyCheckinPolicy.grantSpinCount = 3
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "e2e-999",
+        targetName: "闭环验证群",
+        activeDrawId: e2eDrawId,
+        checkinEnabled: true,
+        dailyCheckinPolicy: { grantSpinCount: 3 },
+      }),
+    });
+    expect(createRes.status).toBe(200);
+    const createData = await createRes.json() as Record<string, unknown>;
+    expect(createData.ok).toBe(true);
+
+    // Step 2: 通过 getActivePlatformTarget 读取 target（生产真实路径：inbound.ts → handleInboundPlatformEvent）
+    const binding = await getActivePlatformTarget(db, { platform: "qq", targetId: "e2e-999" });
+    expect(binding).not.toBeNull();
+    expect(binding!.builtinCommands.dailyCheckinPolicy).toEqual({ grantSpinCount: 3 });
+
+    // Step 3: 执行 /签到 命令，使用 getActivePlatformTarget 返回的 builtinCommands
+    const checkinResult = await executeBuiltinPlatformCommand(db, {
+      tenantId: TENANT_ID,
+      platformTargetId: binding!.id,
+      drawId: e2eDrawId,
+      publicSlug: e2eSlug,
+      command: "checkin",
+      builtinCommands: binding!.builtinCommands,
+      user: { identityType: "qq", identityValue: "e2e_user_001", displayName: "闭环测试用户" },
+      source: { platform: "qq", groupId: "e2e-999", messageId: "msg-001" },
+    });
+    expect(checkinResult.handled).toBe(true);
+    // 奖励提示：签到成功，获得 3 次抽奖机会
+    expect(checkinResult.reply).toContain("获得 3 次抽奖机会");
+
+    // Step 4: 验证 spinsLeft 增加了 grantSpinCount(3)（初始 0 + 3 = 3）
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.identityValue, "e2e_user_001")))
+      .limit(1);
+    expect(entry).not.toBeUndefined();
+    expect(Number(entry!.spinsLeft ?? 0)).toBe(3);
   });
 
   it("创建时保存 purchaseConfig（秒杀购买闭环，docs/171 §断层B）", async () => {
