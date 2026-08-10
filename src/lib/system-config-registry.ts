@@ -1,4 +1,4 @@
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { DbType } from "../db/client";
 import { systemConfig } from "../db/schema";
 import definitions from "./system-config-definitions.json";
@@ -185,4 +185,19 @@ export async function readSystemConfigMap(db: DbType, keys = SYSTEM_CONFIG_KEYS)
 
 export function adminSystemConfigDefinitions(): SystemConfigDefinition[] {
   return [...SYSTEM_CONFIG_DEFINITIONS];
+}
+
+/**
+ * 社群功能全局开关（docs/174）：
+ * 读取 system_config 的 community_feature_enabled（默认 "true"）。
+ * 未配置（无记录）或值为 "true" 时视为启用，仅显式 "false" 关闭。
+ * 供 L2 后端路由（admin-lottery-platform.ts）和入站命令执行链路（inbound.ts）共用。
+ */
+export async function isCommunityFeatureEnabled(db: DbType): Promise<boolean> {
+  const [row] = await db
+    .select({ value: systemConfig.value })
+    .from(systemConfig)
+    .where(eq(systemConfig.key, "community_feature_enabled"))
+    .limit(1);
+  return row ? row.value !== "false" : true;
 }

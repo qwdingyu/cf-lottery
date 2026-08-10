@@ -16,6 +16,7 @@ import { timingSafeEqualString } from "../lib/crypto-compare";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { getActivePlatformTarget } from "../services/platform/targets";
 import { hashPlatformInboundSecret } from "../services/platform/security";
+import { getPlatformAdapter } from "../services/platform/adapter-factory";
 import type { InboundPlatformEvent } from "../services/platform/types";
 
 export const platformTelegramRoute = new Hono<AppEnv>();
@@ -87,5 +88,34 @@ platformTelegramRoute.post("/message", async (c) => {
 
   const result = await handleInboundPlatformEvent(db, event, target);
   if (!result) return ok(c, { handled: false });
+
+  // 处理命令侧写的私聊消息（如卡密私发）。
+  // Telegram Bot API 使用 sendMessage 统一发送群聊和私聊消息，
+  // chat_id 为用户 ID 即私聊，为群 ID 即群聊。
+  if (result.privateMessages?.length) {
+    const adapterConfig = target.adapterConfig as Record<string, unknown>;
+    const botToken = String(adapterConfig.botToken || "").trim();
+    if (botToken) {
+      const adapter = getPlatformAdapter("telegram", adapterConfig);
+      for (const pm of result.privateMessages) {
+        try {
+          await adapter.send({
+            platform: "telegram",
+            targetType: "private",
+            targetId: pm.userId,
+            type: "text",
+            text: pm.text,
+          });
+        } catch {
+          // 私发失败，在群回复中追加降级提示，不中断整个请求
+          result.reply += "\n\n⚠️ 私聊发送失败，请通过网页后台查看卡密。";
+        }
+      }
+    } else {
+      // 适配器未配置 botToken，无法发送私聊，追加降级提示
+      result.reply += "\n\n⚠️ 系统未配置 Telegram Bot Token，无法私聊发送卡密。请通过网页后台查看。";
+    }
+  }
+
   return ok(c, { handled: result.handled, reply: result.reply });
 });

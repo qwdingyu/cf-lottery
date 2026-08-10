@@ -630,12 +630,24 @@ async function executeSpinCommand(
 
     if (result.won) {
       const prizeText = result.prizeName || result.tierName || "奖品";
-      const codeText = result.prizeCode
-        ? "\n卡密已发放。为避免群内泄露，请通过主办方后台核验或后续私聊/网页查看能力领取。"
-        : "";
+      // 卡密奖品：群内回复只告知已私聊发送，实际卡密通过私聊传递。
+      // 路由层（platform-qq.ts）在私聊发送失败后会在回复中追加降级提示。
+      if (result.prizeCode) {
+        return {
+          handled: true,
+          reply: `🎉 恭喜你抽中了「${prizeText}」！\n💰 卡密已私聊发送，请查看私聊消息。\n剩余抽奖次数：${result.spinsLeft} 次`,
+          privateMessages: [
+            {
+              userId: input.user.identityValue,
+              groupId: input.source.groupId,
+              text: `🎉 恭喜你抽中了「${prizeText}」！\n\n🔑 卡密：${result.prizeCode}\n\n请妥善保管，勿将卡密泄露给他人。`,
+            },
+          ],
+        };
+      }
       return {
         handled: true,
-        reply: `🎉 恭喜你抽中了「${prizeText}」！${codeText}\n剩余抽奖次数：${result.spinsLeft} 次`,
+        reply: `🎉 恭喜你抽中了「${prizeText}」！\n剩余抽奖次数：${result.spinsLeft} 次`,
       };
     }
 

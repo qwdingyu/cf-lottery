@@ -139,6 +139,19 @@ export type ExecuteBuiltinCommandInput = {
 export type PlatformCommandResult = {
   reply: string;
   handled: boolean;
+  /**
+   * 命令执行后的侧写私聊消息（如卡密私发）。
+   * 由路由层（platform-qq.ts）在实际发送后根据结果决定是否降级回复。
+   *
+   * userId: 目标用户 QQ 号
+   * groupId: 临时会话上下文群 ID（NapCat 非好友临时消息需要）
+   * text: 私聊消息内容
+   */
+  privateMessages?: Array<{
+    userId: string;
+    groupId: string;
+    text: string;
+  }>;
 };
 
 export const DEFAULT_BUILTIN_COMMANDS: BuiltinCommandConfig = {

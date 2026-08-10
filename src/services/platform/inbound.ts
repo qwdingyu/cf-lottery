@@ -11,6 +11,7 @@ import type { DbType } from "../../db/client";
 import { executeBuiltinPlatformCommand, recognizeBuiltinCommand } from "./commands";
 import { getActivePlatformTarget } from "./targets";
 import type { InboundPlatformEvent, PlatformCommandResult, PlatformTargetBinding } from "./types";
+import { isCommunityFeatureEnabled } from "../../lib/system-config-registry";
 
 /**
  * 处理入站平台事件（如 QQ 群消息）。
@@ -40,6 +41,15 @@ export async function handleInboundPlatformEvent(
     return {
       handled: true,
       reply: "当前群未绑定活动，请管理员先在后台启用群助手。",
+    };
+  }
+
+  // 社群功能全局开关（docs/174）：平台运营者关闭后，已存在的绑定停止响应命令（业务层闭环）。
+  // 这里必须再次校验，而不仅靠 L2 路由的 POST/PUT 403——否则关闭后存量绑定仍会执行 /签到 /抽奖 等命令。
+  if (!(await isCommunityFeatureEnabled(db))) {
+    return {
+      handled: true,
+      reply: "社群功能已被平台运营者暂停，当前群助手暂不响应命令，请稍后再试。",
     };
   }
 

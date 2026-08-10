@@ -13,6 +13,7 @@ import { tenants, users, tenantMembers, lotteryDraws, lotteryEntries, platformTa
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { getActivePlatformTarget } from "../services/platform/targets";
 import { executeBuiltinPlatformCommand } from "../services/platform/commands";
+import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { and, eq } from "drizzle-orm";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -912,6 +913,55 @@ it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → ch
     expect(listRes.status).toBe(200);
     const data = await listRes.json() as Record<string, unknown>;
     expect(data.items).toBeDefined();
+  });
+
+  it("社群功能关闭后 handleInboundPlatformEvent 不响应命令（业务层闭环）", async () => {
+    // 创建一条绑定（社群功能默认开启）
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "g-inbound-403",
+        targetName: "入站闭环测试群",
+        activeDrawId: DRAW_ID,
+        checkinEnabled: true,
+        dailyCheckinPolicy: { grantSpinCount: 3 },
+      }),
+    });
+    expect(createRes.status).toBe(200);
+
+    // 获取绑定对象
+    const binding = await getActivePlatformTarget(db, { platform: "qq", targetId: "g-inbound-403" });
+    expect(binding).not.toBeNull();
+
+    // 关闭社群功能
+    await db.insert(systemConfig).values({ key: "community_feature_enabled", value: "false" });
+
+    // 通过 handleInboundPlatformEvent 执行 /签到 命令（模拟真实入站消息处理链路）
+    const result = await handleInboundPlatformEvent(db, {
+      platform: "qq",
+      sourceId: "g-inbound-403",
+      userId: "inbound_user_001",
+      eventType: "message",
+      text: "/签到",
+      messageId: "msg-inbound-001",
+      senderDisplayName: "入站闭环测试用户",
+      raw: {},
+    }, binding);
+
+    // 断言：返回阻止回复，且命令未被执行
+    expect(result).not.toBeNull();
+    expect(result!.handled).toBe(true);
+    expect(result!.reply).toContain("社群功能已被平台运营者暂停");
+
+    // 验证 spinsLeft 未被增加（命令未被真正执行）
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.identityValue, "inbound_user_001")))
+      .limit(1);
+    expect(entry).toBeUndefined();
   });
 
   it("未登录时返回 401", async () => {

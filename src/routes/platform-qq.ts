@@ -12,6 +12,7 @@ import { timingSafeEqualString } from "../lib/crypto-compare";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { getActivePlatformTarget } from "../services/platform/targets";
 import { hashPlatformInboundSecret } from "../services/platform/security";
+import { getPlatformAdapter } from "../services/platform/adapter-factory";
 
 export const platformQQRoute = new Hono<AppEnv>();
 
@@ -78,5 +79,34 @@ platformQQRoute.post("/message", async (c) => {
   }, target);
 
   if (!result) return ok(c, { handled: false });
+
+  // 处理命令侧写的私聊消息（如卡密私发）。
+  // 私聊发送失败时在群回复中追加降级提示，不阻塞主流程。
+  if (result.privateMessages?.length) {
+    const adapterConfig = target.adapterConfig as Record<string, unknown>;
+    const baseUrl = String(adapterConfig.baseUrl || "").trim();
+    if (baseUrl) {
+      const adapter = getPlatformAdapter("qq", adapterConfig);
+      for (const pm of result.privateMessages) {
+        try {
+          await adapter.send({
+            platform: "qq",
+            targetType: "private",
+            targetId: pm.userId,
+            groupId: pm.groupId,
+            type: "text",
+            text: pm.text,
+          });
+        } catch {
+          // 私发失败，在群回复中追加降级提示，不中断整个请求
+          result.reply += "\n\n⚠️ 私聊发送失败，可能是您关闭了临时会话权限。请检查QQ隐私设置（设置→隐私→临时会话），或通过网页后台查看卡密。";
+        }
+      }
+    } else {
+      // 适配器未配置 baseUrl，无法发送私聊，追加降级提示
+      result.reply += "\n\n⚠️ 系统未配置QQ适配器，无法私聊发送卡密。请通过网页后台查看。";
+    }
+  }
+
   return ok(c, { handled: result.handled, reply: result.reply });
 });

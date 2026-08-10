@@ -17,11 +17,12 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
 import { and, eq, desc, count } from "drizzle-orm";
-import { platformTargets, platformDeliveries, lotteryDraws, auditLogs, systemConfig } from "../db/schema";
+import { platformTargets, platformDeliveries, lotteryDraws, auditLogs } from "../db/schema";
 import { createPlatformInboundSecret, hashPlatformInboundSecret } from "../services/platform/security";
 import { DEFAULT_BUILTIN_COMMANDS, type BuiltinCommandConfig } from "../services/platform/types";
 import { parseStoredCheckinPolicy } from "../services/platform/checkin-reward";
 import { getPlatformAdapter, getSupportedPlatforms, getSupportedProviders } from "../services/platform/adapter-factory";
+import { isCommunityFeatureEnabled } from "../lib/system-config-registry";
 
 /**
  * 有效平台列表动态从适配器工厂获取，新增平台只需在 adapter-factory.ts 注册，
@@ -197,21 +198,7 @@ async function resolveDraw(db: ReturnType<typeof getDb>, tenantId: string, activ
   return draw || null;
 }
 
-/**
- * 社群功能全局开关（docs/172）：
- * 读取 system_config 的 community_feature_enabled（默认 "true"，平台运营者可在 L3 /platform/config 配置）。
- * 当关闭时，租户后台禁止「创建/更新」平台目标绑定（QQ/Telegram 群助手），实现平台级一键停服。
- * 读取 system_config 是后台管理操作，不在公开参与热路径。
- */
-async function isCommunityFeatureEnabled(db: ReturnType<typeof getDb>): Promise<boolean> {
-  const [row] = await db
-    .select({ value: systemConfig.value })
-    .from(systemConfig)
-    .where(eq(systemConfig.key, "community_feature_enabled"))
-    .limit(1);
-  // 未配置（无记录）或值为 "true" 时视为启用，仅显式 "false" 关闭
-  return row ? row.value !== "false" : true;
-}
+/** 社群功能全局开关从 system-config-registry.ts 导入 */
 
 export function setupPlatformRoutes(route: Hono<AppEnv>) {
   // ── 列表 ──

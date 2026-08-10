@@ -591,7 +591,10 @@ describe("POST /api/platform/qq/message", () => {
     expect(body.reply).toContain("恭喜你抽中了");
     expect(body.reply).not.toContain("QQ-CODE-1");
     expect(body.reply).not.toContain("SECRET-1");
-    expect(body.reply).toContain("群内泄露");
+    // 卡密奖品不再在群内展示"群内泄露"提示，而是改为私聊发送
+    expect(body.reply).toContain("卡密已私聊发送");
+    // 由于测试环境没有真实 NapCat 服务，私聊发送会失败，回复中应包含降级提示
+    expect(body.reply).toContain("私聊发送失败");
 
     const entries = await db
       .select()
