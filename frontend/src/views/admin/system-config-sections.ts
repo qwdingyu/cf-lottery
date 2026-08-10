@@ -4,7 +4,10 @@
  */
 export type SystemConfigSectionId =
   | 'general'
+  | 'activity'
+  | 'payment'
   | 'security'
+  | 'email'
   | 'ops'
   | 'plans'
 
@@ -24,10 +27,28 @@ export const SYSTEM_CONFIG_SECTIONS: readonly SystemConfigSectionDef[] = [
     groups: ['基础信息', '平台运营'],
   },
   {
+    id: 'activity',
+    label: '活动设置',
+    description: '抽奖默认值、活动规模与参与方式开关。',
+    groups: ['抽奖设置', '安全与验证'],
+  },
+  {
+    id: 'payment',
+    label: '秒杀/支付',
+    description: '秒杀订单超时、价格边界与库存预警。',
+    groups: ['秒杀/支付'],
+  },
+  {
     id: 'security',
     label: '安全设置',
     description: '验证码有效期、频率限制等安全参数。',
     groups: ['安全设置'],
+  },
+  {
+    id: 'email',
+    label: '邮件通知',
+    description: '发信展示、通知重试、营销提醒与中奖通知开关。',
+    groups: ['邮件通知', '营销邮件'],
   },
   {
     id: 'ops',

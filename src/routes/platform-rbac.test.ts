@@ -15,7 +15,7 @@ import { platformRedemptionCodesRoute } from "./platform-redemption-codes";
 import { platformRoute } from "./platform";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt, verifyJwt } from "../middleware/auth";
-import { lotteryDraws, adminAuditLogs, platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
+import { lotteryDraws, adminAuditLogs, emailDeliveries, platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -450,6 +450,11 @@ describe("RBAC-lite 路由分层", () => {
     }, TEST_ENV);
     expect(((await deliveryRes.json()) as { deliveries?: unknown[] }).deliveries).toEqual([]);
 
+    const emailDeliveryRes = await app.request("/api/platform/email-deliveries", {
+      headers: { ...(await authHeader(PLATFORM_ID)) },
+    }, TEST_ENV);
+    expect(((await emailDeliveryRes.json()) as { deliveries?: unknown[] }).deliveries).toEqual([]);
+
     // 传 tenantId → 允许查看该租户（指定租户只读）
     const scopedRes = await app.request(`/api/platform/audit-logs?tenantId=${TENANT_ID}`, {
       headers: { ...(await authHeader(PLATFORM_ID)) },
@@ -516,6 +521,49 @@ describe("RBAC-lite 路由分层", () => {
     const [audit] = await db.select().from(adminAuditLogs).where(eq(adminAuditLogs.action, "platform.webhook_delivery.retry")).limit(1);
     expect(audit?.tenantId).toBe(TENANT_ID);
     expect(audit?.targetId).toBe("delivery-1");
+  });
+
+  it("平台 owner/operator 可查看并重试邮件投递且写入平台审计", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_operator" });
+    const app = createTestApp();
+
+    await db.insert(emailDeliveries).values({
+      id: "email-delivery-1",
+      tenantId: TENANT_ID,
+      drawId: "draw-email-rbac",
+      sourceType: "draw_reminder",
+      sourceId: "draw-email-rbac:user@test.com",
+      recipientEmail: "user@test.com",
+      template: "draw_reminder",
+      templateDataJson: JSON.stringify({ drawName: "邮件投递测试", shareUrl: "slug", reminderText: "60 分钟" }),
+      status: "failed",
+      attemptCount: 1,
+      lastError: "previous fail",
+    });
+
+    const listRes = await app.request(`/api/platform/email-deliveries?tenantId=${TENANT_ID}&status=failed`, {
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json() as { deliveries: Array<{ id: string; recipientEmail: string }> };
+    expect(listBody.deliveries).toHaveLength(1);
+    expect(listBody.deliveries[0]).toMatchObject({ id: "email-delivery-1", recipientEmail: "user@test.com" });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "mail-rbac-1" }), { status: 200 }));
+    const retryRes = await app.request("/api/platform/email-deliveries/email-delivery-1/retry", {
+      method: "POST",
+      headers: await authHeader(PLATFORM_ID),
+    }, { ...TEST_ENV, RESEND_API_KEY: "test-key", EMAIL_FROM: "noreply@test.com" });
+    expect(retryRes.status).toBe(200);
+
+    const [delivery] = await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, "email-delivery-1")).limit(1);
+    expect(delivery?.status).toBe("sent");
+    expect(delivery?.providerMessageId).toBe("mail-rbac-1");
+
+    const [audit] = await db.select().from(adminAuditLogs).where(eq(adminAuditLogs.action, "platform.email_delivery.retry")).limit(1);
+    expect(audit?.tenantId).toBe(TENANT_ID);
+    expect(audit?.targetId).toBe("email-delivery-1");
   });
 
   it("租户侧兑换入口保留在 /api/admin/redemption-codes/redeem，并用 CAS 防止重复使用", async () => {
