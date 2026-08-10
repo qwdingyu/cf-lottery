@@ -22,6 +22,7 @@ import { platformSystemConfigRoute } from "./routes/platform-system-config";
 import { platformRedemptionCodesRoute } from "./routes/platform-redemption-codes";
 import { platformRoute } from "./routes/platform";
 import { platformQQRoute } from "./routes/platform-qq";
+import { platformTelegramRoute } from "./routes/platform-telegram";
 import { adminMediaRoute, mediaRoute } from "./routes/media";
 import { enforceRequestBodyLimit } from "./lib/body-limit";
 import { timingSafeEqualString } from "./lib/crypto-compare";
@@ -217,6 +218,7 @@ app.route("/api/system-config", systemConfigRoute);
 app.route("/api/platform/system-config", platformSystemConfigRoute);
 app.route("/api/platform/redemption-codes", platformRedemptionCodesRoute);
 app.route("/api/platform/qq", platformQQRoute);
+app.route("/api/platform/telegram", platformTelegramRoute);
 app.route("/api/platform", platformRoute);
 
 // 健康检查：只暴露布尔连通性，不回传内部错误字符串（防侦察，docs/070 LOW #12）
