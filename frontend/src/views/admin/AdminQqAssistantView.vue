@@ -93,6 +93,11 @@
               <div v-if="!editingTarget" class="form-hint">{{ $t('adminQqAssistant.hintAdapterBaseUrl') }}</div>
               <input v-model="form.adapterBaseUrl" class="form-input" :placeholder="editingTarget ? $t('adminQqAssistant.placeholderAdapterBaseUrlEdit') : $t('adminQqAssistant.placeholderAdapterBaseUrl')" />
             </div>
+            <div class="form-group">
+              <label>{{ $t('adminQqAssistant.labelBotId') }}</label>
+              <div class="form-hint">{{ $t('adminQqAssistant.hintBotId') }}</div>
+              <input v-model="form.botId" class="form-input" :placeholder="$t('adminQqAssistant.placeholderBotId')" />
+            </div>
             <div v-if="editingTarget" class="form-group">
               <label>{{ $t('adminQqAssistant.labelNewInboundSecret') }}</label>
               <div class="form-hint">{{ $t('adminQqAssistant.hintNewInboundSecret') }}</div>
