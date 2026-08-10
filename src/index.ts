@@ -6,7 +6,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AppEnv, Bindings } from "./bindings";
-import { createClient } from "@libsql/client";
+import { createClient, type Client } from "@libsql/client";
 import { createDb } from "./db/client";
 import { and, sql } from "drizzle-orm";
 import { getEnv } from "./lib/platform";
@@ -236,22 +236,56 @@ app.use("*", async (c, next) => {
   }
 });
 
+// ── 进程级 DB client 缓存（docs/191 §5.1）──────────────────────────────
+// 背景：本地 SQLite（VPS 生产形态）下，DB 中间件每请求 createClient 是最大开销
+// （实测 35.6× 于连接复用，占单请求耗时约 74%，把吞吐锁死在 ~500 req/s）。
+// 设计约束：
+//  - 单库多租户架构（tenantId 隔离）下进程内只需 1 个连接，按 (url, token) 键缓存安全；
+//  - Workers isolate 内 env 固定，缓存生命周期与 isolate 一致，无跨隔离串号风险；
+//  - createClient 抛异常（如 URL 非法）时不缓存，下次请求重试，保持原 dbInitError 语义；
+//  - 并发首请求同时 cache miss 时用 pending Promise 防抖，只创建一次连接。
+const dbClientCache = new Map<string, Client>();
+const dbClientPending = new Map<string, Promise<Client>>();
+
+/**
+ * 获取（或创建并缓存）libsql client。
+ * WAL 设置持久化到库文件，只需在建连后执行一次；失败忽略（只读库等保持原 .catch 语义）。
+ * @param url  TURSO_URL（file: 本地 SQLite 或 libsql:// 远程）
+ * @param token TURSO_TOKEN（远程库需要；本地库可空）
+ */
+export async function getCachedDbClient(url: string, token?: string): Promise<Client> {
+  const key = `${url}|${token || ""}`;
+  const cached = dbClientCache.get(key);
+  if (cached) return cached;
+
+  let pending = dbClientPending.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const client = createClient({ url, authToken: token });
+      if (url.startsWith("file:")) {
+        await client.execute("PRAGMA journal_mode = WAL").catch(() => {});
+      }
+      dbClientCache.set(key, client);
+      return client;
+    })().finally(() => {
+      dbClientPending.delete(key);
+    });
+    dbClientPending.set(key, pending);
+  }
+  return pending;
+}
+
 // ── 数据库初始化中间件 ──
 // 如果 TURSO_URL 未配置（开发环境），db 为 undefined，health 端点返回 db: false。
 // 如果初始化抛异常（凭证错误等），标记 dbInitError 让 health 端点和 getDb 区分场景。
 // 用 getEnv 读取：Node（server.ts）下回退 process.env，无需等待 env 注入中间件。
+// client 走进程级缓存复用（getCachedDbClient），不再每请求 createClient。
 app.use("*", async (c, next) => {
   try {
     const url = getEnv(c, "TURSO_URL");
     if (url) {
-      const db = createDb(createClient({ url, authToken: getEnv(c, "TURSO_TOKEN") }));
-      c.set("db", db);
-      // WAL 允许读写并发，但不会取消 SQLite 的单写者约束。
-      // 本地库的 WAL 状态会持久化到数据库文件；这里保留兼容性初始化，
-      // 线上是否生效仍应在启动巡检时执行 PRAGMA journal_mode 验证。
-      if (url.startsWith("file:")) {
-        db.run(sql`PRAGMA journal_mode = WAL`).catch(() => {});
-      }
+      const client = await getCachedDbClient(url, getEnv(c, "TURSO_TOKEN"));
+      c.set("db", createDb(client));
     } else {
       c.set("db", undefined);
     }
