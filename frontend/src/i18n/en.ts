@@ -1189,6 +1189,9 @@ export default {
     adminInstantResultHint: "Instant mode: users spin for results — no host “Draw Now”",
     adminTierWeightPlaceholder: "Weight",
     adminTierWeightHint: "Instant spin weight; higher = more likely for this tier",
+    adminTierProbabilityLabel: "Weight share",
+    adminTierProbabilityHint: "Estimated per-spin tier share from current weights only; actual fulfillment is still constrained by stock, tier slots, remaining user spins, and available codes.",
+    adminTierProbabilityUnavailable: "Set at least one weight above 0 so instant spins have a valid random allocation.",
     adminViralLeaderboard: "Show invite leaderboard",
     adminViralLeaderboardHint: "Participants can see who invited the most people",
     /** claim: social sharing shows leaderboard only, no impact on purchase priority */

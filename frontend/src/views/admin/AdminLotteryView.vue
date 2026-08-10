@@ -1158,8 +1158,27 @@
                       :placeholder="$t('lottery.adminTierWeightPlaceholder')"
                       :title="$t('lottery.adminTierWeightHint')"
                     />
+                    <span
+                      v-if="form.resultMode === 'instant'"
+                      class="tier-probability"
+                      :class="{ 'is-zero': tierProbabilities[idx]?.weight === 0 }"
+                      :title="$t('lottery.adminTierProbabilityHint')"
+                    >
+                      {{ $t('lottery.adminTierProbabilityLabel') }} {{ tierProbabilities[idx]?.label || '0%' }}
+                    </span>
                     <button type="button" class="btn btn-ghost btn-xs" @click="removeTier(idx)">✕</button>
                   </div>
+                  <p
+                    v-if="shouldShowTierProbability"
+                    class="tier-probability-summary"
+                    :class="{ 'is-warning': !hasPositiveTierWeight }"
+                  >
+                    {{
+                      hasPositiveTierWeight
+                        ? $t('lottery.adminTierProbabilityHint')
+                        : $t('lottery.adminTierProbabilityUnavailable')
+                    }}
+                  </p>
                   <div class="tier-actions">
                     <button type="button" class="btn btn-ghost btn-xs" :disabled="form.tiers.length >= 10" @click="addTier">
                       {{ $t('lottery.adminAddTier') }}
@@ -1758,6 +1777,7 @@ import {
 import { emptyLotteryEditorForm } from './lottery/form-defaults'
 import { buildFlashSaleDirectChecklist } from './lottery/flash-sale-readiness'
 import { buildPromotionConfigPayload, growthFieldsFromDraw, sanitizeRitualPhrasesForSave } from './lottery/growth-config'
+import { buildTierProbabilities, normalizeTierWeight } from './lottery/tier-probability'
 import {
   isFieldScopedTemplate,
   resolveEditorFieldVisibility,
@@ -2305,9 +2325,10 @@ async function saveDrawTiers(drawId: string) {
       prizeId: tier.prizeId,
       tierName: tier.tierName || t('lottery.adminTierName', { n: i + 1 }),
       winnerCount: Math.max(1, Number(tier.winnerCount) || 1),
-      // instant：未填 weight 默认 1，避免发布预检权重和=0
+      // instant：尊重运营显式填写的 0，0 表示该档暂不进入随机分配。
+      // 不能用 `Number(weight) || 1`，否则会把 0 悄悄改成 1，造成超出运营预期的发放风险。
       ...(isInstant
-        ? { weight: Math.max(0, Math.floor(Number(tier.weight) || 1)) }
+        ? { weight: normalizeTierWeight(tier.weight) }
         : {}),
     }))
   if (validTiers.length === 0) return
@@ -2445,6 +2466,15 @@ const createPathHint = computed(() => {
 const editorVisibility = computed(() =>
   resolveEditorFieldVisibility(activeTemplateId.value, { isEditing: isEditing.value }),
 )
+
+const tierProbabilities = computed(() => buildTierProbabilities(form.value.tiers))
+const hasPositiveTierWeight = computed(() => tierProbabilities.value.some((item) => item.weight > 0))
+const shouldShowTierProbability = computed(() => (
+  form.value.activityKind === 'lottery'
+  && form.value.resultMode === 'instant'
+  && editorVisibility.value.tiers
+  && form.value.tiers.length > 0
+))
 
 /** 当前高亮步骤（点击步骤条时更新；不强制线性 Wizard） */
 const createStepFocus = ref(1)

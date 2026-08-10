@@ -50,6 +50,8 @@ export default defineConfig({
       "frontend/src/views/admin/lottery/growth-config.test.ts",
       // docs/134/137：直付秒杀发布清单，避免商品/价格/码池路径继续断裂
       "frontend/src/views/admin/lottery/flash-sale-readiness.test.ts",
+      // docs/187：即时抽奖 weight 占比展示与保存语义同源，避免运营误配概率
+      "frontend/src/views/admin/lottery/tier-probability.test.ts",
       // docs/115：drawAt ↔ drawTrigger 推断（定时开奖接线）
       "frontend/src/lib/activity-defaults.test.ts",
       "frontend/src/views/admin/lottery/ops-utils.schedule.test.ts",

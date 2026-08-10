@@ -1162,6 +1162,9 @@ export default {
     adminInstantResultHint: "即时开奖：用户自行 spin 出结果，不提供「立即开奖」",
     adminTierWeightPlaceholder: "权重",
     adminTierWeightHint: "即时抽奖概率权重；越大越容易抽中本档",
+    adminTierProbabilityLabel: "权重占比",
+    adminTierProbabilityHint: "仅按当前各档 weight 估算单次命中本档的占比；实际发放还受库存、名额、用户剩余次数和卡密可用量限制。",
+    adminTierProbabilityUnavailable: "请至少配置一个大于 0 的权重，否则即时抽奖无法形成有效随机分配。",
     adminViralLeaderboard: "展示邀请排行榜",
     adminViralLeaderboardHint: "参与者可见谁邀请了最多人",
     /** claim 秒杀：社交传播只展示排行榜，不影响购买优先级 */
