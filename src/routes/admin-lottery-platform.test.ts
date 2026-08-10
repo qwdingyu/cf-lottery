@@ -9,8 +9,10 @@ import type { AppEnv } from "../bindings";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt } from "../middleware/auth";
 import { clearTestData, getTestDb } from "../test-setup";
-import { tenants, users, tenantMembers, lotteryDraws, platformTargets, platformDeliveries } from "../db/schema";
+import { tenants, users, tenantMembers, lotteryDraws, lotteryEntries, platformTargets, platformDeliveries } from "../db/schema";
 import { hashPlatformInboundSecret } from "../services/platform/security";
+import { getActivePlatformTarget } from "../services/platform/targets";
+import { executeBuiltinPlatformCommand } from "../services/platform/commands";
 import { eq } from "drizzle-orm";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
