@@ -76,6 +76,12 @@ export const accessTokens = sqliteTable("access_tokens", {
   tokenHash: text("token_hash").notNull(),
   /** 用途：card_code 等 */
   purpose: text("purpose").notNull().default("card_code"),
+  /**
+   * 令牌所属 drawId（P0-1 安全修复：跨租户隔离）。
+   * 非空时，public-access.ts 查询 winner 时按 drawId 过滤，防止同一 userId 跨租户看到其他租户的卡密。
+   * 空字符串表示不限制（向后兼容已存令牌）。
+   */
+  drawId: text("draw_id").notNull().default(""),
   /** 过期时间（ISO 字符串） */
   expiresAt: text("expires_at").notNull(),
   /** 是否已使用（一次性） */

@@ -176,6 +176,44 @@ export async function dispatchPlatformDeliveries(
   return { sent, failed, errors };
 }
 
+/**
+ * 记录私聊发送失败到 platformDeliveries 审计表（P1-1）。
+ *
+ * 在 QQ/Telegram 路由层的私聊发送 catch 块中调用，将失败信息写入投递审计表，
+ * 方便后台排查，不影响主流程。
+ *
+ * @param db 数据库实例
+ * @param target 平台目标绑定（含 tenantId、platformTargetId、targetId）
+ * @param platform 平台标识（qq / telegram）
+ * @param targetUserId 目标用户 ID
+ * @param textPreview 消息文本预览（前 50 字符）
+ * @param errorMessage 错误描述
+ */
+export async function logPrivateMessageFailure(
+  db: DbType,
+  target: { tenantId: string; id: string; targetId: string },
+  platform: string,
+  targetUserId: string,
+  textPreview: string,
+  errorMessage: string,
+): Promise<void> {
+  try {
+    await db.insert(platformDeliveries).values({
+      id: crypto.randomUUID(),
+      tenantId: target.tenantId,
+      platformTargetId: target.id,
+      platform,
+      targetId: target.targetId,
+      eventType: "private_message",
+      status: "failed",
+      lastError: errorMessage,
+      payloadJson: JSON.stringify({ targetUserId, textPreview: textPreview.slice(0, 50) }),
+    });
+  } catch {
+    // 审计日志写入失败不阻塞主流程
+  }
+}
+
 /** 从 payloadJson 中提取渲染后的消息文本 */
 function extractRenderedMessage(payloadJson: string, fallback: string): string {
   try {

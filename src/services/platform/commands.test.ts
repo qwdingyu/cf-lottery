@@ -20,6 +20,9 @@ import {
   tenants,
   lotterySpins,
   spinsLog,
+  authIdentities,
+  platformBindings,
+  users,
 } from "../../db/schema";
 import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
@@ -531,6 +534,127 @@ describe("executeBuiltinPlatformCommand 通用兜底", () => {
     const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "unknown_cmd" as never } as never));
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("暂不支持");
+  });
+});
+
+// ── /绑定 测试（docs/179） ──
+
+describe("/绑定 (executeBindCommand)", () => {
+  // 需要 users 关联（Phase B 前置条件），否则 /绑定 直接拒绝
+  async function seedUserAndIdentity() {
+    await db.insert(users).values({
+      id: "cmd-user-qq",
+      username: "cmd-bind-qq-user",
+      email: "bind-qq@example.com",
+      passwordHash: "test-hash",
+      createdAt: new Date().toISOString(),
+    });
+    await db.insert(authIdentities).values({
+      id: crypto.randomUUID(),
+      userId: "cmd-user-qq",
+      provider: "qq",
+      providerUserId: USER_ID,
+    });
+  }
+
+  it("无参数生成绑定码：绑定码通过私聊下发，群内不回显明文（P0-2 安全修复）", async () => {
+    await seedUserAndIdentity();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "bind",
+      user: { identityType: "qq", identityValue: USER_ID, userId: "cmd-user-qq" },
+      source: { platform: "qq", groupId: GROUP_ID, raw: "/绑定" },
+    }));
+    expect(result.handled).toBe(true);
+    // 群内回复不应包含绑定码明文（安全关键断言）
+    expect(result.reply).not.toMatch(/[A-Z0-9]{6}/);
+    expect(result.reply).toContain("私聊");
+    // 绑定码应通过私聊下发
+    expect(result.privateMessages).toBeDefined();
+    expect(result.privateMessages).toHaveLength(1);
+    expect(result.privateMessages![0].userId).toBe(USER_ID);
+    // 私聊中应包含 6 位绑定码
+    const codeMatch = result.privateMessages![0].text.match(/[A-Z0-9]{6}/);
+    expect(codeMatch).toBeTruthy();
+    // 数据库中应存在一条 pending 绑定记录
+    const rows = await db.select().from(platformBindings);
+    expect(rows.length).toBe(1);
+    expect(rows[0].sourceUserId).toBe("cmd-user-qq");
+  });
+
+  it("带参数消费绑定码：将当前平台身份合并到发起方 userId", async () => {
+    await seedUserAndIdentity();
+    // 生成绑定码
+    const gen = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "bind",
+      user: { identityType: "qq", identityValue: USER_ID, userId: "cmd-user-qq" },
+      source: { platform: "qq", groupId: GROUP_ID, raw: "/绑定" },
+    }));
+    const codeMatch = gen.privateMessages![0].text.match(/[A-Z0-9]{6}/);
+    expect(codeMatch).toBeTruthy();
+    const code = codeMatch![0];
+
+    // 目标平台（telegram）用户带码执行 /绑定 <code>
+    await db.insert(users).values({
+      id: "cmd-user-tg",
+      username: "cmd-bind-tg-user",
+      email: "bind-tg@example.com",
+      passwordHash: "test-hash",
+      createdAt: new Date().toISOString(),
+    });
+    await db.insert(authIdentities).values({
+      id: crypto.randomUUID(),
+      userId: "cmd-user-tg",
+      provider: "telegram",
+      providerUserId: "tg-12345",
+    });
+
+    const consume = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "bind",
+      user: { identityType: "telegram", identityValue: "tg-12345", userId: "cmd-user-tg" },
+      source: { platform: "telegram", groupId: "-100123", raw: `/绑定 ${code}` },
+    }));
+    expect(consume.handled).toBe(true);
+    expect(consume.reply).toContain("绑定成功");
+
+    // 验证 telegram 身份的 userId 已被重写为发起方 userId
+    const [identity] = await db
+      .select()
+      .from(authIdentities)
+      .where(and(
+        eq(authIdentities.provider, "telegram"),
+        eq(authIdentities.providerUserId, "tg-12345"),
+      ));
+    expect(identity.userId).toBe("cmd-user-qq");
+  });
+
+  it("同一平台不能自我绑定", async () => {
+    await seedUserAndIdentity();
+    const gen = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "bind",
+      user: { identityType: "qq", identityValue: USER_ID, userId: "cmd-user-qq" },
+      source: { platform: "qq", groupId: GROUP_ID, raw: "/绑定" },
+    }));
+    const codeMatch = gen.privateMessages![0].text.match(/[A-Z0-9]{6}/);
+    const code = codeMatch![0];
+
+    // 同一平台（qq）尝试消费绑定码
+    const consume = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "bind",
+      user: { identityType: "qq", identityValue: USER_ID, userId: "cmd-user-qq" },
+      source: { platform: "qq", groupId: GROUP_ID, raw: `/绑定 ${code}` },
+    }));
+    expect(consume.handled).toBe(true);
+    expect(consume.reply).toContain("两个不同平台");
+  });
+
+  it("未关联 userId 时拒绝生成绑定码", async () => {
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "bind",
+      user: { identityType: "qq", identityValue: USER_ID, userId: undefined },
+      source: { platform: "qq", groupId: GROUP_ID, raw: "/绑定" },
+    }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("未找到你的身份信息");
   });
 });
 

@@ -39,6 +39,8 @@ import {
 import { generateAccessToken } from "./access-token";
 /** 跨平台身份绑定（docs/179）：用于 QQ/Telegram 身份关联 */
 import { generateBindingCode, consumeBindingCode, parseBindingCode } from "./binding";
+/** 持久化限流（docs/049）：防止命令被高频滥用，与公开端点限流共用 rate_limit_log 表 */
+import { checkDbRateLimit } from "../../lib/rate-limit";
 
 const COMMAND_LABELS: Record<BuiltinPlatformCommand, string> = {
   checkin: "/签到",
@@ -799,6 +801,10 @@ async function executeCardCodeCommand(
   db: DbType,
   input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
 ): Promise<PlatformCommandResult> {
+  // 限流：每人每 30 秒最多查询一次卡密，防止高频生成访问令牌
+  if (!await checkDbRateLimit(db, `card_code:${input.user.userId}`, 1, 30000)) {
+    return { handled: true, reply: "操作过于频繁，请稍后再试。" };
+  }
   // 1. 查找用户在该活动的参与记录
   const entry = await findPlatformEntryId(db, input);
   if (!entry) {
@@ -890,7 +896,8 @@ async function buildCardCodeAccessUrl(
 ): Promise<string | undefined> {
   if (!input.user.userId || !input.appOrigin) return undefined;
   try {
-    const { token } = await generateAccessToken(db, input.user.userId, "card_code");
+    // P0-1 安全修复：令牌绑定 drawId，确保 Web 页只返回该 draw 下的卡密（跨租户隔离）
+    const { token } = await generateAccessToken(db, input.user.userId, "card_code", { drawId: input.drawId });
     const origin = input.appOrigin.replace(/\/+$/, "");
     return `${origin}/access/card-codes?token=${encodeURIComponent(token)}`;
   } catch (err) {
@@ -951,6 +958,10 @@ async function executeBindCommand(
 
   // 模式 1：无参数 → 生成绑定码
   if (!code) {
+    // 限流：每人每 60 秒最多生成一次绑定码，防止滥用填充 platform_bindings 表
+    if (!await checkDbRateLimit(db, `bind_gen:${input.user.userId}`, 1, 60000)) {
+      return { handled: true, reply: "操作过于频繁，请稍后再试。" };
+    }
     try {
       const { code: bindingCode, expiresAt } = await generateBindingCode(
         db,
@@ -959,9 +970,16 @@ async function executeBindCommand(
         input.user.userId,
       );
       const expiresIn = Math.round((new Date(expiresAt).getTime() - Date.now()) / 1000 / 60);
+      // 安全：绑定码通过私聊下发，不在群内显示明文（防群内截胡，P0-2 安全修复）
+      // 私聊失败时，路由层会在群回复追加降级提示，但不会显示绑定码明文
       return {
         handled: true,
-        reply: `🔗 你的绑定码：${bindingCode}\n\n请在另一个平台（如 ${input.source.platform === "qq" ? "Telegram" : "QQ"} 群）发送 /绑定 ${bindingCode} 完成关联。\n⏰ 绑定码 ${expiresIn} 分钟内有效，请尽快操作。`,
+        reply: `🔗 绑定码已通过私聊发送，请查看私聊消息。\n\n⏰ 绑定码 ${expiresIn} 分钟内有效，请尽快在另一个平台操作。`,
+        privateMessages: [{
+          userId: input.user.identityValue,
+          groupId: input.source.groupId,
+          text: `🔗 你的绑定码：${bindingCode}\n\n请在另一个平台（如 ${input.source.platform === "qq" ? "Telegram" : "QQ"} 群）发送 /绑定 ${bindingCode} 完成关联。\n⏰ 绑定码 ${expiresIn} 分钟内有效，请尽快操作。\n\n⚠️ 请勿将绑定码分享给任何人，此码可让对方查看你的卡密。`,
+        }],
       };
     } catch (err) {
       console.error(`[platform] 生成绑定码失败: ${String(err)}`);
@@ -970,6 +988,10 @@ async function executeBindCommand(
   }
 
   // 模式 2：带参数 → 消费绑定码，完成身份合并
+  // 限流：全局每 10 秒最多消费一次，防止对绑定码做暴力破解（28^6 组合，短窗口内无限试探会降低安全性）
+  if (!await checkDbRateLimit(db, "bind_consume:global", 1, 10000)) {
+    return { handled: true, reply: "操作过于频繁，请稍后再试。" };
+  }
   try {
     const result = await consumeBindingCode(
       db,

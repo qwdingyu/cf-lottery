@@ -18,6 +18,7 @@ import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { getActivePlatformTarget } from "../services/platform/targets";
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { getPlatformAdapter } from "../services/platform/adapter-factory";
+import { logPrivateMessageFailure } from "../services/platform/delivery";
 import type { InboundPlatformEvent } from "../services/platform/types";
 
 export const platformTelegramRoute = new Hono<AppEnv>();
@@ -115,6 +116,15 @@ platformTelegramRoute.post("/message", async (c) => {
           } else {
             result.reply += "\n\n⚠️ 私聊发送失败，请通过网页后台查看卡密。";
           }
+          // P1-1 审计：私聊发送失败记录到 platformDeliveries，方便后台排查
+          await logPrivateMessageFailure(
+            db,
+            target,
+            "telegram",
+            pm.userId,
+            pm.text,
+            "私聊发送失败（用户未发起对话或 adapter 异常）",
+          );
         }
       }
     } else {

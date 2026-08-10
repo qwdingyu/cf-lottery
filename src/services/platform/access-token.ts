@@ -29,14 +29,17 @@ export type AccessTokenResult = {
  * @param db 数据库实例
  * @param userId 目标 users.id
  * @param purpose 令牌用途
- * @param expiresInMs 过期时间（毫秒），默认 5 分钟
+ * @param opts 可选参数
+ * @param opts.drawId 令牌所属 drawId（P0-1 跨租户隔离）：非空时 public-access.ts 按 drawId 过滤 winner
+ * @param opts.expiresInMs 过期时间（毫秒），默认 5 分钟
  */
 export async function generateAccessToken(
   db: DbType,
   userId: string,
   purpose: AccessTokenPurpose = "card_code",
-  expiresInMs = 5 * 60 * 1000,
+  opts: { drawId?: string; expiresInMs?: number } = {},
 ): Promise<AccessTokenResult> {
+  const { drawId = "", expiresInMs = 5 * 60 * 1000 } = opts;
   const token = crypto.randomUUID();
   const tokenHash = await sha256Hex(token);
   const expiresAt = new Date(Date.now() + expiresInMs).toISOString();
@@ -46,6 +49,7 @@ export async function generateAccessToken(
     userId,
     tokenHash,
     purpose,
+    drawId,
     expiresAt,
     used: 0,
   });
@@ -63,13 +67,14 @@ export async function generateAccessToken(
  *
  * 验证通过后标记为已使用（原子性：通过 used=0 条件做 CAS）。
  *
- * @returns 验证通过时返回 userId，否则返回 null
+ * @returns 验证通过时返回 { userId, drawId }，否则返回 null。
+ *   drawId 用于 public-access.ts 按 draw 过滤（P0-1 跨租户隔离）。
  */
 export async function consumeAccessToken(
   db: DbType,
   token: string,
   purpose: AccessTokenPurpose = "card_code",
-): Promise<string | null> {
+): Promise<{ userId: string; drawId: string } | null> {
   const tokenHash = await sha256Hex(token);
 
   // 查找有效令牌（未使用 + 未过期）
@@ -96,7 +101,7 @@ export async function consumeAccessToken(
     ))
     .returning({ id: accessTokens.id });
 
-  return result.length > 0 ? existing.userId : null;
+  return result.length > 0 ? { userId: existing.userId, drawId: existing.drawId || "" } : null;
 }
 
 /**

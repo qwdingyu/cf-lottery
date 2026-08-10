@@ -13,7 +13,7 @@
  * - 绑定码 UNIQUE 约束 + CAS used=0 条件，防并发重复消费
  * - 更新 auth_identities.userId 时，若目标 userId 已存在 identity 则跳过（防重复合并）
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { authIdentities, platformBindings, users } from "../../db/schema";
 
@@ -35,13 +35,21 @@ const BINDING_CODE_EXPIRY_MS = 10 * 60 * 1000; // 10 分钟
 
 /**
  * 生成 6 位绑定码。
- * 使用高熵字符集（排除易混淆字符），36^6 ≈ 2.2B 种组合，10 分钟有效期。
+ * 使用高熵字符集（排除易混淆字符），28^6 ≈ 4.8 亿种组合，10 分钟有效期。
+ *
+ * ⚠️ 为什么用 crypto.getRandomValues 而非 Math.random：
+ *   Math.random() 在 V8 中使用 xorshift128+（非密码学安全 PRNG），
+ *   攻击者观察到足够多的连续输出后可能重建 PRNG 状态并预测未来绑定码。
+ *   crypto.getRandomValues() 是密码学安全 CSPRNG，与代码库既定规范
+ *   （utils.ts:17-19、redemption-codes.ts:33、spin-quota.ts:156）保持一致。
  */
 function generateCode(): string {
+  const chars = BINDING_CODE_CHARS;
+  const bytes = new Uint8Array(BINDING_CODE_LENGTH);
+  crypto.getRandomValues(bytes);
   let code = "";
   for (let i = 0; i < BINDING_CODE_LENGTH; i++) {
-    const idx = Math.floor(Math.random() * BINDING_CODE_CHARS.length);
-    code += BINDING_CODE_CHARS[idx];
+    code += chars[bytes[i] % chars.length];
   }
   return code;
 }
@@ -219,4 +227,25 @@ export function parseBindingCode(text: string): string | null {
 export function isBindingCommand(text: string): boolean {
   const trimmed = text.trim();
   return trimmed === "/绑定" || trimmed === "绑定";
+}
+
+/**
+ * 清理已过期或已使用的绑定码（由调用方按需触发，如定时维护任务）。
+ *
+ * 设计决策：
+ * - 过期绑定码留在表中无意义，且占用 Turso 免费层存储。
+ * - 已使用的绑定码在消费完成后立即标记为 1，历史记录留存价值低。
+ * - 兜底删除超过 24 小时的旧记录，避免短时间内的并发清理冲突。
+ */
+export async function cleanExpiredBindings(
+  db: DbType,
+  maxAgeMs = 24 * 60 * 60 * 1000,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+  const result = await db
+    .delete(platformBindings)
+    .where(
+      sql`${platformBindings.createdAt} < ${cutoff}`,
+    );
+  return result.rowsAffected ?? 0;
 }

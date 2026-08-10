@@ -19,6 +19,7 @@ import {
   lotteryPrizeTiers,
   lotterySpins,
   lotteryWinners,
+  platformDeliveries,
   platformTargets,
   prizeCodes,
   prizes,
@@ -605,6 +606,19 @@ describe("POST /api/platform/telegram/message", () => {
       .from(lotteryWinners)
       .where(and(eq(lotteryWinners.tenantId, TENANT_ID), eq(lotteryWinners.drawId, "draw-tg-1")));
     expect(winners).toHaveLength(1);
+
+    // P1-1 审计：私聊发送失败应记录到 platformDeliveries
+    const deliveries = await db
+      .select()
+      .from(platformDeliveries)
+      .where(and(
+        eq(platformDeliveries.tenantId, TENANT_ID),
+        eq(platformDeliveries.platformTargetId, "pt-tg-1"),
+        eq(platformDeliveries.eventType, "private_message"),
+        eq(platformDeliveries.status, "failed"),
+      ));
+    expect(deliveries.length).toBeGreaterThanOrEqual(1);
+    expect(deliveries[0].lastError).toContain("私聊发送失败");
   });
 
   it("/抽奖 同一消息回放不重复扣次，新消息可继续抽", async () => {

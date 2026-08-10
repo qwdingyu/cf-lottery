@@ -8,8 +8,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearTestData, getTestDb } from "../../test-setup";
 import { platformTargets, platformDeliveries, tenants } from "../../db/schema";
-import { eq } from "drizzle-orm";
-import { enqueuePlatformEvent, dispatchPlatformDeliveries } from "./delivery";
+import { and, eq } from "drizzle-orm";
+import { enqueuePlatformEvent, dispatchPlatformDeliveries, logPrivateMessageFailure } from "./delivery";
 
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -250,6 +250,78 @@ describe("dispatchPlatformDeliveries", () => {
     // 已发送的不应被处理
     expect(result.sent).toBe(0);
     expect(result.failed).toBe(0);
+  });
+});
+describe("logPrivateMessageFailure", () => {
+  it("私聊发送失败时写入一条 platformDeliveries 审计记录", async () => {
+    await logPrivateMessageFailure(
+      db,
+      { tenantId: TENANT_ID, id: TARGET_ID, targetId: "999999" },
+      "qq",
+      "123456789",
+      "恭喜你中奖了！卡密是：XXXX-XXXX",
+      "私聊发送失败: 对方未开启临时会话",
+    );
+
+    const [delivery] = await db
+      .select()
+      .from(platformDeliveries)
+      .where(and(
+        eq(platformDeliveries.tenantId, TENANT_ID),
+        eq(platformDeliveries.platformTargetId, TARGET_ID),
+        eq(platformDeliveries.eventType, "private_message"),
+      ));
+
+    expect(delivery).toBeDefined();
+    expect(delivery.status).toBe("failed");
+    expect(delivery.lastError).toContain("私聊发送失败");
+    expect(delivery.platform).toBe("qq");
+    expect(delivery.targetId).toBe("999999");
+    // payloadJson 应包含 targetUserId 和 textPreview（前 50 字符）
+    const payload = JSON.parse(delivery.payloadJson);
+    expect(payload.targetUserId).toBe("123456789");
+    expect(payload.textPreview).toBe("恭喜你中奖了！卡密是：XXXX-XXXX");
+  });
+
+  it("textPreview 超过 50 字符时截断", async () => {
+    const longText = "这是一条很长的私聊消息，超过了五十个字符的限制，应该被截断处理。后面还有更多内容……";
+    await logPrivateMessageFailure(
+      db,
+      { tenantId: TENANT_ID, id: TARGET_ID, targetId: "999999" },
+      "telegram",
+      "987654321",
+      longText,
+      "timeout",
+    );
+
+    const [delivery] = await db
+      .select()
+      .from(platformDeliveries)
+      .where(and(
+        eq(platformDeliveries.tenantId, TENANT_ID),
+        eq(platformDeliveries.platformTargetId, TARGET_ID),
+        eq(platformDeliveries.eventType, "private_message"),
+        eq(platformDeliveries.platform, "telegram"),
+      ));
+
+    expect(delivery).toBeDefined();
+    const payload = JSON.parse(delivery.payloadJson);
+    expect(payload.textPreview.length).toBeLessThanOrEqual(50);
+  });
+
+  it("审计日志写入失败不抛出异常，主流程不阻塞", async () => {
+    // 传入无效的 db 对象（null 上的方法调用会抛出），但函数内部 catch 后应静默返回
+    const badDb = null as unknown as typeof db;
+    await expect(
+      logPrivateMessageFailure(
+        badDb,
+        { tenantId: "bad", id: "bad", targetId: "bad" },
+        "qq",
+        "000",
+        "test",
+        "boom",
+      ),
+    ).resolves.toBeUndefined();
   });
 });
 });

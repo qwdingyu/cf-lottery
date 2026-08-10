@@ -14,6 +14,7 @@ import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { getActivePlatformTarget, syncInboundBotIdentity } from "../services/platform/targets";
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { getPlatformAdapter } from "../services/platform/adapter-factory";
+import { logPrivateMessageFailure } from "../services/platform/delivery";
 
 export const platformQQRoute = new Hono<AppEnv>();
 
@@ -119,6 +120,15 @@ platformQQRoute.post("/message", async (c) => {
           } else {
             result.reply += "\n\n⚠️ 私聊发送失败，可能是您关闭了临时会话权限。请检查QQ隐私设置（设置→隐私→临时会话），或联系管理员。";
           }
+          // P1-1 审计：私聊发送失败记录到 platformDeliveries，方便后台排查
+          await logPrivateMessageFailure(
+            db,
+            target,
+            "qq",
+            pm.userId,
+            pm.text,
+            "私聊发送失败（QQ 临时会话受限或适配器异常）",
+          );
         }
       }
     } else {
