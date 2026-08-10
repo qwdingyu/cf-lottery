@@ -203,6 +203,153 @@ describe("enforceGroupMemberCap", () => {
     if (!over.ok) expect(over.reply).toContain("200");
   });
 
+  it("free 套餐：第 201 个成员被拒绝（边界精确性）", async () => {
+    // 插入 199 人，未达上限
+    for (let i = 0; i < 199; i++) {
+      await db.insert(communityMembers).values({
+        id: `cm-boundary-${i}`,
+        tenantId: TENANT,
+        platformTargetId: TARGET_A,
+        userId: `boundary-user-${i}`,
+        identityValue: `boundary-user-${i}`,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    // 第 200 人应该放行（刚好达到上限）
+    const atLimit = await enforceGroupMemberCap(db, {
+      tenantId: TENANT,
+      platformTargetId: TARGET_A,
+      userId: "boundary-user-199",
+    });
+    expect(atLimit.ok).toBe(true);
+
+    // 第 201 人应该被拒绝
+    const overLimit = await enforceGroupMemberCap(db, {
+      tenantId: TENANT,
+      platformTargetId: TARGET_A,
+      userId: "boundary-user-200",
+    });
+    expect(overLimit.ok).toBe(false);
+  });
+
+  it("pro 套餐：2000 人上限，超限后拒绝", async () => {
+    await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["pro", TENANT] });
+    // 插入 2000 人占满
+    for (let i = 0; i < 2000; i++) {
+      await db.insert(communityMembers).values({
+        id: `cm-pro-${i}`,
+        tenantId: TENANT,
+        platformTargetId: TARGET_A,
+        userId: `pro-user-${i}`,
+        identityValue: `pro-user-${i}`,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    const over = await enforceGroupMemberCap(db, {
+      tenantId: TENANT,
+      platformTargetId: TARGET_A,
+      userId: "pro-user-new",
+    });
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.reply).toContain("2000");
+  });
+
+  it("team 套餐：3000 人上限，超限后拒绝", async () => {
+    await client.execute({ sql: "UPDATE tenants SET plan = ? WHERE id = ?", args: ["team", TENANT] });
+    // 插入 3000 人占满
+    for (let i = 0; i < 3000; i++) {
+      await db.insert(communityMembers).values({
+        id: `cm-team-${i}`,
+        tenantId: TENANT,
+        platformTargetId: TARGET_A,
+        userId: `team-user-${i}`,
+        identityValue: `team-user-${i}`,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    const over = await enforceGroupMemberCap(db, {
+      tenantId: TENANT,
+      platformTargetId: TARGET_A,
+      userId: "team-user-new",
+    });
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.reply).toContain("3000");
+  });
+
+  it("覆写 maxGroupMembers=500：新上限生效", async () => {
+    await db.insert(tenantCommunityOverrides).values({
+      tenantId: TENANT,
+      communityEnabled: 1,
+      maxPlatformTargets: null,
+      maxGroupMembers: 500,
+      note: "",
+      updatedBy: "actor",
+      updatedAt: new Date().toISOString(),
+    });
+    // 插入 500 人占满覆写上限
+    for (let i = 0; i < 500; i++) {
+      await db.insert(communityMembers).values({
+        id: `cm-ov-${i}`,
+        tenantId: TENANT,
+        platformTargetId: TARGET_A,
+        userId: `ov-user-${i}`,
+        identityValue: `ov-user-${i}`,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    const over = await enforceGroupMemberCap(db, {
+      tenantId: TENANT,
+      platformTargetId: TARGET_A,
+      userId: "ov-user-new",
+    });
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.reply).toContain("500");
+  });
+
+  it("覆写 maxGroupMembers=null → 不限人数", async () => {
+    await db.insert(tenantCommunityOverrides).values({
+      tenantId: TENANT,
+      communityEnabled: 1,
+      maxPlatformTargets: null,
+      maxGroupMembers: null,
+      note: "",
+      updatedBy: "actor",
+      updatedAt: new Date().toISOString(),
+    });
+    // 插入大量成员，应放行
+    for (let i = 0; i < 1000; i++) {
+      const result = await enforceGroupMemberCap(db, {
+        tenantId: TENANT,
+        platformTargetId: TARGET_A,
+        userId: `unlimited-user-${i}`,
+      });
+      expect(result.ok).toBe(true);
+    }
+  });
+
+  it("多群独立性：群 A 满员不影响群 B", async () => {
+    // 创建两个群绑定
+    await insertTarget("pt-community-b", TENANT);
+    // 群 A 插入 200 人占满
+    for (let i = 0; i < 200; i++) {
+      await db.insert(communityMembers).values({
+        id: `cm-multi-${i}`,
+        tenantId: TENANT,
+        platformTargetId: TARGET_A,
+        userId: `multi-user-${i}`,
+        identityValue: `multi-user-${i}`,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    // 群 B 新成员应该放行
+    const result = await enforceGroupMemberCap(db, {
+      tenantId: TENANT,
+      platformTargetId: "pt-community-b",
+      userId: "multi-user-new",
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("free 套餐：未达上限时新成员可加入并注册", async () => {
     const result = await enforceGroupMemberCap(db, {
       tenantId: TENANT,
