@@ -59,5 +59,24 @@ await time("C. 复用连接+每请求 PRAGMA WAL+SELECT", async () => {
 }, N);
 await shared2.close();
 
+// D. 本地 createClient（不查询）—— 回答「health 无查询时每请求建连成本」
+await time("D. 本地 createClient+close（不查询）", async () => {
+  const c = createClient({ url: `file:${DB}` });
+  await c.close();
+}, Math.min(N, 500));
+
+// E. 远程 createClient（不查询，懒连接验证）—— 回答「为何远程 health 反而快」
+// 需通过环境变量提供：TURSO_URL=libsql://... TURSO_TOKEN=...
+const REMOTE = process.env.TURSO_URL;
+if (REMOTE) {
+  await time("E. 远程 createClient+close（不查询）", async () => {
+    const c = createClient({ url: REMOTE, authToken: process.env.TURSO_TOKEN });
+    await c.close();
+  }, 100);
+} else {
+  console.log("E. 远程 createClient+close（不查询）   跳过（未设置 TURSO_URL）");
+}
+
 console.log("");
 console.log("解读：B/A 的倍数 ≈ 每请求建连的额外开销；C/A 的倍数 ≈ PRAGMA 每请求执行的额外开销");
+console.log("D vs E：D 是本地 file: 打开文件的实际 I/O；E 若接近 0 说明远程客户端是懒连接（不查询不建连）");
