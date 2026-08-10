@@ -19,6 +19,7 @@ import {
   prizes,
   prizeCodes,
   systemConfig,
+  spinsLog,
 } from "../../db/schema";
 import { performInstantSpin, SpinBusinessError } from "./spin-execution";
 import { performDraw, notifyInstantSpinWinner, sendWinnerNotifications } from "./draw-execution";
@@ -173,6 +174,14 @@ describe("performInstantSpin", () => {
     const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.publicSlug, slug));
     const rows = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, draw!.id));
     expect(rows.length).toBe(1);
+
+    // spins 流水日志（P1）：join 初始 +1、spin 消耗 -1，余额快照正确
+    const logs = await db.select().from(spinsLog).where(eq(spinsLog.entryId, join.entryId!));
+    expect(logs).toHaveLength(2);
+    const joinLog = logs.find((l) => l.reason === "join");
+    const spinLog = logs.find((l) => l.reason === "spin");
+    expect(joinLog).toMatchObject({ delta: 1, balanceAfter: 1, tenantId: TENANT });
+    expect(spinLog).toMatchObject({ delta: -1, balanceAfter: 0, refId: r1.spinId });
   });
 
   it("maxSpins=1 第二次 spin 409", async () => {

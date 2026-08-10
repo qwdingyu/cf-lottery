@@ -19,6 +19,7 @@ import {
   platformTargets,
   tenants,
   lotterySpins,
+  spinsLog,
 } from "../../db/schema";
 import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
@@ -465,12 +466,23 @@ describe("/签到 (executeCheckinCommand) 签到奖励", () => {
     expect(result.reply).toContain("获得 1 次抽奖机会");
     // 验证 entry 的 spinsLeft 增加了
     const [entry] = await db
-      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .select({ id: lotteryEntries.id, spinsLeft: lotteryEntries.spinsLeft })
       .from(lotteryEntries)
       .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
       .limit(1);
     // initialSpinsOnJoin(1, 来自 joinDraw 的初始发放) + grantSpinCount(1) = 2
     expect(Number(entry?.spinsLeft ?? 0)).toBe(2);
+
+    // spins 流水日志（P1）：记录签到奖励发放
+    const checkinLogs = await db
+      .select()
+      .from(spinsLog)
+      .where(and(
+        eq(spinsLog.entryId, entry!.id),
+        eq(spinsLog.reason, "checkin"),
+      ));
+    expect(checkinLogs).toHaveLength(1);
+    expect(checkinLogs[0]!).toMatchObject({ delta: 1, balanceAfter: 2, reason: "checkin" });
   });
 
   it("同一天重复签到不增加次数", async () => {

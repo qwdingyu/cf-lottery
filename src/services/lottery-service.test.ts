@@ -42,6 +42,7 @@ import {
   lotteryInviteCodes,
   paymentOrders,
   paymentOrderAttempts,
+  spinsLog,
 } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
@@ -968,6 +969,14 @@ describe("活动事件", () => {
     expect(before?.spinsTotalGranted).toBe(1);
     expect(before?.spinsViralEarned).toBe(0);
 
+    // spins 流水日志（P1）：join 初始发放记录
+    const joinLogs = await db.select().from(spinsLog).where(and(
+      eq(spinsLog.entryId, sharerEntryId),
+      eq(spinsLog.reason, "join"),
+    ));
+    expect(joinLogs).toHaveLength(1);
+    expect(joinLogs[0]!).toMatchObject({ delta: 1, balanceAfter: 1 });
+
     await client.execute({
       sql: `INSERT INTO share_records (id, tenant_id, draw_id, sharer_entry_id, share_code, clicked_count, joined_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: ["share-viral-spins", TENANT, id, sharerEntryId, "vspin-ref", 0, 0],
@@ -981,6 +990,14 @@ describe("活动事件", () => {
     expect(after1?.spinsTotalGranted).toBe(3);
     expect(after1?.spinsViralEarned).toBe(2);
     expect(after1?.spinsLeft).toBe(3);
+
+    // spins 流水日志（P1）：裂变奖励记录（第 1 次邀请 +2）
+    const viralLogs = await db.select().from(spinsLog).where(and(
+      eq(spinsLog.entryId, sharerEntryId),
+      eq(spinsLog.reason, "viral"),
+    ));
+    expect(viralLogs).toHaveLength(1);
+    expect(viralLogs[0]!).toMatchObject({ delta: 2, balanceAfter: 3 });
 
     // 第二次有效邀请：roomViral=1 → actual=1；total granted=4
     const invitee2 = await joinDraw(db, publicSlug, "v-invitee2@test.com", "email", { refCode: "vspin-ref" });
