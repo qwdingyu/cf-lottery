@@ -26,6 +26,7 @@ import { verifyAccessPassword } from "./utils";
 import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
 import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
 import { computeViralSpinGrant, initialSpinsForJoin } from "./spin-quota";
+import { recordSpinLog } from "./spins-log";
 import {
   parseFlashSaleConfig,
   resolveEffectiveStockLimit,
@@ -380,6 +381,18 @@ export async function joinDraw(
         return { joined: false, message: acceptsWaitlist ? "参与失败，请稍后重试" : "活动名额已满" };
       }
 
+      // 写入 spins 流水日志（docs/172 §5.5 P1）：记录 join 初始额度发放
+      if (spinInit.spinsLeft > 0) {
+        await recordSpinLog(tx, {
+          tenantId: draw.tenantId,
+          entryId,
+          userId: normalizedValue,
+          delta: spinInit.spinsLeft,
+          balanceAfter: spinInit.spinsLeft,
+          reason: "join",
+        });
+      }
+
       if (inviteCodeId) {
         const inviteResult = await tx
           .update(lotteryInviteCodes)
@@ -730,6 +743,7 @@ async function grantViralSpinsToSharer(
   const [sharer] = await tx
     .select({
       id: lotteryEntries.id,
+      identityValue: lotteryEntries.identityValue,
       spinsLeft: lotteryEntries.spinsLeft,
       spinsTotalGranted: lotteryEntries.spinsTotalGranted,
       spinsViralEarned: lotteryEntries.spinsViralEarned,
@@ -766,6 +780,16 @@ async function grantViralSpinsToSharer(
       // 乐观：granted 未在并发下被他人改到超过预期时再写（纵深）
       eq(lotteryEntries.spinsTotalGranted, Number(sharer.spinsTotalGranted || 0)),
     ));
+
+  // 写入 spins 流水日志（docs/172 §5.5 P1）：记录裂变邀请奖励
+  await recordSpinLog(tx, {
+    tenantId: draw.tenantId,
+    entryId: sharerEntryId,
+    userId: sharer.identityValue ?? "",
+    delta: grant.nextLeftDelta,
+    balanceAfter: Number(sharer.spinsLeft ?? 0) + grant.nextLeftDelta,
+    reason: "viral",
+  });
 }
 
 async function recordAttributedJoin(

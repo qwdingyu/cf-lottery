@@ -24,6 +24,7 @@ import {
   weightedPickTier,
 } from "./spin-quota";
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
+import { recordSpinLog } from "./spins-log";
 import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
 
 export class SpinBusinessError extends Error {
@@ -355,6 +356,17 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         algorithmVersion: INSTANT_ALGORITHM_VERSION,
         ipHash: input.ipHash || "",
         createdAt: nowIso,
+      });
+
+      // 写入 spins 流水日志（docs/172 §5.5 P1）：记录抽奖消耗 1 次
+      await recordSpinLog(tx, {
+        tenantId: draw.tenantId,
+        entryId: entry.id,
+        userId: entry.identityValue,
+        delta: -1,
+        balanceAfter: Math.max(0, Number(entry.spinsLeft ?? 0) - 1),
+        reason: "spin",
+        refId: spinId,
       });
 
       if (won === 1 && tierId) {

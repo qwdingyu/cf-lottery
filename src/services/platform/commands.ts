@@ -16,6 +16,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"
 import { lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, shareRecords } from "../../db/schema";
 import { joinDraw, recordActivityEvent } from "../lottery-service";
 import { performInstantSpin, SpinBusinessError } from "../lottery/spin-execution";
+import { recordSpinLog } from "../lottery/spins-log";
 import {
   aggregateViralInviteCounts,
   buildPublicSharePath,
@@ -467,11 +468,12 @@ async function executeCheckinCommand(
   const today = todayStr();
   const eventType = "daily_checkin";
 
-  // 3. 读取当前 entry 的连续签到信息，用于计算奖励
+  // 3. 读取当前 entry 的连续签到信息和 spinsLeft，用于计算奖励和日志
   const [entry] = await db
     .select({
       lastCheckinDate: lotteryEntries.lastCheckinDate,
       checkinStreak: lotteryEntries.checkinStreak,
+      spinsLeft: lotteryEntries.spinsLeft,
     })
     .from(lotteryEntries)
     .where(and(
@@ -547,7 +549,20 @@ async function executeCheckinCommand(
     }
   }
 
-  // 6. 记录签到事件（仅用于数据分析，不承担去重职责）
+  // 6. 写入 spins 流水日志（docs/172 §5.5 P1）：记录签到奖励发放
+  if (reward > 0) {
+    const balanceAfter = Number(entry.spinsLeft ?? 0) + reward;
+    await recordSpinLog(db, {
+      tenantId: input.tenantId,
+      entryId: result.entryId,
+      userId: input.user.identityValue,
+      delta: reward,
+      balanceAfter,
+      reason: "checkin",
+    });
+  }
+
+  // 7. 记录签到事件（仅用于数据分析，不承担去重职责）
   await recordActivityEvent(db, {
     tenantId: input.tenantId,
     drawId: input.drawId,

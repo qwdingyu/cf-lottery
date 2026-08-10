@@ -350,6 +350,45 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
 }));
 
 /**
+ * spins 流水日志（docs/172 §5.5 P1）。
+ *
+ * 审计能力：记录每次 spins 变动（签到奖励 / 抽奖消耗 / 裂变邀请 / join 初始额度），
+ * 便于排查「次数从哪来、用到哪去」。只追加不更新，与 lottery_entries 分表解耦，
+ * 避免在热路径的 entry 行上做读改写。
+ *
+ * 约定：
+ * - delta > 0 为收入（签到/裂变/join 初始），delta < 0 为支出（抽奖消耗）
+ * - balanceAfter 为本次变动后的余额快照（best-effort，SQLite 单写者下读改写一致）
+ * - reason 枚举：join / checkin / spin / viral / purchase（purchase 预留，当前无购买加次流程）
+ * - refId：关联单据号（spin 关联 lottery_spins.id，裂变关联邀请事件等）
+ */
+export const spinsLog = sqliteTable(
+  "spins_log",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    entryId: text("entry_id").notNull(),
+    /** 用户标识（identityType + identityValue 的面向用户口径，便于不 join 直接审计） */
+    userId: text("user_id").notNull(),
+    /** 本次变动量（正=收入，负=支出） */
+    delta: integer("delta").notNull(),
+    /** 变动后余额快照 */
+    balanceAfter: integer("balance_after").notNull(),
+    /** 变动原因：join/checkin/spin/viral/purchase */
+    reason: text("reason").notNull(),
+    /** 关联单据号（spin_id / 邀请事件等） */
+    refId: text("ref_id"),
+    /** 变动时间 */
+    createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (t) => ({
+    entryIdx: index("idx_spins_log_entry").on(t.tenantId, t.entryId),
+    userIdIdx: index("idx_spins_log_user").on(t.tenantId, t.userId),
+    reasonIdx: index("idx_spins_log_reason").on(t.tenantId, t.reason, t.createdAt),
+  }),
+);
+
+/**
  * 即时开奖每次 spin 审计行（含未中）。
  * 幂等：UNIQUE(tenant, draw, idempotency_key)；多奖靠 winners.spin_id 1:1。
  */
