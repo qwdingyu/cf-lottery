@@ -372,6 +372,122 @@ describe("platform-targets CRUD", () => {
     expect(cmds.dailyCheckinPolicy).toEqual({ grantSpinCount: 5 });
   });
 
+  it("创建时保存 purchaseConfig（秒杀购买闭环，docs/171 §断层B）", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "131313",
+        targetName: "秒杀购买群",
+        activeDrawId: DRAW_ID,
+        flashEnabled: true,
+        purchaseConfig: { url: "https://example.com/flash", label: "🔥 限时秒杀 ¥9.90" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const [row] = await db
+      .select({ builtinCommandsJson: platformTargets.builtinCommandsJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const cmds = JSON.parse(String(row?.builtinCommandsJson || "{}"));
+    expect(cmds.purchaseConfig).toEqual({ url: "https://example.com/flash", label: "🔥 限时秒杀 ¥9.90" });
+    expect(cmds.flashEnabled).toBe(true);
+  });
+
+  it("purchaseConfig.url 为空字符串时省略 purchaseConfig", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "141414",
+        targetName: "空购买链接群",
+        activeDrawId: DRAW_ID,
+        purchaseConfig: { url: "   ", label: "立即购买" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const [row] = await db
+      .select({ builtinCommandsJson: platformTargets.builtinCommandsJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const cmds = JSON.parse(String(row?.builtinCommandsJson || "{}"));
+    expect(cmds.purchaseConfig).toBeUndefined();
+  });
+
+  it("purchaseConfig.label 为空时使用默认文案「立即购买」", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "151515",
+        targetName: "无文案秒杀群",
+        activeDrawId: DRAW_ID,
+        purchaseConfig: { url: "https://example.com/buy", label: "" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const [row] = await db
+      .select({ builtinCommandsJson: platformTargets.builtinCommandsJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const cmds = JSON.parse(String(row?.builtinCommandsJson || "{}"));
+    expect(cmds.purchaseConfig).toEqual({ url: "https://example.com/buy", label: "立即购买" });
+  });
+
+  it("更新时保存 purchaseConfig（覆盖原值）", async () => {
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "161616",
+        targetName: "更新秒杀群",
+        activeDrawId: DRAW_ID,
+        purchaseConfig: { url: "https://old.example.com", label: "旧链接" },
+      }),
+    });
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+
+    const updateRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        builtinCommands: {
+          checkinEnabled: true,
+          spinEnabled: true,
+          shareEnabled: true,
+          leaderboardEnabled: true,
+          myPrizeEnabled: true,
+          helpEnabled: true,
+          flashEnabled: true,
+          purchaseConfig: { url: "https://new.example.com/flash", label: "🔥 新版秒杀" },
+        },
+      }),
+    });
+    expect(updateRes.status).toBe(200);
+
+    const [row] = await db
+      .select({ builtinCommandsJson: platformTargets.builtinCommandsJson })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    const cmds = JSON.parse(String(row?.builtinCommandsJson || "{}"));
+    expect(cmds.purchaseConfig).toEqual({ url: "https://new.example.com/flash", label: "🔥 新版秒杀" });
+  });
+
   it("编辑时入站密钥留空不更新，填写则覆盖", async () => {
     const app = await createApp();
     const createRes = await app.request("/api/admin/platform-targets", {

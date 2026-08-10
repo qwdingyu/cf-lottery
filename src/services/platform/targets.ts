@@ -49,13 +49,9 @@ export function parseBuiltinCommandConfig(raw: string | null | undefined): Built
     myPrizeEnabled: asBoolean(parsed.myPrizeEnabled, DEFAULT_BUILTIN_COMMANDS.myPrizeEnabled),
     helpEnabled: asBoolean(parsed.helpEnabled, DEFAULT_BUILTIN_COMMANDS.helpEnabled),
     flashEnabled: asBoolean(parsed.flashEnabled, DEFAULT_BUILTIN_COMMANDS.flashEnabled),
-    ...(daily ? {
-      dailyCheckinPolicy: {
-        grantSpinCount: Number.isFinite(Number(daily.grantSpinCount))
-          ? Math.max(0, Math.trunc(Number(daily.grantSpinCount)))
-          : undefined,
-      },
-    } : {}),
+    ...(daily && Number.isFinite(Number(daily.grantSpinCount)) && Math.max(0, Math.trunc(Number(daily.grantSpinCount))) > 0
+      ? { dailyCheckinPolicy: { grantSpinCount: Math.max(0, Math.trunc(Number(daily.grantSpinCount))) } }
+      : {}),
     ...(parsed.replyOverrides && typeof parsed.replyOverrides === "object"
       ? { replyOverrides: parsed.replyOverrides as Record<string, string> }
       : {}),

@@ -88,11 +88,12 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
   // 与 targets.ts 的 parseBuiltinCommandConfig 语义一致。
   const purchase = body.purchaseConfig && typeof body.purchaseConfig === "object"
     ? body.purchaseConfig as Record<string, unknown>
-    : undefined;
+    : null;
   const purchaseUrl = purchase && typeof purchase.url === "string" && purchase.url.trim()
     ? String(purchase.url).trim()
     : "";
-  const purchaseLabel = purchaseUrl && typeof purchase.label === "string" && purchase.label.trim()
+  const purchaseLabel = purchase && purchaseUrl
+    && typeof purchase.label === "string" && purchase.label.trim()
     ? String(purchase.label).trim()
     : (purchaseUrl ? "立即购买" : "");
 

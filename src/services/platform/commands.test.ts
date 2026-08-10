@@ -667,6 +667,85 @@ describe("/签到 (executeCheckinCommand) 签到奖励", () => {
     expect(Number(entry?.spinsLeft ?? 0)).toBe(1); // 0 + grantSpinCount(1)
     expect(entry?.lastCheckinDate).toBe(new Date().toISOString().slice(0, 10));
   });
+it("并发签到原子性：两个并发 /签到 只有第一个增加 spinsLeft（原子 UPDATE 消除 TOCTOU）", async () => {
+    // 先播种活动并创建 entry，spinsLeft=0, lastCheckinDate=NULL
+    await seedInstantDraw();
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      identityType: "qq",
+      identityValue: USER_ID,
+      displayName: "测试用户",
+      joinedAt: new Date().toISOString(),
+      spinsLeft: 0,
+      spinsTotalGranted: 0,
+    });
+
+    // 两个并发 /签到，模拟两个请求同时到达。
+    // 注意：同一 DB 连接的 Promise.all 无法复现真实并发（SQLite 单写者模型下，
+    // UPDATE 序列化；但 JavaScript 微任务队列中两个 SELECT 可能都先完成）。
+    // 此测试主要验证最终不变量：spinsLeft 只增加一次，而非两次。
+    const results = await Promise.all([
+      executeBuiltinPlatformCommand(db, makeInput({
+        command: "checkin",
+        builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
+      })),
+      executeBuiltinPlatformCommand(db, makeInput({
+        command: "checkin",
+        builtinCommands: { ...DEFAULT_BUILTIN_COMMANDS, dailyCheckinPolicy: { grantSpinCount: 1 } },
+      })),
+    ]);
+
+    // 断言核心不变量（数据库层面保证，不依赖 Promise.all 的调度顺序）：
+    // 无论两个请求如何交错，spinsLeft 都只增加一次 grantSpinCount(1)，绝不双倍发放。
+    // SQLite 单写者模型下 UPDATE 自带行锁串行执行，第二个请求的
+    // WHERE last_checkin_date IS NULL 条件不再命中 → 影响 0 行 → 不重复发放。
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    // 关键不变量：spinsLeft 只增加了一次 grantSpinCount(1)，而不是两次
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(1);
+  });
+
+  it("端到端闭环：签到获得 spins → 抽奖消耗 spins（验证签到奖励的 spins 可被消耗）", async () => {
+    await seedInstantDraw();
+    // 先签到获得 spins
+    const checkinResult = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "checkin",
+      builtinCommands: {
+        ...DEFAULT_BUILTIN_COMMANDS,
+        dailyCheckinPolicy: { grantSpinCount: 1 },
+      },
+    }));
+    expect(checkinResult.reply).toContain("签到成功");
+
+    // 查看签到后的 spinsLeft：initialSpinsOnJoin(1) + grantSpinCount(1) = 2
+    const [entryBefore] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, DRAW_ID)))
+      .limit(1);
+    expect(Number(entryBefore?.spinsLeft ?? 0)).toBe(2);
+
+    // 抽奖消耗 1 次
+    const spinResult = await executeBuiltinPlatformCommand(db, makeInput({ command: "spin" }));
+    expect(spinResult.handled).toBe(true);
+    // 无论中奖与否，spinsLeft 都应减少 1
+    expect(spinResult.reply).toContain("剩余抽奖次数：1 次");
+
+    // 再次抽奖消耗最后 1 次
+    const spinResult2 = await executeBuiltinPlatformCommand(db, makeInput({ command: "spin" }));
+    expect(spinResult2.handled).toBe(true);
+    expect(spinResult2.reply).toContain("剩余抽奖次数：0 次");
+
+    // 第三次抽奖应触发次数耗尽
+    const spinResult3 = await executeBuiltinPlatformCommand(db, makeInput({ command: "spin" }));
+    expect(spinResult3.handled).toBe(true);
+    expect(spinResult3.reply).toContain("抽奖次数已用完");
+  });
 });
 
 // ── /秒杀 测试（docs/171 §断层B：打通免费→付费转化）──
@@ -743,6 +822,22 @@ describe("抽奖次数耗尽 → 购买引导", () => {
     const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "spin" }));
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("抽奖次数已用完");
+    expect(result.reply).not.toContain("/秒杀");
+  });
+
+  it("flashEnabled=false 时，即使有购买链接也不提示 /秒杀（避免提示可用→实际不可用）", async () => {
+    await seedExhaustedEntry();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "spin",
+      builtinCommands: {
+        ...DEFAULT_BUILTIN_COMMANDS,
+        flashEnabled: false,
+        purchaseConfig: { url: "https://example.com/flash", label: "🔥 限时秒杀" },
+      },
+    }));
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("抽奖次数已用完");
+    // flashEnabled=false 时 /秒杀 命令不可用，不应提示用户使用它
     expect(result.reply).not.toContain("/秒杀");
   });
 });
