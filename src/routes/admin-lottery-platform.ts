@@ -141,19 +141,33 @@ function normalizeAdapterConfig(
   return { ok: false, message: `暂不支持的平台适配器配置: ${platform}` };
 }
 
-/** QQ (NapCat) 适配器配置：只需要 baseUrl，P0 拒绝保存纯文本 token */
+/** QQ (NapCat) 适配器配置：只需要 baseUrl + 可选公证人 botId，P0 拒绝保存纯文本 token */
 function validateQQAdapterConfig(
   raw: Record<string, unknown>,
 ): { ok: true; value: Record<string, string> } | { ok: false; message: string } {
   if (raw.token !== undefined || raw.accessToken !== undefined || raw.authorization !== undefined) {
     return { ok: false, message: "P0 暂不支持保存 NapCat token，请使用内网、IP 白名单或反向代理保护适配器" };
   }
+  const value: Record<string, string> = {};
+
   const baseUrl = typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : "";
-  if (!baseUrl) return { ok: true, value: {} };
-  if (!/^https?:\/\//i.test(baseUrl)) {
-    return { ok: false, message: "adapterConfig.baseUrl 必须以 http:// 或 https:// 开头" };
+  if (baseUrl) {
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      return { ok: false, message: "adapterConfig.baseUrl 必须以 http:// 或 https:// 开头" };
+    }
+    value.baseUrl = baseUrl;
   }
-  return { ok: true, value: { baseUrl } };
+
+  // 公证人 QQ 号：可选，必须是纯数字（QQ 号为 5~20 位）
+  const botId = typeof raw.botId === "string" ? raw.botId.trim() : "";
+  if (botId) {
+    if (!/^\d{5,20}$/.test(botId)) {
+      return { ok: false, message: "adapterConfig.botId 必须是纯数字 QQ 号（5~20 位）" };
+    }
+    value.botId = botId;
+  }
+
+  return { ok: true, value };
 }
 
 /**

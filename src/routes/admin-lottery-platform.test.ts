@@ -221,6 +221,72 @@ describe("platform-targets CRUD", () => {
     expect(data.message).toContain("暂不支持保存 NapCat token");
   });
 
+  it("接受公证人 QQ 号（botId）并保存到 adapterConfig", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "777777",
+        targetName: "botId 测试",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { baseUrl: "http://127.0.0.1:3000", botId: "123456789" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const detailRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      headers: { ...authHeaders() },
+    });
+    const detail = await detailRes.json() as Record<string, unknown>;
+    const item = detail.item as Record<string, unknown>;
+    expect(JSON.parse(String(item.adapterConfigJson || "{}"))).toMatchObject({
+      baseUrl: "http://127.0.0.1:3000",
+      botId: "123456789",
+    });
+  });
+
+  it("拒绝非法 botId（非纯数字）", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "888888",
+        targetName: "非法 botId 测试",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { botId: "not-a-number" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(false);
+    expect(data.message).toContain("botId");
+  });
+
+  it("仅提供 botId 不带 baseUrl 也能创建成功", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "999999",
+        targetName: "仅 botId 测试",
+        activeDrawId: DRAW_ID,
+        adapterConfig: { botId: "987654321" },
+      }),
+    });
+    const data = await res.json() as Record<string, unknown>;
+    expect(data.ok).toBe(true);
+    const id = (data.item as Record<string, unknown>).id as string;
+    const detailRes = await app.request(`/api/admin/platform-targets/${id}`, {
+      headers: { ...authHeaders() },
+    });
+    const detail = await detailRes.json() as Record<string, unknown>;
+    const item = detail.item as Record<string, unknown>;
+    expect(JSON.parse(String(item.adapterConfigJson || "{}"))).toEqual({ botId: "987654321" });
+  });
+
   it("拒绝未注册的平台绑定", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {

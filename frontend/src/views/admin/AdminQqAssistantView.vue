@@ -23,21 +23,23 @@
           <tr>
             <th>{{ $t('adminQqAssistant.colGroup') }}</th>
             <th>{{ $t('adminQqAssistant.colGroupId') }}</th>
+            <th>{{ $t('adminQqAssistant.colBotId') }}</th>
             <th>{{ $t('adminQqAssistant.colActivity') }}</th>
             <th>{{ $t('adminQqAssistant.colStatus') }}</th>
             <th class="col-actions">{{ $t('adminQqAssistant.colActions') }}</th>
           </tr>
         </thead>
         <tbody v-if="loading">
-          <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row"><td :colspan="5"><div class="skeleton-cell" /></td></tr>
+          <tr v-for="i in 3" :key="'sk' + i" class="skeleton-row"><td :colspan="6"><div class="skeleton-cell" /></td></tr>
         </tbody>
         <tbody v-else-if="targets.length === 0">
-          <tr><td :colspan="5" class="empty-row">{{ $t('adminQqAssistant.empty') }}</td></tr>
+          <tr><td :colspan="6" class="empty-row">{{ $t('adminQqAssistant.empty') }}</td></tr>
         </tbody>
         <tbody v-else>
           <tr v-for="t in targets" :key="t.id" :class="{ 'is-selected': selectedId === t.id }">
             <td>{{ t.targetName || '-' }}</td>
             <td class="mono">{{ t.targetId }}</td>
+            <td class="mono">{{ getBotId(t) }}</td>
             <td>
               <span v-if="t.activeDrawId" class="tag tag-info">{{ t.activeDrawId.slice(0, 8) }}…</span>
               <span v-else class="tag tag-muted">{{ $t('adminQqAssistant.notBound') }}</span>
@@ -212,7 +214,10 @@
             <div class="secret-value">{{ inboundSecret }}</div>
             <p class="secret-hint">{{ $t('adminQqAssistant.inboundSecretHint') }}</p>
             <pre class="config-value">{{ napcatInboundConfig }}</pre>
-            <button class="btn btn-ghost btn-xs" type="button" @click="copyInboundConfig">{{ $t('adminQqAssistant.copyConfig') }}</button>
+            <div class="secret-actions">
+              <button class="btn btn-ghost btn-xs" type="button" @click="copyWebhookUrl">{{ $t('adminQqAssistant.copyWebhookUrl') }}</button>
+              <button class="btn btn-ghost btn-xs" type="button" @click="copyInboundConfig">{{ $t('adminQqAssistant.copyConfig') }}</button>
+            </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-ghost" @click="closeModal" type="button">{{ $t('adminQqAssistant.cancel') }}</button>
@@ -241,6 +246,8 @@ interface PlatformTarget {
   activeDrawId: string
   assistantEnabled: number
   builtinCommandsJson: string
+  /** 适配器配置（如 NapCat baseUrl、公证人 botId），docs/177 批次2 */
+  adapterConfigJson: string
 }
 
 interface Draw {
@@ -267,6 +274,8 @@ const form = ref({
   activeDrawId: '',
   adapterBaseUrl: '',
   inboundSecret: '',
+  /** 公证人 QQ 号（docs/177 批次2）：识别哪个机器人服务该群 */
+  botId: '',
   checkinEnabled: true,
   spinEnabled: true,
   shareEnabled: true,
@@ -340,6 +349,8 @@ async function loadDraws() {
 function resetForm() {
   form.value = {
     targetId: '', targetName: '', activeDrawId: '', adapterBaseUrl: '', inboundSecret: '',
+    // 公证人 QQ 号（docs/177 批次2）：重置时默认空
+    botId: '',
     checkinEnabled: true, spinEnabled: true, shareEnabled: true,
     leaderboardEnabled: true, myPrizeEnabled: true, myCardCodeEnabled: true, helpEnabled: true,
     // 签到奖励抽奖次数（docs/171）：重置时默认 0（不奖励），与 form 初始值保持一致
@@ -406,6 +417,11 @@ function fillFormFromTarget(t: PlatformTarget) {
     form.value.purchaseUrl = cmds.purchaseConfig?.url || ''
     form.value.purchaseLabel = cmds.purchaseConfig?.label || ''
   } catch { /* 使用默认值 */ }
+  // 公证人 QQ 号（docs/177 批次2）：从 adapterConfigJson 回填，供编辑时展示
+  try {
+    const cfg = JSON.parse(t.adapterConfigJson || '{}')
+    form.value.botId = cfg.botId || ''
+  } catch { form.value.botId = '' }
 }
 
 function openCreateModal() {
@@ -476,14 +492,18 @@ async function saveTarget() {
         : {}),
     }
     if (editingTarget.value) {
-      /* 编辑时：baseUrl 留空则不更新 adapterConfig，填写则覆盖 */
+      /* 编辑时：baseUrl/botId 留空则不更新 adapterConfig，填写则覆盖 */
       const editPayload: Record<string, unknown> = {
         targetName: form.value.targetName,
         activeDrawId: form.value.activeDrawId,
         builtinCommands,
       }
+      const editAdapterConfig: Record<string, string> = {}
       const baseUrl = form.value.adapterBaseUrl.trim()
-      if (baseUrl) editPayload.adapterConfig = { baseUrl }
+      if (baseUrl) editAdapterConfig.baseUrl = baseUrl
+      const botId = form.value.botId.trim()
+      if (botId) editAdapterConfig.botId = botId
+      if (Object.keys(editAdapterConfig).length > 0) editPayload.adapterConfig = editAdapterConfig
       const newInboundSecret = form.value.inboundSecret.trim()
       if (newInboundSecret) editPayload.inboundSecret = newInboundSecret
       await api(`/platform-targets/${editingTarget.value.id}`, {
@@ -492,9 +512,11 @@ async function saveTarget() {
       })
       showToast(t('adminQqAssistant.toastUpdated'), 'success')
     } else {
-      const adapterConfig = form.value.adapterBaseUrl.trim()
-        ? { baseUrl: form.value.adapterBaseUrl.trim() }
-        : {}
+      const adapterConfig: Record<string, string> = {}
+      const baseUrl = form.value.adapterBaseUrl.trim()
+      if (baseUrl) adapterConfig.baseUrl = baseUrl
+      const botId = form.value.botId.trim()
+      if (botId) adapterConfig.botId = botId
       const data = await api<{ inboundSecret?: string }>('/platform-targets', {
         method: 'POST',
         body: JSON.stringify({ targetId: form.value.targetId, targetName: form.value.targetName, activeDrawId: form.value.activeDrawId, adapterConfig, ...builtinCommands }),
@@ -564,6 +586,25 @@ async function copyInboundConfig() {
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
   }
+}
+
+/** 仅复制 webhook URL（docs/177 批次2），不包含密钥等敏感信息 */
+async function copyWebhookUrl() {
+  const callbackUrl = `${window.location.origin}/api/platform/qq/message`
+  try {
+    await navigator.clipboard.writeText(callbackUrl)
+    showToast(t('adminQqAssistant.toastCopiedWebhook'), 'success')
+  } catch (err) {
+    showToast(String(err instanceof Error ? err.message : err), 'error')
+  }
+}
+
+/** 从目标的 adapterConfigJson 中提取公证人 QQ 号（docs/177 批次2） */
+function getBotId(t: PlatformTarget): string {
+  try {
+    const cfg = JSON.parse(t.adapterConfigJson || '{}')
+    return cfg.botId || '-'
+  } catch { return '-' }
 }
 
 onMounted(() => { void loadTargets() })
