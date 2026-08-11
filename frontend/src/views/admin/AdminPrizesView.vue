@@ -2,6 +2,18 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
+        <input
+          v-model="searchQuery"
+          type="search"
+          :placeholder="$t('adminPrizes.searchPlaceholder')"
+          :disabled="loading"
+          @keyup.enter="searchData"
+        />
+        <select v-model="prizeTypeFilter" :disabled="loading" @change="searchData">
+          <option value="">{{ $t('adminPrizes.allTypes') }}</option>
+          <option value="code">{{ $t('adminPrizes.typeCode') }}</option>
+          <option value="manual_fulfillment">{{ $t('adminPrizes.typeManual') }}</option>
+        </select>
         <button class="btn btn-ghost btn-sm" type="button" :disabled="loading" @click="loadData">
           {{ loading ? $t('adminPrizes.loading') : $t('adminPrizes.refresh') }}
         </button>
@@ -122,6 +134,15 @@
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- 分页（与 AdminDraws 分页风格一致） -->
+    <div class="pagination-row">
+      <span class="pagination-text">{{ $t('adminPrizes.pageInfo', { from: offset + 1, to: Math.min(offset + limit, total), total }) }}</span>
+      <span class="pagination-actions">
+        <button class="btn btn-ghost btn-xs" type="button" :disabled="page <= 1 || loading" @click="previousPage">{{ $t('adminPrizes.prevPage') }}</button>
+        <button class="btn btn-ghost btn-xs" type="button" :disabled="offset + limit >= total || loading" @click="nextPage">{{ $t('adminPrizes.nextPage') }}</button>
+      </span>
     </div>
 
     <!-- 创建奖品弹窗 -->
@@ -422,6 +443,13 @@ const codesPage = ref(0)
 const codesTotal = ref(0)
 const totalAvailable = ref(0)
 const totalIssued = ref(0)
+// 奖品列表分页与搜索（与 AdminDraws 标准一致）
+const searchQuery = ref('')
+const prizeTypeFilter = ref('')
+const page = ref(1)
+const limit = 50
+const total = ref(0)
+const offset = computed(() => (page.value - 1) * limit)
 const importPrize = ref<any>(null)
 const codesText = ref('')
 const importTab = ref<'paste' | 'generate'>('paste')
@@ -541,13 +569,36 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await adminRequest<{ prizes: any[] }>('/api/admin/prizes')
+    const params = new URLSearchParams()
+    params.set('limit', String(limit))
+    params.set('offset', String(offset.value))
+    if (searchQuery.value) params.set('search', searchQuery.value)
+    if (prizeTypeFilter.value) params.set('prizeType', prizeTypeFilter.value)
+    const data = await adminRequest<{ prizes: any[]; total: number }>(`/api/admin/prizes?${params.toString()}`)
     prizes.value = data.prizes || []
+    total.value = data.total || 0
   } catch (err: any) {
     loadError.value = err.message || t('adminPrizes.loadFailed')
   } finally {
     loading.value = false
   }
+}
+
+function searchData() {
+  page.value = 1
+  void loadData()
+}
+
+function previousPage() {
+  if (page.value <= 1) return
+  page.value -= 1
+  void loadData()
+}
+
+function nextPage() {
+  if (offset.value + limit >= total.value) return
+  page.value += 1
+  void loadData()
 }
 
 async function handleCreate() {
@@ -900,7 +951,22 @@ onMounted(loadData)
 
 .pool-empty-banner {
   margin-bottom: 12px;
+}
+
+.pagination-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+.pagination-text {
+  color: var(--muted, #9aa4b2);
   font-size: 13px;
+}
+.pagination-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .prize-preview {

@@ -44,16 +44,28 @@ async function recordTenantAudit(c: Context<AppEnv>, action: string, targetType:
 }
 
 export function setupPrizeRoutes(route: Hono<AppEnv>) {
+  /** 奖品列表（分页 + 搜索 + 类型筛选，与 AdminDraws 标准一致） */
   route.get("/prizes", async (c) => {
-  const db = getDb(c);
-  const tenantId = c.get("tenantId") as string;
-  const rows = await db
-    .select()
-    .from(prizes)
-    .where(eq(prizes.tenantId, tenantId))
-    .orderBy(desc(prizes.createdAt));
-  return ok(c, { prizes: rows });
-});
+    const db = getDb(c);
+    const tenantId = c.get("tenantId") as string;
+    const { limit, offset } = parseAdminPagination(c, 50, 200);
+    const search = c.req.query("search") || "";
+    const prizeType = c.req.query("prizeType") || "";
+
+    const conditions = [eq(prizes.tenantId, tenantId)];
+    if (search) conditions.push(sql`${prizes.name} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`}`);
+    if (prizeType) conditions.push(eq(prizes.prizeType, prizeType));
+
+    const [{ total }] = await db.select({ total: count() }).from(prizes).where(and(...conditions));
+    const rows = await db
+      .select()
+      .from(prizes)
+      .where(and(...conditions))
+      .orderBy(desc(prizes.createdAt))
+      .limit(limit)
+      .offset(offset);
+    return ok(c, { prizes: rows, total });
+  });
 
 /** 创建奖品 */
 route.post("/prizes", async (c) => {
