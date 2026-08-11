@@ -750,10 +750,12 @@ async function validateOrderPreconditions(
 
   // 4. 限购检查（docs/203 §2.4）
   // 源头扼杀：累计检查历史已支付订单，不让用户超限下单。
-  // 注意：仅在已有前置订单（existingOrder != null）时检查——首次下单的 base 1 已在
-  // joinDraw 时计入，直付秒杀允许首次批量购买（qty>1），与 docs/131 §7 语义一致。
+  // 无论是否首次下单，均执行累计检查：
+  // - 首次下单：alreadyBought = 0，0 + quantity > maxPerUser 即 quantity > maxPerUser
+  // - 追加下单：统计已有 PAID / FULFILLMENT_FAILED 订单总量，加上当前数量不得超限
+  // 防御纵深：即使路由层未限制 quantity，后端也能独立拦截超量下单。
   const maxPerUser = flashSaleParsed?.config?.maxPerUser ?? 1;
-  if (maxPerUser > 0 && existingOrder) {
+  if (maxPerUser > 0) {
     const [sumRow] = await tx
       .select({ total: sql<number>`COALESCE(SUM(${paymentOrders.quantity}), 0)` })
       .from(paymentOrders)

@@ -43,7 +43,7 @@ async function seedFlashSaleDraw(prizeCodesCount: number) {
     endAt: new Date(now.getTime() + 3600000).toISOString(),
     activityConfig: "{}",
     promotionConfig: JSON.stringify({
-      flashSale: { enabled: true, paymentRequired: true, priceCents: 9900, stockLimit: 1000 },
+      flashSale: { enabled: true, paymentRequired: true, priceCents: 9900, stockLimit: 1000, maxPerUser: 5 },
     }),
   });
   await db.insert(prizes).values({ id: PRIZE, tenantId: TENANT, name: "秒杀卡密", prizeType: "code", totalCount: prizeCodesCount, active: 1 });

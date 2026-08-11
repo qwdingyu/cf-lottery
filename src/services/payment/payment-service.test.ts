@@ -912,7 +912,7 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
       experienceType: "flash_sale",
       maxParticipants: 5,
       activeParticipantCount: 1,
-      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 5, priceCents: 9900, currency: "cny" } }),
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 5, priceCents: 9900, currency: "cny", maxPerUser: 5 } }),
       startAt: new Date(Date.now() - 60_000).toISOString(),
       endAt: new Date(Date.now() + 60_000).toISOString(),
     });
@@ -960,7 +960,7 @@ describe("秒杀核心生命周期测试(冒烟)", () => {
       experienceType: "flash_sale",
       maxParticipants: 2,
       activeParticipantCount: 2,
-      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 2, priceCents: 9900, currency: "cny" } }),
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, stockLimit: 2, priceCents: 9900, currency: "cny", maxPerUser: 2 } }),
       startAt: new Date(Date.now() - 60_000).toISOString(),
       endAt: new Date(Date.now() + 60_000).toISOString(),
     });
@@ -1428,6 +1428,33 @@ it("累计限购：已有 PAID 订单 + 本次购买超过 maxPerUser 时拒绝�
       notifyUrl: "https://cb", description: "追加批发单",
     }, providerMock);
     expect(created.order.quantity).toBe(3);
+  });
+
+  it("累计限购：首次下单 quantity 超过 maxPerUser 时也被后端拦截（防御纵深，docs/202 复核）", async () => {
+    const { drawId, entryId } = await seedBatchFlow(10, 3);
+    await db.update(lotteryDraws).set({
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 10, priceCents: 9900, currency: "cny", maxPerUser: 2 },
+      }),
+    }).where(eq(lotteryDraws.id, drawId));
+    // entry 保持 reserved（首次下单），quantity=3 > maxPerUser=2：即使绕过路由层也应被后端拦截
+    const provider: PaymentProvider = { ...providerMock, createPayment: vi.fn() };
+
+    await expect(createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email", buyerIdentityValue: "test@example.com",
+      quantity: 3, unitPriceCents: 8900,
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      amountCents: 26700, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "首单超限",
+    }, provider)).rejects.toThrow("每人限购 2 件");
+
+    expect(provider.createPayment).not.toHaveBeenCalled();
+    // 事务回滚：entry 仍为 reserved，活动名额未被额外预约（seedBatchFlow 初始 1）
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(draw?.activeParticipantCount).toBe(1);
+    expect(entry?.paymentStatus).toBe("reserved");
   });
 
   it("retryPaymentFulfillment 批量补发一次性补齐订单数量对应卡密", async () => {
