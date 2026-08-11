@@ -122,8 +122,7 @@
               />
             </td>
             <td>{{ k.name }}</td>
-            <td><code class="code-text">{{ k.prefix || maskKey(k.key) }}</code>
-              <button class="btn btn-ghost btn-xs" type="button" :title="$t('adminIntegrations.copyKey')" @click="copyText(k.key)">{{ $t('adminIntegrations.copy') }}</button></td>
+            <td><code class="code-text">{{ k.prefix || maskKey(k.key) }}</code></td>
             <td><span class="tag" :class="k.active ? 'tag-success' : 'tag-muted'">{{ k.active ? $t('adminIntegrations.enabled') : $t('adminIntegrations.disabled') }}</span></td>
             <td>{{ formatTime(k.createdAt) }}</td>
             <td class="col-actions">

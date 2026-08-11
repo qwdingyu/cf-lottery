@@ -1901,8 +1901,6 @@ export default {
     delete: "Delete",
     emptyWebhooks: "No webhooks",
     emptyKeys: "No API keys",
-    copy: "Copy",
-    copyKey: "Copy full key",
     createWebhookTitle: "Add webhook",
     createKeyTitle: "Create API key",
     urlLabel: "Webhook URL",

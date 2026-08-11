@@ -62,19 +62,18 @@
         </tbody>
       </table>
     </div>
-<!-- 创建 / 编辑弹窗 -->
-    <Teleport to="body">
-      <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
-        <div class="modal-content qq-assistant-modal">
-          <div class="modal-header">
-            <h3>{{ editingTarget ? $t('adminQqAssistant.editBinding') : $t('adminQqAssistant.addBinding') }}</h3>
-            <button class="btn btn-ghost btn-sm" @click="closeModal" type="button" :aria-label="$t('adminQqAssistant.close')">✕</button>
-          </div>
-          <div class="modal-body">
-            <div class="form-group">
-              <label>{{ $t('adminQqAssistant.labelGroupId') }} <span class="required">*</span></label>
-              <input v-model="form.targetId" class="form-input" :placeholder="$t('adminQqAssistant.placeholderGroupId')" :disabled="!!editingTarget" />
-            </div>
+<!-- 创建 / 编辑弹窗：统一使用 cf-admin-fe 的 AdminModal 组件（不造轮子，样式与全后台一致） -->
+    <AdminModal
+      v-model="showModal"
+      :title="editingTarget ? $t('adminQqAssistant.editBinding') : $t('adminQqAssistant.addBinding')"
+      max-width="520px"
+      hide-actions
+    >
+      <form @submit.prevent="saveTarget">
+        <div class="form-group">
+          <label>{{ $t('adminQqAssistant.labelGroupId') }} <span class="required">*</span></label>
+          <input v-model="form.targetId" class="form-input" :placeholder="$t('adminQqAssistant.placeholderGroupId')" :disabled="!!editingTarget" />
+        </div>
             <div class="form-group">
               <label>{{ $t('adminQqAssistant.labelGroupName') }}</label>
               <input v-model="form.targetName" class="form-input" :placeholder="$t('adminQqAssistant.placeholderGroupName')" />
@@ -209,29 +208,28 @@
                 <input v-model="form.purchaseLabel" class="form-input" :placeholder="$t('adminQqAssistant.placeholderPurchaseLabel')" />
               </div>
             </fieldset>
-          </div>
-          <div v-if="inboundSecret" class="modal-body secret-box">
-            <p class="secret-label">{{ $t('adminQqAssistant.inboundSecretLabel') }}</p>
-            <div class="secret-value">{{ inboundSecret }}</div>
-            <p class="secret-hint">{{ $t('adminQqAssistant.inboundSecretHint') }}</p>
-            <pre class="config-value">{{ napcatInboundConfig }}</pre>
-            <div class="secret-actions">
-              <button class="btn btn-ghost btn-xs" type="button" @click="copyWebhookUrl">{{ $t('adminQqAssistant.copyWebhookUrl') }}</button>
-              <button class="btn btn-ghost btn-xs" type="button" @click="copyInboundConfig">{{ $t('adminQqAssistant.copyConfig') }}</button>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-ghost" @click="closeModal" type="button">{{ $t('adminQqAssistant.cancel') }}</button>
-            <button class="btn btn-primary" :disabled="saving" @click="saveTarget">{{ $t('adminQqAssistant.save') }}</button>
-          </div>
+      </form>
+      <div v-if="inboundSecret" class="secret-box">
+        <p class="secret-label">{{ $t('adminQqAssistant.inboundSecretLabel') }}</p>
+        <div class="secret-value">{{ inboundSecret }}</div>
+        <p class="secret-hint">{{ $t('adminQqAssistant.inboundSecretHint') }}</p>
+        <pre class="config-value">{{ napcatInboundConfig }}</pre>
+        <div class="secret-actions">
+          <button class="btn btn-ghost btn-xs" type="button" @click="copyWebhookUrl">{{ $t('adminQqAssistant.copyWebhookUrl') }}</button>
+          <button class="btn btn-ghost btn-xs" type="button" @click="copyInboundConfig">{{ $t('adminQqAssistant.copyConfig') }}</button>
         </div>
       </div>
-    </Teleport>
+      <template #actions>
+        <button class="btn btn-ghost" @click="closeModal" type="button">{{ $t('adminQqAssistant.cancel') }}</button>
+        <button class="btn btn-primary" :disabled="saving" @click="saveTarget">{{ $t('adminQqAssistant.save') }}</button>
+      </template>
+    </AdminModal>
   </div>
 </template>
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import { adminRequest } from '@/composables/useAdminRequest'
 
@@ -601,7 +599,6 @@ onMounted(() => { void loadTargets() })
 <style scoped>
 .mono { font-family: monospace; font-size: 13px; }
 .empty-row { text-align: center; color: #666; padding: 32px 16px; }
-.qq-assistant-modal { max-width: 520px; }
 .pointer { cursor: pointer; }
 .form-group { margin-bottom: 12px; }
 .form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; color: var(--text, #e0e0e0); }

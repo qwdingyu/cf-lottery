@@ -1876,8 +1876,6 @@ export default {
     delete: "删除",
     emptyWebhooks: "暂无 Webhook",
     emptyKeys: "暂无 API 密钥",
-    copy: "复制",
-    copyKey: "复制完整密钥",
     createWebhookTitle: "添加 Webhook",
     createKeyTitle: "创建 API 密钥",
     urlLabel: "Webhook URL",
