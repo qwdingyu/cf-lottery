@@ -14,6 +14,7 @@ import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@uset
 import { eq, and, desc, sql, inArray, isNull, max, ne, notInArray } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
+import { DRAW_STATUS } from "../lottery/types";
 import {
   tenantConfigs,
   paymentOrders,
@@ -432,7 +433,7 @@ async function armPaymentOrderForRetry(
       ))
       .limit(1);
     if (!draw) throw new Error("活动不存在");
-    if (draw.status !== "open") {
+    if (draw.status !== DRAW_STATUS.OPEN) {
       throw new Error("活动当前不可重试支付");
     }
 
