@@ -254,10 +254,17 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
           ));
       }
 
-      // 4) 所有超时订单的容量都需释放（计数器独立于 entry 状态，decrement 用 MAX(0) 防下溢）
+      // 4) 超时订单的容量释放：entry 已释放（toRelease）时释放完整 quantity；
+      //    entry 未释放（keepActive，有其他有效订单）时只释放 quantity-1（额外件数），
+      //    保留 entry 自身占用的 base 1，避免 activeParticipantCount 偏低（docs/199 §4）。
+      const toReleaseSet = new Set(toRelease);
       for (const order of overdue) {
-        const quantity = Math.max(1, Math.floor(Number(order.quantity || 1)));
-        releaseByDraw.set(order.drawId, (releaseByDraw.get(order.drawId) || 0) + quantity);
+        const qty = Math.max(1, Math.floor(Number(order.quantity || 1)));
+        // 若 entry 未释放（keepActive），只释放额外件数，保留 base 1
+        const quantity = toReleaseSet.has(order.entryId) ? qty : Math.max(0, qty - 1);
+        if (quantity > 0) {
+          releaseByDraw.set(order.drawId, (releaseByDraw.get(order.drawId) || 0) + quantity);
+        }
       }
     }
 

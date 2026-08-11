@@ -1259,8 +1259,9 @@ it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
     // 关键断言：仅超时订单 B 被释放，entry 因仍有 PAID 订单 A 恢复为 paid（不是 expired）
     expect(orderB?.status).toBe("expired");
     expect(entry?.paymentStatus).toBe("paid");
-    // 只释放订单 B 的 3 件，订单 A 的 2 件仍占用
-    expect(draw?.activeParticipantCount).toBe(2);
+    // 只释放超时订单 B 的额外件数（qty-1=2，保留 base 1 给 entry），订单 A 的 2 件仍占用。
+    // 测试设 count=5 为简化；修复后（docs/199）keepActive entry 只释放额外件数 → 5-2=3。
+    expect(draw?.activeParticipantCount).toBe(3);
   });
 
   it("expireOverdueOrders 保护履约中名额：entry 有 FULFILLMENT_FAILED 订单时只释放超时订单容量，entry 恢复 paid", async () => {
@@ -1299,8 +1300,9 @@ it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
     // 关键断言：仅超时订单 B 被释放，entry 因仍有履约中订单 A 恢复为 paid（不是 expired）
     expect(orderB?.status).toBe("expired");
     expect(entry?.paymentStatus).toBe("paid");
-    // 只释放订单 B 的 3 件，订单 A 的 2 件仍占用
-    expect(draw?.activeParticipantCount).toBe(2);
+    // 只释放超时订单 B 的额外件数（qty-1=2，保留 base 1 给 entry），订单 A 的 2 件仍占用。
+    // 测试设 count=5 为简化；修复后（docs/199）keepActive entry 只释放额外件数 → 5-2=3。
+    expect(draw?.activeParticipantCount).toBe(3);
   });
 
   it("createPaymentOrder 新订单创建失败时不掩盖已支付名额：entry 恢复为 paid", async () => {
