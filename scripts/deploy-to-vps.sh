@@ -77,12 +77,12 @@ upload_with_retry() {
     if cat "$local_file" | ssh_cmd "cat > $remote_file" 2>/dev/null; then
       remote_size=$(ssh_cmd "stat -c%s $remote_file 2>/dev/null || echo 0" 2>/dev/null || echo 0)
       if [ "$remote_size" = "$local_size" ]; then
-        info "上传成功：$local_file → $remote_file（${local_size} 字节，校验一致）"
+        info "上传成功：${local_file} -> ${remote_file}（${local_size} 字节，校验一致）"
         return 0
       fi
-      warn "文件大小不一致（本地 $local_size / 远端 $remote_size），5 秒后重试..."
+      warn "文件大小不一致（本地 ${local_size} / 远端 ${remote_size}），5 秒后重试..."
     else
-      warn "上传连接中断（第 $attempt 次），5 秒后重试..."
+      warn "上传连接中断（第 ${attempt} 次），5 秒后重试..."
     fi
     sleep 5
   done
@@ -99,13 +99,13 @@ fi
 info "步骤 1/4：打包部署产物..."
 PACKAGE_FILE="cf-lottery-deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
 tar -czf "$PACKAGE_FILE" \
+  --exclude='.DS_Store' \
   dist/server.js \
   public/ \
   package.json \
   package-lock.json \
   configs/ \
-  migrations/ \
-  --exclude='.DS_Store'
+  migrations/
 info "打包完成 → $PACKAGE_FILE ($(du -h "$PACKAGE_FILE" | cut -f1))"
 
 # ── 步骤 2：上传（自动重试 + 大小校验）──
