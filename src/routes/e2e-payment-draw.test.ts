@@ -7,11 +7,9 @@
  * 3. 批发：创建批量活动 → 多 quantity 支付 → 多发卡密
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Hono } from "hono";
-import type { AppEnv } from "../bindings";
 import { clearTestData, getTestDb } from "../test-setup";
 import {
-  lotteryDraws, lotteryEntries, lotteryPrizeTiers, lotterySpins, lotteryWinners,
+  lotteryDraws, lotteryEntries, lotteryPrizeTiers, lotteryWinners,
   paymentOrders, paymentOrderAttempts, paymentOrderItems, prizeCodes, prizes,
   tenants, systemConfig,
 } from "../db/schema";
@@ -26,11 +24,6 @@ const TENANT = "tenant-e2e";
 const DRAW = "draw-e2e";
 const DRAW_SLUG = "e2e-slug";
 const PRIZE = "prize-e2e";
-
-const TEST_ENV = {
-  TURSO_URL: "",
-  ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
-};
 
 /** 创建基础租户 */
 async function seedTenant() {
@@ -86,12 +79,20 @@ async function seedLotteryDraw(prizeCodesCount: number) {
 function mockProvider(name: string, tradeNo: string, amountCents: number, currency = "cny") {
   return {
     name,
-    createPayment: vi.fn(async () => ({ url: "https://pay.test", tradeNo })),
+    displayName: "Test Payment",
+    supportedCurrencies: ["CNY"],
+    createPayment: vi.fn(async () => ({
+      providerTradeNo: tradeNo,
+      redirectUrl: "https://pay.test",
+    })),
     // handlePaymentCallback 从 verifyCallback 返回的 orderNo 获取 attemptId
     // verifyCallback 接收 params（含 attemptId），返回 orderNo 用于查找 attempt
     verifyCallback: vi.fn(async (params: Record<string, string>) => ({
-      ok: true as const, tradeNo, amountCents, currency,
       orderNo: params.attemptId || tradeNo,
+      providerTradeNo: tradeNo,
+      amountCents,
+      currency,
+      paidAt: new Date().toISOString(),
     })),
   };
 }
@@ -113,7 +114,7 @@ describe("秒杀端到端", () => {
     const cpOrder = await createPaymentOrder(db, {
       tenantId: TENANT, drawId: DRAW, entryId: joinResult.entryId!,
       buyerIdentityType: "email", buyerIdentityValue: "buyer@test.com",
-      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1,
+      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1, notifyUrl: "http://callback.test",
     }, mockProvider("easypay", "txn-e2e-001", 9900));
     expect(cpOrder.order.status).toBe("pending");
 
@@ -151,7 +152,7 @@ describe("秒杀端到端", () => {
     const o1 = await createPaymentOrder(db, {
       tenantId: TENANT, drawId: DRAW, entryId: j1.entryId!,
       buyerIdentityType: "email", buyerIdentityValue: "u1@test.com",
-      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1,
+      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1, notifyUrl: "http://callback.test",
     }, mockProvider("easypay", "txn1", 9900));
     const [a1] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, o1.order.id)).limit(1);
     expect(a1).toBeDefined();
@@ -166,7 +167,7 @@ describe("秒杀端到端", () => {
     const o2 = await createPaymentOrder(db, {
       tenantId: TENANT, drawId: DRAW, entryId: j2.entryId!,
       buyerIdentityType: "email", buyerIdentityValue: "u2@test.com",
-      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1,
+      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1, notifyUrl: "http://callback.test",
     }, mockProvider("easypay", "txn2", 9900));
     const [a2] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, o2.order.id)).limit(1);
     expect(a2).toBeDefined();
@@ -345,7 +346,7 @@ describe("批发模式端到端", () => {
     const cpOrder = await createPaymentOrder(db, {
       tenantId: TENANT, drawId: DRAW, entryId: joinResult.entryId!,
       buyerIdentityType: "email", buyerIdentityValue: "wholesale@test.com",
-      amountCents: 29700, currency: "cny", provider: "easypay", quantity: 3,
+      amountCents: 29700, currency: "cny", provider: "easypay", quantity: 3, notifyUrl: "http://callback.test",
     }, mockProvider("easypay", "txn-wholesale", 29700));
     expect(cpOrder.order.status).toBe("pending");
 
@@ -383,7 +384,7 @@ describe("批发模式端到端", () => {
     const cpOrder = await createPaymentOrder(db, {
       tenantId: TENANT, drawId: DRAW, entryId: joinResult.entryId!,
       buyerIdentityType: "email", buyerIdentityValue: "bulk@test.com",
-      amountCents: 49500, currency: "cny", provider: "easypay", quantity: 5,
+      amountCents: 49500, currency: "cny", provider: "easypay", quantity: 5, notifyUrl: "http://callback.test",
     }, mockProvider("easypay", "txn-bulk", 49500));
 
     // 取 attemptId
@@ -439,10 +440,10 @@ describe("过期释放与卡密补发", () => {
     const { joinDraw } = await import("../services/lottery/participation");
     const jA = await joinDraw(db, DRAW_SLUG, "expireA@test.com", "email");
     expect(jA.joined).toBe(true);
-    const oA = await createPaymentOrder(db, {
+    await createPaymentOrder(db, {
       tenantId: TENANT, drawId: DRAW, entryId: jA.entryId!,
       buyerIdentityType: "email", buyerIdentityValue: "expireA@test.com",
-      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1,
+      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1, notifyUrl: "http://callback.test",
     }, mockProvider("easypay", "txn-expire", 9900));
 
     // 强制超时该订单（把 createdAt 改到过去）
@@ -457,7 +458,7 @@ describe("过期释放与卡密补发", () => {
     const oB = await createPaymentOrder(db, {
       tenantId: TENANT, drawId: DRAW, entryId: jB.entryId!,
       buyerIdentityType: "email", buyerIdentityValue: "expireB@test.com",
-      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1,
+      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1, notifyUrl: "http://callback.test",
     }, mockProvider("easypay", "txn-expireB", 9900));
     const [aB] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, oB.order.id)).limit(1);
     expect(aB).toBeDefined();
@@ -478,7 +479,7 @@ describe("过期释放与卡密补发", () => {
     const o1 = await createPaymentOrder(db, {
       tenantId: TENANT, drawId: DRAW, entryId: j1.entryId!,
       buyerIdentityType: "email", buyerIdentityValue: "retry@test.com",
-      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1,
+      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1, notifyUrl: "http://callback.test",
     }, mockProvider("easypay", "txn-retry", 9900));
     const [a1] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, o1.order.id)).limit(1);
     expect(a1).toBeDefined();
@@ -498,7 +499,7 @@ describe("过期释放与卡密补发", () => {
 
     // 补发
     const { retryPaymentFulfillment } = await import("../services/payment/payment-service");
-    const retryResult = await retryPaymentFulfillment(db, TENANT, o1.order.id, "admin");
+    const retryResult = await retryPaymentFulfillment(db, TENANT, o1.order.id);
     expect(retryResult.ok).toBe(true);
 
     // 验证卡密已发放
@@ -635,8 +636,8 @@ describe("黑名单拦截端到端", () => {
     // 将用户加入黑名单
     const { lotteryBlacklist } = await import("../db/schema");
     await db.insert(lotteryBlacklist).values({
-      id: "bl-1", tenantId: TENANT, drawId, identityType: "email", identityValue: "blocked@test.com",
-      reason: "测试", createdBy: "admin", createdAt: new Date().toISOString(),
+      id: "bl-1", tenantId: TENANT, identityValue: "blocked@test.com",
+      note: "测试", createdAt: new Date().toISOString(),
     });
 
     // 黑名单用户尝试参与 → 被拒绝

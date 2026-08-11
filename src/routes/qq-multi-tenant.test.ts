@@ -19,7 +19,6 @@ import {
   lotteryDraws,
   lotteryEntries,
   lotteryPrizeTiers,
-  lotterySpins,
   lotteryWinners,
   platformDeliveries,
   platformTargets,
@@ -29,7 +28,7 @@ import {
   tenants,
 } from "../db/schema";
 import { hashPlatformInboundSecret } from "../services/platform/security";
-import { and, eq, inArray, count } from "drizzle-orm";
+import { and, eq, count } from "drizzle-orm";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
@@ -238,7 +237,6 @@ describe("QQ 群助手多租户隔离（完整）", () => {
     await sendMsg(app, G_B, 2001, "/抽奖", SEC_B, 2);
     // 群 A 查卡密 → 应有结果
     const rA = await sendMsg(app, G_A, 1001, "/卡密", SEC_A, 3);
-    const bA = await rA.json() as Record<string, unknown>;
     expect(rA.status).toBe(200);
     // 两群都抽了奖，各自应有自己的卡密
     const cA = Number((await db.select({ n: count() }).from(prizeCodes).where(and(eq(prizeCodes.tenantId, T_A), eq(prizeCodes.status, "issued"))))[0].n);
