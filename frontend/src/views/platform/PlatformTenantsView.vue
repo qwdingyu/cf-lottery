@@ -2,6 +2,13 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
+        <input
+          v-model="searchQuery"
+          type="search"
+          :placeholder="$t('platformTenants.searchPlaceholder')"
+          :disabled="loading"
+          @keyup.enter="searchData"
+        />
         <select v-model="filter.status" @change="searchData">
           <option value="">{{ $t('platformTenants.allStatus') }}</option>
           <option value="active">{{ $t('platformTenants.statusActive') }}</option>
@@ -269,6 +276,7 @@ const tenants = ref<any[]>([])
 const usageMap = ref<Record<string, any>>({})
 
 const filter = ref({ status: '', plan: '' })
+const searchQuery = ref('')
 const pagination = useTablePagination({ initialLimit: 50 })
 
 const detailModalTitle = computed(() => {
@@ -329,13 +337,10 @@ async function loadData() {
     const params = new URLSearchParams(buildAdminOffsetParams(pagination.page.value, pagination.limit.value))
     if (filter.value.status) params.set('status', filter.value.status)
     if (filter.value.plan) params.set('plan', filter.value.plan)
-    const data = await adminRequest<{ tenants: any[] }>(`/api/platform/tenants?${params}`)
+    if (searchQuery.value) params.set('search', searchQuery.value)
+    const data = await adminRequest<{ tenants: any[]; total: number }>(`/api/platform/tenants?${params}`)
     tenants.value = data.tenants || []
-    pagination.setTotal(
-      data.tenants?.length === pagination.limit.value
-        ? pagination.page.value * pagination.limit.value + 1
-        : (pagination.page.value - 1) * pagination.limit.value + (data.tenants?.length || 0),
-    )
+    pagination.setTotal(data.total || 0)
     await Promise.all(tenants.value.map(async (row) => {
       try {
         const summary = await adminRequest<{ usage: any }>(`/api/platform/tenants/${row.id}/summary`)

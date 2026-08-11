@@ -4,27 +4,14 @@
  * 奖品 CRUD、码池导入/生成/查询/导出/删除。
  * 通过 setupPrizeRoutes(route) 注册到 adminLotteryRoute 实例，无循环依赖。
  */
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
+import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
-import { getDb, ok, fail, clampInteger } from "../lib/http";
+import { getDb, ok, fail } from "../lib/http";
 import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import { prizes, prizeCodes, auditLogs } from "../db/schema";
 import { importPrizeCodes, createPrize } from "../services/lottery-service";
-import { parseBatchDeleteIds } from "./admin-lottery-helpers";
-
-// ── 辅助函数（与 admin-lottery.ts 共享，为避免循环依赖复制至此） ──
-
-/** 转义 LIKE 通配符，防止用户输入 % 和 _ 导致全表扫描 DoS */
-export function escapeLike(value: string): string {
-  return value.replace(/[%_]/g, "\\$&");
-}
-
-function parseAdminPagination(c: Context<AppEnv>, fallbackLimit = 50, maxLimit = 200) {
-  return {
-    limit: clampInteger(c.req.query("limit"), fallbackLimit, 1, maxLimit),
-    offset: clampInteger(c.req.query("offset"), 0, 0, 100_000),
-  };
-}
+import { escapeLike, parseAdminPagination, parseBatchDeleteIds } from "./admin-lottery-helpers";
 
 async function recordTenantAudit(c: Context<AppEnv>, action: string, targetType: string, targetId: string, metadata?: Record<string, unknown>) {
   const db = getDb(c);

@@ -276,12 +276,12 @@ async function loadData() {
     if (statusFilter.value) params.set('status', statusFilter.value)
     if (searchQuery.value) params.set('search', searchQuery.value)
     const [data, statsData] = await Promise.all([
-      adminRequest<{ codes: any[] }>(`${PLATFORM_REDEMPTION_CODES_API}?${params}`),
+      adminRequest<{ codes: any[]; total: number }>(`${PLATFORM_REDEMPTION_CODES_API}?${params}`),
       adminRequest<any>(`${PLATFORM_REDEMPTION_CODES_API}/stats`),
     ])
     codes.value = data.codes || []
     stats.value = statsData
-    pagination.setTotal(data.codes?.length === pagination.limit.value ? pagination.page.value * pagination.limit.value + 1 : (pagination.page.value - 1) * pagination.limit.value + (data.codes?.length || 0))
+    pagination.setTotal(data.total || 0)
   } catch (err: any) {
     loadError.value = err.message || t('adminRedemption.loadFailed')
   } finally {

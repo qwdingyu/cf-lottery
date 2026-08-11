@@ -1721,6 +1721,7 @@ export default {
     planPro: "Pro",
     planTeam: "Team",
     planEnterprise: "Enterprise",
+    searchPlaceholder: "搜索租户名称或 ID",
     searching: "查询中…",
     search: "查询",
     refresh: "刷新",

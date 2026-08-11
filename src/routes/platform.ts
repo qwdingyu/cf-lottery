@@ -7,7 +7,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
-import { fail, getDb, ok } from "../lib/http";
+import { clampInteger, fail, getDb, ok } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { requireAuth, requirePlatformMember, signJwt } from "../middleware/auth";
 import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, emailDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig, tenantCommunityOverrides, communityMembers, platformTargets } from "../db/schema";
@@ -24,12 +24,6 @@ platformRoute.use("*", requireAuth, requirePlatformMember(["platform_owner", "pl
 
 function combinedWhere(conditions: SQL[]): SQL | undefined {
   return conditions.length > 0 ? and(...conditions) : undefined;
-}
-
-function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(Math.max(Math.trunc(parsed), min), max);
 }
 
 const PLATFORM_ROLES = ["platform_owner", "platform_operator", "platform_support"];
@@ -201,18 +195,21 @@ platformRoute.delete("/members/:userId", requirePlatformMember(["platform_owner"
 // 租户管理
 // ═════════════════════════════════════════════════════════
 
-/** 租户列表（分页） */
+/** 租户列表（分页 + 搜索） */
 platformRoute.get("/tenants", async (c) => {
   const db = getDb(c);
   const limit = clampInteger(c.req.query("limit"), 50, 1, 200);
   const offset = clampInteger(c.req.query("offset"), 0, 0, 100_000);
   const status = c.req.query("status") || "";
   const plan = c.req.query("plan") || "";
+  const search = c.req.query("search") || "";
 
   const conditions: SQL[] = [];
   if (status) conditions.push(eq(tenants.status, status));
   if (plan) conditions.push(eq(tenants.plan, plan));
+  if (search) conditions.push(sql`(${tenants.name} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`} OR ${tenants.id} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`})`);
 
+  const [{ total }] = await db.select({ total: count() }).from(tenants).where(combinedWhere(conditions));
   const rows = await db
     .select()
     .from(tenants)
@@ -220,7 +217,7 @@ platformRoute.get("/tenants", async (c) => {
     .orderBy(desc(tenants.createdAt))
     .limit(limit).offset(offset);
 
-  return ok(c, { tenants: rows });
+  return ok(c, { tenants: rows, total });
 });
 
 /** 单租户摘要（含最新快照用量） */

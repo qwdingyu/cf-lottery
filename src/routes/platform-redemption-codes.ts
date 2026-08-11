@@ -7,10 +7,11 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
-import { fail, getDb, ok, safeJsonBody } from "../lib/http";
+import { clampInteger, fail, getDb, ok, safeJsonBody } from "../lib/http";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
 import { redemptionCodes } from "../db/schema";
-import { eq, desc, count } from "drizzle-orm";
+import { eq, desc, count, and, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
 
 export const platformRedemptionCodesRoute = new Hono<AppEnv>();
@@ -41,12 +42,6 @@ function generateCode(): string {
   return `LUCKY-${segments.join("-")}`;
 }
 
-function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(Math.max(Math.trunc(parsed), min), max);
-}
-
 function isRedemptionCodeCollision(error: unknown): boolean {
   const err = error as { message?: unknown; code?: unknown; cause?: { message?: unknown } };
   const message = [err.code, err.message, err.cause?.message].filter(Boolean).join(" ");
@@ -54,10 +49,11 @@ function isRedemptionCodeCollision(error: unknown): boolean {
     && message.includes("redemption_codes.code");
 }
 
-/** 兑换码列表（分页，支持按状态筛选） */
+/** 兑换码列表（分页 + 搜索，支持按状态筛选） */
 platformRedemptionCodesRoute.get("/", async (c) => {
   const db = getDb(c);
   const status = c.req.query("status") || "";
+  const search = c.req.query("search") || "";
   const limit = clampInteger(c.req.query("limit"), 50, 1, 200);
   const offset = clampInteger(c.req.query("offset"), 0, 0, 100_000);
 
@@ -65,22 +61,16 @@ platformRedemptionCodesRoute.get("/", async (c) => {
     return fail(c, "兑换码状态无效", 400);
   }
 
-  // 不传 status 时不能构造空 and()。直接走无 where 的分页列表，
-  // 避免 ORM 版本差异导致运行时异常，也保持平台低频列表行为可预测。
-  const rows = status
-    ? await db
-      .select()
-      .from(redemptionCodes)
-      .where(eq(redemptionCodes.status, status))
-      .orderBy(desc(redemptionCodes.createdAt))
-      .limit(limit).offset(offset)
-    : await db
-      .select()
-      .from(redemptionCodes)
-      .orderBy(desc(redemptionCodes.createdAt))
-      .limit(limit).offset(offset);
+  const conditions: SQL[] = [];
+  if (status) conditions.push(eq(redemptionCodes.status, status));
+  if (search) conditions.push(sql`${redemptionCodes.code} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`}`);
 
-  return ok(c, { codes: rows });
+  const [{ total }] = await db.select({ total: count() }).from(redemptionCodes).where(and(...conditions));
+  const rows = conditions.length > 0
+    ? await db.select().from(redemptionCodes).where(and(...conditions)).orderBy(desc(redemptionCodes.createdAt)).limit(limit).offset(offset)
+    : await db.select().from(redemptionCodes).orderBy(desc(redemptionCodes.createdAt)).limit(limit).offset(offset);
+
+  return ok(c, { codes: rows, total });
 });
 
 /** 批量生成兑换码 */

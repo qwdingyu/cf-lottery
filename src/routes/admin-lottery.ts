@@ -28,6 +28,7 @@ import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
 import { parseFlashSaleConfig } from "../lib/flash-sale-config";
 import { readSystemConfigMap } from "../lib/system-config-registry";
 import { readSystemConfigNumber } from "../services/admin/system-config";
+import { enqueuePlatformEvent } from "../services/platform/delivery";
 import { setupPrizeRoutes } from "./admin-lottery-prizes";
 import { setupTenantOpsRoutes } from "./admin-lottery-tenant-ops";
 import { setupIntegrationRoutes } from "./admin-lottery-integrations";
@@ -906,6 +907,30 @@ adminLotteryRoute.post("/draws/:id/publish", async (c) => {
     });
     if (!result) return fail(c, "活动不存在或已发布", 400);
     await recordTenantAudit(c, "draw.publish", "lottery_draw", drawId);
+    const [publishedDraw] = await db
+      .select({
+        title: lotteryDraws.title,
+        publicSlug: lotteryDraws.publicSlug,
+        drawAt: lotteryDraws.drawAt,
+      })
+      .from(lotteryDraws)
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+      .limit(1);
+    if (publishedDraw) {
+      // 发布通知只写平台投递队列，不同步调用 QQ/Telegram；入队失败不回滚已发布活动。
+      await enqueuePlatformEvent(db, {
+        tenantId,
+        drawId,
+        eventType: "draw.published",
+        data: {
+          drawName: publishedDraw.title,
+          drawAt: publishedDraw.drawAt || "",
+          shareUrl: publishedDraw.publicSlug ? `/lottery/${encodeURIComponent(publishedDraw.publicSlug)}` : "",
+        },
+      }).catch((err) => {
+        console.error(`[admin] enqueuePlatformEvent draw.published failed for ${drawId}:`, err);
+      });
+    }
     return ok(c, { status: "open" });
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "发布失败", 400);

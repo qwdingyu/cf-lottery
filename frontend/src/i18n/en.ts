@@ -1746,6 +1746,7 @@ export default {
     planPro: "Pro",
     planTeam: "Team",
     planEnterprise: "Enterprise",
+    searchPlaceholder: "Search tenant name or ID",
     searching: "Searching…",
     search: "Search",
     refresh: "Refresh",
