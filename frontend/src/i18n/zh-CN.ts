@@ -552,6 +552,8 @@ export default {
     noDraws: "暂无进行中的抽奖活动",
     emailVerify: "邮箱验证",
     emailVerifyHint: "验证码将发送到该邮箱；同一活动每个邮箱仅可参与一次。",
+    unifiedLoginRecommended: "推荐使用，和管理后台同一账号体系",
+    emailCodeFallback: "或使用邮箱验证码",
     emailPlaceholder: "请输入邮箱地址",
     codePlaceholder: "请输入6位验证码",
     sendCode: "发送验证码",
@@ -1507,6 +1509,8 @@ export default {
     resultModeScheduledTag: "定时出结果",
     resultModeManualTag: "手动出结果",
     statusHintDraft: "活动尚未对外开放。请稍后再来，或点「刷新状态」查看是否已开启。",
+    statusHintNotStarted: "活动尚未开始，开始时间：{time}。请到时间后刷新页面再参与。",
+    statusHintEndedByTime: "活动已于 {time} 结束，不能再参与。若你已参与，可在本页查询结果。",
     statusHintPaused: "主办方已暂停本活动，暂不可新参与。可刷新状态或复制链接稍后再进。",
     statusHintDrawing: "正在开奖，请稍后点刷新或查询结果。",
     /** 非抽奖 drawing：勿写「正在开奖」（docs/105） */

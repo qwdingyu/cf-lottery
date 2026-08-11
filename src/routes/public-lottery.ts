@@ -92,6 +92,36 @@ function formatPublicAmount(amountMinor: number | null | undefined, currency: st
   return `${value.toFixed(2)} ${normalized}`;
 }
 
+type PublicJoinWindowState = {
+  canJoin: boolean;
+  joinDisabledReason: "" | "not_started" | "ended" | "status";
+  joinDisabledMessage: string;
+  serverNow: string;
+};
+
+/**
+ * 公开参与时间窗判定。
+ *
+ * status=open 只表示运营已发布，不代表当前时间一定可参与。
+ * 公开详情、发码、验证码参与三处必须共用同一判断，否则用户会先完成邮箱验证，
+ * 最后才在 joinDraw 里看到「不在参与时间内」，造成明显的产品断裂和邮件浪费。
+ */
+function resolvePublicJoinWindow(draw: { status: string; startAt: string; endAt: string }, now = new Date()): PublicJoinWindowState {
+  const serverNow = now.toISOString();
+  if (draw.status !== DRAW_STATUS.OPEN) {
+    return { canJoin: false, joinDisabledReason: "status", joinDisabledMessage: "活动当前不可参与", serverNow };
+  }
+  const start = new Date(draw.startAt);
+  const end = new Date(draw.endAt);
+  if (!Number.isNaN(start.getTime()) && now < start) {
+    return { canJoin: false, joinDisabledReason: "not_started", joinDisabledMessage: "活动尚未开始", serverNow };
+  }
+  if (!Number.isNaN(end.getTime()) && now > end) {
+    return { canJoin: false, joinDisabledReason: "ended", joinDisabledMessage: "活动已结束，不能再参与", serverNow };
+  }
+  return { canJoin: true, joinDisabledReason: "", joinDisabledMessage: "", serverNow };
+}
+
 function productFromPublicConfig(draw: {
   title: string;
   productLink?: string | null;
@@ -360,6 +390,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
   if (draw.status !== DRAW_STATUS.OPEN && draw.status !== DRAW_STATUS.DRAWN) return fail(c, "活动未开放", 400);
   // docs/083：visible=0 时对公众与「未开放」同文案，不额外泄露「存在但隐藏」
   if (Number(draw.visible ?? 1) !== 1) return fail(c, "活动未开放", 400);
+  const joinWindow = resolvePublicJoinWindow(draw);
 
   const detailFlashConfig = parseFlashSaleConfig(draw.promotionConfig).config;
   // 直付秒杀直接读取活动计数器；普通活动才扫描 entries。
@@ -406,6 +437,11 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     participantCount: draw.showParticipantCount ? publicParticipantCount : undefined,
     winnerCount: draw.showWinnerCount ? draw.winnerCount : undefined,
     maxParticipants: draw.maxParticipants,
+    /** 参与门禁：让公开页在发验证码前展示和禁用，避免最后一步才提示不在时间内。 */
+    canJoin: joinWindow.canJoin,
+    joinDisabledReason: joinWindow.joinDisabledReason,
+    joinDisabledMessage: joinWindow.joinDisabledMessage,
+    serverNow: joinWindow.serverNow,
     // 导流：关联商品链接（仅在活动中开放时返回）
     productLink: draw.productLink && draw.productLink !== "{}" ? tryParseJson(draw.productLink) : undefined,
     promotionConfig: draw.promotionConfig && draw.promotionConfig !== "{}" ? tryParseJson(draw.promotionConfig) : undefined,
@@ -665,6 +701,8 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   // join：仅 open；query：开奖后仍需 OTP 证明邮箱，允许 open/paused/drawing/drawn
   if (purpose === "join") {
     if (draw.status !== DRAW_STATUS.OPEN) return fail(c, "活动已结束", 400);
+    const joinWindow = resolvePublicJoinWindow(draw);
+    if (!joinWindow.canJoin) return fail(c, joinWindow.joinDisabledMessage || "不在参与时间内", 400);
   } else if (!([DRAW_STATUS.OPEN, DRAW_STATUS.PAUSED, DRAW_STATUS.DRAWING, DRAW_STATUS.DRAWN] as readonly string[]).includes(draw.status)) {
     return fail(c, "当前无法发送查询验证码", 400);
   }
@@ -943,6 +981,8 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
 
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.status !== DRAW_STATUS.OPEN) return fail(c, "活动已结束", 400);
+  const joinWindow = resolvePublicJoinWindow(draw);
+  if (!joinWindow.canJoin) return fail(c, joinWindow.joinDisabledMessage || "不在参与时间内", 400);
   const joinIpLimit = activityJoinIpLimit(draw, globalJoinLimit);
   if (!(await checkPublicRateLimit(db, `join:${draw.id}:${ip}`, joinIpLimit, 60000))) {
     return fail(c, "参与过于频繁，请稍后再试", 429);
@@ -1632,6 +1672,9 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
         tenantId: lotteryDraws.tenantId,
         activityKind: lotteryDraws.activityKind,
         activityConfig: lotteryDraws.activityConfig,
+        status: lotteryDraws.status,
+        startAt: lotteryDraws.startAt,
+        endAt: lotteryDraws.endAt,
         resultMode: lotteryDraws.resultMode,
         drawTrigger: lotteryDraws.drawTrigger,
         maxSpinsPerEntry: lotteryDraws.maxSpinsPerEntry,
@@ -1640,6 +1683,8 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
       .where(eq(lotteryDraws.publicSlug, c.req.param("slug")))
       .limit(1);
     if (!draw) return fail(c, "活动不存在", 404);
+    const joinWindow = resolvePublicJoinWindow(draw);
+    if (!joinWindow.canJoin) return fail(c, joinWindow.joinDisabledMessage || "不在参与时间内", 400);
     const joinIpLimit = activityJoinIpLimit(draw, globalJoinLimit);
     if (!(await checkPublicRateLimit(db, `join:${draw.id}:${ip}`, joinIpLimit, 60000))) {
       return fail(c, "参与过于频繁，请稍后再试", 429);

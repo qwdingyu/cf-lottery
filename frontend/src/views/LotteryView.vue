@@ -124,7 +124,7 @@
             与 experience 游戏壳解耦：先填内容，再点游戏/底部 CTA 触发 handleJoin。
           -->
           <div
-            v-if="requiresActivitySubmission(draw) && draw.status === 'open' && !isDrawJoined(draw)"
+            v-if="requiresActivitySubmission(draw) && isDrawJoinable(draw) && !isDrawJoined(draw)"
             class="activity-submission"
           >
             <template v-if="draw.activityConfig?.kind === 'vote'">
@@ -319,6 +319,17 @@
                 >{{ $t('lottery.copyShareLink') }}</button>
               </div>
             </template>
+            <template v-else-if="!isDrawJoinable(draw) && !isDrawJoined(draw)">
+              <span class="lottery-join-hint">{{ joinDisabledText(draw) }}</span>
+              <div class="lottery-status-actions">
+                <button
+                  type="button"
+                  class="lottery-join-btn primary"
+                  :disabled="loading"
+                  @click="fetchDraws"
+                >{{ loading ? $t('lottery.loadingText') : $t('lottery.refreshStatus') }}</button>
+              </div>
+            </template>
             <template v-else-if="isDrawJoined(draw) && isDirectPaymentDraw(draw)">
               <span class="lottery-join-hint">✅ {{ $t('lottery.paymentSlotLocked') }} · {{ joinedTimeText(draw) }}</span>
               <button
@@ -435,6 +446,18 @@
 
         <!-- registered 模式：用户名密码登录 -->
         <div v-else-if="isRegisteredJoin" class="modal-form">
+          <div v-if="cfAuthEnabled" class="auth-choice auth-choice--primary">
+            <button
+              type="button"
+              class="auth-choice-btn auth-choice-btn--primary"
+              :disabled="cfAuthLoading"
+              @click="handleCfAuthJoin"
+            >
+              <span class="auth-choice-title">{{ $t('adminLogin.cfAuthLogin') }}</span>
+              <span class="auth-choice-subtitle">{{ $t('lottery.unifiedLoginRecommended') }}</span>
+            </button>
+          </div>
+          <div v-if="cfAuthEnabled" class="auth-divider"><span>{{ $t('adminLogin.or') }}</span></div>
           <label>
             <span>{{ $t('adminLogin.username') }}</span>
             <input v-model="regLoginUsername" type="text" autocomplete="username" @keyup.enter="handleRegisteredLogin" />
@@ -451,17 +474,6 @@
             {{ $t('adminLogin.noAccount') }}
             <a href="/admin/register" target="_blank" class="btn btn-ghost btn-xs">{{ $t('adminLogin.switchToRegister') }}</a>
           </p>
-          <!-- cf-auth 统一认证（docs/059） -->
-          <div v-if="cfAuthEnabled" class="oauth-section" style="margin-top:8px">
-            <div class="oauth-divider" style="margin:8px 0"><span class="divider-text" style="font-size:12px;color:var(--tg-hint)">{{ $t('adminLogin.or') }}</span></div>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm"
-              style="width:100%"
-              :disabled="cfAuthLoading"
-              @click="handleCfAuthJoin"
-            >{{ $t('adminLogin.cfAuthLogin') }}</button>
-          </div>
         </div>
 
         <!-- open / roster / password / invite_code：邮箱验证码 + 模式附加凭证 -->
@@ -509,6 +521,18 @@
             <p v-if="loginError" class="form-error">{{ loginError }}</p>
           </template>
           <template v-else>
+            <div v-if="cfAuthEnabled && !codeSent" class="auth-choice auth-choice--primary">
+              <button
+                type="button"
+                class="auth-choice-btn auth-choice-btn--primary"
+                :disabled="cfAuthLoading"
+                @click="handleCfAuthJoin"
+              >
+                <span class="auth-choice-title">{{ $t('adminLogin.cfAuthLogin') }}</span>
+                <span class="auth-choice-subtitle">{{ $t('lottery.unifiedLoginRecommended') }}</span>
+              </button>
+            </div>
+            <div v-if="cfAuthEnabled && !codeSent" class="auth-divider"><span>{{ $t('lottery.emailCodeFallback') }}</span></div>
             <label>
               <span>{{ $t('lottery.emailPlaceholder') }}</span>
               <input
@@ -544,17 +568,6 @@
                 @keyup.enter="codeSent ? handleVerifyCode() : handleSendCode()"
               />
             </label>
-            <!-- cf-auth 统一认证（docs/059） -->
-            <div v-if="cfAuthEnabled && !codeSent" class="oauth-section" style="margin-top:8px">
-              <div class="oauth-divider" style="margin:8px 0"><span class="divider-text" style="font-size:12px;color:var(--tg-hint)">{{ $t('adminLogin.or') }}</span></div>
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm"
-                style="width:100%"
-                :disabled="cfAuthLoading"
-                @click="handleCfAuthJoin"
-              >{{ $t('adminLogin.cfAuthLogin') }}</button>
-            </div>
             <div v-if="codeSent" class="verified-email-row">
               <span>{{ $t('lottery.emailVerified', { email: loginEmail }) }}</span>
               <button type="button" class="btn btn-primary btn-sm" :disabled="verifyingCode" @click="handleVerifyCode">
@@ -1123,6 +1136,12 @@ async function handleCfAuthJoin() {
     const drawId = pendingJoinDrawId.value || props.id || ''
     const draw =
       draws.value.find((d) => d.id === drawId || d.publicSlug === drawId) || null
+    if (draw && !isDrawJoinable(draw)) {
+      const msg = joinDisabledText(draw)
+      loginError.value = msg
+      showToast(msg, 'error')
+      return
+    }
     const missing = missingJoinCredentialForMode({
       participationMode: draw?.participationMode,
       accessPassword: joinAccessPassword.value,
@@ -1672,6 +1691,39 @@ function resultModeLabel(draw: LotteryDraw) {
   return key ? t(`lottery.${key}`) : ''
 }
 
+function joinWindowReason(draw: LotteryDraw): '' | 'not_started' | 'ended' | 'status' {
+  const serverReason = String(draw.joinDisabledReason || '').trim()
+  if (serverReason === 'not_started' || serverReason === 'ended' || serverReason === 'status') {
+    return serverReason
+  }
+  if (draw.status !== 'open') return 'status'
+  const now = nowMs.value
+  const start = new Date(draw.startAt || draw.startTime || '').getTime()
+  const end = new Date(draw.endAt || draw.endTime || '').getTime()
+  if (Number.isFinite(start) && now < start) return 'not_started'
+  if (Number.isFinite(end) && now > end) return 'ended'
+  return ''
+}
+
+function isDrawJoinable(draw: LotteryDraw): boolean {
+  if (draw.canJoin === false) return false
+  return joinWindowReason(draw) === ''
+}
+
+function joinDisabledText(draw: LotteryDraw): string {
+  const reason = joinWindowReason(draw)
+  if (reason === 'not_started') {
+    return t('lottery.statusHintNotStarted', { time: formatTime(draw.startAt || draw.startTime || '') })
+  }
+  if (reason === 'ended') {
+    return t('lottery.statusHintEndedByTime', { time: formatTime(draw.endAt || draw.endTime || '') })
+  }
+  if (String(draw.joinDisabledMessage || '').trim()) return String(draw.joinDisabledMessage).trim()
+  // 兜底只返回状态短文案，避免异常 joinDisabledReason 与 status=open 组合时
+  // joinDisabledText() 和 statusPathHint() 相互调用形成递归。
+  return statusText(draw)
+}
+
 /**
  * 状态路径提示：主 CTA 旁用完整句子，避免只显示「已结束」等单词。
  * docs/076：draft/paused 说明「为何不能参与 + 下一步」。
@@ -1688,6 +1740,8 @@ function statusPathHint(draw: LotteryDraw) {
   if (draw.status === 'drawing') {
     return t(`lottery.${statusHintDrawingI18nKey(draw.activityKind)}`)
   }
+  const joinReason = joinWindowReason(draw)
+  if (draw.status === 'open' && joinReason) return joinDisabledText(draw)
   const key = ({
     draft: 'lottery.statusHintDraft',
     open: '',
@@ -1783,6 +1837,7 @@ function isInstantLottery(draw: { activityKind?: string; resultMode?: string } |
 
 /** 游戏区禁用：instant 已参与仍可 spin（有次数时） */
 function gameDisabled(draw: LotteryDraw): boolean {
+  if (!isDrawJoinable(draw)) return true
   return isPublicGameDisabled({
     status: draw.status,
     joined: isDrawJoined(draw),
@@ -1793,6 +1848,10 @@ function gameDisabled(draw: LotteryDraw): boolean {
 }
 
 function handleGamePlay(draw: LotteryDraw) {
+  if (!isDrawJoinable(draw)) {
+    showToast(joinDisabledText(draw), 'error')
+    return
+  }
   if (isDrawJoined(draw) && isInstantLottery(draw)) {
     void handleInstantSpin(draw)
     return
@@ -2995,6 +3054,13 @@ function trackPageView(draw: LotteryDraw) {
 const loginModalRef = ref<HTMLElement | null>(null)
 
 function openLogin(drawId?: string, intent: LoginModalIntent = 'join') {
+  if (drawId && intent === 'join') {
+    const draw = draws.value.find((d) => d.id === drawId || d.publicSlug === drawId)
+    if (draw && !isDrawJoinable(draw)) {
+      showToast(joinDisabledText(draw), 'error')
+      return
+    }
+  }
   pendingJoinDrawId.value = drawId || null
   loginModalIntent.value = drawId ? intent : 'login'
   // 仅参与意图记 participation_started；spin 补码不算新参与
@@ -3354,6 +3420,12 @@ async function handleRegisteredLogin() {
 async function joinWithRegisteredToken(drawId: string, token: string) {
   const draw = draws.value.find(d => d.id === drawId)
   if (draw) {
+    if (!isDrawJoinable(draw)) {
+      const msg = joinDisabledText(draw)
+      loginError.value = msg
+      showToast(msg, 'error')
+      return
+    }
     const message = validateSubmissionDraft(draw)
     if (message) {
       loginError.value = message
@@ -3401,6 +3473,10 @@ async function joinWithRegisteredToken(drawId: string, token: string) {
 async function joinOpenWithBearer(drawId: string, token: string, email: string) {
   const draw = draws.value.find((d) => d.id === drawId)
   if (draw) {
+    if (!isDrawJoinable(draw)) {
+      showToast(joinDisabledText(draw), 'error')
+      return
+    }
     const message = validateSubmissionDraft(draw)
     if (message) {
       showToast(message, 'error')
@@ -3554,6 +3630,13 @@ async function resumeCfAuthJoinAfterCallback() {
   const draw =
     draws.value.find((d) => d.id === pending.drawId || d.publicSlug === pending.drawId) || null
   const joinKey = draw?.id || pending.drawId
+  if (draw && !isDrawJoinable(draw)) {
+    const msg = joinDisabledText(draw)
+    consumeCfAuthPendingJoin(sessionStorage)
+    pendingJoinDrawId.value = null
+    showToast(msg, 'error')
+    return
+  }
 
   /** join 成功后清除 pending，防止刷新重复提交 */
   const finishPendingOk = () => {
@@ -3680,8 +3763,8 @@ async function handleJoin(drawId: string) {
   if (joiningId.value) return
   const draw = draws.value.find((item) => item.id === drawId)
   if (!draw) return
-  if (draw.status !== 'open') {
-    showToast(statusPathHint(draw) || statusText(draw), 'error')
+  if (!isDrawJoinable(draw)) {
+    showToast(joinDisabledText(draw), 'error')
     return
   }
   // id 与 publicSlug 任一命中即视为已参与（hints / mark 双键，docs/098）
@@ -3781,6 +3864,10 @@ async function handleSendCode() {
     }
   }
   const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
+  if (!isSpin && draw && !isDrawJoinable(draw)) {
+    loginError.value = joinDisabledText(draw)
+    return
+  }
   if (!isSpin && draw) {
     const message = validateSubmissionDraft(draw)
     if (message) {
@@ -3853,6 +3940,10 @@ async function handleVerifyCode() {
       loginError.value = t('lottery.spinFailed')
       return
     }
+    if (!isDrawJoinable(draw)) {
+      loginError.value = joinDisabledText(draw)
+      return
+    }
     persistSessionEmail(email)
     verifyingCode.value = true
     loginError.value = ''
@@ -3871,6 +3962,10 @@ async function handleVerifyCode() {
     return
   }
   const draw = draws.value.find((item) => item.id === pendingJoinDrawId.value)
+  if (draw && !isDrawJoinable(draw)) {
+    loginError.value = joinDisabledText(draw)
+    return
+  }
   if (draw) {
     const message = validateSubmissionDraft(draw)
     if (message) {

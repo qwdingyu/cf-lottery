@@ -34,6 +34,11 @@ export type LotteryDraw = {
   maxWinners?: number
   participantCount?: number
   entryCount?: number
+  /** 后端按 status + startAt/endAt 计算的参与门禁，公开页必须在发验证码前使用。 */
+  canJoin?: boolean
+  joinDisabledReason?: '' | 'not_started' | 'ended' | 'status' | string
+  joinDisabledMessage?: string
+  serverNow?: string
   winners?: Array<{ identity: string }>
   prizes?: Array<{
     name?: string

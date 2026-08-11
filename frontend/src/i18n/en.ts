@@ -594,6 +594,8 @@ export default {
     noDraws: "No active lotteries",
     emailVerify: "Email Verification",
     emailVerifyHint: "We email a code to this address. One entry per email per draw.",
+    unifiedLoginRecommended: "Recommended. Uses the same account system as the admin console.",
+    emailCodeFallback: "Or use an email code",
     emailPlaceholder: "Enter your email",
     codePlaceholder: "Enter 6-digit code",
     sendCode: "Send Code",
@@ -1534,6 +1536,8 @@ export default {
     resultModeScheduledTag: "Scheduled result",
     resultModeManualTag: "Manual result",
     statusHintDraft: "This activity is not open to the public yet. Refresh later or tap “Refresh status” when the host opens it.",
+    statusHintNotStarted: "This activity has not started yet. Start time: {time}. Refresh after it starts to join.",
+    statusHintEndedByTime: "This activity ended at {time}. New entries are closed. If you joined, check your result on this page.",
     statusHintPaused: "The host paused this activity; new joins are off. Refresh status or copy the link for later.",
     statusHintDrawing: "Drawing in progress. Refresh or check results shortly.",
     /** Non-lottery drawing: no “drawing” prize wording (docs/105) */

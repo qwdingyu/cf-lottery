@@ -524,6 +524,139 @@ describe("公开参与流程", () => {
     expect(rows.filter((row) => row.used === 1)).toHaveLength(1);
   });
 
+  it("过期但仍 open 的活动：公开详情提前标记不可参与，发验证码前拒绝且不写验证码", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "open-but-ended",
+      title: "已过期活动",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-120),
+      endAt: futureTimeISO(-30),
+      winnerCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const detailRes = await app.request("/public/draws/open-but-ended", {}, TEST_ENV);
+    expect(detailRes.status).toBe(200);
+    const detail = await detailRes.json() as {
+      ok?: boolean;
+      canJoin?: boolean;
+      joinDisabledReason?: string;
+      joinDisabledMessage?: string;
+    };
+    expect(detail.ok).toBe(true);
+    expect(detail.canJoin).toBe(false);
+    expect(detail.joinDisabledReason).toBe("ended");
+    expect(detail.joinDisabledMessage).toContain("已结束");
+
+    const codeRes = await app.request("/public/draws/open-but-ended/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.21" },
+      body: JSON.stringify({ email: "ended@test.com" }),
+    }, TEST_ENV);
+    const codeBody = await codeRes.json() as { message?: string };
+    expect(codeRes.status).toBe(400);
+    expect(codeBody.message).toContain("已结束");
+    const rows = await db.select().from(emailAccessCodes).where(and(
+      eq(emailAccessCodes.email, "ended@test.com"),
+      eq(emailAccessCodes.drawId, drawId),
+    ));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("未开始但仍 open 的活动：公开详情提前标记不可参与且发码前拒绝", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "open-but-not-started",
+      title: "未开始活动",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(30),
+      endAt: futureTimeISO(90),
+      winnerCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const detailRes = await app.request("/public/draws/open-but-not-started", {}, TEST_ENV);
+    expect(detailRes.status).toBe(200);
+    const detail = await detailRes.json() as {
+      ok?: boolean;
+      canJoin?: boolean;
+      joinDisabledReason?: string;
+      joinDisabledMessage?: string;
+    };
+    expect(detail.ok).toBe(true);
+    expect(detail.canJoin).toBe(false);
+    expect(detail.joinDisabledReason).toBe("not_started");
+    expect(detail.joinDisabledMessage).toContain("尚未开始");
+
+    const codeRes = await app.request("/public/draws/open-but-not-started/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.22" },
+      body: JSON.stringify({ email: "not-started@test.com" }),
+    }, TEST_ENV);
+    const codeBody = await codeRes.json() as { message?: string };
+    expect(codeRes.status).toBe(400);
+    expect(codeBody.message).toContain("尚未开始");
+    const rows = await db.select().from(emailAccessCodes).where(and(
+      eq(emailAccessCodes.email, "not-started@test.com"),
+      eq(emailAccessCodes.drawId, drawId),
+    ));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("活动过期后 verify-join 前置拒绝：不消费既有验证码且不创建参与记录", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "verify-ended-window",
+      title: "验证时已结束",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-120),
+      endAt: futureTimeISO(-30),
+      winnerCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email: "verify-ended@test.com",
+      drawId,
+      codeHash: await hashCode("123456"),
+      used: 0,
+      expiresAt: futureTimeISO(10),
+    });
+
+    const res = await app.request("/public/draws/verify-ended-window/verify-join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.23" },
+      body: JSON.stringify({ email: "verify-ended@test.com", code: "123456" }),
+    }, TEST_ENV);
+    const body = await res.json() as { message?: string };
+    expect(res.status).toBe(400);
+    expect(body.message).toContain("已结束");
+
+    const [code] = await db.select().from(emailAccessCodes).where(and(
+      eq(emailAccessCodes.email, "verify-ended@test.com"),
+      eq(emailAccessCodes.drawId, drawId),
+    )).limit(1);
+    expect(code?.used).toBe(0);
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId)).limit(1);
+    expect(entry).toBeFalsy();
+  });
+
   /**
    * 驳回错误审查：「email 验证关闭时公开参与依赖 cf-auth，需在 access-code 检测 IdP 再回退发码」。
    * 事实：enable_email_verification=false 时 access-code 对 open 系直接 joinDraw，
