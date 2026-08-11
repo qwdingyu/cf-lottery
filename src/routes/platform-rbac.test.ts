@@ -9,13 +9,14 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
+import * as dbClient from "../db/client";
 import { systemConfigRoute } from "./system-config";
 import { platformSystemConfigRoute } from "./platform-system-config";
 import { platformRedemptionCodesRoute } from "./platform-redemption-codes";
 import { platformRoute } from "./platform";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt, verifyJwt } from "../middleware/auth";
-import { lotteryDraws, adminAuditLogs, emailDeliveries, platformMembers, redemptionCodes, systemConfig, systemConfigVersions, tenantUsageSnapshots, tenantMembers, tenants, users } from "../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, activityEvents, webhookDeliveries, adminAuditLogs, emailDeliveries, platformMembers, redemptionCodes, systemConfig, systemConfigVersions, tenantUsageSnapshots, tenantMembers, tenants, users } from "../db/schema";
 import { desc, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
@@ -176,6 +177,62 @@ describe("RBAC-lite 路由分层", () => {
     expect(latestVersion?.afterValue).toBe("第一版平台");
   });
 
+  it("系统配置回滚必须以事务内的最新版本为准，不能吃到旧预读", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    await app.request("/api/platform/system-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ key: "platform_name", value: "第一版平台" }),
+    }, TEST_ENV);
+    await app.request("/api/platform/system-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ key: "platform_name", value: "第二版平台" }),
+    }, TEST_ENV);
+
+    const originalWithDbTransaction = dbClient.withDbTransaction;
+    const rollbackInsertSpy = vi.spyOn(dbClient, "withDbTransaction").mockImplementation(async (database, fn, options) => {
+      await database.update(systemConfig).set({ value: "第三版平台", updatedAt: new Date().toISOString() }).where(eq(systemConfig.key, "platform_name"));
+      await database.insert(systemConfigVersions).values({
+        key: "platform_name",
+        beforeValue: "第二版平台",
+        afterValue: "第三版平台",
+        changeType: "update",
+        actorUserId: PLATFORM_ID,
+        actorRole: "platform_owner",
+      });
+      return originalWithDbTransaction(database, fn, options);
+    });
+
+    const rollbackRes = await app.request("/api/platform/system-config/rollback/platform_name", {
+      method: "POST",
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+
+    rollbackInsertSpy.mockRestore();
+    expect(rollbackRes.status).toBe(200);
+
+    const [current] = await db
+      .select({ value: systemConfig.value })
+      .from(systemConfig)
+      .where(eq(systemConfig.key, "platform_name"))
+      .limit(1);
+    expect(current?.value).toBe("第二版平台");
+
+    const [latestVersion] = await db
+      .select()
+      .from(systemConfigVersions)
+      .where(eq(systemConfigVersions.key, "platform_name"))
+      .orderBy(desc(systemConfigVersions.revision))
+      .limit(1);
+    expect(latestVersion?.changeType).toBe("rollback");
+    expect(latestVersion?.beforeValue).toBe("第三版平台");
+    expect(latestVersion?.afterValue).toBe("第二版平台");
+  });
+
   it("旧 admin 平台入口不再提供系统配置和发码能力", async () => {
     await seedUsers();
     const app = createTestApp();
@@ -226,6 +283,80 @@ describe("RBAC-lite 路由分层", () => {
     expect(payload.stats.lotteryWinners).toBe(9);
     expect(payload.stats.activityEvents).toBe(88);
     expect(payload.stats.webhookDeliveries).toBe(7);
+  });
+
+  it("快照未覆盖全部活跃租户时必须回退到精确统计", async () => {
+    await seedUsers();
+    await db.insert(tenants).values({ id: "tenant-rbac-2", name: "RBAC 第二租户" });
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_operator" });
+    const app = createTestApp();
+
+    await db.insert(lotteryDraws).values({
+      id: "draw-rbac-1",
+      tenantId: TENANT_ID,
+      publicSlug: "draw-rbac-1",
+      title: "统计回退活动",
+      startAt: "2026-08-11T00:00:00.000Z",
+      endAt: "2026-08-12T00:00:00.000Z",
+    });
+    await db.insert(lotteryEntries).values({
+      id: "entry-rbac-1",
+      tenantId: TENANT_ID,
+      drawId: "draw-rbac-1",
+      identityValue: "user-1",
+    });
+    await db.insert(lotteryWinners).values({
+      id: "winner-rbac-1",
+      tenantId: TENANT_ID,
+      drawId: "draw-rbac-1",
+      tierId: "tier-rbac-1",
+      entryId: "entry-rbac-1",
+      identityType: "email",
+      identityValue: "user-1@test.com",
+    });
+    await db.insert(activityEvents).values({
+      id: "event-rbac-1",
+      tenantId: TENANT_ID,
+      drawId: "draw-rbac-1",
+      entryId: "entry-rbac-1",
+      eventType: "signup",
+    });
+    await db.insert(webhookDeliveries).values({
+      id: "webhook-rbac-1",
+      tenantId: TENANT_ID,
+      webhookConfigId: "wh-rbac-1",
+      eventId: "event-rbac-1",
+      eventType: "signup",
+      url: "https://example.com/webhook",
+      payloadJson: "{}",
+    });
+    await db.insert(tenantUsageSnapshots).values({
+      tenantId: TENANT_ID,
+      snapshotDate: "2026-08-10",
+      activityCount: 41,
+      participantCount: 1234,
+      eventCount: 88,
+      winnerCount: 9,
+      webhookCount: 7,
+    });
+
+    const res = await app.request("/api/platform/data/stats", {
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const payload = await res.json() as {
+      stats: Record<string, number>;
+      snapshotDate: string | null;
+      snapshotTenantCount: number;
+      snapshotized: boolean;
+    };
+    expect(payload.snapshotized).toBe(false);
+    expect(payload.snapshotTenantCount).toBe(1);
+    expect(payload.stats.lotteryDraws).toBe(1);
+    expect(payload.stats.lotteryEntries).toBe(1);
+    expect(payload.stats.lotteryWinners).toBe(1);
+    expect(payload.stats.activityEvents).toBe(1);
+    expect(payload.stats.webhookDeliveries).toBe(1);
   });
 
   it("公开系统配置只走白名单接口，不需要平台权限也不泄漏管理项", async () => {

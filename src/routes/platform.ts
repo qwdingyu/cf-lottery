@@ -779,7 +779,14 @@ platformRoute.get("/data/stats", async (c) => {
   const db = getDb(c);
   const stats: Record<string, number> = {};
   const snapshotTotals = await readLatestTenantUsageSnapshotTotals(db);
-  const useSnapshotTotals = snapshotTotals.tenantCount > 0;
+  // 只有当最新快照覆盖了全部活跃租户时，才允许用快照值替代热表精确统计。
+  // 只看“有无快照”不够：半套快照会悄悄少算，清理页会把风险数据看小。
+  const [activeTenantRow] = await db
+    .select({ total: count() })
+    .from(tenants)
+    .where(eq(tenants.status, "active"));
+  const activeTenantCount = Number(activeTenantRow?.total ?? 0);
+  const useSnapshotTotals = snapshotTotals.tenantCount > 0 && snapshotTotals.tenantCount === activeTenantCount;
 
   const exactCount = async (schemaTable: any) => {
     const [row] = await db.select({ total: count() }).from(schemaTable);

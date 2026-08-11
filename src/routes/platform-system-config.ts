@@ -132,20 +132,22 @@ platformSystemConfigRoute.post("/rollback/:key", async (c) => {
 
     const db = getDb(c);
     const sensitive = isSensitiveSystemConfigKey(key);
-    const [latest] = await db
-      .select()
-      .from(systemConfigVersions)
-      .where(eq(systemConfigVersions.key, key))
-      .orderBy(desc(systemConfigVersions.revision))
-      .limit(1);
-    if (!latest) return fail(c, "没有可回滚的历史版本", 400);
+    // 回滚必须在同一事务内重新读取“当前最新版本”，
+    // 否则请求开始前的预读可能被并发更新打断，导致把旧版本回错到更早的状态。
+    const latest = await withDbTransaction(db, async (tx) => {
+      const [currentLatest] = await tx
+        .select()
+        .from(systemConfigVersions)
+        .where(eq(systemConfigVersions.key, key))
+        .orderBy(desc(systemConfigVersions.revision))
+        .limit(1);
+      if (!currentLatest) return null;
 
-    await withDbTransaction(db, async (tx) => {
-      await upsertSystemConfigStoredValue(tx, key, latest.beforeValue);
+      await upsertSystemConfigStoredValue(tx, key, currentLatest.beforeValue);
       await recordSystemConfigVersion(tx, {
         key,
-        beforeValue: latest.afterValue,
-        afterValue: latest.beforeValue,
+        beforeValue: currentLatest.afterValue,
+        afterValue: currentLatest.beforeValue,
         changeType: "rollback",
         actorUserId: c.get("userId") as string,
         actorRole: c.get("platformRole") as string,
@@ -158,11 +160,15 @@ platformSystemConfigRoute.post("/rollback/:key", async (c) => {
         targetId: key,
         metadata: {
           key,
-          revision: latest.revision,
+          revision: currentLatest.revision,
           sensitive,
         },
       });
+
+      return currentLatest;
     });
+
+    if (!latest) return fail(c, "没有可回滚的历史版本", 400);
 
     return ok(c, {
       key,
