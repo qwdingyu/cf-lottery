@@ -122,7 +122,7 @@
               />
             </td>
             <td>{{ k.name }}</td>
-            <td><code class="code-text">{{ k.prefix || maskKey(k.key) }}</code></td>
+            <td><code class="code-text">{{ k.prefix }}</code></td>
             <td><span class="tag" :class="k.active ? 'tag-success' : 'tag-muted'">{{ k.active ? $t('adminIntegrations.enabled') : $t('adminIntegrations.disabled') }}</span></td>
             <td>{{ formatTime(k.createdAt) }}</td>
             <td class="col-actions">
@@ -266,12 +266,6 @@ function parseEvents(raw: any): string[] {
 
 function truncate(text: string, len: number): string {
   return text.length > len ? text.slice(0, len) + '…' : text
-}
-
-function maskKey(key: string): string {
-  if (!key) return '-'
-  if (key.startsWith('cl_')) return key.length > 12 ? `${key.slice(0, 10)}…` : key
-  return 'cl_••••••••'
 }
 
 function formatTime(iso: string): string {

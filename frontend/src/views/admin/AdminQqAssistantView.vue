@@ -224,17 +224,25 @@
         <button class="btn btn-primary" :disabled="saving" @click="saveTarget">{{ $t('adminQqAssistant.save') }}</button>
       </template>
     </AdminModal>
+
+    <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" danger @confirm="handleConfirmDialogConfirm" />
   </div>
 </template>
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
-import { useToast } from '@usethink/cf-admin-fe/composables'
+import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
+import { useToast, useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { adminRequest } from '@/composables/useAdminRequest'
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const { confirmVisible, confirmMessage, askConfirm, onConfirm } = useConfirmDialog()
+
+function handleConfirmDialogConfirm() {
+  onConfirm()
+}
 
 interface PlatformTarget {
   id: string
@@ -517,7 +525,8 @@ async function saveTarget() {
   } finally { saving.value = false }
 }
 async function deleteTarget(target: PlatformTarget) {
-  if (!confirm(t('adminQqAssistant.confirmDelete', { name: target.targetName || target.targetId }))) return
+  // 统一使用 ConfirmDialog 组件（与全后台一致），替代原生 confirm()
+  if (!(await askConfirm(t('adminQqAssistant.confirmDelete', { name: target.targetName || target.targetId })))) return
   try {
     await api(`/platform-targets/${target.id}`, { method: 'DELETE' })
     showToast(t('adminQqAssistant.toastDeleted'), 'success')
