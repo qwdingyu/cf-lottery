@@ -7,8 +7,9 @@ Type=simple
 User=www-data
 WorkingDirectory=/opt/cf-lottery
 EnvironmentFile=/opt/cf-lottery/.env
-# 使用 tsx 直接运行 TypeScript（无需编译步骤）
-ExecStart=/opt/cf-lottery/node_modules/.bin/tsx /opt/cf-lottery/src/server.ts
+# 使用 esbuild 打包后的产物运行（无需 tsx 运行时转译，启动更快、部署更稳）
+# 对比结论见 docs/191 §5.2 和 docs/156 §七
+ExecStart=/usr/bin/node /opt/cf-lottery/dist/server.js
 ExecStartPre=/bin/sh -c 'cd /opt/cf-lottery && npm install --silent 2>/dev/null || true'
 Restart=always
 RestartSec=5
