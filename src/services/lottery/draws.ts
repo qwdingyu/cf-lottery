@@ -44,11 +44,11 @@ export async function getDraw(db: DbType, drawId: string, tenantId: string) {
 }
 
 /**
- * 获取候选池总数（不含租户隔离，用于公开页展示）。
+ * 获取候选池总数（带租户隔离，用于公开页展示）。
+ * tenantId 为必选参数：防止调用方漏传导致跨租户计数。
  */
-export async function getDrawEntriesCount(db: DbType, drawId: string, tenantId?: string): Promise<number> {
-  const conditions = [eq(lotteryEntries.drawId, drawId)];
-  if (tenantId) conditions.push(eq(lotteryEntries.tenantId, tenantId));
+export async function getDrawEntriesCount(db: DbType, drawId: string, tenantId: string): Promise<number> {
+  const conditions = [eq(lotteryEntries.drawId, drawId), eq(lotteryEntries.tenantId, tenantId)];
   const [{ total }] = await db
     .select({ total: count() })
     .from(lotteryEntries)

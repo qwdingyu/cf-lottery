@@ -847,10 +847,11 @@ export async function healDrawingState(
 
   if (Number(total) > 0) {
     // 中奖已落库但状态未 drawn：补状态
+    // 防御纵深：UPDATE 必须带 tenantId，防止未来调用路径绕过入口校验时误改他租户活动
     await db
       .update(lotteryDraws)
       .set({ status: DRAW_STATUS.DRAWN, drawnAt: draw.drawnAt || nowIso, updatedAt: nowIso, failureReason: "" })
-      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.status, DRAW_STATUS.DRAWING)));
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.DRAWING)));
     return DRAW_STATUS.DRAWN;
   }
 
@@ -864,7 +865,7 @@ export async function healDrawingState(
         failureReason: force ? "运营手动恢复开奖状态" : "开奖超时，已自动回滚",
         updatedAt: nowIso,
       })
-      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.status, DRAW_STATUS.DRAWING)));
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.DRAWING)));
     return DRAW_STATUS.OPEN;
   }
 
