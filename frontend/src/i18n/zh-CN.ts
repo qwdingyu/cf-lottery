@@ -1920,7 +1920,7 @@ export default {
     deleted: "已删除",
     deleteFailed: "删除失败",
   },
-adminQqAssistant: {
+  adminQqAssistant: {
     title: "QQ 群助手",
     addBinding: "绑定群",
     editBinding: "编辑绑定",
@@ -1966,9 +1966,9 @@ adminQqAssistant: {
     hintNewInboundSecret: "不会显示旧密钥。留空则不修改；填写至少 6 位的新密钥会覆盖当前密钥。",
     placeholderNewInboundSecret: "留空保持当前密钥不变",
     labelBotToken: "Bot Token",
-    hintBotToken: "Telegram Bot 的 API Token，从 @BotFather 获取",
+    hintBotToken: "Telegram Bot 的 API Token，从 {'@'}BotFather 获取",
     placeholderBotToken: "例如 1234567890:ABC-DEF1234...",
-    hintBotTokenKeep: "留空则保持当前 Token（不会显示明文）", "例如 1234567890:ABC-DEF1234...",
+    hintBotTokenKeep: "留空则保持当前 Token（不会显示明文）",
     builtinCommands: "内置命令开关",
     cmdCheckin: "签到",
     cmdSpin: "抽奖",
@@ -2029,8 +2029,8 @@ adminQqAssistant: {
     toastToggled: "已切换状态",
     toastTestSent: "测试消息已发送，请到 QQ 群确认",
     confirmDelete: "确认删除绑定「{name}」？",
-  }
-adminPlatformTarget: {
+  },
+  adminPlatformTarget: {
     title: "平台助手",
     addBinding: "添加目标",
     editBinding: "编辑目标",
@@ -2076,9 +2076,9 @@ adminPlatformTarget: {
     hintNewInboundSecret: "不会显示旧密钥。留空则不修改；填写至少 6 位的新密钥会覆盖当前密钥。",
     placeholderNewInboundSecret: "留空保持当前密钥不变",
     labelBotToken: "Bot Token",
-    hintBotToken: "Telegram Bot 的 API Token，从 @BotFather 获取",
+    hintBotToken: "Telegram Bot 的 API Token，从 {'@'}BotFather 获取",
     placeholderBotToken: "例如 1234567890:ABC-DEF1234...",
-    hintBotTokenKeep: "留空则保持当前 Token（不会显示明文）", "例如 1234567890:ABC-DEF1234...",
+    hintBotTokenKeep: "留空则保持当前 Token（不会显示明文）",
     builtinCommands: "内置命令开关",
     cmdCheckin: "签到",
     cmdSpin: "抽奖",

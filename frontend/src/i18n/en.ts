@@ -1944,7 +1944,8 @@ export default {
     batchDeleteResult: "Done: {success} succeeded, {failed} failed",
     deleted: "Deleted",
     deleteFailed: "Delete failed",
-adminQqAssistant: {
+  },
+  adminQqAssistant: {
     title: "QQ Assistant",
     addBinding: "Bind Group",
     editBinding: "Edit Binding",
@@ -1990,9 +1991,9 @@ adminQqAssistant: {
     hintNewInboundSecret: "The existing secret is never shown. Leave empty to keep it; enter at least 6 characters to overwrite it.",
     placeholderNewInboundSecret: "Leave empty to keep the current secret",
     labelBotToken: "Bot Token",
-    hintBotToken: "Telegram Bot API token from @BotFather",
+    hintBotToken: "Telegram Bot API token from {'@'}BotFather",
     placeholderBotToken: "e.g. 1234567890:ABC-DEF1234...",
-    hintBotTokenKeep: "Leave empty to keep the current token (will not be shown)", "e.g. 1234567890:ABC-DEF1234...",
+    hintBotTokenKeep: "Leave empty to keep the current token (will not be shown)",
     builtinCommands: "Built-in Commands",
     cmdCheckin: "Check-in",
     cmdSpin: "Spin",
@@ -2053,8 +2054,8 @@ adminQqAssistant: {
     toastToggled: "Status toggled",
     toastTestSent: "Test message sent; check the QQ group",
     confirmDelete: "Delete binding \"{name}\"?",
-  }
-adminPlatformTarget: {
+  },
+  adminPlatformTarget: {
     title: "Platform Assistant",
     addBinding: "Add Target",
     editBinding: "Edit Target",
@@ -2100,9 +2101,9 @@ adminPlatformTarget: {
     hintNewInboundSecret: "The existing secret is never shown. Leave empty to keep it; enter at least 6 characters to overwrite it.",
     placeholderNewInboundSecret: "Leave empty to keep the current secret",
     labelBotToken: "Bot Token",
-    hintBotToken: "Telegram Bot API token from @BotFather",
+    hintBotToken: "Telegram Bot API token from {'@'}BotFather",
     placeholderBotToken: "e.g. 1234567890:ABC-DEF1234...",
-    hintBotTokenKeep: "Leave empty to keep the current token (will not be shown)", "e.g. 1234567890:ABC-DEF1234...",
+    hintBotTokenKeep: "Leave empty to keep the current token (will not be shown)",
     builtinCommands: "Built-in Commands",
     cmdCheckin: "Check-in",
     cmdSpin: "Spin",
@@ -2163,7 +2164,6 @@ adminPlatformTarget: {
     toastToggled: "Status toggled",
     toastTestSent: "Test message sent; check the target group",
     confirmDelete: "Delete target \"{name}\"?",
-  },
   },
 
   // ── Platform redemption codes UI ──

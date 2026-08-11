@@ -1092,6 +1092,155 @@ it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → ch
     expect(deliveries[0]?.lastError).toContain("HTTP 502");
   });
 
+  // ── Telegram Webhook 注册测试 ──
+  describe("register-telegram-webhook", () => {
+    /** 创建 Telegram 平台目标并返回 id */
+    async function createTelegramTarget(app: ReturnType<typeof createApp> extends Promise<infer T> ? T : never, botToken?: string) {
+      const createRes = await app.request("/api/admin/platform-targets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          platform: "telegram",
+          targetId: "-1009988776655",
+          targetName: "Telegram Webhook 测试群",
+          activeDrawId: DRAW_ID,
+          ...(botToken !== undefined ? { adapterConfig: { botToken } } : {}),
+        }),
+      });
+      const createData = await createRes.json() as Record<string, unknown>;
+      return (createData.item as Record<string, unknown>).id as string;
+    }
+
+    it("成功注册 webhook：调用 setWebhook 和 setMyCommands，持久化入站密钥哈希", async () => {
+      const app = await createApp();
+      const id = await createTelegramTarget(app, "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11");
+
+      // mock 两次 fetch 调用（setWebhook + setMyCommands）
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, result: true }), { status: 200 }),
+      );
+
+      const res = await app.request(`/api/admin/platform-targets/${id}/register-telegram-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ webhookOrigin: "https://example.com" }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+
+      expect(res.status).toBe(200);
+      expect(data.webhookUrl).toBe("https://example.com/api/platform/telegram/message");
+      expect(data.message).toContain("注册成功");
+
+      // 验证两次 fetch 调用：setWebhook 和 setMyCommands
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const [firstUrl, firstInit] = fetchMock.mock.calls[0]!;
+      expect(String(firstUrl)).toContain("setWebhook");
+      const firstBody = JSON.parse(String(firstInit?.body || "{}"));
+      expect(firstBody.url).toBe("https://example.com/api/platform/telegram/message");
+      expect(firstBody.secret_token).toBeDefined();
+      expect(firstBody.secret_token).toHaveLength(44);
+      expect(firstBody.secret_token).toMatch(/^pin_/);
+      expect(firstBody.allowed_updates).toEqual(["message", "callback_query"]);
+
+      const [secondUrl, secondInit] = fetchMock.mock.calls[1]!;
+      expect(String(secondUrl)).toContain("setMyCommands");
+      const secondBody = JSON.parse(String(secondInit?.body || "{}"));
+      expect(secondBody.commands).toBeDefined();
+      expect(secondBody.commands).toHaveLength(9);
+
+      // 验证 inboundSecretHash 被更新到数据库
+      const [target] = await db
+        .select({ hash: platformTargets.inboundSecretHash })
+        .from(platformTargets)
+        .where(eq(platformTargets.id, id))
+        .limit(1);
+      expect(target?.hash).toBeDefined();
+      expect(target?.hash).not.toBe("");
+    });
+
+    it("非 Telegram 平台目标返回 400", async () => {
+      const app = await createApp();
+      // 创建 QQ 平台目标
+      const createRes = await app.request("/api/admin/platform-targets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          platform: "qq",
+          targetId: "12345678",
+          targetName: "QQ 测试群",
+          activeDrawId: DRAW_ID,
+        }),
+      });
+      const createData = await createRes.json() as Record<string, unknown>;
+      const id = (createData.item as Record<string, unknown>).id as string;
+
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const res = await app.request(`/api/admin/platform-targets/${id}/register-telegram-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ webhookOrigin: "https://example.com" }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+
+      expect(res.status).toBe(400);
+      expect(String(data.message || "")).toContain("仅 Telegram");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("缺少 botToken 时返回错误", async () => {
+      const app = await createApp();
+      const id = await createTelegramTarget(app, "");
+
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const res = await app.request(`/api/admin/platform-targets/${id}/register-telegram-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ webhookOrigin: "https://example.com" }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+
+      expect(res.status).toBe(400);
+      expect(String(data.message || "")).toContain("Bot Token");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("缺少 webhookOrigin 且无 APP_ORIGIN 环境变量时返回错误", async () => {
+      const app = await createApp();
+      const id = await createTelegramTarget(app, "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11");
+
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const res = await app.request(`/api/admin/platform-targets/${id}/register-telegram-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json() as Record<string, unknown>;
+
+      expect(res.status).toBe(400);
+      expect(String(data.message || "")).toContain("webhook URL");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("Telegram API 返回错误时透传失败信息", async () => {
+      const app = await createApp();
+      const id = await createTelegramTarget(app, "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11");
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ ok: false, description: "Wrong bot token specified" }), { status: 401 }),
+      );
+
+      const res = await app.request(`/api/admin/platform-targets/${id}/register-telegram-webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ webhookOrigin: "https://example.com" }),
+      });
+      const data = await res.json() as Record<string, unknown>;
+
+      expect(res.status).toBe(400);
+      expect(String(data.message || "")).toContain("Wrong bot token");
+    });
+  });
+
   it("社群功能全局关闭时创建返回 403", async () => {
     // 关闭社群功能
     await db.insert(systemConfig).values({ key: "community_feature_enabled", value: "false" });

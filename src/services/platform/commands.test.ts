@@ -1023,6 +1023,62 @@ describe("/秒杀 (executeFlashCommand)", () => {
   });
 });
 
+// ── 英文别名识别测试 ──
+describe("recognizeBuiltinCommand 英文别名", () => {
+  it("识别 /checkin 和 checkin 为 checkin 命令", () => {
+    expect(recognizeBuiltinCommand("/checkin")).toBe("checkin");
+    expect(recognizeBuiltinCommand("checkin")).toBe("checkin");
+  });
+
+  it("识别 /spin 和 spin 为 spin 命令", () => {
+    expect(recognizeBuiltinCommand("/spin")).toBe("spin");
+    expect(recognizeBuiltinCommand("spin")).toBe("spin");
+  });
+
+  it("识别 /share 和 share 为 share 命令", () => {
+    expect(recognizeBuiltinCommand("/share")).toBe("share");
+    expect(recognizeBuiltinCommand("share")).toBe("share");
+  });
+
+  it("识别 /leaderboard 和 leaderboard 为 leaderboard 命令", () => {
+    expect(recognizeBuiltinCommand("/leaderboard")).toBe("leaderboard");
+    expect(recognizeBuiltinCommand("leaderboard")).toBe("leaderboard");
+  });
+
+  it("识别 /my_prize 和 my_prize 为 my_prize 命令", () => {
+    expect(recognizeBuiltinCommand("/my_prize")).toBe("my_prize");
+    expect(recognizeBuiltinCommand("my_prize")).toBe("my_prize");
+  });
+
+  it("识别 /help 和 help 为 help 命令", () => {
+    expect(recognizeBuiltinCommand("/help")).toBe("help");
+    expect(recognizeBuiltinCommand("help")).toBe("help");
+  });
+
+  it("识别 /card_code 和 card_code 为 card_code 命令", () => {
+    expect(recognizeBuiltinCommand("/card_code")).toBe("card_code");
+    expect(recognizeBuiltinCommand("card_code")).toBe("card_code");
+  });
+
+  it("识别 /flash 和 flash 为 flash 命令", () => {
+    expect(recognizeBuiltinCommand("/flash")).toBe("flash");
+    expect(recognizeBuiltinCommand("flash")).toBe("flash");
+  });
+
+  it("识别 /bind 和 bind（无参数/带参数）为 bind 命令", () => {
+    expect(recognizeBuiltinCommand("/bind")).toBe("bind");
+    expect(recognizeBuiltinCommand("bind")).toBe("bind");
+    expect(recognizeBuiltinCommand("/bind ABC123")).toBe("bind");
+    expect(recognizeBuiltinCommand("bind ABC123")).toBe("bind");
+  });
+
+  it("不识别未知命令返回 null", () => {
+    expect(recognizeBuiltinCommand("/unknown")).toBeNull();
+    expect(recognizeBuiltinCommand("random text")).toBeNull();
+    expect(recognizeBuiltinCommand("")).toBeNull();
+  });
+});
+
 // ── /帮助 渲染测试（docs/171 §断层B：帮助列表与购买配置的联动）──
 describe("renderHelpReply", () => {
   it("默认配置下显示所有命令（含 /秒杀）", () => {
