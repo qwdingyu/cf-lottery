@@ -961,3 +961,56 @@ describe("导入名单 (roster)", () => {
     });
   });
 });
+
+describe("活动复制", () => {
+  const COPY_DRAW = "draw-copy-src";
+  const COPY_PRIZE = "prize-copy";
+
+  afterEach(async () => {
+    await clearTestData(client);
+  });
+
+  async function seedCopyDraw() {
+    await seedTenant(TENANT_A, OWNER_A, "copy-owner", "copy@test.com");
+    await db.insert(lotteryDraws).values({
+      id: COPY_DRAW, tenantId: TENANT_A, title: "原始活动", publicSlug: "copy-src",
+      status: "open", activityKind: "lottery", participationMode: "open",
+      experienceType: "wheel", resultMode: "manual", drawTrigger: "manual",
+      maxParticipants: 100, startAt: "2025-01-01T00:00:00Z", endAt: "2025-12-31T00:00:00Z",
+      activityConfig: JSON.stringify({ prizeImage: "https://example.com/img.png" }),
+      promotionConfig: JSON.stringify({ viral: { enabled: true } }),
+    });
+    await db.insert(prizes).values({
+      id: COPY_PRIZE, tenantId: TENANT_A, name: "原始奖品", prizeType: "code", totalCount: 10, active: 1,
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: "tier-copy", tenantId: TENANT_A, drawId: COPY_DRAW, prizeId: COPY_PRIZE,
+      tierName: "一等奖", winnerCount: 3, weight: 100, sortOrder: 1,
+    });
+  }
+
+  it("复制活动后数据完整（标题/配置/奖品/奖档均复制，ID 不同）", async () => {
+    await seedCopyDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    const res = await app.request(`/api/admin/draws/${COPY_DRAW}/copy`, {
+      method: "POST", headers,
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const data = await res.json() as Record<string, unknown>;
+    const newDrawId = data.id as string;
+    expect(newDrawId).toBeTruthy();
+    expect(newDrawId).not.toBe(COPY_DRAW);
+
+    // 验证新活动数据完整
+    const [newDraw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, newDrawId)).limit(1);
+    expect(newDraw).toBeDefined();
+    expect(newDraw!.title).toBe("原始活动（副本）");
+    expect(newDraw!.tenantId).toBe(TENANT_A);
+    expect(newDraw!.status).toBe("draft");
+    expect(newDraw!.activityKind).toBe("lottery");
+    expect(newDraw!.participationMode).toBe("open");
+    expect(newDraw!.activityConfig).toBe(JSON.stringify({ prizeImage: "https://example.com/img.png" }));
+  });
+});

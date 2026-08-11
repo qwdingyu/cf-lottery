@@ -59,7 +59,7 @@ async function seedFlashSaleDraw(prizeCodesCount: number) {
     id: `code-e2e-${i + 1}`, tenantId: TENANT, prizeId: PRIZE,
     code: `E2E-CODE-${i + 1}`, secret: `E2E-SEC-${i + 1}`, status: "available" as const,
   }));
-  await db.insert(prizeCodes).values(codes);
+  if (codes.length > 0) await db.insert(prizeCodes).values(codes);
 }
 
 /** 创建抽奖活动（lottery） */
@@ -79,7 +79,7 @@ async function seedLotteryDraw(prizeCodesCount: number) {
     id: `code-e2e-${i + 1}`, tenantId: TENANT, prizeId: PRIZE,
     code: `E2E-CODE-${i + 1}`, secret: `E2E-SEC-${i + 1}`, status: "available" as const,
   }));
-  await db.insert(prizeCodes).values(codes);
+  if (codes.length > 0) await db.insert(prizeCodes).values(codes);
 }
 
 // 通用 mock provider
@@ -422,5 +422,143 @@ describe("批发模式端到端", () => {
     // 失败者应提示售罄/容量满
     const failed = [r1, r2].find(r => !r.joined);
     expect(failed).toBeDefined();
+  });
+});
+
+describe("过期释放与卡密补发", () => {
+  beforeAll(async () => { ({ client, db } = await getTestDb()); });
+  beforeEach(async () => {
+    await clearTestData(client);
+    await db.insert(tenants).values({ id: TENANT, name: "e2e-补充测试" });
+    await db.insert(systemConfig).values({ key: "enabled_activity_kinds", value: "lottery,claim" });
+  });
+
+  it("订单超时释放后名额可被其他用户使用", async () => {
+    await seedFlashSaleDraw(2); // 2 张卡密
+    // 用户 A 参与并创建订单（不支付）
+    const { joinDraw } = await import("../services/lottery/participation");
+    const jA = await joinDraw(db, DRAW_SLUG, "expireA@test.com", "email");
+    expect(jA.joined).toBe(true);
+    const oA = await createPaymentOrder(db, {
+      tenantId: TENANT, drawId: DRAW, entryId: jA.entryId!,
+      buyerIdentityType: "email", buyerIdentityValue: "expireA@test.com",
+      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1,
+    }, mockProvider("easypay", "txn-expire", 9900));
+
+    // 强制超时该订单（把 createdAt 改到过去）
+    const { expireOverdueOrders } = await import("../services/payment/payment-service");
+    await db.update(paymentOrders).set({ createdAt: "2020-01-01T00:00:00Z" }).where(eq(paymentOrders.tenantId, TENANT));
+    const released = await expireOverdueOrders(db, TENANT);
+    expect(released).toBeGreaterThanOrEqual(1);
+
+    // 用户 B 参与并支付 → 应该能成功（名额已被释放）
+    const jB = await joinDraw(db, DRAW_SLUG, "expireB@test.com", "email");
+    expect(jB.joined).toBe(true);
+    const oB = await createPaymentOrder(db, {
+      tenantId: TENANT, drawId: DRAW, entryId: jB.entryId!,
+      buyerIdentityType: "email", buyerIdentityValue: "expireB@test.com",
+      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1,
+    }, mockProvider("easypay", "txn-expireB", 9900));
+    const [aB] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, oB.order.id)).limit(1);
+    expect(aB).toBeDefined();
+    await handlePaymentCallback(db, TENANT, mockProvider("easypay", "txn-expireB", 9900), {
+      attemptId: aB!.id, provider: "easypay", amountCents: "9900", currency: "cny", tradeNo: "txn-expireB",
+    });
+    const issued = await db.select({ n: count() }).from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "issued")));
+    expect(Number(issued[0]!.n)).toBe(1);
+  });
+
+  it("卡密补发：FULFILLMENT_FAILED → 补发 → 卡密到账", async () => {
+    await seedFlashSaleDraw(0); // 0 张卡密，必然 FULFILLMENT_FAILED
+
+    // 用户参与并支付 → 卡密不足 → FULFILLMENT_FAILED
+    const { joinDraw } = await import("../services/lottery/participation");
+    const j1 = await joinDraw(db, DRAW_SLUG, "retry@test.com", "email");
+    expect(j1.joined).toBe(true);
+    const o1 = await createPaymentOrder(db, {
+      tenantId: TENANT, drawId: DRAW, entryId: j1.entryId!,
+      buyerIdentityType: "email", buyerIdentityValue: "retry@test.com",
+      amountCents: 9900, currency: "cny", provider: "easypay", quantity: 1,
+    }, mockProvider("easypay", "txn-retry", 9900));
+    const [a1] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, o1.order.id)).limit(1);
+    expect(a1).toBeDefined();
+    await handlePaymentCallback(db, TENANT, mockProvider("easypay", "txn-retry", 9900), {
+      attemptId: a1!.id, provider: "easypay", amountCents: "9900", currency: "cny", tradeNo: "txn-retry",
+    });
+    // 验证是 FULFILLMENT_FAILED
+    const [order] = await db.select({ status: paymentOrders.status }).from(paymentOrders).where(eq(paymentOrders.id, o1.order.id)).limit(1);
+    expect(order!.status).toBe("paid_fulfillment_failed");
+
+    // 补卡密：先往码池加 1 张卡密
+    const newPrizeId = "prize-retry";
+    await db.insert(prizes).values({ id: newPrizeId, tenantId: TENANT, name: "补发奖品", prizeType: "code", totalCount: 1, active: 1 });
+    await db.insert(prizeCodes).values({ id: "code-retry-1", tenantId: TENANT, prizeId: newPrizeId, code: "RETRY-CODE-1", secret: "RETRY-SEC-1", status: "available" });
+    // 把奖档指向新码池
+    await db.update(lotteryPrizeTiers).set({ prizeId: newPrizeId }).where(eq(lotteryPrizeTiers.id, "tier-e2e"));
+
+    // 补发
+    const { retryPaymentFulfillment } = await import("../services/payment/payment-service");
+    const retryResult = await retryPaymentFulfillment(db, TENANT, o1.order.id, "admin");
+    expect(retryResult.ok).toBe(true);
+
+    // 验证卡密已发放
+    const issued = await db.select({ code: prizeCodes.code }).from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "issued")));
+    expect(issued.length).toBe(1);
+    expect(issued[0]!.code).toBe("RETRY-CODE-1");
+
+    // 验证订单状态已恢复为 paid
+    const [orderAfter] = await db.select({ status: paymentOrders.status }).from(paymentOrders).where(eq(paymentOrders.id, o1.order.id)).limit(1);
+    expect(orderAfter!.status).toBe("paid");
+  });
+});
+
+describe("定时开奖端到端", () => {
+  beforeAll(async () => { ({ client, db } = await getTestDb()); });
+  beforeEach(async () => {
+    await clearTestData(client);
+    await db.insert(tenants).values({ id: TENANT, name: "e2e-定时开奖" });
+    await db.insert(systemConfig).values({ key: "enabled_activity_kinds", value: "lottery" });
+  });
+
+  it("定时开奖 → 到期自动开奖 → 中奖 → 发卡密", async () => {
+    const now = new Date();
+    const drawId = "draw-scheduled";
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, title: "定时开奖活动", publicSlug: "scheduled-slug",
+      status: "open", activityKind: "lottery", participationMode: "open",
+      experienceType: "submit", resultMode: "manual", drawTrigger: "scheduled",
+      drawAt: new Date(now.getTime() - 60000).toISOString(), // 1 分钟前到期
+      maxParticipants: 100, maxSpinsPerEntry: 1,
+      startAt: new Date(now.getTime() - 3600000).toISOString(),
+      endAt: new Date(now.getTime() + 3600000).toISOString(),
+      activityConfig: "{}", promotionConfig: "{}",
+    });
+    const prizeId = "prize-sched";
+    await db.insert(prizes).values({ id: prizeId, tenantId: TENANT, name: "定时奖品", prizeType: "code", totalCount: 1, active: 1 });
+    await db.insert(lotteryPrizeTiers).values({ id: "tier-sched", tenantId: TENANT, drawId, prizeId, tierName: "一等奖", winnerCount: 1, weight: 100, sortOrder: 1 });
+    await db.insert(prizeCodes).values({ id: "code-sched-1", tenantId: TENANT, prizeId, code: "SCHED-CODE-1", secret: "SCHED-SEC-1", status: "available" });
+
+    // 用户参与
+    const { joinDraw } = await import("../services/lottery/participation");
+    const j1 = await joinDraw(db, "scheduled-slug", "sched1@test.com", "email");
+    expect(j1.joined).toBe(true);
+
+    // 调用 processDueDraws（cron 定时兜底）
+    const { processDueDraws } = await import("../services/lottery-service");
+    const result = await processDueDraws(db, { limit: 100 });
+    expect(result.processed).toBeGreaterThanOrEqual(1);
+
+    // 验证活动已开奖
+    const [draw] = await db.select({ status: lotteryDraws.status }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.status).toBe("drawn");
+
+    // 验证中奖记录
+    const [winner] = await db.select({ id: lotteryWinners.id, prizeCodeId: lotteryWinners.prizeCodeId }).from(lotteryWinners).where(and(eq(lotteryWinners.tenantId, TENANT), eq(lotteryWinners.drawId, drawId))).limit(1);
+    expect(winner).toBeDefined();
+    expect(winner!.prizeCodeId).toBeTruthy();
+
+    // 验证卡密已发放
+    const issued = await db.select({ n: count() }).from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "issued")));
+    expect(Number(issued[0]!.n)).toBe(1);
   });
 });
