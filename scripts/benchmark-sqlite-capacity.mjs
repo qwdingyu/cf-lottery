@@ -4,7 +4,8 @@
  * 目标：
  * 1. 验证 lottery_entries 按活动 COUNT 是否命中覆盖索引，并记录 p50/p95/p99。
  * 2. 验证直付秒杀的「活动计数器 CAS + entry 写入」在多连接竞争下不超发、不丢写。
- * 3. 输出 BUSY 重试次数和端到端延迟，为单 VPS 实测提供可重复的基线。
+ * 3. 验证 tenant_usage_snapshots 最新快照汇总的查询成本。
+ * 4. 输出 BUSY 重试次数和端到端延迟，为单 VPS 实测提供可重复的基线。
  *
  * 安全边界：
  * - 始终创建系统临时目录下的独立 SQLite 文件，不读取 TURSO_URL 或其他环境变量。
@@ -25,6 +26,8 @@ import { join } from "node:path";
 const DEFAULT_ROWS = [10_000, 50_000, 100_000];
 const DEFAULT_COUNT_ITERATIONS = 50;
 const DEFAULT_CAS_REQUESTS = 500;
+const DEFAULT_SNAPSHOT_TENANTS = 500;
+const DEFAULT_SNAPSHOT_DAYS = 14;
 const DEFAULT_RETRIES = 5;
 const DEFAULT_RETRY_BASE_DELAY_MS = 50;
 
@@ -36,6 +39,8 @@ SQLite 容量基准脚本
   --rows=10000,50000,100000  每个独立活动的参与记录数
   --count-iterations=50      每个 COUNT 样本的重复次数
   --cas-requests=500         同一活动并发 CAS 请求数；0 表示跳过
+  --snapshot-tenants=500     usage snapshots 汇总基准的租户数
+  --snapshot-days=14         每个租户保留的快照天数
   --busy-timeout-ms=0        每个 CAS 连接设置的 SQLite busy_timeout
   --keep-db                  保留临时数据库，便于人工 EXPLAIN/文件检查
   --help                     显示帮助
@@ -69,6 +74,8 @@ function parseOptions(args) {
     rows: DEFAULT_ROWS,
     countIterations: DEFAULT_COUNT_ITERATIONS,
     casRequests: DEFAULT_CAS_REQUESTS,
+    snapshotTenants: DEFAULT_SNAPSHOT_TENANTS,
+    snapshotDays: DEFAULT_SNAPSHOT_DAYS,
     busyTimeoutMs: 0,
     keepDb: false,
   };
@@ -98,6 +105,20 @@ function parseOptions(args) {
         arg.slice("--cas-requests=".length),
         "--cas-requests",
         { allowZero: true },
+      );
+      continue;
+    }
+    if (arg.startsWith("--snapshot-tenants=")) {
+      options.snapshotTenants = parsePositiveInteger(
+        arg.slice("--snapshot-tenants=".length),
+        "--snapshot-tenants",
+      );
+      continue;
+    }
+    if (arg.startsWith("--snapshot-days=")) {
+      options.snapshotDays = parsePositiveInteger(
+        arg.slice("--snapshot-days=".length),
+        "--snapshot-days",
       );
       continue;
     }
@@ -215,6 +236,22 @@ async function createBenchmarkSchema(client) {
     CREATE INDEX idx_entries_tenant_draw_payment_status
     ON lottery_entries(tenant_id, draw_id, payment_status)
   `);
+  await client.execute(`
+    CREATE TABLE tenant_usage_snapshots (
+      tenant_id TEXT NOT NULL,
+      snapshot_date TEXT NOT NULL,
+      activity_count INTEGER NOT NULL DEFAULT 0,
+      participant_count INTEGER NOT NULL DEFAULT 0,
+      event_count INTEGER NOT NULL DEFAULT 0,
+      winner_count INTEGER NOT NULL DEFAULT 0,
+      webhook_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await client.execute(`
+    CREATE UNIQUE INDEX pk_tenant_usage_snapshots
+    ON tenant_usage_snapshots(tenant_id, snapshot_date)
+  `);
 }
 
 async function seedCountRows(client, rowsPerDraw) {
@@ -289,6 +326,100 @@ async function benchmarkActivityCount(client, rowsPerDraw, iterations) {
   }
 
   return results;
+}
+
+async function seedUsageSnapshots(client, tenantCount, days) {
+  const rows = [];
+  const baseDate = Date.UTC(2026, 7, 1);
+  for (let tenantNo = 0; tenantNo < tenantCount; tenantNo += 1) {
+    const tenantId = `snapshot-tenant-${String(tenantNo).padStart(5, "0")}`;
+    for (let dayNo = 0; dayNo < days; dayNo += 1) {
+      const snapshotDate = new Date(baseDate + dayNo * 86_400_000).toISOString().slice(0, 10);
+      rows.push(statement(
+        `INSERT INTO tenant_usage_snapshots (
+          tenant_id, snapshot_date, activity_count, participant_count, event_count, winner_count, webhook_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          tenantId,
+          snapshotDate,
+          tenantNo + dayNo + 1,
+          tenantNo * 10 + dayNo + 10,
+          tenantNo * 20 + dayNo + 20,
+          tenantNo % 17 + dayNo,
+          tenantNo % 11 + dayNo,
+        ],
+      ));
+      if (rows.length >= 1_000) {
+        await client.batch(rows.splice(0, rows.length), "write");
+      }
+    }
+  }
+  if (rows.length > 0) await client.batch(rows, "write");
+}
+
+async function benchmarkUsageSnapshotTotals(client, tenantCount, days, iterations) {
+  const latestDayNo = days - 1;
+  const expected = {
+    tenantCount,
+    activityCount: 0,
+    participantCount: 0,
+    eventCount: 0,
+    winnerCount: 0,
+    webhookCount: 0,
+  };
+  for (let tenantNo = 0; tenantNo < tenantCount; tenantNo += 1) {
+    expected.activityCount += tenantNo + latestDayNo + 1;
+    expected.participantCount += tenantNo * 10 + latestDayNo + 10;
+    expected.eventCount += tenantNo * 20 + latestDayNo + 20;
+    expected.winnerCount += tenantNo % 17 + latestDayNo;
+    expected.webhookCount += tenantNo % 11 + latestDayNo;
+  }
+
+  const query = `
+    SELECT
+      COUNT(*) AS tenant_count,
+      SUM(s.activity_count) AS activity_count,
+      SUM(s.participant_count) AS participant_count,
+      SUM(s.event_count) AS event_count,
+      SUM(s.winner_count) AS winner_count,
+      SUM(s.webhook_count) AS webhook_count,
+      MAX(s.snapshot_date) AS latest_snapshot_date
+    FROM tenant_usage_snapshots s
+    INNER JOIN (
+      SELECT tenant_id, MAX(snapshot_date) AS snapshot_date
+      FROM tenant_usage_snapshots
+      GROUP BY tenant_id
+    ) latest
+      ON latest.tenant_id = s.tenant_id
+     AND latest.snapshot_date = s.snapshot_date
+  `;
+  const plan = await client.execute(`EXPLAIN QUERY PLAN ${query}`);
+  const samples = [];
+  let latestResult;
+  for (let index = 0; index < iterations; index += 1) {
+    const startedAt = nowNs();
+    latestResult = await client.execute(query);
+    samples.push(elapsedMs(startedAt));
+  }
+
+  const row = latestResult.rows[0] || {};
+  for (const [key, value] of Object.entries(expected)) {
+    if (Number(row[key.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)] ?? 0) !== value) {
+      throw new Error(`usage snapshots 汇总错误: ${key}`);
+    }
+  }
+  samples.sort((a, b) => a - b);
+  return {
+    tenantCount,
+    days,
+    snapshotRows: tenantCount * days,
+    queryPlan: plan.rows.map((r) => String(r.detail || "")).filter(Boolean),
+    latestSnapshotDate: String(row.latest_snapshot_date || ""),
+    p50Ms: rounded(percentile(samples, 0.5)),
+    p95Ms: rounded(percentile(samples, 0.95)),
+    p99Ms: rounded(percentile(samples, 0.99)),
+    maxMs: rounded(samples.at(-1) || 0),
+  };
 }
 
 async function reserveFlashSaleSlot(url, requestNo, capacity, busyTimeoutMs) {
@@ -455,11 +586,18 @@ async function main() {
 
     await createBenchmarkSchema(client);
     await seedCountRows(client, options.rows);
+    await seedUsageSnapshots(client, options.snapshotTenants, options.snapshotDays);
     await client.execute("PRAGMA wal_checkpoint(TRUNCATE)");
 
     const countResults = await benchmarkActivityCount(
       client,
       options.rows,
+      options.countIterations,
+    );
+    const usageSnapshotTotals = await benchmarkUsageSnapshotTotals(
+      client,
+      options.snapshotTenants,
+      options.snapshotDays,
       options.countIterations,
     );
     const databaseBytes = (await stat(databasePath)).size;
@@ -472,13 +610,17 @@ async function main() {
 
     console.log(JSON.stringify({
       count: countResults,
+      usageSnapshotTotals,
       databaseBytes,
-      bytesPerSeededCountEntry: rounded(
-        databaseBytes / options.rows.reduce((sum, rowCount) => sum + rowCount, 0),
+      bytesPerSeededRowApprox: rounded(
+        databaseBytes / (
+          options.rows.reduce((sum, rowCount) => sum + rowCount, 0)
+          + options.snapshotTenants * options.snapshotDays
+        ),
       ),
       flashSaleCas: casResult,
       limitations: [
-        "仅覆盖 lottery_entries COUNT 和直付秒杀计数器 CAS，不覆盖完整 Hono 请求、鉴权、限流、支付回调和发卡。",
+        "仅覆盖 lottery_entries COUNT、tenant_usage_snapshots 汇总和直付秒杀计数器 CAS，不覆盖完整 Hono 请求、鉴权、限流、支付回调和发卡。",
         "结果受当前机器 CPU、磁盘、Node/libsql 版本影响，不能直接外推为生产 VPS 容量承诺。",
         "busy_timeout 会改变 SQLite 等锁与应用层退避的分工，必须使用相同参数做 A/B 对照。",
       ],

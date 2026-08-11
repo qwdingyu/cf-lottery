@@ -578,6 +578,28 @@ export const systemConfig = sqliteTable("system_config", {
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
+/**
+ * 系统配置版本记录。
+ *
+ * 只记录平台后台的真实变更轨迹，不做复杂版本树：
+ * - beforeValue / afterValue 保存一次变更前后的原始存储值
+ * - 敏感项仍按密文落库，避免历史表泄露明文
+ * - rollback 只回退到上一条真实状态，适合测试阶段的最小闭环
+ */
+export const systemConfigVersions = sqliteTable("system_config_versions", {
+  revision: integer("revision").primaryKey({ autoIncrement: true }),
+  key: text("key").notNull(),
+  beforeValue: text("before_value").notNull().default(""),
+  afterValue: text("after_value").notNull().default(""),
+  changeType: text("change_type").notNull(),
+  actorUserId: text("actor_user_id").notNull(),
+  actorRole: text("actor_role").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  keyRevisionIdx: index("idx_system_config_versions_key_revision").on(t.key, t.revision),
+  createdIdx: index("idx_system_config_versions_created").on(t.createdAt),
+}));
+
 // ── 参与者黑名单（按租户级别，防止同一人用多个邮箱参与） ──
 export const lotteryBlacklist = sqliteTable("lottery_blacklist", {
   id: text("id").primaryKey(),

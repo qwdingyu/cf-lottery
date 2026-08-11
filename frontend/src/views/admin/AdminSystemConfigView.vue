@@ -70,7 +70,7 @@
               <span>{{ $t('adminConfig.itemCount', { count: group.items.length }) }}</span>
             </div>
             <div class="config-grid">
-              <ConfigField
+              <SystemConfigFieldWithHistory
                 v-for="item in group.items"
                 :key="item.key"
                 :item="item"
@@ -78,6 +78,7 @@
                 :status="fieldStatus[item.key] || 'idle'"
                 @change="update"
                 @reset="reset"
+                @history="openHistory"
               />
             </div>
             <div v-if="groupNameKey(group.name) === 'email_service'" class="config-test-panel">
@@ -159,6 +160,57 @@
       </template>
     </div>
 
+    <AdminModal v-model="historyVisible" :title="historyTitle" max-width="760px" hide-actions>
+      <div class="config-history-modal">
+        <div class="config-history-meta">
+          <span>{{ historyCurrentLabel }}</span>
+          <button
+            v-if="canRollbackHistory"
+            type="button"
+            class="btn btn-danger btn-xs"
+            :disabled="historyRollingBack"
+            @click="rollbackHistory"
+          >
+            {{ historyRollingBack ? $t('adminConfig.history.rollbacking') : $t('adminConfig.history.rollback') }}
+          </button>
+        </div>
+
+        <div v-if="historyLoading" class="empty-text">{{ $t('adminConfig.history.loading') }}</div>
+        <div v-else-if="historyError" class="table-error" role="alert">
+          <span>{{ historyError }}</span>
+          <button class="btn btn-ghost btn-xs" :disabled="historyLoading" @click="reloadHistory">
+            {{ $t('adminConfig.history.retry') }}
+          </button>
+        </div>
+        <template v-else>
+          <div v-if="historyRows.length === 0" class="empty-text">{{ $t('adminConfig.history.empty') }}</div>
+          <div v-else class="config-history-list">
+            <article v-for="row in historyRows" :key="row.revision" class="config-history-item">
+              <div class="config-history-item-head">
+                <strong>#{{ row.revision }}</strong>
+                <span>{{ $t(`adminConfig.history.changeType.${row.changeType}`) }}</span>
+                <span>{{ row.createdAt }}</span>
+              </div>
+              <div class="config-history-item-body">
+                <div>
+                  <span>{{ $t('adminConfig.history.before') }}</span>
+                  <strong>{{ displayHistoryValue(row.beforeValue) }}</strong>
+                </div>
+                <div>
+                  <span>{{ $t('adminConfig.history.after') }}</span>
+                  <strong>{{ displayHistoryValue(row.afterValue) }}</strong>
+                </div>
+                <div class="config-history-item-foot">
+                  <span>{{ row.actorRole || 'unknown' }}</span>
+                  <span>{{ row.actorUserId }}</span>
+                </div>
+              </div>
+            </article>
+          </div>
+        </template>
+      </div>
+    </AdminModal>
+
     <ConfirmDialog v-model="confirmVisible" :message="confirmMessage" danger @confirm="onConfirm" />
   </div>
 </template>
@@ -170,9 +222,10 @@ import { useI18n } from 'vue-i18n'
 import i18n from '@/i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useAdminAuth } from '@/composables/useAdminAuth'
+import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
-import ConfigField from '@usethink/cf-admin-fe/components/ConfigField.vue'
+import SystemConfigFieldWithHistory from '@/components/admin/SystemConfigFieldWithHistory.vue'
 import {
   SYSTEM_CONFIG_SECTIONS,
   getSystemConfigSection,
@@ -183,6 +236,18 @@ import type { AdminSystemConfigDefinition } from '@/types/admin'
 import { adminRequest } from '@/composables/useAdminRequest'
 
 type AdminClearBusinessDataProfile = 'runtime' | 'keep_trade' | 'keep_catalog' | 'full'
+type AdminSystemConfigHistoryChangeType = 'update' | 'delete' | 'rollback'
+
+type AdminSystemConfigHistoryRow = {
+  revision: number
+  key: string
+  beforeValue: string
+  afterValue: string
+  changeType: AdminSystemConfigHistoryChangeType
+  actorUserId: string
+  actorRole: string
+  createdAt: string
+}
 
 
 /** 将后端配置分组名映射为 i18n 键名 */
@@ -243,6 +308,14 @@ const clearProfile = ref<AdminClearBusinessDataProfile>('keep_trade')
 const clearBusinessConfirmText = ref('')
 const clearBusinessDataStatus = ref('')
 const clearingBusinessData = ref(false)
+const historyVisible = ref(false)
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyKey = ref('')
+const historyCurrentValue = ref('')
+const historySensitive = ref(false)
+const historyRows = ref<AdminSystemConfigHistoryRow[]>([])
+const historyRollingBack = ref(false)
 
 // 切换档位时清空已输入短语，避免用上一档短语误触高危档位（服务端仍会校验，此处减少误操作）。
 watch(clearProfile, () => {
@@ -364,6 +437,82 @@ function showSavedStatus(message: string, publicConfigSynced: boolean) {
     return
   }
   showToast(`${message}（公开配置未同步）`, 'info', 5000)
+}
+
+const historyTitle = computed(() => {
+  if (!historyKey.value) return t('adminConfig.history.title')
+  const item = definitions.value.find((def) => def.key === historyKey.value)
+  return item ? t('adminConfig.history.titleWithKey', { key: item.label }) : t('adminConfig.history.title')
+})
+
+const historyCurrentLabel = computed(() => {
+  if (!historyKey.value) return ''
+  const item = definitions.value.find((def) => def.key === historyKey.value)
+  const label = item ? item.label : historyKey.value
+  return t('adminConfig.history.currentLabel', { key: label, value: displayHistoryValue(historyCurrentValue.value) })
+})
+
+const canRollbackHistory = computed(() => historyRows.value.length > 0 && !historyRollingBack.value && !historyLoading.value)
+
+function displayHistoryValue(raw: string): string {
+  if (historySensitive.value) {
+    return raw.trim() ? t('adminConfig.history.configured') : t('adminConfig.history.notConfigured')
+  }
+  return raw.trim() ? raw : t('adminConfig.history.emptyValue')
+}
+
+async function loadHistory(key: string) {
+  historyLoading.value = true
+  historyError.value = ''
+  historyRows.value = []
+  try {
+    const res = await adminRequest<{
+      key: string
+      currentValue: string
+      history: AdminSystemConfigHistoryRow[]
+    }>(`${PLATFORM_SYSTEM_CONFIG_API}/history/${key}`)
+    historyKey.value = res.key
+    historyCurrentValue.value = res.currentValue || ''
+    historySensitive.value = definitions.value.find((item) => item.key === key)?.sensitive ?? false
+    historyRows.value = res.history || []
+  } catch (err: any) {
+    historyError.value = err.message || t('adminConfig.history.loadFailed')
+    historyRows.value = []
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+async function openHistory(key: string) {
+  historyKey.value = key
+  historySensitive.value = definitions.value.find((item) => item.key === key)?.sensitive ?? false
+  historyVisible.value = true
+  await loadHistory(key)
+}
+
+async function reloadHistory() {
+  if (!historyKey.value) return
+  await loadHistory(historyKey.value)
+}
+
+async function rollbackHistory() {
+  if (!historyKey.value || !canRollbackHistory.value) return
+  const item = definitions.value.find((def) => def.key === historyKey.value)
+  const label = item ? item.label : historyKey.value
+  if (!(await askConfirm(t('adminConfig.history.rollbackConfirm', { key: label })))) return
+  historyRollingBack.value = true
+  try {
+    await adminRequest<{ key: string; rolledBackTo: string }>(`${PLATFORM_SYSTEM_CONFIG_API}/rollback/${historyKey.value}`, {
+      method: 'POST',
+    })
+    showToast(t('adminConfig.history.rollbackSuccess'), 'success')
+    await loadData()
+    await loadHistory(historyKey.value)
+  } catch (err: any) {
+    showToast(err.message || t('adminConfig.history.rollbackFailed'), 'error')
+  } finally {
+    historyRollingBack.value = false
+  }
 }
 
 async function loadData() {
@@ -597,6 +746,63 @@ onMounted(loadData)
 
 .config-test-status--error {
   color: #fca5a5;
+}
+
+.config-history-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.config-history-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--tg-hint, #9aa4b2);
+}
+
+.config-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 52vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.config-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--r-md, 8px);
+  background: var(--surface, rgba(255, 255, 255, 0.04));
+}
+
+.config-history-item-head,
+.config-history-item-foot,
+.config-history-item-body > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.config-history-item-head span,
+.config-history-item-foot span,
+.config-history-item-body span {
+  color: var(--tg-hint, #9aa4b2);
+}
+
+.config-history-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .danger-section {

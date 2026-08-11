@@ -13,6 +13,7 @@ import { requireAuth, requirePlatformMember, signJwt } from "../middleware/auth"
 import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, emailDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig, tenantCommunityOverrides, communityMembers, platformTargets } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
+import { readLatestTenantUsageSnapshotTotals } from "../services/admin/usage-snapshots";
 import { dispatchWebhookDelivery } from "../services/lottery-service";
 import { dispatchEmailDeliveries } from "../services/email-delivery";
 
@@ -777,14 +778,50 @@ const TABLE_MAP = {
 platformRoute.get("/data/stats", async (c) => {
   const db = getDb(c);
   const stats: Record<string, number> = {};
+  const snapshotTotals = await readLatestTenantUsageSnapshotTotals(db);
+  const useSnapshotTotals = snapshotTotals.tenantCount > 0;
+
+  const exactCount = async (schemaTable: any) => {
+    const [row] = await db.select({ total: count() }).from(schemaTable);
+    return Number(row?.total ?? 0);
+  };
+
+  if (useSnapshotTotals) {
+    stats.lotteryDraws = snapshotTotals.activityCount;
+    stats.lotteryEntries = snapshotTotals.participantCount;
+    stats.lotteryWinners = snapshotTotals.winnerCount;
+    stats.activityEvents = snapshotTotals.eventCount;
+    stats.webhookDeliveries = snapshotTotals.webhookCount;
+  } else {
+    stats.lotteryDraws = await exactCount(lotteryDraws);
+    stats.lotteryEntries = await exactCount(lotteryEntries);
+    stats.lotteryWinners = await exactCount(lotteryWinners);
+    stats.activityEvents = await exactCount(activityEvents);
+    stats.webhookDeliveries = await exactCount(webhookDeliveries);
+  }
+
   for (const [tableName, schemaTable] of Object.entries(TABLE_MAP)) {
+    if (
+      tableName === "lotteryDraws"
+      || tableName === "lotteryEntries"
+      || tableName === "lotteryWinners"
+      || tableName === "activityEvents"
+      || tableName === "webhookDeliveries"
+    ) {
+      continue;
+    }
     try {
       // ORM 计数：drizzle 编译为 SELECT COUNT(*) FROM <表>，表对象来自上方白名单
       const [row] = await db.select({ total: count() }).from(schemaTable);
       stats[tableName] = Number(row?.total ?? 0);
     } catch { stats[tableName] = -1; }
   }
-  return ok(c, { stats });
+  return ok(c, {
+    stats,
+    snapshotDate: snapshotTotals.latestSnapshotDate,
+    snapshotTenantCount: snapshotTotals.tenantCount,
+    snapshotized: useSnapshotTotals,
+  });
 });
 
 /** 数据清理：删除指定类型的数据（仅平台 owner，用于重置测试环境）

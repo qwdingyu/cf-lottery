@@ -8,17 +8,29 @@
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
+import { desc, eq } from "drizzle-orm";
 import { withDbTransaction } from "../db/client";
-import { fail, getDb, ok, safeJsonBody } from "../lib/http";
+import { clampInteger, fail, getDb, ok, safeJsonBody } from "../lib/http";
+import { decryptSecretConfigValueObserved } from "../lib/secret-config";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
 import {
   adminSystemConfigDefinitions,
+  getSystemConfigDefinition,
   isSensitiveSystemConfigKey,
   isSupportedSystemConfigKey,
   normalizeSystemConfigValue,
 } from "../lib/system-config-registry";
-import { getSystemConfig, upsertSystemConfig, deleteSystemConfig } from "../services/admin/system-config";
+import {
+  getSystemConfig,
+  getSystemConfigHistory,
+  getSystemConfigStoredValue,
+  recordSystemConfigVersion,
+  upsertSystemConfig,
+  upsertSystemConfigStoredValue,
+  deleteSystemConfig,
+} from "../services/admin/system-config";
 import { writePlatformAudit } from "../services/admin/platform-audit";
+import { systemConfigVersions } from "../db/schema";
 
 export const platformSystemConfigRoute = new Hono<AppEnv>();
 
@@ -49,7 +61,18 @@ platformSystemConfigRoute.put("/", async (c) => {
     const db = getDb(c);
     const sensitive = isSensitiveSystemConfigKey(body.key);
     await withDbTransaction(db, async (tx) => {
-      await upsertSystemConfig(tx, body.key, normalized.value, c.env?.CREDENTIALS_ENCRYPTION_KEY);
+      const beforeValue = (await getSystemConfigStoredValue(tx, body.key))
+        ?? getSystemConfigDefinition(body.key)?.defaultValue
+        ?? "";
+      const storedValue = await upsertSystemConfig(tx, body.key, normalized.value, c.env?.CREDENTIALS_ENCRYPTION_KEY);
+      await recordSystemConfigVersion(tx, {
+        key: body.key,
+        beforeValue,
+        afterValue: storedValue,
+        changeType: "update",
+        actorUserId: c.get("userId") as string,
+        actorRole: c.get("platformRole") as string,
+      });
       // 平台配置变更和审计必须同成同败，避免出现"配置已生效但接口 500、审计缺失"的半成功状态。
       await writePlatformAudit(tx, {
         actorUserId: c.get("userId") as string,
@@ -72,6 +95,89 @@ platformSystemConfigRoute.put("/", async (c) => {
   }
 });
 
+/** 系统配置历史（仅平台 owner） */
+platformSystemConfigRoute.get("/history/:key", async (c) => {
+  const key = c.req.param("key");
+  if (!isSupportedSystemConfigKey(key)) return fail(c, `系统参数 "${key}" 未注册`, 404);
+
+  const db = getDb(c);
+  const history = await getSystemConfigHistory(
+    db,
+    key,
+    c.env?.CREDENTIALS_ENCRYPTION_KEY,
+    clampInteger(c.req.query("limit"), 10, 1, 20),
+  );
+  const currentStoredValue = await getSystemConfigStoredValue(db, key);
+  const currentValue = currentStoredValue
+    ? (isSensitiveSystemConfigKey(key)
+      ? await decryptSecretConfigValueObserved(
+        currentStoredValue,
+        c.env?.CREDENTIALS_ENCRYPTION_KEY,
+        () => void 0,
+      )
+      : currentStoredValue)
+    : getSystemConfigDefinition(key)?.defaultValue ?? "";
+  return ok(c, {
+    key,
+    currentValue,
+    history,
+  });
+});
+
+/** 回滚系统配置到上一版（仅平台 owner） */
+platformSystemConfigRoute.post("/rollback/:key", async (c) => {
+  try {
+    const key = c.req.param("key");
+    if (!isSupportedSystemConfigKey(key)) return fail(c, `系统参数 "${key}" 未注册`, 404);
+
+    const db = getDb(c);
+    const sensitive = isSensitiveSystemConfigKey(key);
+    const [latest] = await db
+      .select()
+      .from(systemConfigVersions)
+      .where(eq(systemConfigVersions.key, key))
+      .orderBy(desc(systemConfigVersions.revision))
+      .limit(1);
+    if (!latest) return fail(c, "没有可回滚的历史版本", 400);
+
+    await withDbTransaction(db, async (tx) => {
+      await upsertSystemConfigStoredValue(tx, key, latest.beforeValue);
+      await recordSystemConfigVersion(tx, {
+        key,
+        beforeValue: latest.afterValue,
+        afterValue: latest.beforeValue,
+        changeType: "rollback",
+        actorUserId: c.get("userId") as string,
+        actorRole: c.get("platformRole") as string,
+      });
+      await writePlatformAudit(tx, {
+        actorUserId: c.get("userId") as string,
+        actorRole: c.get("platformRole") as string,
+        action: "platform.system_config.rollback",
+        targetType: "system_config",
+        targetId: key,
+        metadata: {
+          key,
+          revision: latest.revision,
+          sensitive,
+        },
+      });
+    });
+
+    return ok(c, {
+      key,
+      rolledBackTo: isSensitiveSystemConfigKey(key)
+        ? ""
+        : latest.beforeValue,
+      configured: Boolean(latest.beforeValue),
+      revision: latest.revision,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "回滚系统配置失败";
+    return fail(c, message, 500);
+  }
+});
+
 /** 删除系统配置（仅允许删除非内置配置项） */
 platformSystemConfigRoute.delete("/:key", async (c) => {
   try {
@@ -81,7 +187,16 @@ platformSystemConfigRoute.delete("/:key", async (c) => {
     }
     const db = getDb(c);
     await withDbTransaction(db, async (tx) => {
+      const beforeValue = (await getSystemConfigStoredValue(tx, key)) ?? "";
       await deleteSystemConfig(tx, key);
+      await recordSystemConfigVersion(tx, {
+        key,
+        beforeValue,
+        afterValue: "",
+        changeType: "delete",
+        actorUserId: c.get("userId") as string,
+        actorRole: c.get("platformRole") as string,
+      });
       await writePlatformAudit(tx, {
         actorUserId: c.get("userId") as string,
         actorRole: c.get("platformRole") as string,

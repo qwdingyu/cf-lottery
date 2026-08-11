@@ -6,7 +6,7 @@
  */
 import type { DbType } from "../../db/client";
 import { tenants, lotteryDraws, lotteryEntries, lotteryWinners, activityEvents, webhookDeliveries, tenantUsageSnapshots } from "../../db/schema";
-import { eq, and, count, sql } from "drizzle-orm";
+import { eq, and, count, sql, max } from "drizzle-orm";
 
 /**
  * 刷新所有租户的用量快照
@@ -85,4 +85,71 @@ export async function refreshAllTenantSnapshots(db: DbType): Promise<{ processed
   }
 
   return { processed };
+}
+
+/**
+ * 读取所有租户的最新快照汇总。
+ *
+ * 平台统计页不再逐表扫 lottery_entries / lottery_winners / activity_events / webhook_deliveries，
+ * 而是汇总每个租户最新的一条快照，避免对热表做全量 COUNT。
+ */
+export async function readLatestTenantUsageSnapshotTotals(db: DbType): Promise<{
+  activityCount: number;
+  participantCount: number;
+  eventCount: number;
+  winnerCount: number;
+  webhookCount: number;
+  tenantCount: number;
+  latestSnapshotDate: string | null;
+}> {
+  const latestSnapshotPerTenant = db
+    .select({
+      tenantId: tenantUsageSnapshots.tenantId,
+      snapshotDate: max(tenantUsageSnapshots.snapshotDate).as("snapshotDate"),
+    })
+    .from(tenantUsageSnapshots)
+    .groupBy(tenantUsageSnapshots.tenantId)
+    .as("latest_snapshot_per_tenant");
+
+  const rows = await db
+    .select({
+      tenantId: tenantUsageSnapshots.tenantId,
+      snapshotDate: tenantUsageSnapshots.snapshotDate,
+      activityCount: tenantUsageSnapshots.activityCount,
+      participantCount: tenantUsageSnapshots.participantCount,
+      eventCount: tenantUsageSnapshots.eventCount,
+      winnerCount: tenantUsageSnapshots.winnerCount,
+      webhookCount: tenantUsageSnapshots.webhookCount,
+    })
+    .from(tenantUsageSnapshots)
+    .innerJoin(
+      latestSnapshotPerTenant,
+      and(
+        eq(tenantUsageSnapshots.tenantId, latestSnapshotPerTenant.tenantId),
+        eq(tenantUsageSnapshots.snapshotDate, latestSnapshotPerTenant.snapshotDate),
+      ),
+    );
+
+  const totals = {
+    activityCount: 0,
+    participantCount: 0,
+    eventCount: 0,
+    winnerCount: 0,
+    webhookCount: 0,
+    tenantCount: rows.length,
+    latestSnapshotDate: null as string | null,
+  };
+
+  for (const row of rows) {
+    totals.activityCount += Number(row.activityCount || 0);
+    totals.participantCount += Number(row.participantCount || 0);
+    totals.eventCount += Number(row.eventCount || 0);
+    totals.winnerCount += Number(row.winnerCount || 0);
+    totals.webhookCount += Number(row.webhookCount || 0);
+    if (!totals.latestSnapshotDate || row.snapshotDate > totals.latestSnapshotDate) {
+      totals.latestSnapshotDate = row.snapshotDate;
+    }
+  }
+
+  return totals;
 }

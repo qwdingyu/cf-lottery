@@ -8,6 +8,10 @@
       <button class="btn btn-ghost btn-xs" @click="loadStats">{{ $t('platformCleanup.retry') }}</button>
     </div>
 
+    <p v-if="snapshotMeta?.snapshotized" class="field-hint" style="margin-bottom: 12px">
+      {{ $t('platformCleanup.snapshotHint', { date: snapshotMeta.snapshotDate || '-', count: snapshotMeta.snapshotTenantCount }) }}
+    </p>
+
     <div class="stats-grid" style="margin-bottom:24px">
       <div v-for="(count, table) in stats" :key="table" class="stat-chip" :class="{ 'stat-zero': count === 0 }">
         <span class="stat-chip-name">{{ table }}</span>
@@ -33,6 +37,7 @@ import { adminRequest } from '@/composables/useAdminRequest'
 
 const { t } = useI18n()
 const stats = ref<Record<string, number>>({})
+const snapshotMeta = ref<{ snapshotDate: string | null; snapshotTenantCount: number; snapshotized: boolean } | null>(null)
 const loading = ref(false)
 const cleaning = ref(false)
 const loadError = ref('')
@@ -42,8 +47,18 @@ async function loadStats() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await adminRequest<{ stats: Record<string, number> }>('/api/platform/data/stats')
+    const data = await adminRequest<{
+      stats: Record<string, number>
+      snapshotDate?: string | null
+      snapshotTenantCount?: number
+      snapshotized?: boolean
+    }>('/api/platform/data/stats')
     stats.value = data.stats
+    snapshotMeta.value = {
+      snapshotDate: data.snapshotDate ?? null,
+      snapshotTenantCount: data.snapshotTenantCount ?? 0,
+      snapshotized: Boolean(data.snapshotized),
+    }
   } catch (err: any) {
     loadError.value = err?.message || t('platformCleanup.loadFailed')
   } finally {

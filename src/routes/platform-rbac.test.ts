@@ -15,8 +15,8 @@ import { platformRedemptionCodesRoute } from "./platform-redemption-codes";
 import { platformRoute } from "./platform";
 import { adminLotteryRoute } from "./admin-lottery";
 import { signJwt, verifyJwt } from "../middleware/auth";
-import { lotteryDraws, adminAuditLogs, emailDeliveries, platformMembers, redemptionCodes, systemConfig, tenantMembers, tenants, users } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { lotteryDraws, adminAuditLogs, emailDeliveries, platformMembers, redemptionCodes, systemConfig, systemConfigVersions, tenantUsageSnapshots, tenantMembers, tenants, users } from "../db/schema";
+import { desc, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
@@ -117,6 +117,65 @@ describe("RBAC-lite 路由分层", () => {
     });
   });
 
+  it("平台系统配置会写入版本历史，并可回滚到上一版", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    const first = await app.request("/api/platform/system-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ key: "platform_name", value: "第一版平台" }),
+    }, TEST_ENV);
+    expect(first.status).toBe(200);
+
+    const second = await app.request("/api/platform/system-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ key: "platform_name", value: "第二版平台" }),
+    }, TEST_ENV);
+    expect(second.status).toBe(200);
+
+    const historyRes = await app.request("/api/platform/system-config/history/platform_name?limit=5", {
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(historyRes.status).toBe(200);
+    const historyBody = await historyRes.json() as {
+      currentValue: string;
+      history: Array<{ revision: number; beforeValue: string; afterValue: string; changeType: string }>;
+    };
+    expect(historyBody.currentValue).toBe("第二版平台");
+    expect(historyBody.history).toHaveLength(2);
+    expect(historyBody.history[0]).toMatchObject({
+      changeType: "update",
+      afterValue: "第二版平台",
+      beforeValue: "第一版平台",
+    });
+
+    const rollbackRes = await app.request("/api/platform/system-config/rollback/platform_name", {
+      method: "POST",
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(rollbackRes.status).toBe(200);
+
+    const [current] = await db
+      .select({ value: systemConfig.value })
+      .from(systemConfig)
+      .where(eq(systemConfig.key, "platform_name"))
+      .limit(1);
+    expect(current?.value).toBe("第一版平台");
+
+    const [latestVersion] = await db
+      .select()
+      .from(systemConfigVersions)
+      .where(eq(systemConfigVersions.key, "platform_name"))
+      .orderBy(desc(systemConfigVersions.revision))
+      .limit(1);
+    expect(latestVersion?.changeType).toBe("rollback");
+    expect(latestVersion?.beforeValue).toBe("第二版平台");
+    expect(latestVersion?.afterValue).toBe("第一版平台");
+  });
+
   it("旧 admin 平台入口不再提供系统配置和发码能力", async () => {
     await seedUsers();
     const app = createTestApp();
@@ -132,6 +191,41 @@ describe("RBAC-lite 路由分层", () => {
       body: JSON.stringify({ count: 1, activityQuota: 1, participantQuota: 0, durationDays: 30 }),
     }, TEST_ENV);
     expect(batchRes.status).toBe(404);
+  });
+
+  it("平台数据统计优先读取租户快照，避免扫描热表", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_operator" });
+    const app = createTestApp();
+    const snapshotDate = "2026-08-10";
+    await db.insert(tenantUsageSnapshots).values({
+      tenantId: TENANT_ID,
+      snapshotDate,
+      activityCount: 41,
+      participantCount: 1234,
+      eventCount: 88,
+      winnerCount: 9,
+      webhookCount: 7,
+    });
+
+    const res = await app.request("/api/platform/data/stats", {
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const payload = await res.json() as {
+      stats: Record<string, number>;
+      snapshotDate: string | null;
+      snapshotTenantCount: number;
+      snapshotized: boolean;
+    };
+    expect(payload.snapshotized).toBe(true);
+    expect(payload.snapshotDate).toBe(snapshotDate);
+    expect(payload.snapshotTenantCount).toBe(1);
+    expect(payload.stats.lotteryDraws).toBe(41);
+    expect(payload.stats.lotteryEntries).toBe(1234);
+    expect(payload.stats.lotteryWinners).toBe(9);
+    expect(payload.stats.activityEvents).toBe(88);
+    expect(payload.stats.webhookDeliveries).toBe(7);
   });
 
   it("公开系统配置只走白名单接口，不需要平台权限也不泄漏管理项", async () => {

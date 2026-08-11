@@ -205,6 +205,7 @@ export async function clearTestData(client: Client) {
     "tenant_usage_snapshots",
     "platform_audit_logs",
     "admin_audit_logs",
+    "system_config_versions",
     "platform_members",
     "auth_identities",
     "rate_limit_log",
