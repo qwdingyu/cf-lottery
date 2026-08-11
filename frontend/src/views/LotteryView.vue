@@ -245,18 +245,34 @@
                   {{ $t('lottery.flashPurchaseTierApplied', { label: flashSalePurchaseSummary(draw)?.tierLabel }) }}
                 </small>
               </div>
-              <label v-if="isDirectPaymentDraw(draw) && Number(draw.flashSale?.maxPerUser || 1) > 1" class="lottery-flash-quantity" @click.stop>
-                <span>{{ $t('lottery.flashPurchaseQuantity') }}</span>
-                <input
-                  :value="flashSaleQuantityFor(draw)"
-                  type="number"
-                  step="1"
-                  min="1"
-                  :max="draw.flashSale?.maxPerUser || 1"
-                  @input="onFlashSaleQuantityInput(draw, $event)"
-                />
+              <div v-if="isDirectPaymentDraw(draw) && Number(draw.flashSale?.maxPerUser || 1) > 1" class="lottery-flash-quantity" @click.stop>
+                <span class="lottery-flash-quantity-label">{{ $t('lottery.flashPurchaseQuantity') }}</span>
+                <div class="lottery-flash-quantity-control">
+                  <button
+                    type="button"
+                    class="lottery-flash-qty-btn"
+                    :disabled="flashSaleQuantityFor(draw) <= 1"
+                    @click="onFlashSaleQuantityChange(draw, -1)"
+                    :aria-label="$t('lottery.flashQuantityDecrease')"
+                  >−</button>
+                  <input
+                    :value="flashSaleQuantityFor(draw)"
+                    type="number"
+                    step="1"
+                    min="1"
+                    :max="draw.flashSale?.maxPerUser || 1"
+                    @input="onFlashSaleQuantityInput(draw, $event)"
+                  />
+                  <button
+                    type="button"
+                    class="lottery-flash-qty-btn"
+                    :disabled="flashSaleQuantityFor(draw) >= Number(draw.flashSale?.maxPerUser || 1)"
+                    @click="onFlashSaleQuantityChange(draw, 1)"
+                    :aria-label="$t('lottery.flashQuantityIncrease')"
+                  >+</button>
+                </div>
                 <small class="lottery-flash-quantity-hint">{{ $t('lottery.flashPurchaseQuantityHint', { max: Number(draw.flashSale?.maxPerUser || 1) }) }}</small>
-              </label>
+              </div>
             </div>
           </div>
           <div class="lottery-game-area">
@@ -332,12 +348,19 @@
             </template>
             <template v-else-if="isDrawJoined(draw) && isDirectPaymentDraw(draw)">
               <span class="lottery-join-hint">✅ {{ $t('lottery.paymentSlotLocked') }} · {{ joinedTimeText(draw) }}</span>
-              <button
-                type="button"
-                class="lottery-result-btn lottery-result-btn--primary"
-                :disabled="paymentLoading"
-                @click="resumePaymentFromDraw(draw)"
-              >{{ paymentLoading ? $t('lottery.loadingText') : $t('lottery.paymentContinue') }}</button>
+              <div class="lottery-status-actions">
+                <button
+                  type="button"
+                  class="lottery-result-btn lottery-result-btn--primary"
+                  :disabled="paymentLoading"
+                  @click="resumePaymentFromDraw(draw)"
+                >{{ paymentLoading ? $t('lottery.loadingText') : $t('lottery.paymentContinue') }}</button>
+                <button
+                  type="button"
+                  class="lottery-result-btn"
+                  @click="openLogin(draw.id, 'join')"
+                >{{ $t('lottery.paymentRecoverOrder') }}</button>
+              </div>
             </template>
             <template v-else-if="isDrawJoined(draw)">
               <span class="lottery-join-hint">✅ {{ $t('lottery.joined') }} · {{ joinedTimeText(draw) }}</span>
@@ -653,9 +676,9 @@
 
   <!-- 直付秒杀支付弹窗 -->
   <Teleport to="body">
-    <div v-if="showPaymentModal" class="game-result-overlay" @click.self="closePaymentModal">
+    <div v-if="showPaymentModal" class="game-result-overlay" @click.self="handlePaymentOverlayClick">
       <div class="game-result-modal lottery-payment-modal">
-        <button class="result-close" @click="closePaymentModal">✕</button>
+        <button class="result-close" @click="handlePaymentCloseClick">✕</button>
         <div class="result-icon" aria-hidden="true">💳</div>
         <h2 class="result-title">{{ paymentTitle }}</h2>
         <p class="result-hint">{{ paymentHint }}</p>
@@ -682,6 +705,9 @@
         <div v-if="paymentQrDataUrl" class="lottery-payment-qr">
           <img :src="paymentQrDataUrl" :alt="$t('lottery.paymentQrAlt')" />
           <p class="result-hint">{{ $t('lottery.paymentQrHint') }}</p>
+        </div>
+        <div v-else-if="paymentQrLoading" class="lottery-payment-qr">
+          <p class="lottery-payment-qr-loading">{{ $t('lottery.paymentQrGenerating') }}</p>
         </div>
 
         <div v-if="paymentCodes.length && paymentStatusIsPaid" class="result-code-block">
@@ -735,6 +761,18 @@
           <button type="button" class="btn" :class="paymentRedirectUrl ? 'btn-ghost' : 'btn-primary'" @click="closePaymentModal">
             {{ $t('lottery.gotIt') }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 支付中关闭确认弹窗：防止误关闭导致丢失支付入口（docs/202 3.1） -->
+    <div v-if="confirmPaymentClose" class="game-result-overlay" @click.self="confirmPaymentClose = false">
+      <div class="game-result-modal lottery-payment-confirm">
+        <h3 class="result-title">{{ $t('lottery.paymentCloseConfirmTitle') }}</h3>
+        <p class="result-hint">{{ $t('lottery.paymentCloseConfirmHint') }}</p>
+        <div class="result-actions">
+          <button type="button" class="btn btn-primary" @click="hardClosePaymentModal">{{ $t('lottery.paymentCloseConfirmLeave') }}</button>
+          <button type="button" class="btn btn-ghost" @click="confirmPaymentClose = false">{{ $t('lottery.paymentCloseConfirmStay') }}</button>
         </div>
       </div>
     </div>
@@ -1713,7 +1751,11 @@ function isDrawJoinable(draw: LotteryDraw): boolean {
 function joinDisabledText(draw: LotteryDraw): string {
   const reason = joinWindowReason(draw)
   if (reason === 'not_started') {
-    return t('lottery.statusHintNotStarted', { time: formatTime(draw.startAt || draw.startTime || '') })
+    // 未开始时优先展示实时倒计时，提升秒杀转化（docs/202 3.4）
+    const countdown = notStartedCountdownText(draw)
+    return countdown
+      ? t('lottery.statusHintNotStartedCountdown', { countdown })
+      : t('lottery.statusHintNotStarted', { time: formatTime(draw.startAt || draw.startTime || '') })
   }
   if (reason === 'ended') {
     return t('lottery.statusHintEndedByTime', { time: formatTime(draw.endAt || draw.endTime || '') })
@@ -1722,6 +1764,21 @@ function joinDisabledText(draw: LotteryDraw): string {
   // 兜底只返回状态短文案，避免异常 joinDisabledReason 与 status=open 组合时
   // joinDisabledText() 和 statusPathHint() 相互调用形成递归。
   return statusText(draw)
+}
+
+/** 未开始活动的实时倒计时文案（docs/202 3.4）；nowMs 每秒刷新驱动重渲染 */
+function notStartedCountdownText(draw: LotteryDraw): string {
+  const start = new Date(draw.startAt || draw.startTime || '').getTime()
+  if (!Number.isFinite(start) || start <= nowMs.value) return ''
+  const totalSec = Math.max(0, Math.floor((start - nowMs.value) / 1000))
+  const days = Math.floor(totalSec / 86400)
+  const hours = Math.floor((totalSec % 86400) / 3600)
+  const mins = Math.floor((totalSec % 3600) / 60)
+  const secs = totalSec % 60
+  if (days > 0) return t('lottery.countdownDays', { days, hours, mins })
+  if (hours > 0) return t('lottery.countdownHours', { hours, mins, secs })
+  if (mins > 0) return t('lottery.countdownMinSec', { mins, secs })
+  return t('lottery.countdownSeconds', { secs })
 }
 
 /**
@@ -1825,8 +1882,15 @@ const paymentLoading = ref(false)
 const paymentError = ref('')
 const paymentQrDataUrl = ref('')
 const paymentQrSeq = ref(0)
+/** 支付轮询最长持续时长：5 分钟未支付则停止轮询（docs/202 3.3） */
+const PAYMENT_POLL_TIMEOUT_MS = 5 * 60 * 1000
 let paymentPollTimer: ReturnType<typeof setInterval> | null = null
+/** 支付轮询绝对截止时间戳：超过后停止轮询，避免无限请求（docs/202 3.3） */
+let paymentPollDeadline = 0
 const paymentState = ref<PaymentState | null>(null)
+const paymentQrLoading = ref(false)
+/** 支付中误关闭弹窗的二次确认开关（docs/202 3.1） */
+const confirmPaymentClose = ref(false)
 const flashSaleQuantityByDrawId = ref<Record<string, number>>({})
 const publicSupportEmail = ref('')
 
@@ -2064,6 +2128,16 @@ function onFlashSaleQuantityInput(draw: LotteryDraw, event: Event) {
     [draw.id]: Math.min(max, Math.max(1, quantity)),
   }
 }
+
+/** 批量购买 +/- 步进：夹在 [1, maxPerUser] 内（docs/202 3.5） */
+function onFlashSaleQuantityChange(draw: LotteryDraw, change: number) {
+  const max = Math.max(1, Math.floor(Number(draw.flashSale?.maxPerUser || 1)))
+  const next = Math.min(max, Math.max(1, flashSaleQuantityFor(draw) + change))
+  flashSaleQuantityByDrawId.value = {
+    ...flashSaleQuantityByDrawId.value,
+    [draw.id]: next,
+  }
+}
 const paymentTitle = computed(() => {
   if (paymentState.value?.status === 'paid_fulfillment_failed') return t('lottery.paymentFulfillmentFailedTitle')
   if (paymentState.value?.status === 'paid_late_needs_refund') return t('lottery.paymentLatePaidTitle')
@@ -2173,9 +2247,32 @@ function clearPaymentPollTimer() {
   }
 }
 
-function closePaymentModal() {
+/** 支付中（pending）点击遮罩：弹出二次确认，防止误关丢支付入口（docs/202 3.1） */
+function handlePaymentOverlayClick() {
+  if (paymentState.value?.status === 'pending') {
+    confirmPaymentClose.value = true
+    return
+  }
+  hardClosePaymentModal()
+}
+
+/** 支付中（pending）点 ✕：弹出二次确认，防止误关丢支付入口（docs/202 3.1） */
+function handlePaymentCloseClick() {
+  if (paymentState.value?.status === 'pending') {
+    confirmPaymentClose.value = true
+    return
+  }
+  hardClosePaymentModal()
+}
+
+function hardClosePaymentModal() {
   showPaymentModal.value = false
+  confirmPaymentClose.value = false
   clearPaymentPollTimer()
+}
+
+function closePaymentModal() {
+  hardClosePaymentModal()
 }
 
 async function syncPaymentQrCode(qrCode?: string) {
@@ -2183,17 +2280,26 @@ async function syncPaymentQrCode(qrCode?: string) {
   const seq = ++paymentQrSeq.value
   if (!raw) {
     paymentQrDataUrl.value = ''
+    paymentQrLoading.value = false
     return
   }
+  // 二维码异步生成期间显示加载态，避免空白区域（docs/202 3.6）
+  paymentQrLoading.value = true
   try {
     const dataUrl = await QRCode.toDataURL(raw, {
       width: 240,
       margin: 1,
       errorCorrectionLevel: 'M',
     })
-    if (seq === paymentQrSeq.value) paymentQrDataUrl.value = dataUrl
+    if (seq === paymentQrSeq.value) {
+      paymentQrDataUrl.value = dataUrl
+      paymentQrLoading.value = false
+    }
   } catch {
-    if (seq === paymentQrSeq.value) paymentQrDataUrl.value = ''
+    if (seq === paymentQrSeq.value) {
+      paymentQrDataUrl.value = ''
+      paymentQrLoading.value = false
+    }
   }
 }
 
@@ -2313,7 +2419,13 @@ function handleRefreshPaymentStatus() {
 function startPaymentPolling() {
   clearPaymentPollTimer()
   if (!paymentState.value || !shouldPollPaymentStatus(paymentState.value.status)) return
+  // 设置 5 分钟超时，避免无限轮询（docs/202 3.3）
+  paymentPollDeadline = Date.now() + PAYMENT_POLL_TIMEOUT_MS
   paymentPollTimer = setInterval(() => {
+    if (Date.now() > paymentPollDeadline) {
+      clearPaymentPollTimer()
+      return
+    }
     void refreshPaymentOrderStatus({ silent: true })
   }, 3500)
 }
@@ -2834,6 +2946,16 @@ watch(codeSent, async (sent) => {
   if (!sent) return
   await nextTick()
   loginCodeInputRef.value?.focus({ preventScroll: true })
+})
+
+// docs/202 3.4：倒计时归零时自动刷新状态，免手动点击「刷新状态」
+watch(nowMs, (now) => {
+  if (draws.value.some((d) => {
+    const start = new Date(d.startAt || d.startTime || '').getTime()
+    return Number.isFinite(start) && now >= start && now - start < 1100
+  })) {
+    void fetchDraws({ silent: true })
+  }
 })
 
 function ensureSubmissionDraft(draw: LotteryDraw) {
@@ -4022,7 +4144,16 @@ function refreshWhenVisible() {
 }
 
 function handleVisibilityChange() {
-  if (document.visibilityState === 'visible') refreshWhenVisible()
+  if (document.visibilityState === 'visible') {
+    refreshWhenVisible()
+    // 页面回到前台时恢复直付订单轮询（若仍在 pending 且未超时，docs/202 3.3）
+    if (paymentState.value && shouldPollPaymentStatus(paymentState.value.status) && Date.now() < paymentPollDeadline) {
+      startPaymentPolling()
+    }
+  } else if (document.visibilityState === 'hidden') {
+    // 页面隐藏时暂停轮询，减少无效请求（docs/202 3.3）
+    clearPaymentPollTimer()
+  }
 }
 
 onMounted(async () => {

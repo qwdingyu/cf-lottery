@@ -2336,8 +2336,11 @@ async function saveDrawTiers(drawId: string) {
       method: 'POST',
       body: JSON.stringify({ tiers: validTiers }),
     })
-  } catch {
+  } catch (e) {
+    // 奖项保存失败必须中断主流程（throw），否则外层 handleCreate 会误报「创建成功」，
+    // 而活动实际无奖项，无法通过发布门禁（P0，docs/202 §5.1）。
     showToast(t('lottery.adminFailed'), 'error')
+    throw new Error(`保存奖项失败: ${toErrorMessage(e, '')}`)
   }
 }
 
@@ -2358,7 +2361,11 @@ async function saveDrawRoster(drawId: string) {
       method: 'POST',
       body: JSON.stringify({ members: emails }),
     })
-  } catch { /* 导入失败不阻断主流程 */ }
+  } catch (e) {
+    // 名单导入失败不应静默；否则活动创建后无可用名单，roster 模式用户无法参与（P0）。
+    showToast(`名单导入失败: ${toErrorMessage(e, '')}`, 'error')
+    throw new Error(`名单导入失败: ${toErrorMessage(e, '')}`)
+  }
 }
 
 /**
@@ -2372,7 +2379,11 @@ async function saveDrawInviteCodes(drawId: string) {
       method: 'POST',
       body: JSON.stringify({ count: inviteCodeCount.value, maxUses: 1 }),
     })
-  } catch { /* 生成失败不阻断主流程 */ }
+  } catch (e) {
+    // 邀请码生成失败不应静默；否则活动创建后无可用邀请码，invite_code 模式用户无法参与（P0）。
+    showToast(`邀请码生成失败: ${toErrorMessage(e, '')}`, 'error')
+    throw new Error(`邀请码生成失败: ${toErrorMessage(e, '')}`)
+  }
 }
 
 /** 添加一个奖项（最多 10 个） */
@@ -3718,6 +3729,7 @@ async function handleRecover(id: string) {
 }
 
 async function handleCreate() {
+  if (creating.value) return
   if (!form.value.name || !form.value.startTime || !form.value.endTime) {
     showToast(t('lottery.adminFillNameTime'), 'error')
     return

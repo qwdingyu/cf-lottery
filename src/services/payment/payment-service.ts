@@ -1028,6 +1028,9 @@ export async function handlePaymentCallback(
 
     const isCurrentAttempt = current.currentAttemptId === attempt.id;
     const markAttemptLate = async () => {
+      // 用 attempt.status 快照做 WHERE：旧 attempt 可能处于 expired/failed 而非 pending，
+      // 显式 PENDING 会造成 UPDATE 命中 0 行（迟到标记失效）。SQLite 串行化隔离下
+      // 事务内快照始终最新，无需担心并发覆盖（docs/202 §5.2 复核结论）。
       await tx
         .update(paymentOrderAttempts)
         .set({
@@ -1313,8 +1316,6 @@ async function acquirePrizeCodes(
           .where(and(
             eq(prizeCodes.tenantId, tenantId),
             inArray(prizeCodes.id, ids),
-            eq(prizeCodes.paymentOrderId, orderId),
-            eq(prizeCodes.winnerId, entryId),
             eq(prizeCodes.status, "issued"),
           ));
       }
@@ -1380,5 +1381,9 @@ async function findCodePrize(db: DbType, tenantId: string, drawId: string) {
       eq(prizes.active, 1),
     ))
     .where(and(eq(lotteryPrizeTiers.tenantId, tenantId), eq(lotteryPrizeTiers.drawId, drawId)));
+  if (rows.length > 1) {
+    // 多个卡密奖品命中：fail-closed 返回 null 且必须留日志，否则运营看不到发卡失败的真因（docs/202 §5.3-22）。
+    console.error(`[payment] 活动 ${drawId} 存在 ${rows.length} 个卡密奖品，无法确定发卡目标（fail-closed）`);
+  }
   return rows.length === 1 ? rows[0] : null;
 }
