@@ -116,10 +116,16 @@ upload_with_retry "$PACKAGE_FILE" "$VPS_PATH/$PACKAGE_FILE"
 # ── 步骤 3：VPS 后台部署（nohup，SSH 断开不影响）──
 # 关键：所有长任务（npm install 等）放入 nohup bash -c '...' 后台执行，
 # SSH 返回后部署仍继续，彻底避免「SSH 断开导致部署卡死半小时」。
+# ⚠️ 必须显式设置 PATH：nohup 的 bash -c 是非交互 shell，不加载 .bashrc，
+#     nvm 安装的 node/npm 不会在 PATH 中（会报 npm: command not found）。
+# ⚠️ 完成标记：部署脚本最后写入 DONE 标记文件；轮询必须等 DONE 出现才判定成功，
+#     避免「旧进程仍在运行导致 health 正常」的假成功。
 info "步骤 3/4：VPS 后台部署（解压 + npm install --omit=dev + 重启）..."
 REMOTE_LOG="/tmp/cf-lottery-deploy-$(date +%Y%m%d-%H%M%S).log"
+DONE_MARKER="${REMOTE_LOG%.log}.done"
 DEPLOY_SCRIPT="bash -c '
 set -e
+export PATH=/root/.nvm/versions/node/v24.18.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 cd $VPS_PATH
 # 1) 备份旧版本（回滚兜底）
 [ -f dist/server.js ] && cp dist/server.js dist/server.js.bak-\$(date +%Y%m%d-%H%M%S) || true
@@ -134,26 +140,31 @@ systemctl daemon-reload 2>/dev/null || true
 systemctl enable --now cf-lottery-maintenance.timer 2>/dev/null || true
 # 5) 重启服务（启动时自动执行数据库迁移）
 systemctl restart cf-lottery
-# 6) 清理部署包
+# 6) 清理部署包 + 写入完成标记
 rm -f $PACKAGE_FILE
+echo \"DEPLOY_OK \$(date +%F-%T)\" > $DONE_MARKER
 echo DEPLOY_OK
 '"
 ssh_cmd "nohup $DEPLOY_SCRIPT > $REMOTE_LOG 2>&1 & echo 远端部署已后台启动: $REMOTE_LOG"
 
-# ── 步骤 4：轮询验证（不依赖长 SSH 会话）──
+# ── 步骤 4：轮询验证（等 DONE 标记出现，避免旧进程假成功）──
 info "步骤 4/4：轮询验证（每 10 秒，最长 $((MAX_POLL * 10 / 60)) 分钟）..."
 for i in $(seq 1 "$MAX_POLL"); do
   sleep 10
-  status=$(ssh_cmd "systemctl is-active cf-lottery" 2>/dev/null || echo "ssh-fail")
-  if [ "$status" = "active" ]; then
+  # 只认 DONE 标记：标记存在 = 新部署的 npm install + systemctl restart 已成功完成
+  if ssh_cmd "test -f $DONE_MARKER" 2>/dev/null; then
+    done_at=$(ssh_cmd "cat $DONE_MARKER" 2>/dev/null || echo "?")
     health=$(ssh_cmd "curl -s http://localhost:8787/api/health" 2>/dev/null || echo "")
     if echo "$health" | grep -q '"db":true'; then
-      info "✅ 部署成功（第 ${i} 次轮询）"
+      info "✅ 部署成功（第 ${i} 次轮询，完成于 ${done_at}）"
       info "   health: $health"
       info "   远端日志: $REMOTE_LOG"
       rm -f "$PACKAGE_FILE"
       exit 0
     fi
+    err "DONE 标记已出现但 health 异常：$health"
+    rm -f "$PACKAGE_FILE"
+    exit 1
   fi
   # 每 6 次轮询（1 分钟）输出一次进度，避免"无输出卡住"的观感
   if [ $((i % 6)) -eq 0 ]; then
