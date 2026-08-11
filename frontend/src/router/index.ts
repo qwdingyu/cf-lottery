@@ -143,9 +143,9 @@ const router = createRouter({
           component: () => import('@/views/admin/AdminIntegrationsView.vue'),
         },
         {
-          path: 'qq-assistant',
-          name: 'AdminQqAssistant',
-          component: () => import('@/views/admin/AdminQqAssistantView.vue'),
+          path: 'platform-targets',
+          name: 'AdminPlatformTarget',
+          component: () => import('@/views/admin/AdminPlatformTargetView.vue'),
         },
         {
           path: 'payment-config',
