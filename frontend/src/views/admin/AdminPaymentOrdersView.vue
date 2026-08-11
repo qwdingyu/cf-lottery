@@ -2,7 +2,7 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
-        <select v-model="filter.status" class="filter-input" :disabled="loading" @change="searchData">
+        <select v-model="filter.status" :disabled="loading" @change="searchData">
           <option value="">全部状态</option>
           <option value="pending">待支付</option>
           <option value="paid">已支付</option>
@@ -13,7 +13,7 @@
           <option value="cancelled">已取消</option>
           <option value="refunded">已退款</option>
         </select>
-        <select v-model="filter.provider" class="filter-input" :disabled="loading" @change="searchData">
+        <select v-model="filter.provider" :disabled="loading" @change="searchData">
           <option value="">全部渠道</option>
           <option v-for="provider in providerOptions" :key="provider.name" :value="provider.name">
             {{ provider.displayName }}
@@ -21,7 +21,6 @@
         </select>
         <input
           v-model.trim="filter.drawId"
-          class="filter-input"
           type="search"
           placeholder="活动 ID"
           :disabled="loading"
@@ -235,7 +234,6 @@ onMounted(loadData)
 
 <style scoped>
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.filter-input { min-height: 34px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); }
 .cell-main { font-weight: 600; max-width: 260px; overflow-wrap: anywhere; }
 .cell-sub { margin-top: 4px; color: var(--muted); font-size: 12px; max-width: 260px; overflow-wrap: anywhere; }
 .pagination-row { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 14px; }

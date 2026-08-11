@@ -5,8 +5,8 @@
       <p class="muted-text">{{ $t('adminQuota.desc') }}</p>
 
       <form class="redeem-form" @submit.prevent="handleRedeem">
-        <label class="redeem-input-wrap">
-          <span class="redeem-input-label">{{ $t('adminQuota.codeLabel') }}</span>
+        <span class="redeem-input-label">{{ $t('adminQuota.codeLabel') }}</span>
+        <div class="redeem-input-row">
           <input
             v-model="code"
             type="text"
@@ -15,12 +15,12 @@
             placeholder="LUCKY-XXXX-XXXX-XXXX"
             required
           />
-          <small class="field-hint">{{ $t('adminQuota.codeHint') }}</small>
-        </label>
-        <button class="btn btn-primary redeem-btn" type="submit" :disabled="submitting">
-          <span v-if="!submitting">{{ $t('adminQuota.redeem') }}</span>
-          <span v-else>{{ $t('adminQuota.redeeming') }}</span>
-        </button>
+          <button class="btn btn-primary redeem-btn" type="submit" :disabled="submitting">
+            <span v-if="!submitting">{{ $t('adminQuota.redeem') }}</span>
+            <span v-else>{{ $t('adminQuota.redeeming') }}</span>
+          </button>
+        </div>
+        <small class="field-hint">{{ $t('adminQuota.codeHint') }}</small>
       </form>
     </section>
 
@@ -165,24 +165,26 @@ async function handleRedeem() {
   color: var(--tg-hint, #9aa4b2);
 }
 
-/* 兑换表单：标签 + 输入框 + 按钮一行，水平对齐 */
+/* 兑换表单：标签一行，输入框+按钮一行水平并排，提示在下方 */
 .redeem-form {
-  display: grid;
-  grid-template-columns: minmax(220px, 420px) auto;
-  gap: 12px;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin-top: 12px;
-}
-.redeem-input-wrap {
-  display: contents;
 }
 .redeem-input-label {
   font-size: 13px;
   font-weight: 600;
   color: var(--tg-text, #f0f2f5);
-  white-space: nowrap;
 }
-.redeem-form input {
+.redeem-input-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.redeem-input-row input {
+  flex: 1;
+  min-width: 0;
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid var(--border, rgba(255,255,255,0.15));
@@ -191,16 +193,9 @@ async function handleRedeem() {
   font-size: 14px;
   font-family: monospace;
   letter-spacing: 0.5px;
-  grid-column: 1;
-  grid-row: 2;
-}
-.redeem-input-label {
-  grid-column: 1;
-  grid-row: 1;
 }
 .redeem-btn {
-  grid-column: 2;
-  grid-row: 1;
+  flex-shrink: 0;
   min-width: 140px;
   padding: 10px 20px;
   font-size: 14px;
