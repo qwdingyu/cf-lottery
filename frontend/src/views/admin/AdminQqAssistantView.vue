@@ -61,6 +61,7 @@
           </tr>
         </tbody>
       </table>
+    </div>
 <!-- 创建 / 编辑弹窗 -->
     <Teleport to="body">
       <div v-if="showModal" class="modal-overlay" @click.self="closeModal">

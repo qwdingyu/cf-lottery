@@ -19,6 +19,7 @@ import {
   performInstantSpin,
   SpinBusinessError,
   notifyInstantSpinWinner,
+  DRAW_STATUS,
   type ActivityEventType,
 } from "../services/lottery-service";
 import { enqueuePlatformEvent } from "../services/platform/delivery";
@@ -174,7 +175,7 @@ publicLotteryRoute.get("/home-activities", async (c) => {
     .from(lotteryDraws)
     .where(and(
       eq(lotteryDraws.visible, 1),
-      eq(lotteryDraws.status, "open"),
+      eq(lotteryDraws.status, DRAW_STATUS.OPEN),
       ne(lotteryDraws.publicSlug, ""),
       gt(lotteryDraws.endAt, nowIso),
     ))
@@ -260,7 +261,7 @@ publicLotteryRoute.get("/shops/:storeSlug", async (c) => {
     .from(lotteryDraws)
     .where(and(
       eq(lotteryDraws.tenantId, tenant.id),
-      eq(lotteryDraws.status, "open"),
+      eq(lotteryDraws.status, DRAW_STATUS.OPEN),
       eq(lotteryDraws.visible, 1),
       sql`${lotteryDraws.endAt} > ${nowIso}`,
     ))
@@ -356,7 +357,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.status !== "open" && draw.status !== "drawn") return fail(c, "活动未开放", 400);
+  if (draw.status !== DRAW_STATUS.OPEN && draw.status !== DRAW_STATUS.DRAWN) return fail(c, "活动未开放", 400);
   // docs/083：visible=0 时对公众与「未开放」同文案，不额外泄露「存在但隐藏」
   if (Number(draw.visible ?? 1) !== 1) return fail(c, "活动未开放", 400);
 
@@ -485,7 +486,7 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
   }
 
   // 开奖后展示中奖名单
-  if (draw.status === "drawn" && draw.showWinnerList) {
+  if (draw.status === DRAW_STATUS.DRAWN && draw.showWinnerList) {
     const winners = await db
       .select({ identityValue: lotteryWinners.identityValue })
       .from(lotteryWinners)
@@ -663,8 +664,8 @@ publicLotteryRoute.post("/draws/:slug/access-code", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
   // join：仅 open；query：开奖后仍需 OTP 证明邮箱，允许 open/paused/drawing/drawn
   if (purpose === "join") {
-    if (draw.status !== "open") return fail(c, "活动已结束", 400);
-  } else if (!["open", "paused", "drawing", "drawn"].includes(draw.status)) {
+    if (draw.status !== DRAW_STATUS.OPEN) return fail(c, "活动已结束", 400);
+  } else if (!([DRAW_STATUS.OPEN, DRAW_STATUS.PAUSED, DRAW_STATUS.DRAWING, DRAW_STATUS.DRAWN] as readonly string[]).includes(draw.status)) {
     return fail(c, "当前无法发送查询验证码", 400);
   }
 
@@ -941,7 +942,7 @@ publicLotteryRoute.post("/draws/:slug/verify-join", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.status !== "open") return fail(c, "活动已结束", 400);
+  if (draw.status !== DRAW_STATUS.OPEN) return fail(c, "活动已结束", 400);
   const joinIpLimit = activityJoinIpLimit(draw, globalJoinLimit);
   if (!(await checkPublicRateLimit(db, `join:${draw.id}:${ip}`, joinIpLimit, 60000))) {
     return fail(c, "参与过于频繁，请稍后再试", 429);
@@ -1762,7 +1763,7 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
       resultLabel: outcome.resultLabel,
       decidedAt: outcome.decidedAt,
     } : undefined;
-  } else if (draw.status === "drawn") {
+  } else if (draw.status === DRAW_STATUS.DRAWN) {
     // 纵深防御：同时限定 tenantId + drawId + entryId，防止跨租户查询中奖结果
     const [winner] = await db
       .select()

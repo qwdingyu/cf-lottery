@@ -42,6 +42,21 @@ describe("system-config 多选枚举定义", () => {
   });
 });
 
+describe("平台事件运营开关定义", () => {
+  it("entry.created / prize.issued 开关默认关闭且只接受布尔值", () => {
+    for (const key of ["platform_event_entry_created_enabled", "platform_event_prize_issued_enabled"]) {
+      const def = getSystemConfigDefinition(key);
+      expect(def?.type).toBe("boolean");
+      expect(def?.scope).toBe("admin");
+      expect(def?.defaultValue).toBe("false");
+      expect(def?.group).toBe("平台运营");
+      expect(normalizeSystemConfigValue(key, "true").ok).toBe(true);
+      expect(normalizeSystemConfigValue(key, "false").ok).toBe(true);
+      expect(normalizeSystemConfigValue(key, "yes").ok).toBe(false);
+    }
+  });
+});
+
 describe("normalizeSystemConfigValue 多选枚举", () => {
   it("接受合法子集并按定义顺序稳定输出", () => {
     const result = normalizeSystemConfigValue(

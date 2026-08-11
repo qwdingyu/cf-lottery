@@ -36,6 +36,7 @@ import {
   isRetryablePaymentOrderStatus,
   PAYMENT_ENTRY_STATUS,
 } from "../payment/payment-status";
+import { DRAW_STATUS } from "./types";
 
 export interface JoinDrawResult {
   joined: boolean;
@@ -95,7 +96,7 @@ export async function joinDraw(
 
   if (!draw) throw new Error("活动不存在");
   // 只有 open 状态的活动可以参与（draft/paused/drawing/drawn/cancelled 均不可参与）
-  if (draw.status !== "open") throw new Error("活动未开启");
+  if (draw.status !== DRAW_STATUS.OPEN) throw new Error("活动未开启");
 
   // ── registered 模式：参与身份必须是 user_id（端点层已解析，此处服务层兜底） ──
   // 身份由端点解析后传入（identityType/identityValue），业务层只消费不再覆盖。
@@ -253,7 +254,7 @@ export async function joinDraw(
             .where(and(
               eq(lotteryDraws.id, draw.id),
               eq(lotteryDraws.tenantId, draw.tenantId),
-              eq(lotteryDraws.status, "open"),
+              eq(lotteryDraws.status, DRAW_STATUS.OPEN),
               sql`${lotteryDraws.activeParticipantCount} < ${effectiveMax}`,
             ))
             .returning({ id: lotteryDraws.id });
@@ -354,7 +355,7 @@ export async function joinDraw(
           .where(and(
             eq(lotteryDraws.id, draw.id),
             eq(lotteryDraws.tenantId, draw.tenantId),
-            eq(lotteryDraws.status, "open"),
+            eq(lotteryDraws.status, DRAW_STATUS.OPEN),
             sql`${lotteryDraws.activeParticipantCount} < ${effectiveMax}`,
           ))
           .returning({ id: lotteryDraws.id });
@@ -826,6 +827,62 @@ async function grantViralSpinsToSharer(
   });
 }
 
+type EntryIdentityForSelfInviteCheck = {
+  identityType: string | null;
+  identityValue: string | null;
+};
+
+/**
+ * 自邀请身份规范化。
+ *
+ * 签到活动会把 identity_value 写成 `邮箱:YYYY-MM-DD`，用于允许同一人每日签到。
+ * 裂变归因比较时必须剥离日期后缀，否则同一人跨日带自己的 ref 会被误判为新邀请。
+ */
+function baseIdentityValue(value: string | null | undefined) {
+  const s = String(value || "").trim().toLowerCase();
+  const m = s.match(/^(.*):(\d{4}-\d{2}-\d{2})$/);
+  return m ? m[1]! : s;
+}
+
+/**
+ * 判断两个 entry 是否代表同一个真实参与者。
+ *
+ * 同类型：直接比较规范化后的 identity_value。
+ * 跨类型：仅支持 email ↔ user_id 的强证明路径，通过 users 表反查 user_id 的邮箱。
+ *
+ * 为什么不做更激进的字符串猜测：手机号、平台 openid、邮箱等身份体系可能存在同名但不同人的情况。
+ * 自邀请拦截宁可少拦，也不能误伤正常邀请；只有能从账号表证明同一邮箱时才判定 selfInvite。
+ */
+async function isSameParticipantIdentity(
+  db: DbWriteScope,
+  left: EntryIdentityForSelfInviteCheck,
+  right: EntryIdentityForSelfInviteCheck,
+): Promise<boolean> {
+  const leftType = String(left.identityType || "").trim().toLowerCase();
+  const rightType = String(right.identityType || "").trim().toLowerCase();
+  const leftValue = baseIdentityValue(left.identityValue);
+  const rightValue = baseIdentityValue(right.identityValue);
+  if (!leftType || !rightType || !leftValue || !rightValue) return false;
+
+  if (leftType === rightType) {
+    return leftValue === rightValue;
+  }
+
+  const pair = new Set([leftType, rightType]);
+  if (!pair.has("email") || !pair.has("user_id")) {
+    return false;
+  }
+
+  const emailValue = leftType === "email" ? leftValue : rightValue;
+  const userIdValue = leftType === "user_id" ? leftValue : rightValue;
+  const [user] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, userIdValue))
+    .limit(1);
+  return Boolean(user?.email && String(user.email).trim().toLowerCase() === emailValue);
+}
+
 async function recordAttributedJoin(
   db: DbWriteScope,
   input: {
@@ -891,16 +948,7 @@ async function recordAttributedJoin(
         ))
         .limit(1);
       if (joinerEntry) {
-        const sameType = String(sharerEntry.identityType || "") === String(joinerEntry.identityType || "");
-        // 签到 identity_value 带 :YYYY-MM-DD 后缀：比「邮箱/user 主干」防跨日自邀刷权重
-        const baseOf = (v: string) => {
-          const s = String(v || "").trim().toLowerCase();
-          const m = s.match(/^(.*):(\d{4}-\d{2}-\d{2})$/);
-          return m ? m[1]! : s;
-        };
-        const sameIdentity =
-          sameType && baseOf(sharerEntry.identityValue) === baseOf(joinerEntry.identityValue);
-        if (sameIdentity) {
+        if (await isSameParticipantIdentity(db, sharerEntry, joinerEntry)) {
           return { attributed: false, selfInvite: true as const, refCode, shareRecordId: share.id };
         }
       }

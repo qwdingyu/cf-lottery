@@ -23,6 +23,7 @@ import { validateActivityConfigForPublish } from "../lib/activity-config";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../lib/flash-sale-config";
 import { PAYMENT_PROVIDER_CATALOG, type PaymentProviderCatalogItem } from "./payment/catalog";
 import { decryptPaymentConfigValueResult, isEncryptedPaymentConfigValue } from "./payment/secret-config";
+import { DRAW_STATUS } from "./lottery/types";
 
 export type PublishCheckSection =
   | "basic"
@@ -280,7 +281,7 @@ async function validateFlashSalePayment(
       eq(lotteryPrizeTiers.tenantId, tenantId),
       eq(lotteryPrizeTiers.prizeId, codePrizeRows[0].prizeId),
       ne(lotteryDraws.id, draw.id),
-      inArray(lotteryDraws.status, ["open", "paused", "drawing"]),
+      inArray(lotteryDraws.status, [DRAW_STATUS.OPEN, DRAW_STATUS.PAUSED, DRAW_STATUS.DRAWING]),
     ));
   if (sharedPrizeDraws.length > 0) {
     add(

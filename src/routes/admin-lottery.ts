@@ -23,6 +23,9 @@ import {
   getTenantUsage,
   hashAccessPassword,
   defaultResultModeForActivity,
+  DRAW_STATUS,
+  DRAW_STATUS_VALUES,
+  ACTIVE_DRAW_STATUSES,
 } from "../services/lottery-service";
 import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
 import { parseFlashSaleConfig } from "../lib/flash-sale-config";
@@ -81,7 +84,9 @@ const RESULT_MODES = new Set([
 ]);
 const ALLOCATION_POLICIES = new Set(["capacity", "waitlist", "fifo", "priority", "random", "weighted_random", "approval"]);
 const DRAW_EXPORT_MAX_ROWS = 10_000;
-const DRAW_STATUSES = new Set(["active", "draft", "open", "paused", "drawing", "drawn", "cancelled"]);
+/** 管理端列表专用虚拟筛选值，不会写入 lottery_draws.status。 */
+const DRAW_STATUS_FILTER_ACTIVE = "active";
+const DRAW_STATUS_FILTERS = new Set<string>([DRAW_STATUS_FILTER_ACTIVE, ...DRAW_STATUS_VALUES]);
 
 function applyDrawListFilters(
   tenantId: string,
@@ -94,9 +99,9 @@ function applyDrawListFilters(
   },
 ) {
   const conditions: any[] = [eq(lotteryDraws.tenantId, tenantId)];
-  if (input.status === "active") {
-    conditions.push(inArray(lotteryDraws.status, ["draft", "open", "paused", "drawing"]));
-  } else if (input.status && DRAW_STATUSES.has(input.status)) {
+  if (input.status === DRAW_STATUS_FILTER_ACTIVE) {
+    conditions.push(inArray(lotteryDraws.status, ACTIVE_DRAW_STATUSES));
+  } else if (input.status && DRAW_STATUS_FILTERS.has(input.status)) {
     conditions.push(eq(lotteryDraws.status, input.status));
   }
   if (input.query) conditions.push(sql`${lotteryDraws.title} LIKE ${"%" + escapeLike(input.query) + "%"}`);
@@ -131,15 +136,15 @@ adminLotteryRoute.get("/dashboard", async (c) => {
   const [openRow] = await db
     .select({ count: sql<number>`COUNT(*)` })
     .from(lotteryDraws)
-    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "open")));
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.OPEN)));
   const [draftRow] = await db
     .select({ count: sql<number>`COUNT(*)` })
     .from(lotteryDraws)
-    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "draft")));
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.DRAFT)));
   const [drawnRow] = await db
     .select({ count: sql<number>`COUNT(*)` })
     .from(lotteryDraws)
-    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "drawn")));
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.DRAWN)));
 
   // 到期待开奖的定时活动
   const [dueRow] = await db
@@ -147,7 +152,7 @@ adminLotteryRoute.get("/dashboard", async (c) => {
     .from(lotteryDraws)
     .where(and(
       eq(lotteryDraws.tenantId, tenantId),
-      eq(lotteryDraws.status, "open"),
+      eq(lotteryDraws.status, DRAW_STATUS.OPEN),
       eq(lotteryDraws.activityKind, "lottery"),
       eq(lotteryDraws.drawTrigger, "scheduled"),
       sql`${lotteryDraws.drawAt} <= ${now}`,
@@ -201,7 +206,7 @@ adminLotteryRoute.get("/dashboard", async (c) => {
   const openDraws = await db
     .select({ id: lotteryDraws.id, title: lotteryDraws.title, promotionConfig: lotteryDraws.promotionConfig })
     .from(lotteryDraws)
-    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "open")));
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.OPEN)));
 
   const flashDrawIds: string[] = [];
   for (const draw of openDraws) {
@@ -591,7 +596,7 @@ adminLotteryRoute.post("/draws/:id/copy", async (c) => {
     activityConfig: draw.activityConfig,
     productLink: draw.productLink,  // 复制导流商品链接（参与后展示的 CTA）
     maxSpinsPerEntry: Number(draw.maxSpinsPerEntry || 0),
-    status: "draft",
+    status: DRAW_STATUS.DRAFT,
     createdAt: now,
     updatedAt: now,
   });
@@ -765,7 +770,7 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
   if (!draw) return fail(c, "活动不存在", 404);
 
   // ── 已开奖：仅允许 { visible: 0|1|true|false } ──
-  if (draw.status === "drawn") {
+  if (draw.status === DRAW_STATUS.DRAWN) {
     const keys = Object.keys(body || {}).filter((k) => body[k] !== undefined);
     if (keys.length !== 1 || body.visible === undefined) {
       return fail(c, "已开奖活动仅可切换可见性", 409);
@@ -779,7 +784,7 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     return ok(c, { updated: true, visible: nextVisible });
   }
 
-  if (draw.status !== "draft") return fail(c, "只有草稿状态的活动可以编辑", 400);
+  if (draw.status !== DRAW_STATUS.DRAFT) return fail(c, "只有草稿状态的活动可以编辑", 400);
 
   let maxSpinsUpdate: number | undefined;
   if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
@@ -931,7 +936,7 @@ adminLotteryRoute.post("/draws/:id/publish", async (c) => {
         console.error(`[admin] enqueuePlatformEvent draw.published failed for ${drawId}:`, err);
       });
     }
-    return ok(c, { status: "open" });
+    return ok(c, { status: DRAW_STATUS.OPEN });
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "发布失败", 400);
   }
@@ -946,7 +951,7 @@ adminLotteryRoute.post("/draws/:id/pause", async (c) => {
   const result = await pauseDraw(db, tenantId, drawId);
   if (!result) return fail(c, "活动不存在或未开启", 400);
   await recordTenantAudit(c, "draw.pause", "lottery_draw", drawId);
-  return ok(c, { status: "paused" });
+  return ok(c, { status: DRAW_STATUS.PAUSED });
 });
 
 /** 恢复活动（paused → open） */
@@ -958,7 +963,7 @@ adminLotteryRoute.post("/draws/:id/resume", async (c) => {
   const result = await resumeDraw(db, tenantId, drawId);
   if (!result) return fail(c, "活动不存在或未暂停", 400);
   await recordTenantAudit(c, "draw.resume", "lottery_draw", drawId);
-  return ok(c, { status: "open" });
+  return ok(c, { status: DRAW_STATUS.OPEN });
 });
 
 /** 取消活动（draft/open/paused → cancelled） */
@@ -971,7 +976,7 @@ adminLotteryRoute.post("/draws/:id/cancel", async (c) => {
     const result = await cancelDraw(db, tenantId, drawId);
     if (!result) return fail(c, "活动不存在或无法取消", 400);
     await recordTenantAudit(c, "draw.cancel", "lottery_draw", drawId);
-    return ok(c, { status: "cancelled" });
+    return ok(c, { status: DRAW_STATUS.CANCELLED });
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "取消失败", 400);
   }

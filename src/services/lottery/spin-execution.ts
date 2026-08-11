@@ -26,6 +26,7 @@ import {
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
 import { recordSpinLog } from "./spins-log";
 import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
+import { DRAW_STATUS } from "./types";
 
 export class SpinBusinessError extends Error {
   constructor(
@@ -104,7 +105,7 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
   if (String(draw.resultMode || "") !== "instant") {
     throw new SpinBusinessError("该活动不是即时开奖模式", 400, "spin.result_mode.not_instant");
   }
-  if (draw.status !== "open") {
+  if (draw.status !== DRAW_STATUS.OPEN) {
     throw new SpinBusinessError("活动未开启", 400, "spin.draw.not_open");
   }
 

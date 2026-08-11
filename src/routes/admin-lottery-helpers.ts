@@ -25,6 +25,7 @@ import {
   paymentOrders,
 } from "../db/schema";
 import { and, count, eq, inArray } from "drizzle-orm";
+import { DELETABLE_DRAW_STATUSES } from "../services/lottery-service";
 
 /** 单次 batch-delete 上限：防误炸与 Turso 长事务（docs/082 P2） */
 export const ADMIN_BATCH_DELETE_MAX = 100;
@@ -160,7 +161,7 @@ export async function cascadeDeleteDraw(
 
 /** 活动状态是否允许物理删除（与 canDeleteDraw / DELETE 单条一致；无 force） */
 export function isDrawStatusDeletable(status: string): boolean {
-  return status === "draft" || status === "paused" || status === "drawn" || status === "cancelled";
+  return (DELETABLE_DRAW_STATUSES as readonly string[]).includes(status);
 }
 
 export function escapeLike(value: string): string {

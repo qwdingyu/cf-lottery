@@ -183,6 +183,26 @@ export async function readSystemConfigMap(db: DbType, keys = SYSTEM_CONFIG_KEYS)
   return buildSystemConfigMap(rows, keys);
 }
 
+/**
+ * 读取布尔系统配置。
+ *
+ * 默认值来自 system-config-definitions.json，避免业务代码和后台参数定义各自写一份 fallback。
+ * 仅显式 "true" 视为启用，其他异常值按定义默认值兜底，防止脏数据意外打开高风险能力。
+ */
+export async function readSystemConfigBoolean(db: Pick<DbType, "select">, key: string): Promise<boolean> {
+  const definition = getSystemConfigDefinition(key);
+  const defaultValue = definition?.type === "boolean" ? definition.defaultValue === "true" : false;
+  const [row] = await db
+    .select({ value: systemConfig.value })
+    .from(systemConfig)
+    .where(eq(systemConfig.key, key))
+    .limit(1);
+  if (!row) return defaultValue;
+  if (row.value === "true") return true;
+  if (row.value === "false") return false;
+  return defaultValue;
+}
+
 export function adminSystemConfigDefinitions(): SystemConfigDefinition[] {
   return [...SYSTEM_CONFIG_DEFINITIONS];
 }
@@ -194,10 +214,5 @@ export function adminSystemConfigDefinitions(): SystemConfigDefinition[] {
  * 供 L2 后端路由（admin-lottery-platform.ts）和入站命令执行链路（inbound.ts）共用。
  */
 export async function isCommunityFeatureEnabled(db: DbType): Promise<boolean> {
-  const [row] = await db
-    .select({ value: systemConfig.value })
-    .from(systemConfig)
-    .where(eq(systemConfig.key, "community_feature_enabled"))
-    .limit(1);
-  return row ? row.value !== "false" : true;
+  return readSystemConfigBoolean(db, "community_feature_enabled");
 }

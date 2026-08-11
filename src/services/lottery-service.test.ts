@@ -43,6 +43,7 @@ import {
   paymentOrders,
   paymentOrderAttempts,
   spinsLog,
+  users,
 } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
@@ -1099,6 +1100,64 @@ describe("活动事件", () => {
       "SELECT joined_count FROM share_records WHERE id = 'share-self-ck'",
     );
     expect(Number(after.rows[0]?.joined_count)).toBe(1);
+  });
+
+  it("自邀请：email 分享者与同邮箱 user_id 参与者不计 joined_count", async () => {
+    const { id, publicSlug } = await setupDraw();
+    const userId = "self-invite-user-id";
+    await db.insert(users).values({
+      id: userId,
+      username: "selfinvite",
+      email: "cross-self@test.com",
+      emailVerified: 1,
+      passwordHash: "hash",
+    });
+
+    const sharer = await joinDraw(db, publicSlug, "Cross-Self@Test.com", "email");
+    expect(sharer.joined).toBe(true);
+    const sharerEntryId = ("entryId" in sharer && sharer.entryId) ? String(sharer.entryId) : "";
+    expect(sharerEntryId).toBeTruthy();
+    await db.insert(shareRecords).values({
+      id: "share-cross-identity-self",
+      tenantId: TENANT,
+      drawId: id,
+      sharerEntryId,
+      shareCode: "cross-self-ref",
+      clickedCount: 0,
+      joinedCount: 0,
+    });
+
+    const samePerson = await joinDraw(db, publicSlug, userId, "user_id", {
+      refCode: "cross-self-ref",
+    });
+    expect(samePerson.joined).toBe(true);
+    const [share] = await db
+      .select({ joinedCount: shareRecords.joinedCount })
+      .from(shareRecords)
+      .where(eq(shareRecords.id, "share-cross-identity-self"))
+      .limit(1);
+    expect(share?.joinedCount).toBe(0);
+    const summary = await getActivityEventSummary(db, TENANT, id);
+    expect(summary.totals.attributed_join || 0).toBe(0);
+
+    const friendUserId = "friend-user-id";
+    await db.insert(users).values({
+      id: friendUserId,
+      username: "friendinvite",
+      email: "friend-cross@test.com",
+      emailVerified: 1,
+      passwordHash: "hash",
+    });
+    const friend = await joinDraw(db, publicSlug, friendUserId, "user_id", {
+      refCode: "cross-self-ref",
+    });
+    expect(friend.joined).toBe(true);
+    const [after] = await db
+      .select({ joinedCount: shareRecords.joinedCount })
+      .from(shareRecords)
+      .where(eq(shareRecords.id, "share-cross-identity-self"))
+      .limit(1);
+    expect(after?.joinedCount).toBe(1);
   });
 });
 

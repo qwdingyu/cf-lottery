@@ -7,7 +7,7 @@
  */
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearTestData, getTestDb } from "../../test-setup";
-import { platformTargets, platformDeliveries, tenants } from "../../db/schema";
+import { platformTargets, platformDeliveries, tenants, systemConfig } from "../../db/schema";
 import { and, eq } from "drizzle-orm";
 import {
   enqueuePlatformEvent,
@@ -90,6 +90,42 @@ describe("enqueuePlatformEvent", () => {
     const payload = JSON.parse(delivery.payloadJson);
     expect(payload.renderedMessage).toContain("测试活动");
     expect(payload.renderedMessage).toContain("5 人获奖");
+  });
+
+  it("entry.created 默认受运营开关拦截，显式开启后才创建 delivery", async () => {
+    const disabled = await enqueuePlatformEvent(db, {
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      eventType: "entry.created",
+      data: { userName: "参与者", drawName: "测试活动" },
+    });
+    expect(disabled.deliveryIds).toEqual([]);
+    expect(disabled.targetCount).toBe(0);
+    expect(disabled.skippedByConfig).toBe(true);
+
+    await db.insert(systemConfig).values({
+      key: "platform_event_entry_created_enabled",
+      value: "true",
+    });
+    const enabled = await enqueuePlatformEvent(db, {
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      eventType: "entry.created",
+      data: { userName: "参与者", drawName: "测试活动" },
+    });
+    expect(enabled.deliveryIds).toHaveLength(1);
+    expect(enabled.targetCount).toBe(1);
+  });
+
+  it("prize.issued 默认受运营开关拦截", async () => {
+    const result = await enqueuePlatformEvent(db, {
+      tenantId: TENANT_ID,
+      drawId: DRAW_ID,
+      eventType: "prize.issued",
+      data: { userName: "中奖者", prizeName: "卡密" },
+    });
+    expect(result.deliveryIds).toEqual([]);
+    expect(result.skippedByConfig).toBe(true);
   });
 
   it("匹配到多个 target 时创建多条记录", async () => {

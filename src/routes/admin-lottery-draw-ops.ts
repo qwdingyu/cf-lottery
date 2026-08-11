@@ -34,6 +34,7 @@ import {
   listExternalConversions,
   sendWinnerNotifications,
   healDrawingState,
+  DRAW_STATUS,
 } from "../services/lottery-service";
 import { buildPublishCheck } from "../services/publish-check-service";
 import { parseActivityConfig } from "../lib/activity-config";
@@ -479,7 +480,7 @@ route.post("/draws/:id/tiers", async (c) => {
 
   if (!draw) return fail(c, "活动不存在", 404);
   if (draw.activityKind !== "lottery") return fail(c, "只有抽奖活动需要配置奖项", 400);
-  if (draw.status !== "draft") return fail(c, "只有草稿状态的活动可以配置奖项", 400);
+  if (draw.status !== DRAW_STATUS.DRAFT) return fail(c, "只有草稿状态的活动可以配置奖项", 400);
   if (!Array.isArray(body.tiers) || body.tiers.length === 0) return fail(c, "请至少配置一个奖项", 400);
   if (body.tiers.length > 10) return fail(c, "单个活动最多配置 10 个奖项", 400);
 
@@ -669,7 +670,7 @@ route.post("/draws/:id/retry-email", async (c) => {
 
   if (!draw) return fail(c, "活动不存在", 404);
   // drawn 才有 winners；drawing 中途不发；其它状态无结果可通知
-  if (draw.status !== "drawn") {
+  if (draw.status !== DRAW_STATUS.DRAWN) {
     return fail(c, "仅已开奖活动可重发中奖通知", 400);
   }
 
@@ -699,7 +700,7 @@ route.post("/draws/:id/recover", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.status !== "drawing") {
+  if (draw.status !== DRAW_STATUS.DRAWING) {
     return fail(c, "仅 drawing 状态的活动可恢复", 400);
   }
 
@@ -740,7 +741,7 @@ route.post("/draws/:id/roster", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.status !== "draft") return fail(c, "仅草稿状态的活动可导入名单", 400);
+  if (draw.status !== DRAW_STATUS.DRAFT) return fail(c, "仅草稿状态的活动可导入名单", 400);
 
   let imported = 0;
   let skipped = 0;
@@ -781,7 +782,7 @@ route.post("/draws/:id/invite-codes", async (c) => {
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.status !== "draft") return fail(c, "仅草稿状态的活动可生成邀请码", 400);
+  if (draw.status !== DRAW_STATUS.DRAFT) return fail(c, "仅草稿状态的活动可生成邀请码", 400);
 
   const codes: string[] = [];
   for (let i = 0; i < count; i++) {

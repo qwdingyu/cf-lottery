@@ -17,6 +17,7 @@ import { getPlatformAdapter } from "./adapter-factory";
 import type { PlatformMessage, PlatformType } from "./types";
 import { PLATFORM_EVENT_TYPES_SET, type PlatformEventType, renderPlatformEventMessage } from "./templates";
 import { parsePlatformAdapterConfigJson, resolvePlatformAdapterConfigForRuntime } from "./adapter-config";
+import { readSystemConfigBoolean } from "../../lib/system-config-registry";
 
 export interface EnqueuePlatformEventInput {
   tenantId: string;
@@ -38,10 +39,35 @@ export interface EnqueuePrivatePlatformMessageInput {
   text: string;
 }
 
+/**
+ * 高噪声平台事件的运营开关。
+ *
+ * draw.published / outcome.assigned 属于高价值低频事件，默认可投递；
+ * entry.created / prize.issued 可能在活动高峰大量刷群或暴露履约节奏，必须先由平台运营显式开启。
+ */
+export const PLATFORM_EVENT_OPERATION_SWITCHES: Partial<Record<PlatformEventType, string>> = {
+  "entry.created": "platform_event_entry_created_enabled",
+  "prize.issued": "platform_event_prize_issued_enabled",
+};
+
+export async function isPlatformEventOperationallyEnabled(
+  db: Pick<DbType, "select">,
+  eventType: PlatformEventType,
+): Promise<boolean> {
+  const configKey = PLATFORM_EVENT_OPERATION_SWITCHES[eventType];
+  if (!configKey) return true;
+  return readSystemConfigBoolean(db, configKey);
+}
+
 /** 匹配某租户/活动的所有已启用平台目标，为每个目标创建一条投递记录 */
 export async function enqueuePlatformEvent(db: DbWriteScope, input: EnqueuePlatformEventInput) {
   if (!PLATFORM_EVENT_TYPES_SET.has(input.eventType)) {
     throw new Error(`平台事件类型无效: ${input.eventType}`);
+  }
+
+  const eventId = input.eventId || `pevt_${crypto.randomUUID().replace(/-/g, "")}`;
+  if (!(await isPlatformEventOperationallyEnabled(db, input.eventType))) {
+    return { eventId, deliveryIds: [], targetCount: 0, skippedByConfig: true };
   }
 
   /** 查找该租户下绑定该活动且已启用助手的平台目标 */
@@ -56,7 +82,6 @@ export async function enqueuePlatformEvent(db: DbWriteScope, input: EnqueuePlatf
 
   const deliveryIds: string[] = [];
   const now = new Date().toISOString();
-  const eventId = input.eventId || `pevt_${crypto.randomUUID().replace(/-/g, "")}`;
 
   for (const target of targets) {
     const message = renderPlatformEventMessage(input.eventType, input.data);

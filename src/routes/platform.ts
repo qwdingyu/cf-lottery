@@ -14,7 +14,7 @@ import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, ema
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
 import { readLatestTenantUsageSnapshotTotals } from "../services/admin/usage-snapshots";
-import { dispatchWebhookDelivery } from "../services/lottery-service";
+import { dispatchWebhookDelivery, DRAW_STATUS } from "../services/lottery-service";
 import { dispatchEmailDeliveries } from "../services/email-delivery";
 
 export const platformRoute = new Hono<AppEnv>();
@@ -243,7 +243,7 @@ platformRoute.get("/tenants/:id/summary", async (c) => {
   const [drawCount] = snapshot ? [] : await db
     .select({ total: count() })
     .from(lotteryDraws)
-    .where(and(eq(lotteryDraws.tenantId, tenantId), sql`${lotteryDraws.status} <> 'cancelled'`));
+    .where(and(eq(lotteryDraws.tenantId, tenantId), sql`${lotteryDraws.status} <> ${DRAW_STATUS.CANCELLED}`));
 
   return ok(c, {
     tenant,

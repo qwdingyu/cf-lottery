@@ -35,7 +35,7 @@ import {
   normalizeViralWeightNumbers,
   weightedSampleUnique,
 } from "./viral-weight";
-import type { DrawResult } from "./types";
+import { DRAW_STATUS, type DrawResult } from "./types";
 
 /* ── 开奖核心 ─────────────────────────────────────────────── */
 
@@ -80,11 +80,11 @@ export async function performDraw(
   //    使用 returning() 获取更新后的记录，确认 CAS 成功
   const claimResult = await db
     .update(lotteryDraws)
-    .set({ status: "drawing", updatedAt: now })
+    .set({ status: DRAW_STATUS.DRAWING, updatedAt: now })
     .where(and(
       eq(lotteryDraws.id, drawId),
       eq(lotteryDraws.tenantId, tenantId),
-      eq(lotteryDraws.status, "open"),
+      eq(lotteryDraws.status, DRAW_STATUS.OPEN),
     ));
 
   // rowsAffected = 0 表示 CAS 失败（活动已被其他进程开奖或状态不是 open）
@@ -97,17 +97,17 @@ export async function performDraw(
 
     if (!draw) throw new Error("活动不存在");
     // 卡在 drawing 状态的活动：尝试治愈
-    if (draw.status === "drawing") {
+    if (draw.status === DRAW_STATUS.DRAWING) {
       const healed = await healDrawingState(db, drawId, tenantId);
-      if (healed === "drawn") {
+      if (healed === DRAW_STATUS.DRAWN) {
         return { drawId, winnerCount: 0, candidateCount: 0 };
       }
-      if (healed === "open") {
+      if (healed === DRAW_STATUS.OPEN) {
         // 治愈成功，状态已回滚为 open，重新尝试夺取开奖权
         const retryResult = await db
           .update(lotteryDraws)
-          .set({ status: "drawing", updatedAt: new Date().toISOString() })
-          .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "open")));
+          .set({ status: DRAW_STATUS.DRAWING, updatedAt: new Date().toISOString() })
+          .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.OPEN)));
         if ((retryResult.rowsAffected ?? 0) === 0) {
           throw new Error("开奖权已被其他进程夺取，请稍后重试");
         }
@@ -115,7 +115,7 @@ export async function performDraw(
       }
     }
     // 已开奖活动再次开奖 → 幂等返回实际数据
-    if (draw.status === "drawn") {
+    if (draw.status === DRAW_STATUS.DRAWN) {
       const actualWinnerCount = await db
         .select({ total: count() })
         .from(lotteryWinners)
@@ -328,7 +328,7 @@ export async function performDraw(
       // 修复后：drawn 状态与 winners 在同一事务提交，要么全部成功要么全部回滚。
       await tx
         .update(lotteryDraws)
-        .set({ status: "drawn", drawnAt: now, updatedAt: now, failureReason: "" })
+        .set({ status: DRAW_STATUS.DRAWN, drawnAt: now, updatedAt: now, failureReason: "" })
         .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
 
       // 返回本次实际发放的中奖者数，供事务外审计/webhook/返回值使用（F2）
@@ -428,10 +428,10 @@ export async function performDraw(
       .from(lotteryDraws)
       .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
       .limit(1);
-    if (curDraw?.status !== "drawn") {
+    if (curDraw?.status !== DRAW_STATUS.DRAWN) {
       await db
         .update(lotteryDraws)
-        .set({ status: "open", failureReason: reason, updatedAt: new Date().toISOString() })
+        .set({ status: DRAW_STATUS.OPEN, failureReason: reason, updatedAt: new Date().toISOString() })
         .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
     }
     throw error;
@@ -824,7 +824,7 @@ export async function healDrawingState(
   drawId: string,
   tenantId: string,
   options?: { staleMs?: number; force?: boolean },
-): Promise<"drawn" | "open" | null> {
+): Promise<typeof DRAW_STATUS.DRAWN | typeof DRAW_STATUS.OPEN | null> {
   const staleMs = options?.staleMs ?? 300000; // 默认 5 分钟超时
   // force：管理端「恢复」按钮——不等待超时窗口（docs/078）
   const force = options?.force === true;
@@ -835,7 +835,7 @@ export async function healDrawingState(
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
     .limit(1);
 
-  if (!draw || draw.status !== "drawing") return null;
+  if (!draw || draw.status !== DRAW_STATUS.DRAWING) return null;
 
   // 检查是否已有中奖记录
   const [{ total }] = await db
@@ -849,9 +849,9 @@ export async function healDrawingState(
     // 中奖已落库但状态未 drawn：补状态
     await db
       .update(lotteryDraws)
-      .set({ status: "drawn", drawnAt: draw.drawnAt || nowIso, updatedAt: nowIso, failureReason: "" })
-      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.status, "drawing")));
-    return "drawn";
+      .set({ status: DRAW_STATUS.DRAWN, drawnAt: draw.drawnAt || nowIso, updatedAt: nowIso, failureReason: "" })
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.status, DRAW_STATUS.DRAWING)));
+    return DRAW_STATUS.DRAWN;
   }
 
   // 无中奖记录：超时（cron）或运营强制恢复 → 回滚为 open
@@ -860,12 +860,12 @@ export async function healDrawingState(
     await db
       .update(lotteryDraws)
       .set({
-        status: "open",
+        status: DRAW_STATUS.OPEN,
         failureReason: force ? "运营手动恢复开奖状态" : "开奖超时，已自动回滚",
         updatedAt: nowIso,
       })
-      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.status, "drawing")));
-    return "open";
+      .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.status, DRAW_STATUS.DRAWING)));
+    return DRAW_STATUS.OPEN;
   }
 
   return null;

@@ -41,6 +41,45 @@ export type TenantPlanLimits = {
   maxGroupMembers: number | null;     // 每群最大成员数（null=不限，运行时硬配额，跨活动累计）
 };
 
+/**
+ * 活动真实状态常量。
+ *
+ * 为什么集中定义：活动状态参与发布、暂停、开奖、删除、公开查询等多条核心链路。
+ * 字符串散落时最容易出现「某条路径漏改状态名」或把管理端虚拟筛选值 active
+ * 当成真实 DB 状态的问题。这里仅放 lottery_draws.status 会持久化的真实值。
+ */
+export const DRAW_STATUS = {
+  DRAFT: "draft",
+  OPEN: "open",
+  PAUSED: "paused",
+  DRAWING: "drawing",
+  DRAWN: "drawn",
+  CANCELLED: "cancelled",
+} as const;
+
+export type DrawStatus = typeof DRAW_STATUS[keyof typeof DRAW_STATUS];
+
+export const DRAW_STATUS_VALUES = Object.values(DRAW_STATUS) as DrawStatus[];
+
+/**
+ * 管理端「进行中」虚拟筛选使用的状态集合。
+ * 注意：active 不是数据库状态，只是列表筛选语义，必须由路由层单独处理。
+ */
+export const ACTIVE_DRAW_STATUSES = [
+  DRAW_STATUS.DRAFT,
+  DRAW_STATUS.OPEN,
+  DRAW_STATUS.PAUSED,
+  DRAW_STATUS.DRAWING,
+] as const;
+
+/** 可物理删除的活动状态；open/drawing 会影响参与和开奖并发，必须拒绝删除。 */
+export const DELETABLE_DRAW_STATUSES = [
+  DRAW_STATUS.DRAFT,
+  DRAW_STATUS.PAUSED,
+  DRAW_STATUS.DRAWN,
+  DRAW_STATUS.CANCELLED,
+] as const;
+
 export type ActivityEventType =
   | "page_view"
   | "participation_started"

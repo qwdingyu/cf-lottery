@@ -11,7 +11,7 @@ import {
   tenantMembers, users,
 } from "../db/schema";
 import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
-import { getTenantUsage } from "../services/lottery-service";
+import { DRAW_STATUS, getTenantUsage } from "../services/lottery-service";
 import {
   parseAdminPagination,
   parseTenantMemberRole,
@@ -293,12 +293,12 @@ adminLotteryRoute.get("/stats", async (c) => {
   const [openCount] = await db
     .select({ total: count() })
     .from(lotteryDraws)
-    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "open")));
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.OPEN)));
 
   const [drawnCount] = await db
     .select({ total: count() })
     .from(lotteryDraws)
-    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "drawn")));
+    .where(and(eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.DRAWN)));
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
   const [recentEntries] = await db

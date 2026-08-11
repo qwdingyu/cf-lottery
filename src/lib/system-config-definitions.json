@@ -651,6 +651,30 @@
     "difficulty": "advanced"
   },
   {
+    "key": "platform_event_entry_created_enabled",
+    "label": "社群参与播报开关",
+    "description": "控制 entry.created 平台出站事件是否允许写入 QQ/Telegram 投递队列。该事件频率随参与人数增长，默认关闭，避免活动高峰刷屏。",
+    "effect": "关闭时，后端即使接入 entry.created 调用点也必须跳过平台投递；开启后才允许群内播报用户参与成功消息。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "false",
+    "group": "平台运营",
+    "order": 33,
+    "difficulty": "advanced"
+  },
+  {
+    "key": "platform_event_prize_issued_enabled",
+    "label": "社群发奖播报开关",
+    "description": "控制 prize.issued 平台出站事件是否允许写入 QQ/Telegram 投递队列。该事件可能暴露履约节奏和奖品信息，默认关闭，需运营确认后开启。",
+    "effect": "关闭时，后端即使接入 prize.issued 调用点也必须跳过平台投递；开启后才允许群内播报奖品已发放消息。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "false",
+    "group": "平台运营",
+    "order": 34,
+    "difficulty": "advanced"
+  },
+  {
     "key": "community_feature_enabled",
     "label": "社群功能全局开关",
     "description": "平台级一键启停所有租户的 QQ/Telegram 群助手（社群)功能。关闭后租户后台无法新建或修改群绑定，已存在的绑定停止响应命令。",

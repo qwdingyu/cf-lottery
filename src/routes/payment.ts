@@ -33,6 +33,7 @@ import {
   PAYMENT_ORDER_STATUS,
 } from "../services/payment/payment-status";
 import type { AppEnv } from "../bindings";
+import { DRAW_STATUS } from "../services/lottery-service";
 
 export const paymentPublicRoute = new Hono<AppEnv>();
 export const paymentCallbackRoute = new Hono<AppEnv>();
@@ -188,17 +189,17 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
 
   // 活动关闭后不允许凭旧 entry 新建或重试订单；暂停期间仍允许恢复已经
   // 发起的 pending 支付，避免用户已经付款途中因运营暂停活动而失去合法支付入口。
-  if (!existing && draw.status !== "open") {
+  if (!existing && draw.status !== DRAW_STATUS.OPEN) {
     return fail(c, "活动当前不可创建支付订单", 409);
   }
   if (
     existing?.status === PAYMENT_ORDER_STATUS.PENDING &&
-    draw.status !== "open" &&
-    draw.status !== "paused"
+    draw.status !== DRAW_STATUS.OPEN &&
+    draw.status !== DRAW_STATUS.PAUSED
   ) {
     return fail(c, "活动已关闭，不能继续支付", 409);
   }
-  if (existing && isRetryablePaymentOrderStatus(existing.status) && draw.status !== "open") {
+  if (existing && isRetryablePaymentOrderStatus(existing.status) && draw.status !== DRAW_STATUS.OPEN) {
     return fail(c, "活动已关闭，不能重新创建支付订单", 409);
   }
   if (existing?.status === PAYMENT_ORDER_STATUS.PENDING && entry.paymentStatus !== PAYMENT_ENTRY_STATUS.PENDING) {

@@ -18,7 +18,7 @@ import {
   paymentOrders,
   paymentOrderAttempts,
 } from "../../db/schema";
-import { DEFAULT_ACTIVITY_PARTICIPANT_CAP } from "./types";
+import { DEFAULT_ACTIVITY_PARTICIPANT_CAP, DRAW_STATUS } from "./types";
 import { enforceTenantActivityQuota } from "./plan";
 import { hashAccessPassword } from "./utils";
 import { buildPublishCheckForDraw, type PublishCheckOptions } from "../publish-check-service";
@@ -305,7 +305,7 @@ export async function createDraw(
         promotionConfig: data.promotionConfig || "{}",
         activityConfig: data.activityConfig || "{}",
         maxSpinsPerEntry,
-        status: "draft",
+        status: DRAW_STATUS.DRAFT,
         createdAt: now,
         updatedAt: now,
       });
@@ -418,7 +418,7 @@ export async function publishDraw(
 
   if (!draw) throw new Error("活动不存在");
   // 只有草稿状态可以发布
-  if (draw.status !== "draft") throw new Error("只有草稿状态的活动才能发布");
+  if (draw.status !== DRAW_STATUS.DRAFT) throw new Error("只有草稿状态的活动才能发布");
 
   // 发布前二次校验集中交给 publish-check-service：
   // 真实发布路径必须和后台“发布前预检”使用同一套规则，否则前端清单和服务端行为会漂移。
@@ -430,8 +430,8 @@ export async function publishDraw(
   // CAS 更新：条件为 status = 'draft'，防止并发发布
   const result = await db
     .update(lotteryDraws)
-    .set({ status: "open", updatedAt: new Date().toISOString() })
-    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "draft")));
+    .set({ status: DRAW_STATUS.OPEN, updatedAt: new Date().toISOString() })
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.DRAFT)));
 
   return (result.rowsAffected ?? 0) > 0;
 }
@@ -442,8 +442,8 @@ export async function publishDraw(
 export async function pauseDraw(db: DbType, tenantId: string, drawId: string): Promise<boolean> {
   const result = await db
     .update(lotteryDraws)
-    .set({ status: "paused", updatedAt: new Date().toISOString() })
-    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "open")));
+    .set({ status: DRAW_STATUS.PAUSED, updatedAt: new Date().toISOString() })
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.OPEN)));
   return (result.rowsAffected ?? 0) > 0;
 }
 
@@ -453,8 +453,8 @@ export async function pauseDraw(db: DbType, tenantId: string, drawId: string): P
 export async function resumeDraw(db: DbType, tenantId: string, drawId: string): Promise<boolean> {
   const result = await db
     .update(lotteryDraws)
-    .set({ status: "open", updatedAt: new Date().toISOString() })
-    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, "paused")));
+    .set({ status: DRAW_STATUS.OPEN, updatedAt: new Date().toISOString() })
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId), eq(lotteryDraws.status, DRAW_STATUS.PAUSED)));
   return (result.rowsAffected ?? 0) > 0;
 }
 
@@ -472,17 +472,17 @@ export async function cancelDraw(db: DbType, tenantId: string, drawId: string): 
 
     if (!draw) throw new Error("活动不存在");
     // 已开奖或开奖中的活动不可取消，防止结果与支付履约事实被覆盖。
-    if (draw.status === "drawn" || draw.status === "drawing") {
+    if (draw.status === DRAW_STATUS.DRAWN || draw.status === DRAW_STATUS.DRAWING) {
       throw new Error("已开奖或开奖中的活动不可取消");
     }
 
     const cancelled = await tx
       .update(lotteryDraws)
-      .set({ status: "cancelled", updatedAt: new Date().toISOString() })
+      .set({ status: DRAW_STATUS.CANCELLED, updatedAt: new Date().toISOString() })
       .where(and(
         eq(lotteryDraws.id, drawId),
         eq(lotteryDraws.tenantId, tenantId),
-        inArray(lotteryDraws.status, ["draft", "open", "paused"]),
+        inArray(lotteryDraws.status, [DRAW_STATUS.DRAFT, DRAW_STATUS.OPEN, DRAW_STATUS.PAUSED]),
       ))
       .returning({ id: lotteryDraws.id });
     if (cancelled.length === 0) return false;

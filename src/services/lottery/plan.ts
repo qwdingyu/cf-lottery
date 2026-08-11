@@ -7,7 +7,7 @@
 import type { DbType } from "../../db/client";
 import { and, eq, count, inArray, sql } from "drizzle-orm";
 import { systemConfig, tenants, tenantMembers, lotteryDraws, webhookConfigs } from "../../db/schema";
-import type { TenantPlanLimits } from "./types";
+import { DRAW_STATUS, type TenantPlanLimits } from "./types";
 
 const PLAN_LIMITS: Record<string, Omit<TenantPlanLimits, "plan">> = {
   free: {
@@ -183,7 +183,7 @@ export async function getTenantUsage(db: DbType, tenantId: string) {
     .from(lotteryDraws)
     .where(and(
       eq(lotteryDraws.tenantId, tenantId),
-      sql`${lotteryDraws.status} <> 'cancelled'`,
+      sql`${lotteryDraws.status} <> ${DRAW_STATUS.CANCELLED}`,
     ));
 
   const [{ total: memberCount }] = await db
@@ -233,4 +233,3 @@ export async function enforceTenantActivityQuota(
 
   return usage.limits;
 }
-
