@@ -54,14 +54,13 @@ platformRoute.get("/members", requirePlatformMember(["platform_owner"]), async (
     conditions.push(sql`(${platformMembers.userId} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`} OR ${platformMembers.role} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`})`);
   }
 
-  const [{ total }] = await db.select({ total: count() }).from(platformMembers).where(and(...conditions));
-  const rows = await db
-    .select()
-    .from(platformMembers)
-    .where(and(...conditions))
-    .orderBy(desc(platformMembers.createdAt))
-    .limit(limit)
-    .offset(offset);
+  const hasFilter = conditions.length > 0;
+  const [{ total }] = hasFilter
+    ? await db.select({ total: count() }).from(platformMembers).where(and(...conditions))
+    : await db.select({ total: count() }).from(platformMembers);
+  const rows = hasFilter
+    ? await db.select().from(platformMembers).where(and(...conditions)).orderBy(desc(platformMembers.createdAt)).limit(limit).offset(offset)
+    : await db.select().from(platformMembers).orderBy(desc(platformMembers.createdAt)).limit(limit).offset(offset);
 
   return ok(c, { members: rows, total });
 });

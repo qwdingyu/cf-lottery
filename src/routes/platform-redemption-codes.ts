@@ -65,8 +65,11 @@ platformRedemptionCodesRoute.get("/", async (c) => {
   if (status) conditions.push(eq(redemptionCodes.status, status));
   if (search) conditions.push(sql`${redemptionCodes.code} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`}`);
 
-  const [{ total }] = await db.select({ total: count() }).from(redemptionCodes).where(and(...conditions));
-  const rows = conditions.length > 0
+  const hasFilter = conditions.length > 0;
+  const [{ total }] = hasFilter
+    ? await db.select({ total: count() }).from(redemptionCodes).where(and(...conditions))
+    : await db.select({ total: count() }).from(redemptionCodes);
+  const rows = hasFilter
     ? await db.select().from(redemptionCodes).where(and(...conditions)).orderBy(desc(redemptionCodes.createdAt)).limit(limit).offset(offset)
     : await db.select().from(redemptionCodes).orderBy(desc(redemptionCodes.createdAt)).limit(limit).offset(offset);
 
