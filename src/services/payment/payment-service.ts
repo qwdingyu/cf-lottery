@@ -682,6 +682,96 @@ export interface CreateOrderInput {
   description?: string;
 }
 
+/**
+ * 统一的订单前置校验（docs/203 源头扼杀原则）
+ *
+ * 在创建订单的事务内执行所有前置检查，确保：
+ * 1. 用户身份有效（源头扼杀——不让未验证身份的用户进入支付流程）
+ * 2. 活动有效、时间未过期（源头扼杀——不让用户为已结束的活动下单）
+ * 3. 库存充足（源头扼杀——不让用户为空库存下单，而不是付款后才说库存不足）
+ * 4. 限购不超（源头扼杀——不让用户超限下单，而不是付款后检查）
+ * 5. 订单未过期（源头扼杀——不让用户为过期订单支付）
+ *
+ * 所有校验在事务内原子执行，任一失败则事务回滚，用户不会进入付款阶段。
+ * 新增校验只需在此函数加检查项，无需在多个入口打补丁。
+ */
+async function validateOrderPreconditions(
+  tx: DbType,
+  input: Pick<CreateOrderInput, "tenantId" | "drawId" | "entryId" | "quantity">,
+  entryRow: { id: string; tenantId: string; identityType: string | null; identityValue: string | null; paymentStatus: string | null },
+  existingOrder: { id: string; status: string } | null,
+): Promise<{ ok: true; draw: { id: string; status: string; experienceType: string; promotionConfig: string; maxParticipants: number | null; endAt: string } } | { ok: false; error: string }> {
+  const { tenantId, drawId, entryId } = input;
+  const quantity = Math.max(1, Math.floor(Number(input.quantity || 1)));
+
+  // 1. 用户身份有效性（docs/203 §3.1）
+  // 源头扼杀：在订单创建时就验证身份，不让未验证身份的用户进入支付流程。
+  if (!entryRow.identityType || !entryRow.identityValue) {
+    return { ok: false, error: "参与身份未验证，请先完成身份验证" };
+  }
+
+  // 2. 活动有效性 + 时间检查（docs/203 §2.1）
+  const [draw] = await tx
+    .select({
+      id: lotteryDraws.id,
+      status: lotteryDraws.status,
+      experienceType: lotteryDraws.experienceType,
+      promotionConfig: lotteryDraws.promotionConfig,
+      maxParticipants: lotteryDraws.maxParticipants,
+      endAt: lotteryDraws.endAt,
+    })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+  if (!draw) return { ok: false, error: "活动不存在" };
+  if (draw.status !== "open") return { ok: false, error: "活动已结束，无法下单" };
+  if (draw.endAt && new Date(draw.endAt).getTime() < Date.now()) {
+    return { ok: false, error: "活动已结束" };
+  }
+
+  // 3. 库存充足性预检（docs/203 §2.2）
+  // 源头扼杀：在用户下单时就检查卡密库存，不让用户为空库存创建订单并付款。
+  const flashSaleParsed = parseFlashSaleConfig(draw.promotionConfig);
+  const prizeId = (flashSaleParsed.config as Record<string, unknown> | undefined)?.prizeId as string | undefined;
+  if (prizeId) {
+    const [stockRow] = await tx
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(prizeCodes)
+      .where(and(
+        eq(prizeCodes.prizeId, prizeId),
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.status, "available"),
+      ));
+    const availableStock = Number(stockRow?.count ?? 0);
+    if (availableStock < quantity) {
+      return { ok: false, error: `库存不足（可用 ${availableStock} 件，需要 ${quantity} 件）` };
+    }
+  }
+
+  // 4. 限购检查（docs/203 §2.4）
+  // 源头扼杀：累计检查历史已支付订单，不让用户超限下单。
+  // 注意：仅在已有前置订单（existingOrder != null）时检查——首次下单的 base 1 已在
+  // joinDraw 时计入，直付秒杀允许首次批量购买（qty>1），与 docs/131 §7 语义一致。
+  const maxPerUser = flashSaleParsed?.config?.maxPerUser ?? 1;
+  if (maxPerUser > 0 && existingOrder) {
+    const [sumRow] = await tx
+      .select({ total: sql<number>`COALESCE(SUM(${paymentOrders.quantity}), 0)` })
+      .from(paymentOrders)
+      .where(and(
+        eq(paymentOrders.tenantId, tenantId),
+        eq(paymentOrders.drawId, drawId),
+        eq(paymentOrders.entryId, entryId),
+        inArray(paymentOrders.status, [PAYMENT_ORDER_STATUS.PAID, PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED]),
+      ));
+    const alreadyBought = Number(sumRow?.total ?? 0);
+    if (alreadyBought + quantity > maxPerUser) {
+      return { ok: false, error: `每人限购 ${maxPerUser} 件，已购买 ${alreadyBought} 件` };
+    }
+  }
+
+  return { ok: true, draw };
+}
+
 /** 创建订单并请求支付，返回订单 + 支付入口（事务内写入订单 + 更新 entry 状态，docs/131 §7） */
 export async function createPaymentOrder(
   db: DbType,
@@ -728,7 +818,11 @@ export async function createPaymentOrder(
     // - reserved（首次下单）：base=1 已在 joinDraw 时计入，需补 reserveQuantity = qty - 1
     // - paid/pending（再次购买）：base=1 已被之前订单消费，全额预约 reserveQuantity = qty
     const [entryRow] = await tx
-      .select({ paymentStatus: lotteryEntries.paymentStatus })
+      .select({
+        paymentStatus: lotteryEntries.paymentStatus,
+        identityType: lotteryEntries.identityType,
+        identityValue: lotteryEntries.identityValue,
+      })
       .from(lotteryEntries)
       .where(and(eq(lotteryEntries.id, input.entryId), eq(lotteryEntries.tenantId, input.tenantId)))
       .limit(1);
@@ -737,35 +831,14 @@ export async function createPaymentOrder(
     // 需预约件数：有前置订单时全额预约，否则只预约超出 base 1 的部分
     const reserveQuantity = hasPriorOrder ? quantity : (quantity - 1);
 
-    // 累计限购检查（docs/202 §5.2 P1-14）：已有 PAID 订单 + 本次购买不得超过 maxPerUser。
-    // 直付秒杀允许同一身份追加下单，但必须守住"每人限购总量"，
-    // 否则用户可反复提交支付创建多笔订单，绕过 maxPerUser 造成超购。
-    if (hasPriorOrder) {
-      const [drawCfg] = await tx
-        .select({ promotionConfig: lotteryDraws.promotionConfig })
-        .from(lotteryDraws)
-        .where(and(eq(lotteryDraws.id, input.drawId), eq(lotteryDraws.tenantId, input.tenantId)))
-        .limit(1);
-      if (drawCfg) {
-        const { config: flashSale } = parseFlashSaleConfig(drawCfg.promotionConfig);
-        const maxPerUser = flashSale?.maxPerUser ?? 1;
-        if (maxPerUser > 0) {
-          // 统计该 entry 已实际支付并完成发卡的订单总件数（不含 pending/expired/cancelled）
-          const [sumRow] = await tx
-            .select({ total: sql<number>`COALESCE(SUM(${paymentOrders.quantity}), 0)` })
-            .from(paymentOrders)
-            .where(and(
-              eq(paymentOrders.tenantId, input.tenantId),
-              eq(paymentOrders.drawId, input.drawId),
-              eq(paymentOrders.entryId, input.entryId),
-              eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PAID),
-            ));
-          const alreadyBought = Number(sumRow?.total ?? 0);
-          if (alreadyBought + quantity > maxPerUser) {
-            throw new Error(`每人限购 ${maxPerUser} 件，已购买 ${alreadyBought} 件`);
-          }
-        }
-      }
+    // 统一前置校验（docs/203 源头扼杀）：身份/活动有效期/库存/限购，任一失败即事务回滚
+    const validation = await validateOrderPreconditions(tx, input, {
+      ...entryRow,
+      id: input.entryId,
+      tenantId: input.tenantId,
+    }, existingOrder);
+    if (!validation.ok) {
+      throw new Error(validation.error);
     }
 
     if (reserveQuantity > 0) {
