@@ -90,8 +90,29 @@ REMOTE_PACKAGE_PATH="$(shell_quote "${VPS_PATH%/}/$PACKAGE_FILE")"
 
 info "步骤 2/2：上传 $PACKAGE_FILE 到 $VPS_USER@$VPS_HOST:$VPS_PATH/ ..."
 ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "mkdir -p $REMOTE_DIR"
-# 使用 cat + SSH pipe 上传（scp 在部分 VPS 配置下存在连接重置问题）
-cat "$PACKAGE_FILE" | ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "cat > $REMOTE_PACKAGE_PATH"
+
+# 上传：cat + SSH pipe（scp 在部分 VPS 配置下存在连接重置问题）
+# 该 VPS SSH 会话不稳，加入自动重试（最多 3 次）+ 远端文件大小校验，防止半包误判成功
+LOCAL_SIZE=$(stat -f%z "$PACKAGE_FILE" 2>/dev/null || stat -c%s "$PACKAGE_FILE")
+UPLOAD_OK=0
+for attempt in 1 2 3; do
+  if cat "$PACKAGE_FILE" | ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 -o ServerAliveCountMax=10 "$VPS_USER@$VPS_HOST" "cat > $REMOTE_PACKAGE_PATH" 2>/dev/null; then
+    REMOTE_SIZE=$(ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" "stat -c%s $REMOTE_PACKAGE_PATH 2>/dev/null || echo 0" 2>/dev/null || echo 0)
+    if [ "$REMOTE_SIZE" = "$LOCAL_SIZE" ]; then
+      info "上传成功（${LOCAL_SIZE} 字节，大小校验一致）"
+      UPLOAD_OK=1
+      break
+    fi
+    warn "文件大小不一致（本地 $LOCAL_SIZE / 远端 $REMOTE_SIZE），5 秒后重试..."
+  else
+    warn "上传连接中断（第 $attempt 次），5 秒后重试..."
+  fi
+  sleep 5
+done
+if [ "$UPLOAD_OK" != "1" ]; then
+  err "上传失败（已重试 3 次）"
+  exit 1
+fi
 
 echo ""
 info "✅ 上传完成"
