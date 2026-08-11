@@ -1955,7 +1955,7 @@ adminQqAssistant: {
     /* 公证人 QQ 号（docs/177 批次2）：入站自动写入的只读字段，不手动输入 */
     colBotId: "公证人",
     labelNewInboundSecret: "新入站密钥",
-    hintNewInboundSecret: "不会显示旧密钥。留空则不修改；填写至少 16 位的新密钥会覆盖当前密钥。",
+    hintNewInboundSecret: "不会显示旧密钥。留空则不修改；填写至少 6 位的新密钥会覆盖当前密钥。",
     placeholderNewInboundSecret: "留空保持当前密钥不变",
     builtinCommands: "内置命令开关",
     cmdCheckin: "签到",

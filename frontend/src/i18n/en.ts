@@ -1979,7 +1979,7 @@ adminQqAssistant: {
     /** Notary bot QQ (docs/177 batch 2): auto-recorded readonly field from inbound self_id */
     colBotId: "Notary",
     labelNewInboundSecret: "New inbound secret",
-    hintNewInboundSecret: "The existing secret is never shown. Leave empty to keep it; enter at least 16 characters to overwrite it.",
+    hintNewInboundSecret: "The existing secret is never shown. Leave empty to keep it; enter at least 6 characters to overwrite it.",
     placeholderNewInboundSecret: "Leave empty to keep the current secret",
     builtinCommands: "Built-in Commands",
     cmdCheckin: "Check-in",

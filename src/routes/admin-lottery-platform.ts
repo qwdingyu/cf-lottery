@@ -476,7 +476,10 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     if (typeof body.inboundSecret === "string") {
       const inboundSecret = body.inboundSecret.trim();
       if (inboundSecret) {
-        if (inboundSecret.length < 16) return fail(c, "入站密钥至少 16 位");
+        // 入站密钥最小长度：6 位（够短便于在 NapCat 等客户端手动粘贴，仍具备足够熵空间；
+        // 上限防御：64 位封顶防止超长输入拖慢哈希）
+        if (inboundSecret.length < 6) return fail(c, "入站密钥至少 6 位");
+        if (inboundSecret.length > 64) return fail(c, "入站密钥最多 64 位");
         patch.inboundSecretHash = await hashPlatformInboundSecret(inboundSecret);
       }
     }

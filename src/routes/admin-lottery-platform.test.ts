@@ -838,6 +838,39 @@ it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → ch
     expect(afterOverwrite?.inboundSecretHash).toBe(await hashPlatformInboundSecret(newSecret));
   });
 
+  it("编辑入站密钥：少于 6 位被拒，6 位及以上允许", async () => {
+    const app = await createApp();
+    const createRes = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ targetId: "999999", targetName: "密钥长度校验", activeDrawId: DRAW_ID }),
+    });
+    const createData = await createRes.json() as Record<string, unknown>;
+    const id = (createData.item as Record<string, unknown>).id as string;
+
+    // 5 位：拒绝
+    const tooShort = await app.request(`/api/admin/platform-targets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ inboundSecret: "12345" }),
+    });
+    expect(tooShort.status).toBe(400);
+
+    // 6 位：允许
+    const okLen = await app.request(`/api/admin/platform-targets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ inboundSecret: "123456" }),
+    });
+    expect(okLen.status).toBe(200);
+    const [afterOk] = await db
+      .select({ inboundSecretHash: platformTargets.inboundSecretHash })
+      .from(platformTargets)
+      .where(eq(platformTargets.id, id))
+      .limit(1);
+    expect(afterOk?.inboundSecretHash).toBe(await hashPlatformInboundSecret("123456"));
+  });
+
   it("删除成功", async () => {
     const app = await createApp();
     const createRes = await app.request("/api/admin/platform-targets", {
