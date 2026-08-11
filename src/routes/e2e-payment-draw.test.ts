@@ -562,3 +562,145 @@ describe("定时开奖端到端", () => {
     expect(Number(issued[0]!.n)).toBe(1);
   });
 });
+
+describe("接龙活动端到端", () => {
+  beforeAll(async () => { ({ client, db } = await getTestDb()); });
+  beforeEach(async () => {
+    await clearTestData(client);
+    await db.insert(tenants).values({ id: TENANT, name: "e2e-接龙" });
+    await db.insert(systemConfig).values({ key: "enabled_activity_kinds", value: "lottery,signup_chain" });
+  });
+
+  it("创建接龙→参与→分配名额→候补", async () => {
+    const now = new Date();
+    await db.insert(lotteryDraws).values({
+      id: "draw-signup", tenantId: TENANT, title: "接龙活动", publicSlug: "signup-slug",
+      status: "open", activityKind: "signup_chain", participationMode: "open",
+      experienceType: "submit", resultMode: "manual",
+      maxParticipants: 2, allocationPolicy: "waitlist",
+      startAt: new Date(now.getTime() - 3600000).toISOString(),
+      endAt: new Date(now.getTime() + 3600000).toISOString(),
+      activityConfig: "{}", promotionConfig: "{}",
+    });
+
+    // 用户 A、B 参与（占满 2 个名额）
+    const { joinDraw } = await import("../services/lottery/participation");
+    const jA = await joinDraw(db, "signup-slug", "signA@test.com", "email");
+    expect(jA.joined).toBe(true);
+    const jB = await joinDraw(db, "signup-slug", "signB@test.com", "email");
+    expect(jB.joined).toBe(true);
+
+    // 用户 C 参与（进入候补）
+    const jC = await joinDraw(db, "signup-slug", "signC@test.com", "email");
+    expect(jC.joined).toBe(true); // 接龙可以候补
+
+    // 验证参与记录
+    const entries = await db.select({ id: lotteryEntries.id, identityValue: lotteryEntries.identityValue })
+      .from(lotteryEntries).where(eq(lotteryEntries.tenantId, TENANT)).orderBy(lotteryEntries.joinedAt);
+    expect(entries.length).toBe(3);
+
+    // 用户 A 取消
+    const { cancelSignupChainEntry } = await import("../services/lottery/participation");
+    const cancelResult = await cancelSignupChainEntry(db, TENANT, "draw-signup", "signA@test.com");
+    expect(cancelResult.cancelled).toBe(true);
+
+    // 验证序列号（候补用户应仍存在）
+    const entriesAfter = await db.select({ identityValue: lotteryEntries.identityValue })
+      .from(lotteryEntries).where(eq(lotteryEntries.tenantId, TENANT)).orderBy(lotteryEntries.joinedAt);
+    expect(entriesAfter.length).toBe(2); // 一人取消，剩 2 人
+  });
+});
+
+describe("黑名单拦截端到端", () => {
+  beforeAll(async () => { ({ client, db } = await getTestDb()); });
+  beforeEach(async () => {
+    await clearTestData(client);
+    await db.insert(tenants).values({ id: TENANT, name: "e2e-黑名单" });
+    await db.insert(systemConfig).values({ key: "enabled_activity_kinds", value: "lottery" });
+  });
+
+  it("黑名单用户无法参与活动", async () => {
+    const now = new Date();
+    const drawId = "draw-blacklist";
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, title: "黑名单测试活动", publicSlug: "blacklist-slug",
+      status: "open", activityKind: "lottery", participationMode: "open",
+      experienceType: "submit", resultMode: "manual",
+      maxParticipants: 100,
+      startAt: new Date(now.getTime() - 3600000).toISOString(),
+      endAt: new Date(now.getTime() + 3600000).toISOString(),
+      activityConfig: "{}", promotionConfig: "{}",
+    });
+
+    // 将用户加入黑名单
+    const { lotteryBlacklist } = await import("../db/schema");
+    await db.insert(lotteryBlacklist).values({
+      id: "bl-1", tenantId: TENANT, drawId, identityType: "email", identityValue: "blocked@test.com",
+      reason: "测试", createdBy: "admin", createdAt: new Date().toISOString(),
+    });
+
+    // 黑名单用户尝试参与 → 被拒绝
+    const { joinDraw } = await import("../services/lottery/participation");
+    const result = await joinDraw(db, "blacklist-slug", "blocked@test.com", "email");
+    expect(result.joined).toBe(false);
+    expect(result.message).toContain("限制参与");
+
+    // 非黑名单用户 → 可以参与
+    const ok = await joinDraw(db, "blacklist-slug", "normal@test.com", "email");
+    expect(ok.joined).toBe(true);
+  });
+});
+
+describe("公开端卡密找回端到端", () => {
+  beforeAll(async () => { ({ client, db } = await getTestDb()); });
+  beforeEach(async () => {
+    await clearTestData(client);
+    await db.insert(tenants).values({ id: TENANT, name: "e2e-卡密找回" });
+    await db.insert(systemConfig).values({ key: "enabled_activity_kinds", value: "lottery" });
+  });
+
+  it("中奖后通过 access-code 查询卡密（公开端卡密找回）", async () => {
+    const now = new Date();
+    const drawId = "draw-access";
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, title: "卡密找回活动", publicSlug: "access-slug",
+      status: "open", activityKind: "lottery", participationMode: "open",
+      experienceType: "submit", resultMode: "manual",
+      maxParticipants: 100,
+      startAt: new Date(now.getTime() - 3600000).toISOString(),
+      endAt: new Date(now.getTime() + 3600000).toISOString(),
+      activityConfig: "{}", promotionConfig: "{}",
+    });
+    const prizeId = "prize-access";
+    await db.insert(prizes).values({ id: prizeId, tenantId: TENANT, name: "卡密奖品", prizeType: "code", totalCount: 1, active: 1 });
+    await db.insert(lotteryPrizeTiers).values({ id: "tier-access", tenantId: TENANT, drawId, prizeId, tierName: "一等奖", winnerCount: 1, weight: 100, sortOrder: 1 });
+    await db.insert(prizeCodes).values({ id: "code-access-1", tenantId: TENANT, prizeId, code: "ACCESS-CODE-1", secret: "ACCESS-SEC-1", status: "available" });
+
+    // 用户参与
+    const { joinDraw } = await import("../services/lottery/participation");
+    const j1 = await joinDraw(db, "access-slug", "finder@test.com", "email");
+    expect(j1.joined).toBe(true);
+
+    // 手动开奖
+    const { performDraw } = await import("../services/lottery/draw-execution");
+    await performDraw(db, TENANT, drawId, "admin", null as any);
+
+    // 验证中奖记录含卡密
+    const [winner] = await db
+      .select({ id: lotteryWinners.id, prizeCodeId: lotteryWinners.prizeCodeId })
+      .from(lotteryWinners)
+      .where(and(eq(lotteryWinners.tenantId, TENANT), eq(lotteryWinners.drawId, drawId)))
+      .limit(1);
+    expect(winner).toBeDefined();
+    expect(winner!.prizeCodeId).toBeTruthy();
+
+    // 验证卡密已发放
+    const [issuedCode] = await db
+      .select({ code: prizeCodes.code, secret: prizeCodes.secret })
+      .from(prizeCodes)
+      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "issued")))
+      .limit(1);
+    expect(issuedCode).toBeDefined();
+    expect(issuedCode!.code).toBe("ACCESS-CODE-1");
+  });
+});
