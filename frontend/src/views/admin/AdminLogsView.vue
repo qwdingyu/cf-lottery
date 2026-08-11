@@ -137,11 +137,10 @@
       :total="total"
       :total-pages="totalPages"
       :limit="limit"
-      cursor-mode
-      :has-more="hasMore"
       :disabled="loading || logsMutating"
       @prev="previousPage"
       @next="nextPage"
+      @jump="(p: number) => { page = p; loadData() }"
       @update:limit="changeLimit"
     />
 
@@ -210,9 +209,6 @@ const snapshotAt = ref('')
 const page = ref(1)
 const limit = ref(20)
 const total = ref(0)
-const hasMore = ref(false)
-const nextCursor = ref('')
-const pageCursors = ref<string[]>([''])
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / limit.value)))
 const {
   selectedIds,
@@ -247,16 +243,20 @@ const currentLog = ref<AdminAuditLog | null>(null)
 const error = ref('')
 let loadSequence = 0
 
-async function fetchAdminLogs(_token: string, filter: AdminAuditLogFilter): Promise<AdminAuditLogListResult> {
+async function fetchAdminLogs(_token: string, filter: AdminAuditLogFilter & { page?: number }): Promise<AdminAuditLogListResult> {
+  // 后端 /api/admin/logs 是 offset 分页（parseAdminPagination + total），
+  // 前端按 (page-1)*limit 计算 offset 传给后端；游标参数 cursor/snapshotAt 后端不支持，忽略。
   const params = new URLSearchParams()
   if (filter.action) params.set('action', filter.action)
   if (filter.targetType) params.set('targetType', filter.targetType)
   if (filter.targetId) params.set('targetId', filter.targetId)
   params.set('limit', String(filter.limit ?? 20))
-  const data = await adminRequest<{ logs: AdminAuditLog[] }>(`/api/admin/logs?${params.toString()}`)
+  params.set('offset', String((filter.page && filter.page > 1 ? filter.page - 1 : 0) * (filter.limit ?? 20)))
+  const data = await adminRequest<{ logs: AdminAuditLog[]; total: number }>(`/api/admin/logs?${params.toString()}`)
+  // total 以后端返回的总数为准（此前用当前页条数当 total，导致分页信息错误、永远无法翻页）
   return {
     logs: data.logs || [],
-    total: data.logs?.length || 0,
+    total: Number(data.total || 0),
     snapshotAt: new Date().toISOString(),
     nextCursor: '',
     hasMore: false,
@@ -282,15 +282,12 @@ async function loadData() {
     const res = await fetchAdminLogs(token.value, {
       ...filter,
       limit: limit.value,
-      snapshotAt: snapshotAt.value || undefined,
-      cursor: pageCursors.value[page.value - 1] || undefined,
+      page: page.value,
     })
     if (sequence !== loadSequence) return
     items.value = res.logs
     snapshotAt.value = res.snapshotAt
     total.value = res.total
-    hasMore.value = res.hasMore
-    nextCursor.value = res.nextCursor
     clearSelection()
   } catch (err: any) {
     if (sequence !== loadSequence) return
@@ -305,9 +302,6 @@ async function loadData() {
 function resetPagination() {
   page.value = 1
   snapshotAt.value = ''
-  hasMore.value = false
-  nextCursor.value = ''
-  pageCursors.value = ['']
 }
 
 function previousPage() {
@@ -317,8 +311,8 @@ function previousPage() {
 }
 
 function nextPage() {
-  if (loading.value || !hasMore.value || !nextCursor.value) return
-  pageCursors.value[page.value] = nextCursor.value
+  // offset 分页：offset + limit < total 才有下一页
+  if (loading.value || (page.value - 1) * limit.value + limit.value >= total.value) return
   page.value += 1
   loadData()
 }

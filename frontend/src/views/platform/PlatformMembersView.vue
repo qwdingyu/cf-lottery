@@ -129,7 +129,7 @@
       :offset="pagination.offset.value"
       @prev="pagination.prevPage(); loadData()"
       @next="pagination.nextPage(); loadData()"
-      @go="(p: number) => { pagination.setPage(p); loadData() }"
+      @jump="(p: number) => { pagination.setPage(p); loadData() }"
     />
 
     <AdminModal v-model="showAdd" :title="$t('platformMembers.addTitle')" max-width="480px" hide-actions>
