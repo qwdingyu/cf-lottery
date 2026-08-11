@@ -610,4 +610,103 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       return fail(c, `测试发送失败：${errorMsg.slice(0, 200)}`, 502);
     }
   });
+
+  // ── 注册 Telegram Webhook：避免运维手动执行 curl ──
+  route.post("/platform-targets/:id/register-telegram-webhook", async (c) => {
+    const db = getDb(c);
+    const tenantId = c.get("tenantId") as string;
+    const id = c.req.param("id");
+    const [target] = await db
+      .select()
+      .from(platformTargets)
+      .where(and(eq(platformTargets.tenantId, tenantId), eq(platformTargets.id, id)))
+      .limit(1);
+    if (!target) return fail(c, "绑定不存在", 404);
+    if (target.platform !== "telegram") {
+      return fail(c, "仅 Telegram 平台目标支持注册 webhook");
+    }
+
+    // 解密 botToken
+    const adapterConfig = await resolvePlatformAdapterConfigForRuntime(
+      parsePlatformAdapterConfigJson(target.adapterConfigJson),
+      getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "",
+    );
+    const botToken = String(adapterConfig.botToken || "").trim();
+    if (!botToken) {
+      return fail(c, "请先配置 Telegram Bot Token 后再注册 webhook");
+    }
+
+    // 构建 webhook URL：优先请求体传入，其次 APP_ORIGIN 环境变量，最后 Origin 头
+    const body = await c.req.json<Record<string, unknown>>().catch(() => null);
+    const webhookOrigin = body && typeof body === "object" ? String((body as Record<string, unknown>).webhookOrigin || "") : "";
+    const origin = String(webhookOrigin || getEnv(c, "APP_ORIGIN") || c.req.header("Origin") || "").trim();
+    if (!origin) {
+      return fail(c, "无法确定 webhook URL，请提供 webhookOrigin 参数或配置 APP_ORIGIN 环境变量");
+    }
+    // 移除末尾斜杠后拼接固定路径
+    const webhookUrl = `${origin.replace(/\/+$/, "")}/api/platform/telegram/message`;
+
+    // 生成新入站密钥，用于 Telegram 回调验证
+    const inboundSecret = createPlatformInboundSecret();
+    const inboundSecretHash = await hashPlatformInboundSecret(inboundSecret);
+
+    // 调用 Telegram Bot API setWebhook
+    const apiBase = `https://api.telegram.org/bot${botToken}`;
+    let webhookError: string | null = null;
+
+    try {
+      const res = await fetch(`${apiBase}/setWebhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: webhookUrl,
+          secret_token: inboundSecret,
+          // 允许所有更新类型（消息、回调等）
+          allowed_updates: ["message", "callback_query"],
+        }),
+      });
+      const data = await res.json<Record<string, unknown>>().catch(() => null);
+      if (!data || data.ok !== true) {
+        webhookError = String(data?.description || "Telegram API 返回错误");
+      }
+    } catch (err) {
+      webhookError = String(err instanceof Error ? err.message : err);
+    }
+
+    if (webhookError) {
+      return fail(c, `Webhook 注册失败：${webhookError.slice(0, 300)}`);
+    }
+
+    // 同步注册 Bot 命令列表，让用户在 Telegram 输入 / 时能自动补全
+    const botCommands = [
+      { command: "checkin", description: "每日签到" },
+      { command: "spin", description: "抽奖" },
+      { command: "share", description: "分享活动" },
+      { command: "leaderboard", description: "排行榜" },
+      { command: "my_prize", description: "我的奖品" },
+      { command: "help", description: "帮助" },
+      { command: "card_code", description: "我的卡密" },
+      { command: "flash", description: "秒杀/购买" },
+      { command: "bind", description: "绑定账号" },
+    ];
+    // setMyCommands 失败不影响 webhook 主流程，仅记录日志
+    try {
+      await fetch(`${apiBase}/setMyCommands`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commands: botCommands }),
+      });
+    } catch {
+      // 静默忽略
+    }
+
+    // 持久化新入站密钥哈希
+    await db
+      .update(platformTargets)
+      .set({ inboundSecretHash, updatedAt: new Date().toISOString() })
+      .where(and(eq(platformTargets.tenantId, tenantId), eq(platformTargets.id, id)));
+
+    await recordPlatformAudit(c, "platform_target.register_telegram_webhook", id, { webhookUrl });
+    return ok(c, { webhookUrl, message: "Telegram Webhook 注册成功" });
+  });
 }

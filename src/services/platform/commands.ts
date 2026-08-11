@@ -71,38 +71,53 @@ export function recognizeBuiltinCommand(text: string): BuiltinPlatformCommand | 
   switch (trimmed) {
     case "/签到":
     case "签到":
+    case "/checkin":
+    case "checkin":
       return "checkin";
     case "/抽奖":
     case "抽奖":
+    case "/spin":
+    case "spin":
       return "spin";
     case "/分享":
     case "分享":
+    case "/share":
+    case "share":
       return "share";
     case "/排行榜":
     case "排行榜":
     case "排行":
+    case "/leaderboard":
+    case "leaderboard":
       return "leaderboard";
     case "/我的奖品":
     case "我的奖品":
     case "/奖品":
+    case "/my_prize":
+    case "my_prize":
       return "my_prize";
     case "/帮助":
     case "帮助":
     case "/help":
+    case "help":
       return "help";
     case "/我的卡密":
     case "我的卡密":
     case "/卡密":
     case "卡密":
+    case "/card_code":
+    case "card_code":
       return "card_code";
     case "/秒杀":
     case "秒杀":
     case "购买":
+    case "/flash":
+    case "flash":
       return "flash";
     default:
       // /绑定 命令支持带参数：/绑定 XXXXXX（XX 为跨平台绑定码，docs/179）
-      if (trimmed === "/绑定" || trimmed === "绑定") return "bind";
-      if (trimmed.startsWith("/绑定 ") || trimmed.startsWith("绑定 ")) return "bind";
+      if (trimmed === "/绑定" || trimmed === "绑定" || trimmed === "/bind" || trimmed === "bind") return "bind";
+      if (trimmed.startsWith("/绑定 ") || trimmed.startsWith("绑定 ") || trimmed.startsWith("/bind ") || trimmed.startsWith("bind ")) return "bind";
       return null;
   }
 }

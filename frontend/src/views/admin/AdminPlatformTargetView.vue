@@ -62,6 +62,7 @@
             <td class="col-actions">
               <button class="btn btn-ghost btn-xs" :title="$t('adminPlatformTarget.edit')" @click="openEditModal(t)">{{ $t('adminPlatformTarget.edit') }}</button>
               <button class="btn btn-ghost btn-xs" :title="$t('adminPlatformTarget.testMessage')" @click="testMessage(t)" :disabled="testingId === t.id">{{ $t('adminPlatformTarget.testMessage') }}</button>
+              <button v-if="t.platform === 'telegram'" class="btn btn-ghost btn-xs" :title="$t('adminQqAssistant.registerWebhook')" @click="registerWebhook(t)" :disabled="registeringId === t.id">{{ $t('adminQqAssistant.registerWebhook') }}</button>
               <button class="btn btn-ghost btn-xs" :title="$t('adminPlatformTarget.resetSecret')" @click="resetSecret(t)" :disabled="resettingId === t.id">{{ $t('adminPlatformTarget.resetSecret') }}</button>
               <button class="btn btn-danger btn-xs" :title="$t('adminPlatformTarget.delete')" @click="deleteTarget(t)">{{ $t('adminPlatformTarget.delete') }}</button>
             </td>
@@ -300,6 +301,7 @@ const draws = ref<Draw[]>([])
 const selectedId = ref('')
 const resettingId = ref('')
 const testingId = ref('')
+const registeringId = ref('')
 const saving = ref(false)
 const showModal = ref(false)
 const editingTarget = ref<PlatformTarget | null>(null)
@@ -642,6 +644,19 @@ async function testMessage(target: PlatformTarget) {
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
   } finally { testingId.value = '' }
+}
+
+async function registerWebhook(target: PlatformTarget) {
+  registeringId.value = target.id
+  try {
+    await api(`/platform-targets/${target.id}/register-telegram-webhook`, {
+      method: 'POST',
+      body: JSON.stringify({ webhookOrigin: window.location.origin }),
+    })
+    showToast(t('adminQqAssistant.toastWebhookRegistered'), 'success')
+  } catch (err) {
+    showToast(String(err instanceof Error ? err.message : err), 'error')
+  } finally { registeringId.value = '' }
 }
 
 async function copyInboundConfig() {

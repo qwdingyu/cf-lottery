@@ -1942,6 +1942,8 @@ adminQqAssistant: {
     empty: "暂无绑定的 QQ 群，点击右上角「绑定群」开始",
     edit: "编辑",
     testMessage: "测试发送",
+    registerWebhook: "注册 Webhook",
+    toastWebhookRegistered: "Webhook 注册成功",
     resetSecret: "重置密钥",
     delete: "删除",
     close: "关闭",

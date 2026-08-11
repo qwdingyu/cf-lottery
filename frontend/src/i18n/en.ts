@@ -1966,6 +1966,8 @@ adminQqAssistant: {
     empty: "No QQ groups bound. Click \"Bind Group\" to start.",
     edit: "Edit",
     testMessage: "Test Send",
+    registerWebhook: "Register Webhook",
+    toastWebhookRegistered: "Webhook registered successfully.",
     resetSecret: "Reset Secret",
     delete: "Delete",
     close: "Close",
