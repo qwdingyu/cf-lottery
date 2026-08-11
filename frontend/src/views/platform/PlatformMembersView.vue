@@ -2,6 +2,13 @@
   <div class="admin-page">
     <div class="toolbar">
       <div class="filters">
+        <input
+          v-model="searchQuery"
+          type="search"
+          :placeholder="$t('platformMembers.searchPlaceholder')"
+          :disabled="loading || batchOperating"
+          @keyup.enter="searchData"
+        />
         <button class="btn btn-ghost btn-sm" :disabled="loading || batchOperating" @click="loadData">
           {{ loading ? $t('platformMembers.loading') : $t('platformMembers.refresh') }}
         </button>
@@ -113,6 +120,18 @@
       </table>
     </div>
 
+    <AdminPagination
+      v-if="pagination.total.value > 0"
+      :page="pagination.page.value"
+      :total="pagination.total.value"
+      :total-pages="pagination.totalPages.value"
+      :limit="pagination.limit.value"
+      :offset="pagination.offset.value"
+      @prev="pagination.prevPage(); loadData()"
+      @next="pagination.nextPage(); loadData()"
+      @go="(p: number) => { pagination.setPage(p); loadData() }"
+    />
+
     <AdminModal v-model="showAdd" :title="$t('platformMembers.addTitle')" max-width="480px" hide-actions>
       <form @submit.prevent="handleAdd">
         <div class="modal-form">
@@ -148,7 +167,9 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
-import { copyWithToast, useToast } from '@usethink/cf-admin-fe/composables'
+import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
+import { copyWithToast, useToast, useTablePagination } from '@usethink/cf-admin-fe/composables'
+import { buildAdminOffsetParams } from '@usethink/cf-admin-fe/utils'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
@@ -167,6 +188,8 @@ const operatingId = ref('')
 const showAdd = ref(false)
 const formKey = ref('')
 const formRole = ref('platform_operator')
+const searchQuery = ref('')
+const pagination = useTablePagination({ initialLimit: 50 })
 const myUserId = ref('')
 
 const membersRef = computed(() => members.value)
@@ -220,13 +243,21 @@ async function loadData() {
       const payload = JSON.parse(atob(token.split('.')[1]))
       myUserId.value = payload.sub || ''
     } catch { /* 忽略 */ }
-    const data = await adminRequest<{ members: any[] }>('/api/platform/members')
+    const params = new URLSearchParams(buildAdminOffsetParams(pagination.page.value, pagination.limit.value))
+    if (searchQuery.value) params.set('search', searchQuery.value)
+    const data = await adminRequest<{ members: any[]; total: number }>(`/api/platform/members?${params.toString()}`)
     members.value = data.members || []
+    pagination.setTotal(data.total || 0)
   } catch (err: any) {
     loadError.value = err.message || t('platformMembers.loadFailed')
   } finally {
     loading.value = false
   }
+}
+
+function searchData() {
+  pagination.setPage(1)
+  void loadData()
 }
 
 async function handleAdd() {

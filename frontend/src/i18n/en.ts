@@ -2137,6 +2137,7 @@ adminQqAssistant: {
     refresh: "Refresh",
     add: "Add member",
     retry: "Retry",
+    searchPlaceholder: "Search user ID or role",
     tableAria: "Platform members",
     colUserId: "User ID",
     colRole: "Role",

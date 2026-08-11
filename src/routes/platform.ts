@@ -48,15 +48,28 @@ function isSafeQuotaIncrement(value: unknown): boolean {
 // 平台成员管理（仅 platform_owner）
 // ═════════════════════════════════════════════════════════
 
-/** 平台成员列表 */
+/** 平台成员列表（分页 + 搜索，与 tenants 风格一致） */
 platformRoute.get("/members", requirePlatformMember(["platform_owner"]), async (c) => {
   const db = getDb(c);
+  const limit = clampInteger(c.req.query("limit"), 50, 1, 200);
+  const offset = clampInteger(c.req.query("offset"), 0, 0, 100_000);
+  const search = c.req.query("search") || "";
+
+  const conditions: SQL[] = [];
+  if (search) {
+    conditions.push(sql`(${platformMembers.userId} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`} OR ${platformMembers.role} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`})`);
+  }
+
+  const [{ total }] = await db.select({ total: count() }).from(platformMembers).where(and(...conditions));
   const rows = await db
     .select()
     .from(platformMembers)
-    .orderBy(desc(platformMembers.createdAt));
+    .where(and(...conditions))
+    .orderBy(desc(platformMembers.createdAt))
+    .limit(limit)
+    .offset(offset);
 
-  return ok(c, { members: rows });
+  return ok(c, { members: rows, total });
 });
 
 /** 添加平台成员（按用户名或邮箱查找用户，加入平台成员表） */

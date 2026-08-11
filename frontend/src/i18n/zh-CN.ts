@@ -2112,6 +2112,7 @@ adminQqAssistant: {
     refresh: "刷新",
     add: "添加成员",
     retry: "重试",
+    searchPlaceholder: "搜索用户 ID 或角色",
     tableAria: "平台成员",
     colUserId: "用户 ID",
     colRole: "角色",
