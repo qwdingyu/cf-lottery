@@ -1100,7 +1100,7 @@ describe("批量数量生命周期", () => {
       status: "open", experienceType: "flash_sale",
       maxParticipants, activeParticipantCount: 1,
       promotionConfig: JSON.stringify({
-        flashSale: { enabled: true, paymentRequired: true, stockLimit: maxParticipants, priceCents: 9900, currency: "cny" },
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: maxParticipants, priceCents: 9900, currency: "cny", maxPerUser: 20 },
       }),
       startAt: new Date(Date.now() - 60_000).toISOString(),
       endAt: new Date(Date.now() + 600_000).toISOString(),
@@ -1368,6 +1368,66 @@ it("retryPaymentOrder 批量重试恢复正确数量与名额", async () => {
     // 容量未被预约（FULFILLMENT_FAILED 检查在预约之前），初始容量为 seedBatchFlow 的 1
     expect(draw?.activeParticipantCount).toBe(1);
     expect(entry?.paymentStatus).toBe("pending");
+  });
+it("累计限购：已有 PAID 订单 + 本次购买超过 maxPerUser 时拒绝创建新单（docs/202 P1-14）", async () => {
+    const { drawId, entryId } = await seedBatchFlow(10, 3);
+    // 收紧限购为每人 2 件
+    await db.update(lotteryDraws).set({
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 10, priceCents: 9900, currency: "cny", maxPerUser: 2 },
+      }),
+    }).where(eq(lotteryDraws.id, drawId));
+    // 已有 PAID 订单 quantity=2（已买满限购）
+    await db.insert(paymentOrders).values({
+      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, entryId,
+      quantity: 2, amountCents: 17800, currency: "cny",
+      status: "paid", provider: "easypay",
+    });
+    await db.update(lotteryEntries).set({ paymentStatus: "paid" }).where(eq(lotteryEntries.id, entryId));
+
+    const provider: PaymentProvider = { ...providerMock, createPayment: vi.fn() };
+
+    await expect(createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email", buyerIdentityValue: "test@example.com",
+      quantity: 1, unitPriceCents: 8900,
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      amountCents: 8900, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "超限新单",
+    }, provider)).rejects.toThrow("每人限购 2 件");
+
+    expect(provider.createPayment).not.toHaveBeenCalled();
+    // 事务回滚：entry 保持 paid，活动名额未被额外预约（seedBatchFlow 初始 1）
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(draw?.activeParticipantCount).toBe(1);
+    expect(entry?.paymentStatus).toBe("paid");
+  });
+
+  it("累计限购：未超过 maxPerUser 时允许同一身份追加下单（批发场景）", async () => {
+    const { drawId, entryId } = await seedBatchFlow(10, 3);
+    await db.update(lotteryDraws).set({
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 10, priceCents: 9900, currency: "cny", maxPerUser: 5 },
+      }),
+    }).where(eq(lotteryDraws.id, drawId));
+    // 已有 PAID 订单 quantity=2，追加 3 件后合计 5 == maxPerUser：允许
+    await db.insert(paymentOrders).values({
+      id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, entryId,
+      quantity: 2, amountCents: 17800, currency: "cny",
+      status: "paid", provider: "easypay",
+    });
+    await db.update(lotteryEntries).set({ paymentStatus: "paid" }).where(eq(lotteryEntries.id, entryId));
+
+    const created = await createPaymentOrder(db, {
+      tenantId: TENANT_ID, drawId, entryId,
+      buyerIdentityType: "email", buyerIdentityValue: "test@example.com",
+      quantity: 3, unitPriceCents: 8900,
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      amountCents: 26700, currency: "cny", provider: "easypay",
+      notifyUrl: "https://cb", description: "追加批发单",
+    }, providerMock);
+    expect(created.order.quantity).toBe(3);
   });
 
   it("retryPaymentFulfillment 批量补发一次性补齐订单数量对应卡密", async () => {

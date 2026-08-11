@@ -737,6 +737,37 @@ export async function createPaymentOrder(
     // 需预约件数：有前置订单时全额预约，否则只预约超出 base 1 的部分
     const reserveQuantity = hasPriorOrder ? quantity : (quantity - 1);
 
+    // 累计限购检查（docs/202 §5.2 P1-14）：已有 PAID 订单 + 本次购买不得超过 maxPerUser。
+    // 直付秒杀允许同一身份追加下单，但必须守住"每人限购总量"，
+    // 否则用户可反复提交支付创建多笔订单，绕过 maxPerUser 造成超购。
+    if (hasPriorOrder) {
+      const [drawCfg] = await tx
+        .select({ promotionConfig: lotteryDraws.promotionConfig })
+        .from(lotteryDraws)
+        .where(and(eq(lotteryDraws.id, input.drawId), eq(lotteryDraws.tenantId, input.tenantId)))
+        .limit(1);
+      if (drawCfg) {
+        const { config: flashSale } = parseFlashSaleConfig(drawCfg.promotionConfig);
+        const maxPerUser = flashSale?.maxPerUser ?? 1;
+        if (maxPerUser > 0) {
+          // 统计该 entry 已实际支付并完成发卡的订单总件数（不含 pending/expired/cancelled）
+          const [sumRow] = await tx
+            .select({ total: sql<number>`COALESCE(SUM(${paymentOrders.quantity}), 0)` })
+            .from(paymentOrders)
+            .where(and(
+              eq(paymentOrders.tenantId, input.tenantId),
+              eq(paymentOrders.drawId, input.drawId),
+              eq(paymentOrders.entryId, input.entryId),
+              eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PAID),
+            ));
+          const alreadyBought = Number(sumRow?.total ?? 0);
+          if (alreadyBought + quantity > maxPerUser) {
+            throw new Error(`每人限购 ${maxPerUser} 件，已购买 ${alreadyBought} 件`);
+          }
+        }
+      }
+    }
+
     if (reserveQuantity > 0) {
       const [draw] = await tx
         .select({
