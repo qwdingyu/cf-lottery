@@ -5,8 +5,7 @@
         <span class="toolbar-title">{{ $t('adminPlatformTarget.title') }}</span>
         <select v-model="platformFilter" class="form-select form-select-sm" @change="loadTargets" style="margin-left: 8px; width: 140px;">
           <option value="">{{ $t('adminPlatformTarget.filterAll') }}</option>
-          <option value="qq">QQ</option>
-          <option value="telegram">Telegram</option>
+          <option v-for="p in SUPPORTED_PLATFORMS" :key="p.value" :value="p.value">{{ p.label }}</option>
         </select>
       </div>
       <div class="toolbar-actions">
@@ -62,7 +61,7 @@
             <td class="col-actions">
               <button class="btn btn-ghost btn-xs" :title="$t('adminPlatformTarget.edit')" @click="openEditModal(t)">{{ $t('adminPlatformTarget.edit') }}</button>
               <button class="btn btn-ghost btn-xs" :title="$t('adminPlatformTarget.testMessage')" @click="testMessage(t)" :disabled="testingId === t.id">{{ $t('adminPlatformTarget.testMessage') }}</button>
-              <button v-if="t.platform === 'telegram'" class="btn btn-ghost btn-xs" :title="$t('adminQqAssistant.registerWebhook')" @click="registerWebhook(t)" :disabled="registeringId === t.id">{{ $t('adminQqAssistant.registerWebhook') }}</button>
+              <button v-if="t.platform === 'telegram'" class="btn btn-ghost btn-xs" :title="$t('adminPlatformTarget.registerWebhook')" @click="registerWebhook(t)" :disabled="registeringId === t.id">{{ $t('adminPlatformTarget.registerWebhook') }}</button>
               <button class="btn btn-ghost btn-xs" :title="$t('adminPlatformTarget.resetSecret')" @click="resetSecret(t)" :disabled="resettingId === t.id">{{ $t('adminPlatformTarget.resetSecret') }}</button>
               <button class="btn btn-danger btn-xs" :title="$t('adminPlatformTarget.delete')" @click="deleteTarget(t)">{{ $t('adminPlatformTarget.delete') }}</button>
             </td>
@@ -73,30 +72,29 @@
 <!-- 创建 / 编辑弹窗：统一使用 cf-admin-fe 的 AdminModal 组件（不造轮子，样式与全后台一致） -->
     <AdminModal
       v-model="showModal"
-      :title="editingTarget ? $t('adminQqAssistant.editBinding') : $t('adminQqAssistant.addBinding')"
+      :title="editingTarget ? $t('adminPlatformTarget.editBinding') : $t('adminPlatformTarget.addBinding')"
       max-width="520px"
       hide-actions
     >
       <form @submit.prevent="saveTarget">
         <div v-if="!editingTarget" class="form-group">
-          <label>{{ $t('adminQqAssistant.labelPlatform') }} <span class="required">*</span></label>
+          <label>{{ $t('adminPlatformTarget.labelPlatform') }} <span class="required">*</span></label>
           <select v-model="form.platform" class="form-select">
-            <option value="qq">QQ</option>
-            <option value="telegram">Telegram</option>
+            <option v-for="p in SUPPORTED_PLATFORMS" :key="p.value" :value="p.value">{{ p.label }}</option>
           </select>
         </div>
         <div class="form-group">
-          <label>{{ $t('adminQqAssistant.labelGroupId') }} <span class="required">*</span></label>
-          <input v-model="form.targetId" class="form-input" :placeholder="$t('adminQqAssistant.placeholderGroupId')" :disabled="!!editingTarget" />
+          <label>{{ $t('adminPlatformTarget.labelGroupId') }} <span class="required">*</span></label>
+          <input v-model="form.targetId" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderGroupId')" :disabled="!!editingTarget" />
         </div>
             <div class="form-group">
-              <label>{{ $t('adminQqAssistant.labelGroupName') }}</label>
-              <input v-model="form.targetName" class="form-input" :placeholder="$t('adminQqAssistant.placeholderGroupName')" />
+              <label>{{ $t('adminPlatformTarget.labelGroupName') }}</label>
+              <input v-model="form.targetName" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderGroupName')" />
             </div>
             <div class="form-group">
-              <label>{{ $t('adminQqAssistant.labelActivity') }}</label>
+              <label>{{ $t('adminPlatformTarget.labelActivity') }}</label>
               <select v-model="form.activeDrawId" class="form-select">
-                <option value="">{{ $t('adminQqAssistant.noActivity') }}</option>
+                <option value="">{{ $t('adminPlatformTarget.noActivity') }}</option>
                 <option v-for="d in draws" :key="d.id" :value="d.id">{{ d.title }}</option>
               </select>
             </div>
@@ -104,150 +102,151 @@
             <template v-if="form.platform === 'qq'">
             <div class="form-group">
               <label>
-                {{ $t('adminQqAssistant.labelAdapterBaseUrl') }}
-                <span v-if="editingTarget" class="form-hint">{{ $t('adminQqAssistant.hintAdapterBaseUrlEdit') }}</span>
+                {{ $t('adminPlatformTarget.labelAdapterBaseUrl') }}
+                <span v-if="editingTarget" class="form-hint">{{ $t('adminPlatformTarget.hintAdapterBaseUrlEdit') }}</span>
               </label>
-              <div v-if="!editingTarget" class="form-hint">{{ $t('adminQqAssistant.hintAdapterBaseUrl') }}</div>
-              <input v-model="form.adapterBaseUrl" class="form-input" :placeholder="editingTarget ? $t('adminQqAssistant.placeholderAdapterBaseUrlEdit') : $t('adminQqAssistant.placeholderAdapterBaseUrl')" />
+              <div v-if="!editingTarget" class="form-hint">{{ $t('adminPlatformTarget.hintAdapterBaseUrl') }}</div>
+              <input v-model="form.adapterBaseUrl" class="form-input" :placeholder="editingTarget ? $t('adminPlatformTarget.placeholderAdapterBaseUrlEdit') : $t('adminPlatformTarget.placeholderAdapterBaseUrl')" />
             </div>
             <div v-if="editingTarget" class="form-group">
-              <label>{{ $t('adminQqAssistant.labelNewInboundSecret') }}</label>
-              <div class="form-hint">{{ $t('adminQqAssistant.hintNewInboundSecret') }}</div>
-              <input v-model="form.inboundSecret" class="form-input" autocomplete="new-password" :placeholder="$t('adminQqAssistant.placeholderNewInboundSecret')" />
+              <label>{{ $t('adminPlatformTarget.labelNewInboundSecret') }}</label>
+              <div class="form-hint">{{ $t('adminPlatformTarget.hintNewInboundSecret') }}</div>
+              <input v-model="form.inboundSecret" class="form-input" autocomplete="new-password" :placeholder="$t('adminPlatformTarget.placeholderNewInboundSecret')" />
             </div>
             </template>
             <!-- Telegram 平台特定配置 -->
             <template v-if="form.platform === 'telegram'">
             <div class="form-group">
-              <label>{{ $t('adminQqAssistant.labelBotToken') }} <span class="required">*</span></label>
-              <div class="form-hint">{{ $t('adminQqAssistant.hintBotToken') }}</div>
-              <input v-model="form.botToken" class="form-input" :placeholder="$t('adminQqAssistant.placeholderBotToken')" />
+              <label>{{ $t('adminPlatformTarget.labelBotToken') }} <span class="required">*</span></label>
+              <div class="form-hint">{{ $t('adminPlatformTarget.hintBotToken') }}</div>
+              <input v-model="form.botToken" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderBotToken')" />
+              <div v-if="editingTarget && !form.botToken" class="form-hint" style="color: #888; margin-top: 4px;">{{ $t('adminPlatformTarget.hintBotTokenKeep') }}</div>
             </div>
             </template>
             <fieldset class="form-fieldset">
-              <legend>{{ $t('adminQqAssistant.builtinCommands') }}</legend>
+              <legend>{{ $t('adminPlatformTarget.builtinCommands') }}</legend>
               <div class="checkbox-group">
-                <label class="checkbox-label"><input type="checkbox" v-model="form.checkinEnabled" /> {{ $t('adminQqAssistant.cmdCheckin') }}</label>
-                <label class="checkbox-label"><input type="checkbox" v-model="form.spinEnabled" /> {{ $t('adminQqAssistant.cmdSpin') }}</label>
-                <label class="checkbox-label"><input type="checkbox" v-model="form.shareEnabled" /> {{ $t('adminQqAssistant.cmdShare') }}</label>
-                <label class="checkbox-label"><input type="checkbox" v-model="form.leaderboardEnabled" /> {{ $t('adminQqAssistant.cmdLeaderboard') }}</label>
-                <label class="checkbox-label"><input type="checkbox" v-model="form.myPrizeEnabled" /> {{ $t('adminQqAssistant.cmdMyPrize') }}</label>
-                <label class="checkbox-label"><input type="checkbox" v-model="form.myCardCodeEnabled" /> {{ $t('adminQqAssistant.cmdCardCode') }}</label>
-                <label class="checkbox-label"><input type="checkbox" v-model="form.helpEnabled" /> {{ $t('adminQqAssistant.cmdHelp') }}</label>
-                <label class="checkbox-label"><input type="checkbox" v-model="form.flashEnabled" /> {{ $t('adminQqAssistant.cmdFlash') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.checkinEnabled" /> {{ $t('adminPlatformTarget.cmdCheckin') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.spinEnabled" /> {{ $t('adminPlatformTarget.cmdSpin') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.shareEnabled" /> {{ $t('adminPlatformTarget.cmdShare') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.leaderboardEnabled" /> {{ $t('adminPlatformTarget.cmdLeaderboard') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.myPrizeEnabled" /> {{ $t('adminPlatformTarget.cmdMyPrize') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.myCardCodeEnabled" /> {{ $t('adminPlatformTarget.cmdCardCode') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.helpEnabled" /> {{ $t('adminPlatformTarget.cmdHelp') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="form.flashEnabled" /> {{ $t('adminPlatformTarget.cmdFlash') }}</label>
               </div>
               <!-- 每日签到奖励（docs/172）：仅在启用 /签到 时显示。
                    支持两种方式：简单固定值（grantSpinCount）或完整奖励模式（mode+baseRange） -->
               <div v-if="form.checkinEnabled" class="form-group">
-                <label>{{ $t('adminQqAssistant.labelCheckinGrantSpin') }}</label>
-                <div class="form-hint">{{ $t('adminQqAssistant.hintCheckinGrantSpin') }}</div>
+                <label>{{ $t('adminPlatformTarget.labelCheckinGrantSpin') }}</label>
+                <div class="form-hint">{{ $t('adminPlatformTarget.hintCheckinGrantSpin') }}</div>
                 <input v-model.number="form.grantSpinCount" type="number" min="0" max="100" step="1" class="form-input" />
               </div>
               <div v-if="form.checkinEnabled" class="form-group">
-                <label>{{ $t('adminQqAssistant.labelCheckinMode') }}</label>
-                <div class="form-hint">{{ $t('adminQqAssistant.hintCheckinMode') }}</div>
+                <label>{{ $t('adminPlatformTarget.labelCheckinMode') }}</label>
+                <div class="form-hint">{{ $t('adminPlatformTarget.hintCheckinMode') }}</div>
                 <select v-model="form.checkinMode" class="form-input">
                   <option value="">—</option>
-                  <option value="daily">{{ $t('adminQqAssistant.optionModeDaily') }}</option>
-                  <option value="linear">{{ $t('adminQqAssistant.optionModeLinear') }}</option>
-                  <option value="step">{{ $t('adminQqAssistant.optionModeStep') }}</option>
-                  <option value="cycle">{{ $t('adminQqAssistant.optionModeCycle') }}</option>
+                  <option value="daily">{{ $t('adminPlatformTarget.optionModeDaily') }}</option>
+                  <option value="linear">{{ $t('adminPlatformTarget.optionModeLinear') }}</option>
+                  <option value="step">{{ $t('adminPlatformTarget.optionModeStep') }}</option>
+                  <option value="cycle">{{ $t('adminPlatformTarget.optionModeCycle') }}</option>
                 </select>
               </div>
               <template v-if="form.checkinEnabled && form.checkinMode">
                 <div class="form-row">
                   <div class="form-group">
-                    <label>{{ $t('adminQqAssistant.labelBaseMin') }}</label>
-                    <div class="form-hint">{{ $t('adminQqAssistant.hintBaseMin') }}</div>
+                    <label>{{ $t('adminPlatformTarget.labelBaseMin') }}</label>
+                    <div class="form-hint">{{ $t('adminPlatformTarget.hintBaseMin') }}</div>
                     <input v-model.number="form.baseMin" type="number" min="0" max="100" step="1" class="form-input" />
                   </div>
                   <div class="form-group">
-                    <label>{{ $t('adminQqAssistant.labelBaseMax') }}</label>
-                    <div class="form-hint">{{ $t('adminQqAssistant.hintBaseMax') }}</div>
+                    <label>{{ $t('adminPlatformTarget.labelBaseMax') }}</label>
+                    <div class="form-hint">{{ $t('adminPlatformTarget.hintBaseMax') }}</div>
                     <input v-model.number="form.baseMax" type="number" min="0" max="100" step="1" class="form-input" />
                   </div>
                 </div>
                 <div v-if="form.checkinMode === 'linear' || form.checkinMode === 'step'" class="form-row">
                   <div class="form-group">
-                    <label>{{ $t('adminQqAssistant.labelIncrement') }}</label>
-                    <div class="form-hint">{{ $t('adminQqAssistant.hintIncrement') }}</div>
+                    <label>{{ $t('adminPlatformTarget.labelIncrement') }}</label>
+                    <div class="form-hint">{{ $t('adminPlatformTarget.hintIncrement') }}</div>
                     <input v-model.number="form.increment" type="number" min="0" max="100" step="1" class="form-input" />
                   </div>
                   <div class="form-group">
-                    <label>{{ $t('adminQqAssistant.labelCap') }}</label>
-                    <div class="form-hint">{{ $t('adminQqAssistant.hintCap') }}</div>
+                    <label>{{ $t('adminPlatformTarget.labelCap') }}</label>
+                    <div class="form-hint">{{ $t('adminPlatformTarget.hintCap') }}</div>
                     <input v-model.number="form.cap" type="number" min="0" max="100" step="1" class="form-input" />
                   </div>
                 </div>
                 <div v-if="form.checkinMode === 'step'" class="form-group">
-                  <label>{{ $t('adminQqAssistant.labelStepDays') }}</label>
-                  <div class="form-hint">{{ $t('adminQqAssistant.hintStepDays') }}</div>
+                  <label>{{ $t('adminPlatformTarget.labelStepDays') }}</label>
+                  <div class="form-hint">{{ $t('adminPlatformTarget.hintStepDays') }}</div>
                   <input v-model.number="form.stepDays" type="number" min="1" max="365" step="1" class="form-input" />
                 </div>
                 <div v-if="form.checkinMode === 'cycle'" class="form-row">
                   <div class="form-group">
-                    <label>{{ $t('adminQqAssistant.labelCycleDays') }}</label>
-                    <div class="form-hint">{{ $t('adminQqAssistant.hintCycleDays') }}</div>
+                    <label>{{ $t('adminPlatformTarget.labelCycleDays') }}</label>
+                    <div class="form-hint">{{ $t('adminPlatformTarget.hintCycleDays') }}</div>
                     <input v-model.number="form.cycleDays" type="number" min="1" max="365" step="1" class="form-input" />
                   </div>
                   <div class="form-group">
-                    <label>{{ $t('adminQqAssistant.labelCycleBonus') }}</label>
-                    <div class="form-hint">{{ $t('adminQqAssistant.hintCycleBonus') }}</div>
+                    <label>{{ $t('adminPlatformTarget.labelCycleBonus') }}</label>
+                    <div class="form-hint">{{ $t('adminPlatformTarget.hintCycleBonus') }}</div>
                     <input v-model.number="form.cycleBonus" type="number" min="0" max="100" step="1" class="form-input" />
                   </div>
                 </div>
               </template>
               <!-- P2 randomBonus 随机签到事件（docs/175 §2.4）：在基础奖励之上小概率额外增加 spins -->
               <div v-if="form.checkinEnabled" class="form-group">
-                <label>{{ $t('adminQqAssistant.labelRandomBonus') }}</label>
-                <div class="form-hint">{{ $t('adminQqAssistant.hintRandomBonus') }}</div>
+                <label>{{ $t('adminPlatformTarget.labelRandomBonus') }}</label>
+                <div class="form-hint">{{ $t('adminPlatformTarget.hintRandomBonus') }}</div>
                 <label class="checkbox-label">
-                  <input type="checkbox" v-model="form.randomBonusEnabled" /> {{ $t('adminQqAssistant.labelRandomBonusEnabled') }}
+                  <input type="checkbox" v-model="form.randomBonusEnabled" /> {{ $t('adminPlatformTarget.labelRandomBonusEnabled') }}
                 </label>
               </div>
               <div v-if="form.checkinEnabled && form.randomBonusEnabled" class="form-row">
                 <div class="form-group">
-                  <label>{{ $t('adminQqAssistant.labelRandomBonusProbability') }}</label>
-                  <div class="form-hint">{{ $t('adminQqAssistant.hintRandomBonusProbability') }}</div>
+                  <label>{{ $t('adminPlatformTarget.labelRandomBonusProbability') }}</label>
+                  <div class="form-hint">{{ $t('adminPlatformTarget.hintRandomBonusProbability') }}</div>
                   <input v-model.number="form.randomBonusProbability" type="number" min="0" max="1" step="0.05" class="form-input" />
                 </div>
                 <div class="form-group">
-                  <label>{{ $t('adminQqAssistant.labelRandomBonusMin') }}</label>
-                  <div class="form-hint">{{ $t('adminQqAssistant.hintRandomBonusMin') }}</div>
+                  <label>{{ $t('adminPlatformTarget.labelRandomBonusMin') }}</label>
+                  <div class="form-hint">{{ $t('adminPlatformTarget.hintRandomBonusMin') }}</div>
                   <input v-model.number="form.randomBonusMin" type="number" min="0" max="100" step="1" class="form-input" />
                 </div>
                 <div class="form-group">
-                  <label>{{ $t('adminQqAssistant.labelRandomBonusMax') }}</label>
-                  <div class="form-hint">{{ $t('adminQqAssistant.hintRandomBonusMax') }}</div>
+                  <label>{{ $t('adminPlatformTarget.labelRandomBonusMax') }}</label>
+                  <div class="form-hint">{{ $t('adminPlatformTarget.hintRandomBonusMax') }}</div>
                   <input v-model.number="form.randomBonusMax" type="number" min="0" max="100" step="1" class="form-input" />
                 </div>
               </div>
               <!-- 购买引导（docs/171 §断层B）：配置 /秒杀 返回的购买链接；次数耗尽时也会自动附加引导 -->
               <div class="form-group">
-                <label>{{ $t('adminQqAssistant.labelPurchaseUrl') }}</label>
-                <div class="form-hint">{{ $t('adminQqAssistant.hintPurchaseUrl') }}</div>
-                <input v-model="form.purchaseUrl" class="form-input" :placeholder="$t('adminQqAssistant.placeholderPurchaseUrl')" />
+                <label>{{ $t('adminPlatformTarget.labelPurchaseUrl') }}</label>
+                <div class="form-hint">{{ $t('adminPlatformTarget.hintPurchaseUrl') }}</div>
+                <input v-model="form.purchaseUrl" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderPurchaseUrl')" />
               </div>
               <div class="form-group">
-                <label>{{ $t('adminQqAssistant.labelPurchaseLabel') }}</label>
-                <div class="form-hint">{{ $t('adminQqAssistant.hintPurchaseLabel') }}</div>
-                <input v-model="form.purchaseLabel" class="form-input" :placeholder="$t('adminQqAssistant.placeholderPurchaseLabel')" />
+                <label>{{ $t('adminPlatformTarget.labelPurchaseLabel') }}</label>
+                <div class="form-hint">{{ $t('adminPlatformTarget.hintPurchaseLabel') }}</div>
+                <input v-model="form.purchaseLabel" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderPurchaseLabel')" />
               </div>
             </fieldset>
       </form>
       <div v-if="inboundSecret" class="secret-box">
-        <p class="secret-label">{{ $t('adminQqAssistant.inboundSecretLabel') }}</p>
+        <p class="secret-label">{{ $t('adminPlatformTarget.inboundSecretLabel') }}</p>
         <div class="secret-value">{{ inboundSecret }}</div>
-        <p class="secret-hint">{{ $t('adminQqAssistant.inboundSecretHint') }}</p>
+        <p class="secret-hint">{{ $t('adminPlatformTarget.inboundSecretHint') }}</p>
         <pre class="config-value">{{ platformInboundConfig }}</pre>
         <div class="secret-actions">
-          <button class="btn btn-ghost btn-xs" type="button" @click="copyWebhookUrl">{{ $t('adminQqAssistant.copyWebhookUrl') }}</button>
-          <button class="btn btn-ghost btn-xs" type="button" @click="copyInboundConfig">{{ $t('adminQqAssistant.copyConfig') }}</button>
+          <button class="btn btn-ghost btn-xs" type="button" @click="copyWebhookUrl">{{ $t('adminPlatformTarget.copyWebhookUrl') }}</button>
+          <button class="btn btn-ghost btn-xs" type="button" @click="copyInboundConfig">{{ $t('adminPlatformTarget.copyConfig') }}</button>
         </div>
       </div>
       <template #actions>
-        <button class="btn btn-ghost" @click="closeModal" type="button">{{ $t('adminQqAssistant.cancel') }}</button>
-        <button class="btn btn-primary" :disabled="saving" @click="saveTarget">{{ $t('adminQqAssistant.save') }}</button>
+        <button class="btn btn-ghost" @click="closeModal" type="button">{{ $t('adminPlatformTarget.cancel') }}</button>
+        <button class="btn btn-primary" :disabled="saving" @click="saveTarget">{{ $t('adminPlatformTarget.save') }}</button>
       </template>
     </AdminModal>
 
@@ -288,6 +287,11 @@ interface Draw {
   title: string
   status: string
 }
+
+const SUPPORTED_PLATFORMS = [
+  { value: 'qq', label: 'QQ' },
+  { value: 'telegram', label: 'Telegram' },
+] as const
 
 const loading = ref(false)
 const loadError = ref('')
@@ -567,7 +571,7 @@ async function saveTarget() {
         method: 'PUT',
         body: JSON.stringify(editPayload),
       })
-      showToast(t('adminQqAssistant.toastUpdated'), 'success')
+      showToast(t('adminPlatformTarget.toastUpdated'), 'success')
     } else {
       const adapterConfig: Record<string, string> = {}
       const baseUrl = form.value.adapterBaseUrl.trim()
@@ -588,7 +592,7 @@ async function saveTarget() {
         }),
       })
       inboundSecret.value = String(data.inboundSecret || '')
-      showToast(t('adminQqAssistant.toastCreated'), 'success')
+      showToast(t('adminPlatformTarget.toastCreated'), 'success')
     }
     if (!inboundSecret.value) closeModal()
     await loadTargets()
@@ -598,10 +602,10 @@ async function saveTarget() {
 }
 async function deleteTarget(target: PlatformTarget) {
   // 统一使用 ConfirmDialog 组件（与全后台一致），替代原生 confirm()
-  if (!(await askConfirm(t('adminQqAssistant.confirmDelete', { name: target.targetName || target.targetId })))) return
+  if (!(await askConfirm(t('adminPlatformTarget.confirmDelete', { name: target.targetName || target.targetId })))) return
   try {
     await api(`/platform-targets/${target.id}`, { method: 'DELETE' })
-    showToast(t('adminQqAssistant.toastDeleted'), 'success')
+    showToast(t('adminPlatformTarget.toastDeleted'), 'success')
     await loadTargets()
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
@@ -615,7 +619,7 @@ async function toggleEnabled(target: PlatformTarget) {
       body: JSON.stringify({ assistantEnabled: !target.assistantEnabled }),
     })
     target.assistantEnabled = target.assistantEnabled ? 0 : 1
-    showToast(t('adminQqAssistant.toastToggled'), 'success')
+    showToast(t('adminPlatformTarget.toastToggled'), 'success')
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
   }
@@ -640,7 +644,7 @@ async function testMessage(target: PlatformTarget) {
       method: 'POST',
       body: JSON.stringify({}),
     })
-    showToast(t('adminQqAssistant.toastTestSent'), 'success')
+    showToast(t('adminPlatformTarget.toastTestSent'), 'success')
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
   } finally { testingId.value = '' }
@@ -653,7 +657,7 @@ async function registerWebhook(target: PlatformTarget) {
       method: 'POST',
       body: JSON.stringify({ webhookOrigin: window.location.origin }),
     })
-    showToast(t('adminQqAssistant.toastWebhookRegistered'), 'success')
+    showToast(t('adminPlatformTarget.toastWebhookRegistered'), 'success')
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
   } finally { registeringId.value = '' }
@@ -662,7 +666,7 @@ async function registerWebhook(target: PlatformTarget) {
 async function copyInboundConfig() {
   try {
     await navigator.clipboard.writeText(platformInboundConfig.value)
-    showToast(t('adminQqAssistant.toastCopied'), 'success')
+    showToast(t('adminPlatformTarget.toastCopied'), 'success')
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
   }
@@ -673,17 +677,19 @@ async function copyWebhookUrl() {
   const callbackUrl = `${window.location.origin}/api/platform/qq/message`
   try {
     await navigator.clipboard.writeText(callbackUrl)
-    showToast(t('adminQqAssistant.toastCopiedWebhook'), 'success')
+    showToast(t('adminPlatformTarget.toastCopiedWebhook'), 'success')
   } catch (err) {
     showToast(String(err instanceof Error ? err.message : err), 'error')
   }
 }
 
-/** 从目标的 adapterConfigJson 中提取公证人 QQ 号（docs/177 批次2） */
+/** 从目标的 adapterConfigJson 中提取平台特有标识（QQ 公证人号 / Telegram 等信息） */
 function getBotId(t: PlatformTarget): string {
   try {
     const cfg = JSON.parse(t.adapterConfigJson || '{}')
-    return cfg.botId || '-'
+    if (t.platform === 'qq') return cfg.botId || '-'
+    if (t.platform === 'telegram') return cfg.botName || '—'
+    return '-'
   } catch { return '-' }
 }
 
