@@ -231,6 +231,102 @@ describe("抽奖端到端", () => {
     const issued = await db.select({ n: count() }).from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "issued")));
     expect(Number(issued[0]!.n)).toBe(1);
   });
+
+  it("延迟开奖（手动）→ 中奖 → 发卡密", async () => {
+    // 创建非 instant 的 lottery 活动
+    const now = new Date();
+    await db.insert(lotteryDraws).values({
+      id: "draw-delayed", tenantId: TENANT, title: "延迟开奖活动", publicSlug: "delayed-slug",
+      status: "open", activityKind: "lottery", participationMode: "open",
+      experienceType: "submit", resultMode: "manual", drawTrigger: "manual",
+      maxParticipants: 100, maxSpinsPerEntry: 1,
+      startAt: new Date(now.getTime() - 3600000).toISOString(),
+      endAt: new Date(now.getTime() + 3600000).toISOString(),
+      activityConfig: "{}", promotionConfig: "{}",
+    });
+    const prizeId = "prize-delayed";
+    await db.insert(prizes).values({ id: prizeId, tenantId: TENANT, name: "延迟奖品", prizeType: "code", totalCount: 1, active: 1 });
+    await db.insert(lotteryPrizeTiers).values({ id: "tier-delayed", tenantId: TENANT, drawId: "draw-delayed", prizeId, tierName: "一等奖", winnerCount: 1, weight: 100, sortOrder: 1 });
+    await db.insert(prizeCodes).values({ id: "code-delayed-1", tenantId: TENANT, prizeId, code: "DELAYED-CODE-1", secret: "DELAYED-SEC-1", status: "available" });
+
+    // 用户参与
+    const { joinDraw } = await import("../services/lottery/participation");
+    const joinResult = await joinDraw(db, "delayed-slug", "delayed@test.com", "email");
+    expect(joinResult.joined).toBe(true);
+
+    // 手动开奖
+    const { performDraw } = await import("../services/lottery/draw-execution");
+    const drawResult = await performDraw(db, TENANT, "draw-delayed", "admin", null as any);
+    expect(drawResult.winnerCount).toBeGreaterThanOrEqual(1);
+
+    // 验证中奖记录
+    const [winner] = await db
+      .select({ id: lotteryWinners.id, prizeCodeId: lotteryWinners.prizeCodeId })
+      .from(lotteryWinners)
+      .where(and(eq(lotteryWinners.tenantId, TENANT), eq(lotteryWinners.drawId, "draw-delayed")))
+      .limit(1);
+    expect(winner).toBeDefined();
+    expect(winner!.prizeCodeId).toBeTruthy();
+
+    // 验证卡密已发放
+    const issued = await db.select({ n: count() }).from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "issued")));
+    expect(Number(issued[0]!.n)).toBe(1);
+
+    // 验证活动状态为 drawn
+    const [draw] = await db.select({ status: lotteryDraws.status }).from(lotteryDraws).where(eq(lotteryDraws.id, "draw-delayed")).limit(1);
+    expect(draw!.status).toBe("drawn");
+  });
+
+  it("用户间隔离：A 的中奖记录不包含 B 的结果", async () => {
+    const now = new Date();
+    const drawId = "draw-isolation";
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, title: "隔离测试", publicSlug: "isolation-slug",
+      status: "open", activityKind: "lottery", participationMode: "open",
+      experienceType: "submit", resultMode: "manual", drawTrigger: "manual",
+      maxParticipants: 100, maxSpinsPerEntry: 1,
+      startAt: new Date(now.getTime() - 3600000).toISOString(),
+      endAt: new Date(now.getTime() + 3600000).toISOString(),
+      activityConfig: "{}", promotionConfig: "{}",
+    });
+    const prizeId = "prize-iso";
+    await db.insert(prizes).values({ id: prizeId, tenantId: TENANT, name: "隔离奖品", prizeType: "code", totalCount: 2, active: 1 });
+    await db.insert(lotteryPrizeTiers).values({ id: "tier-iso", tenantId: TENANT, drawId, prizeId, tierName: "一等奖", winnerCount: 2, weight: 100, sortOrder: 1 });
+    await db.insert(prizeCodes).values([
+      { id: "code-iso-1", tenantId: TENANT, prizeId, code: "ISO-CODE-1", secret: "ISO-SEC-1", status: "available" },
+      { id: "code-iso-2", tenantId: TENANT, prizeId, code: "ISO-CODE-2", secret: "ISO-SEC-2", status: "available" },
+    ]);
+
+    // A 和 B 各自参与
+    const { joinDraw } = await import("../services/lottery/participation");
+    const jA = await joinDraw(db, "isolation-slug", "userA@test.com", "email");
+    const jB = await joinDraw(db, "isolation-slug", "userB@test.com", "email");
+    expect(jA.joined).toBe(true);
+    expect(jB.joined).toBe(true);
+
+    // 手动开奖（2 个名额，各中一个）
+    const { performDraw } = await import("../services/lottery/draw-execution");
+    await performDraw(db, TENANT, drawId, "admin", null as any);
+
+    // 验证：按 identityValue 查 winner → A 只看到 A 的，B 只看到 B 的
+    const [wA] = await db
+      .select({ id: lotteryWinners.id, entryId: lotteryWinners.entryId })
+      .from(lotteryWinners)
+      .where(and(eq(lotteryWinners.tenantId, TENANT), eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.entryId, jA.entryId!)))
+      .limit(1);
+    const [wB] = await db
+      .select({ id: lotteryWinners.id, entryId: lotteryWinners.entryId })
+      .from(lotteryWinners)
+      .where(and(eq(lotteryWinners.tenantId, TENANT), eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.entryId, jB.entryId!)))
+      .limit(1);
+    expect(wA).toBeDefined();
+    expect(wB).toBeDefined();
+    // A 的 winner 不同于 B 的 winner
+    expect(wA!.id).not.toBe(wB!.id);
+    // A 的 entryId 应为 jA 的 entry
+    expect(wA!.entryId).toBe(jA.entryId!);
+    expect(wB!.entryId).toBe(jB.entryId!);
+  });
 });
 
 describe("批发模式端到端", () => {
@@ -307,5 +403,24 @@ describe("批发模式端到端", () => {
     // 订单状态应为 paid_fulfillment_failed
     const [order] = await db.select({ status: paymentOrders.status }).from(paymentOrders).where(eq(paymentOrders.tenantId, TENANT)).limit(1);
     expect(order!.status).toBe("paid_fulfillment_failed");
+  });
+
+  it("两个用户同时抢最后一个秒杀名额，仅一人成功", async () => {
+    // 设 1 个名额 + 1 张卡密，两用户同时 joinDraw
+    await seedFlashSaleDraw(1);
+    // 容量由 stockLimit 控制（优先于 maxParticipants），需同步改小
+    await db.update(lotteryDraws).set({ maxParticipants: 1, promotionConfig: JSON.stringify({ flashSale: { enabled: true, paymentRequired: true, priceCents: 9900, stockLimit: 1 } }) }).where(eq(lotteryDraws.id, DRAW));
+
+    const { joinDraw } = await import("../services/lottery/participation");
+    const [r1, r2] = await Promise.all([
+      joinDraw(db, DRAW_SLUG, "concurrent1@test.com", "email"),
+      joinDraw(db, DRAW_SLUG, "concurrent2@test.com", "email"),
+    ]);
+    // 仅一人成功
+    const joined = [r1, r2].filter(r => r.joined);
+    expect(joined.length).toBe(1);
+    // 失败者应提示售罄/容量满
+    const failed = [r1, r2].find(r => !r.joined);
+    expect(failed).toBeDefined();
   });
 });
