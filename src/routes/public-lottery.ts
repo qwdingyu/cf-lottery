@@ -21,6 +21,7 @@ import {
   notifyInstantSpinWinner,
   type ActivityEventType,
 } from "../services/lottery-service";
+import { enqueuePlatformEvent } from "../services/platform/delivery";
 import { verifyJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
 import { parseActivityConfig, parseActivityOperationalConfig, validateSubmissionPayload } from "../lib/activity-config";
@@ -1383,6 +1384,7 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
     .select({
       id: lotteryDraws.id,
       tenantId: lotteryDraws.tenantId,
+      title: lotteryDraws.title,
       participationMode: lotteryDraws.participationMode,
       resultMode: lotteryDraws.resultMode,
       activityKind: lotteryDraws.activityKind,
@@ -1516,6 +1518,23 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
       };
       void notifyInstantSpinWinner(db, draw.tenantId, draw.id, result.spinId, emailEnv).catch((err) => {
         console.error(`[public] notifyInstantSpinWinner failed for ${result.spinId}:`, err);
+      });
+
+      void enqueuePlatformEvent(db, {
+        tenantId: draw.tenantId,
+        drawId: draw.id,
+        eventType: "outcome.assigned",
+        eventId: `outcome:${result.spinId}`,
+        data: {
+          drawName: draw.title,
+          userName: identity.identityType === "email"
+            ? email
+            : identity.identityValue,
+          prizeName: result.prizeName || result.tierName || "中奖",
+          claimHint: result.prizeCode ? "请在活动结果页查看卡密" : "",
+        },
+      }).catch((err) => {
+        console.error(`[public] enqueuePlatformEvent outcome.assigned failed for ${result.spinId}:`, err);
       });
     }
 

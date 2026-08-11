@@ -392,6 +392,12 @@ export async function performDraw(
       console.error(`[lottery] enqueuePlatformEvent draw.completed failed for ${drawId}:`, err);
     });
 
+    // 出站平台消息（QQ/Telegram 群）：逐个中奖结果通知。
+    // 这里只写投递队列；如果社群通知失败，不能反向影响已经提交的开奖结果。
+    await enqueueOutcomeAssignedPlatformEvents(db, tenantId, drawId, draw.title).catch((err) => {
+      console.error(`[lottery] enqueuePlatformEvent outcome.assigned failed for ${drawId}:`, err);
+    });
+
     // 活动后承接：未中奖自动发券（需在活动配置中启用 loserReward.enabled）
     // 在开奖状态更新之后执行，保证"是否中奖"已尘埃落定；不阻塞主流程，失败不影响开奖结果。
     try {
@@ -429,6 +435,71 @@ export async function performDraw(
         .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));
     }
     throw error;
+  }
+}
+
+async function enqueueOutcomeAssignedPlatformEvents(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  drawName: string,
+): Promise<void> {
+  const winners = await db
+    .select({
+      winnerId: lotteryWinners.id,
+      identityValue: lotteryWinners.identityValue,
+      displayName: lotteryEntries.displayName,
+      tierName: lotteryPrizeTiers.tierName,
+      prizeName: prizes.name,
+      prizeValue: prizes.valueText,
+      prizeCodeId: lotteryWinners.prizeCodeId,
+    })
+    .from(lotteryWinners)
+    .innerJoin(
+      lotteryEntries,
+      and(
+        eq(lotteryEntries.tenantId, lotteryWinners.tenantId),
+        eq(lotteryEntries.drawId, lotteryWinners.drawId),
+        eq(lotteryEntries.id, lotteryWinners.entryId),
+      ),
+    )
+    .leftJoin(
+      lotteryPrizeTiers,
+      and(
+        eq(lotteryPrizeTiers.tenantId, lotteryWinners.tenantId),
+        eq(lotteryPrizeTiers.drawId, lotteryWinners.drawId),
+        eq(lotteryPrizeTiers.id, lotteryWinners.tierId),
+      ),
+    )
+    .leftJoin(
+      prizes,
+      and(
+        eq(prizes.tenantId, lotteryWinners.tenantId),
+        eq(prizes.id, lotteryPrizeTiers.prizeId),
+      ),
+    )
+    .where(and(eq(lotteryWinners.tenantId, tenantId), eq(lotteryWinners.drawId, drawId)));
+
+  const results = await runBounded(winners, 5, async (winner) => {
+    await enqueuePlatformEvent(db, {
+      tenantId,
+      drawId,
+      eventType: "outcome.assigned",
+      eventId: `outcome:${winner.winnerId}`,
+      data: {
+        drawName,
+        userName: winner.displayName || winner.identityValue,
+        prizeName: winner.prizeName || winner.tierName || "中奖",
+        prizeValue: winner.prizeValue || "",
+        claimHint: winner.prizeCodeId ? "请在活动结果页查看卡密" : "",
+      },
+    });
+  });
+
+  for (const result of results) {
+    if (!result.ok) {
+      console.error("[lottery] enqueue outcome.assigned delivery failed:", result.error);
+    }
   }
 }
 

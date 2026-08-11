@@ -26,6 +26,8 @@ import {
   lotteryRosterMembers,
   lotteryInviteCodes,
   activityOutcomes,
+  platformTargets,
+  platformDeliveries,
   systemConfig,
 } from "../db/schema";
 import { eq, and } from "drizzle-orm";
@@ -181,6 +183,88 @@ describe("PR: Prize CRUD (admin-lottery-prizes.ts)", () => {
       }, TEST_ENV);
       expect(editRes.status).toBe(404);
     });
+  });
+});
+
+describe("活动发布出站闭环", () => {
+  it("发布活动后会写入 draw.published 平台投递队列", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+    const app = createTestApp();
+    const drawId = crypto.randomUUID();
+    const now = new Date();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT_A,
+      publicSlug: `publish-${drawId.slice(0, 8)}`,
+      title: "发布事件测试",
+      status: "draft",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "wheel",
+      drawTrigger: "manual",
+      resultMode: "manual",
+      startAt: new Date(now.getTime() - 60_000).toISOString(),
+      endAt: new Date(now.getTime() + 3_600_000).toISOString(),
+      winnerCount: 1,
+      showParticipantCount: 1,
+      showWinnerCount: 1,
+      showWinnerList: 0,
+      visible: 1,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    });
+    const prizeId = crypto.randomUUID();
+    await db.insert(prizes).values({
+      id: prizeId,
+      tenantId: TENANT_A,
+      name: "发布测试奖品",
+      prizeType: "physical",
+      active: 1,
+      totalCount: 1,
+      usedCount: 0,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A,
+      drawId,
+      prizeId,
+      tierName: "一等奖",
+      winnerCount: 1,
+      sortOrder: 1,
+      weight: 100,
+    });
+    await db.insert(platformTargets).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A,
+      platform: "qq",
+      targetId: "123456",
+      targetName: "发布测试群",
+      activeDrawId: drawId,
+      activePublicSlug: `publish-${drawId.slice(0, 8)}`,
+      assistantEnabled: 1,
+      adapterDeploymentMode: "tenant_hosted",
+      adapterProvider: "napcat",
+      adapterConfigJson: "{}",
+      builtinCommandsJson: "{}",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    });
+
+    const res = await app.request(`/api/admin/draws/${drawId}/publish`, {
+      method: "POST",
+      headers: await authHeader(OWNER_A, TENANT_A),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const deliveries = await db
+      .select()
+      .from(platformDeliveries)
+      .where(and(eq(platformDeliveries.tenantId, TENANT_A), eq(platformDeliveries.eventType, "draw.published")));
+    expect(deliveries).toHaveLength(1);
+    const payload = JSON.parse(deliveries[0]!.payloadJson) as { renderedMessage: string };
+    expect(payload.renderedMessage).toContain("发布事件测试");
   });
 });
 // ============================================================

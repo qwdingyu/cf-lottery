@@ -27,6 +27,8 @@ import {
   prizeCodes,
   couponCodes,
   shareRecords,
+  platformTargets,
+  platformDeliveries,
   systemConfig,
   tenantMembers,
   tenants,
@@ -2257,6 +2259,22 @@ describe("公开 instant spin 路由", () => {
     const app = createPublicTestApp();
     const { drawId, slug } = await seedOpenInstant({ slug: "spin-otp-gate" });
     const email = "spin-otp@test.com";
+    await db.insert(platformTargets).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      platform: "qq",
+      targetId: "spin-test-group",
+      targetName: "Spin Test Group",
+      activeDrawId: drawId,
+      activePublicSlug: slug,
+      assistantEnabled: 1,
+      adapterDeploymentMode: "tenant_hosted",
+      adapterProvider: "napcat",
+      adapterConfigJson: "{}",
+      builtinCommandsJson: "{}",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     await db.insert(lotteryEntries).values({
       id: crypto.randomUUID(),
       tenantId: TENANT,
@@ -2308,6 +2326,14 @@ describe("公开 instant spin 路由", () => {
     expect(body.won).toBe(true);
     expect(body.spinsLeft).toBe(1);
     expect(body.spinId).toBeTruthy();
+
+    const deliveries = await db
+      .select()
+      .from(platformDeliveries)
+      .where(and(eq(platformDeliveries.tenantId, TENANT), eq(platformDeliveries.eventType, "outcome.assigned")));
+    expect(deliveries).toHaveLength(1);
+    const deliveryPayload = JSON.parse(deliveries[0]!.payloadJson) as { renderedMessage: string };
+    expect(deliveryPayload.renderedMessage).toContain("路由即时抽");
 
     // 成功后 OTP 已核销：同码再 spin（新幂等键）应 400
     const reuse = await app.request(
