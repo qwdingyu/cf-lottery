@@ -829,8 +829,20 @@ export async function createPaymentOrder(
       .where(and(eq(lotteryEntries.id, input.entryId), eq(lotteryEntries.tenantId, input.tenantId)))
       .limit(1);
     if (!entryRow) throw new Error("参与记录不存在");
+    // ── existingOrder 语义（该 entry 在该 draw 下是否已有订单）──
+    // existingOrder = 本函数开头按 (tenantId, drawId, entryId) 查到的最近一笔订单。
+    // 它的两个用途：
+    //   ① 订单去重：状态为 FULFILLMENT_FAILED / LATE_NEEDS_REFUND 时拒绝（等人工/补发），
+    //      PENDING 时拒绝（已有未支付订单，防重复下单）。
+    //   ② 名额预约计算：见下方 reserveQuantity。
+    // hasPriorOrder = 是否已有任意状态的前置订单。
     const hasPriorOrder = existingOrder != null;
-    // 需预约件数：有前置订单时全额预约，否则只预约超出 base 1 的部分
+    // ── reserveQuantity 语义（本次需从活动名额中预约的件数）──
+    // joinDraw 时已为每个参与 entry 计入 base 1 名额（activeParticipantCount + 1）。
+    //   · 首次下单（hasPriorOrder=false）：base 1 已在 join 时计入，本次只需补足
+    //     reserveQuantity = quantity - 1（qty=1 时不补，qty>1 时补额外件数）。
+    //   · 追加下单（hasPriorOrder=true）：base 1 已被之前订单消费，本次全额预约
+    //     reserveQuantity = quantity。
     const reserveQuantity = hasPriorOrder ? quantity : (quantity - 1);
 
     // 统一前置校验（docs/203 源头扼杀）：身份/活动有效期/库存/限购，任一失败即事务回滚

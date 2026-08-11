@@ -21,7 +21,17 @@ export type FlashSaleConfig = {
    * null = 未在 flashSale 节点显式配置，运行时应回退 draw.maxParticipants。
    */
   stockLimit: number | null;
-  /** 每用户限次提示（展示/运营约定；硬限购仍靠参与模式与业务规则） */
+  /**
+   * 每用户限购件数（单笔订单数量上限 + 累计购买上限双保险）。
+   * 
+   * 两级防护（见 docs/203 注释链）：
+   *   ① 路由层 normalizeFlashSaleQuantity 把单笔 quantity 钳制到 ≤ maxPerUser，
+   *      即用户一次最多购买 maxPerUser 件（如 maxPerUser=1 时 qty=5→1）。
+   *   ② 订单层 validateOrderPreconditions 在事务内统计该 entry 已有 PAID/
+   *      FULFILLMENT_FAILED 订单总件数，加上本次 quantity 不得超过 maxPerUser。
+   *      防止用户反复下单（每次 qty=maxPerUser）累计突破限购。
+   * 默认 1（单件限购）。运营配置时需注意：这是"每人总限购量"，不是"单次限购"。
+   */
   maxPerUser: number;
   showCountdown: boolean;
   showProgress: boolean;
