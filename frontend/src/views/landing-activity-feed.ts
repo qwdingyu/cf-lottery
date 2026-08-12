@@ -25,6 +25,9 @@ export interface LandingHomeActivity {
     remaining?: number | null
     effectiveStockLimit?: number | null
     progressPercent?: number
+    showCountdown?: boolean
+    showProgress?: boolean
+    showStock?: boolean
   } | null
 }
 
@@ -47,6 +50,28 @@ export interface LandingActivityCard {
   remaining: number | null
   progressPercent: number
   href: string
+
+  // ── 店铺首页秒杀化（docs/205）所需字段 ──
+  /** 活动开始 ISO 8601 */
+  startAt: string
+  /** 活动结束 ISO 8601 */
+  endAt: string
+  /** 是否为秒杀活动 */
+  flashSaleEnabled: boolean
+  /** 是否要求直付 */
+  paymentRequired: boolean
+  /** 秒杀单价（分） */
+  priceCents: number | null
+  /** 币种 */
+  currency: string | null
+  /** 有效库存上限 */
+  effectiveStockLimit: number | null
+  /** 是否显示倒计时 */
+  showCountdown: boolean
+  /** 是否显示进度条 */
+  showProgress: boolean
+  /** 是否显示库存 */
+  showStock: boolean
 }
 
 export function classifyLandingActivity(activity: Pick<LandingHomeActivity, 'experienceType' | 'flashSale'>): LandingActivityKind {
@@ -134,5 +159,23 @@ export function buildLandingActivityCard(activity: LandingHomeActivity, freeLabe
         : Math.max(0, Math.floor(Number(flashSale.remaining) || 0)),
     progressPercent: Math.min(100, Math.max(0, Math.floor(Number(flashSale?.progressPercent) || 0))),
     href: `/lottery/${encodeURIComponent(activity.publicSlug)}`,
+
+    // 店铺首页秒杀化透传（docs/205）：倒计时/进度/库存展示都基于这些原始字段
+    startAt: String(activity.startAt || '').trim(),
+    endAt: String(activity.endAt || '').trim(),
+    flashSaleEnabled: badge === 'flash',
+    paymentRequired: flashSale?.paymentRequired === true,
+    priceCents:
+      flashSale?.priceCents !== null && flashSale?.priceCents !== undefined
+        ? Math.floor(Number(flashSale.priceCents) || 0)
+        : null,
+    currency: String(flashSale?.currency || '').trim() || null,
+    effectiveStockLimit:
+      flashSale?.effectiveStockLimit !== null && flashSale?.effectiveStockLimit !== undefined
+        ? Math.max(0, Math.floor(Number(flashSale.effectiveStockLimit) || 0))
+        : null,
+    showCountdown: flashSale?.showCountdown !== false,
+    showProgress: flashSale?.showProgress !== false,
+    showStock: flashSale?.showStock !== false,
   }
 }

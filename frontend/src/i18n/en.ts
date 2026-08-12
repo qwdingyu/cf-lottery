@@ -31,6 +31,23 @@ export default {
     refresh: "Refresh",
     notFound: "Shop not found",
     loadFailed: "Failed to load",
+    // ── Flash-sale upgrade (docs/205) ────────────────
+    flashBannerTitle: "⚡ Flash Sale",
+    flashBannerSub: "{n} flash sales are live — first come, first served!",
+    flashBannerUpcoming: "{n} starting soon",
+    countdownStartIn: "Starts in",
+    countdownEndIn: "Ends in",
+    countdownEnded: "Ended",
+    soldOut: "Sold out",
+    grabedPercent: "{n}% claimed",
+    remaining: "{n} left",
+    flashCta: "Grab now",
+    viewActivity: "View details",
+    endsAt: "Ends {time}",
+    startsAt: "Starts {time}",
+    flashTag: "Flash",
+    freeTag: "Free",
+    day: "d",
   },
 
   confirm: {

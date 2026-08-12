@@ -32,6 +32,23 @@ export default {
     refresh: "刷新",
     notFound: "店铺不存在",
     loadFailed: "加载失败",
+    // ── 秒杀化升级（docs/205） ──
+    flashBannerTitle: "⚡ 限时抢购",
+    flashBannerSub: "本店 {n} 场秒杀火热进行中，手慢无！",
+    flashBannerUpcoming: "{n} 场即将开始",
+    countdownStartIn: "距开始",
+    countdownEndIn: "距结束",
+    countdownEnded: "已结束",
+    soldOut: "已抢光",
+    grabedPercent: "已抢 {n}%",
+    remaining: "剩 {n} 份",
+    flashCta: "立即抢购",
+    viewActivity: "查看详情",
+    endsAt: "结束 {time}",
+    startsAt: "开始 {time}",
+    flashTag: "秒杀",
+    freeTag: "免费",
+    day: "天",
   },
 
   // ── 确认对话框（ConfirmDialog） ───────────────────────

@@ -100,4 +100,59 @@ describe('landing-activity-feed', () => {
     expect(resolveLandingEligibilityMode({ participationMode: 'registered' })).toBe('registered')
     expect(eligibilityModeI18nKey('invite')).toBe('landing.marketEligibilityInvite')
   })
+
+  it('倒计时字段透传：店铺首页秒杀化依赖 startAt/endAt 与展示开关（docs/205）', () => {
+    const card = buildLandingActivityCard({
+      publicSlug: 'flash-205',
+      title: '205 秒杀',
+      participationMode: 'open',
+      startAt: '2026-08-07T04:00:00.000Z',
+      endAt: '2026-08-07T05:00:00.000Z',
+      product: { title: '日卡', priceText: '¥10' },
+      flashSale: {
+        enabled: true,
+        paymentRequired: true,
+        priceCents: 990,
+        currency: 'cny',
+        sessionLabel: '20:00场',
+        remaining: 3,
+        effectiveStockLimit: 10,
+        progressPercent: 70,
+        showCountdown: true,
+        showProgress: false,
+        showStock: true,
+      },
+    }, '免费', NOW)
+
+    expect(card).toMatchObject({
+      badge: 'flash',
+      flashSaleEnabled: true,
+      paymentRequired: true,
+      priceCents: 990,
+      currency: 'cny',
+      effectiveStockLimit: 10,
+      showCountdown: true,
+      showProgress: false,
+      showStock: true,
+      startAt: '2026-08-07T04:00:00.000Z',
+      endAt: '2026-08-07T05:00:00.000Z',
+    })
+  })
+
+  it('非秒杀活动 flashSaleEnabled 为 false 且展示开关默认开启', () => {
+    const card = buildLandingActivityCard({
+      publicSlug: 'free-205',
+      title: '免费抽奖',
+      participationMode: 'open',
+      startAt: '2026-08-07T04:00:00.000Z',
+      endAt: '2026-08-07T05:00:00.000Z',
+    }, '免费', NOW)
+
+    expect(card.flashSaleEnabled).toBe(false)
+    expect(card.paymentRequired).toBe(false)
+    expect(card.priceCents).toBeNull()
+    expect(card.showCountdown).toBe(true)
+    expect(card.showProgress).toBe(true)
+    expect(card.showStock).toBe(true)
+  })
 })

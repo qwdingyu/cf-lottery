@@ -32,6 +32,8 @@ export default defineConfig({
       "frontend/src/views/lottery/flash-sale-merchandising.test.ts",
       // docs/137：公开首页活动矩阵卡片映射
       "frontend/src/views/landing-activity-feed.test.ts",
+      // docs/205：店铺秒杀化倒计时纯函数
+      "frontend/src/views/shop/countdown.test.ts",
       // 公开页体验氛围时长 / 主 CTA 文案 key（docs/095）
       "frontend/src/views/lottery/public-helpers.test.ts",
       // docs/096：体验别名与未知→Submit 回退
