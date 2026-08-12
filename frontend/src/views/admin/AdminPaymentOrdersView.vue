@@ -3,18 +3,18 @@
     <div class="toolbar">
       <div class="filters">
         <select v-model="filter.status" :disabled="loading" @change="searchData">
-          <option value="">全部状态</option>
-          <option value="pending">待支付</option>
-          <option value="paid">已支付</option>
-          <option value="paid_fulfillment_failed">发卡失败</option>
-          <option value="paid_late_needs_refund">待退款/人工处理</option>
-          <option value="needs_refund">旧尝试待退款</option>
-          <option value="expired">已过期</option>
-          <option value="cancelled">已取消</option>
-          <option value="refunded">已退款</option>
+          <option value="">{{ $t('adminPaymentOrders.allStatus') }}</option>
+          <option value="pending">{{ $t('adminPaymentOrders.statusPending') }}</option>
+          <option value="paid">{{ $t('adminPaymentOrders.statusPaid') }}</option>
+          <option value="paid_fulfillment_failed">{{ $t('adminPaymentOrders.statusFulfillmentFailed') }}</option>
+          <option value="paid_late_needs_refund">{{ $t('adminPaymentOrders.statusLateNeedsRefund') }}</option>
+          <option value="needs_refund">{{ $t('adminPaymentOrders.statusNeedsRefund') }}</option>
+          <option value="expired">{{ $t('adminPaymentOrders.statusExpired') }}</option>
+          <option value="cancelled">{{ $t('adminPaymentOrders.statusCancelled') }}</option>
+          <option value="refunded">{{ $t('adminPaymentOrders.statusRefunded') }}</option>
         </select>
         <select v-model="filter.provider" :disabled="loading" @change="searchData">
-          <option value="">全部渠道</option>
+          <option value="">{{ $t('adminPaymentOrders.allProviders') }}</option>
           <option v-for="provider in providerOptions" :key="provider.name" :value="provider.name">
             {{ provider.displayName }}
           </option>
@@ -22,34 +22,34 @@
         <input
           v-model.trim="filter.drawId"
           type="search"
-          placeholder="活动 ID"
+          :placeholder="$t('adminPaymentOrders.drawIdPlaceholder')"
           :disabled="loading"
           @keyup.enter="searchData"
         />
-        <button class="btn btn-primary btn-sm" type="button" :disabled="loading" @click="searchData">查询</button>
+        <button class="btn btn-primary btn-sm" type="button" :disabled="loading" @click="searchData">{{ $t('adminPaymentOrders.search') }}</button>
       </div>
       <div class="toolbar-actions">
-        <button class="btn btn-ghost btn-sm" type="button" :disabled="loading" @click="loadData">刷新</button>
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="loading" @click="loadData">{{ $t('adminPaymentOrders.refresh') }}</button>
       </div>
     </div>
 
     <div v-if="error" class="table-error" role="alert">
       <span>{{ error }}</span>
-      <button class="btn btn-ghost btn-xs" type="button" :disabled="loading" @click="loadData">重试</button>
+      <button class="btn btn-ghost btn-xs" type="button" :disabled="loading" @click="loadData">{{ $t('adminPaymentOrders.retry') }}</button>
     </div>
 
-    <div class="table-wrap" role="region" aria-label="支付订单列表" tabindex="0" :aria-busy="loading">
+    <div class="table-wrap" role="region" aria-label="Payment Orders" tabindex="0" :aria-busy="loading">
       <table class="admin-table">
         <thead>
           <tr>
-            <th>订单</th>
-            <th>活动</th>
-            <th>参与者</th>
-            <th>金额</th>
-            <th>状态</th>
-            <th>发卡</th>
-            <th>时间</th>
-            <th>操作</th>
+            <th>{{ $t('adminPaymentOrders.colOrder') }}</th>
+            <th>{{ $t('adminPaymentOrders.colDraw') }}</th>
+            <th>{{ $t('adminPaymentOrders.colParticipant') }}</th>
+            <th>{{ $t('adminPaymentOrders.colAmount') }}</th>
+            <th>{{ $t('adminPaymentOrders.colStatus') }}</th>
+            <th>{{ $t('adminPaymentOrders.colFulfillment') }}</th>
+            <th>{{ $t('adminPaymentOrders.colTime') }}</th>
+            <th>{{ $t('adminPaymentOrders.colAction') }}</th>
           </tr>
         </thead>
         <tbody v-if="loading">
@@ -64,7 +64,7 @@
               <div class="cell-sub">{{ providerLabel(order.provider) }}</div>
               <div v-if="order.providerTradeNo" class="cell-sub">{{ order.providerTradeNo }}</div>
               <div v-if="order.pendingRefundAttemptCount" class="cell-sub refund-hint">
-                旧尝试待退款 {{ order.pendingRefundAttemptCount }} 次
+                {{ $t('adminPaymentOrders.refundAttemptPrefix', { count: order.pendingRefundAttemptCount }) }}
                 <span v-if="order.pendingRefundProviderTradeNo">/{{ order.pendingRefundProviderTradeNo }}</span>
               </div>
             </td>
@@ -80,13 +80,13 @@
             <td><span class="tag" :class="statusClass(order.status, order.pendingRefundAttemptCount)">{{ statusLabel(order.status, order.pendingRefundAttemptCount) }}</span></td>
             <td>
               <span class="tag" :class="order.hasPrizeCode ? 'tag-success' : 'tag-muted'">
-                {{ order.hasPrizeCode ? '已发卡' : '未发卡' }}
+                {{ order.hasPrizeCode ? $t('adminPaymentOrders.issued') : $t('adminPaymentOrders.notIssued') }}
               </span>
               <div v-if="order.prizeCodeStatus" class="cell-sub">{{ order.prizeCodeStatus }}</div>
             </td>
             <td>
               <div class="cell-main">{{ formatDate(order.createdAt) }}</div>
-              <div v-if="order.paidAt" class="cell-sub">支付 {{ formatDate(order.paidAt) }}</div>
+              <div v-if="order.paidAt" class="cell-sub">{{ $t('adminPaymentOrders.paidAtPrefix') }} {{ formatDate(order.paidAt) }}</div>
             </td>
             <td>
               <button
@@ -95,32 +95,34 @@
                 :disabled="mutatingId === order.id || order.status !== 'paid_fulfillment_failed'"
                 @click="retryFulfillment(order)"
               >
-                {{ mutatingId === order.id ? '处理中' : '补发卡密' }}
+                {{ mutatingId === order.id ? $t('adminPaymentOrders.processing') : $t('adminPaymentOrders.retryFulfillment') }}
               </button>
             </td>
           </tr>
           <tr v-if="orders.length === 0">
-            <td colspan="8" class="empty-text">暂无支付订单</td>
+            <td colspan="8" class="empty-text">{{ $t('adminPaymentOrders.empty') }}</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <div class="pagination-row">
-      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || page <= 1" @click="previousPage">上一页</button>
-      <span class="pagination-text">第 {{ page }} 页 / 共 {{ total }} 条</span>
-      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || !hasMore" @click="nextPage">下一页</button>
+      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || page <= 1" @click="previousPage">{{ $t('adminPaymentOrders.prevPage') }}</button>
+      <span class="pagination-text">{{ $t('adminPaymentOrders.pageInfo', { page, total }) }}</span>
+      <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || !hasMore" @click="nextPage">{{ $t('adminPaymentOrders.nextPage') }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { formatDate } from '@/composables/useFormat'
 import type { AdminPaymentOrder, AdminPaymentOrdersResult } from '@/types/admin'
 
+const { t } = useI18n()
 const { showToast } = useToast()
 const loading = ref(false)
 const error = ref('')
@@ -157,7 +159,7 @@ async function loadData() {
     providerOptions.value = data.providers || []
     total.value = data.total
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '加载失败'
+    error.value = err instanceof Error ? err.message : t('adminPaymentOrders.loadFailed')
   } finally {
     loading.value = false
   }
@@ -187,25 +189,25 @@ async function retryFulfillment(order: AdminPaymentOrder) {
     await adminRequest(`/api/admin/payment-orders/${encodeURIComponent(order.id)}/retry-fulfillment`, {
       method: 'POST',
     })
-    showToast('补发成功', 'success')
+    showToast(t('adminPaymentOrders.retrySuccess'), 'success')
     await loadData()
   } catch (err) {
-    showToast(err instanceof Error ? err.message : '补发失败', 'error')
+    showToast(err instanceof Error ? err.message : t('adminPaymentOrders.retryFailed'), 'error')
   } finally {
     mutatingId.value = ''
   }
 }
 
 function statusLabel(status: string, pendingRefundAttemptCount = 0) {
-  if (pendingRefundAttemptCount > 0) return '旧尝试待退款'
+  if (pendingRefundAttemptCount > 0) return t('adminPaymentOrders.statusNeedsRefund')
   const map: Record<string, string> = {
-    pending: '待支付',
-    paid: '已支付',
-    paid_fulfillment_failed: '发卡失败',
-    paid_late_needs_refund: '待退款/人工处理',
-    refunded: '已退款',
-    expired: '已过期',
-    cancelled: '已取消',
+    pending: t('adminPaymentOrders.statusPending'),
+    paid: t('adminPaymentOrders.statusPaid'),
+    paid_fulfillment_failed: t('adminPaymentOrders.statusFulfillmentFailed'),
+    paid_late_needs_refund: t('adminPaymentOrders.statusLateNeedsRefund'),
+    refunded: t('adminPaymentOrders.statusRefunded'),
+    expired: t('adminPaymentOrders.statusExpired'),
+    cancelled: t('adminPaymentOrders.statusCancelled'),
   }
   return map[status] || status
 }

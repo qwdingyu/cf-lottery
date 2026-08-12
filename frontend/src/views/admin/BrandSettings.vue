@@ -1,31 +1,33 @@
 <template>
   <div class="card card-flat brand-settings">
-    <h3>品牌设置</h3>
+    <h3>{{ $t('brand.title') }}</h3>
     <div class="form-row">
-      <label>店铺链接</label>
+      <label>{{ $t('brand.shopLink') }}</label>
       <div class="input-group">
         <input :value="shopUrl" readonly class="form-input" @focus="($event.target as HTMLInputElement).select()" />
-        <button class="btn btn-sm" @click="copyShopUrl" :disabled="!!copyFeedback">{{ copyFeedback || '复制' }}</button>
+        <button class="btn btn-sm" @click="copyShopUrl" :disabled="!!copyFeedback">{{ copyFeedback || $t('brand.copy') }}</button>
       </div>
-      <small class="hint">将此链接分享到 QQ/微信/群公告，用户点击即可看到您的所有公开活动</small>
+      <small class="hint">{{ $t('brand.shopLinkHint') }}</small>
     </div>
     <div class="form-row">
-      <label>自定义链接</label>
+      <label>{{ $t('brand.customLink') }}</label>
       <div class="input-group">
-        <input v-model="editingSlug" maxlength="30" placeholder="输入英文名如 my-store" class="form-input" />
-        <button class="btn btn-sm" @click="generateSlug">随机</button>
-        <button class="btn btn-sm btn-primary" :disabled="saving" @click="saveSlug">保存</button>
+        <input v-model="editingSlug" maxlength="30" :placeholder="$t('brand.slugPlaceholder')" class="form-input" />
+        <button class="btn btn-sm" @click="generateSlug">{{ $t('brand.random') }}</button>
+        <button class="btn btn-sm btn-primary" :disabled="saving" @click="saveSlug">{{ $t('brand.save') }}</button>
       </div>
       <small v-if="slugError" class="error">{{ slugError }}</small>
-      <small v-else class="hint">留空保存默认值;只能包含字母数字和短横线;修改后旧链接立即失效</small>
+      <small v-else class="hint">{{ $t('brand.slugHint') }}</small>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { adminRequest } from '@/composables/useAdminRequest'
 
+const { t } = useI18n()
 const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
 const shopUrl = ref('')
 const editingSlug = ref('')
@@ -48,27 +50,27 @@ async function copyShopUrl() {
     const input = document.querySelector('.brand-settings input[readonly]') as HTMLInputElement
     if (input) { input.select(); document.execCommand('copy') }
   }
-  copyFeedback.value = '已复制'
+  copyFeedback.value = t('brand.copied')
   setTimeout(() => { copyFeedback.value = '' }, 2000)
 }
 
 async function load() {
   const data = await adminRequest<{ storeSlug?: string; config?: any }>('/api/admin/brand')
   const slug = data.storeSlug || ''
-  shopUrl.value = slug ? `${baseUrl}/shop/${slug}` : '(未配置,创建租户后自动生成)'
+  shopUrl.value = slug ? `${baseUrl}/shop/${slug}` : t('brand.notConfigured')
   editingSlug.value = slug
 }
 
 async function saveSlug() {
   const v = editingSlug.value.trim()
-  if (v && !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(v)) { slugError.value = '只能包含小写字母、数字和短横线'; return }
+  if (v && !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(v)) { slugError.value = t('brand.slugInvalid'); return }
   saving.value = true; slugError.value = ''
   try {
     const r = await adminRequest<{ storeSlug?: string }>('/api/admin/brand', { method:'PUT', body: JSON.stringify({ storeSlug: v, logo:'', primaryColor:'', companyName:'', domain:'' }) })
     editingSlug.value = r.storeSlug || ''
     shopUrl.value = r.storeSlug ? `${baseUrl}/shop/${r.storeSlug}` : ''
   } catch(e:any) {
-    slugError.value = e.message || '保存失败'
+    slugError.value = e.message || t('brand.saveFailed')
   } finally { saving.value = false }
 }
 
