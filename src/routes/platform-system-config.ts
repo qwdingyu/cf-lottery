@@ -11,6 +11,7 @@ import type { AppEnv } from "../bindings";
 import { desc, eq } from "drizzle-orm";
 import { withDbTransaction } from "../db/client";
 import { clampInteger, fail, getDb, ok, safeJsonBody } from "../lib/http";
+import { getEnv } from "../lib/platform";
 import { decryptSecretConfigValueObserved } from "../lib/secret-config";
 import { requireAuth, requirePlatformMember } from "../middleware/auth";
 import {
@@ -40,7 +41,7 @@ platformSystemConfigRoute.use("*", requireAuth, requirePlatformMember(["platform
 /** 获取系统配置 */
 platformSystemConfigRoute.get("/", async (c) => {
   const db = getDb(c);
-  const encryptionKey = c.env?.CREDENTIALS_ENCRYPTION_KEY;
+  const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY");
   const config = await getSystemConfig(db, encryptionKey);
   const definitions = adminSystemConfigDefinitions().map((definition) => {
     if (!definition.sensitive) return definition;
@@ -227,7 +228,7 @@ platformSystemConfigRoute.post("/email-test", async (c) => {
   const to = String(body.to || "").trim();
   if (!to || !to.includes("@")) return fail(c, "请输入有效的邮箱地址", 400);
 
-  const apiKey = c.env.RESEND_API_KEY;
+  const apiKey = getEnv(c, "RESEND_API_KEY");
   if (!apiKey) return fail(c, "RESEND_API_KEY 未配置", 500);
 
   try {
