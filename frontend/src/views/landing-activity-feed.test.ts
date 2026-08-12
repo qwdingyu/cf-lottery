@@ -62,7 +62,8 @@ describe('landing-activity-feed', () => {
     expect(card.priceText).toBe('免费')
     expect(card.badge).toBe('free')
     expect(card.paymentMode).toBe('free')
-    expect(paymentModeI18nKey(card.paymentMode)).toBe('marketPaymentFree')
+    // i18n key 带 landing. 前缀（页面 $t() 直接取用，避免回退显示 key 本身）
+    expect(paymentModeI18nKey(card.paymentMode)).toBe('landing.marketPaymentFree')
   })
 
   it('外部承接活动只标识导流，不伪装成站内支付', () => {
@@ -72,7 +73,7 @@ describe('landing-activity-feed', () => {
     })
 
     expect(mode).toBe('external')
-    expect(paymentModeI18nKey(mode)).toBe('marketPaymentExternal')
+    expect(paymentModeI18nKey(mode)).toBe('landing.marketPaymentExternal')
   })
 
   it('按开始结束时间识别活动阶段标签', () => {
@@ -88,7 +89,7 @@ describe('landing-activity-feed', () => {
       startAt: '2026-08-07T03:00:00.000Z',
       endAt: '2026-08-07T04:00:00.000Z',
     }, NOW)).toBe('ended')
-    expect(activityPhaseI18nKey('upcoming')).toBe('marketPhaseUpcoming')
+    expect(activityPhaseI18nKey('upcoming')).toBe('landing.marketPhaseUpcoming')
   })
 
   it('公开活动卡片标识参与门槛，避免用户点击后才发现受限', () => {
@@ -97,6 +98,6 @@ describe('landing-activity-feed', () => {
     expect(resolveLandingEligibilityMode({ participationMode: 'invite_code' })).toBe('invite')
     expect(resolveLandingEligibilityMode({ participationMode: 'roster' })).toBe('roster')
     expect(resolveLandingEligibilityMode({ participationMode: 'registered' })).toBe('registered')
-    expect(eligibilityModeI18nKey('invite')).toBe('marketEligibilityInvite')
+    expect(eligibilityModeI18nKey('invite')).toBe('landing.marketEligibilityInvite')
   })
 })

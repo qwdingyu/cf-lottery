@@ -60,9 +60,12 @@ export function resolveLandingPaymentMode(activity: Pick<LandingHomeActivity, 'f
 }
 
 export function paymentModeI18nKey(mode: LandingPaymentMode): string {
-  if (mode === 'direct') return 'marketPaymentDirect'
-  if (mode === 'external') return 'marketPaymentExternal'
-  return 'marketPaymentFree'
+  // 返回带命名空间前缀的完整 i18n key：页面 $t() 直接取用。
+  // 注意：i18n 中这些文案在 landing 命名空间下（landing.marketPayment*），
+  // 若返回裸 key 会导致 $t('marketPaymentFree') 找不到 → vue-i18n 回退显示 key 本身（写死文案）。
+  if (mode === 'direct') return 'landing.marketPaymentDirect'
+  if (mode === 'external') return 'landing.marketPaymentExternal'
+  return 'landing.marketPaymentFree'
 }
 
 export function resolveLandingActivityPhase(
@@ -77,9 +80,10 @@ export function resolveLandingActivityPhase(
 }
 
 export function activityPhaseI18nKey(phase: LandingActivityPhase): string {
-  if (phase === 'upcoming') return 'marketPhaseUpcoming'
-  if (phase === 'ended') return 'marketPhaseEnded'
-  return 'marketPhaseRunning'
+  // 带 landing. 前缀（见 paymentModeI18nKey 注释）——避免 $t 找不到回退显示 key 本身
+  if (phase === 'upcoming') return 'landing.marketPhaseUpcoming'
+  if (phase === 'ended') return 'landing.marketPhaseEnded'
+  return 'landing.marketPhaseRunning'
 }
 
 export function resolveLandingEligibilityMode(activity: Pick<LandingHomeActivity, 'participationMode'>): LandingEligibilityMode {
@@ -93,12 +97,13 @@ export function resolveLandingEligibilityMode(activity: Pick<LandingHomeActivity
 }
 
 export function eligibilityModeI18nKey(mode: LandingEligibilityMode): string {
-  if (mode === 'password') return 'marketEligibilityPassword'
-  if (mode === 'invite') return 'marketEligibilityInvite'
-  if (mode === 'roster') return 'marketEligibilityRoster'
-  if (mode === 'registered') return 'marketEligibilityRegistered'
-  if (mode === 'restricted') return 'marketEligibilityRestricted'
-  return 'marketEligibilityOpen'
+  // 带 landing. 前缀（见 paymentModeI18nKey 注释）
+  if (mode === 'password') return 'landing.marketEligibilityPassword'
+  if (mode === 'invite') return 'landing.marketEligibilityInvite'
+  if (mode === 'roster') return 'landing.marketEligibilityRoster'
+  if (mode === 'registered') return 'landing.marketEligibilityRegistered'
+  if (mode === 'restricted') return 'landing.marketEligibilityRestricted'
+  return 'landing.marketEligibilityOpen'
 }
 
 export function buildLandingActivityCard(activity: LandingHomeActivity, freeLabel: string, nowMs = Date.now()): LandingActivityCard {
