@@ -3800,6 +3800,52 @@ async function handleEdit(draw: LotteryDraw) {
   createStepFocus.value = needPrizes ? 4 : 1
   showCreateModal.value = true
   if (needPrizes) nextTick(() => focusCreateStep(4))
+
+  // ── 修复 #10：编辑 roster 模式时加载已有名单成员，供运营确认/追加 ──
+  if (draw.participationMode === 'roster') {
+    loadRosterForEdit(draw.id).catch(() => { /* 加载失败不阻塞编辑流程 */ })
+  }
+  // ── 修复 #11：编辑 invite_code 模式时加载已有邀请码数量，避免重复生成 ──
+  if (draw.participationMode === 'invite_code') {
+    loadInviteCodeCountForEdit(draw.id).catch(() => { /* 加载失败不阻塞编辑流程 */ })
+  }
+}
+
+/**
+ * 加载已有名单成员到 rosterInput（编辑回显用）。
+ * 不阻塞编辑流程，失败时保持空输入框。
+ */
+async function loadRosterForEdit(drawId: string) {
+  try {
+    const data = await adminRequest<{ members: Array<{ identityValue: string; displayName: string }>; totalCount: number }>(
+      `/api/admin/draws/${drawId}/roster`,
+    )
+    if (data.members?.length > 0) {
+      // 把名单成员转换为「每行一个邮箱」的格式，与 saveDrawRoster 的 split/join 一致
+      rosterInput.value = data.members.map((m) => m.identityValue).join('\n')
+    }
+  } catch {
+    // roster 加载失败不阻断编辑主流程
+    rosterInput.value = ''
+  }
+}
+
+/**
+ * 加载已有邀请码数量到 inviteCodeCount（编辑回显用）。
+ * 不阻塞编辑流程，失败时保持默认值 10。
+ */
+async function loadInviteCodeCountForEdit(drawId: string) {
+  try {
+    const data = await adminRequest<{ codes: Array<unknown>; totalCount: number }>(
+      `/api/admin/draws/${drawId}/invite-codes`,
+    )
+    if (data.totalCount > 0) {
+      inviteCodeCount.value = data.totalCount
+    }
+  } catch {
+    // 邀请码加载失败不阻断编辑主流程
+    inviteCodeCount.value = 10
+  }
 }
 
 async function handleToggleVisibility(id: string, visible: number | undefined) {
@@ -3898,7 +3944,8 @@ async function handleCreate() {
       // instant 不写 drawAt，避免运营误以为定时开奖
       drawAt: schedule.resultMode === 'instant' ? undefined : drawAtIso,
       drawTrigger: schedule.drawTrigger,
-      winnerCount: activityKind === 'lottery' ? Number(form.value.winnerCount) || 1 : 0,
+      winnerCount: (activityKind === 'lottery' || (activityKind === 'claim' && form.value.experienceType === 'flash_sale'))
+        ? Number(form.value.winnerCount) || 1 : 0,
       maxParticipants: form.value.maxParticipants ? Number(form.value.maxParticipants) : undefined,
       // 预计参与人数（运营参考值，仅展示用）：非负数时发送，0 表示未设置
       expectedParticipants: form.value.expectedParticipants >= 0 ? Number(form.value.expectedParticipants) : 0,
@@ -3925,6 +3972,12 @@ async function handleCreate() {
           syncLoserReward()
           const config = form.value.activityConfig as any
           return { version: 1, kind: 'lottery', loserReward: config?.loserReward || { enabled: false, couponLabel: '' } }
+        }
+        // 其他活动类型（checkin/signup_chain/claim/approval/reservation/waitlist 等）：
+        // 如果表单有 activityConfig.kind，透传以保留配置；否则留空
+        const cfg = form.value.activityConfig as any
+        if (cfg && cfg.kind) {
+          return normalizeActivityConfig(form.value.activityKind || 'lottery', cfg)
         }
         return undefined
       })(),

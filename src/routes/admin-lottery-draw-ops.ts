@@ -754,6 +754,36 @@ route.get("/draws/:id/publish-check", async (c) => {
   return ok(c, check);
 });
 
+/** 查询名单成员（roster 模式） */
+route.get("/draws/:id/roster", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  // 读取现有名单成员，供编辑回显（identity_email/display_name 与 POST 导入一致）
+  const members = await db
+    .select({
+      identityValue: lotteryRosterMembers.identityValue,
+      displayName: lotteryRosterMembers.displayName,
+      createdAt: lotteryRosterMembers.createdAt,
+    })
+    .from(lotteryRosterMembers)
+    .where(and(
+      eq(lotteryRosterMembers.tenantId, tenantId),
+      eq(lotteryRosterMembers.drawId, drawId),
+    ))
+    .orderBy(lotteryRosterMembers.createdAt);
+
+  return ok(c, { members, totalCount: members.length });
+});
 /** 导入名单成员（roster 模式） */
 route.post("/draws/:id/roster", async (c) => {
   const db = getDb(c);
@@ -794,6 +824,38 @@ route.post("/draws/:id/roster", async (c) => {
   }
 
   return ok(c, { imported, skipped });
+/** 查询邀请码（invite_code 模式） */
+route.get("/draws/:id/invite-codes", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const [draw] = await db
+    .select({ id: lotteryDraws.id })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  // 读取现有邀请码，供编辑回显数量（used_count/active 一并返回，运营可评估码池健康度）
+  const codes = await db
+    .select({
+      code: lotteryInviteCodes.code,
+      maxUses: lotteryInviteCodes.maxUses,
+      usedCount: lotteryInviteCodes.usedCount,
+      active: lotteryInviteCodes.active,
+      createdAt: lotteryInviteCodes.createdAt,
+    })
+    .from(lotteryInviteCodes)
+    .where(and(
+      eq(lotteryInviteCodes.tenantId, tenantId),
+      eq(lotteryInviteCodes.drawId, drawId),
+    ))
+    .orderBy(lotteryInviteCodes.createdAt);
+
+  return ok(c, { codes, totalCount: codes.length });
+});
 });
 
 /** 生成邀请码（invite_code 模式） */
