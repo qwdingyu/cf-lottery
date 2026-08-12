@@ -246,12 +246,6 @@ export function validateActivityConfigForPublish(activityKind: string, rawConfig
   };
 }
 
-export function normalizeActivityConfigForStorage(activityKind: string, rawConfig: unknown): string {
-  const result = validateActivityConfigForPublish(activityKind, rawConfig);
-  if (!result.config) return "{}";
-  return JSON.stringify(result.config);
-}
-
 export function parseActivityConfig(rawConfig: unknown): ActivityConfigV1 | null {
   const raw = parseJsonObject(rawConfig);
   if (!raw) return null;

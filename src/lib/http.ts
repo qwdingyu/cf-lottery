@@ -26,18 +26,6 @@ export function fail(c: Context<AppEnv>, message: string, status = 400) {
 }
 
 /**
- * 获取请求来源域名
- */
-export function getOrigin(c: Context<AppEnv>): string {
-  const origin = c.req.header("Origin") || c.req.header("Referer") || "";
-  try {
-    return new URL(origin).origin;
-  } catch {
-    return "";
-  }
-}
-
-/**
  * 安全解析 JSON 请求体
  */
 export async function safeJsonBody<T>(c: Context<AppEnv>): Promise<T | null> {

@@ -67,6 +67,25 @@ export interface SendEmailResult {
   ok: boolean; message?: string; id?: string;
 }
 
+/**
+ * 私有工厂：按邮件环境构建 EmailService 实例。
+ * 为什么提取（docs/196 M1）：sendEmail / sendAccessCode 重复构造 15 行，
+ * 通道优先级（cf-auth 网关 → Resend → CF Email）必须单一实现，避免两处漂移。
+ */
+function createEmailService(emailEnv: EmailEnv): EmailService {
+  const from = emailEnv.emailFromName
+    ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
+    : (emailEnv.emailFrom || "noreply@eforge.xyz");
+  return new EmailService({
+    ...(emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret
+      ? { remote: { url: `${emailEnv.cfAuthIssuer}/api/email/send`, clientId: emailEnv.cfAuthClientId, clientSecret: emailEnv.cfAuthClientSecret } }
+      : {}),
+    ...(emailEnv.resendApiKey ? { apiKey: emailEnv.resendApiKey } : {}),
+    ...(emailEnv.email ? { emailBinding: emailEnv.email } : {}),
+    from,
+  });
+}
+
 export async function sendEmail(
   emailEnv: EmailEnv,
   input: SendEmailInput,
@@ -75,19 +94,8 @@ export async function sendEmail(
   if (!tpl) return { ok: false, message: `模板不存在: ${input.template}` };
   const subject = templateSubjects[input.template] || "通知";
   const html = interpolate(tpl, input.templateData);
-  const from = emailEnv.emailFromName
-    ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
-    : (emailEnv.emailFrom || "noreply@eforge.xyz");
 
-  const svc = new EmailService({
-    ...(emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret
-      ? { remote: { url: `${emailEnv.cfAuthIssuer}/api/email/send`, clientId: emailEnv.cfAuthClientId, clientSecret: emailEnv.cfAuthClientSecret } }
-      : {}),
-    ...(emailEnv.resendApiKey ? { apiKey: emailEnv.resendApiKey } : {}),
-    ...(emailEnv.email ? { emailBinding: emailEnv.email } : {}),
-    from,
-  });
-
+  const svc = createEmailService(emailEnv);
   const result = await svc.send({ to: input.to, subject, html });
   return { ok: result.ok, message: result.error || result.messageId, id: result.messageId };
 }
@@ -97,18 +105,8 @@ export async function sendAccessCode(
   to: string, drawName: string, code: string,
 ): Promise<{ ok: boolean; message: string }> {
   const html = interpolate(emailAccessCodeHtml, { drawName, code });
-  const from = emailEnv.emailFromName
-    ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
-    : (emailEnv.emailFrom || "noreply@eforge.xyz");
 
-  const svc = new EmailService({
-    ...(emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret
-      ? { remote: { url: `${emailEnv.cfAuthIssuer}/api/email/send`, clientId: emailEnv.cfAuthClientId, clientSecret: emailEnv.cfAuthClientSecret } }
-      : {}),
-    ...(emailEnv.resendApiKey ? { apiKey: emailEnv.resendApiKey } : {}),
-    from,
-  });
-
+  const svc = createEmailService(emailEnv);
   const result = await svc.send({ to, subject: "您的抽奖验证码", html });
   return { ok: result.ok, message: result.error || "发送成功" };
 }

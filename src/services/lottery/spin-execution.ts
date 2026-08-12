@@ -607,12 +607,14 @@ async function buildSpinResultFromRow(
 export async function cleanExpiredSpins(db: DbType, maxAgeMs = 7 * 24 * 60 * 60 * 1000): Promise<number> {
   const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
   // 只清理不被 lottery_winners.spinId 引用的 spins（保留 instant 中奖记录可追溯性）
+  // M3: NOT IN → NOT EXISTS —— 大表下 NOT IN 子查询性能差（SQLite 需构建完整结果集再比对），
+  // NOT EXISTS 用相关子查询短路，命中即停；且 lottery_winners.spinId 有联合索引可走。
   const result = await db
     .delete(lotterySpins)
     .where(
       and(
         sql`${lotterySpins.createdAt} < ${cutoff}`,
-        sql`${lotterySpins.id} NOT IN (SELECT spin_id FROM lottery_winners WHERE spin_id != '')`,
+        sql`NOT EXISTS (SELECT 1 FROM lottery_winners WHERE lottery_winners.spin_id = ${lotterySpins.id})`,
       ),
     );
   return result.rowsAffected ?? 0;

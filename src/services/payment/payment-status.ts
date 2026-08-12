@@ -92,6 +92,4 @@ export const PAYMENT_ORDER_ITEM_STATUS = {
 
 export type PaymentOrderItemStatus = typeof PAYMENT_ORDER_ITEM_STATUS[keyof typeof PAYMENT_ORDER_ITEM_STATUS];
 
-export function isFulfilledOrderItemStatus(status: string): boolean {
-  return status === PAYMENT_ORDER_ITEM_STATUS.FULFILLED;
-}
+

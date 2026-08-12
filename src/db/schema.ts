@@ -527,7 +527,10 @@ export const auditLogs = sqliteTable("audit_logs", {
   targetId: text("target_id").notNull(),
   metadataJson: text("metadata_json").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
-});
+}, (t) => ({
+  /** H1: createdAt 索引用于 runRetentionCleanup 按时间范围批量删除，避免全表扫描 */
+  createdAtIdx: index("idx_audit_logs_created").on(t.createdAt),
+}));
 
 // ── 活动结果 ──
 // 抽奖继续使用 lottery_winners；接龙、预约、候补、审核等活动使用统一 outcome 记录。
