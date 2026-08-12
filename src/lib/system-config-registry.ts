@@ -216,3 +216,13 @@ export function adminSystemConfigDefinitions(): SystemConfigDefinition[] {
 export async function isCommunityFeatureEnabled(db: DbType): Promise<boolean> {
   return readSystemConfigBoolean(db, "community_feature_enabled");
 }
+
+/**
+ * 店铺功能全局开关（docs/204）：
+ * 读取 system_config 的 shop_feature_enabled（默认 "true"）。
+ * 未配置或值为 "true" 时视为启用，仅显式 "false" 关闭。
+ * 供 /api/admin/brand 与主页右上角「我的商铺」按钮共用。
+ */
+export async function isShopFeatureEnabled(db: DbType): Promise<boolean> {
+  return readSystemConfigBoolean(db, "shop_feature_enabled");
+}

@@ -214,7 +214,9 @@ async function loadShopUrl() {
   storeSlug.value = ''
   if (!isLoggedIn.value) return
   try {
-    const data = await adminRequest<{ storeSlug?: string }>('/api/admin/brand')
+    const data = await adminRequest<{ storeSlug?: string; shopFeatureEnabled?: boolean }>('/api/admin/brand')
+    // L3 系统配置 shop_feature_enabled=false 时隐藏「我的商铺」按钮
+    if (data.shopFeatureEnabled === false) { storeSlug.value = ''; return }
     storeSlug.value = data.storeSlug || ''
   } catch {
     storeSlug.value = '' // 未配置店铺或请求失败时不显示按钮

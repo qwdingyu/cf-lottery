@@ -7,6 +7,7 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
 import { withDbTransaction } from "../db/client";
+import { isShopFeatureEnabled } from "../lib/system-config-registry";
 import {
   apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords,
   tenants,
@@ -276,7 +277,9 @@ adminLotteryRoute.get("/brand", async (c) => {
   const [tenant] = await db.select({ brandConfig: tenants.brandConfig, storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
   if (!tenant) return fail(c, "租户不存在", 404);
   const config = tryParseJson(tenant.brandConfig);
-  return ok(c, { config, storeSlug: tenant.storeSlug || "" });
+  // 店铺功能开关：L3 平台运营者配置，控制主页右上角「我的商铺」按钮与 /admin/brand 的「打开」按钮
+  const shopFeatureEnabled = await isShopFeatureEnabled(db);
+  return ok(c, { config, storeSlug: tenant.storeSlug || "", shopFeatureEnabled });
 });
 
 /** 更新品牌配置 */

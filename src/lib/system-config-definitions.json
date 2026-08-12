@@ -685,5 +685,17 @@
     "group": "平台运营",
     "order": 35,
     "difficulty": "basic"
+  },
+  {
+    "key": "shop_feature_enabled",
+    "label": "店铺功能开关",
+    "description": "平台级一键启停所有租户的店铺功能。关闭后主页右上角不显示「我的商铺」按钮，/admin/brand 页面中店铺链接仍可查看但「打开」按钮隐藏。",
+    "effect": "配置关闭后，主页右上角隐藏「我的商铺」按钮；/admin/brand 页面店铺链接只显示复制按钮，不显示打开按钮。",
+    "scope": "admin",
+    "type": "boolean",
+    "defaultValue": "true",
+    "group": "平台运营",
+    "order": 36,
+    "difficulty": "basic"
   }
 ]

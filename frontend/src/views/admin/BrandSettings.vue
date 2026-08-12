@@ -6,6 +6,13 @@
       <div class="input-group">
         <input :value="shopUrl" readonly class="form-input" @focus="($event.target as HTMLInputElement).select()" />
         <button class="btn btn-sm" @click="copyShopUrl" :disabled="!!copyFeedback">{{ copyFeedback || $t('brand.copy') }}</button>
+        <a
+          v-if="shopFeatureEnabled && shopUrl && !shopUrl.includes($t('brand.notConfigured'))"
+          :href="shopUrl"
+          target="_blank"
+          rel="noopener"
+          class="btn btn-sm btn-primary"
+        >{{ $t('brand.open') }}</a>
       </div>
       <small class="hint">{{ $t('brand.shopLinkHint') }}</small>
     </div>
@@ -30,6 +37,7 @@ import { adminRequest } from '@/composables/useAdminRequest'
 const { t } = useI18n()
 const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
 const shopUrl = ref('')
+const shopFeatureEnabled = ref(true)
 const editingSlug = ref('')
 const saving = ref(false)
 const slugError = ref('')
@@ -55,9 +63,10 @@ async function copyShopUrl() {
 }
 
 async function load() {
-  const data = await adminRequest<{ storeSlug?: string; config?: any }>('/api/admin/brand')
+  const data = await adminRequest<{ storeSlug?: string; config?: any; shopFeatureEnabled?: boolean }>('/api/admin/brand')
   const slug = data.storeSlug || ''
   shopUrl.value = slug ? `${baseUrl}/shop/${slug}` : t('brand.notConfigured')
+  shopFeatureEnabled.value = data.shopFeatureEnabled !== false
   editingSlug.value = slug
 }
 
