@@ -3,7 +3,7 @@
     <div class="toolbar">
       <div class="filters">
         <span class="toolbar-title">{{ $t('adminPlatformTarget.title') }}</span>
-        <select v-model="platformFilter" class="form-select form-select-sm" @change="loadTargets" style="margin-left: 8px; width: 140px;">
+        <select v-model="platformFilter" :aria-label="$t('adminPlatformTarget.filterAll')" @change="loadTargets">
           <option value="">{{ $t('adminPlatformTarget.filterAll') }}</option>
           <option v-for="p in SUPPORTED_PLATFORMS" :key="p.value" :value="p.value">{{ p.label }}</option>
         </select>
@@ -77,51 +77,53 @@
       hide-actions
     >
       <form @submit.prevent="saveTarget">
-        <div v-if="!editingTarget" class="form-group">
-          <label>{{ $t('adminPlatformTarget.labelPlatform') }} <span class="required">*</span></label>
-          <select v-model="form.platform" class="form-select">
+        <!-- 表单字段统一使用共享 admin-primitives 的 modal-form / label>span 结构（docs/199，不造轮子） -->
+        <div class="modal-form">
+        <label v-if="!editingTarget">
+          <span>{{ $t('adminPlatformTarget.labelPlatform') }} <span class="required">*</span></span>
+          <select v-model="form.platform">
             <option v-for="p in SUPPORTED_PLATFORMS" :key="p.value" :value="p.value">{{ p.label }}</option>
           </select>
-        </div>
-        <div class="form-group">
-          <label>{{ $t('adminPlatformTarget.labelGroupId') }} <span class="required">*</span></label>
-          <input v-model="form.targetId" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderGroupId')" :disabled="!!editingTarget" />
-        </div>
-            <div class="form-group">
-              <label>{{ $t('adminPlatformTarget.labelGroupName') }}</label>
-              <input v-model="form.targetName" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderGroupName')" />
-            </div>
-            <div class="form-group">
-              <label>{{ $t('adminPlatformTarget.labelActivity') }}</label>
-              <select v-model="form.activeDrawId" class="form-select">
-                <option value="">{{ $t('adminPlatformTarget.noActivity') }}</option>
-                <option v-for="d in draws" :key="d.id" :value="d.id">{{ d.title }}</option>
-              </select>
-            </div>
+        </label>
+        <label>
+          <span>{{ targetIdLabel }} <span class="required">*</span></span>
+          <input v-model="form.targetId" :placeholder="targetIdPlaceholder" :disabled="!!editingTarget" />
+        </label>
+        <label>
+          <span>{{ targetNameLabel }}</span>
+          <input v-model="form.targetName" :placeholder="targetNamePlaceholder" />
+        </label>
+        <label>
+          <span>{{ $t('adminPlatformTarget.labelActivity') }}</span>
+          <select v-model="form.activeDrawId">
+            <option value="">{{ $t('adminPlatformTarget.noActivity') }}</option>
+            <option v-for="d in draws" :key="d.id" :value="d.id">{{ d.title }}</option>
+          </select>
+        </label>
             <!-- QQ 平台特定配置 -->
             <template v-if="form.platform === 'qq'">
-            <div class="form-group">
-              <label>
+            <label>
+              <span>
                 {{ $t('adminPlatformTarget.labelAdapterBaseUrl') }}
-                <span v-if="editingTarget" class="form-hint">{{ $t('adminPlatformTarget.hintAdapterBaseUrlEdit') }}</span>
-              </label>
-              <div v-if="!editingTarget" class="form-hint">{{ $t('adminPlatformTarget.hintAdapterBaseUrl') }}</div>
-              <input v-model="form.adapterBaseUrl" class="form-input" :placeholder="editingTarget ? $t('adminPlatformTarget.placeholderAdapterBaseUrlEdit') : $t('adminPlatformTarget.placeholderAdapterBaseUrl')" />
-            </div>
-            <div v-if="editingTarget" class="form-group">
-              <label>{{ $t('adminPlatformTarget.labelNewInboundSecret') }}</label>
-              <div class="form-hint">{{ $t('adminPlatformTarget.hintNewInboundSecret') }}</div>
-              <input v-model="form.inboundSecret" class="form-input" autocomplete="new-password" :placeholder="$t('adminPlatformTarget.placeholderNewInboundSecret')" />
-            </div>
+                <small v-if="editingTarget" class="field-hint">{{ $t('adminPlatformTarget.hintAdapterBaseUrlEdit') }}</small>
+              </span>
+              <small v-if="!editingTarget" class="field-hint">{{ $t('adminPlatformTarget.hintAdapterBaseUrl') }}</small>
+              <input v-model="form.adapterBaseUrl" :placeholder="editingTarget ? $t('adminPlatformTarget.placeholderAdapterBaseUrlEdit') : $t('adminPlatformTarget.placeholderAdapterBaseUrl')" />
+            </label>
+            <label v-if="editingTarget">
+              <span>{{ $t('adminPlatformTarget.labelNewInboundSecret') }}</span>
+              <small class="field-hint">{{ $t('adminPlatformTarget.hintNewInboundSecret') }}</small>
+              <input v-model="form.inboundSecret" autocomplete="new-password" :placeholder="$t('adminPlatformTarget.placeholderNewInboundSecret')" />
+            </label>
             </template>
             <!-- Telegram 平台特定配置 -->
             <template v-if="form.platform === 'telegram'">
-            <div class="form-group">
-              <label>{{ $t('adminPlatformTarget.labelBotToken') }} <span class="required">*</span></label>
-              <div class="form-hint">{{ $t('adminPlatformTarget.hintBotToken') }}</div>
-              <input v-model="form.botToken" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderBotToken')" />
-              <div v-if="editingTarget && !form.botToken" class="form-hint" style="color: #888; margin-top: 4px;">{{ $t('adminPlatformTarget.hintBotTokenKeep') }}</div>
-            </div>
+            <label>
+              <span>{{ $t('adminPlatformTarget.labelBotToken') }} <span class="required">*</span></span>
+              <small class="field-hint">{{ $t('adminPlatformTarget.hintBotToken') }}</small>
+              <input v-model="form.botToken" :placeholder="$t('adminPlatformTarget.placeholderBotToken')" />
+              <small v-if="editingTarget && !form.botToken" class="field-hint" style="color: #888; margin-top: 4px;">{{ $t('adminPlatformTarget.hintBotTokenKeep') }}</small>
+            </label>
             </template>
             <fieldset class="form-fieldset">
               <legend>{{ $t('adminPlatformTarget.builtinCommands') }}</legend>
@@ -139,13 +141,13 @@
                    支持两种方式：简单固定值（grantSpinCount）或完整奖励模式（mode+baseRange） -->
               <div v-if="form.checkinEnabled" class="form-group">
                 <label>{{ $t('adminPlatformTarget.labelCheckinGrantSpin') }}</label>
-                <div class="form-hint">{{ $t('adminPlatformTarget.hintCheckinGrantSpin') }}</div>
-                <input v-model.number="form.grantSpinCount" type="number" min="0" max="100" step="1" class="form-input" />
+                <small class="field-hint">{{ $t('adminPlatformTarget.hintCheckinGrantSpin') }}</small>
+                <input v-model.number="form.grantSpinCount" type="number" min="0" max="100" step="1" />
               </div>
               <div v-if="form.checkinEnabled" class="form-group">
                 <label>{{ $t('adminPlatformTarget.labelCheckinMode') }}</label>
-                <div class="form-hint">{{ $t('adminPlatformTarget.hintCheckinMode') }}</div>
-                <select v-model="form.checkinMode" class="form-input">
+                <small class="field-hint">{{ $t('adminPlatformTarget.hintCheckinMode') }}</small>
+                <select v-model="form.checkinMode">
                   <option value="">—</option>
                   <option value="daily">{{ $t('adminPlatformTarget.optionModeDaily') }}</option>
                   <option value="linear">{{ $t('adminPlatformTarget.optionModeLinear') }}</option>
@@ -157,49 +159,49 @@
                 <div class="form-row">
                   <div class="form-group">
                     <label>{{ $t('adminPlatformTarget.labelBaseMin') }}</label>
-                    <div class="form-hint">{{ $t('adminPlatformTarget.hintBaseMin') }}</div>
-                    <input v-model.number="form.baseMin" type="number" min="0" max="100" step="1" class="form-input" />
+                    <small class="field-hint">{{ $t('adminPlatformTarget.hintBaseMin') }}</small>
+                    <input v-model.number="form.baseMin" type="number" min="0" max="100" step="1" />
                   </div>
                   <div class="form-group">
                     <label>{{ $t('adminPlatformTarget.labelBaseMax') }}</label>
-                    <div class="form-hint">{{ $t('adminPlatformTarget.hintBaseMax') }}</div>
-                    <input v-model.number="form.baseMax" type="number" min="0" max="100" step="1" class="form-input" />
+                    <small class="field-hint">{{ $t('adminPlatformTarget.hintBaseMax') }}</small>
+                    <input v-model.number="form.baseMax" type="number" min="0" max="100" step="1" />
                   </div>
                 </div>
                 <div v-if="form.checkinMode === 'linear' || form.checkinMode === 'step'" class="form-row">
                   <div class="form-group">
                     <label>{{ $t('adminPlatformTarget.labelIncrement') }}</label>
-                    <div class="form-hint">{{ $t('adminPlatformTarget.hintIncrement') }}</div>
-                    <input v-model.number="form.increment" type="number" min="0" max="100" step="1" class="form-input" />
+                    <small class="field-hint">{{ $t('adminPlatformTarget.hintIncrement') }}</small>
+                    <input v-model.number="form.increment" type="number" min="0" max="100" step="1" />
                   </div>
                   <div class="form-group">
                     <label>{{ $t('adminPlatformTarget.labelCap') }}</label>
-                    <div class="form-hint">{{ $t('adminPlatformTarget.hintCap') }}</div>
-                    <input v-model.number="form.cap" type="number" min="0" max="100" step="1" class="form-input" />
+                    <small class="field-hint">{{ $t('adminPlatformTarget.hintCap') }}</small>
+                    <input v-model.number="form.cap" type="number" min="0" max="100" step="1" />
                   </div>
                 </div>
                 <div v-if="form.checkinMode === 'step'" class="form-group">
                   <label>{{ $t('adminPlatformTarget.labelStepDays') }}</label>
-                  <div class="form-hint">{{ $t('adminPlatformTarget.hintStepDays') }}</div>
-                  <input v-model.number="form.stepDays" type="number" min="1" max="365" step="1" class="form-input" />
+                  <small class="field-hint">{{ $t('adminPlatformTarget.hintStepDays') }}</small>
+                  <input v-model.number="form.stepDays" type="number" min="1" max="365" step="1" />
                 </div>
                 <div v-if="form.checkinMode === 'cycle'" class="form-row">
                   <div class="form-group">
                     <label>{{ $t('adminPlatformTarget.labelCycleDays') }}</label>
-                    <div class="form-hint">{{ $t('adminPlatformTarget.hintCycleDays') }}</div>
-                    <input v-model.number="form.cycleDays" type="number" min="1" max="365" step="1" class="form-input" />
+                    <small class="field-hint">{{ $t('adminPlatformTarget.hintCycleDays') }}</small>
+                    <input v-model.number="form.cycleDays" type="number" min="1" max="365" step="1" />
                   </div>
                   <div class="form-group">
                     <label>{{ $t('adminPlatformTarget.labelCycleBonus') }}</label>
-                    <div class="form-hint">{{ $t('adminPlatformTarget.hintCycleBonus') }}</div>
-                    <input v-model.number="form.cycleBonus" type="number" min="0" max="100" step="1" class="form-input" />
+                    <small class="field-hint">{{ $t('adminPlatformTarget.hintCycleBonus') }}</small>
+                    <input v-model.number="form.cycleBonus" type="number" min="0" max="100" step="1" />
                   </div>
                 </div>
               </template>
               <!-- P2 randomBonus 随机签到事件（docs/175 §2.4）：在基础奖励之上小概率额外增加 spins -->
               <div v-if="form.checkinEnabled" class="form-group">
                 <label>{{ $t('adminPlatformTarget.labelRandomBonus') }}</label>
-                <div class="form-hint">{{ $t('adminPlatformTarget.hintRandomBonus') }}</div>
+                <small class="field-hint">{{ $t('adminPlatformTarget.hintRandomBonus') }}</small>
                 <label class="checkbox-label">
                   <input type="checkbox" v-model="form.randomBonusEnabled" /> {{ $t('adminPlatformTarget.labelRandomBonusEnabled') }}
                 </label>
@@ -207,33 +209,33 @@
               <div v-if="form.checkinEnabled && form.randomBonusEnabled" class="form-row">
                 <div class="form-group">
                   <label>{{ $t('adminPlatformTarget.labelRandomBonusProbability') }}</label>
-                  <div class="form-hint">{{ $t('adminPlatformTarget.hintRandomBonusProbability') }}</div>
-                  <input v-model.number="form.randomBonusProbability" type="number" min="0" max="1" step="0.05" class="form-input" />
+                  <small class="field-hint">{{ $t('adminPlatformTarget.hintRandomBonusProbability') }}</small>
+                  <input v-model.number="form.randomBonusProbability" type="number" min="0" max="1" step="0.05" />
                 </div>
                 <div class="form-group">
                   <label>{{ $t('adminPlatformTarget.labelRandomBonusMin') }}</label>
-                  <div class="form-hint">{{ $t('adminPlatformTarget.hintRandomBonusMin') }}</div>
-                  <input v-model.number="form.randomBonusMin" type="number" min="0" max="100" step="1" class="form-input" />
+                  <small class="field-hint">{{ $t('adminPlatformTarget.hintRandomBonusMin') }}</small>
+                  <input v-model.number="form.randomBonusMin" type="number" min="0" max="100" step="1" />
                 </div>
                 <div class="form-group">
                   <label>{{ $t('adminPlatformTarget.labelRandomBonusMax') }}</label>
-                  <div class="form-hint">{{ $t('adminPlatformTarget.hintRandomBonusMax') }}</div>
-                  <input v-model.number="form.randomBonusMax" type="number" min="0" max="100" step="1" class="form-input" />
+                  <small class="field-hint">{{ $t('adminPlatformTarget.hintRandomBonusMax') }}</small>
+                  <input v-model.number="form.randomBonusMax" type="number" min="0" max="100" step="1" />
                 </div>
               </div>
               <!-- 购买引导（docs/171 §断层B）：配置 /秒杀 返回的购买链接；次数耗尽时也会自动附加引导 -->
               <div class="form-group">
                 <label>{{ $t('adminPlatformTarget.labelPurchaseUrl') }}</label>
-                <div class="form-hint">{{ $t('adminPlatformTarget.hintPurchaseUrl') }}</div>
-                <input v-model="form.purchaseUrl" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderPurchaseUrl')" />
+                <small class="field-hint">{{ $t('adminPlatformTarget.hintPurchaseUrl') }}</small>
+                <input v-model="form.purchaseUrl" :placeholder="$t('adminPlatformTarget.placeholderPurchaseUrl')" />
               </div>
               <div class="form-group">
                 <label>{{ $t('adminPlatformTarget.labelPurchaseLabel') }}</label>
-                <div class="form-hint">{{ $t('adminPlatformTarget.hintPurchaseLabel') }}</div>
-                <input v-model="form.purchaseLabel" class="form-input" :placeholder="$t('adminPlatformTarget.placeholderPurchaseLabel')" />
+                <small class="field-hint">{{ $t('adminPlatformTarget.hintPurchaseLabel') }}</small>
+                <input v-model="form.purchaseLabel" :placeholder="$t('adminPlatformTarget.placeholderPurchaseLabel')" />
               </div>
             </fieldset>
-      </form>
+      </div></form>
       <div v-if="inboundSecret" class="secret-box">
         <p class="secret-label">{{ $t('adminPlatformTarget.inboundSecretLabel') }}</p>
         <div class="secret-value">{{ inboundSecret }}</div>
@@ -297,6 +299,27 @@ const loading = ref(false)
 const loadError = ref('')
 const targets = ref<PlatformTarget[]>([])
 const platformFilter = ref('')
+/** 根据当前选择的平台返回目标 ID 的标签（QQ 群号 / Telegram 群组 ID） */
+const targetIdLabel = computed(() => {
+  if (form.value.platform === 'telegram') return t('adminPlatformTarget.labelTelegramTargetId')
+  return t('adminPlatformTarget.labelGroupId')
+})
+/** 根据当前选择的平台返回目标 ID 的占位符 */
+const targetIdPlaceholder = computed(() => {
+  if (form.value.platform === 'telegram') return t('adminPlatformTarget.placeholderTelegramTargetId')
+  return t('adminPlatformTarget.placeholderGroupId')
+})
+/** 根据当前选择的平台返回目标名称的标签 */
+const targetNameLabel = computed(() => {
+  if (form.value.platform === 'telegram') return t('adminPlatformTarget.labelTelegramTargetName')
+  return t('adminPlatformTarget.labelGroupName')
+})
+/** 根据当前选择的平台返回目标名称的占位符 */
+const targetNamePlaceholder = computed(() => {
+  if (form.value.platform === 'telegram') return t('adminPlatformTarget.placeholderTelegramTargetName')
+  return t('adminPlatformTarget.placeholderGroupName')
+})
+
 const filteredTargets = computed(() => {
   if (!platformFilter.value) return targets.value
   return targets.value.filter(t => t.platform === platformFilter.value)
@@ -700,11 +723,8 @@ onMounted(() => { void loadTargets() })
 .mono { font-family: monospace; font-size: 13px; }
 .empty-row { text-align: center; color: #666; padding: 32px 16px; }
 .pointer { cursor: pointer; }
+/* 表单字段间距（本页 fieldset 内部的多字段布局需要，非重复造轮子的控件样式） */
 .form-group { margin-bottom: 12px; }
-.form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; color: var(--text, #e0e0e0); }
-.form-input, .form-select, .form-textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border, #333); border-radius: 6px; background: var(--bg-input, #1a1a2e); color: var(--text, #e0e0e0); font-size: 13px; }
-.form-textarea { resize: vertical; min-height: 60px; }
-.form-hint { font-size: 11px; color: #888; margin-bottom: 4px; }
 .form-fieldset { border: 1px solid var(--border, #333); border-radius: 6px; padding: 8px 12px; margin-top: 8px; }
 .form-fieldset legend { font-size: 12px; font-weight: 600; padding: 0 4px; color: #999; }
 .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
