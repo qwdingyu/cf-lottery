@@ -1353,3 +1353,24 @@ it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → ch
     expect(res.status).toBe(401);
   });
 });
+
+describe("/api/admin/brand 店铺功能开关（shopFeatureEnabled）", () => {
+  it("返回 storeSlug 与 shopFeatureEnabled（默认启用）", async () => {
+    await db.update(tenants).set({ storeSlug: "shop_test_123" }).where(eq(tenants.id, TENANT_ID));
+    // 无 shop_feature_enabled 记录 → 默认 true
+    const app = await createApp();
+    const res = await app.request("/api/admin/brand", { headers: authHeaders() });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { storeSlug?: string; shopFeatureEnabled?: boolean };
+    expect(body.storeSlug).toBe("shop_test_123");
+    expect(body.shopFeatureEnabled).toBe(true);
+  });
+
+  it("系统配置 shop_feature_enabled=false 时返回 false", async () => {
+    await db.insert(systemConfig).values({ key: "shop_feature_enabled", value: "false" }).onConflictDoNothing();
+    const app = await createApp();
+    const res = await app.request("/api/admin/brand", { headers: authHeaders() });
+    const body = await res.json() as { shopFeatureEnabled?: boolean };
+    expect(body.shopFeatureEnabled).toBe(false);
+  });
+});
