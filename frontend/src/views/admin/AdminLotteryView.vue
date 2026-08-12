@@ -2288,7 +2288,9 @@ const flashSalePriceYuan = computed({
   },
   set: (val: string) => {
     const n = parseFloat(val)
-    form.value.flashSalePriceCents = isNaN(n) || n <= 0 ? null : Math.max(1, Math.round(n * 100))
+    // 显式拦截负数/超大值（浏览器 type=number 的 min/max 非强制，不能依赖）
+    // 上限 1,000,000 元（100,000,000 分），防止无意输入过长数字导致存储/显示异常
+    form.value.flashSalePriceCents = isNaN(n) || n <= 0 ? null : Math.max(1, Math.min(100000000, Math.round(n * 100)))
   },
 })
 
@@ -3062,7 +3064,7 @@ async function handleDuplicate(draw: LotteryDraw) {
     flashSaleSessionLabel: growth.flashSaleSessionLabel || '',
     flashSaleStockLimit: growth.flashSaleStockLimit,
     flashSaleMaxPerUser: growth.flashSaleMaxPerUser || 1,
-    flashSaleCtaLabel: growth.flashSaleCtaLabel || '抢',
+    flashSaleCtaLabel: growth.flashSaleCtaLabel,
     flashSaleShowCountdown: growth.flashSaleShowCountdown !== false,
     flashSaleShowProgress: growth.flashSaleShowProgress !== false,
     flashSaleShowStock: growth.flashSaleShowStock !== false,
@@ -3329,8 +3331,14 @@ function applyTemplate(tpl: any) {
   activeTemplateId.value = String(tpl.id || '')
   activeTemplateName.value = templateDisplayName(tpl, tplI18n)
   activeTemplateHints.value = templateDisplayHints(tpl, tplI18n)
-  // 时间：抽奖/接龙偏「一天活动」；短互动（签到试跑）仍 1d 可改，统一 1d 降低认知分支
-  applyTimePreset('1d')
+  // 根据活动类型选择合理的时间预设，减少运营反复调整（docs/213 #8）
+  if (kind === 'checkin' || kind === 'vote' || kind === 'survey') {
+    applyTimePreset('1h')  // 短互动默认 1 小时
+  } else if (kind === 'signup_chain' || kind === 'reservation') {
+    applyTimePreset('3d')  // 报名/预约默认 3 天
+  } else {
+    applyTimePreset('1d')  // 抽奖/秒杀/领取默认 1 天
+  }
   // 模板已带标题/时间时，焦点落到第 4 步（奖项/名额），缩短 TTV 扫视
   createStepFocus.value = kind === 'lottery' ? 4 : 1
   showCreateModal.value = true
@@ -3780,7 +3788,7 @@ async function handleEdit(draw: LotteryDraw) {
     flashSaleSessionLabel: growth.flashSaleSessionLabel || '',
     flashSaleStockLimit: growth.flashSaleStockLimit,
     flashSaleMaxPerUser: growth.flashSaleMaxPerUser || 1,
-    flashSaleCtaLabel: growth.flashSaleCtaLabel || '抢',
+    flashSaleCtaLabel: growth.flashSaleCtaLabel,
     flashSaleShowCountdown: growth.flashSaleShowCountdown !== false,
     flashSaleShowProgress: growth.flashSaleShowProgress !== false,
     flashSaleShowStock: growth.flashSaleShowStock !== false,
@@ -3931,7 +3939,7 @@ async function handleCreate() {
   creating.value = true
   try {
     // 注意：后端 API 使用 title/startAt/endAt/drawAt/winnerCount 字段名
-    // 前端 form 使用 name/startTime/endTime/drawTime/maxWinners 需要映射
+    // 前端 form 使用 name/startTime/endTime/drawTime 需要映射
     const activityKind = form.value.activityKind || 'lottery'
     const drawAtIso = form.value.drawTime ? dateTimeLocalToIso(form.value.drawTime) : undefined
     // docs/115：drawAt 必须配对 drawTrigger=scheduled，否则 Cron 永不扫到（表单文案写「系统自动开奖」）
