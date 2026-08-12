@@ -257,6 +257,29 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   const notifyUrl = buildPaymentCallbackUrl(paymentRequestUrl, draw.tenantId, config.provider);
   const returnUrl = buildPaymentReturnUrl(paymentRequestUrl);
 
+  // 支付前订单有效期校验（docs/203 §2.3，防御纵深）
+  // resumingPending 分支不经过 createPaymentOrder/validateOrderPreconditions，
+  // 这里直接基于 createdAt 计算过期时间，防止用户为已过期的 pending 订单重新生成支付入口。
+  // 正常流程 expireOverdueOrders 已在前面懒清理，此处为配置变更时差/并发窗口的兜底。
+  if (resumingPending) {
+    let timeoutMinutes = 30;
+    try {
+      const [cfgRow] = await db
+        .select({ value: systemConfig.value })
+        .from(systemConfig)
+        .where(eq(systemConfig.key, "payment_order_timeout_minutes"))
+        .limit(1);
+      if (cfgRow) {
+        const parsed = Number(cfgRow.value || "");
+        if (Number.isFinite(parsed) && parsed >= 1) timeoutMinutes = Math.floor(parsed);
+      }
+    } catch { /* 表不存在或未迁移 → 默认 30 */ }
+    const createdAt = new Date(existing?.createdAt || "").getTime();
+    if (Number.isFinite(createdAt) && Date.now() - createdAt > timeoutMinutes * 60 * 1000) {
+      return fail(c, "订单已过期，请重新参与", 409);
+    }
+  }
+
   if (resumingPending) {
     // 已有 pending 订单不新增逻辑订单；只用当前 attempt 重新生成支付入口。
     const [attempt] = await db
