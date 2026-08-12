@@ -699,7 +699,7 @@ async function validateOrderPreconditions(
   tx: DbType,
   input: Pick<CreateOrderInput, "tenantId" | "drawId" | "entryId" | "quantity">,
   entryRow: { id: string; tenantId: string; identityType: string | null; identityValue: string | null; paymentStatus: string | null },
-  existingOrder: { id: string; status: string } | null,
+  existingOrder: { id: string; status: string; createdAt: string } | null,
 ): Promise<{ ok: true; draw: { id: string; status: string; experienceType: string; promotionConfig: string; maxParticipants: number | null; endAt: string } } | { ok: false; error: string }> {
   const { tenantId, drawId, entryId } = input;
   const quantity = Math.max(1, Math.floor(Number(input.quantity || 1)));
@@ -730,21 +730,34 @@ async function validateOrderPreconditions(
   }
 
   // 3. 库存充足性预检（docs/203 §2.2）
-  // 源头扼杀：在用户下单时就检查卡密库存，不让用户为空库存创建订单并付款。
   const flashSaleParsed = parseFlashSaleConfig(draw.promotionConfig);
-  const prizeId = (flashSaleParsed.config as Record<string, unknown> | undefined)?.prizeId as string | undefined;
-  if (prizeId) {
-    const [stockRow] = await tx
-      .select({ count: sql<number>`COUNT(*)` })
-      .from(prizeCodes)
-      .where(and(
-        eq(prizeCodes.prizeId, prizeId),
-        eq(prizeCodes.tenantId, tenantId),
-        eq(prizeCodes.status, "available"),
-      ));
-    const availableStock = Number(stockRow?.count ?? 0);
-    if (availableStock < quantity) {
-      return { ok: false, error: `库存不足（可用 ${availableStock} 件，需要 ${quantity} 件）` };
+  // 源头扼杀：在用户下单时就检查卡密库存，不让用户为空库存创建订单并付款。
+  // 通过 lotteryPrizeTiers 关联活动奖品，确认奖品类型为卡密（code）后再检查 prizeCodes 可用库存。
+  // 无奖档或奖品类型非卡密时跳过（非卡密奖品不占用 prizeCodes 库存，由名额 CAS 管理）。
+  const tiers = await tx
+    .select({ prizeId: lotteryPrizeTiers.prizeId })
+    .from(lotteryPrizeTiers)
+    .where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)))
+    .limit(1);
+  if (tiers.length > 0 && tiers[0].prizeId) {
+    const [prizeRow] = await tx
+      .select({ prizeType: prizes.prizeType })
+      .from(prizes)
+      .where(and(eq(prizes.id, tiers[0].prizeId), eq(prizes.tenantId, tenantId)))
+      .limit(1);
+    if (prizeRow?.prizeType === "code") {
+      const [stockRow] = await tx
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(prizeCodes)
+        .where(and(
+          eq(prizeCodes.prizeId, tiers[0].prizeId),
+          eq(prizeCodes.tenantId, tenantId),
+          eq(prizeCodes.status, "available"),
+        ));
+      const availableStock = Number(stockRow?.count ?? 0);
+      if (availableStock < quantity) {
+        return { ok: false, error: `库存不足（可用 ${availableStock} 件，需要 ${quantity} 件）` };
+      }
     }
   }
 
@@ -768,6 +781,29 @@ async function validateOrderPreconditions(
     const alreadyBought = Number(sumRow?.total ?? 0);
     if (alreadyBought + quantity > maxPerUser) {
       return { ok: false, error: `每人限购 ${maxPerUser} 件，已购买 ${alreadyBought} 件` };
+    }
+  }
+
+  // 5. 订单未过期（docs/203 §2.3）
+  // 源头扼杀：在用户提交支付请求时直接检查订单有效期，不让用户为已过期的订单支付。
+  // 与 expireOverdueOrders 共用 payment_order_timeout_minutes 配置，基于 createdAt 计算过期时间，
+  // 而不是依赖懒清理标记 status——避免懒清理尚未执行或配置变更时差导致的缺口。
+  if (existingOrder?.status === PAYMENT_ORDER_STATUS.PENDING) {
+    let timeoutMinutes = 30;
+    try {
+      const [row] = await tx
+        .select({ value: systemConfigTable.value })
+        .from(systemConfigTable)
+        .where(eq(systemConfigTable.key, "payment_order_timeout_minutes"))
+        .limit(1);
+      if (row) {
+        const parsed = Number(row.value || "");
+        if (Number.isFinite(parsed) && parsed >= 1) timeoutMinutes = Math.floor(parsed);
+      }
+    } catch { /* 表不存在或未迁移 → 默认 30 */ }
+    const createdAt = new Date(existingOrder.createdAt).getTime();
+    if (Date.now() - createdAt > timeoutMinutes * 60 * 1000) {
+      return { ok: false, error: "订单已过期，请重新参与" };
     }
   }
 
@@ -812,6 +848,24 @@ export async function createPaymentOrder(
       throw new Error("订单仍在处理中，请联系客服处理");
     }
     if (existingOrder?.status === PAYMENT_ORDER_STATUS.PENDING) {
+      // 防御纵深：检查订单是否已过期（docs/203 §2.3）
+      // 不使用 expireOverdueOrders 的懒清理标记 status，而是直接基于 createdAt 计算过期时间。
+      let timeoutMinutes = 30;
+      try {
+        const [row] = await tx
+          .select({ value: systemConfigTable.value })
+          .from(systemConfigTable)
+          .where(eq(systemConfigTable.key, "payment_order_timeout_minutes"))
+          .limit(1);
+        if (row) {
+          const parsed = Number(row.value || "");
+          if (Number.isFinite(parsed) && parsed >= 1) timeoutMinutes = Math.floor(parsed);
+        }
+      } catch { /* 默认 30 */ }
+      const createdAt = new Date(existingOrder.createdAt).getTime();
+      if (Number.isFinite(createdAt) && Date.now() - createdAt > timeoutMinutes * 60 * 1000) {
+        throw new Error("订单已过期，请重新参与");
+      }
       throw new Error("订单已存在，请刷新后重试");
     }
 

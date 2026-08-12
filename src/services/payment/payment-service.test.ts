@@ -2061,4 +2061,137 @@ describe("支付并发安全性", () => {
     const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
     expect(entry?.paymentStatus).toBe("paid");
   });
+
+  describe("createPaymentOrder 源头扼杀校验（docs/203）", () => {
+    async function seedOrderTestData() {
+      const drawId = crypto.randomUUID();
+      const entryId = crypto.randomUUID();
+      await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" }).onConflictDoNothing();
+      await db.insert(lotteryDraws).values({
+        id: drawId, tenantId: TENANT_ID, publicSlug: `source-kill-${drawId}`,
+        title: "源头扼杀", status: "open",
+        experienceType: "flash_sale", maxParticipants: 10,
+        promotionConfig: JSON.stringify({
+          flashSale: { enabled: true, paymentRequired: true, stockLimit: 10, priceCents: 9900, currency: "cny", maxPerUser: 2 },
+        }),
+        startAt: new Date(Date.now() - 60_000).toISOString(),
+        endAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+      await db.insert(lotteryEntries).values({
+        id: entryId, tenantId: TENANT_ID, drawId,
+        identityType: "email", identityValue: "source@kill.com",
+        paymentStatus: "reserved",
+      });
+      const prizeId = crypto.randomUUID();
+      await db.insert(prizes).values({ id: prizeId, tenantId: TENANT_ID, name: "源头扼杀奖品", prizeType: "code", totalCount: 10 });
+      await db.insert(lotteryPrizeTiers).values({
+        id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, prizeId,
+        tierName: "中奖", winnerCount: 10, sortOrder: 100, weight: 100,
+      });
+      for (let i = 0; i < 5; i++) {
+        await db.insert(prizeCodes).values({
+          id: crypto.randomUUID(), tenantId: TENANT_ID, prizeId,
+          code: `SK-CODE-${i}`, secret: "secret", status: "available",
+        });
+      }
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email", buyerIdentityValue: "buyer@test.com",
+        amountCents: 9900, currency: "cny",
+        provider: "alipay" as const, notifyUrl: "https://cb.example.com",
+      };
+      return { drawId, entryId, orderInput, prizeId };
+    }
+
+    it("首次下单 quantity > maxPerUser 时拒绝（后端独立拦截，路由层钳制未生效时兜底）", async () => {
+      const { orderInput } = await seedOrderTestData();
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 3 }, providerMock))
+        .rejects.toThrow("每人限购 2 件");
+    });
+
+    it("首次下单 quantity <= maxPerUser 时允许创建", async () => {
+      const { orderInput } = await seedOrderTestData();
+      const result = await createPaymentOrder(db, { ...orderInput, quantity: 2 }, providerMock);
+      expect(result.order.quantity).toBe(2);
+    });
+
+    it("身份未验证时拒绝创建订单", async () => {
+      const { orderInput, entryId } = await seedOrderTestData();
+      // 用空字符串模拟未验证身份（drizzle set null 会生成 SQL NULL 导致类型错误）
+      await db.update(lotteryEntries).set({ identityType: "", identityValue: "" }).where(eq(lotteryEntries.id, entryId));
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
+        .rejects.toThrow("身份未验证");
+    });
+
+    it("活动已结束（status !== open）时拒绝创建订单", async () => {
+      const { orderInput, drawId } = await seedOrderTestData();
+      await db.update(lotteryDraws).set({ status: "closed" }).where(eq(lotteryDraws.id, drawId));
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
+        .rejects.toThrow("活动已结束");
+    });
+
+    it("活动已过期（endAt < now）时拒绝创建订单", async () => {
+      const { orderInput, drawId } = await seedOrderTestData();
+      await db.update(lotteryDraws).set({ endAt: new Date(Date.now() - 60_000).toISOString() }).where(eq(lotteryDraws.id, drawId));
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
+        .rejects.toThrow("活动已结束");
+    });
+
+    it("库存不足时拒绝创建订单", async () => {
+      const { orderInput, prizeId } = await seedOrderTestData();
+      await db.update(prizeCodes).set({ status: "issued" }).where(eq(prizeCodes.prizeId, prizeId));
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
+        .rejects.toThrow("库存不足");
+    });
+
+    it("追加购买时累计超过 maxPerUser 拒绝", async () => {
+      const { orderInput, drawId, entryId } = await seedOrderTestData();
+      await db.insert(paymentOrders).values({
+        id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email", buyerIdentityValue: "buyer@test.com",
+        quantity: 2, amountCents: 19800, currency: "cny",
+        provider: "alipay", status: "paid",
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      });
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
+        .rejects.toThrow("每人限购 2 件");
+    });
+
+    it("quantity 非法值（0/负/NaN）被钳制为 1 后正常创建", async () => {
+      const { orderInput, entryId } = await seedOrderTestData();
+      for (const qty of [0, -1, NaN, undefined as unknown as number]) {
+        const result = await createPaymentOrder(db, { ...orderInput, quantity: qty }, providerMock);
+        expect(result.order.quantity).toBe(1);
+        // 清理订单与 attempts，避免下一轮创建冲突
+        await db.delete(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, result.order.id));
+        await db.delete(paymentOrders).where(eq(paymentOrders.entryId, entryId));
+        await db.update(lotteryEntries).set({ paymentStatus: "reserved" }).where(eq(lotteryEntries.id, entryId));
+      }
+    });
+
+    it("expired pending 订单再创建时不会静默重新支付（懒清理置为 expired + 拒绝重复创建）", async () => {
+      const { orderInput, drawId, entryId } = await seedOrderTestData();
+      // 先创建一个已过期的 pending 订单（createdAt 设为 31 分钟前，timeout=30）
+      const expiredOrderId = crypto.randomUUID();
+      await db.insert(paymentOrders).values({
+        id: expiredOrderId, tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email", buyerIdentityValue: "buyer@test.com",
+        quantity: 1, amountCents: 9900, currency: "cny",
+        provider: "alipay", status: "pending",
+        createdAt: new Date(Date.now() - 31 * 60 * 1000).toISOString(),
+        updatedAt: new Date(Date.now() - 31 * 60 * 1000).toISOString(),
+      });
+      // 真实流程：createPaymentOrder 开头会先懒清理 expireOverdueOrders，
+      // 该过期 pending 订单被置为 expired，entry 因逾期被释放，
+      // 随后同一 reserved entry 无法再直接创建新订单（必须重新参与），从而杜绝"过期订单继续收款"。
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
+        .rejects.toThrow("参与预约已失效");
+      // 验证懒清理已把过期订单标记为 expired（不变量：不会作为可支付订单残留）
+      const [after] = await db
+        .select({ status: paymentOrders.status })
+        .from(paymentOrders)
+        .where(eq(paymentOrders.id, expiredOrderId));
+      expect(after?.status).toBe("expired");
+    });
+  });
 });

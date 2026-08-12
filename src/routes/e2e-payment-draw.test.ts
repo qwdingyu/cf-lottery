@@ -143,7 +143,7 @@ describe("秒杀端到端", () => {
   });
 
   it("卡密不足时秒杀不完成（FULFILLMENT_FAILED）", async () => {
-    await seedFlashSaleDraw(1); // 仅 1 张卡密
+    await seedFlashSaleDraw(2); // 2 张卡密：下单时库存充足（源头扼杀预检通过），回调前模拟并发消耗
 
     // 第一个用户 → 成功
     const { joinDraw } = await import("../services/lottery/participation");
@@ -161,7 +161,8 @@ describe("秒杀端到端", () => {
     });
     expect((await db.select({ n: count() }).from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "issued"))))[0]!.n).toBe(1);
 
-    // 第二个用户 → 卡密不足 → FULFILLMENT_FAILED
+    // 第二个用户：下单时库存仍有 1 张（源头扼杀预检通过），
+    // 但回调前模拟并发：另一笔订单先消耗了最后一张卡密 → 回调发卡失败 → FULFILLMENT_FAILED
     const j2 = await joinDraw(db, DRAW_SLUG, "u2@test.com", "email");
     expect(j2.joined).toBe(true);
     const o2 = await createPaymentOrder(db, {
@@ -171,6 +172,10 @@ describe("秒杀端到端", () => {
     }, mockProvider("easypay", "txn2", 9900));
     const [a2] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, o2.order.id)).limit(1);
     expect(a2).toBeDefined();
+    // 模拟并发：回调前把最后一张可用卡密标记为 issued（另一笔订单已发走）
+    await db.update(prizeCodes)
+      .set({ status: "reserved" })
+      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "available")));
     const cbResult = await handlePaymentCallback(db, TENANT, mockProvider("easypay", "txn2", 9900), {
       attemptId: a2!.id, provider: "easypay", amountCents: "9900", currency: "cny", tradeNo: "txn2",
     });
@@ -374,13 +379,13 @@ describe("批发模式端到端", () => {
   });
 
   it("批发卡密不足 → 不发卡 → FULFILLMENT_FAILED", async () => {
-    await seedFlashSaleDraw(2); // 仅 2 张卡密
+    await seedFlashSaleDraw(5); // 5 张卡密：下单时库存充足（源头扼杀预检通过），回调前模拟并发消耗
 
     const { joinDraw } = await import("../services/lottery/participation");
     const joinResult = await joinDraw(db, DRAW_SLUG, "bulk@test.com", "email");
     expect(joinResult.joined).toBe(true);
 
-    // 创建订单 quantity=5（远超卡密库存）
+    // 创建订单 quantity=5（下单时预检通过，库存 5 >= 5）
     const cpOrder = await createPaymentOrder(db, {
       tenantId: TENANT, drawId: DRAW, entryId: joinResult.entryId!,
       buyerIdentityType: "email", buyerIdentityValue: "bulk@test.com",
@@ -390,6 +395,15 @@ describe("批发模式端到端", () => {
     // 取 attemptId
     const [attemptB] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, cpOrder.order.id)).limit(1);
     expect(attemptB).toBeDefined();
+
+    // 模拟并发：回调前消耗 4 张卡密（其他订单已发走），剩余 1 张 < quantity=5 → 发卡失败
+    // SQLite 不支持 UPDATE ... LIMIT，逐张标记 reserved
+    const codesToConsume = await db.select({ id: prizeCodes.id }).from(prizeCodes)
+      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "available")))
+      .limit(4);
+    for (const c of codesToConsume) {
+      await db.update(prizeCodes).set({ status: "reserved" }).where(eq(prizeCodes.id, c.id));
+    }
 
     // 支付回调 → 卡密不足 → FULFILLMENT_FAILED（不半单发放）
     const cbResult = await handlePaymentCallback(db, TENANT, mockProvider("easypay", "txn-bulk", 49500), {
@@ -470,7 +484,7 @@ describe("过期释放与卡密补发", () => {
   });
 
   it("卡密补发：FULFILLMENT_FAILED → 补发 → 卡密到账", async () => {
-    await seedFlashSaleDraw(0); // 0 张卡密，必然 FULFILLMENT_FAILED
+    await seedFlashSaleDraw(1); // 1 张卡密：下单时库存充足（源头扼杀预检通过），回调前模拟并发消耗触发 FULFILLMENT_FAILED
 
     // 用户参与并支付 → 卡密不足 → FULFILLMENT_FAILED
     const { joinDraw } = await import("../services/lottery/participation");
@@ -483,6 +497,10 @@ describe("过期释放与卡密补发", () => {
     }, mockProvider("easypay", "txn-retry", 9900));
     const [a1] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, o1.order.id)).limit(1);
     expect(a1).toBeDefined();
+    // 模拟并发：回调前把唯一可用卡密标记 issued（另一笔订单已发走）→ 发卡失败 → FULFILLMENT_FAILED
+    await db.update(prizeCodes)
+      .set({ status: "reserved" })
+      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "available")));
     await handlePaymentCallback(db, TENANT, mockProvider("easypay", "txn-retry", 9900), {
       attemptId: a1!.id, provider: "easypay", amountCents: "9900", currency: "cny", tradeNo: "txn-retry",
     });
