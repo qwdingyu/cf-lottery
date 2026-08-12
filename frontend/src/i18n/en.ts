@@ -1055,6 +1055,7 @@ export default {
     adminStartTimeHint: "When users can start joining",
     adminEndTimeHint: "When users can no longer join",
     adminDrawTimeHint: "Auto-draw time (must be after end time)",
+    adminDrawTimeInstantHint: "Instant mode: results are produced on the spot (spin/purchase), no draw time needed.",
     winnerCountHint: "Maximum number of winners",
     maxParticipantsPlaceholder: "Empty = unlimited",
     adminTimePresets: "Time presets",

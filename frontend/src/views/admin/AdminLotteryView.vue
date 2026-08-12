@@ -591,9 +591,15 @@
                 <small class="field-hint">{{ $t('lottery.adminEndTimeHint') }}</small>
               </label>
               <label class="field-span-2">
-                <span>{{ $t('lottery.drawTime') }}</span>
-                <input v-model="form.drawTime" type="datetime-local" step="60" :lang="locale" required />
-                <small class="field-hint">{{ $t('lottery.adminDrawTimeHint') }}</small>
+                <template v-if="isInstantMode">
+                  <span>{{ $t('lottery.drawTime') }}</span>
+                  <div class="field-hint" style="margin-top: 4px;">{{ $t('lottery.adminDrawTimeInstantHint') }}</div>
+                </template>
+                <template v-else>
+                  <span>{{ $t('lottery.drawTime') }}</span>
+                  <input v-model="form.drawTime" type="datetime-local" step="60" :lang="locale" required />
+                  <small class="field-hint">{{ $t('lottery.adminDrawTimeHint') }}</small>
+                </template>
               </label>
             </div>
 
@@ -603,13 +609,15 @@
               role="status"
             >
               <template v-if="timeOrderError">{{ timeOrderError }}</template>
-              <template v-else-if="form.startTime && form.endTime && form.drawTime">
+              <template v-else-if="form.startTime && form.endTime && (isInstantMode || form.drawTime)">
                 {{ $t('lottery.adminTimeOrderOk') }}
                 <strong>{{ formatLocalInput(form.startTime) }}</strong>
                 →
                 <strong>{{ formatLocalInput(form.endTime) }}</strong>
-                →
-                <strong>{{ formatLocalInput(form.drawTime) }}</strong>
+                <template v-if="!isInstantMode">
+                  →
+                  <strong>{{ formatLocalInput(form.drawTime) }}</strong>
+                </template>
               </template>
               <template v-else>{{ $t('lottery.adminTimeOrderHint') }}</template>
             </p>
@@ -2515,6 +2523,9 @@ const editorVisibility = computed(() =>
 )
 
 const tierProbabilities = computed(() => buildTierProbabilities(form.value.tiers))
+// instant 模式（即时大转盘 / 直付秒杀）：结果由用户 spin/购买即时产生，无需设置开奖时间。
+// 表单不显示开奖时间输入框、创建步骤不要求 drawTime、payload 不写 drawAt（docs/116）。
+const isInstantMode = computed(() => String(form.value.resultMode || '') === 'instant')
 const hasPositiveTierWeight = computed(() => tierProbabilities.value.some((item) => item.weight > 0))
 const shouldShowTierProbability = computed(() => (
   form.value.activityKind === 'lottery'
@@ -2532,7 +2543,10 @@ const createStepFocus = ref(1)
  */
 const createStepDone = computed(() => {
   const nameOk = Boolean(String(form.value.name || '').trim())
-  const timeFilled = Boolean(form.value.startTime && form.value.endTime && form.value.drawTime)
+  // instant 模式无需开奖时间（结果即时产生），只要求开始/结束时间
+  const timeFilled = isInstantMode.value
+    ? Boolean(form.value.startTime && form.value.endTime)
+    : Boolean(form.value.startTime && form.value.endTime && form.value.drawTime)
   const timeOk = timeFilled && !timeOrderError.value
   let joinOk = true
   if (form.value.participationMode === 'password') {
@@ -2559,7 +2573,7 @@ const createReadinessLabel = computed(() => {
   if (isEditing.value) return ''
   const missing: string[] = []
   if (!createStepDone.value.basic) missing.push(t('lottery.adminCreateNeedName'))
-  if (!form.value.startTime || !form.value.endTime || !form.value.drawTime) {
+  if (!form.value.startTime || !form.value.endTime || (!isInstantMode.value && !form.value.drawTime)) {
     missing.push(t('lottery.adminCreateNeedTime'))
   } else if (timeOrderError.value) {
     missing.push(t('lottery.adminCreateNeedTimeOrder'))

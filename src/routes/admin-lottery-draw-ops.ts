@@ -497,13 +497,20 @@ route.post("/draws/:id/tiers", async (c) => {
       status: lotteryDraws.status,
       activityKind: lotteryDraws.activityKind,
       resultMode: lotteryDraws.resultMode,
+      experienceType: lotteryDraws.experienceType,
     })
     .from(lotteryDraws)
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
     .limit(1);
 
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.activityKind !== "lottery") return fail(c, "只有抽奖活动需要配置奖项", 400);
+  // 奖项配置适用于两类活动：
+  // ① lottery（抽奖奖档）；② claim + flash_sale（直付秒杀绑定唯一卡密奖品，发卡目标）。
+  // 其他活动（资料领取、问卷、报名等）不需要奖项，拒绝保存。
+  const isFlashSaleDirect = draw.activityKind === "claim" && String(draw.experienceType || "") === "flash_sale";
+  if (draw.activityKind !== "lottery" && !isFlashSaleDirect) {
+    return fail(c, "只有抽奖活动或直付秒杀需要配置奖项", 400);
+  }
   if (draw.status !== DRAW_STATUS.DRAFT) return fail(c, "只有草稿状态的活动可以配置奖项", 400);
   if (!Array.isArray(body.tiers) || body.tiers.length === 0) return fail(c, "请至少配置一个奖项", 400);
   if (body.tiers.length > 10) return fail(c, "单个活动最多配置 10 个奖项", 400);

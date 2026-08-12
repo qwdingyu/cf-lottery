@@ -1028,6 +1028,7 @@ export default {
     adminStartTimeHint: "用户可参与的开始时间",
     adminEndTimeHint: "用户可参与的结束时间",
     adminDrawTimeHint: "系统自动开奖时间（需在参与结束后）",
+    adminDrawTimeInstantHint: "即时模式：结果当场产生（抽奖/购买），无需设置开奖时间。",
     winnerCountHint: "最多可中奖的人数",
     maxParticipantsPlaceholder: "留空=不限",
     adminTimePresets: "时间快捷填充",
