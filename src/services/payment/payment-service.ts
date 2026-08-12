@@ -1179,6 +1179,15 @@ export async function handlePaymentCallback(
   provider: PaymentProvider,
   params: Record<string, string>,
 ): Promise<{ processed: boolean; order?: typeof paymentOrders.$inferSelect; error?: string }> {
+  // ── 支付回调校验链（6 重防护，docs/203 复核）──
+  // ① 验签：provider.verifyCallback 返回 null/false 直接拒绝
+  // ② attempt 存在性 + 租户归属：SELECT by attemptId + tenantId，跨租户 attempt 被排除
+  // ③ 支付渠道一致性：attempt.provider === provider.name
+  // ④ 金额一致性：callback.amountCents === attempt.amountCents（防御路由层/网关篡改）
+  // ⑤ 币种一致性：callback.currency === attempt.currency（防御多币种混淆）
+  // ⑥ 幂等性：attempt.status 已 paid 时跳过，不重复发卡
+  // ⑦ 订单当前 attempt 校验：current.currentAttemptId === attempt.id（旧 attempt 迟到付款走 LATE_NEEDS_REFUND）
+  // ⑧ entry 状态校验：必须是 PENDING，否则标记 LATE_NEEDS_REFUND 等待人工退款
   let callback: CallbackResult;
   try {
     callback = await provider.verifyCallback(params);
