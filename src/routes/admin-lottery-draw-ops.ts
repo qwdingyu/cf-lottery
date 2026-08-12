@@ -824,6 +824,8 @@ route.post("/draws/:id/roster", async (c) => {
   }
 
   return ok(c, { imported, skipped });
+});
+
 /** 查询邀请码（invite_code 模式） */
 route.get("/draws/:id/invite-codes", async (c) => {
   const db = getDb(c);
@@ -855,7 +857,6 @@ route.get("/draws/:id/invite-codes", async (c) => {
     .orderBy(lotteryInviteCodes.createdAt);
 
   return ok(c, { codes, totalCount: codes.length });
-});
 });
 
 /** 生成邀请码（invite_code 模式） */

@@ -899,6 +899,60 @@ describe("导入名单 (roster)", () => {
       }, TEST_ENV);
       expect(res.status).toBe(400);
     });
+
+    it("查询名单成员（GET）返回已导入成员", async () => {
+      await seedRosterDraw();
+      const app = createTestApp();
+      const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+      // 先导入 2 个成员
+      await app.request(`/api/admin/draws/${ROSTER_DRAW_ID}/roster`, {
+        method: "POST", headers,
+        body: JSON.stringify({ members: [
+          { email: "alice@test.com", name: "Alice" },
+          { email: "bob@test.com", name: "Bob" },
+        ] }),
+      }, TEST_ENV);
+
+      // GET 查询
+      const res = await app.request(`/api/admin/draws/${ROSTER_DRAW_ID}/roster`, { headers }, TEST_ENV);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { members: Array<{ identityValue: string; displayName: string }>; totalCount: number };
+      expect(body.totalCount).toBe(2);
+      expect(body.members).toHaveLength(2);
+      // 邮箱以原文返回（内部调 lower case 存储，读回一致）
+      expect(body.members.map((m) => m.identityValue).sort()).toEqual(["alice@test.com", "bob@test.com"]);
+      expect(body.members.find((m) => m.identityValue === "alice@test.com")?.displayName).toBe("Alice");
+    });
+
+    it("查询名单成员（GET）空名单返回空数组", async () => {
+      await seedRosterDraw();
+      const app = createTestApp();
+      const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+      const res = await app.request(`/api/admin/draws/${ROSTER_DRAW_ID}/roster`, { headers }, TEST_ENV);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { members: unknown[]; totalCount: number };
+      expect(body.totalCount).toBe(0);
+      expect(body.members).toHaveLength(0);
+    });
+
+    it("查询名单成员（GET）跨租户隔离", async () => {
+      await seedRosterDraw();
+      // 导入成员到 A 租户
+      const app = createTestApp();
+      const headersA = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+      await app.request(`/api/admin/draws/${ROSTER_DRAW_ID}/roster`, {
+        method: "POST", headers: headersA,
+        body: JSON.stringify({ members: [{ email: "alice@test.com" }] }),
+      }, TEST_ENV);
+
+      // B 租户查询 A 的活动 → 404（租户隔离）
+      await seedTenant(TENANT_B, OWNER_B, "core-b", "b@test.com");
+      const headersB = { "Content-Type": "application/json", ...(await authHeader(OWNER_B, TENANT_B)) };
+      const res = await app.request(`/api/admin/draws/${ROSTER_DRAW_ID}/roster`, { headers: headersB }, TEST_ENV);
+      expect(res.status).toBe(404);
+    });
   });
 
   describe("生成邀请码", () => {
@@ -958,6 +1012,59 @@ describe("导入名单 (roster)", () => {
         body: JSON.stringify({ count: 1 }),
       }, TEST_ENV);
       expect(res.status).toBe(400);
+    });
+
+    it("查询邀请码（GET）返回已生成的邀请码", async () => {
+      await seedInviteDraw();
+      const app = createTestApp();
+      const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+      // 先 POST 生成 3 个邀请码
+      await app.request(`/api/admin/draws/${INVITE_DRAW_ID}/invite-codes`, {
+        method: "POST", headers,
+        body: JSON.stringify({ count: 3, maxUses: 5 }),
+      }, TEST_ENV);
+
+      // GET 查询
+      const res = await app.request(`/api/admin/draws/${INVITE_DRAW_ID}/invite-codes`, { headers }, TEST_ENV);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { codes: Array<{ code: string; maxUses: number; usedCount: number; active: number }>; totalCount: number };
+      expect(body.totalCount).toBe(3);
+      expect(body.codes).toHaveLength(3);
+      body.codes.forEach((code) => {
+        expect(code.code).toMatch(/^[A-Z0-9]{8}$/);
+        expect(code.maxUses).toBe(5);
+        expect(code.usedCount).toBe(0);
+        expect(code.active).toBe(1);
+      });
+    });
+
+    it("查询邀请码（GET）无邀请码时返回空数组", async () => {
+      await seedInviteDraw();
+      const app = createTestApp();
+      const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+      const res = await app.request(`/api/admin/draws/${INVITE_DRAW_ID}/invite-codes`, { headers }, TEST_ENV);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { codes: unknown[]; totalCount: number };
+      expect(body.totalCount).toBe(0);
+      expect(body.codes).toHaveLength(0);
+    });
+
+    it("查询邀请码（GET）跨租户隔离", async () => {
+      await seedInviteDraw();
+      const app = createTestApp();
+      const headersA = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+      await app.request(`/api/admin/draws/${INVITE_DRAW_ID}/invite-codes`, {
+        method: "POST", headers: headersA,
+        body: JSON.stringify({ count: 2 }),
+      }, TEST_ENV);
+
+      // B 租户查询 A 的活动 → 404
+      await seedTenant(TENANT_B, OWNER_B, "core-b", "b@test.com");
+      const headersB = { "Content-Type": "application/json", ...(await authHeader(OWNER_B, TENANT_B)) };
+      const res = await app.request(`/api/admin/draws/${INVITE_DRAW_ID}/invite-codes`, { headers: headersB }, TEST_ENV);
+      expect(res.status).toBe(404);
     });
   });
 });
