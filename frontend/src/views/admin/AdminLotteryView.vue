@@ -1138,7 +1138,7 @@
               </p>
             </header>
             <div class="form-grid two-cols">
-              <div v-if="editorVisibility.tiers" class="field-span-2">
+              <div v-if="editorVisibility.tiers && (form.activityKind === 'lottery' || form.activityKind === 'claim')" class="field-span-2">
                 <span class="field-label-text">{{ $t('lottery.adminTierConfig') }}</span>
                 <div class="tier-list">
                   <div v-for="(tier, idx) in form.tiers" :key="idx" class="tier-row">
@@ -1622,7 +1622,25 @@
                 <small v-if="row.amountCents > 0">{{ $t('lottery.adminCentsAmount', { amount: row.amountCents }) }}</small>
               </div>
             </div>
-            <p v-else class="empty-text">{{ $t('lottery.adminNoConversions') }}</p>
+            <template v-else>
+              <!-- ★ P0-4: ROI/转化接入引导 —— 空态给出可执行的回传示例（docs/211） -->
+              <p class="empty-text">{{ $t('lottery.adminNoConversions') }}</p>
+              <div class="analytics-setup-guide">
+                <p class="muted-text">{{ $t('lottery.adminConversionSetupHint') }}</p>
+                <pre><code>curl -X POST https://{{ $t('lottery.adminApiHost') }}/api/integration/conversions \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "publicSlug": "{{ analyticsDraw?.publicSlug || 'your-activity-slug' }}",
+    "externalEventId": "order_10001",
+    "conversionType": "purchase",
+    "amountCents": 9900,
+    "currency": "CNY",
+    "identityType": "email",
+    "identityValue": "user@example.com"
+  }'</code></pre>
+              </div>
+            </template>
           </div>
 
           <div class="analytics-section">
