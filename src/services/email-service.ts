@@ -51,6 +51,8 @@ export type EmailEnv = {
   resendApiKey?: string;
   emailFrom?: string;
   emailFromName?: string;
+  /** 公开邮件链接使用的服务端配置域名，禁止信任请求 Host。 */
+  appOrigin?: string;
   email?: CloudflareEmailBinding;
   cfAuthIssuer?: string;
   cfAuthClientId?: string;

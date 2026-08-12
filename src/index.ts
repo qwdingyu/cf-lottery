@@ -61,6 +61,7 @@ function createDbFromEnv(env: Bindings) {
 export interface MaintenanceEnv {
   resendApiKey?: string;
   emailFrom?: string;
+  appOrigin?: string;
   credentialsEncryptionKey?: string;
   cfAuthIssuer?: string;
   cfAuthClientId?: string;
@@ -82,6 +83,7 @@ export async function runScheduledMaintenance(
     emailEnv: {
       resendApiKey: env.resendApiKey || "",
       emailFrom: env.emailFrom || "",
+      appOrigin: env.appOrigin || "",
     },
   });
   const webhooks = await processPendingWebhookDeliveriesForAllTenants(db, options?.fetcher ?? fetch, {
@@ -360,6 +362,7 @@ app.get("/api/cron/draw", async (c) => {
       emailEnv: {
         resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
         emailFrom: getEnv(c, "EMAIL_FROM") || "",
+        appOrigin: getEnv(c, "APP_ORIGIN") || "",
       },
     });
     return c.json({

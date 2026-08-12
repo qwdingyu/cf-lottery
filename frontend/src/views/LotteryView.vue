@@ -718,6 +718,11 @@
           <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
         </div>
 
+        <!-- ★ P0-3: 支付成功二次转化 —— 引导用户回到首页/店铺（docs/211） -->
+        <div v-if="paymentStatusIsPaid" class="payment-success-cta">
+          <a href="/" class="btn btn-ghost btn-sm">{{ $t('lottery.viewMoreActivities') }}</a>
+        </div>
+
         <div v-if="paymentState?.status === 'paid_fulfillment_failed' || paymentState?.status === 'paid_late_needs_refund'" class="lottery-payment-support" role="alert">
           <p class="result-error">{{ paymentState?.status === 'paid_late_needs_refund' ? $t('lottery.paymentLatePaid') : $t('lottery.paymentFulfillmentFailed') }}</p>
           <p class="result-hint">{{ paymentState?.status === 'paid_late_needs_refund' ? $t('lottery.paymentLatePaidSupportHint') : $t('lottery.paymentFulfillmentSupportHint') }}</p>

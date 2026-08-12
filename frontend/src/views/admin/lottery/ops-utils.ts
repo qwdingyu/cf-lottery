@@ -490,13 +490,14 @@ export function canGuidePublishFixInEditor(status: string, errors: PublishCheckI
 
 /** 门禁 section → 创建表单分区 id */
 export function publishFixSectionTargetId(errors: PublishCheckItem[]): string | undefined {
-  const priority = ['prizes', 'basic', 'participation', 'activity_config', 'promotion', 'webhook']
+  const priority = ['prizes', 'basic', 'participation', 'activity_config', 'payment', 'promotion', 'webhook']
   const section = priority.find((s) => errors.some((e) => e.section === s)) || errors[0]?.section
   const idMap: Record<string, string> = {
     prizes: 'lottery-prizes',
     basic: 'lottery-basic',
     participation: 'lottery-mode',
     activity_config: 'activity-config',
+    payment: 'lottery-advanced',  // 秒杀/直付配置在高级区
     promotion: 'lottery-advanced',
   }
   return section ? idMap[section] : undefined

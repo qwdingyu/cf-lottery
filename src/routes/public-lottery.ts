@@ -209,7 +209,11 @@ publicLotteryRoute.get("/home-activities", async (c) => {
       ne(lotteryDraws.publicSlug, ""),
       gt(lotteryDraws.endAt, nowIso),
     ))
-    .orderBy(asc(lotteryDraws.endAt), desc(lotteryDraws.createdAt))
+    .orderBy(
+      sql`CASE WHEN json_extract(${lotteryDraws.promotionConfig}, '$.enableFlashSale') = 'true' THEN 0 ELSE 1 END`,
+      asc(lotteryDraws.endAt),
+      desc(lotteryDraws.createdAt),
+    )
     .limit(limit);
 
   const drawIds = rows.map((draw) => draw.internalId);

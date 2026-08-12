@@ -17,6 +17,7 @@ import {
   prizeCodes,
   shareRecords,
   users,
+  tenants,
   auditLogs,
   couponCodes,
   systemConfig,
@@ -909,7 +910,25 @@ export async function sendLoserConsolationEmails(
     ))
     .limit(500);
 
-  const origin = "";  // APP_ORIGIN 由调用方传入，这里用相对路径
+  // ★ P0-2: 构建复访链接（docs/211）—— 优先指向店铺页，无店铺时回退到首页
+  const configuredOrigin = String(emailEnv.appOrigin || "").trim().replace(/\/+$/, "");
+  let origin = "https://lucky.eforge.xyz";
+  try {
+    const parsedOrigin = new URL(configuredOrigin);
+    if (parsedOrigin.protocol === "http:" || parsedOrigin.protocol === "https:") {
+      origin = parsedOrigin.origin;
+    }
+  } catch {
+    // 未配置或非法配置时使用生产默认域名，避免邮件生成不可点击链接。
+  }
+  const [tenantRow] = await db
+    .select({ storeSlug: tenants.storeSlug })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .limit(1);
+  const nextActivityUrl = tenantRow?.storeSlug
+    ? `${origin}/shop/${encodeURIComponent(tenantRow.storeSlug)}`
+    : `${origin}/`;
 
   const deliveryIds: string[] = [];
   for (const coupon of issuedCoupons) {
@@ -925,7 +944,7 @@ export async function sendLoserConsolationEmails(
         drawName: drawTitle,
         couponCode: coupon.code,
         couponLabel: coupon.label || "",
-        nextActivityUrl: origin || "",
+        nextActivityUrl,
       },
     });
     if (queued.enqueued) deliveryIds.push(queued.deliveryId);

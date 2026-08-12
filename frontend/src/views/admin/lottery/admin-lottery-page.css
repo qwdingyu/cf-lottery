@@ -293,6 +293,26 @@
   min-width: 0;
 }
 
+/* ★ P0-4: 转化接入引导 —— 空态 curl 示例样式 */
+.analytics-setup-guide {
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--surface, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--r-md, 8px);
+}
+
+.analytics-setup-guide pre {
+  margin: 8px 0 0;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.analytics-setup-guide code {
+  white-space: pre;
+}
+
 .analytics-rates span,
 .analytics-type-list strong {
   color: var(--tg-text, #f0f2f5);

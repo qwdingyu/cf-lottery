@@ -22,6 +22,7 @@
 import type { DbType } from "../db/client";
 import { and, eq, sql } from "drizzle-orm";
 import { enqueueEmailDelivery, dispatchEmailDeliveries } from "./email-delivery";
+import type { EmailEnv } from "./email-service";
 import {
   lotteryDraws,          // 抽奖活动表
   lotteryEntries,        // 候选池表
@@ -149,7 +150,7 @@ export async function importPrizeCodes(
  */
 export async function processDueDraws(
   db: DbType,
-  options?: { limit?: number; emailEnv?: { resendApiKey: string; emailFrom: string } },
+  options?: { limit?: number; emailEnv?: EmailEnv },
 ): Promise<{ processed: number; failed: number; errors: Array<{ drawId: string; message: string }> }> {
   // 单次最多处理 50 个，默认 20 个
   const limit = Math.max(1, Math.min(50, options?.limit ?? 20));

@@ -59,6 +59,21 @@ export function useDrawAnalytics(opts: {
     analyticsStats.value?.events.ctaClicks || 0,
   ))
 
+  // ★ P1-3: 未中奖承接看板 —— 安慰券发放/核销及核销率
+  const consolationCards = computed(() => {
+    const c = analyticsStats.value?.consolation
+    const issued = c?.issued ?? 0
+    const redeemed = c?.redeemed ?? 0
+    return [
+      { key: 'consolation_issued', label: t('lottery.adminConsolationIssued'), value: issued },
+      { key: 'consolation_redeemed', label: t('lottery.adminConsolationRedeemed'), value: redeemed },
+    ]
+  })
+  const consolationRedeemRate = computed(() => percent(
+    analyticsStats.value?.consolation?.redeemed ?? 0,
+    analyticsStats.value?.consolation?.issued ?? 0,
+  ))
+
   function conversionTypeLabel(type: string): string {
     const map: Record<string, string> = {
       registration: t('lottery.adminConvReg'),
@@ -135,5 +150,7 @@ export function useDrawAnalytics(opts: {
     conversionTypeLabel,
     handleViewAnalytics,
     handleExportConversions,
+    consolationCards,
+    consolationRedeemRate,
   }
 }

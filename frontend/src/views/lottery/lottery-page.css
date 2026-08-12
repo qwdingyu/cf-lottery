@@ -834,6 +834,8 @@
 .result-cta-card { margin-top: 8px; }
 .result-cta-card .btn { display: inline-block; }
 .result-code-block { display: flex; flex-direction: column; gap: 4px; align-items: center; background: var(--tg-secondary-bg, #151b28); padding: 12px; border-radius: 8px; width: 100%; }
+/* ★ P0-3: 支付成功二次转化 —— 引导用户回到首页/店铺（docs/211） */
+.payment-success-cta { margin-top: 12px; text-align: center; }
 .result-code-label { font-size: 12px; color: var(--tg-hint, #9aa4b2); }
 .result-code { font-size: 16px; font-weight: 700; color: var(--brand); cursor: pointer; word-break: break-all; }
 .result-share-win { margin-top: 12px; text-align: center; }

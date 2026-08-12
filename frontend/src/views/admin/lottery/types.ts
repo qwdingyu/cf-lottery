@@ -118,6 +118,11 @@ export type DrawAnalyticsStats = {
   entryCount: number
   events: ActivityEventSummary
   externalConversions: ExternalConversionSummary
+  /** ★ P1-3: 未中奖安慰券发放与核销统计 */
+  consolation: {
+    issued: number
+    redeemed: number
+  }
 }
 
 export type PublishCheckItem = {

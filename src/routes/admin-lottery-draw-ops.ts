@@ -22,6 +22,7 @@ import {
   lotteryEntries,
   activityOutcomes,
   activitySubmissions,
+  couponCodes,
 } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
@@ -161,7 +162,30 @@ route.get("/draws/:id/stats", async (c) => {
   const entryCount = Number(entryRow?.total ?? 0);
   const events = await getActivityEventSummary(db, tenantId, drawId);
   const externalConversions = await getExternalConversionSummary(db, tenantId, drawId);
-  return ok(c, { entryCount, events, externalConversions });
+
+  // ★ P1-3: 未中奖承接看板（docs/211）—— 统计安慰券发放与核销
+  const [issuedResult] = await db
+    .select({ total: count() })
+    .from(couponCodes)
+    .where(and(
+      eq(couponCodes.tenantId, tenantId),
+      eq(couponCodes.drawId, drawId),
+      eq(couponCodes.status, "issued"),
+    ));
+  const [redeemedResult] = await db
+    .select({ total: count() })
+    .from(couponCodes)
+    .where(and(
+      eq(couponCodes.tenantId, tenantId),
+      eq(couponCodes.drawId, drawId),
+      eq(couponCodes.status, "redeemed"),
+    ));
+  const consolation = {
+    issued: Number(issuedResult?.total ?? 0),
+    redeemed: Number(redeemedResult?.total ?? 0),
+  };
+
+  return ok(c, { entryCount, events, externalConversions, consolation });
 });
 
 /** 活动事件汇总：导流漏斗基础事实，不代表外部成交 */
