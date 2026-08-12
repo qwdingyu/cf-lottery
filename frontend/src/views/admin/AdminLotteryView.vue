@@ -3293,7 +3293,11 @@ function applyTemplate(tpl: any) {
     flashSalePriceCents: tpl.defaults?.flashSalePriceCents ?? null,
     flashSaleCurrency: String(tpl.defaults?.flashSaleCurrency || 'cny'),
     flashSaleTitle: String(tpl.defaults?.flashSaleTitle || ''),
-    flashSalePricingTiers: [],
+    flashSalePricingTiers: (tpl.defaults?.flashSalePricingTiers || []).map((tier: any) => ({
+      minQuantity: Number(tier.minQuantity || 1),
+      unitPriceCents: Number(tier.unitPriceCents || 0),
+      label: String(tier.label || ''),
+    })),
   }
   // 模板智能增强：不同类型预设更合理的默认值，减少重复配置
   if (tpl.id === 'signup-chain' || kind === 'signup_chain') {

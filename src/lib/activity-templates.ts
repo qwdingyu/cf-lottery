@@ -31,6 +31,12 @@ export interface ActivityTemplate {
     flashSalePriceCents?: number | null;
     flashSaleCurrency?: string;
     flashSaleTitle?: string;
+    /** 阶梯定价配置（flash_sale 批量优惠）：格式与前端表单 flashSalePricingTiers 一致 */
+    flashSalePricingTiers?: Array<{
+      minQuantity: number;
+      unitPriceCents: number;
+      label: string;
+    }>;
   };
   /** 提示文案：创建时需要填写的关键字段 */
   hints: string[];
@@ -248,6 +254,11 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       flashSalePriceCents: null,
       flashSaleCurrency: "cny",
       flashSaleTitle: "限时抢购商品",
+      // 阶梯定价：批发优惠预置 2 档（单件 / 5件起），运营可改；前端表单按 minQuantity 升序展示
+      flashSalePricingTiers: [
+        { minQuantity: 1, unitPriceCents: 990, label: "单件" },
+        { minQuantity: 5, unitPriceCents: 890, label: "5件起" },
+      ],
     },
     hints: [
       "先填商品链接、商品名称、展示价格和图片；导流模式必须指向可下单页面",

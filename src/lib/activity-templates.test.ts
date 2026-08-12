@@ -75,6 +75,23 @@ describe("ACTIVITY_TEMPLATES 抽奖体验诚实性（docs/115）", () => {
     expect(flash!.hints.join(" ")).toMatch(/商品链接|paymentRequired|priceCents|卡密码池/);
   });
 
+  it("#9 修复：flash-sale-rush 模板预置阶梯定价（minQuantity 升序、单价为正分）", () => {
+    const flash = ACTIVITY_TEMPLATES.find((t) => t.id === "flash-sale-rush");
+    expect(flash).toBeTruthy();
+    const tiers = flash!.defaults.flashSalePricingTiers;
+    expect(tiers).toBeTruthy();
+    expect(tiers!.length).toBeGreaterThan(0);
+    // 按 minQuantity 严格升序，前端表单按此渲染
+    for (let i = 1; i < tiers!.length; i++) {
+      expect(tiers![i].minQuantity).toBeGreaterThan(tiers![i - 1].minQuantity);
+    }
+    // 单价必须为正分（单位价格 > 0）
+    tiers!.forEach((tier) => {
+      expect(tier.unitPriceCents).toBeGreaterThan(0);
+      expect(tier.label.length).toBeGreaterThan(0);
+    });
+  });
+
   it("docs/162 P2-A：预约模板存在（reservation + calendar + capacity_assignment）", () => {
     const booking = ACTIVITY_TEMPLATES.find((t) => t.id === "reservation-booking");
     expect(booking).toBeTruthy();
