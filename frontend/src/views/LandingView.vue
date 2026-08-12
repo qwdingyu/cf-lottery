@@ -184,8 +184,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useAdminAuth } from '@/composables/useAdminAuth'
-import { adminRequest } from '@/composables/useAdminRequest'
+import { useAdminAuth, readAdminToken } from '@/composables/useAdminAuth'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import {
   activityPhaseI18nKey,
@@ -214,9 +213,16 @@ async function loadShopUrl() {
   storeSlug.value = ''
   if (!isLoggedIn.value) return
   try {
-    const data = await adminRequest<{ storeSlug?: string; shopFeatureEnabled?: boolean }>('/api/admin/brand')
-    // L3 系统配置 shop_feature_enabled=false 时隐藏「我的商铺」按钮
-    if (data.shopFeatureEnabled === false) { storeSlug.value = ''; return }
+    // 用普通 fetch + 手动 token（非 adminRequest）：主页不应因 401 跳转登录页，失败时静默隐藏按钮
+    const token = readAdminToken()
+    if (!token) { storeSlug.value = ''; return }
+    const res = await fetch('/api/admin/brand', {
+      credentials: 'same-origin',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) { storeSlug.value = ''; return }
+    const data = await res.json().catch(() => null) as { storeSlug?: string; shopFeatureEnabled?: boolean } | null
+    if (!data || data.shopFeatureEnabled === false) { storeSlug.value = ''; return }
     storeSlug.value = data.storeSlug || ''
   } catch {
     storeSlug.value = '' // 未配置店铺或请求失败时不显示按钮
