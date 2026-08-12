@@ -6,6 +6,7 @@
  * 裂变与接龙列表见 public-lottery-share.ts。
  */
 import { Hono } from "hono";
+import { isInstantResultMode } from "../lib/activity-utils";
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
@@ -326,7 +327,7 @@ async function instantJoinSpinFields(
   draw: { id: string; tenantId: string; resultMode?: string | null; maxSpinsPerEntry?: number | null },
   entryId: string | undefined,
 ): Promise<Record<string, number | undefined>> {
-  if (String(draw.resultMode || "") !== "instant" || !entryId) return {};
+  if (!isInstantResultMode(draw.resultMode) || !entryId) return {};
   const [row] = await db
     .select({
       spinsLeft: lotteryEntries.spinsLeft,
@@ -1295,7 +1296,7 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
       const granted = Number(entrySpins.spinsTotalGranted ?? 0);
       spinsUsed = Math.max(0, granted - spinsLeft);
     }
-    if (String(draw.resultMode || "") === "instant") {
+    if (isInstantResultMode(draw.resultMode)) {
       maxSpinsPerEntry = Number(draw.maxSpinsPerEntry || 0) || null;
     }
   } else if (entry && (resultFamily === "assignment" || resultFamily === "review")) {
@@ -1404,7 +1405,7 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
     .where(eq(lotteryDraws.publicSlug, slug))
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
-  if (draw.activityKind !== "lottery" || String(draw.resultMode || "") !== "instant") {
+  if (draw.activityKind !== "lottery" || !isInstantResultMode(draw.resultMode)) {
     return fail(c, "该活动不支持即时抽奖", 400);
   }
 

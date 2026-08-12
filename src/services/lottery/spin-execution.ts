@@ -6,6 +6,7 @@
  * 邮件/webhook 异步，失败不回滚 spin（由路由层触发）。
  */
 import type { DbType } from "../../db/client";
+import { isInstantResultMode } from "../../lib/activity-utils";
 import { withDbTransaction } from "../../db/client";
 import { and, eq, sql } from "drizzle-orm";
 import {
@@ -102,7 +103,7 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
   if (draw.activityKind !== "lottery") {
     throw new SpinBusinessError("该活动不支持即时抽奖", 400, "spin.activity.not_lottery");
   }
-  if (String(draw.resultMode || "") !== "instant") {
+  if (!isInstantResultMode(draw.resultMode)) {
     throw new SpinBusinessError("该活动不是即时开奖模式", 400, "spin.result_mode.not_instant");
   }
   if (draw.status !== DRAW_STATUS.OPEN) {

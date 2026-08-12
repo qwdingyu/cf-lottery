@@ -6,6 +6,7 @@
  * 依赖 utils（随机/seed hash）与 integration（webhook），无反向依赖。
  */
 import type { DbType } from "../../db/client";
+import { isInstantResultMode } from "../../lib/activity-utils";
 import { withDbTransaction } from "../../db/client";
 import { and, eq, count, inArray, sql } from "drizzle-orm";
 import {
@@ -72,7 +73,7 @@ export async function performDraw(
       .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
       .limit(1);
     if (!modeRow) throw new Error("活动不存在");
-    if (String(modeRow.resultMode || "") === "instant") {
+    if (isInstantResultMode(modeRow.resultMode)) {
       throw new Error("即时开奖活动请使用 spin，不能统一开奖");
     }
   }

@@ -7,6 +7,7 @@
  * - 预检返回结构化 code/section，前端可以直接展示成运营清单，后续补问卷/投票配置时也只扩展本文件。
  */
 import { and, count, eq, inArray, ne, sql } from "drizzle-orm";
+import { isInstantResultMode } from "../lib/activity-utils";
 import type { DbType } from "../db/client";
 import {
   lotteryDraws,
@@ -468,7 +469,7 @@ async function validateParticipation(db: DbType, tenantId: string, draw: Lottery
 async function validateLotteryPrizes(db: DbType, tenantId: string, draw: LotteryDraw, result: PublishCheckResult) {
   if (draw.activityKind !== "lottery") return;
 
-  const isInstant = String(draw.resultMode || "") === "instant";
+  const isInstant = isInstantResultMode(draw.resultMode);
   const maxSpins = Number((draw as { maxSpinsPerEntry?: number }).maxSpinsPerEntry ?? 0);
 
   // docs/116：instant 必须配置每人抽奖次数；禁止依赖 scheduled 自动 performDraw
@@ -614,7 +615,7 @@ async function validatePromotion(
   const experience = promotionConfig?.experience as
     | { prizePanelMode?: string }
     | undefined;
-  if (draw.resultMode !== "instant" && experience?.prizePanelMode === "full_on_shell") {
+  if (!isInstantResultMode(draw.resultMode) && experience?.prizePanelMode === "full_on_shell") {
     add(
       result.errors,
       "promotion",

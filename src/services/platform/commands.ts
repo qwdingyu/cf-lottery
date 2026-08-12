@@ -12,6 +12,7 @@
  * 涉及卡密的回复必须默认群内脱敏，不能把完整码发到公开群聊里。
  */
 import type { DbType } from "../../db/client";
+import { isInstantResultMode } from "../../lib/activity-utils";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, shareRecords } from "../../db/schema";
 import { joinDraw, recordActivityEvent } from "../lottery-service";
@@ -675,7 +676,7 @@ async function executeSpinCommand(
     return { handled: true, reply: "当前绑定活动不是抽奖活动，不能使用 /抽奖。请管理员绑定即时抽奖活动。" };
   }
 
-  if (String(draw.resultMode || "") !== "instant") {
+  if (!isInstantResultMode(draw.resultMode)) {
     return { handled: true, reply: "当前活动为手动开奖，开奖后可用 /我的奖品 查看结果。" };
   }
 

@@ -6,6 +6,7 @@
  * 通过 setupDrawOpsRoutes 挂载，中间件已在主路由 use("*") 覆盖。
  */
 import { Hono } from "hono";
+import { isInstantResultMode } from "../lib/activity-utils";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
@@ -515,7 +516,7 @@ route.post("/draws/:id/tiers", async (c) => {
   if (!Array.isArray(body.tiers) || body.tiers.length === 0) return fail(c, "请至少配置一个奖项", 400);
   if (body.tiers.length > 10) return fail(c, "单个活动最多配置 10 个奖项", 400);
 
-  const isInstant = String(draw.resultMode || "") === "instant";
+  const isInstant = isInstantResultMode(draw.resultMode);
   const normalizedTiers: Array<{
     id: string;
     tenantId: string;

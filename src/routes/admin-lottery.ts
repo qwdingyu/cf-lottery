@@ -6,6 +6,7 @@
  * 奖品、运营数据、租户运维、集成域由 setup* 子模块挂载。
  */
 import { Hono } from "hono";
+import { isInstantResultMode } from "../lib/activity-utils";
 import type { AppEnv } from "../bindings";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
@@ -1002,7 +1003,7 @@ adminLotteryRoute.post("/draws/:id/draw", async (c) => {
     if (draw.activityKind !== "lottery") {
       return fail(c, "该活动类型不需要开奖", 400);
     }
-    if (String(draw.resultMode || "") === "instant") {
+    if (isInstantResultMode(draw.resultMode)) {
       return fail(c, "即时开奖活动请由用户 spin，不能统一开奖", 400);
     }
     const result = await performDraw(db, tenantId, drawId, userId, {
