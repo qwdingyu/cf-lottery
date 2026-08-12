@@ -15,7 +15,7 @@ export interface FlashSaleDirectChecklistInput {
   maxParticipants?: number | null
   productLink?: { title?: string | null }
   tiers?: Array<{ prizeId?: string | null }>
-  prizeOptions?: Array<{ id?: string | null; prizeType?: string | null }>
+  prizeOptions?: Array<{ id?: string | null; prizeType?: string | null; active?: number | null }>
 }
 
 function positiveInteger(value: unknown): boolean {
@@ -25,8 +25,11 @@ function positiveInteger(value: unknown): boolean {
 
 export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInput): FlashSaleDirectChecklistItem[] {
   const selectedPrizeIds = new Set((input.tiers || []).map((tier) => tier.prizeId).filter(Boolean))
+  // 与后端 publish-check（publish-check-service.ts）保持一致：只统计 active 的卡密奖品
   const selectedCodePrizeCount = (input.prizeOptions || []).filter((prize) =>
-    selectedPrizeIds.has(prize.id) && String(prize.prizeType || '').trim() === 'code',
+    selectedPrizeIds.has(prize.id)
+    && String(prize.prizeType || '').trim() === 'code'
+    && Number(prize.active) !== 0,
   ).length
 
   return [
