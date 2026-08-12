@@ -113,6 +113,7 @@ export default {
     menuIntegrations: "集成设置",
     menuQQAssistant: "QQ 群助手",
     menuPlatformTarget: "平台助手",
+    menuShop: "我的商铺",
     menuPaymentConfig: "支付配置",
     menuPaymentOrders: "支付订单",
     menuQuotaRedeem: "兑换额度",

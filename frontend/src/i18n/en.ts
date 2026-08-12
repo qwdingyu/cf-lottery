@@ -110,6 +110,7 @@ export default {
     menuIntegrations: "Integrations",
     menuQQAssistant: "QQ Assistant",
     menuPlatformTarget: "Platform Assistant",
+    menuShop: "My Shop",
     menuPaymentConfig: "Payment Config",
     menuBrand: "Brand",
     menuPaymentOrders: "Payment Orders",
