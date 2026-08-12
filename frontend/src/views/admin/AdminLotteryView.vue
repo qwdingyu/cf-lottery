@@ -245,7 +245,6 @@
                 <span>
                   <span v-if="draw.winnerCount !== undefined">{{ draw.winnerCount }}</span>
                   <span v-else class="muted-text">-</span>
-                  <span class="muted-text"> / {{ draw.maxWinners }}</span>
                 </span>
                 <small>{{ $t('lottery.adminWinnersOfMax') }}</small>
               </div>
@@ -2998,19 +2997,37 @@ async function handleExportWinners() {
   }
 }
 
-function handleDuplicate(draw: LotteryDraw) {
+async function handleDuplicate(draw: LotteryDraw) {
   const draft = buildLotteryDuplicateDraft(draw, { nameSuffix: t('lottery.adminDuplicateSuffix'), defaultName: t('lottery.adminNewActivity') })
+  // 调详情 API 获取完整数据（含 tiers + promotionConfig），与 handleEdit 同一真相源
+  let tiers: Array<{ prizeId: string; tierName: string; winnerCount: number; weight?: number }> = []
+  let detailDraw: Record<string, any> | null = null
+  try {
+    const detail = await adminRequest<{ draw: any; tiers: Array<{ prizeId: string; tierName: string; winnerCount: number; weight?: number }> }>(`/api/admin/draws/${draw.id}`)
+    if (detail.tiers) {
+      tiers = detail.tiers.map(t => ({
+        prizeId: t.prizeId || '',
+        tierName: t.tierName || '',
+        winnerCount: t.winnerCount || 1,
+        weight: Number(t.weight) || 0,
+      }))
+    }
+    if (detail.draw) detailDraw = detail.draw
+  } catch { /* 详情加载失败时使用列表行上的字段 */ }
+  // 详情优先（含完整 promotionConfig）；列表行作 fallback
+  const source = detailDraw || (draw as Record<string, any>)
+  const growth = growthFieldsFromDraw(source)
   form.value = {
     ...emptyForm(),
     id: '',
     name: draft.name,
     description: draft.description,
-    prizeName: draft.prizeName,
     startTime: draft.startTime,
     endTime: draft.endTime,
     drawTime: draft.drawTime,
     winnerCount: draft.winnerCount,
     maxParticipants: draft.maxParticipants,
+    expectedParticipants: Number(source.expectedParticipants ?? 0),
     participationMode: draft.participationMode,
     activityKind: draft.activityKind || 'lottery',
     allocationPolicy: draft.allocationPolicy || 'capacity',
@@ -3018,18 +3035,50 @@ function handleDuplicate(draw: LotteryDraw) {
     resultMode: draft.resultMode,
     activityConfig: normalizeActivityConfig(draft.activityKind || 'lottery', draft.activityConfig),
     accessPassword: draft.accessPassword,
-    enableProductLink: false,
-    productLink: { url: '', title: '', imageUrl: '', price: '' },
-    enableViral: false,
-    viralExtraEntriesPerInvite: 1,
-    viralMaxExtraEntries: 10,
-    viralLeaderboardEnabled: true,
+    // 奖项配置（复制源活动，与 handleEdit 一致）
+    tiers,
+    // 展示开关（从源活动回填）
+    showWinners: Number(source.showWinnerList ?? source.showWinnerCount ?? 0) === 1,
+    showParticipantCount: (Number(source.showParticipantCount ?? 1) === 1 ? 1 : 0) as 0 | 1,
+    maxSpinsPerEntry: Math.max(1, Number(source.maxSpinsPerEntry || 1)),
+    // 增长配置（growthFieldsFromDraw 解析源活动 promotionConfig，与 handleEdit 同一真相源）
+    enableProductLink: growth.enableProductLink,
+    productLink: growth.productLink,
+    enableViral: growth.enableViral,
+    viralExtraEntriesPerInvite: growth.viralExtraEntriesPerInvite,
+    viralMaxExtraEntries: growth.viralMaxExtraEntries,
+    viralLeaderboardEnabled: growth.viralLeaderboardEnabled,
+    enableAfterWinCta: growth.enableAfterWinCta,
+    afterWinCtaUrl: growth.afterWinCtaUrl,
+    afterWinCtaTitle: growth.afterWinCtaTitle,
+    enableAfterLossCta: growth.enableAfterLossCta,
+    afterLossCtaUrl: growth.afterLossCtaUrl,
+    afterLossCtaTitle: growth.afterLossCtaTitle,
+    // 游戏壳展示（growthFieldsFromDraw 解析 promotion.experience）
+    prizePanelMode: growth.prizePanelMode || 'auto',
+    ritualPhrasesText: growth.ritualPhrasesText || '',
+    // 秒杀壳（growthFieldsFromDraw 解析 promotion.flashSale）
+    enableFlashSale: growth.enableFlashSale,
+    flashSaleSessionLabel: growth.flashSaleSessionLabel || '',
+    flashSaleStockLimit: growth.flashSaleStockLimit,
+    flashSaleMaxPerUser: growth.flashSaleMaxPerUser || 1,
+    flashSaleCtaLabel: growth.flashSaleCtaLabel || '抢',
+    flashSaleShowCountdown: growth.flashSaleShowCountdown !== false,
+    flashSaleShowProgress: growth.flashSaleShowProgress !== false,
+    flashSaleShowStock: growth.flashSaleShowStock !== false,
+    flashSalePaymentRequired: growth.flashSalePaymentRequired === true,
+    flashSalePriceCents: growth.flashSalePriceCents,
+    flashSaleCurrency: growth.flashSaleCurrency || 'cny',
+    flashSaleTitle: growth.flashSaleTitle || '',
+    flashSalePricingTiers: growth.flashSalePricingTiers || [],
   }
   isEditing.value = false
-  showAdvancedGrowth.value = false
+  showAdvancedGrowth.value = growth.hasGrowthConfig
   activeTemplateId.value = ''
   activeTemplateName.value = ''
   activeTemplateHints.value = []
+  rosterInput.value = ''
+  inviteCodeCount.value = 10
   showCreateModal.value = true
   showToast(t('lottery.adminDuplicatedToast'), 'success')
 }
@@ -3694,6 +3743,7 @@ async function handleEdit(draw: LotteryDraw) {
     endTime: toDateTimeLocalValue(draw.endAt),
     drawTime: toDateTimeLocalValue(draw.drawAt || ''),
     winnerCount: draw.winnerCount,
+    expectedParticipants: Number(draw.expectedParticipants ?? 0),
     maxSpinsPerEntry: Math.max(1, Number(source.maxSpinsPerEntry || draw.maxSpinsPerEntry || 1)),
     maxParticipants: draw.maxParticipants ?? null,
     participationMode: draw.participationMode || 'open',
@@ -3850,6 +3900,8 @@ async function handleCreate() {
       drawTrigger: schedule.drawTrigger,
       winnerCount: activityKind === 'lottery' ? Number(form.value.winnerCount) || 1 : 0,
       maxParticipants: form.value.maxParticipants ? Number(form.value.maxParticipants) : undefined,
+      // 预计参与人数（运营参考值，仅展示用）：非负数时发送，0 表示未设置
+      expectedParticipants: form.value.expectedParticipants >= 0 ? Number(form.value.expectedParticipants) : 0,
       participationMode: form.value.participationMode || 'open',
       experienceType: form.value.experienceType || defaultExperienceForActivity(activityKind, form.value.participationMode || 'open'),
       activityKind,

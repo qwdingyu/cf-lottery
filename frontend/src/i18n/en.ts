@@ -1071,7 +1071,7 @@ export default {
     adminTimeOrderOk: "Time order OK:",
     adminTimeOrderError: "Invalid time order: require start < end < draw.",
     adminTimeInvalid: "Invalid time format. Please reselect.",
-    adminWinnersOfMax: "actual / slots",
+    adminWinnersOfMax: "Winner slots",
     adminWindowTo: "to",
     adminCopyLink: "Share link",
     adminCopyLinkHint: "Copy the public draw URL for campaigns",

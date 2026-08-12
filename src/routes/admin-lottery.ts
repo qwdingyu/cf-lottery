@@ -48,6 +48,7 @@ import {
   validateProductLink,
   coerceEnum,
   normalizeOptionalPositiveInteger,
+  normalizeOptionalNonNegativeInteger,
   defaultExperienceForActivity,
 } from "./admin-lottery-helpers";
 
@@ -589,6 +590,7 @@ adminLotteryRoute.post("/draws/:id/copy", async (c) => {
     accessPassword: draw.accessPassword,
     maxParticipants: draw.maxParticipants,
     winnerCount: draw.winnerCount,
+    expectedParticipants: draw.expectedParticipants,
     showParticipantCount: draw.showParticipantCount,
     showWinnerCount: draw.showWinnerCount,
     showWinnerList: draw.showWinnerList,
@@ -730,6 +732,10 @@ adminLotteryRoute.post("/draws", async (c) => {
       drawAt: body.drawAt || undefined,
       accessPassword: String(body.accessPassword || ""),
       maxParticipants: requestedMaxParticipants ?? systemMaxParticipants,
+      // 预计参与人数（运营参考值）：非负整数，0 表示未设置
+      expectedParticipants: body.expectedParticipants !== undefined
+        ? (normalizeOptionalNonNegativeInteger(body.expectedParticipants, "预计参与") ?? 0)
+        : 0,
       winnerCount: body.winnerCount !== undefined ? Number(body.winnerCount) : defaultWinnerCount,
       // 055a P1：模板 defaults 的展示开关可在创建时写入（createDraw 本就支持；此前路由未透传）
       ...(body.showParticipantCount !== undefined ? { showParticipantCount: body.showParticipantCount ? 1 : 0 } : {}),
@@ -851,6 +857,7 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       ...(body.endAt !== undefined ? { endAt: body.endAt } : {}),
       ...(body.drawAt !== undefined ? { drawAt: body.drawAt } : {}),
       ...(body.winnerCount !== undefined ? { winnerCount: Number(body.winnerCount) } : {}),
+      ...(body.expectedParticipants !== undefined ? { expectedParticipants: normalizeOptionalNonNegativeInteger(body.expectedParticipants, "预计参与") ?? 0 } : {}),
       ...(maxSpinsUpdate !== undefined ? { maxSpinsPerEntry: maxSpinsUpdate } : {}),
       ...(maxParticipantsUpdate !== undefined ? { maxParticipants: maxParticipantsUpdate } : {}),
       ...(body.accessPassword !== undefined ? { accessPassword: body.accessPassword ? await hashAccessPassword(String(body.accessPassword)) : "" } : {}),

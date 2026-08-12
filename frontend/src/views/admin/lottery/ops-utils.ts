@@ -167,7 +167,6 @@ export function buildLotteryDuplicateDraft(
   return {
     name: draw.title ? `${draw.title}${opts.nameSuffix}` : opts.defaultName,
     description: draw.description || '',
-    prizeName: '',
     startTime: draw.startAt ? toDateTimeLocalValue(draw.startAt) : '',
     endTime: draw.endAt ? toDateTimeLocalValue(draw.endAt) : '',
     drawTime: draw.drawAt ? toDateTimeLocalValue(draw.drawAt) : '',

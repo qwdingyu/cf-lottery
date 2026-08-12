@@ -1044,7 +1044,7 @@ export default {
     adminTimeOrderOk: "时间顺序正确：",
     adminTimeOrderError: "时间顺序无效：须满足 开始 < 结束 < 开奖。",
     adminTimeInvalid: "时间格式无效，请重新选择。",
-    adminWinnersOfMax: "实际 / 名额",
+    adminWinnersOfMax: "中奖名额",
     adminWindowTo: "至",
     adminCopyLink: "分享链接",
     adminCopyLinkHint: "复制用户端活动链接，便于投放",

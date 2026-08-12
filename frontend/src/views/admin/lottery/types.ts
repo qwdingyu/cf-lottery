@@ -30,7 +30,6 @@ export type LotteryDraw = {
   /** instant：每人累计 spin 次数硬顶（0=未配置/delayed） */
   maxSpinsPerEntry?: number
   maxParticipants: number | null
-  maxWinners?: number
   expectedParticipants?: number
   entryCount?: number
   visible?: number
@@ -160,13 +159,10 @@ export type LotteryEditorForm = {
   id: string
   name: string
   description: string
-  prizeName: string
-  productName: string
   startTime: string
   endTime: string
   drawTime: string
   winnerCount: number
-  maxWinners: number
   maxParticipants: number | null
   expectedParticipants: number
   activityKind: string

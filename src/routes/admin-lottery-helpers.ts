@@ -303,6 +303,15 @@ export function normalizeOptionalPositiveInteger(value: unknown, fieldName: stri
   return normalized;
 }
 
+export function normalizeOptionalNonNegativeInteger(value: unknown, fieldName: string): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized < 0) {
+    throw new Error(`${fieldName}必须为非负整数`);
+  }
+  return normalized;
+}
+
 export function defaultExperienceForParticipation(participationMode: string): string {
   if (participationMode === "invite_code") return "slot";
   if (participationMode === "password") return "scratch";

@@ -287,6 +287,11 @@ export const lotteryDraws = sqliteTable("lottery_draws", {
   accessPassword: text("access_password").notNull().default(""),
   maxParticipants: integer("max_participants"),
   /**
+   * 预计参与人数（运营参考值，仅展示用，不参与名额/库存计算）。
+   * 产品链路：创建表单「预计参与」输入 → 列表 tooltip 展示。
+   */
+  expectedParticipants: integer("expected_participants").notNull().default(0),
+  /**
    * 直付秒杀当前占用名额计数器（reserved/pending/paid）。
    * 参与热路径用条件 UPDATE 做 CAS，避免 COUNT(lottery_entries) 随规模线性增长。
    */

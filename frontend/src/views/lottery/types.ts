@@ -31,7 +31,6 @@ export type LotteryDraw = {
   showWinnerCount: number
   showWinnerList: number
   showWinners?: boolean
-  maxWinners?: number
   participantCount?: number
   entryCount?: number
   /** 后端按 status + startAt/endAt 计算的参与门禁，公开页必须在发验证码前使用。 */

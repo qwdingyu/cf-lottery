@@ -202,6 +202,8 @@ export async function createDraw(
     drawAt?: string;               // 定时开奖时间（ISO 8601）
     accessPassword?: string;       // 密码模式下的访问密码（明文，存储时需 hash）
     maxParticipants?: number;      // 最大参与人数（null=不限）
+    /** 预计参与人数（运营参考值，仅展示用，不参与名额/库存计算） */
+    expectedParticipants?: number;
     winnerCount?: number;          // 中奖人数
     showParticipantCount?: number; // 是否公开参与人数（0/1）
     showWinnerCount?: number;      // 是否公开中奖人数（0/1）
@@ -296,6 +298,7 @@ export async function createDraw(
         accessPassword: accessPasswordHash,
         maxParticipants: requestedMaxParticipants ?? Math.min(DEFAULT_ACTIVITY_PARTICIPANT_CAP, planLimits.maxParticipantsPerActivity),
         winnerCount,
+        expectedParticipants: data.expectedParticipants ?? 0,
         showParticipantCount: data.showParticipantCount ?? 1,
         showWinnerCount: data.showWinnerCount ?? 1,
         showWinnerList: data.showWinnerList ?? 0,
