@@ -37,9 +37,9 @@ import {
   verifyEmailAccessCode,
   consumeEmailAccessCode,
   tryParseJson,
-  escapeHtml,
   hashEventValue,
-  ogDescriptionFallback,
+  decodePublicSlug,
+  renderPublicOgHtml,
 } from "./public-lottery-helpers";
 import { setupPublicShareRoutes } from "./public-lottery-share";
 import { defaultExperienceForParticipation } from "./admin-lottery-helpers";
@@ -539,44 +539,39 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
 
 publicLotteryRoute.get("/draws/:slug/og", async (c) => {
   const db = getDb(c);
-  const slug = c.req.param("slug");
+  const slug = decodePublicSlug(c.req.param("slug"));
+  if (!slug) return c.html("<!DOCTYPE html><html><body><h1>活动不存在</h1></body></html>", 404);
   const [draw] = await db
     .select({
       title: lotteryDraws.title,
       description: lotteryDraws.description,
       status: lotteryDraws.status,
+      productLink: lotteryDraws.productLink,
+      promotionConfig: lotteryDraws.promotionConfig,
     })
     .from(lotteryDraws)
-    .where(eq(lotteryDraws.publicSlug, slug))
+    .where(and(
+      eq(lotteryDraws.publicSlug, slug),
+      eq(lotteryDraws.visible, 1),
+      inArray(lotteryDraws.status, [DRAW_STATUS.OPEN, DRAW_STATUS.DRAWN]),
+    ))
     .limit(1);
   if (!draw) return c.html("<!DOCTYPE html><html><body><h1>活动不存在</h1></body></html>", 404);
 
-  const title = escapeHtml(draw.title);
-  // 有主办方描述用描述；否则按 status 兜底，终态不写「快来参与」（docs/104）
-  const rawDesc =
-    String(draw.description || "").trim() || ogDescriptionFallback(draw.status);
-  const desc = escapeHtml(rawDesc);
   const origin = getEnv(c, "APP_ORIGIN") || "https://lucky.eforge.xyz";
-  const pageUrl = `${origin}/lottery/${slug}`;
+  const requestUrl = new URL(c.req.url);
+  const pageUrl = `${origin}/lottery/${encodeURIComponent(slug)}${requestUrl.search}`;
 
-  return c.html(`<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta property="og:title" content="${title}" />
-  <meta property="og:description" content="${desc}" />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="${pageUrl}" />
-  <meta property="og:site_name" content="运营活动引擎" />
-  <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="${title}" />
-  <meta name="twitter:description" content="${desc}" />
-  <meta http-equiv="refresh" content="0;url=${pageUrl}" />
-</head>
-<body>
-  <p>正在跳转到活动页…<a href="${pageUrl}">点击这里</a></p>
-</body>
-</html>`);
+  // 提取活动/商品图片：productLink.imageUrl > promotionConfig.destination.imageUrl > 默认图(render内处理)
+  const product = productFromPublicConfig(draw as { title: string; productLink?: string | null; promotionConfig?: string | null });
+
+  return c.html(renderPublicOgHtml({
+    title: draw.title,
+    description: draw.description,
+    status: draw.status,
+    pageUrl,
+    imageUrl: product.imageUrl,
+  }));
 });
 
 

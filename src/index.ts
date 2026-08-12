@@ -8,9 +8,10 @@ import { cors } from "hono/cors";
 import type { AppEnv, Bindings } from "./bindings";
 import { createClient, type Client } from "@libsql/client";
 import { createDb, type DbType } from "./db/client";
-import { and, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getEnv } from "./lib/platform";
 import { systemConfig, auditLogs, lotteryDraws, paymentOrders, rateLimitLog } from "./db/schema";
+import { decodePublicSlug, isSocialCrawler, renderPublicOgHtml } from "./routes/public-lottery-helpers";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
@@ -416,6 +417,35 @@ app.get("*", async (c, next) => {
   // 双保险：/api 不应进入 SPA（正常已由上方 all /api/* 截获）
   if (c.req.path.startsWith("/api/") || c.req.path === "/api") {
     return c.json({ ok: false, message: "接口不存在" }, 404);
+  }
+  const lotteryMatch = c.req.path.match(/^\/lottery\/([^/]+)$/);
+  if (lotteryMatch && isSocialCrawler(c.req.header("User-Agent"))) {
+    const slug = decodePublicSlug(lotteryMatch[1] || "");
+    const db = c.get("db");
+    if (slug && db) {
+      const [draw] = await db
+        .select({
+          title: lotteryDraws.title,
+          description: lotteryDraws.description,
+          status: lotteryDraws.status,
+        })
+        .from(lotteryDraws)
+        .where(and(
+          eq(lotteryDraws.publicSlug, slug),
+          eq(lotteryDraws.visible, 1),
+          inArray(lotteryDraws.status, ["open", "drawn"]),
+        ))
+        .limit(1);
+      if (draw) {
+        const requestUrl = new URL(c.req.url);
+        return c.html(renderPublicOgHtml({
+          title: draw.title,
+          description: draw.description,
+          status: draw.status,
+          pageUrl: requestUrl.toString(),
+        }));
+      }
+    }
   }
   const assets = c.env.ASSETS as Fetcher | undefined;
   if (!assets) return next();

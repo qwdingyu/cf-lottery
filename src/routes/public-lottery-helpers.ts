@@ -191,5 +191,68 @@ export function ogDescriptionFallback(status: string | null | undefined): string
   return "快来参与活动吧！";
 }
 
+/**
+ * 社交平台抓取公开活动链接时不会执行前端 JavaScript，
+ * 因此 /lottery/:slug 必须在 SPA 回退前返回服务端 OG HTML。
+ * 只识别已知社交抓取器，避免普通浏览器请求被误判。
+ */
+export function isSocialCrawler(userAgent: string | null | undefined): boolean {
+  return /facebookexternalhit|Facebot|Twitterbot|Slackbot|Discordbot|TelegramBot|WhatsApp|LinkedInBot|Pinterest|MicroMessenger|Bytespider|Line\/|Google-InspectionTool/i
+    .test(String(userAgent || ""));
+}
+
+/** URL path 参数来自外部请求，非法百分号编码只应当走正常 SPA 404/回退，不能抛出 500。 */
+export function decodePublicSlug(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+/** 默认 OG 图片：内置彩色 SVG，始终可用且无需额外部署静态资源 */
+export function defaultOgImageUrl(pageUrl: string): string {
+  return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='630' viewBox='0 0 1200 630'%3E%3Crect width='1200' height='630' fill='%234F46E5'/%3E%3Ctext x='600' y='300' text-anchor='middle' fill='white' font-size='48' font-family='sans-serif'%3E🎯%3C/text%3E%3Ctext x='600' y='370' text-anchor='middle' fill='white' font-size='24' font-family='sans-serif'%3E运营活动引擎%3C/text%3E%3C/svg%3E`;
+}
+
+export function renderPublicOgHtml(input: {
+  title: string;
+  description?: string | null;
+  status?: string | null;
+  pageUrl: string;
+  /** 活动/商品图片 URL，为空时使用默认 SVG 公益图 */
+  imageUrl?: string | null;
+}): string {
+  const title = escapeHtml(input.title);
+  const rawDesc = String(input.description || "").trim() || ogDescriptionFallback(input.status);
+  const description = escapeHtml(rawDesc);
+  const pageUrl = escapeHtml(input.pageUrl);
+  // 图片优先级：活动商品图/奖品图 > 默认 SVG 公益图
+  const imageUrl = escapeHtml(input.imageUrl || defaultOgImageUrl(pageUrl));
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta property="og:title" content="${title}" />
+  <meta property="og:description" content="${description}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="${pageUrl}" />
+  <meta property="og:image" content="${imageUrl}" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:site_name" content="运营活动引擎" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${title}" />
+  <meta name="twitter:description" content="${description}" />
+  <meta name="twitter:image" content="${imageUrl}" />
+  <meta http-equiv="refresh" content="0;url=${pageUrl}" />
+</head>
+<body>
+  <p>正在跳转到活动页…<a href="${pageUrl}">点击这里</a></p>
+</body>
+</html>`;
+}
+
 import { escapeHtml } from "../services/email-service";
 export { escapeHtml };

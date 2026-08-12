@@ -181,6 +181,49 @@ describe("GET /public/home-activities", () => {
   });
 });
 
+describe("GET /public/draws/:slug/og", () => {
+  it("返回活动动态 OG 元数据并保留分享参数", async () => {
+    await db.insert(tenants).values({ id: TENANT, name: "OG Tenant" });
+    await seedDraw({
+      id: "og-draw",
+      slug: "og-draw-slug",
+      title: "OG 活动标题",
+      promotionConfig: {},
+    });
+
+    const res = await app().request(
+      "/public/draws/og-draw-slug/og?ref=share-code",
+      { headers: { "User-Agent": "Twitterbot/1.0" } },
+      { ...TEST_ENV, APP_ORIGIN: "https://lucky.eforge.xyz" },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('<meta property="og:title" content="OG 活动标题"');
+    expect(html).toContain('https://lucky.eforge.xyz/lottery/og-draw-slug?ref=share-code');
+  });
+
+  it("不为隐藏或草稿活动暴露 OG 元数据", async () => {
+    await db.insert(tenants).values({ id: TENANT, name: "OG Hidden Tenant" });
+    await seedDraw({
+      id: "og-hidden",
+      slug: "og-hidden-slug",
+      title: "不应公开",
+      visible: 0,
+    });
+    await seedDraw({
+      id: "og-draft",
+      slug: "og-draft-slug",
+      title: "草稿不应公开",
+      status: "draft",
+    });
+
+    const hidden = await app().request("/public/draws/og-hidden-slug/og", {}, TEST_ENV);
+    const draft = await app().request("/public/draws/og-draft-slug/og", {}, TEST_ENV);
+    expect(hidden.status).toBe(404);
+    expect(draft.status).toBe(404);
+  });
+});
+
 describe("GET /public/shops/:storeSlug", () => {
   it("店铺首页直付秒杀按活动计数器计算进度，且不暴露内部 ID", async () => {
     await db.insert(tenants).values({ id: TENANT, name: "Public Shop Tenant", storeSlug: "token-shop" });
