@@ -1148,6 +1148,17 @@
             <div class="form-grid two-cols">
               <div v-if="editorVisibility.tiers && (form.activityKind === 'lottery' || form.activityKind === 'claim')" class="field-span-2">
                 <span class="field-label-text">{{ $t('lottery.adminTierConfig') }}</span>
+                <!-- 奖项配置表头（docs/206）：与阶梯价对齐，让运营者清楚每列含义 -->
+                <div v-if="form.tiers.length > 0" class="tier-header">
+                  <span class="tier-header-prize">{{ $t('lottery.adminTierHeaderPrize') }}</span>
+                  <span class="tier-header-name">{{ $t('lottery.adminTierHeaderName') }}</span>
+                  <span class="tier-header-count">{{ $t('lottery.adminTierHeaderWinnerCount') }}</span>
+                  <template v-if="form.resultMode === 'instant'">
+                    <span class="tier-header-count">{{ $t('lottery.adminTierHeaderWeight') }}</span>
+                    <span class="tier-header-probability">{{ $t('lottery.adminTierHeaderProbability') }}</span>
+                  </template>
+                  <span class="tier-header-actions"></span>
+                </div>
                 <div class="tier-list">
                   <div v-for="(tier, idx) in form.tiers" :key="idx" class="tier-row">
                     <select v-model="tier.prizeId" class="tier-prize" :disabled="creating">

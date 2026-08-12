@@ -467,6 +467,23 @@
 
 /* 奖项配置 */
 .tier-list { display: flex; flex-direction: column; gap: 8px; }
+.tier-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 0 2px;
+  margin-bottom: 4px;
+}
+.tier-header-prize { flex: 2; min-width: 0; }
+.tier-header-name { flex: 1.5; min-width: 0; }
+.tier-header-count { flex: 0.5; min-width: 70px; }
+.tier-header-probability { flex: 0 0 118px; text-align: right; white-space: nowrap; }
+.tier-header-actions { flex: 0 0 28px; }
+@media (max-width: 720px) {
+  .tier-header-probability { flex-basis: 100%; text-align: left; }
+}
 .tier-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .tier-prize { flex: 2; min-width: 0; }
 .tier-name { flex: 1.5; min-width: 0; }
