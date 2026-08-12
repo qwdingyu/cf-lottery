@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AppEnv, Bindings } from "./bindings";
 import { createClient, type Client } from "@libsql/client";
-import { createDb } from "./db/client";
+import { createDb, type DbType } from "./db/client";
 import { and, sql } from "drizzle-orm";
 import { getEnv } from "./lib/platform";
 import { systemConfig, auditLogs, lotteryDraws, paymentOrders, rateLimitLog } from "./db/schema";
@@ -53,8 +53,22 @@ function createDbFromEnv(env: Bindings) {
   return createDb(client);
 }
 
+/**
+ * runScheduledMaintenance 所需的配置项（从环境变量提取）。
+ * 与 Bindings 解耦，确保 Node 环境（process.env）和 Workers 环境（c.env）均可正常注入。
+ */
+export interface MaintenanceEnv {
+  resendApiKey?: string;
+  emailFrom?: string;
+  credentialsEncryptionKey?: string;
+  cfAuthIssuer?: string;
+  cfAuthClientId?: string;
+  cfAuthClientSecret?: string;
+}
+
 export async function runScheduledMaintenance(
-  env: Bindings,
+  db: DbType,
+  env: MaintenanceEnv,
   options?: {
     fetcher?: WebhookFetch;
     drawLimit?: number;
@@ -62,14 +76,11 @@ export async function runScheduledMaintenance(
     webhookPerTenantLimit?: number;
   },
 ) {
-  const db = createDbFromEnv(env);
-  if (!db) throw new Error("数据库未配置");
-
   const draws = await processDueDraws(db, {
     limit: options?.drawLimit ?? 20,
     emailEnv: {
-      resendApiKey: env.RESEND_API_KEY || "",
-      emailFrom: env.EMAIL_FROM || "",
+      resendApiKey: env.resendApiKey || "",
+      emailFrom: env.emailFrom || "",
     },
   });
   const webhooks = await processPendingWebhookDeliveriesForAllTenants(db, options?.fetcher ?? fetch, {
@@ -79,14 +90,14 @@ export async function runScheduledMaintenance(
   // 平台出站消息投递（QQ 群消息）：异步发送 pending 的平台消息，3 次重试
   const platformDeliveries = await processPendingPlatformDeliveriesForAllTenants(db, {
     perTenantLimit: 20,
-    credentialsEncryptionKey: env.CREDENTIALS_ENCRYPTION_KEY || "",
+    credentialsEncryptionKey: env.credentialsEncryptionKey || "",
   });
   const emailDeliveries = await dispatchEmailDeliveries(db, {
-    resendApiKey: env.RESEND_API_KEY || "",
-    emailFrom: env.EMAIL_FROM || "",
-    cfAuthIssuer: env.CF_AUTH_ISSUER || "",
-    cfAuthClientId: env.CF_AUTH_CLIENT_ID || "",
-    cfAuthClientSecret: env.CF_AUTH_CLIENT_SECRET || "",
+    resendApiKey: env.resendApiKey || "",
+    emailFrom: env.emailFrom || "",
+    cfAuthIssuer: env.cfAuthIssuer || "",
+    cfAuthClientId: env.cfAuthClientId || "",
+    cfAuthClientSecret: env.cfAuthClientSecret || "",
   }, { limit: 50 });
   // 限流日志只服务短窗口判断，定时清理避免 Turso 免费层 rows/storage 被长期无价值日志拖垮。
   // F1 修复：reward 邀请奖励配额是【24 小时窗口】（reward.ts REWARD_QUOTA_WINDOW_MS），
@@ -106,8 +117,8 @@ export async function runScheduledMaintenance(
   const cleanedRetention = await runRetentionCleanup(db);
   // 营销邮件：开奖前 1 小时提醒
   const drawReminders = await sendDrawReminders(db, {
-    resendApiKey: env.RESEND_API_KEY || "",
-    emailFrom: env.EMAIL_FROM || "",
+    resendApiKey: env.resendApiKey || "",
+    emailFrom: env.emailFrom || "",
   });
 
   return { draws, webhooks, platformDeliveries, emailDeliveries, cleanedRateLimitLogs, cleanedTokens, cleanedBindings, cleanedSpins, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
@@ -373,7 +384,16 @@ app.post("/api/cron/maintenance", async (c) => {
   }
 
   try {
-    const result = await runScheduledMaintenance(c.env);
+    const db = c.get("db");
+    if (!db) return c.json({ ok: false, message: "数据库未配置" }, 500);
+    const result = await runScheduledMaintenance(db, {
+      resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
+      emailFrom: getEnv(c, "EMAIL_FROM") || "",
+      credentialsEncryptionKey: getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "",
+      cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
+      cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
+      cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
+    });
     return c.json({ ok: true, ...result });
   } catch (err) {
     console.error("[cron] maintenance failed:", err);
@@ -418,7 +438,19 @@ const worker: ExportedHandler<Bindings> = {
   scheduled(_event, env, ctx) {
     ctx.waitUntil((async () => {
       try {
-        const result = await runScheduledMaintenance(env);
+        const db = createDbFromEnv(env);
+        if (!db) {
+          console.error("[cron] 数据库未配置，跳过 maintenance");
+          return;
+        }
+        const result = await runScheduledMaintenance(db, {
+          resendApiKey: env.RESEND_API_KEY || "",
+          emailFrom: env.EMAIL_FROM || "",
+          credentialsEncryptionKey: env.CREDENTIALS_ENCRYPTION_KEY || "",
+          cfAuthIssuer: env.CF_AUTH_ISSUER || "",
+          cfAuthClientId: env.CF_AUTH_CLIENT_ID || "",
+          cfAuthClientSecret: env.CF_AUTH_CLIENT_SECRET || "",
+        });
         console.log("[cron] maintenance complete", JSON.stringify(result));
       } catch (err) {
         console.error("[cron] maintenance failed:", err);
