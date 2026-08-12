@@ -501,3 +501,37 @@ export function publishFixSectionTargetId(errors: PublishCheckItem[]): string | 
   }
   return section ? idMap[section] : undefined
 }
+
+/**
+ * 活动是否需要奖项配置（壳层面 —— 奖档区可显示、saveDrawTiers 可调用、后端可保存）。
+ *
+ * 仅两类活动需要：
+ * ① lottery（抽奖奖档）；② claim + flash_sale（直付秒杀绑定唯一卡密奖品）。
+ * 其他活动（资料领取/问卷/报名/投票/签到/审核/预约）不需要奖项配置。
+ *
+ * 与后端 admin-lottery-draw-ops.ts 的 `isFlashSaleDirect` 判断一致。
+ * 调用处：奖档区显示、saveDrawTiers 调用、后端保存（4 层统一）。
+ */
+export function needsTiersActivity(kind: string, experienceType: string): boolean {
+  return kind === 'lottery' || (kind === 'claim' && experienceType === 'flash_sale')
+}
+
+/**
+ * 活动是否必须配置奖项（强制层面 —— 创建步骤第 4 步强制检查、发布检查强制要求）。
+ *
+ * 在 needsTiersActivity 的基础上，额外要求直付秒杀必须启用并直付（enableFlashSale && paymentRequired），
+ * 否则奖档可选但不强制（导流模式）。
+ *
+ * 与后端 publish-check 的 validateFlashSalePayment（paymentRequired 保护）一致。
+ * 调用处：createStepDone 第 4 步、createReadinessLabel。
+ */
+export function needsTiersMandatory(
+  kind: string,
+  experienceType: string,
+  enableFlashSale: boolean,
+  paymentRequired: boolean,
+): boolean {
+  if (kind === 'lottery') return true
+  if (kind === 'claim' && experienceType === 'flash_sale' && enableFlashSale && paymentRequired) return true
+  return false
+}

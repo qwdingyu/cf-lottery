@@ -46,6 +46,8 @@ export default defineConfig({
       "frontend/src/views/admin/lottery/ops-utils.email.test.ts",
       // docs/086 复查：批量选中/可见性/列表筛选空态
       "frontend/src/views/admin/lottery/ops-utils.bulk.test.ts",
+      // docs/212：奖项配置条件组合矩阵（needsTiersActivity + needsTiersMandatory）
+      "frontend/src/views/admin/lottery/ops-utils.tiers.test.ts",
       // docs/114：邀请排行榜 UI 决策（门禁/高亮/底栏/错误解析）
       "frontend/src/views/lottery/viral-leaderboard-ui.test.ts",
       // docs/114：管理端裂变回填与 promotionConfig 提交防擦

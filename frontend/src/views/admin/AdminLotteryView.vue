@@ -1146,7 +1146,7 @@
               </p>
             </header>
             <div class="form-grid two-cols">
-              <div v-if="editorVisibility.tiers && (form.activityKind === 'lottery' || (form.activityKind === 'claim' && form.experienceType === 'flash_sale'))" class="field-span-2">
+              <div v-if="editorVisibility.tiers && needsTiersActivity(form.activityKind, form.experienceType || '')" class="field-span-2">
                 <span class="field-label-text">{{ $t('lottery.adminTierConfig') }}</span>
                 <!-- 奖项配置表头（docs/206）：与阶梯价对齐，让运营者清楚每列含义 -->
                 <div v-if="form.tiers.length > 0" class="tier-header">
@@ -1873,6 +1873,8 @@ import {
   formatLotteryEntryProgress,
   formatLotteryVisibilityLabel,
   formatPublishCheckItems as formatPublishCheckItemsRaw,
+  needsTiersActivity,
+  needsTiersMandatory,
   publishFixSectionTargetId,
   resolveLotteryScheduleFields,
   statusClass,
@@ -2572,7 +2574,7 @@ const createStepDone = computed(() => {
   let prizesOk = true
   if (form.value.activityKind === 'lottery') {
     prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
-  } else if (form.value.activityKind === 'claim' && form.value.experienceType === 'flash_sale' && form.value.enableFlashSale && form.value.flashSalePaymentRequired) {
+  } else if (needsTiersMandatory(form.value.activityKind, form.value.experienceType || '', form.value.enableFlashSale, form.value.flashSalePaymentRequired)) {
     // 直付秒杀（限时抢购）：必须绑定至少 1 个卡密奖品（发布清单 codePrize 检查项），
     // 否则创建后无法通过发布门禁。导流模式（非直付）不需要卡密奖品。
     prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
@@ -2594,11 +2596,7 @@ const createReadinessLabel = computed(() => {
   if (form.value.activityKind === 'lottery' && !createStepDone.value.prizes) {
     missing.push(t('lottery.adminCreateNeedPrize'))
   }
-  if (
-    form.value.activityKind === 'claim'
-    && form.value.experienceType === 'flash_sale'
-    && form.value.enableFlashSale
-    && form.value.flashSalePaymentRequired
+  if (needsTiersMandatory(form.value.activityKind, form.value.experienceType || '', form.value.enableFlashSale, form.value.flashSalePaymentRequired)
     && !form.value.tiers.some((tier) => Boolean(tier.prizeId))
   ) {
     missing.push(t('lottery.adminCreateNeedPrize'))
@@ -4018,7 +4016,7 @@ async function handleCreate() {
       await saveDrawRoster(form.value.id)
       await saveDrawInviteCodes(form.value.id)
       // 仅抽奖或直付秒杀需要奖项配置；资料领取/领券等 claim 活动不调用（后端会拒绝）
-      if (form.value.activityKind === 'lottery' || (form.value.activityKind === 'claim' && form.value.experienceType === 'flash_sale')) {
+      if (needsTiersActivity(form.value.activityKind, form.value.experienceType || '')) {
         await saveDrawTiers(form.value.id)
       }
       // P1 体验：保存成功后回显清洗后的仪式短语，运营者立即看到哪些被保留/被拒。
@@ -4035,7 +4033,7 @@ async function handleCreate() {
         // 如果是 invite_code 模式，生成邀请码
         await saveDrawInviteCodes(created.id)
         // 仅抽奖或直付秒杀保存奖项配置；资料领取/领券等 claim 活动不调用（后端会拒绝）
-        if (form.value.activityKind === 'lottery' || (form.value.activityKind === 'claim' && form.value.experienceType === 'flash_sale')) {
+        if (needsTiersActivity(form.value.activityKind, form.value.experienceType || '')) {
           await saveDrawTiers(created.id)
         }
         try {
