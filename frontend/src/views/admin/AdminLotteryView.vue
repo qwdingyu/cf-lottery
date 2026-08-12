@@ -716,7 +716,7 @@
                 <div class="form-grid two-cols">
                   <label class="field-span-2">
                     <span>{{ $t('lottery.adminExperienceType') }}</span>
-                    <select v-model="form.experienceType">
+                    <select v-model="form.experienceType" @change="handleExperienceChange">
                       <option value="wheel">{{ $t('lottery.adminExpWheel') }}</option>
                       <option value="slot">{{ $t('lottery.adminExpSlot') }}</option>
                       <option value="scratch">{{ $t('lottery.adminExpScratch') }}</option>
@@ -2571,7 +2571,7 @@ const createStepDone = computed(() => {
   let prizesOk = true
   if (form.value.activityKind === 'lottery') {
     prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
-  } else if (form.value.activityKind === 'claim' && form.value.enableFlashSale && form.value.flashSalePaymentRequired) {
+  } else if (form.value.activityKind === 'claim' && form.value.experienceType === 'flash_sale' && form.value.enableFlashSale && form.value.flashSalePaymentRequired) {
     // 直付秒杀（限时抢购）：必须绑定至少 1 个卡密奖品（发布清单 codePrize 检查项），
     // 否则创建后无法通过发布门禁。导流模式（非直付）不需要卡密奖品。
     prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
@@ -2595,6 +2595,7 @@ const createReadinessLabel = computed(() => {
   }
   if (
     form.value.activityKind === 'claim'
+    && form.value.experienceType === 'flash_sale'
     && form.value.enableFlashSale
     && form.value.flashSalePaymentRequired
     && !form.value.tiers.some((tier) => Boolean(tier.prizeId))
@@ -2658,6 +2659,15 @@ function statusLabel(status: string): string {
     cancelled: 'lottery.adminDrawCancelled',
   }
   return t(map[status] || 'lottery.adminUnknown')
+}
+
+function handleExperienceChange() {
+  // 源头扼杀：切换体验类型时，若不再是 flash_sale（直付秒杀壳），自动关闭秒杀配置，
+  // 避免「experienceType=reveal 但 flashSale 配置残留」导致奖档区隐藏、发布检查仍要求卡密奖品而卡死。
+  if (String(form.value.experienceType || '') !== 'flash_sale' && form.value.enableFlashSale) {
+    form.value.enableFlashSale = false
+    form.value.flashSalePaymentRequired = false
+  }
 }
 
 function handleActivityKindChange() {
