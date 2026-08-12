@@ -132,7 +132,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { buildLandingActivityCard, classifyLandingActivity, activityPhaseI18nKey } from '@/views/landing-activity-feed'
+import { buildLandingActivityCard, classifyLandingActivity, activityPhaseI18nKey, resolveLandingActivityPhase } from '@/views/landing-activity-feed'
 import { formatCountdown, formatEndTime } from '@/views/shop/countdown'
 import type { LandingActivityCard } from '@/views/landing-activity-feed'
 
@@ -184,8 +184,8 @@ const cards = computed(() => {
     if (a.flashSaleEnabled !== b.flashSaleEnabled) return a.flashSaleEnabled ? -1 : 1
 
     // 同类型：运行中 > 即将开始 > 已结束
-    const phaseA = resolvePhase(a, now)
-    const phaseB = resolvePhase(b, now)
+    const phaseA = resolveLandingActivityPhase(a, now)
+    const phaseB = resolveLandingActivityPhase(b, now)
     const order: Record<string, number> = { running: 0, upcoming: 1, ended: 2 }
     const diff = (order[phaseA] ?? 9) - (order[phaseB] ?? 9)
     if (diff !== 0) return diff
@@ -201,66 +201,51 @@ const cards = computed(() => {
 })
 
 // ── 秒杀英雄横幅（取最紧急的秒杀活动） ──
-const flashBanner = computed(() => {
-  const runningFlash = cards.value.filter((c) => c.flashSaleEnabled && resolvePhase(c, nowMs.value) === 'running')
-  const upcomingFlash = cards.value.filter((c) => c.flashSaleEnabled && resolvePhase(c, nowMs.value) === 'upcoming')
-  if (runningFlash.length === 0 && upcomingFlash.length === 0) return null
-  const target = runningFlash.length > 0 ? runningFlash[0] : upcomingFlash[0]
-  return { href: target.href }
+const flashBanner = computed<LandingActivityCard | null>(() => {
+  const running = cards.value.find((c) => c.flashSaleEnabled && resolveLandingActivityPhase(c, nowMs.value) === 'running')
+  if (running) return running
+  return cards.value.find((c) => c.flashSaleEnabled && resolveLandingActivityPhase(c, nowMs.value) === 'upcoming') || null
 })
 
 const flashBannerSub = computed(() => {
-  const running = cards.value.filter((c) => c.flashSaleEnabled && resolvePhase(c, nowMs.value) === 'running').length
-  const upcoming = cards.value.filter((c) => c.flashSaleEnabled && resolvePhase(c, nowMs.value) === 'upcoming').length
+  const running = cards.value.filter((c) => c.flashSaleEnabled && resolveLandingActivityPhase(c, nowMs.value) === 'running').length
+  const upcoming = cards.value.filter((c) => c.flashSaleEnabled && resolveLandingActivityPhase(c, nowMs.value) === 'upcoming').length
   const parts: string[] = []
   if (running > 0) parts.push(t('shop.flashBannerSub', { n: running }))
   if (upcoming > 0) parts.push(t('shop.flashBannerUpcoming', { n: upcoming }))
   return parts.join(' · ') || t('shop.flashBannerTitle')
 })
 
-function bannerTarget(): LandingActivityCard | null {
-  if (!flashBanner.value) return null
-  return cards.value.find((c) => c.href === flashBanner.value!.href) || null
-}
-
 const flashBannerLabel = computed(() => {
-  const target = bannerTarget()
+  const target = flashBanner.value
   if (!target) return ''
-  const phase = resolvePhase(target, nowMs.value)
+  const phase = resolveLandingActivityPhase(target, nowMs.value)
   if (phase === 'ended') return t('shop.countdownEnded')
   if (phase === 'upcoming') return t('shop.countdownStartIn')
   return t('shop.countdownEndIn')
 })
 
 const flashBannerDigits = computed(() => {
-  const target = bannerTarget()
+  const target = flashBanner.value
   if (!target) return ''
   return flashCountdown(target)
 })
 
 // ── 阶段 / 倒计时辅助函数 ──
-function resolvePhase(card: LandingActivityCard, now: number): 'upcoming' | 'running' | 'ended' {
-  const startMs = Date.parse(card.startAt)
-  const endMs = Date.parse(card.endAt)
-  if (Number.isFinite(startMs) && now < startMs) return 'upcoming'
-  if (Number.isFinite(endMs) && now >= endMs) return 'ended'
-  return 'running'
-}
-
 function cardPhase(card: LandingActivityCard): string {
-  return resolvePhase(card, nowMs.value)
+  return resolveLandingActivityPhase(card, nowMs.value)
 }
 
 /** 剩余不足 5 分钟 → 紧急呼吸态，强化「手慢无」 */
 function cardUrgent(card: LandingActivityCard): boolean {
-  if (resolvePhase(card, nowMs.value) !== 'running') return false
+  if (resolveLandingActivityPhase(card, nowMs.value) !== 'running') return false
   const endMs = Date.parse(card.endAt)
   if (!Number.isFinite(endMs)) return false
   return endMs - nowMs.value < 300_000
 }
 
 function flashCountdown(card: LandingActivityCard): string {
-  const phase = resolvePhase(card, nowMs.value)
+  const phase = resolveLandingActivityPhase(card, nowMs.value)
   if (phase === 'ended') return ''
   const targetMs = phase === 'upcoming' ? Date.parse(card.startAt) : Date.parse(card.endAt)
   if (!Number.isFinite(targetMs)) return ''
