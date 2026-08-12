@@ -14,6 +14,7 @@ import { verifyJwt } from "../middleware/auth";
 import { checkDbRateLimit } from "../lib/rate-limit";
 import { MemoryRateLimiter } from "@usethink/cf-core/rate-limit";
 import type { ActivityEventType } from "../services/lottery-service";
+import { escapeHtml } from "../services/email-service";
 
 /** 内存固定窗口限流（docs/091 P0-5：统一到 cf-core MemoryRateLimiter，替代本地 Map 实现） */
 const memoryLimiter = new MemoryRateLimiter();
@@ -168,6 +169,18 @@ export function tryParseJson(s: string): any {
   }
 }
 
+/** 校验并规范化 http(s) URL；非法/非 http(s) 返回空串（防 XSS/防协议注入） */
+export function publicHttpUrl(value: unknown): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 /**
  * Open Graph 缺 description 时的兜底文案（docs/104）。
  * 终态活动禁止「快来参与」——别人点开也无法同等参与，与结果页隐藏邀请同一原则。
@@ -215,6 +228,28 @@ export function defaultOgImageUrl(pageUrl: string): string {
   return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='630' viewBox='0 0 1200 630'%3E%3Crect width='1200' height='630' fill='%234F46E5'/%3E%3Ctext x='600' y='300' text-anchor='middle' fill='white' font-size='48' font-family='sans-serif'%3E🎯%3C/text%3E%3Ctext x='600' y='370' text-anchor='middle' fill='white' font-size='24' font-family='sans-serif'%3E运营活动引擎%3C/text%3E%3C/svg%3E`;
 }
 
+/**
+ * 从活动配置中提取商品信息（productLink > promotionConfig.destination）。
+ * 已移到 public-lottery-helpers，供 index.ts 社交爬虫和 public-lottery.ts OG 端点复用。
+ */
+export function productFromPublicConfig(draw: {
+  title: string;
+  productLink?: string | null;
+  promotionConfig?: string | null;
+}) {
+  const productLink = tryParseJson(draw.productLink || "{}") as Record<string, unknown> | null;
+  const promotion = tryParseJson(draw.promotionConfig || "{}") as Record<string, unknown> | null;
+  const destination = promotion?.destination && typeof promotion.destination === "object" && !Array.isArray(promotion.destination)
+    ? (promotion.destination as Record<string, unknown>)
+    : null;
+  return {
+    title: String(productLink?.title || destination?.title || draw.title || "").trim(),
+    imageUrl: publicHttpUrl(productLink?.imageUrl || destination?.imageUrl),
+    priceText: String(productLink?.price || productLink?.priceText || destination?.priceText || "").trim(),
+    url: publicHttpUrl(productLink?.url || destination?.url),
+  };
+}
+
 export function renderPublicOgHtml(input: {
   title: string;
   description?: string | null;
@@ -254,5 +289,4 @@ export function renderPublicOgHtml(input: {
 </html>`;
 }
 
-import { escapeHtml } from "../services/email-service";
 export { escapeHtml };

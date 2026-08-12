@@ -11,7 +11,7 @@ import { createDb, type DbType } from "./db/client";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getEnv } from "./lib/platform";
 import { systemConfig, auditLogs, lotteryDraws, paymentOrders, rateLimitLog } from "./db/schema";
-import { decodePublicSlug, isSocialCrawler, renderPublicOgHtml } from "./routes/public-lottery-helpers";
+import { decodePublicSlug, isSocialCrawler, renderPublicOgHtml, productFromPublicConfig } from "./routes/public-lottery-helpers";
 import { authRoute } from "./routes/auth";
 import { adminLotteryRoute } from "./routes/admin-lottery";
 import { publicLotteryRoute } from "./routes/public-lottery";
@@ -431,6 +431,8 @@ app.get("*", async (c, next) => {
           title: lotteryDraws.title,
           description: lotteryDraws.description,
           status: lotteryDraws.status,
+          productLink: lotteryDraws.productLink,
+          promotionConfig: lotteryDraws.promotionConfig,
         })
         .from(lotteryDraws)
         .where(and(
@@ -441,11 +443,15 @@ app.get("*", async (c, next) => {
         .limit(1);
       if (draw) {
         const requestUrl = new URL(c.req.url);
+        // 与 /api/public/draws/:slug/og 保持一致：真实分享链接(/lottery/:slug)也要带商品图，
+        // 否则社交爬虫永远只能拿到默认 SVG（P0-1 目标未达成的核心路径）。
+        const product = productFromPublicConfig(draw);
         return c.html(renderPublicOgHtml({
           title: draw.title,
           description: draw.description,
           status: draw.status,
           pageUrl: requestUrl.toString(),
+          imageUrl: product.imageUrl,
         }));
       }
     }

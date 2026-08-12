@@ -758,9 +758,26 @@ export async function grantLoserRewards(
 
   // 查询全部参与记录
   const entries = await db
-    .select({ id: lotteryEntries.id, identityValue: lotteryEntries.identityValue })
+    .select({
+      id: lotteryEntries.id,
+      identityValue: lotteryEntries.identityValue,
+      /** registered 身份时 identityValue 是 userId（UUID），需要关联 users.email；email 身份直接用 */
+      identityType: lotteryEntries.identityType,
+    })
     .from(lotteryEntries)
     .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId)));
+
+  // registered 用户（identity_type = user_id）：identity_value 是 userId 而非邮箱，
+  // 必须先查出真实邮箱，否则安慰邮件 recipientEmail 落库成 UUID 会被投递过滤掉（收不到任何安慰邮件）。
+  const userIds = [...new Set(entries.filter((e) => e.identityType === "user_id" && e.identityValue).map((e) => e.identityValue))];
+  const userEmailMap = new Map<string, string>();
+  if (userIds.length > 0) {
+    const userRows = await db
+      .select({ id: users.id, email: users.email })
+      .from(users)
+      .where(inArray(users.id, userIds));
+    for (const u of userRows) userEmailMap.set(u.id, u.email);
+  }
 
   // 查询已中奖者（排除中奖者，只给未中奖的发放）
   const winners = await db
@@ -791,13 +808,17 @@ export async function grantLoserRewards(
   for (let i = 0; i < losers.length && i < availableCoupons.length; i++) {
     const loser = losers[i]!;
     const coupon = availableCoupons[i]!;
+    // registered 身份（identityType=user_id）用 users.email 作为 recipientEmail，其余用 identityValue
+    const recipientEmail = loser.identityType === "user_id"
+      ? (userEmailMap.get(loser.identityValue) || "")
+      : loser.identityValue;
     // CAS 原子发放：仅当仍为 available 时更新为 issued，并记录领取人
     const result = await db.update(couponCodes)
       .set({
         status: "issued",
-        recipientEmail: loser.identityValue,
+        recipientEmail,
         drawId,
-        redeemedAt: new Date().toISOString(),
+        // 注意：redeemedAt 只在核销（/coupons/redeem）时写入，发放时不能写，否则会把发放时间伪造成核销时间
       })
       .where(and(
         eq(couponCodes.id, coupon.id),

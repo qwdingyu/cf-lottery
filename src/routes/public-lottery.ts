@@ -40,6 +40,7 @@ import {
   hashEventValue,
   decodePublicSlug,
   renderPublicOgHtml,
+  productFromPublicConfig,
 } from "./public-lottery-helpers";
 import { setupPublicShareRoutes } from "./public-lottery-share";
 import { defaultExperienceForParticipation } from "./admin-lottery-helpers";
@@ -65,17 +66,6 @@ publicLotteryRoute.use("*", async (c, next) => {
 
 // 裂变 / 接龙 / 分享码子域
 setupPublicShareRoutes(publicLotteryRoute);
-
-function publicHttpUrl(value: unknown): string {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const url = new URL(raw);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
-  } catch {
-    return "";
-  }
-}
 
 function formatPublicAmount(amountMinor: number | null | undefined, currency: string | null | undefined): string {
   const normalized = String(currency || "cny").trim().toUpperCase() || "CNY";
@@ -121,25 +111,6 @@ function resolvePublicJoinWindow(draw: { status: string; startAt: string; endAt:
   }
   return { canJoin: true, joinDisabledReason: "", joinDisabledMessage: "", serverNow };
 }
-
-function productFromPublicConfig(draw: {
-  title: string;
-  productLink?: string | null;
-  promotionConfig?: string | null;
-}) {
-  const productLink = tryParseJson(draw.productLink || "{}") as Record<string, unknown> | null;
-  const promotion = tryParseJson(draw.promotionConfig || "{}") as Record<string, unknown> | null;
-  const destination = promotion?.destination && typeof promotion.destination === "object" && !Array.isArray(promotion.destination)
-    ? promotion.destination as Record<string, unknown>
-    : null;
-  return {
-    title: String(productLink?.title || destination?.title || draw.title || "").trim(),
-    imageUrl: publicHttpUrl(productLink?.imageUrl || destination?.imageUrl),
-    priceText: String(productLink?.price || productLink?.priceText || destination?.priceText || "").trim(),
-    url: publicHttpUrl(productLink?.url || destination?.url),
-  };
-}
-
 async function readGlobalJoinLimitPerMinute(db: ReturnType<typeof getDb>): Promise<number> {
   const [row] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "rate_limit_join_per_minute")).limit(1);
   return Math.min(Math.max(parseInt(row?.value || "", 10) || 10, 1), 100);
