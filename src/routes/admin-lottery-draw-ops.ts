@@ -6,7 +6,7 @@
  * 通过 setupDrawOpsRoutes 挂载，中间件已在主路由 use("*") 覆盖。
  */
 import { Hono } from "hono";
-import { isInstantResultMode } from "../lib/activity-utils";
+import { isInstantResultMode, isFlashSaleExperience } from "../lib/activity-utils";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
 import { withDbTransaction } from "../db/client";
@@ -508,7 +508,7 @@ route.post("/draws/:id/tiers", async (c) => {
   // 奖项配置适用于两类活动：
   // ① lottery（抽奖奖档）；② claim + flash_sale（直付秒杀绑定唯一卡密奖品，发卡目标）。
   // 其他活动（资料领取、问卷、报名等）不需要奖项，拒绝保存。
-  const isFlashSaleDirect = draw.activityKind === "claim" && String(draw.experienceType || "") === "flash_sale";
+  const isFlashSaleDirect = draw.activityKind === "claim" && isFlashSaleExperience(draw.experienceType);
   if (draw.activityKind !== "lottery" && !isFlashSaleDirect) {
     return fail(c, "只有抽奖活动或直付秒杀需要配置奖项", 400);
   }
