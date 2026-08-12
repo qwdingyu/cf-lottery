@@ -20,8 +20,9 @@ describe('shop countdown', () => {
     expect(formatCountdown(3600_000 + 600_000 + 45_000)).toBe('01:10:45')
   })
 
-  it('formatCountdown 超过一天输出 天 前缀', () => {
-    expect(formatCountdown(2 * 86400_000 + 3600_000)).toBe('2天 01:00:00')
+  it('formatCountdown 超过一天输出 天 前缀（可传 dayUnit）', () => {
+    expect(formatCountdown(2 * 86400_000 + 3600_000, '天')).toBe('2天 01:00:00')
+    expect(formatCountdown(2 * 86400_000 + 3600_000, 'd')).toBe('2d 01:00:00')
   })
 
   it('formatCountdown 已结束/非法输入输出空串', () => {

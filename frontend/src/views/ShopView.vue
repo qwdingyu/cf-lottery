@@ -30,9 +30,9 @@
     <!-- ═══ 加载 / 空态 / 错误 ═══ -->
     <div v-if="loading" class="skeleton-grid" aria-busy="true">
       <div v-for="i in 4" :key="i" class="skeleton-card">
-        <div class="skeleton skeleton-line w-70" />
-        <div class="skeleton skeleton-line w-40" />
-        <div class="skeleton skeleton-line w-30" />
+        <div class="skeleton-line w-70" />
+        <div class="skeleton-line w-40" />
+        <div class="skeleton-line w-30" />
       </div>
     </div>
     <div v-else-if="error" class="empty-state" role="alert">
@@ -168,16 +168,16 @@ const tabs = computed(() => {
 })
 
 /**
- * 卡片排序：秒杀运行中（最早结束优先）→ 秒杀即将开始 → 免费。
- * 让「最紧急」的秒杀排在最前面，塑造紧迫感促进转化。
+ * 卡片排序：秒杀（运行中→即将开始→已结束）整体排在免费前面，
+ * 再按结束时间升序（越早结束越靠前，制造紧迫感）。让「最紧急」的秒杀排在最前。
  */
 const cards = computed(() => {
   let list = activities.value
   if (activeTab.value === 'flash') list = list.filter((a: any) => classifyLandingActivity(a) === 'flash')
   if (activeTab.value === 'free') list = list.filter((a: any) => classifyLandingActivity(a) === 'free')
 
-  const mapped = list.map((a: any) => buildLandingActivityCard(a, t('landing.marketFreePrice')))
   const now = nowMs.value
+  const mapped = list.map((a: any) => buildLandingActivityCard(a, t('landing.marketFreePrice'), now))
 
   mapped.sort((a: LandingActivityCard, b: LandingActivityCard) => {
     // 秒杀优先于免费
@@ -266,7 +266,7 @@ function flashCountdown(card: LandingActivityCard): string {
   if (!Number.isFinite(targetMs)) return ''
   const diff = targetMs - nowMs.value
   if (diff <= 0) return ''
-  return formatCountdown(diff)
+  return formatCountdown(diff, t('shop.day'))
 }
 
 async function refresh() {
@@ -421,7 +421,8 @@ onMounted(refresh)
 /* ── 卡片头部 ── */
 .card-head { display: flex; justify-content: space-between; align-items: center; }
 .badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; }
-.badge.flash{background:var(--danger);color:#fff}.badge.free{background:var(--success);color:#fff}
+/* 兜底色值：--danger/--success 未在全局定义过，回退到秒杀玫红/成功绿，避免白字无底色 */
+.badge.flash{background:var(--danger, #e11d48);color:#fff}.badge.free{background:var(--success, #16a34a);color:#fff}
 .price { font-weight: 700; font-size: 15px; }
 .price-flash { color: var(--shop-sale-strong); font-size: 18px; }
 
@@ -470,8 +471,8 @@ onMounted(refresh)
 /* 紧急态：不足 5 分钟，白字红底呼吸 */
 .flash-cd-digits.cd-urgent {
   color: #fff;
-  background: var(--danger);
-  border-color: var(--danger);
+  background: var(--danger, #e11d48);
+  border-color: var(--danger, #e11d48);
   animation: cdPulse 1s ease-in-out infinite;
 }
 .flash-cd-digits.cd-ended {
@@ -551,5 +552,15 @@ onMounted(refresh)
   .shop-view { padding: 16px; }
   .shop-flash-hero { flex-wrap: wrap; gap: 8px; }
   .flash-hero-countdown { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
+}
+
+/* ── 无障碍：减少动画 ── */
+@media (prefers-reduced-motion: reduce) {
+  .flash-hero-badge,
+  .flash-cd-digits.cd-urgent,
+  .skeleton-line,
+  .product-card { animation: none !important; transition: none !important; }
+  .shop-flash-hero,
+  .flash-grab-btn { transition: none !important; }
 }
 </style>
