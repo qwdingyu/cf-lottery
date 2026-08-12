@@ -166,6 +166,7 @@ export default {
   // ── 登录/注册（AdminLoginView） ────────────────
   adminLogin: {
     cfAuthLogin: '使用统一认证登录',
+    cfAuthRedirecting: '正在跳转…',
     title: "管理后台",
     subtitle: "请登录以管理抽奖活动",
     username: "用户名",

@@ -84,9 +84,9 @@
             <td><code class="code-id" :title="m.userId" @click="copyText(m.userId)">{{ m.userId.slice(0, 10) }}…</code></td>
             <td>
               <select :value="m.role" :disabled="operatingId === m.userId || m.userId === myUserId || batchOperating" @change="updateRole(m, ($event.target as HTMLSelectElement).value)">
-                <option value="platform_owner">Owner</option>
-                <option value="platform_operator">Operator</option>
-                <option value="platform_support">Support</option>
+                <option value="platform_owner">{{ $t('platformMembers.roleOwner') }}</option>
+                <option value="platform_operator">{{ $t('platformMembers.roleOperator') }}</option>
+                <option value="platform_support">{{ $t('platformMembers.roleSupport') }}</option>
               </select>
             </td>
             <td>

@@ -164,6 +164,7 @@ export default {
   // ── Login / Register ────────────────────────
   adminLogin: {
     cfAuthLogin: 'Sign in with unified auth',
+    cfAuthRedirecting: 'Redirecting…',
     title: "Admin",
     subtitle: "Log in to manage lottery activities",
     username: "Username",

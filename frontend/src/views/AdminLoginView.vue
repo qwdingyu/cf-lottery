@@ -11,7 +11,7 @@
           class="btn btn-primary oauth-btn"
           :disabled="cfAuthLoading"
           @click="handleCfAuthLogin"
-        >{{ cfAuthLoading ? '正在跳转…' : $t('adminLogin.cfAuthLogin') }}</button>
+        >{{ cfAuthLoading ? $t('adminLogin.cfAuthRedirecting') : $t('adminLogin.cfAuthLogin') }}</button>
         <div class="oauth-divider"><span class="divider-text">{{ $t('adminLogin.or') }}</span></div>
       </div>
 

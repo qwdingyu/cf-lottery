@@ -11,8 +11,8 @@
       </div>
       <div class="lottery-header-actions">
         <select class="lang-select" :value="locale" @change="onLanguageChange">
-          <option value="zh-CN">中文</option>
-          <option value="en">EN</option>
+          <option value="zh-CN">{{ $t('adminLayout.langZh') }}</option>
+          <option value="en">{{ $t('adminLayout.langEn') }}</option>
         </select>
         <template v-if="sessionEmail || registeredUsername">
           <span class="lottery-user">{{ registeredUsername || sessionEmail }}</span>
