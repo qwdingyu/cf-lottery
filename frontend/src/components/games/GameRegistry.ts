@@ -35,7 +35,7 @@ import { defineAsyncComponent, type Component } from 'vue'
 
 export type { GameProps, PrizeItem, GameEmits } from './types'
 
-/** 体验类型 → 游戏组件的映射 */
+/** 体验类型 → 异步加载器映射（只存加载函数，组件壳统一走缓存，见 getGameComponent） */
 const GAME_MAP: Record<string, () => Promise<Component>> = {
   'wheel':   () => import('./WheelGame.vue'),      // 大转盘（体验壳，不决定结果）
   'slot':    () => import('./SlotGame.vue'),       // 老虎机（体验壳）
@@ -57,15 +57,41 @@ const GAME_MAP: Record<string, () => Promise<Component>> = {
 }
 
 /**
+ * 异步组件壳缓存（根因修复：刮刮卡「永远刮不开」）。
+ *
+ * 背景：`defineAsyncComponent()` 每次调用都会返回一个**全新**的组件引用对象。
+ * 公开活动页 LotteryView 有多个静默刷新入口（30s 轮询、focus/online/visibilitychange），
+ * 刷新会替换 `draws.value` → 模板重渲染 → 重新调用 `getGameComponent()`。
+ * 若每次都新建 defineAsyncComponent，Vue 对 `<component :is>` 按引用比较会误判
+ * 「组件类型变了」，从而**卸载旧 ScratchGame 并重挂新实例**，canvas 涂层被清空复位，
+ * 用户永远刮不满 50% 阈值。因此必须缓存同一组件引用，重渲染时让 Vue 复用组件实例。
+ */
+const GAME_COMPONENT_CACHE = new Map<string, Component>()
+
+/** 按 key 取（或首次创建）缓存后的异步组件壳；未知 key 回退 SubmitGame。 */
+function resolveCachedComponent(key: string): Component {
+  // 将 key 归一化到规范键：未知体验统一走 "submit" 缓存，避免每个未知 key
+  // 创建不同组件引用（回归：防刮刮卡刷新重挂）
+  const canonicalKey = GAME_MAP[key] ? key : 'submit'
+  let comp = GAME_COMPONENT_CACHE.get(canonicalKey)
+  if (!comp) {
+    const loader = GAME_MAP[canonicalKey]!
+    comp = defineAsyncComponent(loader)
+    GAME_COMPONENT_CACHE.set(canonicalKey, comp)
+  }
+  return comp
+}
+
+/**
  * 根据体验类型获取对应的游戏组件。
  * 未匹配到任何模式时回退 SubmitGame，避免「无壳 + 底部双路径」断层（docs/096）。
- * 使用 defineAsyncComponent 实现懒加载，减少首屏 JS 体积。
+ * 使用 defineAsyncComponent 实现懒加载，减少首屏 JS 体积；
+ * 组件壳经缓存复用同一引用，保证重渲染不触发游戏组件卸载重挂。
  */
 export function getGameComponent(experienceType: string): Component | null {
   const key = String(experienceType || '').trim().toLowerCase()
-  const loader = GAME_MAP[key] || GAME_MAP.submit
-  if (!loader) return null
-  return defineAsyncComponent(loader)
+  if (!GAME_MAP[key] && !GAME_MAP.submit) return null
+  return resolveCachedComponent(key)
 }
 
 /**
