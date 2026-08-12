@@ -728,6 +728,7 @@
                       <option value="calendar">{{ $t('lottery.adminExpCalendar') }}</option>
                       <option value="checkin">{{ $t('lottery.adminExpCheckin') }}</option>
                       <option value="reveal">{{ $t('lottery.adminExpReveal') }}</option>
+                      <option value="flash_sale">{{ $t('lottery.adminExpFlashSale') }}</option>
                       <option value="grid">{{ $t('lottery.adminExpGrid') }}</option>
                       <option value="submit">{{ $t('lottery.adminExpSubmit') }}</option>
                     </select>
@@ -1146,7 +1147,7 @@
               </p>
             </header>
             <div class="form-grid two-cols">
-              <div v-if="editorVisibility.tiers && (form.activityKind === 'lottery' || form.activityKind === 'claim')" class="field-span-2">
+              <div v-if="editorVisibility.tiers && (form.activityKind === 'lottery' || (form.activityKind === 'claim' && form.experienceType === 'flash_sale'))" class="field-span-2">
                 <span class="field-label-text">{{ $t('lottery.adminTierConfig') }}</span>
                 <!-- 奖项配置表头（docs/206）：与阶梯价对齐，让运营者清楚每列含义 -->
                 <div v-if="form.tiers.length > 0" class="tier-header">
@@ -2661,7 +2662,12 @@ function statusLabel(status: string): string {
 
 function handleActivityKindChange() {
   const kind = form.value.activityKind || 'lottery'
-  form.value.experienceType = defaultExperienceForActivity(kind, form.value.participationMode || 'open')
+  // 切换活动类型时保护直付秒杀配置：仅当目标类型为 claim 且当前体验已是 flash_sale 时保留，
+  // 避免用户切一下活动类型就把「限时抢购」的体验壳悄悄改成 reveal（奖项/秒杀配置随之失联）。
+  const currentExp = form.value.experienceType
+  if (!(kind === 'claim' && currentExp === 'flash_sale')) {
+    form.value.experienceType = defaultExperienceForActivity(kind, form.value.participationMode || 'open')
+  }
   form.value.resultMode = defaultResultModeForActivity(kind)
   form.value.allocationPolicy = kind === 'signup_chain' ? 'waitlist' : kind === 'approval' ? 'approval' : 'capacity'
   form.value.winnerCount = kind === 'lottery' ? Math.max(1, Number(form.value.winnerCount) || 1) : 0
@@ -3884,7 +3890,10 @@ async function handleCreate() {
       // ★ 创建与编辑共用：名单导入 / 邀请码生成 / 奖项配置（防止编辑分支遗漏）
       await saveDrawRoster(form.value.id)
       await saveDrawInviteCodes(form.value.id)
-      await saveDrawTiers(form.value.id)
+      // 仅抽奖或直付秒杀需要奖项配置；资料领取/领券等 claim 活动不调用（后端会拒绝）
+      if (form.value.activityKind === 'lottery' || (form.value.activityKind === 'claim' && form.value.experienceType === 'flash_sale')) {
+        await saveDrawTiers(form.value.id)
+      }
       // P1 体验：保存成功后回显清洗后的仪式短语，运营者立即看到哪些被保留/被拒。
       // sanitizeRitualPhrasesForSave 与提交清洗同源（docs/128）；不回显会显得「填的短语丢了」。
       form.value.ritualPhrasesText = sanitizeRitualPhrasesForSave(
@@ -3898,8 +3907,10 @@ async function handleCreate() {
         await saveDrawRoster(created.id)
         // 如果是 invite_code 模式，生成邀请码
         await saveDrawInviteCodes(created.id)
-        // 抽奖活动：创建成功后保存奖项配置（选择奖品库中的奖品 + 中奖名额）
-        await saveDrawTiers(created.id)
+        // 仅抽奖或直付秒杀保存奖项配置；资料领取/领券等 claim 活动不调用（后端会拒绝）
+        if (form.value.activityKind === 'lottery' || (form.value.activityKind === 'claim' && form.value.experienceType === 'flash_sale')) {
+          await saveDrawTiers(created.id)
+        }
         try {
           await writeClipboardText(publicShareUrl(created.publicSlug || created.id))
         } catch { /* 剪贴板写入失败不阻断 */ }

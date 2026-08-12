@@ -1151,6 +1151,7 @@ export default {
     adminExpCalendar: "预约日历",
     adminExpCheckin: "签到按钮",
     adminExpReveal: "领取揭晓",
+    adminExpFlashSale: "限时抢购",
     adminExpGrid: "九宫格",
     adminExperienceHint: "互动体验只影响活动页展示，不决定参与资格或开奖结果",
     adminAllocationPolicy: "名额策略",

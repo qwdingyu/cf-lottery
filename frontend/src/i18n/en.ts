@@ -1178,6 +1178,7 @@ export default {
     adminExpCalendar: "Calendar",
     adminExpCheckin: "Check-in button",
     adminExpReveal: "Reveal",
+    adminExpFlashSale: "Flash Sale",
     adminExpGrid: "Grid",
     adminExperienceHint: "The experience only affects the activity page display, not eligibility or draw results",
     adminAllocationPolicy: "Allocation policy",
