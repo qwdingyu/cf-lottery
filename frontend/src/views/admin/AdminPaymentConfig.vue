@@ -1,12 +1,12 @@
 <template>
   <div class="admin-page">
     <div class="toolbar">
-      <h2 class="page-title">支付设置</h2>
+      <h2 class="page-title">{{ $t('adminPaymentConfig.title') }}</h2>
       <div class="toolbar-actions">
         <button class="btn btn-ghost btn-sm" :disabled="loading || checking || Boolean(savingProvider)" @click="checkConfig">
-          {{ checking ? '自检中...' : '配置自检' }}
+          {{ checking ? $t('adminPaymentConfig.checking') : $t('adminPaymentConfig.checkConfig') }}
         </button>
-        <button class="btn btn-primary btn-sm" :disabled="loading || Boolean(savingProvider)" @click="loadData">刷新</button>
+        <button class="btn btn-primary btn-sm" :disabled="loading || Boolean(savingProvider)" @click="loadData">{{ $t('adminPaymentConfig.refresh') }}</button>
       </div>
     </div>
 
@@ -23,17 +23,17 @@
 
     <div v-if="loadError" class="table-error" role="alert">
       <span>{{ loadError }}</span>
-      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">重试</button>
+      <button class="btn btn-ghost btn-xs" :disabled="loading" @click="loadData">{{ $t('adminPaymentConfig.retry') }}</button>
     </div>
 
     <div v-if="checkResult" class="payment-check-strip" role="status">
       <div class="payment-check-item">
-        <span class="check-label">凭据加密</span>
-        <strong>{{ checkResult.credentialsEncryptionKey.configured ? '已配置' : '未配置' }}</strong>
+        <span class="check-label">{{ $t('adminPaymentConfig.credentialEncryption') }}</span>
+        <strong>{{ checkResult.credentialsEncryptionKey.configured ? $t('adminPaymentConfig.configured') : $t('adminPaymentConfig.notConfigured') }}</strong>
       </div>
       <div v-for="currency in checkResult.currencySupport" :key="currency.currency" class="payment-check-item">
         <span class="check-label">{{ currency.currency.toUpperCase() }}</span>
-        <strong>{{ currency.available ? currency.providers.join(' / ') : '无可用渠道' }}</strong>
+        <strong>{{ currency.available ? currency.providers.join(' / ') : $t('adminPaymentConfig.noAvailableProvider') }}</strong>
       </div>
     </div>
 
@@ -41,7 +41,7 @@
       v-if="!loading && !loadError"
       class="provider-list"
       role="region"
-      aria-label="支付渠道"
+      :aria-label="$t('adminPaymentConfig.providersRegionAria')"
       tabindex="0"
     >
       <div v-for="item in providers" :key="item.name" class="provider-card">
@@ -54,43 +54,43 @@
           </div>
           <div class="provider-status">
             <span class="tag" :class="item.enabled ? 'tag-success' : 'tag-muted'">
-              {{ item.enabled ? '已启用' : '未启用' }}
+              {{ item.enabled ? $t('adminPaymentConfig.enabled') : $t('adminPaymentConfig.disabled') }}
             </span>
             <span class="tag" :class="providerReady(item) ? 'tag-success' : 'tag-muted'">
-              {{ providerReady(item) ? '配置完整' : '未就绪' }}
+              {{ providerReady(item) ? $t('adminPaymentConfig.ready') : $t('adminPaymentConfig.notReady') }}
             </span>
-            <span v-if="providerIssues(item).length > 0" class="tag tag-danger">需处理</span>
+            <span v-if="providerIssues(item).length > 0" class="tag tag-danger">{{ $t('adminPaymentConfig.needsAttention') }}</span>
           </div>
         </div>
 
         <dl class="provider-facts">
           <div>
-            <dt>支持币种</dt>
+            <dt>{{ $t('adminPaymentConfig.supportedCurrencies') }}</dt>
             <dd>{{ item.supportedCurrencies.join(' / ') }}</dd>
           </div>
           <div>
-            <dt>默认收款方式</dt>
-            <dd>{{ item.name === 'easypay' ? paymentTypeLabel(providerConfigValue(item, 'EASYPAY_PAY_TYPE')) : '按渠道配置' }}</dd>
+            <dt>{{ $t('adminPaymentConfig.defaultPayType') }}</dt>
+            <dd>{{ item.name === 'easypay' ? paymentTypeLabel(providerConfigValue(item, 'EASYPAY_PAY_TYPE')) : $t('adminPaymentConfig.perProvider') }}</dd>
           </div>
           <div>
-            <dt>启用收款方式</dt>
-            <dd>{{ item.name === 'easypay' ? enabledPaymentTypesLabel(providerConfigValue(item, 'EASYPAY_ENABLED_PAY_TYPES'), providerConfigValue(item, 'EASYPAY_PAY_TYPE')) : '按渠道配置' }}</dd>
+            <dt>{{ $t('adminPaymentConfig.enabledPayTypes') }}</dt>
+            <dd>{{ item.name === 'easypay' ? enabledPaymentTypesLabel(providerConfigValue(item, 'EASYPAY_ENABLED_PAY_TYPES'), providerConfigValue(item, 'EASYPAY_PAY_TYPE')) : $t('adminPaymentConfig.perProvider') }}</dd>
           </div>
           <div>
-            <dt>网关地址</dt>
-            <dd>{{ item.name === 'easypay' ? (providerConfigValue(item, 'EASYPAY_API_BASE') || '未配置') : '按渠道配置' }}</dd>
+            <dt>{{ $t('adminPaymentConfig.gatewayUrl') }}</dt>
+            <dd>{{ item.name === 'easypay' ? (providerConfigValue(item, 'EASYPAY_API_BASE') || $t('adminPaymentConfig.notConfigured')) : $t('adminPaymentConfig.perProvider') }}</dd>
           </div>
           <div>
-            <dt>支付回调</dt>
+            <dt>{{ $t('adminPaymentConfig.callback') }}</dt>
             <dd class="callback-value">
               <span>{{ callbackUrl(item) }}</span>
-              <button class="btn btn-ghost btn-xs" type="button" @click="copyCallbackUrl(item)">复制</button>
+              <button class="btn btn-ghost btn-xs" type="button" @click="copyCallbackUrl(item)">{{ $t('adminPaymentConfig.copy') }}</button>
             </dd>
           </div>
           <div>
-            <dt>自检结果</dt>
+            <dt>{{ $t('adminPaymentConfig.selfCheckResult') }}</dt>
             <dd>
-              <span v-if="providerIssues(item).length === 0 && providerWarnings(item).length === 0">无阻断项</span>
+              <span v-if="providerIssues(item).length === 0 && providerWarnings(item).length === 0">{{ $t('adminPaymentConfig.noBlocking') }}</span>
               <span v-else>{{ providerIssues(item)[0] || providerWarnings(item)[0] }}</span>
             </dd>
           </div>
@@ -103,25 +103,25 @@
 
         <div class="provider-actions">
           <button class="btn btn-primary btn-sm" :disabled="Boolean(savingProvider)" type="button" @click="openConfig(item)">
-            配置
+            {{ $t('adminPaymentConfig.configure') }}
           </button>
           <button class="btn btn-ghost btn-sm" :disabled="Boolean(savingProvider)" type="button" @click="toggleProvider(item)">
-            {{ savingProvider === item.name ? '保存中...' : (item.enabled ? '停用' : '启用') }}
+            {{ savingProvider === item.name ? $t('adminPaymentConfig.saving') : (item.enabled ? $t('adminPaymentConfig.disable') : $t('adminPaymentConfig.enable')) }}
           </button>
         </div>
       </div>
     </div>
 
-    <AdminModal v-model="configVisible" :title="editingProvider ? `配置 ${editingProvider.displayName}` : '配置支付渠道'" max-width="720px" hide-actions>
+    <AdminModal v-model="configVisible" :title="editingProvider ? $t('adminPaymentConfig.configTitle', { name: editingProvider.displayName }) : $t('adminPaymentConfig.configTitleGeneric')" max-width="720px" hide-actions>
       <form class="modal-form" @submit.prevent="saveConfig">
         <template v-if="editingProvider">
           <div class="config-grid two-cols">
             <label>
-              <span>收款方式</span>
+              <span>{{ $t('adminPaymentConfig.payType') }}</span>
               <input :value="editingProvider.displayName" disabled />
             </label>
             <label>
-              <span>支持币种</span>
+              <span>{{ $t('adminPaymentConfig.supportedCurrencies') }}</span>
               <input :value="editingProvider.supportedCurrencies.join(' / ')" disabled />
             </label>
           </div>
@@ -129,10 +129,10 @@
           <template v-if="editingProvider.name === 'easypay'">
             <div class="quick-setting">
               <div class="quick-copy">
-                <span class="quick-label">启用收款方式</span>
-                <small>易支付可同时开放支付宝、微信、QQ，前台按默认方式发起支付。</small>
+                <span class="quick-label">{{ $t('adminPaymentConfig.enabledPayTypes') }}</span>
+                <small>{{ $t('adminPaymentConfig.easypayHint') }}</small>
               </div>
-              <div class="segmented" role="group" aria-label="启用收款方式">
+              <div class="segmented" role="group" :aria-label="$t('adminPaymentConfig.enabledPayTypes')">
                 <button
                   v-for="option in paymentTypeOptions"
                   :key="option.value"
@@ -148,10 +148,10 @@
 
             <div class="quick-setting">
               <div class="quick-copy">
-                <span class="quick-label">默认收款方式</span>
-                <small>用户打开支付单时默认使用该方式；必须属于已启用方式。</small>
+                <span class="quick-label">{{ $t('adminPaymentConfig.defaultPayType') }}</span>
+                <small>{{ $t('adminPaymentConfig.defaultPayTypeHint') }}</small>
               </div>
-              <div class="segmented" role="group" aria-label="默认收款方式">
+              <div class="segmented" role="group" :aria-label="$t('adminPaymentConfig.defaultPayType')">
                 <button
                   v-for="option in paymentTypeOptions"
                   :key="option.value"
@@ -168,7 +168,7 @@
 
           <label class="toggle-row">
             <input type="checkbox" v-model="configEnabled" :disabled="Boolean(savingProvider)" />
-            <span>启用该收款方式</span>
+            <span>{{ $t('adminPaymentConfig.enableThisPayType') }}</span>
           </label>
 
           <label v-for="field in editingProvider.fields" :key="field.key">
@@ -184,16 +184,16 @@
           </label>
 
           <div class="callback-box">
-            <span>异步回调地址</span>
+            <span>{{ $t('adminPaymentConfig.asyncCallbackUrl') }}</span>
             <code>{{ callbackUrl(editingProvider) }}</code>
-            <button type="button" class="btn btn-ghost btn-xs" @click="copyCallbackUrl(editingProvider)">复制</button>
+            <button type="button" class="btn btn-ghost btn-xs" @click="copyCallbackUrl(editingProvider)">{{ $t('adminPaymentConfig.copy') }}</button>
           </div>
         </template>
 
         <div class="modal-actions">
-          <button type="button" class="btn btn-ghost" :disabled="Boolean(savingProvider)" @click="configVisible = false">取消</button>
+          <button type="button" class="btn btn-ghost" :disabled="Boolean(savingProvider)" @click="configVisible = false">{{ $t('adminPaymentConfig.cancel') }}</button>
           <button type="submit" class="btn btn-primary" :disabled="Boolean(savingProvider)">
-            {{ savingProvider ? '保存中...' : '保存配置' }}
+            {{ savingProvider ? $t('adminPaymentConfig.saving') : $t('adminPaymentConfig.saveConfig') }}
           </button>
         </div>
       </form>
@@ -203,11 +203,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import { copyWithToast, useToast } from '@usethink/cf-admin-fe/composables'
 import { adminRequest } from '@/composables/useAdminRequest'
 import type { AdminPaymentConfigCheckResult } from '@/types/admin'
 
+const { t } = useI18n()
 const { showToast } = useToast()
 
 interface ProviderFieldMeta {
@@ -244,9 +246,9 @@ const configForm = reactive<Record<string, string>>({})
 const savingProvider = ref('')
 
 const paymentTypeOptions = [
-  { value: 'alipay' as const, label: '支付宝' },
-  { value: 'wxpay' as const, label: '微信支付' },
-  { value: 'qqpay' as const, label: 'QQ 支付' },
+  { value: 'alipay' as const, label: t('adminPaymentConfig.payTypeAlipay') },
+  { value: 'wxpay' as const, label: t('adminPaymentConfig.payTypeWxpay') },
+  { value: 'qqpay' as const, label: t('adminPaymentConfig.payTypeQqpay') },
 ]
 
 const selectedPayType = computed(() => normalizePayType(configForm.EASYPAY_PAY_TYPE))
@@ -254,11 +256,11 @@ const enabledPayTypes = computed(() => normalizeEnabledPayTypes(configForm.EASYP
 
 const checkReady = computed(() => checkResult.value?.currencySupport.some((item) => item.available) === true)
 const healthClass = computed(() => checkReady.value ? 'health-card-success' : 'health-card-error')
-const healthTitle = computed(() => checkReady.value ? '支付配置可用于已覆盖币种' : '支付配置存在阻断项')
+const healthTitle = computed(() => checkReady.value ? t('adminPaymentConfig.healthReady') : t('adminPaymentConfig.healthBlocking'))
 const healthMessage = computed(() => {
-  if (!checkResult.value?.credentialsEncryptionKey.configured) return 'CREDENTIALS_ENCRYPTION_KEY 未配置，不能安全保存商户密钥。'
+  if (!checkResult.value?.credentialsEncryptionKey.configured) return t('adminPaymentConfig.healthKeyMissing')
   const available = checkResult.value.currencySupport.filter((item) => item.available).map((item) => item.currency.toUpperCase())
-  return available.length > 0 ? `当前可用币种：${available.join(' / ')}` : '没有已启用且配置完整的直付自动发卡渠道。'
+  return available.length > 0 ? `${t('adminPaymentConfig.healthCurrencies')}${available.join(' / ')}` : t('adminPaymentConfig.healthNoProvider')
 })
 
 function normalizeProvider(raw: ProviderConfig): ProviderConfig {
@@ -281,7 +283,7 @@ async function loadData() {
     providers.value = configData.providers.map(normalizeProvider)
     checkResult.value = checkData
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : '加载失败'
+    loadError.value = err instanceof Error ? err.message : t('adminPaymentConfig.loadFailed')
   } finally {
     loading.value = false
   }
@@ -293,9 +295,9 @@ async function checkConfig() {
   try {
     const data = await adminRequest<AdminPaymentConfigCheckResult>('/api/admin/payment-config/check')
     checkResult.value = data
-    showToast(checkReady.value ? '自检完成' : '自检发现阻断项', checkReady.value ? 'success' : 'error')
+    showToast(t('adminPaymentConfig.checkDone'), checkReady.value ? 'success' : 'error')
   } catch (err) {
-    showToast(err instanceof Error ? err.message : '自检失败', 'error')
+    showToast(err instanceof Error ? err.message : t('adminPaymentConfig.checkFailed'), 'error')
   } finally {
     checking.value = false
   }
@@ -345,10 +347,10 @@ async function saveProviders(providerName: string, enabled: boolean, fields: Rec
         })),
       }),
     })
-    showToast('支付配置已保存', 'success')
+    showToast(t('adminPaymentConfig.saveSuccess'), 'success')
     await loadData()
   } catch (err) {
-    showToast(err instanceof Error ? err.message : '保存失败', 'error')
+    showToast(err instanceof Error ? err.message : t('adminPaymentConfig.saveFailed'), 'error')
   } finally {
     savingProvider.value = ''
   }
@@ -397,7 +399,7 @@ function normalizeEnabledPayTypes(value: string | undefined, fallback: string) {
 
 function paymentTypeLabel(value: string | undefined) {
   const normalized = normalizePayType(value)
-  return paymentTypeOptions.find((option) => option.value === normalized)?.label || '支付宝'
+  return paymentTypeOptions.find((option) => option.value === normalized)?.label || t('adminPaymentConfig.payTypeAlipay')
 }
 
 function enabledPaymentTypesLabel(value: string | undefined, fallback: string | undefined) {
@@ -415,11 +417,11 @@ function togglePayType(value: string) {
   const enabled = enabledPayTypes.value.filter((item) => item !== next)
   if (enabledPayTypes.value.includes(next)) {
     if (next === selectedPayType.value) {
-      showToast('默认收款方式必须保持启用', 'error')
+      showToast(t('adminPaymentConfig.defaultMustEnabled'), 'error')
       return
     }
     if (enabled.length === 0) {
-      showToast('至少启用一种收款方式', 'error')
+      showToast(t('adminPaymentConfig.atLeastOnePayType'), 'error')
       return
     }
     configForm.EASYPAY_ENABLED_PAY_TYPES = enabled.join(',')
@@ -435,8 +437,8 @@ function callbackUrl(provider: ProviderConfig) {
 
 async function copyCallbackUrl(provider: ProviderConfig) {
   await copyWithToast(callbackUrl(provider), {
-    successMessage: '回调地址已复制',
-    errorMessage: '复制失败',
+    successMessage: t('adminPaymentConfig.callbackCopied'),
+    errorMessage: t('adminPaymentConfig.copyFailed'),
   })
 }
 
