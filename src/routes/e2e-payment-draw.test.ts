@@ -172,10 +172,11 @@ describe("秒杀端到端", () => {
     }, mockProvider("easypay", "txn2", 9900));
     const [a2] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, o2.order.id)).limit(1);
     expect(a2).toBeDefined();
-    // 模拟并发：回调前把最后一张可用卡密标记为 issued（另一笔订单已发走）
+    // 模拟并发：回调前把该订单预占的卡密改走（paymentOrderId 改为其他订单），
+    // confirmPrizeCodes 按本订单找 reserved 卡密时找不到 → FULFILLMENT_FAILED
     await db.update(prizeCodes)
-      .set({ status: "reserved" })
-      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "available")));
+      .set({ paymentOrderId: "OTHER-ORDER-SIM" })
+      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "reserved")));
     const cbResult = await handlePaymentCallback(db, TENANT, mockProvider("easypay", "txn2", 9900), {
       attemptId: a2!.id, provider: "easypay", amountCents: "9900", currency: "cny", tradeNo: "txn2",
     });
@@ -396,13 +397,14 @@ describe("批发模式端到端", () => {
     const [attemptB] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, cpOrder.order.id)).limit(1);
     expect(attemptB).toBeDefined();
 
-    // 模拟并发：回调前消耗 4 张卡密（其他订单已发走），剩余 1 张 < quantity=5 → 发卡失败
-    // SQLite 不支持 UPDATE ... LIMIT，逐张标记 reserved
+    // 模拟并发：回调前把 4 张该订单预占的卡密改走（paymentOrderId 改为其他订单），
+    // 剩余 1 张 < quantity=5 → confirmPrizeCodes 不足 → FULFILLMENT_FAILED
+    // SQLite 不支持 UPDATE ... LIMIT，逐张更新
     const codesToConsume = await db.select({ id: prizeCodes.id }).from(prizeCodes)
-      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "available")))
+      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "reserved")))
       .limit(4);
     for (const c of codesToConsume) {
-      await db.update(prizeCodes).set({ status: "reserved" }).where(eq(prizeCodes.id, c.id));
+      await db.update(prizeCodes).set({ paymentOrderId: "OTHER-ORDER-SIM" }).where(eq(prizeCodes.id, c.id));
     }
 
     // 支付回调 → 卡密不足 → FULFILLMENT_FAILED（不半单发放）
@@ -497,10 +499,10 @@ describe("过期释放与卡密补发", () => {
     }, mockProvider("easypay", "txn-retry", 9900));
     const [a1] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, o1.order.id)).limit(1);
     expect(a1).toBeDefined();
-    // 模拟并发：回调前把唯一可用卡密标记 issued（另一笔订单已发走）→ 发卡失败 → FULFILLMENT_FAILED
+    // 模拟并发：回调前把该订单预占的卡密改走（paymentOrderId 改为其他订单）→ confirmPrizeCodes 找不到 → FULFILLMENT_FAILED
     await db.update(prizeCodes)
-      .set({ status: "reserved" })
-      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "available")));
+      .set({ paymentOrderId: "OTHER-ORDER-SIM" })
+      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "reserved")));
     await handlePaymentCallback(db, TENANT, mockProvider("easypay", "txn-retry", 9900), {
       attemptId: a1!.id, provider: "easypay", amountCents: "9900", currency: "cny", tradeNo: "txn-retry",
     });

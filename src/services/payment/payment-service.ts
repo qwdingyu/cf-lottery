@@ -265,6 +265,8 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         if (quantity > 0) {
           releaseByDraw.set(order.drawId, (releaseByDraw.get(order.drawId) || 0) + quantity);
         }
+        // 释放该订单预占的卡密（P2 优化，docs/205）：reserved → available，供其他用户复用
+        await releaseReservedPrizeCodes(tx, order.id, tenantId);
       }
     }
 
@@ -335,6 +337,8 @@ async function cancelPaymentOrder(
     // 释放该订单占用的名额
     const quantity = Math.max(1, Math.floor(Number(cancelled[0]?.quantity || 1)));
     await decrementActiveFlashSaleCount(tx, input.tenantId, input.drawId, quantity);
+    // 释放该订单预占的卡密（P2 优化，docs/205）：reserved → available
+    await releaseReservedPrizeCodes(tx, orderId, input.tenantId);
 
     // V2：释放 entry 时必须考虑该 entry 是否有其他有效订单（PAID / FULFILLMENT_FAILED / PENDING），
     // 而不仅是检查其他 pending 订单。否则用户已有 PAID 订单 A、正在创建订单 B 时 B 取消，
@@ -1041,6 +1045,15 @@ export async function createPaymentOrder(
       unitPriceCents: Math.max(0, Math.floor(Number(input.unitPriceCents || 0))),
     }));
     await tx.insert(paymentOrderItems).values(orderItemValues);
+    // 下单时预占卡密库存（P2 优化，docs/205）：事务内与名额预约原子完成。
+    // reservePrizeCodes 返回：
+    //   null = 无卡密奖品（非秒杀直付），跳过预占
+    //   []   = 有卡密但库存不足，throw 回滚事务（用户不进入支付流程）
+    //   id[] = 预占成功
+    const reservedCodeIds = await reservePrizeCodes(tx, input.tenantId, input.drawId, input.entryId, id, quantity);
+    if (reservedCodeIds !== null && reservedCodeIds.length < quantity) {
+      throw new Error("卡密库存不足");
+    }
     await tx.insert(paymentOrderAttempts).values({
       id: attemptId,
       paymentOrderId: id,
@@ -1295,7 +1308,14 @@ export async function handlePaymentCallback(
     }
 
     const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
-    const acquiredPrizeCodeIds = await acquirePrizeCodes(tx, tenantId, current.drawId, current.entryId, current.id, quantity);
+    // 确认下单时预占的卡密（reserved → issued，P2 优化，docs/205）。
+    // 先确认预占：正常流程（createPaymentOrder 预占）下能命中 reserved 卡密。
+    let acquiredPrizeCodeIds = await confirmPrizeCodes(tx, current.id, quantity);
+    // 兼容兜底：若订单无预占卡密（seed/旧订单/人工补录），回退到从 available 领取。
+    // 避免这些历史订单回调时因无预占卡密而错误进入 FULFILLMENT_FAILED。
+    if (acquiredPrizeCodeIds.length < quantity) {
+      acquiredPrizeCodeIds = await acquirePrizeCodes(tx, tenantId, current.drawId, current.entryId, current.id, quantity);
+    }
 
     // 卡密不足：标记 paid_fulfillment_failed（运营后台可见，docs/131 §7），不静默 null
     const newStatus = acquiredPrizeCodeIds.length === quantity
@@ -1528,6 +1548,142 @@ async function acquirePrizeCodes(
     ids.push(id);
   }
   return ids;
+}
+
+/**
+ * 下单时预占卡密库存（P2 优化，docs/205）。
+ *
+ * 与 acquirePrizeCodes 逻辑相同，但目标状态为 reserved（而非 issued），
+ * 在 createPaymentOrder 事务内执行，与名额预约原子完成。
+ * 回调时由 confirmPrizeCodes 把 reserved → issued。
+ *
+ * 不足时回滚已预占的卡密，返回 []。
+ * 预占的卡密在订单超时/取消时由 expireOverdueOrders / cancelPaymentOrder 释放回 available。
+ */
+async function reservePrizeCodes(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  entryId: string,
+  orderId: string,
+  quantityRaw: number,
+): Promise<string[] | null> {
+  const quantity = Math.max(1, Math.floor(Number(quantityRaw || 1)));
+  const tier = await findCodePrize(db, tenantId, drawId);
+  // 无卡密奖品（非秒杀直付）：返回 null 表示"无需预占"，调用方跳过卡密预占。
+  if (!tier?.prizeId) return null;
+
+  const ids: string[] = [];
+  for (let i = 0; i < quantity; i += 1) {
+    const acquired = await db
+      .update(prizeCodes)
+      .set({
+        status: "reserved",
+        winnerId: entryId,
+        paymentOrderId: orderId,
+      })
+      .where(and(
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.status, "available"),
+        eq(prizeCodes.id, sql<string>`(
+          SELECT id FROM prize_codes
+          WHERE tenant_id = ${tenantId}
+            AND prize_id = ${tier.prizeId}
+            AND status = 'available'
+          ORDER BY id
+          LIMIT 1
+        )`),
+      ))
+      .returning({ id: prizeCodes.id });
+    const id = acquired[0]?.id;
+    if (!id) {
+      if (ids.length > 0) {
+        await db
+          .update(prizeCodes)
+          .set({ status: "available", winnerId: "", paymentOrderId: null })
+          .where(and(
+            eq(prizeCodes.tenantId, tenantId),
+            inArray(prizeCodes.id, ids),
+            eq(prizeCodes.status, "reserved"),
+          ));
+      }
+      return [];
+    }
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * 支付回调时确认预占的卡密（reserved → issued，P2 优化，docs/205）。
+ *
+ * 在 handlePaymentCallback 事务内调用，把该订单（orderId）预占的 reserved 卡密转为 issued。
+ * 不足时回滚已确认的卡密并返回 []（极少发生，仅在并发下单时预占卡密被其他订单共用）。
+ */
+async function confirmPrizeCodes(
+  tx: DbType,
+  orderId: string,
+  quantityRaw: number,
+): Promise<string[]> {
+  const quantity = Math.max(1, Math.floor(Number(quantityRaw || 1)));
+  const ids: string[] = [];
+  for (let i = 0; i < quantity; i += 1) {
+    const updated = await tx
+      .update(prizeCodes)
+      .set({
+        status: "issued",
+        issuedAt: sql`(datetime('now'))`,
+      })
+      .where(and(
+        eq(prizeCodes.paymentOrderId, orderId),
+        eq(prizeCodes.status, "reserved"),
+        eq(prizeCodes.id, sql<string>`(
+          SELECT id FROM prize_codes
+          WHERE payment_order_id = ${orderId}
+            AND status = 'reserved'
+          ORDER BY id
+          LIMIT 1
+        )`),
+      ))
+      .returning({ id: prizeCodes.id });
+    const id = updated[0]?.id;
+    if (!id) {
+      if (ids.length > 0) {
+        await tx
+          .update(prizeCodes)
+          .set({ status: "reserved" })
+          .where(and(
+            eq(prizeCodes.paymentOrderId, orderId),
+            inArray(prizeCodes.id, ids),
+            eq(prizeCodes.status, "issued"),
+          ));
+      }
+      return [];
+    }
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * 释放订单预占的卡密（reserved → available，P2 优化，docs/205）。
+ *
+ * 在订单超时（expireOverdueOrders）或取消（cancelPaymentOrder）时调用，
+ * 把该订单预占的 reserved 卡密释放回 available，供其他用户使用。
+ */
+async function releaseReservedPrizeCodes(
+  tx: DbType,
+  orderId: string,
+  tenantId: string,
+): Promise<void> {
+  await tx
+    .update(prizeCodes)
+    .set({ status: "available", winnerId: "", paymentOrderId: null })
+    .where(and(
+      eq(prizeCodes.paymentOrderId, orderId),
+      eq(prizeCodes.tenantId, tenantId),
+      eq(prizeCodes.status, "reserved"),
+    ));
 }
 
 /**
