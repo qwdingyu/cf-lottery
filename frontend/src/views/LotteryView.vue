@@ -4183,7 +4183,17 @@ onMounted(async () => {
     nowMs.value = Date.now()
   }, 1000)
   // 每 30 秒静默轮询：不闪 skeleton、不擦失败态（docs/097 P0-3）
+  // 已参与该活动后停止自动轮询（避免挂页无限请求浪费资源）；
+  // 用户需要看最新数据（开奖结果/参与人数）时点击「刷新状态」手动刷新。
   pollTimer = setInterval(() => {
+    const d = draws.value[0]
+    const joinedKeys = [d?.id, d?.publicSlug, props.id || ''].filter((k): k is string => Boolean(k))
+    const joined = joinedKeys.some((k) => myJoinedById.value[k])
+    if (joined) {
+      if (pollTimer) clearInterval(pollTimer)
+      pollTimer = null
+      return
+    }
     void fetchDraws({ silent: true })
   }, 30000)
   window.addEventListener('focus', refreshWhenVisible)
