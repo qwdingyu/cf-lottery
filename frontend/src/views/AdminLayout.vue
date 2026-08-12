@@ -185,7 +185,6 @@ const menuItems = computed(() => [
   { name: 'AdminQuotaRedeem', to: '/admin/quota-redeem', label: t('adminLayout.menuQuotaRedeem'), icon: '🎟' },
   { name: 'AdminIntegrations', to: '/admin/integrations', label: t('adminLayout.menuIntegrations'), icon: '🔗' },
   { name: 'AdminPlatformTarget', to: '/admin/platform-targets', label: t('adminLayout.menuPlatformTarget'), icon: '🤖' },
-  { name: 'Shop', to: 'https://lucky.eforge.xyz/shop/shop_43c49ec9', label: t('adminLayout.menuShop'), icon: '🛍️' },
   { name: 'AdminMembers', to: '/admin/members', label: t('adminLayout.menuMembers'), icon: '👥' },
   { name: 'AdminBlacklist', to: '/admin/blacklist', label: t('adminLayout.menuBlacklist'), icon: '🚫' },
   { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '📝' },
@@ -204,11 +203,6 @@ const pageTitle = computed(() => {
 })
 
 function onNavClick(to: string) {
-  // 外链（商铺链接等）：直接打开新标签页，不干扰当前路由
-  if (to.startsWith("http://") || to.startsWith("https://")) {
-    window.open(to, "_blank", "noopener");
-    return;
-  }
   if (route.fullPath === to) return
   router.push(to)
 }

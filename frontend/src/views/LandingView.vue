@@ -5,6 +5,7 @@
       <div class="nav-actions">
         <template v-if="isLoggedIn">
           <RouterLink to="/admin" class="nav-link nav-link-primary">{{ $t('landing.enterAdmin') }}</RouterLink>
+          <a v-if="shopUrl" :href="shopUrl" target="_blank" rel="noopener" class="nav-link">{{ $t('landing.myShop') }}</a>
           <button type="button" class="nav-link" @click="handleLogout">{{ $t('landing.logout') }}</button>
         </template>
         <RouterLink v-else to="/admin/login" class="nav-link nav-link-primary">{{ $t('landing.login') }}</RouterLink>
@@ -180,10 +181,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminAuth } from '@/composables/useAdminAuth'
+import { adminRequest } from '@/composables/useAdminRequest'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import {
   activityPhaseI18nKey,
@@ -203,6 +205,21 @@ const activitiesLoading = ref(false)
 const activitiesError = ref('')
 const homeActivities = ref<LandingHomeActivity[]>([])
 const activityFilter = ref<'all' | 'flash' | 'free'>('all')
+
+// 我的商铺链接：从 /api/admin/brand 读取 storeSlug，动态生成（docs/204 引流配置）
+const storeSlug = ref('')
+const shopUrl = computed(() => (storeSlug.value ? `${window.location.origin}/shop/${storeSlug.value}` : ''))
+
+async function loadShopUrl() {
+  storeSlug.value = ''
+  if (!isLoggedIn.value) return
+  try {
+    const data = await adminRequest<{ storeSlug?: string }>('/api/admin/brand')
+    storeSlug.value = data.storeSlug || ''
+  } catch {
+    storeSlug.value = '' // 未配置店铺或请求失败时不显示按钮
+  }
+}
 
 const publicCards = computed<LandingActivityCard[]>(() =>
   homeActivities.value.map((activity) => buildLandingActivityCard(activity, t('landing.marketFreePrice'))),
@@ -242,8 +259,12 @@ function handleLogout() {
 }
 
 onMounted(() => {
+  void loadShopUrl()
   void loadHomeActivities()
 })
+
+// 登录后加载商铺链接（isLoggedIn 变化时重新获取）
+watch(isLoggedIn, (v) => { if (v) void loadShopUrl(); else storeSlug.value = '' })
 </script>
 
 <style scoped>
