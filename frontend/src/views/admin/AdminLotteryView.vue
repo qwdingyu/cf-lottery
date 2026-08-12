@@ -1138,7 +1138,7 @@
               </p>
             </header>
             <div class="form-grid two-cols">
-              <div v-if="form.activityKind === 'lottery' && editorVisibility.tiers" class="field-span-2">
+              <div v-if="editorVisibility.tiers" class="field-span-2">
                 <span class="field-label-text">{{ $t('lottery.adminTierConfig') }}</span>
                 <div class="tier-list">
                   <div v-for="(tier, idx) in form.tiers" :key="idx" class="tier-row">
@@ -1589,6 +1589,23 @@
               <div>
                 <span>{{ externalConversionRate }}</span>
                 <small>{{ $t('lottery.adminRateExternalCta') }}</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- ★ P1-3: 未中奖承接看板 —— 安慰券发放与核销 -->
+          <div class="analytics-section">
+            <h4>{{ $t('lottery.adminConsolationTitle') }}</h4>
+            <div class="analytics-grid">
+              <div v-for="item in consolationCards" :key="item.key" class="analytics-card">
+                <span class="analytics-value">{{ item.value }}</span>
+                <span class="analytics-label">{{ item.label }}</span>
+              </div>
+            </div>
+            <div class="analytics-rates">
+              <div>
+                <span>{{ consolationRedeemRate }}</span>
+                <small>{{ $t('lottery.adminConsolationRedeemRate') }}</small>
               </div>
             </div>
           </div>
@@ -2115,6 +2132,8 @@ const {
   conversionTypeLabel,
   handleViewAnalytics,
   handleExportConversions,
+  consolationCards,
+  consolationRedeemRate,
 } = useDrawAnalytics({ operatingId })
 
 // 模板绑定的 composable 字段：避免 vue-tsc 在部分配置下误报 TS6133
