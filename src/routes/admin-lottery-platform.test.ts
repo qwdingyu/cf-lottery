@@ -1205,6 +1205,10 @@ it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → ch
     });
 
     it("缺少 webhookOrigin 且无 APP_ORIGIN 环境变量时返回错误", async () => {
+      // 清除 APP_ORIGIN 环境变量，确保测试不受 dev 环境 .env 影响
+      const savedOrigin = process.env.APP_ORIGIN;
+      delete process.env.APP_ORIGIN;
+
       const app = await createApp();
       const id = await createTelegramTarget(app, "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11");
 
@@ -1214,6 +1218,9 @@ it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → ch
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({}),
       });
+      // 恢复 APP_ORIGIN，避免影响后续测试
+      if (savedOrigin !== undefined) process.env.APP_ORIGIN = savedOrigin;
+
       const data = await res.json() as Record<string, unknown>;
 
       expect(res.status).toBe(400);
