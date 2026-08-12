@@ -260,6 +260,7 @@ export default {
     navBrand: "运营活动引擎",
     login: "登录",
     enterAdmin: "进入后台",
+    myShop: "我的商铺",
     logout: "退出",
     loggedOut: "已退出登录",
     // 055a ADR-055a-5：P1 路径验收达标前，对外不用绝对「3 分钟」承诺

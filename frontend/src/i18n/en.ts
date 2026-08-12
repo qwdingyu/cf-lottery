@@ -258,6 +258,7 @@ export default {
     navBrand: "Activity Engine",
     login: "Log in",
     enterAdmin: "Go to admin",
+    myShop: "My Shop",
     logout: "Log out",
     loggedOut: "Logged out",
     // 055a ADR-055a-5: no absolute "3 minutes" claim until TTV path is validated
