@@ -81,6 +81,8 @@ const LOTTERY_WHEEL_INSTANT_VISIBILITY: EditorFieldVisibility = {
  * 限时抢购：秒杀壳 + 商品导流/直付是主路径。
  * 不展示抽奖奖项壳、安慰奖（claim 路径）。
  * 社交传播：开启后展示邀请排行榜，不影响购买优先级。
+ * tiers: true —— 直付秒杀需通过奖档绑定唯一卡密奖品（发布清单 codePrize 检查项），
+ * 隐藏奖档会导致用户无法选择卡密奖品而卡在发布门禁（docs/204 修复）。
  */
 const FLASH_SALE_RUSH_VISIBILITY: EditorFieldVisibility = {
   prizeShell: false,
@@ -90,7 +92,7 @@ const FLASH_SALE_RUSH_VISIBILITY: EditorFieldVisibility = {
   cta: true,
   loserReward: false,
   experienceType: false,
-  tiers: false,
+  tiers: true,
   maxSpins: false,
   instantWeight: false,
 }

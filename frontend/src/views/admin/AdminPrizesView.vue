@@ -295,7 +295,7 @@
     </AdminModal>
 
     <!-- 查看码弹窗：真多选删除（仅勾选且 available），禁止「本页全部盲删」 -->
-    <AdminModal hide-actions v-model="showCodesModal" :title="$t('adminPrizes.codesTitle', { name: codesPrize?.name || '' })" max-width="800px">
+    <AdminModal close-on-escape v-model="showCodesModal" :title="$t('adminPrizes.codesTitle', { name: codesPrize?.name || '' })" max-width="800px">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
         <select v-model="codesFilter" @change="onCodesFilterChange">
           <option value="">{{ $t('adminPrizes.allStatus') }}</option>
