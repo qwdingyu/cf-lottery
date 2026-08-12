@@ -15,7 +15,7 @@
     </div>
 
     <!-- ═══ 秒杀英雄横幅（docs/205）：仅当有秒杀活动时展示 ═══ -->
-    <div v-if="flashBanner" class="shop-flash-hero" @click="$router.push(flashBanner.href)">
+    <div v-if="flashBanner" class="shop-flash-hero" role="button" tabindex="0" :aria-label="$t('shop.flashBannerTitle')" @click="$router.push(flashBanner.href)" @keydown.enter.prevent="$router.push(flashBanner.href)" @keydown.space.prevent="$router.push(flashBanner.href)">
       <div class="flash-hero-badge">⚡</div>
       <div class="flash-hero-body">
         <span class="flash-hero-title">{{ $t('shop.flashBannerTitle') }}</span>
@@ -30,9 +30,12 @@
     <!-- ═══ 加载 / 空态 / 错误 ═══ -->
     <div v-if="loading" class="skeleton-grid" aria-busy="true">
       <div v-for="i in 4" :key="i" class="skeleton-card">
-        <div class="skeleton-line w-70" />
+        <div class="skeleton-line w-25" />
+        <div class="skeleton-line w-60" />
+        <div class="skeleton-line w-45" />
+        <div class="skeleton-line w-90" />
         <div class="skeleton-line w-40" />
-        <div class="skeleton-line w-30" />
+        <div class="skeleton-block" />
       </div>
     </div>
     <div v-else-if="error" class="empty-state" role="alert">
@@ -76,22 +79,25 @@
             <span class="flash-session-tag">{{ card.sessionLabel }}</span>
           </div>
 
-          <!-- 倒计时 -->
+          <!-- 倒计时（注意：不用 aria-live——每秒更新会让读屏持续播报，反模式；读屏用户导航到此处按需读取即可） -->
           <div v-if="card.showCountdown" class="flash-countdown-row">
             <span class="flash-cd-label">
-              {{ cardPhase(card) === 'upcoming' ? $t('shop.countdownStartIn') : cardPhase(card) === 'ended' ? $t('shop.countdownEnded') : $t('shop.countdownEndIn') }}
+              {{ card.phase === 'upcoming' ? $t('shop.countdownStartIn') : card.phase === 'ended' ? $t('shop.countdownEnded') : $t('shop.countdownEndIn') }}
             </span>
             <span
               class="flash-cd-digits"
-              :class="{ 'cd-urgent': cardUrgent(card), 'cd-ended': cardPhase(card) === 'ended' }"
+              :class="{ 'cd-urgent': cardUrgent(card), 'cd-ended': card.phase === 'ended' }"
             >
               {{ flashCountdown(card) }}
             </span>
           </div>
 
+          <!-- 商品图片（秒杀卡片展示，增加视觉锚点） -->
+          <img v-if="card.flashSaleEnabled && card.imageUrl" :src="card.imageUrl" :alt="card.title" class="flash-image" loading="lazy" />
+
           <!-- 进度条 -->
           <div v-if="card.showProgress && card.progressPercent > 0" class="flash-progress-wrap">
-            <div class="flash-progress-track" role="progressbar" :aria-valuenow="card.progressPercent" aria-valuemin="0" aria-valuemax="100">
+            <div class="flash-progress-track" role="progressbar" :aria-label="$t('shop.grabedPercent', { n: card.progressPercent })" :aria-valuenow="card.progressPercent" aria-valuemin="0" aria-valuemax="100">
               <div class="flash-progress-fill" :style="{ width: card.progressPercent + '%' }" />
             </div>
             <span class="flash-progress-label">{{ $t('shop.grabedPercent', { n: card.progressPercent }) }}</span>
@@ -133,8 +139,11 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { buildLandingActivityCard, classifyLandingActivity, activityPhaseI18nKey, resolveLandingActivityPhase } from '@/views/landing-activity-feed'
+import type { LandingActivityCard, LandingHomeActivity } from '@/views/landing-activity-feed'
 import { formatCountdown, formatEndTime } from '@/views/shop/countdown'
-import type { LandingActivityCard } from '@/views/landing-activity-feed'
+
+/** 紧急态阈值：距结束不足 5 分钟 → 白字红底呼吸动画 */
+const URGENT_THRESHOLD_MS = 5 * 60 * 1000
 
 const { t } = useI18n()
 const route = useRoute()
@@ -143,7 +152,7 @@ const loading = ref(true)
 const error = ref('')
 const activeTab = ref('all')
 const store = ref<{ name: string }>({ name: '' })
-const activities = ref<any[]>([])
+const activities = ref<LandingHomeActivity[]>([])
 
 // 统一倒计时时钟（每秒更新一次，驱动所有卡片的倒计时）
 const nowMs = ref(Date.now())
@@ -162,8 +171,8 @@ const tabs = computed(() => {
   const all = activities.value
   return [
     { key: 'all', label: t('landing.marketFilterAll'), count: all.length },
-    { key: 'flash', label: t('landing.marketFilterFlash'), count: all.filter((a: any) => classifyLandingActivity(a) === 'flash').length },
-    { key: 'free', label: t('landing.marketFilterFree'), count: all.filter((a: any) => classifyLandingActivity(a) === 'free').length },
+    { key: 'flash', label: t('landing.marketFilterFlash'), count: all.filter((a) => classifyLandingActivity(a) === 'flash').length },
+    { key: 'free', label: t('landing.marketFilterFree'), count: all.filter((a) => classifyLandingActivity(a) === 'free').length },
   ]
 })
 
@@ -173,11 +182,11 @@ const tabs = computed(() => {
  */
 const cards = computed(() => {
   let list = activities.value
-  if (activeTab.value === 'flash') list = list.filter((a: any) => classifyLandingActivity(a) === 'flash')
-  if (activeTab.value === 'free') list = list.filter((a: any) => classifyLandingActivity(a) === 'free')
+  if (activeTab.value === 'flash') list = list.filter((a) => classifyLandingActivity(a) === 'flash')
+  if (activeTab.value === 'free') list = list.filter((a) => classifyLandingActivity(a) === 'free')
 
   const now = nowMs.value
-  const mapped = list.map((a: any) => buildLandingActivityCard(a, t('landing.marketFreePrice'), now))
+  const mapped = list.map((a) => buildLandingActivityCard(a, t('landing.marketFreePrice'), now))
 
   mapped.sort((a: LandingActivityCard, b: LandingActivityCard) => {
     // 秒杀优先于免费
@@ -207,9 +216,16 @@ const flashBanner = computed<LandingActivityCard | null>(() => {
   return cards.value.find((c) => c.flashSaleEnabled && resolveLandingActivityPhase(c, nowMs.value) === 'upcoming') || null
 })
 
+/** 一次遍历统计秒杀活动数量，供横幅副标题使用 */
 const flashBannerSub = computed(() => {
-  const running = cards.value.filter((c) => c.flashSaleEnabled && resolveLandingActivityPhase(c, nowMs.value) === 'running').length
-  const upcoming = cards.value.filter((c) => c.flashSaleEnabled && resolveLandingActivityPhase(c, nowMs.value) === 'upcoming').length
+  let running = 0
+  let upcoming = 0
+  for (const c of cards.value) {
+    if (!c.flashSaleEnabled) continue
+    const phase = resolveLandingActivityPhase(c, nowMs.value)
+    if (phase === 'running') running++
+    else if (phase === 'upcoming') upcoming++
+  }
   const parts: string[] = []
   if (running > 0) parts.push(t('shop.flashBannerSub', { n: running }))
   if (upcoming > 0) parts.push(t('shop.flashBannerUpcoming', { n: upcoming }))
@@ -231,17 +247,14 @@ const flashBannerDigits = computed(() => {
   return flashCountdown(target)
 })
 
-// ── 阶段 / 倒计时辅助函数 ──
-function cardPhase(card: LandingActivityCard): string {
-  return resolveLandingActivityPhase(card, nowMs.value)
-}
+// ── 辅助函数 ──
 
 /** 剩余不足 5 分钟 → 紧急呼吸态，强化「手慢无」 */
 function cardUrgent(card: LandingActivityCard): boolean {
   if (resolveLandingActivityPhase(card, nowMs.value) !== 'running') return false
   const endMs = Date.parse(card.endAt)
   if (!Number.isFinite(endMs)) return false
-  return endMs - nowMs.value < 300_000
+  return endMs - nowMs.value < URGENT_THRESHOLD_MS
 }
 
 function flashCountdown(card: LandingActivityCard): string {
@@ -303,6 +316,10 @@ onMounted(refresh)
 }
 .shop-flash-hero:hover {
   background: linear-gradient(135deg, rgba(244, 63, 94, 0.22) 0%, rgba(244, 63, 94, 0.35) 100%);
+}
+.shop-flash-hero:focus-visible {
+  outline: 2px solid var(--shop-sale, #e11d48);
+  outline-offset: 2px;
 }
 .flash-hero-badge {
   flex-shrink: 0;
@@ -521,11 +538,23 @@ onMounted(refresh)
 .card-meta-row { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px 8px; }
 .card-meta { font-size: 12px; color: var(--tg-hint); }
 
+/* ── 商品图片（秒杀卡片） ── */
+.flash-image {
+  width: 100%;
+  height: 120px;
+  object-fit: contain;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  margin: 0;
+}
+
 /* ── 骨架屏 / 空态 ── */
 .skeleton-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .skeleton-card { border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-.skeleton-line { height: 12px; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hover) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: var(--r-sm); }
-.w-70{width:70%}.w-40{width:40%}.w-30{width:30%}
+.skeleton-line { height: 12px; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hover) 50%, var(--surface) 75%); background-size: 200% 100%; border-radius: var(--r-sm); animation: shimmer 1.5s ease-in-out infinite; }
+/* 模拟按钮区域，占更多垂直空间 */
+.skeleton-block { height: 36px; border-radius: var(--r-lg); background: var(--surface-2); }
+.w-25{width:25%}.w-40{width:40%}.w-45{width:45%}.w-60{width:60%}.w-70{width:70%}.w-90{width:90%}
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
