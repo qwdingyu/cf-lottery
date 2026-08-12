@@ -20,6 +20,8 @@ export default {
   },
   common: {
     backToHome: "Back to home",
+    copy: "Copy",
+    copyFailed: "Copy failed",
   },
 
   // ── Shop storefront (ShopView) ─────────────────────────

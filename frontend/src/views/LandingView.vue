@@ -114,7 +114,7 @@
           >
             <div class="activity-media" :class="{ 'activity-media-empty': !card.imageUrl }">
               <img v-if="card.imageUrl" :src="card.imageUrl" :alt="card.title" />
-              <span v-else>{{ card.badge === 'flash' ? 'SALE' : 'FREE' }}</span>
+              <span v-else>{{ card.badge === 'flash' ? $t('landing.marketFlashTag') : $t('landing.marketFreeTag') }}</span>
             </div>
             <div class="activity-body">
               <div class="card-tags">

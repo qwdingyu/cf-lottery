@@ -21,6 +21,8 @@ export default {
   },
   common: {
     backToHome: "返回主页",
+    copy: "复制",
+    copyFailed: "复制失败",
   },
 
   // ── 店铺首页（ShopView） ──────────────────────────────
