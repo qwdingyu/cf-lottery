@@ -1560,7 +1560,7 @@ async function acquirePrizeCodes(
  * 不足时回滚已预占的卡密，返回 []。
  * 预占的卡密在订单超时/取消时由 expireOverdueOrders / cancelPaymentOrder 释放回 available。
  */
-async function reservePrizeCodes(
+export async function reservePrizeCodes(
   db: DbType,
   tenantId: string,
   drawId: string,
@@ -1620,7 +1620,7 @@ async function reservePrizeCodes(
  * 在 handlePaymentCallback 事务内调用，把该订单（orderId）预占的 reserved 卡密转为 issued。
  * 不足时回滚已确认的卡密并返回 []（极少发生，仅在并发下单时预占卡密被其他订单共用）。
  */
-async function confirmPrizeCodes(
+export async function confirmPrizeCodes(
   tx: DbType,
   orderId: string,
   quantityRaw: number,
@@ -1671,7 +1671,7 @@ async function confirmPrizeCodes(
  * 在订单超时（expireOverdueOrders）或取消（cancelPaymentOrder）时调用，
  * 把该订单预占的 reserved 卡密释放回 available，供其他用户使用。
  */
-async function releaseReservedPrizeCodes(
+export async function releaseReservedPrizeCodes(
   tx: DbType,
   orderId: string,
   tenantId: string,

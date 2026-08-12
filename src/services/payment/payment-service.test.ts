@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../../test-setup";
 import type { DbType } from "../../db/client";
 import {
@@ -2192,6 +2192,127 @@ describe("支付并发安全性", () => {
         .from(paymentOrders)
         .where(eq(paymentOrders.id, expiredOrderId));
       expect(after?.status).toBe("expired");
+    });
+  });
+
+  describe("P2 优化：下单时预占卡密库存（docs/205）", () => {
+    async function seedReserveCtx(codeCount: number) {
+      const drawId = crypto.randomUUID();
+      const entryId = crypto.randomUUID();
+      const prizeId = crypto.randomUUID();
+      await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" }).onConflictDoNothing();
+      await db.insert(lotteryDraws).values({
+        id: drawId, tenantId: TENANT_ID, publicSlug: `reserve-p2-${drawId}`,
+        title: "卡密预占P2", status: "open",
+        experienceType: "flash_sale", maxParticipants: 10,
+        promotionConfig: JSON.stringify({
+          flashSale: { enabled: true, paymentRequired: true, stockLimit: 10, priceCents: 9900, currency: "cny", maxPerUser: 5 },
+        }),
+        startAt: new Date(Date.now() - 60_000).toISOString(),
+        endAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+      await db.insert(lotteryEntries).values({
+        id: entryId, tenantId: TENANT_ID, drawId,
+        identityType: "email", identityValue: "reserve@test.com", paymentStatus: "reserved",
+      });
+      await db.insert(prizes).values({ id: prizeId, tenantId: TENANT_ID, name: "卡密奖品", prizeType: "code", totalCount: codeCount });
+      await db.insert(lotteryPrizeTiers).values({
+        id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, prizeId,
+        tierName: "中奖", winnerCount: codeCount, sortOrder: 100, weight: 100,
+      });
+      const codes = Array.from({ length: codeCount }, (_, i) => ({
+        id: `reserve-code-${i}`, tenantId: TENANT_ID, prizeId,
+        code: `R-CODE-${i}`, secret: "s", status: "available" as const,
+      }));
+      if (codes.length > 0) await db.insert(prizeCodes).values(codes);
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email", buyerIdentityValue: "buyer@test.com",
+        amountCents: 19800, currency: "cny", provider: "alipay" as const,
+        notifyUrl: "https://cb.test", unitPriceCents: 9900,
+      };
+      return { drawId, entryId, orderInput, prizeId };
+    }
+
+    it("createPaymentOrder 成功时预占卡密为 reserved 并绑定订单", async () => {
+      const { orderInput } = await seedReserveCtx(5);
+      const result = await createPaymentOrder(db, { ...orderInput, quantity: 2 }, providerMock);
+      // 预占 2 张 reserved
+      const reserved = await db.select().from(prizeCodes).where(and(
+        eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved"), inArray(prizeCodes.paymentOrderId, [result.order.id]),
+      ));
+      expect(reserved.length).toBe(2);
+      expect(reserved.every(c => c.paymentOrderId === result.order.id)).toBe(true);
+      // 其余 3 张仍 available
+      const avail = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "available")));
+      expect(avail.length).toBe(3);
+    });
+
+    it("createPaymentOrder 卡密不足时拒绝下单并整体回滚（订单/entry/名额/卡密）", async () => {
+      const { orderInput, entryId, drawId } = await seedReserveCtx(1);
+      // 卡密仅 1 张，下单 quantity=3 → 源头扼杀预检先拦截（availableStock < quantity）
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 3, amountCents: 29700 }, providerMock))
+        .rejects.toThrow("库存不足");
+      // 订单不创建（事务回滚）
+      const orders = await db.select().from(paymentOrders).where(eq(paymentOrders.entryId, entryId));
+      expect(orders).toHaveLength(0);
+      // entry 保持 reserved（未被消费）
+      const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+      expect(entry?.paymentStatus).toBe("reserved");
+      // 卡密未被预占（回滚到 available）
+      const codes = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved")));
+      expect(codes).toHaveLength(0);
+      // 名额未占用
+      const [draw] = await db.select({ count: lotteryDraws.activeParticipantCount }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+      expect(draw?.count).toBe(0);
+    });
+
+    it("handlePaymentCallback 把预占卡密确认（reserved → issued）", async () => {
+      const { orderInput } = await seedReserveCtx(5);
+      const order = await createPaymentOrder(db, { ...orderInput, quantity: 2 }, providerMock);
+      const [att] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, order.order.id)).limit(1);
+      expect(att).toBeDefined();
+      const cbProvider = { ...providerMock, name: "alipay", verifyCallback: vi.fn(async () => ({
+        orderNo: att!.id, providerTradeNo: "EP-P2", amountCents: 19800, currency: "cny", paidAt: "2026-08-12T00:00:00.000Z",
+      })) };
+      const result = await handlePaymentCallback(db, TENANT_ID, cbProvider, {});
+      expect(result.processed).toBe(true);
+      expect(result.order?.status).toBe("paid");
+      // 2 张卡密 issued
+      const issued = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "issued")));
+      expect(issued.length).toBe(2);
+      expect(issued.every(c => c.paymentOrderId === order.order.id)).toBe(true);
+      // 无残留 reserved
+      const reserved = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved")));
+      expect(reserved).toHaveLength(0);
+    });
+
+    it("expireOverdueOrders 超时释放预占卡密回 available", async () => {
+      const { orderInput } = await seedReserveCtx(5);
+      const order = await createPaymentOrder(db, { ...orderInput, quantity: 2 }, providerMock);
+      // 修改 orders createdAt 为超时（50 分钟前）
+      const past = new Date(Date.now() - 50 * 60_000).toISOString();
+      await db.update(paymentOrders).set({ createdAt: past }).where(eq(paymentOrders.id, order.order.id));
+      await expireOverdueOrders(db, TENANT_ID);
+      // 预占卡密释放回 available
+      const reserved = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved")));
+      expect(reserved).toHaveLength(0);
+      const avail = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "available")));
+      expect(avail.length).toBe(5);
+    });
+
+    it("cancelPaymentOrder 取消时释放预占卡密回 available", async () => {
+      const { orderInput } = await seedReserveCtx(5);
+      // 模拟 provider.createPayment 确定性失败 → createPaymentOrder 触发 cancelPaymentOrder
+      const failProvider = { ...providerMock, createPayment: vi.fn(async () => {
+        throw new EasyPayProviderError("param_error" as any, "参数错误");
+      }) };
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 2 }, failProvider)).rejects.toThrow();
+      // 预占卡密在事务内与订单一起回滚，无残留 reserved
+      const reserved = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved")));
+      expect(reserved).toHaveLength(0);
+      const avail = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "available")));
+      expect(avail.length).toBe(5);
     });
   });
 });
