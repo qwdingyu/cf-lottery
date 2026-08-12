@@ -556,11 +556,66 @@ async function update(key: string, value: string) {
 }
 
 async function sendTestEmail() {
-  showToast('测试邮件功能暂不可用', 'info')
+  const to = testEmailTo.value.trim()
+  if (!to) {
+    showToast(t('adminConfig.emailTest.emailPlaceholder'), 'error')
+    return
+  }
+  sendingTestEmail.value = true
+  testEmailStatus.value = ''
+  try {
+    const res = await adminRequest<{ sent: boolean; resendId?: string }>(`${PLATFORM_SYSTEM_CONFIG_API}/email-test`, {
+      method: 'POST',
+      body: JSON.stringify({ to }),
+    })
+    testEmailOk.value = true
+    testEmailStatus.value = res.resendId
+      ? t('adminConfig.emailTest.sentWithId', { id: res.resendId })
+      : t('adminConfig.emailTest.sent')
+    showToast(testEmailStatus.value, 'success')
+  } catch (err: any) {
+    testEmailOk.value = false
+    testEmailStatus.value = err.message || t('adminConfig.emailTest.sendTest')
+    showToast(testEmailStatus.value, 'error')
+  } finally {
+    sendingTestEmail.value = false
+  }
 }
 
 async function clearBusinessData() {
-  showToast('数据清理功能暂不可用', 'info')
+  if (!canClearBusinessData.value) return
+  clearingBusinessData.value = true
+  clearBusinessDataStatus.value = ''
+  try {
+    // 根据清理档位映射到后端允许的白名单目标
+    // 后端 /api/platform/data/cleanup 仅支持白名单内的表名
+    // 各档位含义见 i18n 描述：runtime=仅运行态日志, keep_trade=保留交易,
+    // keep_catalog=保留商品, full=全清（保留系统配置/支付/分类/API Key/迁移）
+    const profileTargets: Record<string, string[]> = {
+      runtime: ['email_access_codes', 'rate_limit_log', 'audit_logs', 'platform_audit_logs', 'activity_events'],
+      keep_trade: ['email_access_codes', 'rate_limit_log', 'audit_logs', 'platform_audit_logs', 'activity_events', 'webhook_deliveries'],
+      keep_catalog: ['email_access_codes', 'rate_limit_log', 'audit_logs', 'platform_audit_logs', 'activity_events', 'webhook_deliveries'],
+      full: ['email_access_codes', 'rate_limit_log', 'audit_logs', 'platform_audit_logs', 'activity_events', 'webhook_deliveries'],
+    }
+    const targets = profileTargets[clearProfile.value] ?? profileTargets.runtime
+    const data = await adminRequest<{ results: Record<string, number> }>('/api/platform/data/cleanup', {
+      method: 'POST',
+      body: JSON.stringify({ targets }),
+    })
+    const parts = Object.entries(data.results).map(([k, v]) => `${k}: ${v}`)
+    clearBusinessDataStatus.value = t('adminConfig.clearData.result', {
+      profile: t(`adminConfig.clearProfiles.${clearProfile.value}.title`),
+      deleted: parts.join('，'),
+      auditId: '',
+      strategy: 'none',
+    })
+    showToast(t('adminConfig.clearData.completed'), 'success')
+  } catch (err: any) {
+    clearBusinessDataStatus.value = err?.message || ''
+    showToast(clearBusinessDataStatus.value || t('adminConfig.clearData.completed'), 'error')
+  } finally {
+    clearingBusinessData.value = false
+  }
 }
 
 async function reset(key: string) {
