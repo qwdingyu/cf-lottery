@@ -697,7 +697,7 @@ export interface CreateOrderInput {
  */
 async function validateOrderPreconditions(
   tx: DbType,
-  input: Pick<CreateOrderInput, "tenantId" | "drawId" | "entryId" | "quantity">,
+  input: Pick<CreateOrderInput, "tenantId" | "drawId" | "entryId" | "quantity" | "unitPriceCents" | "amountCents">,
   entryRow: { id: string; tenantId: string; identityType: string | null; identityValue: string | null; paymentStatus: string | null },
   existingOrder: { id: string; status: string; createdAt: string } | null,
 ): Promise<{ ok: true; draw: { id: string; status: string; experienceType: string; promotionConfig: string; maxParticipants: number | null; endAt: string } } | { ok: false; error: string }> {
@@ -708,6 +708,26 @@ async function validateOrderPreconditions(
   // 源头扼杀：在订单创建时就验证身份，不让未验证身份的用户进入支付流程。
   if (!entryRow.identityType || !entryRow.identityValue) {
     return { ok: false, error: "参与身份未验证，请先完成身份验证" };
+  }
+
+  // 1a. entry 状态有效性（docs/203 复核）
+  // 源头扼杀：entry 必须处于可下单状态（reserved 首次 / paid 追加），
+  // 已过期（expired）或已取消（cancelled）的 entry 不允许创建订单。
+  // expireOverdueOrders 会清理超时 reserved entry，但清理后 entry 仍存在于表中，
+  // 如果不检查状态，用户可绕过名额限制重新下单。
+  if (entryRow.paymentStatus !== "reserved" && entryRow.paymentStatus !== "paid") {
+    return { ok: false, error: "参与预约已失效" };
+  }
+
+  // 1b. 金额一致性校验（docs/203 复核）
+  // 源头扼杀：路由层 calculateFlashSalePrice 保证 amountCents = unitPriceCents * quantity，
+  // 但后端应独立校验，防止路由层传入不一致的值导致订单金额错误（防御纵深）。
+  // 注意：pricingSnapshotJson 和 unitPriceCents 可能为空（非秒杀场景），此时跳过。
+  if (input.unitPriceCents && input.unitPriceCents > 0) {
+    const expectedAmount = input.unitPriceCents * quantity;
+    if (input.amountCents !== expectedAmount) {
+      return { ok: false, error: `订单金额不一致（预期 ${expectedAmount}，收到 ${input.amountCents}）` };
+    }
   }
 
   // 2. 活动有效性 + 时间检查（docs/203 §2.1）
@@ -899,8 +919,11 @@ export async function createPaymentOrder(
     //     reserveQuantity = quantity。
     const reserveQuantity = hasPriorOrder ? quantity : (quantity - 1);
 
-    // 统一前置校验（docs/203 源头扼杀）：身份/活动有效期/库存/限购，任一失败即事务回滚
-    const validation = await validateOrderPreconditions(tx, input, {
+    // 统一前置校验（docs/203 源头扼杀）：身份/活动有效期/库存/限购/金额一致性，任一失败即事务回滚
+    const validation = await validateOrderPreconditions(tx, {
+      ...input,
+      quantity, unitPriceCents: input.unitPriceCents, amountCents: input.amountCents,
+    }, {
       ...entryRow,
       id: input.entryId,
       tenantId: input.tenantId,
