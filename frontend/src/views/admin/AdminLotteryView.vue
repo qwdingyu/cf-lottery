@@ -2545,8 +2545,12 @@ const createStepDone = computed(() => {
   let prizesOk = true
   if (form.value.activityKind === 'lottery') {
     prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
+  } else if (form.value.activityKind === 'claim' && form.value.enableFlashSale && form.value.flashSalePaymentRequired) {
+    // 直付秒杀（限时抢购）：必须绑定至少 1 个卡密奖品（发布清单 codePrize 检查项），
+    // 否则创建后无法通过发布门禁。导流模式（非直付）不需要卡密奖品。
+    prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
   } else {
-    prizesOk = timeOk // 非抽奖：名额可选，时间齐即视为第 4 步可过
+    prizesOk = timeOk // 非 lottery/claim 直付：名额可选，时间齐即视为第 4 步可过
   }
   return { basic: nameOk, time: timeOk, join: joinOk, prizes: prizesOk }
 })
@@ -2561,6 +2565,14 @@ const createReadinessLabel = computed(() => {
     missing.push(t('lottery.adminCreateNeedTimeOrder'))
   }
   if (form.value.activityKind === 'lottery' && !createStepDone.value.prizes) {
+    missing.push(t('lottery.adminCreateNeedPrize'))
+  }
+  if (
+    form.value.activityKind === 'claim'
+    && form.value.enableFlashSale
+    && form.value.flashSalePaymentRequired
+    && !form.value.tiers.some((tier) => Boolean(tier.prizeId))
+  ) {
     missing.push(t('lottery.adminCreateNeedPrize'))
   }
   if (form.value.participationMode === 'password' && !String(form.value.accessPassword || '').trim()) {
