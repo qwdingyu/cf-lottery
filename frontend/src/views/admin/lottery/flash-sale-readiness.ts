@@ -25,12 +25,15 @@ function positiveInteger(value: unknown): boolean {
 
 export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInput): FlashSaleDirectChecklistItem[] {
   const selectedPrizeIds = new Set((input.tiers || []).map((tier) => tier.prizeId).filter(Boolean))
-  // 与后端 publish-check（publish-check-service.ts）保持一致：只统计 active 的卡密奖品
+  // 与后端 publish-check（validateFlashSalePayment）保持一致：
+  // ① 仅直付模式（paymentRequired=true）要求恰好绑定 1 个 active 卡密奖品（发卡目标）；
+  // ② 导流模式（不直付）不要求卡密奖品（后端不检查，用户无需绑定）。
   const selectedCodePrizeCount = (input.prizeOptions || []).filter((prize) =>
     selectedPrizeIds.has(prize.id)
     && String(prize.prizeType || '').trim() === 'code'
     && Number(prize.active) !== 0,
   ).length
+  const needCodePrize = input.enableFlashSale === true && input.flashSalePaymentRequired === true
 
   return [
     {
@@ -55,7 +58,8 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
     },
     {
       key: 'codePrize',
-      done: selectedCodePrizeCount === 1,
+      // 直付模式才要求恰好 1 个卡密奖品；导流模式视为完成（与后端一致）
+      done: !needCodePrize || selectedCodePrizeCount === 1,
       labelKey: 'adminFlashSaleChecklistCodePrize',
     },
   ]
