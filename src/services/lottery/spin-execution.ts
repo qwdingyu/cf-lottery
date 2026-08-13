@@ -28,7 +28,7 @@ import {
 } from "./spin-quota";
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
 import { recordSpinLog } from "./spins-log";
-import { todayStr } from "../platform/checkin-reward";
+import { todayStr } from "../../lib/date-utils";
 import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
 import { DRAW_STATUS } from "./types";
 

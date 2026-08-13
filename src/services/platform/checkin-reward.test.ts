@@ -12,8 +12,8 @@ import {
   parseStoredCheckinPolicy,
   computeCheckinReward,
   nextStreakAfterCheckin,
-  todayStr,
 } from "./checkin-reward";
+import { todayStr } from "../../lib/date-utils";
 
 describe("parseStoredCheckinPolicy", () => {
   it("返回 undefined 当输入非法/空", () => {

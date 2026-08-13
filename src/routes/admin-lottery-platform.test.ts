@@ -13,7 +13,7 @@ import { tenants, users, tenantMembers, lotteryDraws, lotteryEntries, platformTa
 import { hashPlatformInboundSecret } from "../services/platform/security";
 import { getActivePlatformTarget } from "../services/platform/targets";
 import { executeBuiltinPlatformCommand } from "../services/platform/commands";
-import { todayStr } from "../services/platform/checkin-reward";
+import { todayStr } from "../lib/date-utils";
 import { handleInboundPlatformEvent } from "../services/platform/inbound";
 import { isEncryptedPlatformSecret, PLATFORM_SECRET_PLACEHOLDER } from "../services/platform/adapter-config";
 import { and, eq } from "drizzle-orm";

@@ -34,8 +34,8 @@ import type {
 import {
   computeCheckinReward,
   nextStreakAfterCheckin,
-  todayStr,
 } from "./checkin-reward";
+import { todayStr } from "../../lib/date-utils";
 /** 一次性 Web 访问令牌（docs/179）：用于 Bot 生成卡密查看链接 */
 import { generateAccessToken } from "./access-token";
 /** 跨平台身份绑定（docs/179）：用于 QQ/Telegram 身份关联 */

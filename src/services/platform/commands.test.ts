@@ -28,7 +28,7 @@ import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
 import { executeBuiltinPlatformCommand, recognizeBuiltinCommand, renderHelpReply } from "./commands";
 import type { ExecuteBuiltinCommandInput, BuiltinCommandConfig } from "./types";
-import { todayStr } from "./checkin-reward";
+import { todayStr } from "../../lib/date-utils";
 
 let db: DbType;
 let client: Client;

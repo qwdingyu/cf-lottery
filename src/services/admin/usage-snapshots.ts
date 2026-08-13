@@ -11,7 +11,7 @@
 import type { DbType } from "../../db/client";
 import { tenants, lotteryDraws, lotteryEntries, lotteryWinners, activityEvents, webhookDeliveries, tenantUsageSnapshots } from "../../db/schema";
 import { eq, and, count, sql, max } from "drizzle-orm";
-import { todayStr } from "../platform/checkin-reward";
+import { todayStr } from "../../lib/date-utils";
 
 /**
  * 从批查询结果构建 { tenantId → count } 映射。
