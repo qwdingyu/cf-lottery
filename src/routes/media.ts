@@ -10,6 +10,7 @@ import {
   getManagedMediaImageContentType,
   validateMediaImage,
 } from "../lib/media-image";
+import { isLocalMediaMode, saveLocalMedia, readLocalMedia } from "../lib/local-media";
 
 export const mediaRoute = new Hono<AppEnv>();
 export const adminMediaRoute = new Hono<AppEnv>();
@@ -33,7 +34,10 @@ adminMediaRoute.use("*", requireAuth, requireTenantMember(), async (c, next) => 
 
 adminMediaRoute.post("/images", async (c) => {
   const bucket = getMediaBucket(c);
-  if (!bucket) return fail(c, "图片存储未配置，请先创建并绑定 R2 Bucket", 503);
+  // VPS/本地模式（无 R2 binding）回退本地磁盘存储 data/media/（2026-08 上线补充），
+  // 否则运营上传活动图/奖品图会 503，公开页只能用默认图。
+  const localMode = isLocalMediaMode(Boolean(bucket));
+  if (!bucket && !localMode) return fail(c, "图片存储未配置，请先创建并绑定 R2 Bucket", 503);
 
   const contentType = c.req.header("content-type") || "";
   if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
@@ -63,14 +67,19 @@ adminMediaRoute.post("/images", async (c) => {
   }
 
   const key = createMediaImageKey(image.extension);
-  const stored = await bucket.put(key, bytes, {
-    httpMetadata: {
-      contentType: image.contentType,
-      contentDisposition: "inline",
-      cacheControl: MEDIA_IMAGE_CACHE_CONTROL,
-    },
-  });
-  if (!stored) return fail(c, "图片保存失败，请重试", 500);
+  if (bucket) {
+    const stored = await bucket.put(key, bytes, {
+      httpMetadata: {
+        contentType: image.contentType,
+        contentDisposition: "inline",
+        cacheControl: MEDIA_IMAGE_CACHE_CONTROL,
+      },
+    });
+    if (!stored) return fail(c, "图片保存失败，请重试", 500);
+  } else {
+    const saved = await saveLocalMedia(key, bytes);
+    if (!saved) return fail(c, "图片保存失败，请重试", 500);
+  }
 
   // 上传是低频后台动作，写一条租户审计可帮助后续定位异常图片或滥用。
   await getDb(c).insert(auditLogs).values({
@@ -93,7 +102,8 @@ adminMediaRoute.post("/images", async (c) => {
 
 mediaRoute.get("/media/images/:filename", async (c) => {
   const bucket = getMediaBucket(c);
-  if (!bucket) return fail(c, "图片存储未配置", 503);
+  const localMode = isLocalMediaMode(Boolean(bucket));
+  if (!bucket && !localMode) return fail(c, "图片存储未配置", 503);
 
   // 路由只开放 images 命名空间，避免未来同一 Bucket 中的其他对象被意外公开。
   const encodedKey = `images/${c.req.param("filename")}`;
@@ -105,6 +115,18 @@ mediaRoute.get("/media/images/:filename", async (c) => {
   }
   const safeContentType = getManagedMediaImageContentType(key);
   if (!safeContentType) return fail(c, "图片不存在", 404);
+
+  // 本地磁盘模式：直接读文件返回（无边缘缓存；VPS 经 nginx 缓存 /assets/，/api/media 走短缓存头）
+  if (!bucket) {
+    const local = await readLocalMedia(key);
+    if (!local) return fail(c, "图片不存在", 404);
+    const headers = new Headers();
+    headers.set("Content-Type", local.contentType);
+    headers.set("Content-Disposition", "inline");
+    headers.set("Cache-Control", MEDIA_IMAGE_CACHE_CONTROL);
+    headers.set("X-Content-Type-Options", "nosniff");
+    return new Response(local.bytes, { headers });
+  }
 
   const cacheUrl = new URL(c.req.url);
   cacheUrl.search = "";

@@ -151,19 +151,35 @@ describe("媒体上传和公开读取", () => {
     expect(res.status).toBe(403);
   });
 
-  it("未绑定 R2 时上传和公开读取都返回明确 503", async () => {
+  it("未绑定 R2 时上传走本地磁盘存储（data/media/）并可公开读取（VPS 模式，2026-08 上线补充）", async () => {
     await seedMembers();
     const app = createTestApp();
+    // 测试隔离：媒体目录指向临时目录，避免污染工作区 data/media/
+    const tmpMediaDir = `/tmp/cf-lottery-media-test-${crypto.randomUUID()}`;
+    process.env.LOCAL_MEDIA_DIR = tmpMediaDir;
+    try {
+      const uploadRes = await app.request("/api/admin/media/images", {
+        method: "POST",
+        headers: await authHeader(OWNER_ID),
+        body: imageForm(new File([PNG_BYTES], "prize.png", { type: "image/png" })),
+      }, BASE_ENV);
+      expect(uploadRes.status).toBe(200);
+      const uploaded = await uploadRes.json() as { key: string; url: string };
 
-    const uploadRes = await app.request("/api/admin/media/images", {
-      method: "POST",
-      headers: await authHeader(OWNER_ID),
-      body: imageForm(new File([PNG_BYTES], "prize.png", { type: "image/png" })),
-    }, BASE_ENV);
-    expect(uploadRes.status).toBe(503);
+      const readRes = await app.request(uploaded.url, {}, BASE_ENV);
+      expect(readRes.status).toBe(200);
+      expect(readRes.headers.get("Content-Type")).toContain("image/png");
+      const body = new Uint8Array(await readRes.arrayBuffer());
+      expect(body.length).toBeGreaterThanOrEqual(PNG_BYTES.length);
 
-    const readRes = await app.request("/api/media/images/00000000-0000-4000-8000-000000000000.png", {}, BASE_ENV);
-    expect(readRes.status).toBe(503);
+      // 不存在的 key → 404
+      const missingRes = await app.request("/api/media/images/00000000-0000-4000-8000-000000000000.png", {}, BASE_ENV);
+      expect(missingRes.status).toBe(404);
+    } finally {
+      delete process.env.LOCAL_MEDIA_DIR;
+      const fs = await import("node:fs");
+      try { fs.rmSync(tmpMediaDir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+    }
   });
 
   it("MIME 声明和文件签名不一致时拒绝上传且不写审计", async () => {

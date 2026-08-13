@@ -27,6 +27,42 @@ export function isFlashSaleExperience(experienceType: string | null | undefined)
 }
 
 /**
+ * 公开端 promotionConfig 脱敏（2026-08 上线补充）。
+ *
+ * 公开详情 GET /draws/:slug 会返回 promotionConfig 供前端渲染秒杀壳/CTA/转盘壳/裂变排行榜。
+ * 但其中包含**内部激励参数**（保底阈值 pity、每日免费 dailyFreeSpins、推荐里程碑 referralRewards、
+ * 排行榜奖励明细 viral.leaderboardRewards）——公开泄露会让用户精确算出保底/刷里程碑门槛。
+ *
+ * 脱敏规则（白名单保留展示所需，剔除激励策略）：
+ * - 保留：flashSale / ctas / destination / experience / viral（去掉 leaderboardRewards 明细）
+ * - 剔除：pity / dailyFreeSpins / referralRewards / viral.leaderboardRewards
+ * - 非法输入返回 undefined（与 tryParseJson 语义一致，调用方按"无配置"处理）
+ */
+export function sanitizePublicPromotionConfig(raw: unknown): Record<string, unknown> | undefined {
+  let root: unknown = raw;
+  if (typeof raw === "string") {
+    const text = raw.trim();
+    if (!text || text === "{}") return undefined;
+    try {
+      root = JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!root || typeof root !== "object" || Array.isArray(root)) return undefined;
+  const out: Record<string, unknown> = { ...(root as Record<string, unknown>) };
+  delete out.pity;
+  delete out.dailyFreeSpins;
+  delete out.referralRewards;
+  const viral = out.viral;
+  if (viral && typeof viral === "object" && !Array.isArray(viral)) {
+    out.viral = { ...(viral as Record<string, unknown>) };
+    delete (out.viral as Record<string, unknown>).leaderboardRewards;
+  }
+  return out;
+}
+
+/**
  * 仅按参与模式给抽奖类体验的默认（open→转盘等）。
  *
  * 收敛点（P2 审查项）：旧实现分别在 src/services/lottery/draws.ts 与

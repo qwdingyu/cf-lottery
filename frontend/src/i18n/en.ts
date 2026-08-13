@@ -1710,6 +1710,10 @@ export default {
     refundAttemptPrefix: "Old attempt needs refund {count} times",
     retrySuccess: "Fulfillment reissued",
     retryFailed: "Reissue failed",
+    refund: "Refund",
+    refundConfirm: "Refund order {id}? Issued codes will be revoked and capacity released. This cannot be undone.",
+    refundSuccess: "Refunded",
+    refundFailed: "Refund failed",
     loadFailed: "Failed to load",
   },
 

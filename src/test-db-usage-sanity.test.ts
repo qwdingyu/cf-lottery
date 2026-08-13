@@ -4,7 +4,12 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC_DIR = join(process.cwd(), "src");
-const ALLOWED_FILES = new Set(["src/test-setup.ts", "src/test-db-usage-sanity.test.ts"]);
+const ALLOWED_FILES = new Set([
+  "src/test-setup.ts",
+  "src/test-db-usage-sanity.test.ts",
+  // 迁移 0063 去重语义需自建临时库验证（见该文件头部说明）
+  "src/migrations-0063-sanity.test.ts",
+]);
 
 function listTypeScriptFiles(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {

@@ -54,6 +54,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 import { encryptPaymentConfigValue } from "../services/payment/secret-config";
+import { sanitizePublicPromotionConfig } from "../lib/activity-utils";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
@@ -3091,5 +3092,38 @@ describe("reservation/waitlist 参与闭环", () => {
     expect("outcome" in w1 && w1.outcome?.status).toBe("assigned");
     const w2 = await joinDraw(db, publicSlug, "wl-2@test.com");
     expect("outcome" in w2 && w2.outcome?.status).toBe("waitlisted");
+  });
+});
+// 上线补充（2026-08）：公开端 promotionConfig 脱敏——内部激励参数不泄露
+describe("sanitizePublicPromotionConfig 脱敏", () => {
+  it("剔除 pity/dailyFreeSpins/referralRewards/viral.leaderboardRewards，保留展示字段", () => {
+    const out = sanitizePublicPromotionConfig({
+      flashSale: { enabled: true, priceCents: 9900 },
+      ctas: { after_win: { url: "https://x.com" } },
+      destination: { url: "https://x.com" },
+      experience: { prizePanelMode: "auto" },
+      viral: { enabled: true, leaderboardEnabled: true, leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 3 }] },
+      pity: { enabled: true, threshold: 3 },
+      dailyFreeSpins: { enabled: true, count: 1 },
+      referralRewards: [{ requireCount: 3, rewardType: "bonus_spin", rewardValue: 5 }],
+    });
+    expect(out).toBeDefined();
+    expect(out!.flashSale).toBeDefined();
+    expect(out!.ctas).toBeDefined();
+    expect(out!.destination).toBeDefined();
+    expect(out!.experience).toBeDefined();
+    expect(out!.viral).toBeDefined();
+    expect((out!.viral as Record<string, unknown>).leaderboardEnabled).toBe(true);
+    expect((out!.viral as Record<string, unknown>).leaderboardRewards).toBeUndefined();
+    expect(out!.pity).toBeUndefined();
+    expect(out!.dailyFreeSpins).toBeUndefined();
+    expect(out!.referralRewards).toBeUndefined();
+  });
+
+  it("字符串输入与非法输入容错", () => {
+    expect(sanitizePublicPromotionConfig('{"flashSale":{"enabled":true}}')?.flashSale).toBeDefined();
+    expect(sanitizePublicPromotionConfig("{}")).toBeUndefined();
+    expect(sanitizePublicPromotionConfig("not-json")).toBeUndefined();
+    expect(sanitizePublicPromotionConfig(null)).toBeUndefined();
   });
 });

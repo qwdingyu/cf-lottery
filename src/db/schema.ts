@@ -264,9 +264,13 @@ export const prizeCodes = sqliteTable("prize_codes", {
   // 这是按租户、奖品、状态领取可用码的性能索引，不是业务唯一约束。
   // 如果误用 uniqueIndex，同一秒导入多条可用码会被数据库拒绝，直接破坏码池能力。
   prizeStatusIdx: index("idx_prize_codes_prize_status").on(t.tenantId, t.prizeId, t.status, t.createdAt),
-  // P0（2026-08 审查）：同租户同奖品下 code 必须唯一，防止重复卡密被重复发放。
-  // 历史重复数据由迁移 0063 先去重（多余行标记 revoked）再建索引；新重复码直接拒绝。
-  codeUnique: uniqueIndex("idx_prize_codes_tenant_prize_code").on(t.tenantId, t.prizeId, t.code),
+  // P0（2026-08 审查）：同租户同奖品下可发放/已发放的 code 必须唯一，防止重复卡密被重复发放。
+  // 历史重复数据由迁移 0063 先去重（多余行标记 revoked）再建索引。
+  // ⚠️ PARTIAL 唯一约束：revoked/expired 是终态审计行（含补偿中的重复码），不参与唯一性，
+  // 否则同组多条被标记 revoked 的行仍互相重复，迁移建索引会失败（上线预演发现，见 0063 注释）。
+  codeUnique: uniqueIndex("idx_prize_codes_tenant_prize_code")
+    .on(t.tenantId, t.prizeId, t.code)
+    .where(sql`${t.status} IN ('available', 'issued', 'reserved')`),
 }));
 
 // ── 抽奖活动 ──

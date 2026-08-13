@@ -6,7 +6,7 @@
  * 裂变与接龙列表见 public-lottery-share.ts。
  */
 import { Hono } from "hono";
-import { isInstantResultMode } from "../lib/activity-utils";
+import { isInstantResultMode, sanitizePublicPromotionConfig } from "../lib/activity-utils";
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
@@ -420,7 +420,8 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     serverNow: joinWindow.serverNow,
     // 导流：关联商品链接（仅在活动中开放时返回）
     productLink: draw.productLink && draw.productLink !== "{}" ? tryParseJson(draw.productLink) : undefined,
-    promotionConfig: draw.promotionConfig && draw.promotionConfig !== "{}" ? tryParseJson(draw.promotionConfig) : undefined,
+    // 公开端脱敏：剔除内部激励参数（保底/每日免费/里程碑/排行榜奖励明细），保留展示所需（sanitizePublicPromotionConfig）
+    promotionConfig: sanitizePublicPromotionConfig(draw.promotionConfig),
     // 公开端只接收经过后端白名单解析的配置；无效配置会由发布闸门阻断，不在这里暴露半成品。
     activityConfig: parseActivityConfig(draw.activityConfig) || undefined,
     // instant：每人抽奖次数硬顶（0=未配置/非 instant）

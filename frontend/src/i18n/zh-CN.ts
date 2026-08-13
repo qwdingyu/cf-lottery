@@ -1700,6 +1700,10 @@ export default {
     refundAttemptPrefix: "旧尝试待退款 {count} 次",
     retrySuccess: "补发成功",
     retryFailed: "补发失败",
+    refund: "退款",
+    refundConfirm: "确认退款订单 {id}？将作废已发卡密并释放名额，此操作不可撤销。",
+    refundSuccess: "退款成功",
+    refundFailed: "退款失败",
     loadFailed: "加载失败",
   },
 

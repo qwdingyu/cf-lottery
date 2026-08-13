@@ -89,14 +89,26 @@
               <div v-if="order.paidAt" class="cell-sub">{{ $t('adminPaymentOrders.paidAtPrefix') }} {{ formatDate(order.paidAt) }}</div>
             </td>
             <td>
-              <button
-                class="btn btn-primary btn-xs"
-                type="button"
-                :disabled="mutatingId === order.id || order.status !== 'paid_fulfillment_failed'"
-                @click="retryFulfillment(order)"
-              >
-                {{ mutatingId === order.id ? $t('adminPaymentOrders.processing') : $t('adminPaymentOrders.retryFulfillment') }}
-              </button>
+              <div class="row-actions">
+                <button
+                  class="btn btn-primary btn-xs"
+                  type="button"
+                  :disabled="mutatingId === order.id || order.status !== 'paid_fulfillment_failed'"
+                  @click="retryFulfillment(order)"
+                >
+                  {{ mutatingId === order.id ? $t('adminPaymentOrders.processing') : $t('adminPaymentOrders.retryFulfillment') }}
+                </button>
+                <!-- 退款闭环（2026-08 上线补充）：paid / paid_fulfillment_failed / paid_late_needs_refund
+                     可退款（后端 POST /payment-orders/:id/refund，owner/admin；已核销卡密会拒绝） -->
+                <button
+                  class="btn btn-danger btn-xs"
+                  type="button"
+                  :disabled="mutatingId === order.id || !isRefundable(order.status)"
+                  @click="refundOrder(order)"
+                >
+                  {{ mutatingId === order.id ? $t('adminPaymentOrders.processing') : $t('adminPaymentOrders.refund') }}
+                </button>
+              </div>
             </td>
           </tr>
           <tr v-if="orders.length === 0">
@@ -117,13 +129,14 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToast } from '@usethink/cf-admin-fe/composables'
+import { useToast, useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { formatDate } from '@/composables/useFormat'
 import type { AdminPaymentOrder, AdminPaymentOrdersResult } from '@/types/admin'
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const { askConfirm } = useConfirmDialog()
 const loading = ref(false)
 const error = ref('')
 const orders = ref<AdminPaymentOrder[]>([])
@@ -198,6 +211,29 @@ async function retryFulfillment(order: AdminPaymentOrder) {
   }
 }
 
+/** 可退款状态（与后端 refundPaymentOrder 的 refundableStatuses 对齐） */
+function isRefundable(status: string) {
+  return status === 'paid' || status === 'paid_fulfillment_failed' || status === 'paid_late_needs_refund'
+}
+
+async function refundOrder(order: AdminPaymentOrder) {
+  if (mutatingId.value) return
+  const confirmed = await askConfirm(t('adminPaymentOrders.refundConfirm', { id: order.id }))
+  if (!confirmed) return
+  mutatingId.value = order.id
+  try {
+    await adminRequest(`/api/admin/payment-orders/${encodeURIComponent(order.id)}/refund`, {
+      method: 'POST',
+    })
+    showToast(t('adminPaymentOrders.refundSuccess'), 'success')
+    await loadData()
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : t('adminPaymentOrders.refundFailed'), 'error')
+  } finally {
+    mutatingId.value = ''
+  }
+}
+
 function statusLabel(status: string, pendingRefundAttemptCount = 0) {
   if (pendingRefundAttemptCount > 0) return t('adminPaymentOrders.statusNeedsRefund')
   const map: Record<string, string> = {
@@ -236,6 +272,7 @@ onMounted(loadData)
 
 <style scoped>
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row-actions { display: flex; gap: 6px; align-items: center; }
 .cell-main { font-weight: 600; max-width: 260px; overflow-wrap: anywhere; }
 .cell-sub { margin-top: 4px; color: var(--muted); font-size: 12px; max-width: 260px; overflow-wrap: anywhere; }
 .pagination-row { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 14px; }
