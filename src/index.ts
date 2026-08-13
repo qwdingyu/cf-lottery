@@ -36,6 +36,7 @@ import {
   type WebhookFetch,
 } from "./services/lottery-service";
 import { processPendingPlatformDeliveriesForAllTenants } from "./services/platform/delivery";
+import { expireExpiredPrizeCodes, expireOverdueOrders } from "./services/payment/payment-service";
 import { dispatchEmailDeliveries } from "./services/email-delivery";
 import { cleanExpiredTokens } from "./services/platform/access-token";
 import { cleanExpiredBindings } from "./services/platform/binding";
@@ -102,6 +103,27 @@ export async function runScheduledMaintenance(
     cfAuthClientId: env.cfAuthClientId || "",
     cfAuthClientSecret: env.cfAuthClientSecret || "",
   }, { limit: 50 });
+  // 支付超时订单清理（任务 2，P1）：先按租户分片（有 pending 订单的租户 LIMIT 25），
+  // 逐租户调用 expireOverdueOrders。为什么要分片：
+  // - expireOverdueOrders 内部是"订单 + entry 名额"同事务软释放，不能一次全库一把长事务；
+  // - 大多数租户没有 pending 订单，按 DISTINCT tenant_id 先过滤可避免无意义的空扫描。
+  // 单租户失败不中断其它租户（记日志继续），保证维护任务整体韧性。
+  const overdueTenantRows = await db
+    .selectDistinct({ tenantId: paymentOrders.tenantId })
+    .from(paymentOrders)
+    .where(eq(paymentOrders.status, "pending"))
+    .limit(25);
+  let overdueExpired = 0;
+  for (const row of overdueTenantRows) {
+    try {
+      overdueExpired += await expireOverdueOrders(db, row.tenantId);
+    } catch (err) {
+      console.error(`[cron] expireOverdueOrders tenant=${row.tenantId} failed:`, err);
+    }
+  }
+  // 卡密过期维护（任务 4a，P1）：available/issued 且 expiresAt 已过的限时卡密统一标记 expired，
+  // 防止过期码被继续领取/核销。分批（默认 500）执行，汇总处理数。
+  const expiredPrizeCodes = await expireExpiredPrizeCodes(db);
   // 限流日志只服务短窗口判断，定时清理避免 Turso 免费层 rows/storage 被长期无价值日志拖垮。
   // F1 修复：reward 邀请奖励配额是【24 小时窗口】（reward.ts REWARD_QUOTA_WINDOW_MS），
   // 而通用登录/验证码限流是【1 小时窗口】。若统一按 1h 清理，会把 reward 的 24h 计数记录
@@ -124,7 +146,7 @@ export async function runScheduledMaintenance(
     emailFrom: env.emailFrom || "",
   });
 
-  return { draws, webhooks, platformDeliveries, emailDeliveries, cleanedRateLimitLogs, cleanedTokens, cleanedBindings, cleanedSpins, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
+  return { draws, webhooks, platformDeliveries, emailDeliveries, overdueOrders: { tenants: overdueTenantRows.length, expired: overdueExpired }, expiredPrizeCodes, cleanedRateLimitLogs, cleanedTokens, cleanedBindings, cleanedSpins, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
 }
 
 /**

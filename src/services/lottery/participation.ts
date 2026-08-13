@@ -9,7 +9,7 @@
 import type { DbType, DbWriteScope } from "../../db/client";
 import { isFlashSaleExperience } from "../../lib/activity-utils";
 import { withDbTransaction } from "../../db/client";
-import { and, eq, inArray, sql, count, asc } from "drizzle-orm";
+import { and, eq, inArray, sql, asc, max } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
@@ -331,10 +331,12 @@ export async function joinDraw(
       // 仅 flashSale 启用或 experience_type=flash_sale 走秒杀截单语义；
       // 普通 claim/reveal 仍按 maxParticipants（可无限软顶），避免误杀非秒杀领取。
       // 秒杀：禁止候补超卖；其它活动仍按 maxParticipants（无上限时 50000 软顶）
+      // 候补语义开放给 signup_chain 与 waitlist 两种按序分配类型；
+      // 秒杀不做候补，满即拒（reservation 不候补，满即拒）。
       const acceptsWaitlist =
-        draw.activityKind === "signup_chain" &&
+        (draw.activityKind === "signup_chain" || draw.activityKind === "waitlist") &&
         draw.allocationPolicy === "waitlist" &&
-        !isFlashSaleJoin; // 秒杀不做候补，满即拒
+        !isFlashSaleJoin;
       // 普通活动仍按活动维度做条件 INSERT；直付秒杀不在热路径扫描 entries。
       const activeCapacityCountClause = sql`(
             SELECT COUNT(*) FROM lottery_entries
@@ -459,7 +461,17 @@ export async function joinDraw(
         });
       }
 
-      if (draw.activityKind !== "signup_chain") {
+      // ── 结果物化（闭环修复，2026-08 审查）──
+      // 只有「按序分配结果」的活动类型写 activity_outcomes：
+      //   signup_chain / waitlist：assigned（占位）或 waitlisted（候补）
+      //   reservation：assigned（容量占位，满即拒、无候补）
+      // 旧实现只对 signup_chain 写 outcome → reservation/waitlist 参与后 my-result
+      // 查不到结果（outcome=null）、取消接口因无 outcome 永远失败（断链）。
+      const isAssignmentKind =
+        draw.activityKind === "signup_chain" ||
+        draw.activityKind === "reservation" ||
+        draw.activityKind === "waitlist";
+      if (!isAssignmentKind) {
         const attribution = await recordAttributedJoin(tx, {
           tenantId: draw.tenantId,
           drawId: draw.id,
@@ -472,11 +484,17 @@ export async function joinDraw(
         return { joined: true, entryId, activityKind: draw.activityKind, attribution, submissionId };
       }
 
-      const [{ total }] = await tx
-        .select({ total: count() })
-        .from(lotteryEntries)
-        .where(and(eq(lotteryEntries.tenantId, draw.tenantId), eq(lotteryEntries.drawId, draw.id)));
-      const sequenceNo = Number(total);
+      // sequenceNo 用 MAX(sequence_no)+1 单调递增（闭环修复，2026-08 审查）：
+      // 旧实现用 COUNT(*)（含本次新插入的 entry）计算序号，删除中间参与者后序号会复用，
+      // 撞 activity_outcomes 的 UNIQUE(tenant,draw,outcomeType,assignment_no) → 新参与永久失败。
+      // MAX+1 保证序号不复用；「第 N 位」展示删除前绝对报名序号，语义正确。
+      const [{ maxSeq }] = await tx
+        .select({ maxSeq: max(activityOutcomes.sequenceNo) })
+        .from(activityOutcomes)
+        .where(and(eq(activityOutcomes.tenantId, draw.tenantId), eq(activityOutcomes.drawId, draw.id)));
+      const sequenceNo = Number(maxSeq ?? 0) + 1;
+      // reservation 满即拒（acceptsWaitlist 只对 signup_chain 开放），因此不会出现 waitlisted；
+      // waitlist kind 与 signup_chain 同语义（配 waitlist 策略时满额进候补）。
       const status = draw.maxParticipants && sequenceNo > draw.maxParticipants ? "waitlisted" : "assigned";
       const assignmentNo = status === "assigned" ? sequenceNo : null;
       const resultLabel = status === "assigned"
@@ -494,7 +512,7 @@ export async function joinDraw(
         assignmentNo,
         resultKey: status === "assigned" ? `slot_${sequenceNo}` : `waitlist_${sequenceNo - (draw.maxParticipants || 0)}`,
         resultLabel,
-        metadataJson: JSON.stringify({ source: "signup_chain", allocationPolicy: draw.allocationPolicy }),
+        metadataJson: JSON.stringify({ source: draw.activityKind, allocationPolicy: draw.allocationPolicy }),
         decidedAt: nowIso,
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -640,7 +658,12 @@ export async function cancelSignupChainEntry(
         eq(activityOutcomes.entryId, entry.id),
       ))
       .limit(1);
-    if (!outcome) return { cancelled: false, promoted: false };
+    // 闭环修复（2026-08 审查）：旧 reservation/waitlist 数据无 outcome 行，仍允许取消——
+    // 直接删除 entry 释放容量（普通容量 = COUNT(entries)），不依赖 outcome 存在。
+    if (!outcome) {
+      await tx.delete(lotteryEntries).where(eq(lotteryEntries.id, entry.id));
+      return { cancelled: true, promoted: false };
+    }
 
     // 删除参与记录和结果
     await tx.delete(activityOutcomes).where(eq(activityOutcomes.id, outcome.id));

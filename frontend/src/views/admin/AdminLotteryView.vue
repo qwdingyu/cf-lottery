@@ -667,6 +667,8 @@
                 <span>{{ $t('lottery.adminAccessPassword') }}</span>
                 <input v-model="form.accessPassword" type="text" maxlength="20" :placeholder="$t('lottery.adminAccessPasswordPlaceholder')" />
                 <small class="field-hint">{{ $t('lottery.adminAccessPasswordHint') }}</small>
+                <!-- 编辑已设密码的活动：留空 = 保持不变（后端 PATCH 空串跳过、null 清空），避免运营误以为密码丢了 -->
+                <small v-if="editingHasAccessPassword" class="field-hint password-keep-hint" role="status">{{ $t('lottery.adminPasswordKeepHint') }}</small>
               </label>
               <label v-if="form.participationMode === 'roster'" class="field-span-2">
                 <span>{{ $t('lottery.adminRosterLabel') }}</span>
@@ -824,6 +826,12 @@
                       <input v-model="form.flashSalePaymentRequired" type="checkbox" class="checkbox-inline" />
                       <span>{{ $t('lottery.adminFlashSalePaymentRequired') }}</span>
                     </label>
+                    <!-- 3c：lottery + 直付秒杀 组合不硬阻断（后端发布预检会拒），但内联提示避免运营保存必拒组合 -->
+                    <p
+                      v-if="form.activityKind === 'lottery' && form.flashSalePaymentRequired"
+                      class="field-span-2 flash-sale-warn-inline"
+                      role="alert"
+                    >{{ $t('lottery.adminFlashSaleLotteryConflict') }}</p>
                     <template v-if="form.flashSalePaymentRequired">
                       <div class="field-span-2 flash-sale-checklist" aria-live="polite">
                         <div class="flash-sale-checklist-head">
@@ -831,8 +839,12 @@
                           <span>{{ $t('lottery.adminFlashSaleDirectChecklistDesc') }}</span>
                         </div>
                         <ul>
-                          <li v-for="item in flashSaleDirectChecklist" :key="item.key" :class="{ done: item.done }">
-                            <span class="check-dot">{{ item.done ? '✓' : '!' }}</span>
+                          <li
+                            v-for="item in flashSaleDirectChecklist"
+                            :key="item.key"
+                            :class="{ done: item.done && !item.error, error: item.error }"
+                          >
+                            <span class="check-dot">{{ item.error ? '✕' : (item.done ? '✓' : '!') }}</span>
                             <span>{{ $t(`lottery.${item.labelKey}`) }}</span>
                           </li>
                         </ul>
@@ -2387,7 +2399,13 @@ const flashSaleDirectChecklist = computed(() => {
     flashSaleStockLimit: form.value.flashSaleStockLimit,
     flashSaleTitle: form.value.flashSaleTitle,
     maxParticipants: form.value.maxParticipants,
+    // 3a：lottery + 直付秒杀 是发布红线，清单需按活动类型给出 error 级冲突条目
+    activityKind: form.value.activityKind,
+    // 3b：导流 URL 安全判定——destination 即表单商品链接（提交时同源写入 promotion.destination）
     productLink: form.value.productLink,
+    destination: { url: form.value.productLink.url },
+    // after_win CTA 也是后端认可的导流落地页（promotion.ctas.after_win.url）
+    afterWin: form.value.enableAfterWinCta ? { url: form.value.afterWinCtaUrl } : undefined,
     tiers: form.value.tiers,
     prizeOptions: prizeOptions.value,
   })
@@ -2396,6 +2414,12 @@ const flashSaleDirectChecklist = computed(() => {
 // ── 活动后承接：未中奖自动发券开关（表单编辑用，保存时同步进 activityConfig.loserReward） ──
 const loserRewardEnabled = ref(false)
 const loserRewardCouponLabel = ref('')
+
+// 编辑「已设访问密码」的活动时为 true：表单内提示「留空保持不变」。
+// 为什么：后端 detail 只返回 hasAccessPassword 布尔、不返回哈希（也不能返回），
+// 编辑时密码框为空容易让运营误以为密码丢了而重新设置；后端 PATCH 已改为空串跳过、null 清空，
+// 留空即「保持原密码不变」。
+const editingHasAccessPassword = ref(false)
 
 /** 把开关状态同步进 form.activityConfig.loserReward */
 function syncLoserReward() {
@@ -3081,7 +3105,9 @@ async function handleDuplicate(draw: LotteryDraw) {
     experienceType: draft.experienceType,
     resultMode: draft.resultMode,
     activityConfig: normalizeActivityConfig(draft.activityKind || 'lottery', draft.activityConfig),
-    accessPassword: draft.accessPassword,
+    // 复制活动不携带访问密码：明确置空，运营为新副本重新设置。
+    // 为什么不能带源密码：detail 已不再返回哈希，且把旧密码复制给新活动等于把访问权泄露给不知情的新参与者。
+    accessPassword: '',
     // 奖项配置（复制源活动，与 handleEdit 一致）
     tiers,
     // 展示开关（从源活动回填）
@@ -3128,6 +3154,8 @@ async function handleDuplicate(draw: LotteryDraw) {
     flashSalePricingTiers: growth.flashSalePricingTiers || [],
   }
   isEditing.value = false
+  // 复制不是编辑：不显示「留空保持原密码」提示
+  editingHasAccessPassword.value = false
   showAdvancedGrowth.value = growth.hasGrowthConfig
   activeTemplateId.value = ''
   activeTemplateName.value = ''
@@ -3190,6 +3218,8 @@ function closeEditor() {
   showCreateModal.value = false
   isEditing.value = false
   showAdvancedGrowth.value = false
+  // 关闭即清除「编辑已设密码」提示，避免下次打开创建表单时残留误导
+  editingHasAccessPassword.value = false
   activeTemplateId.value = ''
   activeTemplateName.value = ''
   activeTemplateHints.value = []
@@ -3275,6 +3305,8 @@ function startBlankCreate() {
   showTemplateModal.value = false
   form.value = emptyForm()
   isEditing.value = false
+  // 空白创建非编辑：不残留「已设密码」提示
+  editingHasAccessPassword.value = false
   showAdvancedGrowth.value = false
   activeTemplateId.value = ''
   activeTemplateName.value = ''
@@ -3379,6 +3411,8 @@ function applyTemplate(tpl: any) {
     }
   }
   isEditing.value = false
+  // 套模板创建非编辑：不残留「已设密码」提示
+  editingHasAccessPassword.value = false
   // docs/162 P1-C：模板配置要点展示在创建表单顶部；docs/145：flash-sale 自动展开高级区
   showAdvancedGrowth.value = shouldAutoExpandAdvancedForTemplate(tpl.id)
   activeTemplateId.value = String(tpl.id || '')
@@ -3866,6 +3900,10 @@ async function handleEdit(draw: LotteryDraw) {
   isEditing.value = true
   // 回填未中奖自动发券开关状态
   initLoserRewardFromConfig()
+  // 编辑已设访问密码的 password 活动：表单内提示「留空保持不变」，
+  // 避免运营看到空密码框以为密码丢了（后端只回 hasAccessPassword 布尔，不回哈希）
+  editingHasAccessPassword.value =
+    source.hasAccessPassword === true && form.value.participationMode === 'password'
   // 已有裂变/导流时展开高级增长区，否则运营看不到「已开启」状态（易二次保存擦掉）
   showAdvancedGrowth.value = growth.hasGrowthConfig
   activeTemplateId.value = ''

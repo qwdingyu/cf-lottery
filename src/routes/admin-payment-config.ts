@@ -12,7 +12,7 @@
  */
 import { Hono } from "hono";
 import { and, count, desc, eq } from "drizzle-orm";
-import { getDb, ok, fail } from "../lib/http";
+import { getDb, ok, fail, safeJsonBody } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import {
@@ -26,7 +26,7 @@ import {
 } from "../db/schema";
 import { parseAdminPagination, recordTenantAudit } from "./admin-lottery-helpers";
 import { PAYMENT_PROVIDER_CATALOG, getProviderMeta } from "../services/payment/catalog";
-import { retryPaymentFulfillment } from "../services/payment/payment-service";
+import { refundPaymentOrder, retryPaymentFulfillment } from "../services/payment/payment-service";
 import {
   decryptPaymentConfigValueResult,
   encryptPaymentConfigValue,
@@ -481,4 +481,45 @@ adminPaymentConfigRoute.post("/payment-orders/:id/retry-fulfillment", async (c) 
   });
 
   return ok(c, { order: result.order });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// POST /admin/payment-orders/:id/refund  docs/131 §8 退款闭环
+// ═══════════════════════════════════════════════════════════════
+// 只允许 owner/admin（退款是资金敏感操作，viewer 只读）。
+// 业务错误映射：
+//   - 订单不存在          → 404
+//   - 有已核销卡密/状态不允许 → 409/400（message 中带业务原因）
+// provider 支持退款时（当前均未实现）会先调网关退款，失败抛错不推进本地状态。
+adminPaymentConfigRoute.post("/payment-orders/:id/refund", async (c) => {
+  const tenantRole = c.get("tenantRole") || "";
+  if (tenantRole !== "owner" && tenantRole !== "admin") {
+    return fail(c, "无权限：仅租户所有者/管理员可退款", 403);
+  }
+
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") || "";
+  const orderId = c.req.param("id");
+  const actorUserId = c.get("userId") as string;
+  const encryptionKey = getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "";
+
+  // 允许空请求体：reason 为可选的人工备注，缺省时退款函数使用默认原因
+  const body = await safeJsonBody<{ reason?: string }>(c);
+  const reason = String(body?.reason || "").trim() || undefined;
+
+  try {
+    const result = await refundPaymentOrder(db, tenantId, orderId, actorUserId, {
+      encryptionKey,
+      reason,
+    });
+    return ok(c, { order: result.order });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "退款失败";
+    const status = message === "订单不存在"
+      ? 404
+      : message.includes("已核销")
+        ? 409
+        : 400;
+    return fail(c, message, status);
+  }
 });

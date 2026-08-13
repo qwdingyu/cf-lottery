@@ -26,6 +26,7 @@ import {
   prizes,
   lotteryEntries,
   lotteryDraws,
+  auditLogs,
 } from "../../db/schema";
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
 import { decryptPaymentConfigValue, isEncryptedPaymentConfigValue } from "./secret-config";
@@ -1423,6 +1424,11 @@ export async function retryPaymentFulfillment(
     if (pendingItems.length === 0) {
       return { error: "订单没有可补发的待处理明细" };
     }
+    // FULFILLMENT_FAILED 残留预留码释放（P1 修复）：
+    // 回调流程先 confirmPrizeCodes（reserved→issued）再兜底 acquirePrizeCodes，卡密不足时 acquire 会原子回滚，
+    // 但任何未确认的预占码都会永久卡在 reserved。补发前先统一释放本订单残留的 reserved 码回 available，
+    // 避免码池永久泄漏（与 expireOverdueOrders / cancelPaymentOrder 的释放语义一致）。
+    await releaseReservedPrizeCodes(tx, current.id, tenantId);
     const acquiredPrizeCodeIds = await acquirePrizeCodes(
       tx,
       tenantId,
@@ -1487,6 +1493,235 @@ export async function retryPaymentFulfillment(
 
   if ("error" in order) return { ok: false, error: order.error };
   return { ok: true, order: order.order };
+}
+
+/**
+ * 管理端退款执行（docs/131 §8 退款闭环修复）。
+ *
+ * 背景：paid_late_needs_refund / paid_fulfillment_failed 此前只有状态标记，没有任何退款执行路径；
+ * cf-core 的 PaymentProvider.refund 是可选接口，当前所有 provider 都未实现（easypay 明确不实现）。
+ * 因此这里不能盲目调用 provider.refund()：
+ *   1. 按 order.provider 精确加载租户配置取 provider（allowDisabled:true，退款是存量订单收尾，不要求渠道当前启用）；
+ *   2. 仅当 provider.refund 存在才发起自动退款，否则只做本地状态收尾（人工线下退款后由运营点击确认标记）。
+ *
+ * 流程：
+ * 1. 前置校验：订单存在且状态 ∈ {paid, paid_fulfillment_failed, paid_late_needs_refund}；
+ *    有已核销（redeemed）卡密的订单拒绝退款——用户已实际消费卡密，退款会造成"钱退人、卡被用"双重损失，只能人工线下处理。
+ * 2. 自动退款（provider.refund 存在时）：调用 refund({ providerTradeNo, refundCents, reason })；
+ *    调用抛错或 success=false 都抛错、绝不推进本地状态，防止"网关没退、本地已退"的资金黑洞。
+ * 3. 事务内收尾：
+ *    - order.status → refunded；currentAttempt.status → refunded；
+ *    - order_items（pending/fulfilled）→ refunded（明细级履约收尾，docs/158）；
+ *    - 该订单已发卡密（issued 且 paymentOrderId=order）→ revoked（保留 winnerId/paymentOrderId 审计，不物理删除）；
+ *    - 残留 reserved 码释放回 available（防码池泄漏）；
+ *    - entry 释放逻辑与 cancelPaymentOrder 一致：查该 entry 是否还有其他有效订单
+ *      （PAID / FULFILLMENT_FAILED / PENDING，排除本订单）→ 有则 entry 保持（PAID/FF 存在时恢复为 paid）；
+ *      无则 entry.paymentStatus → EXPIRED 并 decrementActiveFlashSaleCount(quantity) 释放名额；
+ *    - 写租户审计（auditLogs，action: "payment.order.refund"）——退款是资金敏感操作，必须与状态迁移同事务留痕。
+ *
+ * @param options.provider 可注入的 Provider（测试用）；不传时按 order.provider 从租户配置加载。
+ */
+export async function refundPaymentOrder(
+  db: DbType,
+  tenantId: string,
+  orderId: string,
+  actorUserId: string,
+  options: { encryptionKey?: string; reason?: string; provider?: PaymentProvider } = {},
+): Promise<{ ok: true; order: typeof paymentOrders.$inferSelect }> {
+  // 纵深防御：同时限定 id + tenantId，防止跨租户退款
+  const [current] = await db
+    .select()
+    .from(paymentOrders)
+    .where(and(eq(paymentOrders.id, orderId), eq(paymentOrders.tenantId, tenantId)))
+    .limit(1);
+  if (!current) throw new Error("订单不存在");
+
+  const refundableStatuses: string[] = [
+    PAYMENT_ORDER_STATUS.PAID,
+    PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED,
+    PAYMENT_ORDER_STATUS.LATE_NEEDS_REFUND,
+  ];
+  if (!refundableStatuses.includes(current.status)) {
+    // 幂等保护：已 refunded / pending / expired / cancelled 一律拒绝，防止重复退款或对未支付订单退款
+    throw new Error(`订单状态 ${current.status} 不允许退款`);
+  }
+
+  // 已核销卡密拒绝退款：卡已被用户消费，退款会直接造成资损，只能人工线下处理
+  const [redeemed] = await db
+    .select({ id: prizeCodes.id })
+    .from(prizeCodes)
+    .where(and(
+      eq(prizeCodes.paymentOrderId, orderId),
+      eq(prizeCodes.tenantId, tenantId),
+      eq(prizeCodes.status, "redeemed"),
+    ))
+    .limit(1);
+  if (redeemed) {
+    throw new Error("订单包含已核销卡密，无法自动退款，请人工线下处理");
+  }
+
+  // 自动退款：仅当 provider 实现了 refund 才调用（当前全部 provider 未实现 → 走人工退款标记）
+  let provider = options.provider;
+  if (!provider) {
+    const loaded = await loadTenantConfig(db, tenantId, options.encryptionKey, {
+      provider: current.provider,
+      allowDisabled: true, // 退款是存量订单收尾，不要求渠道当前处于启用状态
+    });
+    if (loaded) provider = createTenantProvider(loaded.env, current.currency) ?? undefined;
+  }
+  if (provider?.refund) {
+    if (!current.providerTradeNo) {
+      // 缺少平台交易号无法发起网关退款；本地标记退款会掩盖"钱还在用户账户"的事实，必须 fail closed
+      throw new Error("订单缺少支付平台交易号，无法自动退款，请人工线下处理");
+    }
+    let refundResult;
+    try {
+      refundResult = await provider.refund({
+        providerTradeNo: current.providerTradeNo,
+        refundCents: Number(current.amountCents),
+        reason: options.reason || "运营退款",
+      });
+    } catch (err) {
+      // 网关调用失败不推进本地状态，避免"网关没退、本地已退"的资金黑洞
+      throw new Error(`支付平台退款调用失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!refundResult.success) {
+      throw new Error(`支付平台退款被拒绝（${refundResult.status || "unknown"}），请人工线下处理`);
+    }
+  }
+
+  const order = await withDbTransaction(db, async (tx) => {
+    // 用 status 快照做乐观锁：并发两次退款只有一次能命中，天然幂等
+    const updated = await tx
+      .update(paymentOrders)
+      .set({ status: PAYMENT_ORDER_STATUS.REFUNDED, updatedAt: sql`(datetime('now'))` })
+      .where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.status, current.status)))
+      .returning({ id: paymentOrders.id });
+    if (updated.length === 0) {
+      throw new Error("订单状态已变化，请刷新后重试");
+    }
+
+    // 当前支付尝试 → refunded（只更新已支付/待退款状态的尝试，避免覆盖其它终态）
+    if (current.currentAttemptId) {
+      await tx
+        .update(paymentOrderAttempts)
+        .set({ status: PAYMENT_ATTEMPT_STATUS.REFUNDED, updatedAt: sql`(datetime('now'))` })
+        .where(and(
+          eq(paymentOrderAttempts.id, current.currentAttemptId),
+          eq(paymentOrderAttempts.paymentOrderId, current.id),
+          inArray(paymentOrderAttempts.status, [
+            PAYMENT_ATTEMPT_STATUS.PAID,
+            PAYMENT_ATTEMPT_STATUS.LATE_NEEDS_REFUND,
+          ]),
+        ));
+    }
+
+    // 订单明细（pending/fulfilled）→ refunded：明细级履约收尾，与 payment_orders.status 解耦
+    await tx
+      .update(paymentOrderItems)
+      .set({ status: PAYMENT_ORDER_ITEM_STATUS.REFUNDED, updatedAt: sql`(datetime('now'))` })
+      .where(and(
+        eq(paymentOrderItems.tenantId, tenantId),
+        eq(paymentOrderItems.paymentOrderId, current.id),
+        inArray(paymentOrderItems.status, [
+          PAYMENT_ORDER_ITEM_STATUS.PENDING,
+          PAYMENT_ORDER_ITEM_STATUS.FULFILLED,
+        ]),
+      ));
+
+    // 已发卡密 → revoked：保留 winnerId/paymentOrderId 审计，不物理删除，防止退款后再现卡密
+    await tx
+      .update(prizeCodes)
+      .set({ status: "revoked", issuedAt: sql`(datetime('now'))` })
+      .where(and(
+        eq(prizeCodes.paymentOrderId, current.id),
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.status, "issued"),
+      ));
+    // 残留 reserved 码释放回 available（防泄漏，与 expireOverdueOrders/cancelPaymentOrder 一致）
+    await releaseReservedPrizeCodes(tx, current.id, tenantId);
+
+    // entry 释放：仿照 cancelPaymentOrder 的两步策略（docs/158 V2 语义）
+    if (current.entryId) {
+      // 1) 有 PAID/FULFILLMENT_FAILED 的其他订单 → entry 恢复为 paid（仍有有效履约，不能释放名额）
+      const [paidOrder] = await tx
+        .select({ id: paymentOrders.id })
+        .from(paymentOrders)
+        .where(and(
+          eq(paymentOrders.tenantId, tenantId),
+          eq(paymentOrders.entryId, current.entryId),
+          ne(paymentOrders.id, current.id),
+          inArray(paymentOrders.status, [
+            PAYMENT_ORDER_STATUS.PAID,
+            PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED,
+          ]),
+        ))
+        .limit(1);
+      if (paidOrder) {
+        await tx
+          .update(lotteryEntries)
+          .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
+          .where(and(
+            eq(lotteryEntries.id, current.entryId),
+            eq(lotteryEntries.tenantId, tenantId),
+            eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
+          ));
+      } else {
+        // 2) 有其他 PENDING 订单 → 保持 entry 现状（仍有在途支付占位）
+        const [otherPending] = await tx
+          .select({ id: paymentOrders.id })
+          .from(paymentOrders)
+          .where(and(
+            eq(paymentOrders.tenantId, tenantId),
+            eq(paymentOrders.entryId, current.entryId),
+            ne(paymentOrders.id, current.id),
+            eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
+          ))
+          .limit(1);
+        if (!otherPending) {
+          // 3) 无其他有效订单 → 释放 entry 为 expired 并扣减该订单 quantity 名额
+          await tx
+            .update(lotteryEntries)
+            .set({ paymentStatus: PAYMENT_ENTRY_STATUS.EXPIRED })
+            .where(and(
+              eq(lotteryEntries.id, current.entryId),
+              eq(lotteryEntries.tenantId, tenantId),
+              inArray(lotteryEntries.paymentStatus, [
+                PAYMENT_ENTRY_STATUS.PENDING,
+                PAYMENT_ENTRY_STATUS.PAID,
+              ]),
+            ));
+          const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
+          await decrementActiveFlashSaleCount(tx, tenantId, current.drawId, quantity);
+        }
+      }
+    }
+
+    // 审计：退款是资金敏感操作，与状态迁移同事务写入，失败即整体回滚
+    await tx.insert(auditLogs).values({
+      id: crypto.randomUUID(),
+      tenantId,
+      actorUserId,
+      action: "payment.order.refund",
+      targetType: "payment_order",
+      targetId: current.id,
+      metadataJson: JSON.stringify({
+        reason: options.reason || "",
+        providerRefund: Boolean(provider?.refund),
+        previousStatus: current.status,
+        providerTradeNo: current.providerTradeNo || "",
+      }),
+    });
+
+    const [finalOrder] = await tx
+      .select()
+      .from(paymentOrders)
+      .where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.tenantId, tenantId)))
+      .limit(1);
+    return finalOrder!;
+  });
+
+  return { ok: true, order };
 }
 
 /**
@@ -1747,4 +1982,38 @@ async function findCodePrize(db: DbType, tenantId: string, drawId: string) {
     console.error(`[payment] 活动 ${drawId} 存在 ${rows.length} 个卡密奖品，无法确定发卡目标（fail-closed）`);
   }
   return rows.length === 1 ? rows[0] : null;
+}
+
+/**
+ * 卡密过期维护（cron 调用，docs/111 §7.3 + docs/114 §4）。
+ *
+ * 把 status IN ('available','issued') 且 expiresAt 非空且 expiresAt < now 的码标记为 'expired'。
+ * - available 过期：未发放的限时卡密到点即作废，防止过期码被后续领取/发放；
+ * - issued 过期：已发放但用户未核销的限时卡密到点作废（不再允许核销）。
+ * - redeemed 不进处理范围：已核销消费的事实必须保留，不能把核销记录改写成过期。
+ *
+ * 分批处理（bound limit，默认 500）避免长事务；返回实际处理行数供 maintenance 汇总。
+ */
+export async function expireExpiredPrizeCodes(db: DbType, limit = 500): Promise<number> {
+  const now = new Date().toISOString();
+  // 先按条件取 id 列表再按 id 更新：libSQL 不支持 UPDATE ... ORDER BY ... LIMIT（与 acquirePrizeCodes 同约束）
+  const rows = await db
+    .select({ id: prizeCodes.id })
+    .from(prizeCodes)
+    .where(and(
+      inArray(prizeCodes.status, ["available", "issued"]),
+      sql`${prizeCodes.expiresAt} IS NOT NULL AND ${prizeCodes.expiresAt} <> '' AND ${prizeCodes.expiresAt} < ${now}`,
+    ))
+    .limit(Math.max(1, Math.min(limit, 5000)));
+  if (rows.length === 0) return 0;
+
+  const result = await db
+    .update(prizeCodes)
+    .set({ status: "expired" })
+    .where(and(
+      inArray(prizeCodes.id, rows.map((row) => row.id)),
+      // 双保险：只更新仍处于 available/issued 的码，避免把并发中被核销/作废的码覆盖
+      inArray(prizeCodes.status, ["available", "issued"]),
+    ));
+  return result.rowsAffected ?? 0;
 }

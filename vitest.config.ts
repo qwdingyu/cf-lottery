@@ -52,6 +52,8 @@ export default defineConfig({
       "frontend/src/views/lottery/viral-leaderboard-ui.test.ts",
       // docs/114：管理端裂变回填与 promotionConfig 提交防擦
       "frontend/src/views/admin/lottery/growth-config.test.ts",
+      // P0：lottery activity_config 归一化保留 loserReward（编辑保存不再静默关发券）
+      "frontend/src/views/admin/lottery/activity-config.test.ts",
       // docs/134/137：直付秒杀发布清单，避免商品/价格/码池路径继续断裂
       "frontend/src/views/admin/lottery/flash-sale-readiness.test.ts",
       // docs/187：即时抽奖 weight 占比展示与保存语义同源，避免运营误配概率

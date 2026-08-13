@@ -199,79 +199,148 @@ export async function dispatchPlatformDeliveries(
       .returning({ id: platformDeliveries.id });
     if (claimed.length === 0) continue;
 
-    const [target] = await db
-      .select()
-      .from(platformTargets)
-      .where(eq(platformTargets.id, delivery.platformTargetId))
-      .limit(1);
-
-    if (!target) {
-      await db
-        .update(platformDeliveries)
-        .set({
-          status: "failed",
-          lastError: "平台目标已删除",
-          updatedAt: now,
-        })
-        .where(eq(platformDeliveries.id, delivery.id));
-      failed++;
-      errors.push(`delivery ${delivery.id}: 平台目标 ${delivery.platformTargetId} 已删除`);
-      continue;
-    }
-
-    // 使用适配器工厂获取平台对应的适配器，不硬编码平台名
-    // 新增平台只需在 adapter-factory.ts 注册工厂，无需改动 delivery.ts
-    try {
-      const adapterConfig = await resolvePlatformAdapterConfigForRuntime(
-        parsePlatformAdapterConfigJson(target.adapterConfigJson),
-        options?.credentialsEncryptionKey,
-      );
-      const adapter = getPlatformAdapter(target.platform, adapterConfig, fetcher);
-      const payload = parseDeliveryPayload(delivery.payloadJson);
-      const message: PlatformMessage = {
-        platform: target.platform as PlatformType,
-        targetId: payload.targetType === "private" && payload.privateTargetId
-          ? payload.privateTargetId
-          : target.targetId,
-        targetType: payload.targetType,
-        groupId: payload.groupId,
-        type: "text",
-        text: payload.renderedMessage || delivery.eventType,
-      };
-      const result = await adapter.send(message);
-      await db
-        .update(platformDeliveries)
-        .set({
-          status: "sent",
-          attemptCount: delivery.attemptCount + 1,
-          providerMessageId: result.messageId,
-          responseBody: JSON.stringify(result.response || {}),
-          sentAt: now,
-          updatedAt: now,
-        })
-        .where(eq(platformDeliveries.id, delivery.id));
+    // 复用单条投递逻辑：批量与单条重试走同一条代码路径，避免两套发送/退避逻辑漂移
+    const outcome = await sendPlatformDelivery(db, delivery, fetcher, options);
+    if (outcome.sent) {
       sent++;
-    } catch (err) {
-      const errorMsg = String(err instanceof Error ? err.message : err);
-      const newAttempt = delivery.attemptCount + 1;
-      const maxRetries = 3;
-      const nextRetry = newAttempt >= maxRetries ? null : new Date(Date.now() + 60000 * newAttempt).toISOString();
-      await db
-        .update(platformDeliveries)
-        .set({
-          status: newAttempt >= maxRetries ? "failed" : "pending",
-          attemptCount: newAttempt,
-          lastError: errorMsg.slice(0, 500),
-          nextRetryAt: nextRetry,
-          updatedAt: now,
-        })
-        .where(eq(platformDeliveries.id, delivery.id));
+    } else {
       failed++;
-      errors.push(`delivery ${delivery.id}: ${errorMsg.slice(0, 200)}`);
+      if (outcome.lastError) errors.push(`delivery ${delivery.id}: ${outcome.lastError.slice(0, 200)}`);
     }
   }
 
   return { sent, failed, errors };
+}
+
+/**
+ * 单条平台投递（管理端重试用，docs/167 出站方向）。
+ *
+ * 与 dispatchPlatformDeliveries 的批量路径共用 sendPlatformDelivery：
+ * - 只处理 pending / 卡死超时的 processing 记录（sent/failed 终态直接返回现状）；
+ * - 先 CAS 领取（pending → processing）再发送，防止并发重复投递；
+ * - 发送失败按退避策略更新 attemptCount / nextRetryAt / lastError。
+ */
+export async function dispatchPlatformDelivery(
+  db: DbType,
+  deliveryId: string,
+  fetcher: typeof fetch = fetch,
+  options?: { credentialsEncryptionKey?: string },
+): Promise<{ sent: boolean; status: string; lastError?: string }> {
+  const [delivery] = await db
+    .select()
+    .from(platformDeliveries)
+    .where(eq(platformDeliveries.id, deliveryId))
+    .limit(1);
+  if (!delivery) throw new Error("投递记录不存在");
+
+  const now = new Date().toISOString();
+  const staleProcessingCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const claimed = await db
+    .update(platformDeliveries)
+    .set({ status: "processing", updatedAt: now })
+    .where(and(
+      eq(platformDeliveries.id, deliveryId),
+      or(
+        eq(platformDeliveries.status, "pending"),
+        and(
+          eq(platformDeliveries.status, "processing"),
+          sql`${platformDeliveries.updatedAt} <= ${staleProcessingCutoff}`,
+        ),
+      ),
+    ))
+    .returning({ id: platformDeliveries.id });
+  if (claimed.length === 0) {
+    // 终态（sent/failed）不可重复投递：返回当前状态，由调用方决定是否提示
+    return { sent: false, status: delivery.status, lastError: delivery.lastError || "" };
+  }
+  return sendPlatformDelivery(db, delivery, fetcher, options);
+}
+
+/**
+ * 发送单条已领取的投递记录（batch 与单条重试共用）。
+ *
+ * 设计约束：
+ * - 目标已删除 → 标记 failed（"平台目标已删除"），避免投递队列永久卡在 processing；
+ * - 适配器发送失败 → attemptCount+1，达到 maxRetries(3) 前保持 pending 按 nextRetryAt 退避，
+ *   达到后标记 failed；发送失败不回滚任何业务（投递是尽力而为的旁路）。
+ */
+async function sendPlatformDelivery(
+  db: DbType,
+  delivery: typeof platformDeliveries.$inferSelect,
+  fetcher: typeof fetch,
+  options?: { credentialsEncryptionKey?: string },
+): Promise<{ sent: boolean; status: string; lastError?: string }> {
+  const now = new Date().toISOString();
+
+  const [target] = await db
+    .select()
+    .from(platformTargets)
+    .where(eq(platformTargets.id, delivery.platformTargetId))
+    .limit(1);
+
+  if (!target) {
+    // 保留平台目标 ID 到 lastError/错误摘要：投递失败排障需要知道是哪个 target 被删除
+    const missingTargetError = `平台目标 ${delivery.platformTargetId} 已删除`;
+    await db
+      .update(platformDeliveries)
+      .set({
+        status: "failed",
+        lastError: missingTargetError,
+        updatedAt: now,
+      })
+      .where(eq(platformDeliveries.id, delivery.id));
+    return { sent: false, status: "failed", lastError: missingTargetError };
+  }
+
+  // 使用适配器工厂获取平台对应的适配器，不硬编码平台名
+  // 新增平台只需在 adapter-factory.ts 注册工厂，无需改动 delivery.ts
+  try {
+    const adapterConfig = await resolvePlatformAdapterConfigForRuntime(
+      parsePlatformAdapterConfigJson(target.adapterConfigJson),
+      options?.credentialsEncryptionKey,
+    );
+    const adapter = getPlatformAdapter(target.platform, adapterConfig, fetcher);
+    const payload = parseDeliveryPayload(delivery.payloadJson);
+    const message: PlatformMessage = {
+      platform: target.platform as PlatformType,
+      targetId: payload.targetType === "private" && payload.privateTargetId
+        ? payload.privateTargetId
+        : target.targetId,
+      targetType: payload.targetType,
+      groupId: payload.groupId,
+      type: "text",
+      text: payload.renderedMessage || delivery.eventType,
+    };
+    const result = await adapter.send(message);
+    await db
+      .update(platformDeliveries)
+      .set({
+        status: "sent",
+        attemptCount: delivery.attemptCount + 1,
+        providerMessageId: result.messageId,
+        responseBody: JSON.stringify(result.response || {}),
+        sentAt: now,
+        updatedAt: now,
+      })
+      .where(eq(platformDeliveries.id, delivery.id));
+    return { sent: true, status: "sent" };
+  } catch (err) {
+    const errorMsg = String(err instanceof Error ? err.message : err);
+    const newAttempt = delivery.attemptCount + 1;
+    const maxRetries = 3;
+    const nextRetry = newAttempt >= maxRetries ? null : new Date(Date.now() + 60000 * newAttempt).toISOString();
+    await db
+      .update(platformDeliveries)
+      .set({
+        status: newAttempt >= maxRetries ? "failed" : "pending",
+        attemptCount: newAttempt,
+        lastError: errorMsg.slice(0, 500),
+        nextRetryAt: nextRetry,
+        updatedAt: now,
+      })
+      .where(eq(platformDeliveries.id, delivery.id));
+    return { sent: false, status: newAttempt >= maxRetries ? "failed" : "pending", lastError: errorMsg.slice(0, 500) };
+  }
 }
 
 function parseDeliveryPayload(payloadJson: string): {

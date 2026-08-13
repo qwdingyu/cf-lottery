@@ -390,4 +390,68 @@ route.post("/prizes/codes/batch-delete", async (c) => {
   });
 });
 
+// ═════════════════════════════════════════════════════════
+// 作废单个奖品码（docs/111 §7.3 状态机：issued → revoked / available → revoked）
+// ═════════════════════════════════════════════════════════
+
+/**
+ * POST /prizes/:prizeId/codes/:codeId/revoke — 运营人工作废卡密。
+ *
+ * 状态机规则（为什么这么设计）：
+ * - available → revoked：未发放，直接作废安全（等价于删除但保留审计）。
+ * - issued 且 paymentOrderId 为空：抽奖/instant 发放、未支付场景，撤奖作废安全。
+ * - issued 且 paymentOrderId 非空：直付已发卡（用户已付款），直接作废会破坏支付履约，
+ *   必须走订单退款流程（refundPaymentOrder 会把该订单卡密统一 revoked），这里拒绝并提示。
+ * - redeemed：已核销消费，作废会篡改核销事实，拒绝。
+ *
+ * 跨租户/跨奖品隔离：查询同时限定 id + tenantId + prizeId，找不到即 404（不泄露其它租户资源存在性）。
+ */
+route.post("/prizes/:prizeId/codes/:codeId/revoke", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const prizeId = c.req.param("prizeId");
+  const codeId = c.req.param("codeId");
+
+  const [code] = await db
+    .select({
+      id: prizeCodes.id,
+      status: prizeCodes.status,
+      paymentOrderId: prizeCodes.paymentOrderId,
+      winnerId: prizeCodes.winnerId,
+    })
+    .from(prizeCodes)
+    .where(and(
+      eq(prizeCodes.id, codeId),
+      eq(prizeCodes.tenantId, tenantId),
+      eq(prizeCodes.prizeId, prizeId),
+    ))
+    .limit(1);
+  if (!code) return fail(c, "码不存在或不属于当前租户", 404);
+
+  if (code.status === "redeemed") {
+    return fail(c, "码已核销，不能作废", 409);
+  }
+  if (code.status === "issued" && code.paymentOrderId) {
+    return fail(c, "直付已发卡密请走退款流程，不能直接作废", 409);
+  }
+  if (code.status !== "available" && code.status !== "issued") {
+    return fail(c, `状态 ${code.status} 的码不能作废`, 409);
+  }
+
+  // 只改状态，保留 winnerId/paymentOrderId/issuedAt 审计字段
+  await db
+    .update(prizeCodes)
+    .set({ status: "revoked" })
+    .where(and(eq(prizeCodes.id, codeId), eq(prizeCodes.tenantId, tenantId)));
+
+  await recordTenantAudit(c, "prize.code.revoke", "prize_code", codeId, {
+    prizeId,
+    previousStatus: code.status,
+    winnerId: code.winnerId || "",
+    paymentOrderId: code.paymentOrderId || "",
+  });
+
+  return ok(c, { revoked: true });
+});
+
 }

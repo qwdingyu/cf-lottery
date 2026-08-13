@@ -899,8 +899,9 @@ async function executeCardCodeCommand(
   // 3. 组装私聊消息：每条卡密一条私聊消息（含 Web 访问链接兜底）
   // 生成一次性 Web 访问链接：解决私聊失败后卡密无法 Web 找回的闭环（docs/179）
   // 仅当 Phase B 已关联本地 userId（input.user.userId）时生成；否则降级为纯私聊。
-  // 安全：accessUrl 只在私聊消息中下发，不写进群回复；
-  // 仅当私聊发送失败时，路由层才把 accessUrl 追加到群回复作为降级（见路由层实现）。
+  // 安全：accessUrl 只在私聊消息中下发，绝不写进群回复。
+  // P1 修复（防群内先点者窃卡）：私聊发送失败时，路由层也不再把 accessUrl 追加到群回复，
+  // 只提示「发送 /卡密 重试或联系管理员」，重试会重新走私聊投递（见路由层实现）。
   const accessUrl = await buildCardCodeAccessUrl(db, input);
   const accessHint = accessUrl
     ? `\n\n💻 网页查看（5 分钟内有效，仅可查看一次）：\n${accessUrl}`

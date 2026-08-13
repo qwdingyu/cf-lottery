@@ -32,6 +32,7 @@ import {
   cancelDraw,
   performInstantSpin,
   grantLeaderboardRewards,
+  cancelSignupChainEntry,
 } from "../services/lottery-service";
 import {
   lotteryPrizeTiers,
@@ -47,6 +48,7 @@ import {
   spinsLog,
   prizeCodes,
   prizes,
+  activityOutcomes,
   users,
 } from "../db/schema";
 import { and, eq } from "drizzle-orm";
@@ -3019,5 +3021,75 @@ describe("推荐里程碑聚合与裁剪", () => {
       .where(and(eq(spinsLog.entryId, sharerEntryId), eq(spinsLog.reason, "viral")));
     const msRefs = milestoneLogs.map((l) => String(l.refId || "")).filter((r) => r.startsWith("milestone:"));
     expect(msRefs).toEqual([]);
+  });
+});
+
+// 闭环修复（2026-08 审查）：reservation/waitlist 参与物化 outcome、取消可执行
+describe("reservation/waitlist 参与闭环", () => {
+  it("reservation 参与写入 activity_outcomes（assigned），my-result 可查、可取消", async () => {
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 7 * 86400_000).toISOString();
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "预约闭环测试",
+      startAt,
+      endAt,
+      participationMode: "open",
+      activityKind: "reservation",
+      experienceType: "calendar",
+      resultMode: "capacity_assignment",
+      allocationPolicy: "capacity",
+      maxParticipants: 2,
+      winnerCount: 0,
+    });
+    await db.update(lotteryDraws).set({ status: "open" }).where(and(eq(lotteryDraws.id, id), eq(lotteryDraws.tenantId, TENANT)));
+
+    const r1 = await joinDraw(db, publicSlug, "resv-1@test.com");
+    expect(r1.joined).toBe(true);
+    expect("outcome" in r1 && r1.outcome?.status).toBe("assigned");
+    const r2 = await joinDraw(db, publicSlug, "resv-2@test.com");
+    expect(r2.joined).toBe(true);
+    // 满额即拒（reservation 不候补）
+    const r3 = await joinDraw(db, publicSlug, "resv-3@test.com");
+    expect(r3.joined).toBe(false);
+
+    // my-result 语义：outcome 存在
+    const [outcome] = await db
+      .select({ status: activityOutcomes.status })
+      .from(activityOutcomes)
+      .where(eq(activityOutcomes.entryId, String(r1.entryId)))
+      .limit(1);
+    expect(outcome?.status).toBe("assigned");
+
+    // 取消可执行（删除 entry 释放容量）
+    const cancelled = await cancelSignupChainEntry(db, TENANT, id, "resv-1@test.com");
+    expect(cancelled.cancelled).toBe(true);
+    // 释放后可再参与
+    const r4 = await joinDraw(db, publicSlug, "resv-4@test.com");
+    expect(r4.joined).toBe(true);
+  });
+
+  it("waitlist 活动参与写入 outcome（满额进候补）", async () => {
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 7 * 86400_000).toISOString();
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "waitlist 闭环测试",
+      startAt,
+      endAt,
+      participationMode: "open",
+      activityKind: "waitlist",
+      experienceType: "queue",
+      resultMode: "ordered_assignment",
+      allocationPolicy: "waitlist",
+      maxParticipants: 1,
+      winnerCount: 0,
+    });
+    await db.update(lotteryDraws).set({ status: "open" }).where(and(eq(lotteryDraws.id, id), eq(lotteryDraws.tenantId, TENANT)));
+
+    const w1 = await joinDraw(db, publicSlug, "wl-1@test.com");
+    expect("outcome" in w1 && w1.outcome?.status).toBe("assigned");
+    const w2 = await joinDraw(db, publicSlug, "wl-2@test.com");
+    expect("outcome" in w2 && w2.outcome?.status).toBe("waitlisted");
   });
 });

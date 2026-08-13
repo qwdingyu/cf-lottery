@@ -86,6 +86,30 @@
   color: var(--tg-text, #f0f2f5);
 }
 
+/* 红线级 checklist 条目（lottery + 直付秒杀，docs/166）：危险色，与后端发布必拒语义一致 */
+.flash-sale-checklist li.error {
+  color: var(--admin-danger, #ef4444);
+  font-weight: 600;
+}
+
+/* 表单内警告条（lottery + 直付秒杀 组合，3c）：只提示不硬阻断，后端发布预检仍会拒绝 */
+.flash-sale-warn-inline {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--admin-danger, #ef4444);
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--admin-danger, #ef4444);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* 编辑已设访问密码的活动提示：强调色，区别于普通 field-hint 灰字 */
+.password-keep-hint {
+  color: var(--admin-accent, #f59e0b);
+  font-weight: 600;
+}
+
 .check-dot {
   flex: 0 0 auto;
   display: inline-flex;

@@ -83,7 +83,28 @@ export function normalizeActivityConfig(
         : (defaultActivityConfigForKind('vote', t) as Extract<ActivityConfigForm, { kind: 'vote' }>).options
     return { version: 1, kind: 'vote', selection: 'single', options }
   }
-  return defaultActivityConfigForKind(kind, t)
+  // lottery（及其余非 survey/vote 类型）分支：必须解析 raw 里的 loserReward 并与默认合并，
+  // 而不是直接返回默认。为什么：DB 里可能已启用「未中奖自动发券」（{enabled:true, couponLabel:'安慰奖'}），
+  // 直接 return default 会把 enabled 重置为 false，导致「编辑任一字段保存后发券被静默关闭」（P0 回归）。
+  // 合并语义 { ...default, ...stored }：stored 缺省（含非法值）时回落默认 {enabled:false, couponLabel:''}。
+  const defaultLottery = defaultActivityConfigForKind(kind, t) as {
+    version: 1
+    kind: string
+    loserReward: { enabled: boolean; couponLabel: string }
+  }
+  // 容错：loserReward 非对象（null / 字符串 / 数组 / 数字）一律视为缺省，避免脏数据炸表单
+  const storedLoserReward = (raw as { loserReward?: unknown }).loserReward
+  const parsedLoserReward =
+    storedLoserReward && typeof storedLoserReward === 'object' && !Array.isArray(storedLoserReward)
+      ? {
+          enabled: Boolean((storedLoserReward as { enabled?: unknown }).enabled),
+          couponLabel: String((storedLoserReward as { couponLabel?: unknown }).couponLabel || ''),
+        }
+      : undefined
+  return {
+    ...defaultLottery,
+    ...(parsedLoserReward ? { loserReward: parsedLoserReward } : {}),
+  }
 }
 
 export function isChoiceSurveyField(field: SurveyFieldForm): boolean {

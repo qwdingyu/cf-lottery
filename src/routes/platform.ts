@@ -10,12 +10,13 @@ import { withDbTransaction } from "../db/client";
 import { clampInteger, fail, getDb, ok } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { requireAuth, requirePlatformMember, signJwt } from "../middleware/auth";
-import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, emailDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig, tenantCommunityOverrides, communityMembers, platformTargets } from "../db/schema";
+import { tenants, platformMembers, users, adminAuditLogs, webhookDeliveries, emailDeliveries, tenantUsageSnapshots, lotteryDraws, tenantMembers, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, lotteryRosterMembers, lotteryInviteCodes, lotteryBlacklist, emailAccessCodes, auditLogs, activityEvents, activityOutcomes, activitySubmissions, shareRecords, externalConversions, apiKeys, webhookConfigs, couponCodes, redemptionCodes, redemptionRecords, rateLimitLog, systemConfig, tenantCommunityOverrides, communityMembers, platformTargets, platformDeliveries } from "../db/schema";
 import { eq, and, desc, count, sql, type SQL } from "drizzle-orm";
 import { writePlatformAudit } from "../services/admin/platform-audit";
 import { readLatestTenantUsageSnapshotTotals } from "../services/admin/usage-snapshots";
 import { dispatchWebhookDelivery, DRAW_STATUS } from "../services/lottery-service";
 import { dispatchEmailDeliveries } from "../services/email-delivery";
+import { dispatchPlatformDelivery } from "../services/platform/delivery";
 
 export const platformRoute = new Hono<AppEnv>();
 
@@ -765,6 +766,121 @@ platformRoute.post("/email-deliveries/:id/retry", requirePlatformMember(["platfo
     targetId: delivery.id,
     tenantId: delivery.tenantId,
     metadata: { previousStatus: delivery.status, template: delivery.template, sourceType: delivery.sourceType, result },
+  });
+
+  return ok(c, result);
+});
+
+// ═════════════════════════════════════════════════════════
+// 平台消息投递（platform_deliveries）管理
+// ═════════════════════════════════════════════════════════
+
+/**
+ * GET /api/platform/platform-deliveries — 平台消息投递列表（分页 + 过滤）。
+ *
+ * 覆盖 QQ/Telegram 私聊与群事件消息（webhook_deliveries 只管 HTTP webhook）。
+ * 过滤维度：tenantId / status / platform。与其它投递列表一致：
+ * support 角色只读且必须指定 tenantId，不传时返回空而非全站数据。
+ */
+platformRoute.get("/platform-deliveries", async (c) => {
+  const db = getDb(c);
+  const limit = clampInteger(c.req.query("limit"), 50, 1, 200);
+  const offset = clampInteger(c.req.query("offset"), 0, 0, 100_000);
+  const tenantId = c.req.query("tenantId") || "";
+  const status = c.req.query("status") || "";
+  const platform = c.req.query("platform") || "";
+
+  // 平台 support 角色只读权限：必须指定租户(tenantId)，不传时返回空而非全部（docs/129 §五）
+  if (c.get("platformRole") === "platform_support" && !tenantId) {
+    return ok(c, { deliveries: [] });
+  }
+
+  const conditions: SQL[] = [];
+  if (tenantId) conditions.push(eq(platformDeliveries.tenantId, tenantId));
+  if (status) conditions.push(eq(platformDeliveries.status, status));
+  if (platform) conditions.push(eq(platformDeliveries.platform, platform));
+
+  const rows = await db
+    .select({
+      id: platformDeliveries.id,
+      tenantId: platformDeliveries.tenantId,
+      platformTargetId: platformDeliveries.platformTargetId,
+      platform: platformDeliveries.platform,
+      targetId: platformDeliveries.targetId,
+      eventId: platformDeliveries.eventId,
+      eventType: platformDeliveries.eventType,
+      command: platformDeliveries.command,
+      status: platformDeliveries.status,
+      attemptCount: platformDeliveries.attemptCount,
+      providerMessageId: platformDeliveries.providerMessageId,
+      lastError: platformDeliveries.lastError,
+      nextRetryAt: platformDeliveries.nextRetryAt,
+      createdAt: platformDeliveries.createdAt,
+      updatedAt: platformDeliveries.updatedAt,
+      sentAt: platformDeliveries.sentAt,
+    })
+    .from(platformDeliveries)
+    .where(combinedWhere(conditions))
+    .orderBy(desc(platformDeliveries.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  return ok(c, { deliveries: rows });
+});
+
+/**
+ * POST /api/platform/platform-deliveries/:id/retry — 平台手动重试消息投递。
+ *
+ * 与 webhook/email 重试同权限：support 只读，owner/operator 可执行。
+ * 流程：
+ * 1. 非 sent 记录恢复为 pending + nextRetryAt=null + lastError=''（清空退避状态）；
+ * 2. 调用 dispatchPlatformDelivery 单条投递（适配器真实发送，失败按退避策略重写状态）；
+ * 3. 重试会真实触发出站请求，必须写平台审计。
+ */
+platformRoute.post("/platform-deliveries/:id/retry", requirePlatformMember(["platform_owner", "platform_operator"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
+  const deliveryId = c.req.param("id");
+  if (!deliveryId) return fail(c, "缺少投递记录 ID", 400);
+
+  const [delivery] = await db
+    .select({
+      id: platformDeliveries.id,
+      tenantId: platformDeliveries.tenantId,
+      status: platformDeliveries.status,
+      platform: platformDeliveries.platform,
+      eventType: platformDeliveries.eventType,
+    })
+    .from(platformDeliveries)
+    .where(eq(platformDeliveries.id, deliveryId))
+    .limit(1);
+  if (!delivery) return fail(c, "投递记录不存在", 404);
+  if (delivery.status === "sent") return fail(c, "已发送的投递不能重复重试", 400);
+
+  // 恢复为 pending 并清空退避/错误信息，交给统一投递器重新发送
+  await db
+    .update(platformDeliveries)
+    .set({ status: "pending", nextRetryAt: null, lastError: "", updatedAt: new Date().toISOString() })
+    .where(eq(platformDeliveries.id, delivery.id));
+
+  const result = await dispatchPlatformDelivery(db, delivery.id, fetch, {
+    credentialsEncryptionKey: getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "",
+  });
+
+  await writePlatformAudit(db, {
+    actorUserId,
+    actorRole,
+    action: "platform.platform_delivery.retry",
+    targetType: "platform_delivery",
+    targetId: delivery.id,
+    tenantId: delivery.tenantId,
+    metadata: {
+      previousStatus: delivery.status,
+      platform: delivery.platform,
+      eventType: delivery.eventType,
+      result,
+    },
   });
 
   return ok(c, result);

@@ -96,7 +96,9 @@ platformQQRoute.post("/message", async (c) => {
   // 处理命令侧写的私聊消息（如卡密私发）。
   // QQ webhook 必须尽快返回，否则 NapCat/OneBot 会阻塞上报链路；
   // 私聊统一写入 platform_deliveries，由 maintenance 异步调用 /send_private_msg 并重试。
-  // 只有“入队失败”才在群回复中追加一次性 Web 链接降级，避免卡密泄露到群内。
+  // P1 安全修复：私聊失败时群回复【不再追加一次性 accessUrl】——群内先看到的人可抢先点击
+  // 并一次性消费掉访问链接，导致真正的卡密获得者无法网页查看（防群内先点者窃卡）。
+  // 改为引导用户在群内发送 /卡密 重试（重走私聊投递）或联系管理员。
   if (result.privateMessages?.length) {
     const adapterConfig = target.adapterConfig as Record<string, unknown>;
     const baseUrl = String(adapterConfig.baseUrl || "").trim();
@@ -114,11 +116,8 @@ platformQQRoute.post("/message", async (c) => {
           });
         } catch {
           // 入队失败才降级；发送失败由平台投递队列记录 lastError 并按重试策略处理。
-          if (result.accessUrl) {
-            result.reply += `\n\n⚠️ 私聊消息入队失败，可点击下方链接网页查看（5 分钟内有效，仅可查看一次，请勿泄露）：\n${result.accessUrl}`;
-          } else {
-            result.reply += "\n\n⚠️ 私聊消息入队失败，请通过网页后台查看卡密。";
-          }
+          // 只提示重试入口，不贴一次性访问链接（防群内截胡）。
+          result.reply += "\n\n⚠️ 卡密私聊发送失败，请发送 /卡密 重试，或联系管理员。";
           await logPrivateMessageFailure(
             db,
             target,
@@ -131,12 +130,8 @@ platformQQRoute.post("/message", async (c) => {
       }
       result.reply += "\n\n私聊消息已进入发送队列，如未收到可稍后发送 /我的卡密 重试。";
     } else {
-      // 适配器未配置 baseUrl，无法发送私聊，追加降级提示
-      if (result.accessUrl) {
-        result.reply += `\n\n⚠️ 系统未配置QQ适配器，无法私聊发送卡密。可点击下方链接网页查看：\n${result.accessUrl}`;
-      } else {
-        result.reply += "\n\n⚠️ 系统未配置QQ适配器，无法私聊发送卡密。请通过网页后台查看。";
-      }
+      // 适配器未配置 baseUrl，无法发送私聊：只提示重试/联系管理员，不贴一次性链接
+      result.reply += "\n\n⚠️ 系统未配置QQ适配器，无法私聊发送卡密。请发送 /卡密 重试，或联系管理员。";
     }
   }
 

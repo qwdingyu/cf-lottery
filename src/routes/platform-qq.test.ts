@@ -712,6 +712,45 @@ describe("POST /api/platform/qq/message", () => {
     expect(body.reply).not.toContain("QQ-CODE-1");
     expect(body.reply).not.toContain("SECRET-1");
   });
+
+  it("私聊降级不再贴一次性访问链接（防群内先点者窃卡），只提示重试入口", async () => {
+    // 适配器未配置 baseUrl → 无法私聊发送，走降级分支
+    await db.insert(tenants).values({ id: TENANT_ID, name: "QQ 群助手测试租户" });
+    await db.insert(platformTargets).values({
+      id: "pt-qq-no-adapter",
+      tenantId: TENANT_ID,
+      platform: "qq",
+      targetId: "123456",
+      targetName: "测试群",
+      activeDrawId: "draw-qq-1",
+      activePublicSlug: "qq-lottery",
+      assistantEnabled: 1,
+      adapterDeploymentMode: "tenant_hosted",
+      adapterProvider: "napcat",
+      adapterConfigJson: "{}", // 无 baseUrl
+      inboundSecretHash: await hashPlatformInboundSecret(INBOUND_SECRET),
+      builtinCommandsJson: "{}",
+    });
+    await seedInstantDraw();
+    const app = createTestApp();
+
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/抽奖", message_id: 9301 })),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    // P1 修复：群回复提示重试/联系管理员，且绝不含网页访问链接
+    expect(body.reply).toContain("无法私聊发送卡密");
+    expect(body.reply).toContain("请发送 /卡密 重试，或联系管理员");
+    expect(body.reply).not.toContain("/access/");
+    expect(body.reply).not.toContain("网页查看");
+  });
 });
 
 describe("入站 self_id 自动回填/覆盖 botId（docs/177 批次2）", () => {
