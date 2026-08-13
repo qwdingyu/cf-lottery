@@ -254,3 +254,51 @@ export function random01Csprng(): number {
   crypto.getRandomValues(buf);
   return (buf[0]! >>> 0) / 0x100000000;
 }
+
+/* ── 保底机制（docs/218 模式一） ───────────────────────────── */
+
+export type PityConfig = {
+  enabled: boolean;
+  /** 连续未中达到该次数后触发保底（≥1）。缺省 / 非法 → 0 = 不启用 */
+  threshold: number;
+};
+
+/**
+ * 从 promotion_config 的 pity 节点解析保底配置。
+ * 纯函数，缺省或非法时返回 { enabled: false, threshold: 0 }。
+ */
+export function normalizePityConfig(raw: unknown): PityConfig {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { enabled: false, threshold: 0 };
+  }
+  const node = raw as Record<string, unknown>;
+  const enabled = node.enabled === true || node.enabled === 1 || node.enabled === "true";
+  if (!enabled) return { enabled: false, threshold: 0 };
+  const threshold = Math.floor(Number(node.threshold) || 0);
+  if (threshold < 1) return { enabled: false, threshold: 0 };
+  return { enabled: true, threshold };
+}
+
+/* ── 每日免费抽奖（docs/218 模式二） ────────────────────────── */
+
+export type DailyFreeSpinConfig = {
+  enabled: boolean;
+  /** 每日免费发放的 spin 次数（≥1）。缺省 / 非法 → 0 = 不启用 */
+  count: number;
+};
+
+/**
+ * 从 promotion_config 的 dailyFreeSpins 节点解析每日免费抽奖配置。
+ * 纯函数，缺省或非法时返回 { enabled: false, count: 0 }。
+ */
+export function normalizeDailyFreeSpinConfig(raw: unknown): DailyFreeSpinConfig {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { enabled: false, count: 0 };
+  }
+  const node = raw as Record<string, unknown>;
+  const enabled = node.enabled === true || node.enabled === 1 || node.enabled === "true";
+  if (!enabled) return { enabled: false, count: 0 };
+  const count = Math.floor(Math.max(0, Number(node.count) || 0));
+  if (count < 1) return { enabled: false, count: 0 };
+  return { enabled: true, count };
+}

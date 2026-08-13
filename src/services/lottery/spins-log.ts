@@ -13,7 +13,7 @@ import type { DbType } from "../../db/client";
 import { spinsLog } from "../../db/schema";
 
 /** spins 变动原因枚举 */
-export type SpinLogReason = "join" | "checkin" | "spin" | "viral" | "purchase";
+export type SpinLogReason = "join" | "checkin" | "spin" | "viral" | "purchase" | "daily_free";
 
 /** 写入 spins_log 的参数 */
 export interface RecordSpinLogInput {

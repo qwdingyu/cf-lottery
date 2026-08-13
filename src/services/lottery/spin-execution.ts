@@ -23,6 +23,8 @@ import {
   isInstantSpinQuotaConfigured,
   random01Csprng,
   weightedPickTier,
+  normalizePityConfig,
+  normalizeDailyFreeSpinConfig,
 } from "./spin-quota";
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
 import { recordSpinLog } from "./spins-log";
@@ -150,6 +152,15 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
     }
   }
 
+  // 保底机制 + 每日免费抽奖（docs/218）：配置缺省时均不启用，完全不改变现有路径。
+  // 与 flashSale 同层解析 promotion_config（JSON 字符串，容错：非法 JSON → 未启用）。
+  let pc: Record<string, unknown> | null = null;
+  try {
+    pc = JSON.parse(draw.promotionConfig || "{}") as Record<string, unknown>;
+  } catch { /* 非法 JSON 视为未配置 */ }
+  const pityConfig = normalizePityConfig(pc?.pity);
+  const dailyFreeConfig = normalizeDailyFreeSpinConfig(pc?.dailyFreeSpins);
+
   const [existing] = await db
     .select()
     .from(lotterySpins)
@@ -179,33 +190,64 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         .limit(1);
       if (again) return { kind: "replay" as const, row: again };
 
-      const deduct = await tx
-        .update(lotteryEntries)
-        .set({ spinsLeft: sql`${lotteryEntries.spinsLeft} - 1` })
-        .where(and(
-          eq(lotteryEntries.id, entry.id),
-          eq(lotteryEntries.tenantId, draw.tenantId),
-          eq(lotteryEntries.drawId, draw.id),
-          sql`${lotteryEntries.spinsLeft} >= 1`,
-        ));
+      // ── 每日免费抽奖：原子条件 UPDATE 领取（docs/218 模式二） ──
+      // 与签到（commands.ts:568）模式一致：WHERE 条件保证同一自然日内只有第一个并发请求能领取成功。
+      // 领取成功后 spinsLeft += count，本次 spin 跳过扣次（免费）。
+      // 未配置或今日已领 → dailyFreeClaimed = false，走正常扣次路径。
+      let dailyFreeClaimed = false;
+      if (dailyFreeConfig.enabled && dailyFreeConfig.count >= 1) {
+        const today = now.toISOString().slice(0, 10);
+        const claim = await tx
+          .update(lotteryEntries)
+          .set({
+            spinsLeft: sql`${lotteryEntries.spinsLeft} + ${dailyFreeConfig.count}`,
+            lastDailyFreeSpinAt: today,
+          })
+          .where(and(
+            eq(lotteryEntries.id, entry.id),
+            eq(lotteryEntries.tenantId, draw.tenantId),
+            eq(lotteryEntries.drawId, draw.id),
+            sql`(${lotteryEntries.lastDailyFreeSpinAt} IS NULL OR ${lotteryEntries.lastDailyFreeSpinAt} < ${today})`,
+          ));
+        if ((claim.rowsAffected ?? 0) > 0) {
+          dailyFreeClaimed = true;
+        }
+      }
 
-      if ((deduct.rowsAffected ?? 0) === 0) {
-        // 次数耗尽：CAS 未命中（WHERE spinsLeft>=1 无行），因此本次绝对未扣次。
-        // 返回业务失败结果而非抛异常，避免调用方误判「已扣次需补偿」。
-        // 返回值路径保证外部无需在 catch 中做扣次补偿（P0 防无限消耗）。
-        // ⚠️ 关键：此处不能使用事务外预读的 entry.spinsLeft 回填剩余次数——
-        // 并发场景下预读可能读到较高的旧值（如两人同时读到 1），导致返回的剩余次数虚高、
-        // 与实际已扣减后的值不一致。因此事务内重新读取当前真实余额，保证响应与库内一致。
-        // 事务内（BEGIN IMMEDIATE 串行化写锁）能读到竞争者已提交的扣减结果。
-        const [fresh] = await tx
-          .select({ spinsLeft: lotteryEntries.spinsLeft })
-          .from(lotteryEntries)
-          .where(eq(lotteryEntries.id, entry.id))
-          .limit(1);
-        return {
-          kind: "quotaExhausted" as const,
-          spinsLeft: Math.max(0, Number(fresh?.spinsLeft ?? 0)),
-        };
+      // ── CAS 扣次（每日免费领取成功时跳过 ──
+      let spinsLeftAfterDeduct = Number(entry.spinsLeft ?? 0);
+      if (!dailyFreeClaimed) {
+        const deduct = await tx
+          .update(lotteryEntries)
+          .set({ spinsLeft: sql`${lotteryEntries.spinsLeft} - 1` })
+          .where(and(
+            eq(lotteryEntries.id, entry.id),
+            eq(lotteryEntries.tenantId, draw.tenantId),
+            eq(lotteryEntries.drawId, draw.id),
+            sql`${lotteryEntries.spinsLeft} >= 1`,
+          ));
+
+        if ((deduct.rowsAffected ?? 0) === 0) {
+          // 次数耗尽：CAS 未命中（WHERE spinsLeft>=1 无行），因此本次绝对未扣次。
+          // 返回业务失败结果而非抛异常，避免调用方误判「已扣次需补偿」。
+          // 返回值路径保证外部无需在 catch 中做扣次补偿（P0 防无限消耗）。
+          // ⚠️ 关键：此处不能使用事务外预读的 entry.spinsLeft 回填剩余次数——
+          // 并发场景下预读可能读到较高的旧值（如两人同时读到 1），导致返回的剩余次数虚高、
+          // 与实际已扣减后的值不一致。因此事务内重新读取当前真实余额，保证响应与库内一致。
+          // 事务内（BEGIN IMMEDIATE 串行化写锁）能读到竞争者已提交的扣减结果。
+          const [fresh] = await tx
+            .select({ spinsLeft: lotteryEntries.spinsLeft })
+            .from(lotteryEntries)
+            .where(eq(lotteryEntries.id, entry.id))
+            .limit(1);
+          return {
+            kind: "quotaExhausted" as const,
+            spinsLeft: Math.max(0, Number(fresh?.spinsLeft ?? 0)),
+          };
+        }
+        spinsLeftAfterDeduct = Math.max(0, spinsLeftAfterDeduct - 1);
+      } else {
+        spinsLeftAfterDeduct = Math.max(0, spinsLeftAfterDeduct + dailyFreeConfig.count);
       }
 
       const tiers = await tx
@@ -273,7 +315,20 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
       let prizeName: string | null = null;
       let prizeCodePlain: string | null = null;
 
-      const picked = weightedPickTier(eligible, random01Csprng);
+      // ── 保底机制（docs/218 模式一）：事务内重新读取连续未中次数 →
+      // 若 >= threshold 且尚有可抽档位，强制中最低价值档（eligible 最后一位）。
+      // 事务内 BEGIN IMMEDIATE 串行化写锁，读取到的值一致。
+      const [entryRow] = await tx
+        .select({ consecutiveNoWinSpins: lotteryEntries.consecutiveNoWinSpins })
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.id, entry.id))
+        .limit(1);
+      const currentConsecutive = Math.max(0, Number(entryRow?.consecutiveNoWinSpins ?? 0));
+      const pityTriggered = pityConfig.enabled && currentConsecutive >= pityConfig.threshold && eligible.length > 0;
+
+      // 保底触发时强制选中最低价值档（sortOrder 最大 = eligible 数组末尾）；
+      // 否则正常加权随机抽样。
+      const picked = pityTriggered ? eligible[eligible.length - 1]! : weightedPickTier(eligible, random01Csprng);
       if (picked) {
         let award = false;
 
@@ -382,16 +437,39 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         createdAt: nowIso,
       });
 
-      // 写入 spins 流水日志（docs/172 §5.5 P1）：记录抽奖消耗 1 次
-      await recordSpinLog(tx, {
-        tenantId: draw.tenantId,
-        entryId: entry.id,
-        userId: entry.identityValue,
-        delta: -1,
-        balanceAfter: Math.max(0, Number(entry.spinsLeft ?? 0) - 1),
-        reason: "spin",
-        refId: spinId,
-      });
+      // ── 更新连续未中计数器（docs/218 模式一） ──
+      // 中奖 → 归零；未中（含 pity 触发但 award CAS 失败）→ 累加
+      const newConsecutive = won === 1 ? 0 : currentConsecutive + 1;
+      await tx
+        .update(lotteryEntries)
+        .set({ consecutiveNoWinSpins: newConsecutive })
+        .where(and(eq(lotteryEntries.id, entry.id), eq(lotteryEntries.tenantId, draw.tenantId)));
+
+      // 写入 spins 流水日志（docs/172 §5.5 P1）：
+      // - 每日免费：记录 reason=daily_free, delta=+count（发放次数，同时表示本次 spin 由
+      //   免费额度支付，故未再写 spin 消耗流水）；refId 关联本次 spinId 形成审计闭环
+      // - 正常抽奖：记录 reason=spin, delta=-1；保底触发时 refId 标识触发阈值
+      if (dailyFreeClaimed) {
+        await recordSpinLog(tx, {
+          tenantId: draw.tenantId,
+          entryId: entry.id,
+          userId: entry.identityValue,
+          delta: dailyFreeConfig.count,
+          balanceAfter: spinsLeftAfterDeduct,
+          reason: "daily_free",
+          refId: spinId,
+        });
+      } else {
+        await recordSpinLog(tx, {
+          tenantId: draw.tenantId,
+          entryId: entry.id,
+          userId: entry.identityValue,
+          delta: -1,
+          balanceAfter: spinsLeftAfterDeduct,
+          reason: "spin",
+          refId: pityTriggered ? `pity:${pityConfig.threshold}` : spinId,
+        });
+      }
 
       if (won === 1 && tierId) {
         await tx.insert(lotteryWinners).values({

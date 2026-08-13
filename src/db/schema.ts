@@ -415,6 +415,21 @@ export const lotteryEntries = sqliteTable("lottery_entries", {
    *  - 1+ = 连续签到天数，断签重置为 1
    *  与 lastCheckinDate 在同一个原子 UPDATE 中维护，无需额外事务。 */
   checkinStreak: integer("checkin_streak").notNull().default(0),
+  /**
+   * 连续未中奖次数（docs/218 模式一：保底机制）。用于 instant spin 的保底逻辑：
+   * - 每次未中 → +1；中奖 → 归零
+   * - 在同一事务内与抽奖结果同步更新，无并发竞态
+   * - 缺省 0 表示从未 spin 或上次 spin 中奖
+   */
+  consecutiveNoWinSpins: integer("consecutive_no_win_spins").notNull().default(0),
+  /**
+   * 最近一次每日免费抽奖日期（YYYY-MM-DD，NULL=从未领取，docs/218 模式二）。
+   * 用于并发安全的每日免费 spin 去重：
+   * UPDATE ... SET spins_left += :count, last_daily_free_spin_at = :today
+   * WHERE ... AND (last_daily_free_spin_at IS NULL OR last_daily_free_spin_at < :today)
+   * 模式与 lastCheckinDate 完全一致。
+   */
+  lastDailyFreeSpinAt: text("last_daily_free_spin_at"),
 }, (t) => ({
   unique: uniqueIndex("idx_entries_unique").on(t.tenantId, t.drawId, t.identityType, t.identityValue),
   identityIdx: index("idx_entries_identity").on(t.tenantId, t.identityType, t.identityValue),

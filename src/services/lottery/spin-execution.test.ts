@@ -6,7 +6,7 @@
  * 中奖路径：单档 weight>0 + 有 available 码 → 确定性中奖（无随机跳过）。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getTestDb, clearTestData } from "../../test-setup";
 import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
@@ -1101,5 +1101,332 @@ describe("cleanExpiredSpins", () => {
 
     const rows = await db.select().from(lotterySpins).where(eq(lotterySpins.id, spinId));
     expect(rows).toHaveLength(0);
+  });
+});
+describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", () => {
+  let db: DbType;
+  let client: Client;
+
+  beforeEach(async () => {
+    const t = await getTestDb();
+    db = t.db;
+    client = t.client;
+    await clearTestData(client);
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO tenants (id, name, plan, status) VALUES (?, 'T', 'free', 'active')`,
+      args: [TENANT],
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    restoreCsprng();
+  });
+
+  /**
+   * 双档活动辅助：
+   * - 档 A（sortOrder 10, 高价值, 库存 0 → 必未中）→ 用于累积连空
+   * - 档 B（sortOrder 100, 低价值, 库存 3 → 有码必中）→ 保底强制最低档
+   * CSPRNG 固定为 0 时 normal 随机抽 eligible[0] = 档 A，必未中。
+   */
+  async function seedPityDraw(opts?: { threshold?: number; dailyCount?: number; maxSpins?: number }) {
+    const maxSpins = opts?.maxSpins ?? 5;
+    const id = crypto.randomUUID();
+    const slug = `py${id.slice(0, 6)}`;
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 7 * 86400_000).toISOString();
+
+    const promotion: Record<string, unknown> = {};
+    if (typeof opts?.threshold === "number") {
+      promotion.pity = { enabled: true, threshold: opts.threshold };
+    }
+    if (typeof opts?.dailyCount === "number") {
+      promotion.dailyFreeSpins = { enabled: true, count: opts.dailyCount };
+    }
+
+    await db.insert(lotteryDraws).values({
+      id,
+      tenantId: TENANT,
+      publicSlug: slug,
+      title: "pity test",
+      description: "",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "wheel",
+      drawTrigger: "manual",
+      resultMode: "instant",
+      startAt,
+      endAt,
+      winnerCount: 5,
+      maxSpinsPerEntry: maxSpins,
+      promotionConfig: JSON.stringify(promotion),
+    });
+
+    // 奖品 A：0 库存 → 正常抽中必未中（模拟高价值奖品售罄）
+    const prizeAId = crypto.randomUUID();
+    await db.insert(prizes).values({
+      id: prizeAId, tenantId: TENANT, name: "售罄大奖", prizeType: "code", totalCount: 0, active: 1,
+    });
+    // 奖品 B：3 库存 → 保底触发时必中
+    const prizeBId = crypto.randomUUID();
+    await db.insert(prizes).values({
+      id: prizeBId, tenantId: TENANT, name: "保底小奖", prizeType: "code", totalCount: 3, active: 1,
+    });
+
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId: id, prizeId: prizeAId,
+      tierName: "大奖", winnerCount: 100, sortOrder: 10, weight: 100,
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId: id, prizeId: prizeBId,
+      tierName: "小奖", winnerCount: 3, sortOrder: 100, weight: 100,
+    });
+
+    for (let i = 0; i < 3; i++) {
+      await db.insert(prizeCodes).values({
+        id: crypto.randomUUID(), tenantId: TENANT, prizeId: prizeBId,
+        code: `PITY-${i}-${slug}`, secret: `S-${i}`, status: "available",
+      });
+    }
+
+    return { id, slug };
+  }
+
+  /** 固定 CSPRNG 结果：0 → 抽 eligible[0]（档 A 必未中）；MAX → 抽末尾（档 B 必中） */
+  function stubCsprng(intValue: number) {
+    // getRandomValues 是 crypto 的自身属性（可写），直接原地替换。
+    // randomUUID 是原型方法，不受影响（this 绑定正确）。
+    const real = crypto as unknown as { getRandomValues: (arr: Uint32Array) => void };
+    (crypto as unknown as Record<string, unknown>).__csprngOriginal = real.getRandomValues;
+    real.getRandomValues = (arr: Uint32Array) => {
+      arr[0] = intValue >>> 0;
+    };
+  }
+
+  function restoreCsprng() {
+    const orig = (crypto as unknown as Record<string, unknown>).__csprngOriginal as
+      | ((arr: Uint32Array) => void)
+      | undefined;
+    if (orig) {
+      const real = crypto as unknown as { getRandomValues: (arr: Uint32Array) => void };
+      real.getRandomValues = orig;
+      delete (crypto as unknown as Record<string, unknown>).__csprngOriginal;
+    }
+  }
+
+// ── 保底机制 ──
+
+  it("保底未达阈值：不触发，连空计数器正确累加", async () => {
+    const { slug } = await seedPityDraw({ threshold: 10 }); // 阈值 10，远高于测试次数
+    const join = await joinDraw(db, slug, "pity0@test.com");
+    expect(join.joined).toBe(true);
+    await grantSpins(client, join.entryId!, 5);
+    stubCsprng(0); // 每次都抽 eligible[0]（档 A，库存 0 → 未中）
+
+    for (let i = 1; i <= 5; i++) {
+      const r = await performInstantSpin(db, {
+        slug, identityType: "email", identityValue: "pity0@test.com", idempotencyKey: `p0-${i}`,
+      });
+      expect(r.won).toBe(false);
+      // 查 spins_log 确认 refId 不包含 "pity" 前缀（非保底触发）
+      const logs = await db.select().from(spinsLog).where(eq(spinsLog.refId, r.spinId));
+      for (const log of logs) {
+        expect(log.refId).not.toMatch(/^pity:/);
+      }
+    }
+
+    // 断言：连空计数器 = 5，档 A 未中过（awardedCount 仍为 0）
+    const entry = await readEntry(join.entryId!);
+    expect(Number(entry.consecutiveNoWinSpins)).toBe(5);
+    const winners = await db.select().from(lotteryWinners).where(eq(lotteryWinners.drawId, slug));
+    expect(winners).toHaveLength(0);
+  });
+
+  it("保底达阈值：强制最低档中奖，计数器归零，spins_log 标识阈值", async () => {
+    const { slug } = await seedPityDraw({ threshold: 3 });
+    const join = await joinDraw(db, slug, "pity1@test.com");
+    expect(join.joined).toBe(true);
+    await grantSpins(client, join.entryId!, 5);
+    stubCsprng(0); // 前 3 次抽 eligible[0]（档 A，库存 0 → 未中），计数器累加
+
+    // 前 3 次：累计未中，counter→1,2,3
+    for (let i = 1; i <= 3; i++) {
+      const r = await performInstantSpin(db, {
+        slug, identityType: "email", identityValue: "pity1@test.com", idempotencyKey: `p1-${i}`,
+      });
+      expect(r.won).toBe(false);
+    }
+    const entryBefore = await readEntry(join.entryId!);
+    expect(Number(entryBefore.consecutiveNoWinSpins)).toBe(3);
+
+    // 第 4 次：counter=3 ≥ threshold=3 → 保底触发！强制 eligibility[1] = 档 B（有库存）
+    // CSPRNG 对保底无效（强制不调用 weightedPickTier）
+    const r4 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "pity1@test.com", idempotencyKey: `p1-4`,
+    });
+    expect(r4.won).toBe(true);
+    expect(r4.tierName).toBe("小奖");
+    expect(r4.prizeCode).toBeTruthy();
+
+    // 计数器归零
+    const entryAfter = await readEntry(join.entryId!);
+    expect(Number(entryAfter.consecutiveNoWinSpins)).toBe(0);
+
+    // spins_log 中该 spin 记录 refId 应包含 "pity:3" 标识保底阈值
+    const logs = await db.select().from(spinsLog).where(eq(spinsLog.refId, `pity:3`));
+    expect(logs.length).toBeGreaterThanOrEqual(1);
+    // 查该 spin 的 log: reason=spin, delta=-1（正常扣次，不免费）
+    const spinLog = logs.find((l) => l.entryId === join.entryId);
+    expect(spinLog).toBeDefined();
+    expect(spinLog!.reason).toBe("spin");
+    expect(spinLog!.delta).toBe(-1);
+  });
+  async function readEntry(entryId: string) {
+    const rows = await db
+      .select()
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.id, entryId), eq(lotteryEntries.tenantId, TENANT)));
+    return rows[0]!;
+  }
+// ── 每日免费抽奖 ──
+
+  it("每日免费：首次领取成功+1，当日不重复累加，spinsLeft 不扣本次", async () => {
+    const { slug } = await seedPityDraw({ dailyCount: 1, maxSpins: 2 });
+    const join = await joinDraw(db, slug, "free0@test.com");
+    expect(join.joined).toBe(true);
+    // 初始 spinsLeft = 1（join grant）
+
+    // 第一次 spin：每日免费领取 +1 → spinsLeft = 2，跳过扣次
+    const r1 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "free0@test.com", idempotencyKey: "f0-1",
+    });
+    expect(r1.spinsLeft).toBe(2); // 初始 1 + 免费 1，本次未扣
+
+    // spins_log 有 daily_free 记录
+    const logs1 = await db.select().from(spinsLog).where(eq(spinsLog.entryId, join.entryId!));
+    const freeLog = logs1.find((l) => l.reason === "daily_free");
+    expect(freeLog).toBeDefined();
+    expect(freeLog!.delta).toBe(1);          // 发放 1 次
+    expect(freeLog!.balanceAfter).toBe(2);   // 余额 2
+
+    // 第二次 spin：当日已领，正常扣次 → spinsLeft = 1
+    const r2 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "free0@test.com", idempotencyKey: "f0-2",
+    });
+    expect(r2.spinsLeft).toBe(1);
+    expect(r2.won).toBe(false);
+
+    // 第三次 spin：正常扣次 → spinsLeft = 0
+    const r3 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "free0@test.com", idempotencyKey: "f0-3",
+    });
+    expect(r3.spinsLeft).toBe(0);
+
+    // 第四次 spin：次数耗尽
+    const r4 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "free0@test.com", idempotencyKey: "f0-4",
+    });
+    expect(r4.businessErrorCode).toBe("spin.quota.exhausted");
+
+    // lastDailyFreeSpinAt 记录为今日
+    const entry = await readEntry(join.entryId!);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(entry.lastDailyFreeSpinAt).toBe(today);
+  });
+
+  it("每日免费：次日自动重置，可再次领取", async () => {
+    const { slug } = await seedPityDraw({ dailyCount: 1, maxSpins: 3 });
+    const join = await joinDraw(db, slug, "free1@test.com");
+    expect(join.joined).toBe(true);
+    await grantSpins(client, join.entryId!, 2); // 覆盖为 2 → spinsLeft=2（join 1 + 覆盖 2 取后值 2）
+
+    // 第一次 spin：领取免费 +1 → spinsLeft = 3
+    const r1 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "free1@test.com", idempotencyKey: "f1-1",
+    });
+    expect(r1.spinsLeft).toBe(3);
+
+    // 手动将 lastDailyFreeSpinAt 改为昨天，模拟次日
+    const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+    await db
+      .update(lotteryEntries)
+      .set({ lastDailyFreeSpinAt: yesterday })
+      .where(and(eq(lotteryEntries.id, join.entryId!), eq(lotteryEntries.tenantId, TENANT)));
+
+    // 第二次 spin：应再次领取免费 +1 → spinsLeft = 4（3+1，跳过扣次）
+    const r2 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "free1@test.com", idempotencyKey: "f1-2",
+    });
+    expect(r2.spinsLeft).toBe(4); // 3 + 1，未扣
+
+    // lastDailyFreeSpinAt 更新为今日
+    const entry = await readEntry(join.entryId!);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(entry.lastDailyFreeSpinAt).toBe(today);
+  });
+it("每日免费未配置时保持原扣次行为，last_daily_free 保持 NULL", async () => {
+    const { slug } = await seedPityDraw({}); // 无 dailyFree 配置
+    const join = await joinDraw(db, slug, "free2@test.com");
+    expect(join.joined).toBe(true);
+    // 初始 spinsLeft = 1
+
+    const r1 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "free2@test.com", idempotencyKey: "f2-1",
+    });
+    expect(r1.spinsLeft).toBe(0); // 正常扣次 1→0
+    expect(r1.won).toBe(false);
+
+    // 断言：无 daily_free 日志
+    const logs = await db.select().from(spinsLog).where(eq(spinsLog.entryId, join.entryId!));
+    expect(logs.every((l) => l.reason !== "daily_free")).toBe(true);
+
+    // lastDailyFreeSpinAt 保持 NULL
+    const entry = await readEntry(join.entryId!);
+    expect(entry.lastDailyFreeSpinAt).toBeNull();
+  });
+
+  it("保底 + 每日免费组合：免费领取不影响保底计数", async () => {
+    const { slug } = await seedPityDraw({ threshold: 3, dailyCount: 1, maxSpins: 5 });
+    const join = await joinDraw(db, slug, "combo@test.com");
+    expect(join.joined).toBe(true);
+    await grantSpins(client, join.entryId!, 4); // 覆盖为 4 → spinsLeft=4
+    stubCsprng(0); // 正常抽档 A → 必未中
+
+    // spin1：免费领取 +1 → spinsLeft = 5，跳过扣次，未中 → counter 0→1
+    const r1 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "combo@test.com", idempotencyKey: "c-1",
+    });
+    expect(r1.spinsLeft).toBe(5);
+    expect(r1.won).toBe(false);
+
+    // spin2：正常扣次 → spinsLeft = 4，未中 → counter 1→2
+    const r2 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "combo@test.com", idempotencyKey: "c-2",
+    });
+    expect(r2.spinsLeft).toBe(4);
+    expect(r2.won).toBe(false);
+
+    // spin3：正常扣次 → spinsLeft = 3，未中 → counter 2→3（本轮仍正常抽）
+    const r3 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "combo@test.com", idempotencyKey: "c-3",
+    });
+    expect(r3.spinsLeft).toBe(3);
+    expect(r3.won).toBe(false);
+
+    // spin4：正常扣次 → spinsLeft = 2，counter=3 ≥ threshold → 保底触发！强制中档 B
+    const r4 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "combo@test.com", idempotencyKey: "c-4",
+    });
+    expect(r4.won).toBe(true);
+    expect(r4.tierName).toBe("小奖");
+    expect(r4.prizeCode).toBeTruthy();
+    expect(r4.spinsLeft).toBe(2); // 正常扣次 1
+
+    // 计数器归零
+    const entry = await readEntry(join.entryId!);
+    expect(Number(entry.consecutiveNoWinSpins)).toBe(0);
   });
 });
