@@ -944,6 +944,12 @@ route.post("/draws/:id/leaderboard-rewards", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
+  // 仅 instant 模式需要手动发放；delayed/manual 在 performDraw 收尾自动发放，
+  // 手动调用可能在开奖前提前发放（后续 join 不再计入排名），故直接拒绝。
+  if (draw.resultMode !== "instant") {
+    return fail(c, "非即时开奖模式的排行榜奖励由开奖流程自动发放，无需手动操作", 400);
+  }
+
   const result = await grantLeaderboardRewards(db, draw);
   return ok(c, result);
 });
