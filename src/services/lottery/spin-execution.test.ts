@@ -18,11 +18,13 @@ import {
   lotteryWinners,
   prizes,
   prizeCodes,
-  systemConfig,
   spinsLog,
+  shareRecords,
+  systemConfig,
 } from "../../db/schema";
 import { performInstantSpin, cleanExpiredSpins } from "./spin-execution";
 import { performDraw, notifyInstantSpinWinner, sendWinnerNotifications } from "./draw-execution";
+import { grantLeaderboardRewards } from "./leaderboard-rewards";
 import { joinDraw, type JoinDrawResult } from "./participation";
 
 const TENANT = "tenant-spin-t";
@@ -1426,5 +1428,374 @@ it("每日免费未配置时保持原扣次行为，last_daily_free 保持 NULL"
     // 计数器归零
     const entry = await readEntry(join.entryId!);
     expect(Number(entry.consecutiveNoWinSpins)).toBe(0);
+  });
+});
+
+describe("grantLeaderboardRewards", () => {
+  let db: DbType;
+  let client: Client;
+
+  beforeEach(async () => {
+    const t = await getTestDb();
+    db = t.db;
+    client = t.client;
+    await clearTestData(client);
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO tenants (id, name, plan, status) VALUES (?, 'T', 'free', 'active')`,
+      args: [TENANT],
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * 创建带排行榜奖励配置的 draw（delayed 模式）。
+   * @param extraTenant 多租户隔离测试用（不同租户 id）
+   */
+  async function seedLeaderboardDraw(opts?: {
+    rewards?: Array<{ rank: number; rewardValue: number }>;
+    extraTenant?: string;
+  }) {
+    const id = crypto.randomUUID();
+    const slug = `lb${id.slice(0, 6)}`;
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 7 * 86400_000).toISOString();
+    const tenant = opts?.extraTenant ?? TENANT;
+    const rewards = opts?.rewards ?? [
+      { rank: 1, rewardValue: 5 },
+      { rank: 2, rewardValue: 3 },
+      { rank: 3, rewardValue: 1 },
+    ];
+
+    const promotion = {
+      viral: {
+        enabled: true,
+        leaderboardEnabled: true,
+        leaderboardRewards: rewards.map((r) => ({
+          rank: r.rank,
+          rewardType: "bonus_spin",
+          rewardValue: r.rewardValue,
+        })),
+      },
+    };
+
+    await db.insert(lotteryDraws).values({
+      id,
+      tenantId: tenant,
+      publicSlug: slug,
+      title: "leaderboard test",
+      description: "",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "wheel",
+      drawTrigger: "manual",
+      resultMode: "delayed",
+      startAt,
+      endAt,
+      winnerCount: 5,
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify(promotion),
+    });
+
+    return { id, slug, tenant };
+  }
+
+  /**
+   * 创建一条 shareRecord + 对应的 lotteryEntry。
+   * 返回 { entryId, shareRecordId }。
+   */
+  async function seedShareRecord(
+    drawId: string,
+    joinedCount: number,
+    tenant: string,
+    email?: string,
+  ): Promise<{ entryId: string; shareRecordId: string }> {
+    const entryId = crypto.randomUUID();
+    const identityValue = email || `share-${entryId.slice(0, 6)}@test.com`;
+
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: tenant,
+      drawId,
+      identityType: "email",
+      identityValue,
+      spinsLeft: 0,
+      spinsTotalGranted: 0,
+      spinsViralEarned: 0,
+      joinedAt: new Date().toISOString(),
+    });
+
+    const shareRecordId = crypto.randomUUID();
+    const shareCode = `sc-${drawId.slice(0, 6)}-${entryId.slice(0, 6)}`;
+
+    await db.insert(shareRecords).values({
+      id: shareRecordId,
+      tenantId: tenant,
+      drawId,
+      sharerEntryId: entryId,
+      shareCode,
+      joinedCount,
+      clickedCount: 0,
+      rewardMilestonesGranted: "[]",
+      leaderboardRewardedAt: "",
+      createdAt: new Date().toISOString(),
+    });
+
+    return { entryId, shareRecordId };
+  }
+
+  it("正常发放：按 joined_count 排名取 Top3，各获得对应 spins", async () => {
+    const { id: drawId } = await seedLeaderboardDraw();
+
+    // 创建 5 个 share record，joinedCount 分别为 10, 8, 5, 2, 1
+    const s1 = await seedShareRecord(drawId, 10, TENANT, "top1@test.com");
+    const s2 = await seedShareRecord(drawId, 8, TENANT, "top2@test.com");
+    const s3 = await seedShareRecord(drawId, 5, TENANT, "top3@test.com");
+    await seedShareRecord(drawId, 2, TENANT, "rank4@test.com");
+    await seedShareRecord(drawId, 1, TENANT, "rank5@test.com");
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+
+    // Top3 发放成功
+    expect(result.granted).toBe(3);
+    expect(result.skipped).toBe(0);
+
+    // 验证各 entry 获得的 spins
+    const check = async (entryId: string, expectedSpins: number) => {
+      const [entry] = await db
+        .select({ spinsLeft: lotteryEntries.spinsLeft, spinsTotalGranted: lotteryEntries.spinsTotalGranted })
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.id, entryId))
+        .limit(1);
+      expect(entry!.spinsLeft).toBe(expectedSpins);
+      expect(entry!.spinsTotalGranted).toBe(expectedSpins);
+    };
+
+    await check(s1.entryId, 5); // rank 1 → 5 spins
+    await check(s2.entryId, 3); // rank 2 → 3 spins
+    await check(s3.entryId, 1); // rank 3 → 1 spins
+
+    // 验证 spins_log 记录（reason=viral, refId=leaderboard:{rank}）
+    const log1 = (await db.select().from(spinsLog).where(eq(spinsLog.entryId, s1.entryId))).find((l) => l.reason === "viral");
+    expect(log1).toBeDefined();
+    expect(log1!.delta).toBe(5);
+    expect(log1!.refId).toBe("leaderboard:1");
+    expect(log1!.userId).toBe("top1@test.com");
+    expect(log1!.balanceAfter).toBe(5);
+
+    const log2 = (await db.select().from(spinsLog).where(eq(spinsLog.entryId, s2.entryId))).find((l) => l.reason === "viral");
+    expect(log2).toBeDefined();
+    expect(log2!.delta).toBe(3);
+    expect(log2!.refId).toBe("leaderboard:2");
+    expect(log2!.userId).toBe("top2@test.com");
+    expect(log2!.balanceAfter).toBe(3);
+
+    const log3 = (await db.select().from(spinsLog).where(eq(spinsLog.entryId, s3.entryId))).find((l) => l.reason === "viral");
+    expect(log3).toBeDefined();
+    expect(log3!.delta).toBe(1);
+    expect(log3!.refId).toBe("leaderboard:3");
+    expect(log3!.userId).toBe("top3@test.com");
+    expect(log3!.balanceAfter).toBe(1);
+
+    // 验证 shareRecord 的 leaderboardRewardedAt 已写入
+    const checkRewarded = async (shareRecordId: string) => {
+      const [sr] = await db
+        .select({ rewardedAt: shareRecords.leaderboardRewardedAt })
+        .from(shareRecords)
+        .where(eq(shareRecords.id, shareRecordId))
+        .limit(1);
+      expect(sr!.rewardedAt).not.toBe("");
+    };
+    await checkRewarded(s1.shareRecordId);
+    await checkRewarded(s2.shareRecordId);
+    await checkRewarded(s3.shareRecordId);
+  });
+
+  it("幂等性：重复调用不重复发放，已发放的 records 被跳过", async () => {
+    const { id: drawId } = await seedLeaderboardDraw();
+
+    const s1 = await seedShareRecord(drawId, 10, TENANT);
+    await seedShareRecord(drawId, 5, TENANT); // rank 2
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId))
+      .limit(1);
+
+    // 第一次调用
+    const r1 = await grantLeaderboardRewards(db, draw!);
+    expect(r1.granted).toBe(2);
+    expect(r1.skipped).toBe(0);
+
+    // 第一次后的 spinsLeft
+    const [e1] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, s1.entryId))
+      .limit(1);
+    expect(e1!.spinsLeft).toBe(5);
+
+    // 第二次调用：全部已发放，应该全部跳过
+    const r2 = await grantLeaderboardRewards(db, draw!);
+    expect(r2.granted).toBe(0);
+    expect(r2.skipped).toBe(2); // 两个都因为 leaderboardRewardedAt 非空跳过
+
+    // spinsLeft 不变（未重复发放）
+    const [e2] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, s1.entryId))
+      .limit(1);
+    expect(e2!.spinsLeft).toBe(5);
+  });
+
+  it("未配置排行榜奖励时不发放任何奖励", async () => {
+    const { id: drawId } = await seedLeaderboardDraw({ rewards: [] }); // 空奖励列表
+    await seedShareRecord(drawId, 10, TENANT);
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+    expect(result.granted).toBe(0);
+    expect(result.skipped).toBe(0);
+    expect(result.details.length).toBe(0);
+  });
+
+  it("leaderboardEnabled=false 时跳过发放", async () => {
+    const id = crypto.randomUUID();
+    const slug = `lb-off${id.slice(0, 6)}`;
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 7 * 86400_000).toISOString();
+    // 配置 leaderboardEnabled=false
+    const promotion = {
+      viral: {
+        enabled: true,
+        leaderboardEnabled: false,
+        leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 5 }],
+      },
+    };
+
+    await db.insert(lotteryDraws).values({
+      id,
+      tenantId: TENANT,
+      publicSlug: slug,
+      title: "lb off test",
+      description: "",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "wheel",
+      drawTrigger: "manual",
+      resultMode: "delayed",
+      startAt,
+      endAt,
+      winnerCount: 5,
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify(promotion),
+    });
+
+    await seedShareRecord(id, 10, TENANT);
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, id))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+    expect(result.granted).toBe(0);
+    expect(result.skipped).toBe(0);
+  });
+
+  it("多租户隔离：不同租户的数据互不影响", async () => {
+    const TENANT_B = "tenant-b-leaderboard";
+    // 确保租户 B 存在
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO tenants (id, name, plan, status) VALUES (?, 'B', 'free', 'active')`,
+      args: [TENANT_B],
+    });
+
+    // 租户 A：有排行榜奖励配置
+    const { id: drawA } = await seedLeaderboardDraw();
+
+    // 租户 B：有排行榜奖励配置，但使用不同租户 ID
+    const { id: drawB } = await seedLeaderboardDraw({ extraTenant: TENANT_B });
+
+    // 租户 A 创建 share records
+    const a1 = await seedShareRecord(drawA, 10, TENANT, "a1@test.com");
+    await seedShareRecord(drawA, 5, TENANT, "a2@test.com"); // rank 2
+
+    // 租户 B 创建 share records
+    const b1 = await seedShareRecord(drawB, 20, TENANT_B, "b1@test.com");
+    await seedShareRecord(drawB, 15, TENANT_B, "b2@test.com"); // rank 2
+
+    // 只对租户 A 发放
+    const [drawArow] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawA))
+      .limit(1);
+
+    const rA = await grantLeaderboardRewards(db, drawArow!);
+    expect(rA.granted).toBe(2); // 租户 A 的 2 个 record 被发放
+    expect(rA.skipped).toBe(0);
+
+    // 租户 A 的 entry 获得 spins
+    const [a1entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, a1.entryId))
+      .limit(1);
+    expect(a1entry!.spinsLeft).toBe(5);
+
+    // 租户 B 的 entry 不应受影响
+    const [b1entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, b1.entryId))
+      .limit(1);
+    expect(b1entry!.spinsLeft).toBe(0);
+  });
+
+  it("名次大于配置最高 rank 时跳过", async () => {
+    const { id: drawId } = await seedLeaderboardDraw({
+      rewards: [{ rank: 1, rewardValue: 5 }], // 只配置了 rank 1
+    });
+
+    // 创建 3 个 share record，rank 2/3 不应获得奖励
+    await seedShareRecord(drawId, 10, TENANT); // rank 1 → 应发
+    await seedShareRecord(drawId, 5, TENANT);  // rank 2 → 不在 topN 内，不进入迭代
+    await seedShareRecord(drawId, 3, TENANT);  // rank 3 → 不在 topN 内，不进入迭代
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+    // topN = max rank = 1，只查询 1 条记录，其余不进入迭代
+    expect(result.granted).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.details.length).toBe(1);
+    expect(result.details[0]!.status).toBe("granted");
+    expect(result.details[0]!.rank).toBe(1);
   });
 });
