@@ -10,6 +10,7 @@
  * 复用 @usethink/cf-core/features/payment（Provider 抽象已在共享库）。
  */
 import { createProviderRegistry, isAmbiguousEasyPayProviderError } from "@usethink/cf-core/features/payment";
+import { isFlashSaleExperience } from "../../lib/activity-utils";
 import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
 import { eq, and, desc, sql, inArray, isNull, max, ne, notInArray } from "drizzle-orm";
 import type { DbType } from "../../db/client";
@@ -449,7 +450,7 @@ async function armPaymentOrderForRetry(
     }
 
     const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
-    const isFlashSale = flashParsed.config != null || draw.experienceType === "flash_sale";
+    const isFlashSale = flashParsed.config != null || isFlashSaleExperience(draw.experienceType);
     const capacity = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
     if (!isFlashSale || capacity == null || capacity <= 0) {
       throw new Error("秒杀活动未配置可重试名额");
@@ -948,7 +949,7 @@ export async function createPaymentOrder(
         .limit(1);
       if (!draw) throw new Error("活动不存在");
       const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
-      const isFlashSale = flashParsed.config != null || draw.experienceType === "flash_sale";
+      const isFlashSale = flashParsed.config != null || isFlashSaleExperience(draw.experienceType);
       const capacity = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
       if (!isFlashSale || capacity == null || capacity <= 0) {
         throw new Error("秒杀活动未配置可用名额");

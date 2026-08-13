@@ -7,7 +7,7 @@
  * - 预检返回结构化 code/section，前端可以直接展示成运营清单，后续补问卷/投票配置时也只扩展本文件。
  */
 import { and, count, eq, inArray, ne, sql } from "drizzle-orm";
-import { isInstantResultMode } from "../lib/activity-utils";
+import { isInstantResultMode, isFlashSaleExperience } from "../lib/activity-utils";
 import type { DbType } from "../db/client";
 import {
   lotteryDraws,
@@ -702,7 +702,7 @@ async function validatePromotion(
         "展示型秒杀必须配置安全的导流/购买链接（商品链接、destination 或 after_win CTA）；否则用户抢到后无法下单",
       );
     }
-    if (draw.experienceType !== "flash_sale") {
+    if (!isFlashSaleExperience(draw.experienceType)) {
       add(
         result.infos,
         "promotion",

@@ -7,6 +7,7 @@
  * 依赖 utils（访问密码验证）与 integration（活动事件），无反向依赖。
  */
 import type { DbType, DbWriteScope } from "../../db/client";
+import { isFlashSaleExperience } from "../../lib/activity-utils";
 import { withDbTransaction } from "../../db/client";
 import { and, eq, inArray, sql, count, asc } from "drizzle-orm";
 import {
@@ -188,7 +189,7 @@ export async function joinDraw(
       const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
       const flashCap = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
       const isFlashSaleJoin =
-        flashParsed.config != null || draw.experienceType === "flash_sale";
+        flashParsed.config != null || isFlashSaleExperience(draw.experienceType);
       const isDirectPaymentFlashSale = isFlashSaleJoin && flashParsed.config?.paymentRequired === true;
       const effectiveMax =
         flashCap != null && flashCap > 0
