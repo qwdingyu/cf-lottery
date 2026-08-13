@@ -32,7 +32,7 @@ export type GrantLeaderboardResult = {
  * 1. 解析 draw.promotionConfig.viral.leaderboardRewards；空 → 直接返回。
  * 2. 按 joined_count DESC, created_at ASC 取前 N 名 shareRecords（N=最高 rank）。
  * 3. 对每个未发放的 shareRecord 按名次发放 spins → 更新 spins_left/spins_total_granted；
- *    写入 spins_log（reason: "viral", refId: "leaderboard:{rank}"）；写 audit_logs。
+ *    写入 spins_log（reason: "viral", refId: "leaderboard:{rank}"），userId 取 entry.identityValue。
  * 4. CAS 更新 leaderboard_rewarded_at 防止并发重复发放。
  *
  * @param db 数据库实例
@@ -74,15 +74,22 @@ export async function grantLeaderboardRewards(
   // 取最高 rank 作为 TOP N
   const topN = Math.max(...rewards.map((r) => r.rank));
 
-  // 2. 按邀请人数降序取前 N 名 shareRecords
+  // 2. 按邀请人数降序取前 N 名 shareRecords（含 entry identityValue 用于审计记录）
   const topRecords = await db
     .select({
       id: shareRecords.id,
       sharerEntryId: shareRecords.sharerEntryId,
       joinedCount: shareRecords.joinedCount,
       leaderboardRewardedAt: shareRecords.leaderboardRewardedAt,
+      /** 分享者身份标识（email / platform_user_id），用于 spins_log.userId 审计 */
+      identityValue: lotteryEntries.identityValue,
     })
     .from(shareRecords)
+    .leftJoin(lotteryEntries, and(
+      eq(lotteryEntries.id, shareRecords.sharerEntryId),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+    ))
     .where(and(
       eq(shareRecords.tenantId, draw.tenantId),
       eq(shareRecords.drawId, draw.id),
@@ -151,13 +158,20 @@ export async function grantLeaderboardRewards(
           eq(lotteryEntries.drawId, draw.id),
         ));
 
-      // 记录 spins 流水日志
+      // 事务内重新读取更新后的余额，用于审计快照
+      const [updatedEntry] = await tx
+        .select({ spinsLeft: lotteryEntries.spinsLeft })
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.id, record.sharerEntryId))
+        .limit(1);
+
+      // 记录 spins 流水日志（reason=viral，refId=leaderboard:{rank}）
       await recordSpinLog(tx, {
         tenantId: draw.tenantId,
         entryId: record.sharerEntryId,
-        userId: record.sharerEntryId,
+        userId: record.identityValue || record.sharerEntryId,
         delta: rewardCfg.rewardValue,
-        balanceAfter: 0, // 调用方不关心余额，spins 流水主要审计
+        balanceAfter: Math.max(0, Number(updatedEntry?.spinsLeft ?? 0)),
         reason: "viral",
         refId: `leaderboard:${rank}`,
       });

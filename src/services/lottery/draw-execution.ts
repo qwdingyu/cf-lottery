@@ -31,6 +31,7 @@ import { enqueueEmailDelivery, dispatchEmailDeliveries } from "../email-delivery
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
 import { runBounded } from "../../lib/concurrency";
 import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
+import { grantLeaderboardRewards } from "./leaderboard-rewards";
 import {
   aggregateViralInviteCounts,
   computeViralDrawWeight,

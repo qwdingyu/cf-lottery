@@ -201,6 +201,8 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
           .update(lotteryEntries)
           .set({
             spinsLeft: sql`${lotteryEntries.spinsLeft} + ${dailyFreeConfig.count}`,
+            // 每日免费是活动级额外额度（区别于平台级签到奖励），同步累加总授予数（docs/218 模式二）
+            spinsTotalGranted: sql`${lotteryEntries.spinsTotalGranted} + ${dailyFreeConfig.count}`,
             lastDailyFreeSpinAt: today,
           })
           .where(and(
