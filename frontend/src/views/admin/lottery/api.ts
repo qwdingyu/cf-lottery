@@ -97,3 +97,14 @@ export const retryAdminLotteryEmail = async (id: string) =>
 
 export const recoverLotteryDraw = async (id: string) =>
   adminRequest<{ healed: 'drawn' | 'open' }>(`/api/admin/draws/${id}/recover`, { method: 'POST' })
+
+/**
+ * 发放排行榜奖励（docs/218 模式三）。
+ * 仅对 result_mode=instant 的活动手动调用，delayed 模式在 performDraw 时自动发放。
+ * 返回 granted/skipped 计数及每项详情，幂等：已发放的 shareRecord 自动跳过。
+ */
+export const grantLeaderboardRewards = async (id: string) =>
+  adminRequest<{ granted: number; skipped: number; details: Array<{ rank: number; entryId: string; rewardValue: number; status: 'granted' | 'skipped' }> }>(
+    `/api/admin/draws/${id}/leaderboard-rewards`,
+    { method: 'POST' },
+  )

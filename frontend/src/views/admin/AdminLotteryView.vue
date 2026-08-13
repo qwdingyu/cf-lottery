@@ -1543,6 +1543,15 @@
             :disabled="operatingId === expandedActionDraw.id"
             @click="runMoreAction(d => handleRetryEmail(d.id))"
           >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
+          <!-- 排行榜奖励发放：open（instant 模式手动触发）或 drawn 时均可调用，后端幂等处理 -->
+          <button
+            v-if="expandedActionDraw.status === 'open' || expandedActionDraw.status === 'drawn'"
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            @click="runMoreAction(d => handleGrantLeaderboardRewards(d.id))"
+          >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminGrantLeaderboard') }}</button>
         </div>
         <div class="table-actions-group table-actions-group--danger" role="group">
           <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupDanger') }}</span>
@@ -1819,6 +1828,7 @@ import {
   recoverLotteryDraw,
   resumeLotteryDraw,
   retryAdminLotteryEmail,
+  grantLeaderboardRewards,
   updateLotteryDraw,
 } from './lottery/api'
 import {
@@ -3893,6 +3903,28 @@ async function handleRetryEmail(id: string) {
       rememberDrawEmailFails(id, data.winners || [])
     } catch {
       /* 列表刷新失败不阻断主提示 */
+    }
+    await loadData()
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
+  } finally {
+    operatingId.value = ''
+  }
+}
+
+/**
+ * 发放排行榜奖励（docs/218 模式三）。
+ * 仅对 instant 模式手动调用；delayed 模式在 performDraw 时自动发放。
+ * 后端幂等：已发放的 shareRecord 自动跳过。
+ */
+async function handleGrantLeaderboardRewards(id: string) {
+  operatingId.value = id
+  try {
+    const result = await grantLeaderboardRewards(id)
+    if (result.granted > 0 || result.skipped > 0) {
+      showToast(t('lottery.adminGrantLeaderboardSuccess', { granted: result.granted, skipped: result.skipped }), 'success')
+    } else {
+      showToast(t('lottery.adminGrantLeaderboardNone'), 'info')
     }
     await loadData()
   } catch (e) {

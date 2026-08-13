@@ -995,6 +995,10 @@ export default {
       "确认解除 drawing 卡死？若已有中奖记录将标为已开奖（不再二次发卡）；若无中奖将恢复为可开奖。",
     adminRecoverDoneOpen: "已恢复为可开奖，可再次手动开奖",
     adminRecoverDoneDrawn: "已补齐为已开奖（检测到中奖记录，未二次发卡）",
+    // 排行榜奖励（docs/218 模式三）
+    adminGrantLeaderboard: "发放排行榜奖励",
+    adminGrantLeaderboardSuccess: "排行榜奖励已发放：{granted} 名已发放，{skipped} 名跳过（已发放/无资格）",
+    adminGrantLeaderboardNone: "排行榜奖励未配置或无人达标",
     // 新增字段
     statusPaused: "已暂停",
     expectedCount: "预计参与",

@@ -1023,6 +1023,10 @@ export default {
       "Unstick this drawing state? If winners already exist it will be marked drawn (no re-issue). If none, it returns to open for another draw.",
     adminRecoverDoneOpen: "Restored to open — you can draw again",
     adminRecoverDoneDrawn: "Marked drawn (winners found; cards were not re-issued)",
+    // Leaderboard rewards (docs/218 pattern 3)
+    adminGrantLeaderboard: "Grant leaderboard rewards",
+    adminGrantLeaderboardSuccess: "Leaderboard rewards granted: {granted} granted, {skipped} skipped (already granted/no eligible)",
+    adminGrantLeaderboardNone: "Leaderboard rewards not configured or no one eligible",
     statusPaused: "Paused",
     expectedCount: "Expected",
     expectedCountHint: "Reference value for display only",
