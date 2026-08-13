@@ -24,7 +24,7 @@ import {
 } from "../../db/schema";
 import { performInstantSpin, cleanExpiredSpins } from "./spin-execution";
 import { performDraw, notifyInstantSpinWinner, sendWinnerNotifications } from "./draw-execution";
-import { grantLeaderboardRewards } from "./leaderboard-rewards";
+import { grantLeaderboardRewards, normalizeLeaderboardRewards } from "./leaderboard-rewards";
 import { joinDraw, type JoinDrawResult } from "./participation";
 
 const TENANT = "tenant-spin-t";
@@ -1522,6 +1522,45 @@ it("每日免费未配置时保持原扣次行为，last_daily_free 保持 NULL"
     // 计数器归零
     const entry = await readEntry(join.entryId!);
     expect(Number(entry.consecutiveNoWinSpins)).toBe(0);
+  });
+});
+
+describe("normalizeLeaderboardRewards（publish-check 与发放共用同一归一化）", () => {
+  it("非数组输入 → 空数组", () => {
+    expect(normalizeLeaderboardRewards(undefined)).toEqual([]);
+    expect(normalizeLeaderboardRewards(null)).toEqual([]);
+    expect(normalizeLeaderboardRewards("not-array")).toEqual([]);
+    expect(normalizeLeaderboardRewards({ rank: 1 })).toEqual([]);
+    expect(normalizeLeaderboardRewards(42)).toEqual([]);
+  });
+
+  it("空数组或全无效项 → 空数组", () => {
+    expect(normalizeLeaderboardRewards([])).toEqual([]);
+    // rank<1 / 非 bonus_spin / rewardValue<1 / 非对象元素 全部剔除
+    expect(normalizeLeaderboardRewards([
+      { rank: 0, rewardType: "bonus_spin", rewardValue: 3 },
+      { rank: 1, rewardType: "points", rewardValue: 3 },
+      { rank: 1, rewardType: "bonus_spin", rewardValue: 0 },
+      { rank: -1, rewardType: "bonus_spin", rewardValue: 3 },
+      "garbage",
+      null,
+      7,
+    ])).toEqual([]);
+  });
+
+  it("混合有效/无效项 → 仅保留有效项，数值字符串归一化为 number", () => {
+    expect(normalizeLeaderboardRewards([
+      { rank: "1", rewardType: "bonus_spin", rewardValue: "3" },
+      { rank: 1.9, rewardType: "bonus_spin", rewardValue: 2.9 }, // floor 后 1/2
+      { rank: 2, rewardType: "bonus_spin", rewardValue: 5 },
+      { rank: 3, rewardType: "bonus_spin", rewardValue: 0 }, // 无效
+      { rank: 4, rewardType: "bonus_spin", rewardValue: 1 },
+    ])).toEqual([
+      { rank: 1, rewardType: "bonus_spin", rewardValue: 3 },
+      { rank: 1, rewardType: "bonus_spin", rewardValue: 2 },
+      { rank: 2, rewardType: "bonus_spin", rewardValue: 5 },
+      { rank: 4, rewardType: "bonus_spin", rewardValue: 1 },
+    ]);
   });
 });
 

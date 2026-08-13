@@ -27,6 +27,14 @@ export type GrowthFieldsFromDraw = {
   viralExtraEntriesPerInvite: number
   viralMaxExtraEntries: number
   viralLeaderboardEnabled: boolean
+  /** 保底机制（docs/218 模式一）：连空 threshold 次后下次必中（仅 instant） */
+  enablePity: boolean
+  pityThreshold: number
+  /** 每日免费（docs/218 模式二）：每自然日首抽免费（仅 instant） */
+  enableDailyFreeSpins: boolean
+  dailyFreeSpinsCount: number
+  /** 排行榜奖励明细（docs/218 模式三）：多行 "名次:spins次数"，如 "1:3\n2:1" */
+  leaderboardRewardsText: string
   enableAfterWinCta: boolean
   afterWinCtaUrl: string
   afterWinCtaTitle: string
@@ -104,6 +112,45 @@ export function normalizePrizePanelMode(raw: unknown): string {
   return PRIZE_PANEL_MODES.has(m) ? m : 'auto'
 }
 
+/** 排行榜奖励项（与后端 LeaderboardRewardConfig 对齐） */
+export type LeaderboardRewardEntry = {
+  rank: number
+  rewardType: 'bonus_spin'
+  rewardValue: number
+}
+
+/**
+ * 解析排行榜奖励明细文本（多行 "名次:spins次数"，如 "1:3\n2:1"）。
+ * 非法行跳过；名次/次数必须为正整数，名次上限 100。
+ * 空输入 → []。
+ */
+export function parseLeaderboardRewardsText(raw: string | null | undefined): LeaderboardRewardEntry[] {
+  const out: LeaderboardRewardEntry[] = []
+  const seen = new Set<number>()
+  for (const line of String(raw || '').split(/[\n,;；]/)) {
+    const s = line.trim()
+    if (!s) continue
+    const m = s.match(/^(\d+)\s*[:：]\s*(\d+)$/)
+    if (!m) continue
+    const rank = Number(m[1])
+    const rewardValue = Number(m[2])
+    if (rank < 1 || rank > 100 || rewardValue < 1 || rewardValue > 1000) continue
+    if (seen.has(rank)) continue
+    seen.add(rank)
+    out.push({ rank, rewardType: 'bonus_spin', rewardValue })
+  }
+  return out.sort((a, b) => a.rank - b.rank)
+}
+
+/** 排行榜奖励明细 → 多行文本（与 parseLeaderboardRewardsText 互逆） */
+export function formatLeaderboardRewardsText(rewards: Array<{ rank: number; rewardValue: number }> | null | undefined): string {
+  if (!Array.isArray(rewards) || rewards.length === 0) return ''
+  return [...rewards]
+    .sort((a, b) => a.rank - b.rank)
+    .map((r) => `${r.rank}:${r.rewardValue}`)
+    .join('\n')
+}
+
 /** 解析活动上的 JSON 对象字段（字符串或对象）；空 / "{}" / 非法 → null */
 export function parseJsonObjectField(raw: unknown): Record<string, unknown> | null {
   if (raw == null || raw === '' || raw === '{}') return null
@@ -138,6 +185,16 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
   const viral =
     promotion?.viral && typeof promotion.viral === 'object' && !Array.isArray(promotion.viral)
       ? (promotion.viral as Record<string, unknown>)
+      : null
+  // docs/218 模式一：保底（promotion.pity）
+  const pity =
+    promotion?.pity && typeof promotion.pity === 'object' && !Array.isArray(promotion.pity)
+      ? (promotion.pity as Record<string, unknown>)
+      : null
+  // docs/218 模式二：每日免费（promotion.dailyFreeSpins）
+  const dailyFree =
+    promotion?.dailyFreeSpins && typeof promotion.dailyFreeSpins === 'object' && !Array.isArray(promotion.dailyFreeSpins)
+      ? (promotion.dailyFreeSpins as Record<string, unknown>)
       : null
   const ctas =
     promotion?.ctas && typeof promotion.ctas === 'object' && !Array.isArray(promotion.ctas)
@@ -245,6 +302,26 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
       return 10
     })(),
     viralLeaderboardEnabled: viral?.leaderboardEnabled !== false,
+    enablePity: pity?.enabled === true || pity?.enabled === 1 || pity?.enabled === 'true',
+    pityThreshold: (() => {
+      const n = Number(pity?.threshold)
+      return Number.isFinite(n) && Number.isInteger(n) && n >= 2 && n <= 100 ? n : 3
+    })(),
+    enableDailyFreeSpins: dailyFree?.enabled === true || dailyFree?.enabled === 1 || dailyFree?.enabled === 'true',
+    dailyFreeSpinsCount: (() => {
+      const n = Number(dailyFree?.count)
+      return Number.isFinite(n) && Number.isInteger(n) && n >= 1 && n <= 10 ? n : 1
+    })(),
+    leaderboardRewardsText: formatLeaderboardRewardsText(
+      Array.isArray(viral?.leaderboardRewards)
+        ? (viral!.leaderboardRewards as Array<Record<string, unknown>>).flatMap((item) => {
+            const rank = Number(item?.rank)
+            const rewardValue = Number(item?.rewardValue)
+            if (!Number.isInteger(rank) || rank < 1 || !Number.isInteger(rewardValue) || rewardValue < 1) return []
+            return [{ rank, rewardValue }]
+          })
+        : null,
+    ),
     enableAfterWinCta,
     afterWinCtaUrl: String(afterWin?.url || ''),
     afterWinCtaTitle: String(afterWin?.title || ''),
@@ -295,6 +372,14 @@ export function buildPromotionConfigPayload(form: {
   enableAfterLossCta?: boolean
   afterLossCtaUrl?: string
   afterLossCtaTitle?: string
+  /** docs/218 保底（仅 instant） */
+  enablePity?: boolean
+  pityThreshold?: number | null
+  /** docs/218 每日免费（仅 instant） */
+  enableDailyFreeSpins?: boolean
+  dailyFreeSpinsCount?: number | null
+  /** docs/218 排行榜奖励明细（多行 "名次:次数"） */
+  leaderboardRewardsText?: string | null
   /** instant 时双写 extraSpins*，与 runtime grant 对齐（docs/122） */
   resultMode?: string | null
   /** docs/128 游戏壳 */
@@ -321,7 +406,14 @@ export function buildPromotionConfigPayload(form: {
   const hasWinCta = Boolean(form.enableAfterWinCta && form.afterWinCtaUrl)
   const hasLossCta = Boolean(form.enableAfterLossCta && form.afterLossCtaUrl)
   const hasFlashSale = Boolean(form.enableFlashSale)
-  const hasGrowth = hasProduct || hasViral || hasWinCta || hasLossCta || hasFlashSale
+  // docs/218 模式一/二/三开关：仅 instant 生效；编辑态缺省回填，避免整包覆盖时擦掉已有配置
+  const isInstantMode = String(form.resultMode || '').trim() === 'instant'
+  const hasPity = isInstantMode && form.enablePity === true
+  const hasDailyFree = isInstantMode && form.enableDailyFreeSpins === true
+  const leaderboardRewards = parseLeaderboardRewardsText(form.leaderboardRewardsText)
+  const hasLeaderboardRewards = leaderboardRewards.length > 0
+  const hasGrowth =
+    hasProduct || hasViral || hasWinCta || hasLossCta || hasFlashSale || hasPity || hasDailyFree || hasLeaderboardRewards
 
   const prizePanelMode = normalizePrizePanelMode(form.prizePanelMode)
   const ritualPhrases = sanitizeRitualPhrasesForSave(
@@ -432,6 +524,28 @@ export function buildPromotionConfigPayload(form: {
   const maxExtra = form.viralMaxExtraEntries || 10
   const isInstant = String(form.resultMode || '').trim() === 'instant'
 
+  // docs/218 模式一/二：保底与每日免费仅 instant 生效
+  let pityBlock: Record<string, unknown> = {}
+  if (hasPity) {
+    const threshold = Math.floor(Number(form.pityThreshold) || 3)
+    pityBlock = {
+      pity: {
+        enabled: true,
+        threshold: Math.min(Math.max(threshold, 2), 100),
+      },
+    }
+  }
+  let dailyFreeBlock: Record<string, unknown> = {}
+  if (hasDailyFree) {
+    const count = Math.floor(Number(form.dailyFreeSpinsCount) || 1)
+    dailyFreeBlock = {
+      dailyFreeSpins: {
+        enabled: true,
+        count: Math.min(Math.max(count, 1), 10),
+      },
+    }
+  }
+
   return {
     version: 1,
     enabled: true,
@@ -462,9 +576,21 @@ export function buildPromotionConfigPayload(form: {
                 }
               : {}),
             leaderboardEnabled: form.viralLeaderboardEnabled ?? true,
+            // docs/218 模式三：排行榜奖励明细（rank:spins 数组，运行时归一化过滤）
+            ...(hasLeaderboardRewards
+              ? {
+                  leaderboardRewards: leaderboardRewards.map((r) => ({
+                    rank: r.rank,
+                    rewardType: 'bonus_spin',
+                    rewardValue: r.rewardValue,
+                  })),
+                }
+              : {}),
           },
         }
       : {}),
+    ...pityBlock,
+    ...dailyFreeBlock,
     ctas: {
       ...(hasWinCta
         ? { after_win: { url: form.afterWinCtaUrl, title: form.afterWinCtaTitle || '' } }

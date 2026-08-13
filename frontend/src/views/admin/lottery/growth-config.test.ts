@@ -5,6 +5,8 @@ import {
   normalizePrizePanelMode,
   parseJsonObjectField,
   sanitizeRitualPhrasesForSave,
+  parseLeaderboardRewardsText,
+  formatLeaderboardRewardsText,
 } from './growth-config'
 
 describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () => {
@@ -363,5 +365,126 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
       { isEditing: true },
     )
     expect(payload).not.toHaveProperty('flashSale')
+  })
+
+  describe('docs/218 保底 / 每日免费 / 排行榜奖励', () => {
+    it('parseLeaderboardRewardsText：正常解析、去重、非法行跳过、上下限', () => {
+      expect(parseLeaderboardRewardsText('1:3\n2:1\n3:1')).toEqual([
+        { rank: 1, rewardType: 'bonus_spin', rewardValue: 3 },
+        { rank: 2, rewardType: 'bonus_spin', rewardValue: 1 },
+        { rank: 3, rewardType: 'bonus_spin', rewardValue: 1 },
+      ])
+      // 乱序 → 按名次排序；重复名次保留首个
+      expect(parseLeaderboardRewardsText('3:1\n1:5\n3:9\n2:2')).toEqual([
+        { rank: 1, rewardType: 'bonus_spin', rewardValue: 5 },
+        { rank: 2, rewardType: 'bonus_spin', rewardValue: 2 },
+        { rank: 3, rewardType: 'bonus_spin', rewardValue: 1 },
+      ])
+      // 非法：0 名次 / 负数次数 / 非数字 / 超上限 → 全部跳过
+      expect(parseLeaderboardRewardsText('0:3\n1:-1\nabc\n101:1\n1:2000')).toEqual([])
+      expect(parseLeaderboardRewardsText(null)).toEqual([])
+      expect(parseLeaderboardRewardsText('')).toEqual([])
+    })
+
+    it('formatLeaderboardRewardsText：与 parse 互逆', () => {
+      const text = '2:1\n1:3'
+      expect(formatLeaderboardRewardsText(parseLeaderboardRewardsText(text))).toBe('1:3\n2:1')
+      expect(formatLeaderboardRewardsText(null)).toBe('')
+    })
+
+    it('growthFieldsFromDraw：回填保底 / 每日免费 / 排行榜奖励（编辑防擦）', () => {
+      const g = growthFieldsFromDraw({
+        promotionConfig: JSON.stringify({
+          version: 1,
+          pity: { enabled: true, threshold: 5 },
+          dailyFreeSpins: { enabled: true, count: 2 },
+          viral: {
+            enabled: true,
+            leaderboardEnabled: true,
+            leaderboardRewards: [
+              { rank: 1, rewardType: 'bonus_spin', rewardValue: 3 },
+              { rank: 2, rewardType: 'bonus_spin', rewardValue: 1 },
+            ],
+          },
+        }),
+      })
+      expect(g.enablePity).toBe(true)
+      expect(g.pityThreshold).toBe(5)
+      expect(g.enableDailyFreeSpins).toBe(true)
+      expect(g.dailyFreeSpinsCount).toBe(2)
+      expect(g.leaderboardRewardsText).toBe('1:3\n2:1')
+      expect(g.hasGrowthConfig).toBe(true)
+    })
+
+    it('编辑回填后再提交：保底 / 每日免费 / 排行榜奖励 round-trip 不丢（只改标题场景）', () => {
+      const source = {
+        promotionConfig: JSON.stringify({
+          version: 1,
+          pity: { enabled: true, threshold: 5 },
+          dailyFreeSpins: { enabled: true, count: 2 },
+          viral: {
+            enabled: true,
+            extraEntriesPerInvite: 1,
+            maxExtraEntries: 10,
+            leaderboardEnabled: true,
+            leaderboardRewards: [
+              { rank: 1, rewardType: 'bonus_spin', rewardValue: 3 },
+            ],
+          },
+        }),
+      }
+      const form = growthFieldsFromDraw(source)
+      const payload = buildPromotionConfigPayload(
+        {
+          resultMode: 'instant',
+          enableViral: form.enableViral,
+          viralExtraEntriesPerInvite: form.viralExtraEntriesPerInvite,
+          viralMaxExtraEntries: form.viralMaxExtraEntries,
+          viralLeaderboardEnabled: form.viralLeaderboardEnabled,
+          enablePity: form.enablePity,
+          pityThreshold: form.pityThreshold,
+          enableDailyFreeSpins: form.enableDailyFreeSpins,
+          dailyFreeSpinsCount: form.dailyFreeSpinsCount,
+          leaderboardRewardsText: form.leaderboardRewardsText,
+        },
+        { isEditing: true },
+      )
+      expect((payload as any).pity).toEqual({ enabled: true, threshold: 5 })
+      expect((payload as any).dailyFreeSpins).toEqual({ enabled: true, count: 2 })
+      expect((payload as any).viral.leaderboardRewards).toEqual([
+        { rank: 1, rewardType: 'bonus_spin', rewardValue: 3 },
+      ])
+    })
+
+    it('非 instant 模式：保底/每日免费配置不写入包（后端该校验阻断）', () => {
+      const payload = buildPromotionConfigPayload(
+        {
+          resultMode: 'manual',
+          enableViral: true,
+          viralExtraEntriesPerInvite: 1,
+          viralMaxExtraEntries: 5,
+          enablePity: true,
+          pityThreshold: 3,
+          enableDailyFreeSpins: true,
+          dailyFreeSpinsCount: 1,
+        },
+        { isEditing: false },
+      )
+      expect(payload).not.toHaveProperty('pity')
+      expect(payload).not.toHaveProperty('dailyFreeSpins')
+    })
+
+    it('仅配置保底（未开裂变）也能独立提交', () => {
+      const payload = buildPromotionConfigPayload(
+        {
+          resultMode: 'instant',
+          enablePity: true,
+          pityThreshold: 4,
+        },
+        { isEditing: false },
+      )
+      expect(payload).toMatchObject({ enabled: true, pity: { enabled: true, threshold: 4 } })
+      expect(payload).not.toHaveProperty('viral')
+    })
   })
 })

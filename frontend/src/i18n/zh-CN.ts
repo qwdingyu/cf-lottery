@@ -1237,6 +1237,18 @@ export default {
     adminTierProbabilityUnavailable: "请至少配置一个大于 0 的权重，否则即时抽奖无法形成有效随机分配。",
     adminViralLeaderboard: "展示邀请排行榜",
     adminViralLeaderboardHint: "参与者可见谁邀请了最多人",
+    /** docs/218 保底 / 每日免费 / 排行榜奖励（仅 instant） */
+    adminPity: "保底机制（连空必中）",
+    adminPityHint: "连续未中达到阈值后，下一次必中最低价值档（仅即时开奖）",
+    adminPityThreshold: "连空阈值",
+    adminPityThresholdSuffix: "连续未中 N 次后必中（2-100）",
+    adminDailyFree: "每日免费抽奖",
+    adminDailyFreeHint: "每自然日第一次抽奖免费，不消耗次数（仅即时开奖）",
+    adminDailyFreeCount: "每日免费次数",
+    adminDailyFreeCountSuffix: "每日免费发放次数（1-10）",
+    adminLeaderboardRewards: "排行榜奖励（每行 名次:次数）",
+    adminLeaderboardRewardsPlaceholder: "1:3\n2:1\n3:1",
+    adminLeaderboardRewardsHint: "按邀请人数排名，活动结束后按名次发放 spins（仅即时开奖需手动发放）",
     /** claim 秒杀：社交传播只展示排行榜，不影响购买优先级 */
     adminSocialSection: "社交传播",
     adminSocialSectionDesc: "开启后可展示邀请排行榜（仅展示榜单，不改变购买优先级和开奖结果）",

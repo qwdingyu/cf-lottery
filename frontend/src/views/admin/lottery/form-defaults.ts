@@ -39,6 +39,14 @@ export function emptyLotteryEditorForm(t: ActivityConfigTranslate): LotteryEdito
     viralExtraEntriesPerInvite: 1,
     viralMaxExtraEntries: 10,
     viralLeaderboardEnabled: true,
+    // docs/218 保底（仅 instant）：默认关
+    enablePity: false,
+    pityThreshold: 3,
+    // docs/218 每日免费（仅 instant）：默认关
+    enableDailyFreeSpins: false,
+    dailyFreeSpinsCount: 1,
+    // docs/218 排行榜奖励明细（多行 "名次:spins次数"）
+    leaderboardRewardsText: '',
     // 多状态 CTA
     enableAfterWinCta: false,
     afterWinCtaUrl: '',

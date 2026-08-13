@@ -182,6 +182,14 @@ export type LotteryEditorForm = {
   viralExtraEntriesPerInvite: number
   viralMaxExtraEntries: number
   viralLeaderboardEnabled: boolean
+  /** docs/218 保底（仅 instant）：连空 threshold 次后下次必中 */
+  enablePity: boolean
+  pityThreshold: number
+  /** docs/218 每日免费（仅 instant）：每自然日首抽免费 */
+  enableDailyFreeSpins: boolean
+  dailyFreeSpinsCount: number
+  /** docs/218 排行榜奖励明细（多行 "名次:spins次数"，如 "1:3\n2:1"） */
+  leaderboardRewardsText: string
   enableAfterWinCta: boolean
   afterWinCtaUrl: string
   afterWinCtaTitle: string

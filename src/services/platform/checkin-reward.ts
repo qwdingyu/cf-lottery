@@ -301,12 +301,3 @@ function isYesterday(prev: string, today: string): boolean {
   const diffDays = Math.round((t.getTime() - p.getTime()) / 86400_000);
   return diffDays === 1;
 }
-
-/** 计算「今天」的 YYYY-MM-DD（本地时区） */
-export function todayStr(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}

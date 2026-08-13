@@ -1264,6 +1264,18 @@ export default {
     adminTierProbabilityUnavailable: "Set at least one weight above 0 so instant spins have a valid random allocation.",
     adminViralLeaderboard: "Show invite leaderboard",
     adminViralLeaderboardHint: "Participants can see who invited the most people",
+    /** docs/218 pity / daily free / leaderboard rewards (instant only) */
+    adminPity: "Pity mechanism (guaranteed win)",
+    adminPityHint: "After N consecutive losses, the next spin guarantees the lowest-value tier (instant mode only)",
+    adminPityThreshold: "Consecutive loss threshold",
+    adminPityThresholdSuffix: "Guaranteed win after N consecutive losses (2-100)",
+    adminDailyFree: "Daily free spin",
+    adminDailyFreeHint: "The first spin of each calendar day is free (instant mode only)",
+    adminDailyFreeCount: "Free spins per day",
+    adminDailyFreeCountSuffix: "Free spins granted daily (1-10)",
+    adminLeaderboardRewards: "Leaderboard rewards (one per line: rank:spins)",
+    adminLeaderboardRewardsPlaceholder: "1:3\n2:1\n3:1",
+    adminLeaderboardRewardsHint: "Ranked by invitations, granted at activity end (instant mode requires manual grant)",
     /** claim: social sharing shows leaderboard only, no impact on purchase priority */
     adminSocialSection: "Social Sharing",
     adminSocialSectionDesc: "Enable to show invite leaderboard (leaderboard only, does not change purchase priority or draw results)",

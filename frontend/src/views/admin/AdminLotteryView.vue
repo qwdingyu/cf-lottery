@@ -973,6 +973,36 @@
                     </label>
                   </template>
                 </div>
+                <!-- docs/218 增长玩法：保底 / 每日免费 / 排行榜奖励（仅即时开奖） -->
+                <template v-if="form.resultMode === 'instant' && form.activityKind === 'lottery'">
+                  <div class="form-grid two-cols">
+                    <label class="field-span-2">
+                      <input v-model="form.enablePity" type="checkbox" class="checkbox-inline" />
+                      <span>{{ $t('lottery.adminPity') }}</span>
+                      <small>{{ $t('lottery.adminPityHint') }}</small>
+                    </label>
+                    <label v-if="form.enablePity">
+                      <span>{{ $t('lottery.adminPityThreshold') }}</span>
+                      <input v-model.number="form.pityThreshold" type="number" min="2" max="100" />
+                      <small>{{ $t('lottery.adminPityThresholdSuffix') }}</small>
+                    </label>
+                    <label class="field-span-2">
+                      <input v-model="form.enableDailyFreeSpins" type="checkbox" class="checkbox-inline" />
+                      <span>{{ $t('lottery.adminDailyFree') }}</span>
+                      <small>{{ $t('lottery.adminDailyFreeHint') }}</small>
+                    </label>
+                    <label v-if="form.enableDailyFreeSpins">
+                      <span>{{ $t('lottery.adminDailyFreeCount') }}</span>
+                      <input v-model.number="form.dailyFreeSpinsCount" type="number" min="1" max="10" />
+                      <small>{{ $t('lottery.adminDailyFreeCountSuffix') }}</small>
+                    </label>
+                    <label class="field-span-2">
+                      <span>{{ $t('lottery.adminLeaderboardRewards') }}</span>
+                      <textarea v-model="form.leaderboardRewardsText" rows="3" :placeholder="$t('lottery.adminLeaderboardRewardsPlaceholder')"></textarea>
+                      <small>{{ $t('lottery.adminLeaderboardRewardsHint') }}</small>
+                    </label>
+                  </div>
+                </template>
               </section>
 
               <!-- 多状态 CTA 承接：中奖/未中奖不同导流 -->
@@ -3058,6 +3088,12 @@ async function handleDuplicate(draw: LotteryDraw) {
     viralExtraEntriesPerInvite: growth.viralExtraEntriesPerInvite,
     viralMaxExtraEntries: growth.viralMaxExtraEntries,
     viralLeaderboardEnabled: growth.viralLeaderboardEnabled,
+    // docs/218 保底/每日免费/排行榜奖励：编辑回填防整包覆盖擦掉配置
+    enablePity: growth.enablePity,
+    pityThreshold: growth.pityThreshold,
+    enableDailyFreeSpins: growth.enableDailyFreeSpins,
+    dailyFreeSpinsCount: growth.dailyFreeSpinsCount,
+    leaderboardRewardsText: growth.leaderboardRewardsText,
     enableAfterWinCta: growth.enableAfterWinCta,
     afterWinCtaUrl: growth.afterWinCtaUrl,
     afterWinCtaTitle: growth.afterWinCtaTitle,
@@ -3782,6 +3818,12 @@ async function handleEdit(draw: LotteryDraw) {
     viralExtraEntriesPerInvite: growth.viralExtraEntriesPerInvite,
     viralMaxExtraEntries: growth.viralMaxExtraEntries,
     viralLeaderboardEnabled: growth.viralLeaderboardEnabled,
+    // docs/218 保底/每日免费/排行榜奖励：编辑回填防整包覆盖擦掉配置
+    enablePity: growth.enablePity,
+    pityThreshold: growth.pityThreshold,
+    enableDailyFreeSpins: growth.enableDailyFreeSpins,
+    dailyFreeSpinsCount: growth.dailyFreeSpinsCount,
+    leaderboardRewardsText: growth.leaderboardRewardsText,
     enableAfterWinCta: growth.enableAfterWinCta,
     afterWinCtaUrl: growth.afterWinCtaUrl,
     afterWinCtaTitle: growth.afterWinCtaTitle,
