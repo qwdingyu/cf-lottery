@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildFlashSaleDirectChecklist, isSafeHttpUrl } from './flash-sale-readiness'
+import { isFlashSaleApplicable } from './ops-utils'
 
 function doneMap(input: Parameters<typeof buildFlashSaleDirectChecklist>[0]) {
   return Object.fromEntries(buildFlashSaleDirectChecklist(input).map((item) => [item.key, item.done]))
@@ -159,5 +160,28 @@ describe('flash-sale-readiness', () => {
     expect(doneMap({ ...base, productLink: { url: 'http://localhost:3000/p/1' } }).product).toBe(false)
     // 全缺 → 不通过
     expect(doneMap(base).product).toBe(false)
+  })
+})
+
+// 交叉组合死角修复（2026-08 体验优化）：秒杀壳配置仅在 lottery/claim + flash_sale 组合适用，
+// 切换类型/参与模式后残留的 flashSale 配置会被联动清理（isFlashSaleApplicable 判定）。
+describe('isFlashSaleApplicable 交叉组合判定', () => {
+  it('合法组合：lottery/claim + flash_sale 体验', () => {
+    expect(isFlashSaleApplicable('lottery', 'flash_sale')).toBe(true)
+    expect(isFlashSaleApplicable('claim', 'flash_sale')).toBe(true)
+  })
+  it('非法组合：survey/vote/signup_chain 等 + flash_sale 体验 → 不适用（联动清理）', () => {
+    expect(isFlashSaleApplicable('survey', 'flash_sale')).toBe(false)
+    expect(isFlashSaleApplicable('vote', 'flash_sale')).toBe(false)
+    expect(isFlashSaleApplicable('signup_chain', 'flash_sale')).toBe(false)
+    expect(isFlashSaleApplicable('approval', 'flash_sale')).toBe(false)
+    expect(isFlashSaleApplicable('checkin', 'flash_sale')).toBe(false)
+    expect(isFlashSaleApplicable('reservation', 'flash_sale')).toBe(false)
+    expect(isFlashSaleApplicable('waitlist', 'flash_sale')).toBe(false)
+  })
+  it('非 flash_sale 体验一律不适用（无论类型）', () => {
+    expect(isFlashSaleApplicable('claim', 'reveal')).toBe(false)
+    expect(isFlashSaleApplicable('lottery', 'wheel')).toBe(false)
+    expect(isFlashSaleApplicable('lottery', '')).toBe(false)
   })
 })

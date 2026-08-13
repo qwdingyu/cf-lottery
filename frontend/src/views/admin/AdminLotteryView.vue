@@ -463,10 +463,6 @@
           055a：创建路径 3～4 步指示（不新路由、不 Wizard 框架）。
           步骤完成态 + 正确滚动锚点；不改提交语义。
         -->
-          <!--
-            055a：创建路径 3～4 步指示（不新路由、不 Wizard 框架）。
-            步骤完成态 + 正确滚动锚点；不改提交语义。
-          -->
           <nav class="create-path-steps" :aria-label="$t('lottery.adminCreatePathAria')">
             <button
               type="button"
@@ -702,6 +698,20 @@
                 </span>
               </button>
               <p class="form-section-desc">{{ $t('lottery.adminAdvancedGrowthDesc') }}</p>
+              <!-- 折叠态摘要（2026-08 体验优化）：运营不展开也能一眼看到该活动已启用了哪些增长/导流/秒杀配置，
+                   避免「折叠后无法感知配置状态」——编辑已有活动/复盘时尤其重要。 -->
+              <div
+                v-if="!showAdvancedGrowth && advancedConfigSummary.length"
+                class="form-advanced-summary"
+                role="note"
+                aria-label="已启用配置"
+              >
+                <span
+                  v-for="chip in advancedConfigSummary"
+                  :key="chip"
+                  class="form-advanced-chip"
+                >{{ chip }}</span>
+              </div>
             </header>
             <div v-show="showAdvancedGrowth" id="lottery-advanced-body" class="form-advanced-body">
               <!-- 体验类型：模板已带默认值；完整列表仅在此修改（055a 断点 C）；docs/145 按模板收口 -->
@@ -1928,6 +1938,7 @@ import {
   isLotteryUserVisible,
   isWinnerEmailFailed,
   isWinnerEmailSent,
+  isFlashSaleApplicable,
   winnersPollSettleKind,
   formatLotteryEntryProgress,
   formatLotteryVisibilityLabel,
@@ -2070,6 +2081,32 @@ const { loading, loadError, runLoad } = useAdminListLoader()
 const showCreateModal = ref(false)
 /** 055a：创建表单「高级配置（导流/裂变/CTA）」默认收起，减少主路径压迫 */
 const showAdvancedGrowth = ref(false)
+
+/**
+ * 高级区折叠摘要（2026-08 体验优化）：列出已启用的配置块标签。
+ * 基于表单当前状态实时计算（与保存 payload 同源字段），折叠时展示在高级区标题下，
+ * 让运营不展开也能感知「这个活动配了什么」（裂变/保底/每日免费/里程碑/排行榜/秒杀/CTA/发券）。
+ */
+const advancedConfigSummary = computed((): string[] => {
+  const chips: string[] = []
+  const growth = form.value as unknown as Record<string, unknown>
+  if (growth.enableViral === true) chips.push(t('lottery.adminChipViral'))
+  if (growth.enablePity === true && Number(growth.pityThreshold || 0) >= 2) chips.push(t('lottery.adminChipPity'))
+  if (growth.enableDailyFreeSpins === true && Number(growth.dailyFreeSpinsCount || 0) >= 1) chips.push(t('lottery.adminChipDailyFree'))
+  if (String(growth.referralRewardsText || '').trim()) chips.push(t('lottery.adminChipReferral'))
+  if (String(growth.leaderboardRewardsText || '').trim()) chips.push(t('lottery.adminChipLeaderboard'))
+  if (growth.enableFlashSale === true) {
+    chips.push(growth.flashSalePaymentRequired === true
+      ? t('lottery.adminChipFlashSalePaid')
+      : t('lottery.adminChipFlashSale'))
+  }
+  if (growth.enableProductLink === true) chips.push(t('lottery.adminChipProductLink'))
+  if (growth.enableAfterWinCta === true) chips.push(t('lottery.adminChipAfterWin'))
+  if (growth.enableAfterLossCta === true) chips.push(t('lottery.adminChipAfterLoss'))
+  const loser = (form.value.activityConfig as { loserReward?: { enabled?: boolean } } | null)?.loserReward
+  if (loser?.enabled === true) chips.push(t('lottery.adminChipLoserReward'))
+  return chips
+})
 /** docs/079：列表行「更多」浮层 — 同时只开一行；菜单 Teleport 到 body，不撑行高 */
 const expandedActionId = ref<string | null>(null)
 const moreMenuPos = ref({ top: 0, left: 0, width: 200 })
@@ -2732,9 +2769,9 @@ function statusLabel(status: string): string {
 }
 
 function handleExperienceChange() {
-  // 源头扼杀：切换体验类型时，若不再是 flash_sale（直付秒杀壳），自动关闭秒杀配置，
+  // 源头扼杀：切换体验类型时，若新组合（kind × experienceType）不再适用秒杀壳，自动关闭秒杀配置，
   // 避免「experienceType=reveal 但 flashSale 配置残留」导致奖档区隐藏、发布检查仍要求卡密奖品而卡死。
-  if (String(form.value.experienceType || '') !== 'flash_sale' && form.value.enableFlashSale) {
+  if (!isFlashSaleApplicable(form.value.activityKind || 'lottery', form.value.experienceType || '') && form.value.enableFlashSale) {
     form.value.enableFlashSale = false
     form.value.flashSalePaymentRequired = false
   }
@@ -2748,6 +2785,13 @@ function handleActivityKindChange() {
   if (!(kind === 'claim' && currentExp === 'flash_sale')) {
     form.value.experienceType = defaultExperienceForActivity(kind, form.value.participationMode || 'open')
   }
+  // 交叉组合死角修复（2026-08 体验优化）：切换活动类型后，若新组合不适用秒杀壳
+  // （如 lottery 开秒杀壳后切到 survey），清理 enableFlashSale/paymentRequired，
+  // 避免「survey 活动残留 flashSale.enabled=true」导致发布预检要求卡密奖品而卡死。
+  if (!isFlashSaleApplicable(kind, form.value.experienceType || '')) {
+    form.value.enableFlashSale = false
+    form.value.flashSalePaymentRequired = false
+  }
   form.value.resultMode = defaultResultModeForActivity(kind)
   form.value.allocationPolicy = kind === 'signup_chain' ? 'waitlist' : kind === 'approval' ? 'approval' : 'capacity'
   form.value.winnerCount = kind === 'lottery' ? Math.max(1, Number(form.value.winnerCount) || 1) : 0
@@ -2756,6 +2800,12 @@ function handleActivityKindChange() {
 
 function handleParticipationModeChange() {
   form.value.experienceType = defaultExperienceForActivity(form.value.activityKind || 'lottery', form.value.participationMode || 'open')
+  // 交叉组合死角修复：参与模式切换可能把体验从 flash_sale 重置为默认（如 password→scratch），
+  // 同步清理不适用的秒杀配置（与 handleActivityKindChange 同策略）。
+  if (!isFlashSaleApplicable(form.value.activityKind || 'lottery', form.value.experienceType || '')) {
+    form.value.enableFlashSale = false
+    form.value.flashSalePaymentRequired = false
+  }
 }
 
 function addSurveyField() {

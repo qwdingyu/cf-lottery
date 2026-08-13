@@ -535,3 +535,21 @@ export function needsTiersMandatory(
   if (kind === 'claim' && experienceType === 'flash_sale' && enableFlashSale && paymentRequired) return true
   return false
 }
+
+/**
+ * 秒杀壳配置是否适用于当前（活动类型 × 体验类型）组合（2026-08 体验优化）。
+ *
+ * 为什么需要：切换活动类型/参与模式时，experienceType 会被重置为默认，但 enableFlashSale /
+ * flashSalePaymentRequired 可能残留 true（如 lottery 开了秒杀壳后切到 survey）。
+ * 残留会导致：
+ * - 高级区仍显示秒杀配置，但活动语义不匹配；
+ * - 提交 payload 带 flashSale.enabled=true → 后端发布预检（validateFlashSalePayment）要求
+ *   绑定卡密奖品 + 配置支付渠道，而 survey/vote 等无法配置 → 发布卡死且运营困惑（交叉组合死角）。
+ *
+ * 秒杀壳合法组合：lottery + flash_sale（展示/导流壳，docs/130）、claim + flash_sale（直付发卡或导流）。
+ * 其他组合一律视为不适用 → 联动清理秒杀开关。
+ */
+export function isFlashSaleApplicable(kind: string, experienceType: string): boolean {
+  if (String(experienceType || '').trim() !== 'flash_sale') return false
+  return kind === 'lottery' || kind === 'claim'
+}
