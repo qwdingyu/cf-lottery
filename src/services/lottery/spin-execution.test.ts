@@ -1388,6 +1388,49 @@ it("每日免费未配置时保持原扣次行为，last_daily_free 保持 NULL"
     expect(entry.lastDailyFreeSpinAt).toBeNull();
   });
 
+  it("保底触发但 award 失败（奖档无库存）：未中，连空计数器继续累加", async () => {
+    // 场景：保底阈值=3，前三轮累计 3 次未中 → 第 4 轮保底触发，强制选最低档 B
+    // 但档 B 库存为 0（无可用卡密），award CAS 失败 → won=0
+    // 计数器应从 3 累加至 4，而非归零
+    const { slug } = await seedPityDraw({ threshold: 3 });
+    // 手动将档 B 的库存清零：把 prize_codes 全部设为 claimed
+    const [prizeB] = await db
+      .select({ id: prizes.id })
+      .from(prizes)
+      .where(and(eq(prizes.name, "保底小奖"), eq(prizes.tenantId, TENANT)))
+      .limit(1);
+    if (prizeB) {
+      await db
+        .update(prizeCodes)
+        .set({ status: "claimed" })
+        .where(and(eq(prizeCodes.prizeId, prizeB.id), eq(prizeCodes.tenantId, TENANT)));
+    }
+
+    const join = await joinDraw(db, slug, "pityfail@test.com");
+    expect(join.joined).toBe(true);
+    await grantSpins(client, join.entryId!, 5);
+    stubCsprng(0); // 正常抽抽 eligible[0]（档 A，库存 0 → 未中）
+
+    // 前三轮：累计未中, counter→1,2,3
+    for (let i = 1; i <= 3; i++) {
+      const r = await performInstantSpin(db, {
+        slug, identityType: "email", identityValue: "pityfail@test.com", idempotencyKey: `pf-${i}`,
+      });
+      expect(r.won).toBe(false);
+    }
+
+    // 第 4 轮：保底触发（counter=3 >= threshold=3），强制选档 B（最低价值）
+    // 但档 B 无可用库存 → award 失败 → won=0
+    const r4 = await performInstantSpin(db, {
+      slug, identityType: "email", identityValue: "pityfail@test.com", idempotencyKey: "pf-4",
+    });
+    expect(r4.won).toBe(false);
+
+    // 计数器应为 4（累加而非归零）
+    const entry = await readEntry(join.entryId!);
+    expect(Number(entry.consecutiveNoWinSpins)).toBe(4);
+  });
+
   it("保底 + 每日免费组合：免费领取不影响保底计数", async () => {
     const { slug } = await seedPityDraw({ threshold: 3, dailyCount: 1, maxSpins: 5 });
     const join = await joinDraw(db, slug, "combo@test.com");

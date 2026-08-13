@@ -216,8 +216,8 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         }
       }
 
-      // ── CAS 扣次（每日免费领取成功时跳过 ──
-      let spinsLeftAfterDeduct = Number(entry.spinsLeft ?? 0);
+      // ── CAS 扣次（每日免费领取成功时跳过） ──
+      let spinsLeftAfterDeduct: number;
       if (!dailyFreeClaimed) {
         const deduct = await tx
           .update(lotteryEntries)
@@ -247,9 +247,22 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
             spinsLeft: Math.max(0, Number(fresh?.spinsLeft ?? 0)),
           };
         }
-        spinsLeftAfterDeduct = Math.max(0, spinsLeftAfterDeduct - 1);
+        // 扣次成功后，事务内重新读取真实余额，用于审计日志 balanceAfter。
+        // 不依赖事务外预读的 entry.spinsLeft（并发下可能偏高），与 leaderboard-rewards.ts:162-166 一致。
+        const [fresh] = await tx
+          .select({ spinsLeft: lotteryEntries.spinsLeft })
+          .from(lotteryEntries)
+          .where(eq(lotteryEntries.id, entry.id))
+          .limit(1);
+        spinsLeftAfterDeduct = Math.max(0, Number(fresh?.spinsLeft ?? 0));
       } else {
-        spinsLeftAfterDeduct = Math.max(0, spinsLeftAfterDeduct + dailyFreeConfig.count);
+        // 每日免费领取成功后，事务内重新读取真实余额，用于审计日志 balanceAfter
+        const [fresh] = await tx
+          .select({ spinsLeft: lotteryEntries.spinsLeft })
+          .from(lotteryEntries)
+          .where(eq(lotteryEntries.id, entry.id))
+          .limit(1);
+        spinsLeftAfterDeduct = Math.max(0, Number(fresh?.spinsLeft ?? 0));
       }
 
       const tiers = await tx

@@ -624,6 +624,14 @@ async function validatePromotion(
     );
   }
 
+  // 保底机制校验：仅支持即时开奖模式（result_mode=instant）。
+  // 如果管理员在 delayed/manual 模式中配置了 pity.enabled=true，运行时
+  // performInstantSpin 不会被调用，保底逻辑完全不执行，导致配置不生效的困惑。
+  const pity = promotionConfig?.pity as Record<string, unknown> | undefined;
+  if (pity?.enabled === true && !isInstantResultMode(draw.resultMode)) {
+    add(result.errors, "promotion", "promotion.pity.delayed_not_supported", "保底机制仅支持即时开奖模式（result_mode=instant），当前模式不会触发保底逻辑");
+  }
+
   // 裂变配置校验
   if (viral?.enabled) {
     const perInvite = Number(viral.extraEntriesPerInvite ?? 0);
