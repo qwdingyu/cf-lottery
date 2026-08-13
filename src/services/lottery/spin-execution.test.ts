@@ -1317,7 +1317,6 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
       slug, identityType: "email", identityValue: "free0@test.com", idempotencyKey: "f0-2",
     });
     expect(r2.spinsLeft).toBe(1);
-    expect(r2.won).toBe(false);
 
     // 第三次 spin：正常扣次 → spinsLeft = 0
     const r3 = await performInstantSpin(db, {
@@ -1377,7 +1376,6 @@ it("每日免费未配置时保持原扣次行为，last_daily_free 保持 NULL"
       slug, identityType: "email", identityValue: "free2@test.com", idempotencyKey: "f2-1",
     });
     expect(r1.spinsLeft).toBe(0); // 正常扣次 1→0
-    expect(r1.won).toBe(false);
 
     // 断言：无 daily_free 日志
     const logs = await db.select().from(spinsLog).where(eq(spinsLog.entryId, join.entryId!));

@@ -37,6 +37,7 @@ import {
   sendWinnerNotifications,
   healDrawingState,
   DRAW_STATUS,
+  grantLeaderboardRewards,
 } from "../services/lottery-service";
 import { buildPublishCheck } from "../services/publish-check-service";
 import { parseActivityConfig } from "../lib/activity-config";
@@ -928,5 +929,22 @@ route.get("/draws/:id/signup-list", async (c) => {
   await decorateIdentityDisplay(db, entries);
 
   return ok(c, { entries, total: entries.length });
+});
+
+/** 发放排行榜奖励（docs/218 模式三）—— 仅对 result_mode=instant 的活动手动调用 */
+route.post("/draws/:id/leaderboard-rewards", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  const [draw] = await db
+    .select()
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  const result = await grantLeaderboardRewards(db, draw);
+  return ok(c, result);
 });
 }

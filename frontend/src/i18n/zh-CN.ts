@@ -789,6 +789,7 @@ export default {
     clickToCopy: "点击复制",
     /** 中奖后分享：邀请门禁另控；文案中性，不绑「好运/抽奖」（docs/107） */
     shareYourLuck: "把活动分享给好友，邀请更多人一起参与",
+    shareAfterMiss: "还差一点！邀请好友获得额外抽奖机会",
     shareActivityBtn: "分享活动",
     gotConsolation: "获得安慰奖！",
     couponLabel: "优惠券：",

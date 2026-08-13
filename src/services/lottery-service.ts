@@ -48,6 +48,7 @@ export * from "./lottery/spin-execution";
 export * from "./lottery/spin-quota";
 export * from "./lottery/penalty";
 export * from "./lottery/reward";
+export * from "./lottery/leaderboard-rewards";
 
 /* ── 奖品管理 ────────────────────────────────────────────── */
 

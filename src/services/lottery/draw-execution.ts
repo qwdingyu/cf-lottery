@@ -417,6 +417,18 @@ export async function performDraw(
       console.error(`[lottery] grantLoserRewards failed for ${drawId}:`, err);
     }
 
+    // 排行榜奖励（docs/218 模式三）：delayed/scheduled/manual 开奖在收尾后自动发放。
+    // 与 grantLoserRewards 同语义：不阻塞主流程，失败不影响开奖结果。
+    // instant 模式由管理员显式调用 POST /draws/:id/leaderboard-rewards。
+    try {
+      const leaderboardResult = await grantLeaderboardRewards(db, draw);
+      if (leaderboardResult.granted > 0) {
+        console.log(`[lottery] leaderboard rewards granted: ${leaderboardResult.granted} for draw ${drawId}`);
+      }
+    } catch (err) {
+      console.error(`[lottery] grantLeaderboardRewards failed for ${drawId}:`, err);
+    }
+
     return { drawId, winnerCount: entryIndex, candidateCount };
   } catch (error) {
     // 开奖失败：恢复为 open 状态并记录失败原因

@@ -827,6 +827,7 @@ export default {
     clickToCopy: "Click to copy",
     /** After win share: CTA gated separately; neutral invite wording (docs/107) */
     shareYourLuck: "Share this activity and invite more friends to join",
+    shareAfterMiss: "Almost there! Invite friends to get extra spin chances",
     shareActivityBtn: "Share",
     gotConsolation: "Consolation prize!",
     couponLabel: "Coupon:",

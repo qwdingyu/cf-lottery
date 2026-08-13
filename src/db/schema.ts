@@ -756,6 +756,11 @@ export const shareRecords = sqliteTable("share_records", {
    * 每个 shareRecordId + requireCount 组合只发放一次奖励。
    */
   rewardMilestonesGranted: text("reward_milestones_granted").notNull().default("[]"),
+  /**
+   * 排行榜奖励发放时间（docs/218 模式三）。空串 = 未发放。
+   * 同活动、同 shareRecord CAS 幂等，防止并发重复发放。
+   */
+  leaderboardRewardedAt: text("leaderboard_rewarded_at").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   shareDrawIdx: index("idx_share_draw").on(t.tenantId, t.drawId, t.createdAt),

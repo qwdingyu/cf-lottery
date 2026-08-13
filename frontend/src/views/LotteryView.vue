@@ -1032,6 +1032,11 @@
           <!-- 仅抽奖族 + 已开奖 + 未中奖 -->
           <template v-else>
             <div class="result-line">😊 {{ $t('lottery.thanksForParticipating') }}</div>
+            <!-- 模式四（docs/218）：未中奖后分享引导，活动未终态时推邀请（与中奖分支同门禁） -->
+            <div v-if="showMyResultInviteShare" class="result-share-win">
+              <p class="result-share-hint">⭐ {{ $t('lottery.shareAfterMiss') }}</p>
+              <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 {{ $t('lottery.shareActivityBtn') }}</button>
+            </div>
           </template>
 
           <div
