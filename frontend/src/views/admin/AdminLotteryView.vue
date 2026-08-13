@@ -251,13 +251,13 @@
             </td>
             <td>
               <div class="time-stack">
-                <span>{{ formatDate(draw.startTime) }}</span>
-                <small>{{ $t('lottery.adminWindowTo') }} {{ formatDate(draw.endTime) }}</small>
+                <span>{{ formatDate(draw.startAt) }}</span>
+                <small>{{ $t('lottery.adminWindowTo') }} {{ formatDate(draw.endAt) }}</small>
               </div>
             </td>
             <td>
               <div class="time-stack">
-                <span>{{ formatDate(draw.drawTime) }}</span>
+                <span>{{ formatDate(draw.drawAt) }}</span>
               </div>
             </td>
             <td class="col-actions">
@@ -3973,14 +3973,14 @@ async function handleRetryEmail(id: string) {
  * 排行榜奖励可发放判定：instant 活动须「已结束」才允许手动发放。
  * 活动进行中发放会锁定当前排名快照，之后的邀请不再计入（与后端端点 endAt 校验同语义）。
  * - drawn/closed：已开奖/已关闭 → 已结束
- * - 无 endTime：视为可发放（与后端 endAt 为空时放行一致）
- * - 否则 endTime 已过 → 已结束
+ * - 无 endAt：视为可发放（与后端 endAt 为空时放行一致）
+ * - 否则 endAt 已过 → 已结束
  */
-function isDrawEndedForLeaderboard(draw: { status?: string; endTime?: string | null }): boolean {
+function isDrawEndedForLeaderboard(draw: { status?: string; endAt?: string | null }): boolean {
   const status = String(draw.status || '')
   if (status === 'drawn' || status === 'closed') return true
-  if (!draw.endTime) return true
-  return Date.now() >= new Date(draw.endTime).getTime()
+  if (!draw.endAt) return true
+  return Date.now() >= new Date(draw.endAt).getTime()
 }
 
 /**
