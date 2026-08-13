@@ -334,3 +334,49 @@ export function defaultExperienceForActivity(activityKind: string, participation
 export function tryParseJson(s: string): any {
   try { return JSON.parse(s); } catch { return undefined; }
 }
+
+/**
+ * JSON 列顶层键级 merge（P1 修复，2026-08 审查）。
+ *
+ * 用于 promotionConfig / activityConfig 的 PATCH 更新：
+ * - 旧实现整包 JSON.stringify 覆盖，前端 buildPromotionConfigPayload 重建整包时，
+ *   任何"前端未回填的新增键"（如 activityConfig.operational / prizeImage / 未来块）会被静默擦除。
+ * - 新语义：以 DB 现有对象为底，把 incoming 的顶层键合并上去（incoming 覆盖同名键）。
+ *   前端重建整包时只覆盖自己认识的键，未知键原样保留（透传）。
+ * - incoming === null → "{}"（显式清空，与旧 null 语义一致）。
+ * - incoming 为空字符串 → 保持原值（避免空串误清）。
+ * - 非法 JSON / 非对象 → 保持原值（fail-closed，不破坏存量配置）。
+ */
+export function mergeJsonTopLevel(existing: string | null | undefined, incoming: unknown): string {
+  if (incoming === null || incoming === undefined) {
+    return "{}";
+  }
+
+  let parsedIncoming: unknown;
+  if (typeof incoming === "string") {
+    const trimmed = incoming.trim();
+    if (!trimmed) return String(existing || "{}"); // 空串：不修改
+    try {
+      parsedIncoming = JSON.parse(trimmed);
+    } catch {
+      return String(existing || "{}"); // 非法 JSON：保持原值
+    }
+  } else {
+    parsedIncoming = incoming;
+  }
+  if (typeof parsedIncoming !== "object" || parsedIncoming === null || Array.isArray(parsedIncoming)) {
+    return String(existing || "{}"); // 非对象：保持原值
+  }
+
+  let existingObj: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(String(existing || "{}"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      existingObj = parsed as Record<string, unknown>;
+    }
+  } catch {
+    existingObj = {};
+  }
+
+  return JSON.stringify({ ...existingObj, ...(parsedIncoming as Record<string, unknown>) });
+}

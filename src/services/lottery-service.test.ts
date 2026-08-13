@@ -45,6 +45,8 @@ import {
   paymentOrders,
   paymentOrderAttempts,
   spinsLog,
+  prizeCodes,
+  prizes,
   users,
 } from "../db/schema";
 import { and, eq } from "drizzle-orm";
@@ -2543,8 +2545,9 @@ describe("增长功能集成：保底+每日免费+排行榜奖励+裂变", () =
         .where(eq(lotteryEntries.id, sharerEntryId))
         .limit(1);
       expect(Number(entryAfterReward?.spinsLeft ?? 0)).toBe(7);
-      // 总授予：join(1) + viral(1) + 手动(5) + 每日免费(1) + 排行榜(3) = 11
-      expect(Number(entryAfterReward?.spinsTotalGranted ?? 0)).toBe(11);
+      // 总授予：join(1) + viral(1) + 手动(5) + 排行榜(3) = 10
+      // （P1 修复：每日免费不再计入 spinsTotalGranted，与签到同语义——避免毒化裂变/里程碑 room）
+      expect(Number(entryAfterReward?.spinsTotalGranted ?? 0)).toBe(10);
 
       // 排行榜奖励写入 spins_log（reason=viral, refId=leaderboard:1）
       const logsAfterLb = await db
@@ -2818,5 +2821,203 @@ describe("保底→每日免费→排行榜奖励全链路", () => {
       // 确保 CSPRNG 恢复，不影响后续测试
       (crypto as unknown as { getRandomValues: (arr: Uint32Array) => void }).getRandomValues = realCsprng;
     }
+  });
+});
+
+// P0 修复（2026-08 审查）：卡密重复导入必须被拦截（迁移 0063 唯一约束 + importPrizeCodes 显式查重）
+describe("importPrizeCodes 重复码拦截", () => {
+  it("批次内重复码只插入一次，返回 skipped 数", async () => {
+    const { id: prizeId } = await createPrize(db, TENANT, { name: "去重奖品", prizeType: "code" });
+    const result = await importPrizeCodes(db, TENANT, prizeId, [
+      { code: "DUP-1", secret: "S1" },
+      { code: "DUP-1", secret: "S1-again" }, // 批次内重复 → 跳过
+      { code: "DUP-2", secret: "S2" },
+      { code: "", secret: "empty" }, // 空码 → 跳过
+    ]);
+    expect(result.imported).toBe(2);
+    expect(result.skipped).toBe(2);
+
+    const rows = await db.select().from(prizeCodes).where(eq(prizeCodes.prizeId, prizeId));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.code).sort()).toEqual(["DUP-1", "DUP-2"]);
+    // total_count 只累计实际插入数
+    const [prize] = await db.select().from(prizes).where(eq(prizes.id, prizeId)).limit(1);
+    expect(Number(prize?.totalCount ?? 0)).toBe(2);
+  });
+
+  it("库中已存在的同码跳过（不重复入库、不重复发放）", async () => {
+    const { id: prizeId } = await createPrize(db, TENANT, { name: "查重奖品", prizeType: "code" });
+    await importPrizeCodes(db, TENANT, prizeId, [{ code: "EXIST-1", secret: "S1" }]);
+    const second = await importPrizeCodes(db, TENANT, prizeId, [
+      { code: "EXIST-1", secret: "S1" }, // 已存在 → 跳过
+      { code: "NEW-1", secret: "S2" },
+    ]);
+    expect(second.imported).toBe(1);
+    expect(second.skipped).toBe(1);
+
+    const rows = await db.select().from(prizeCodes).where(eq(prizeCodes.prizeId, prizeId));
+    expect(rows).toHaveLength(2); // 没有重复的 EXIST-1
+  });
+
+  it("唯一约束硬兜底：同租户同奖品直接插入同码被拒绝（迁移 0063）", async () => {
+    const { id: prizeId } = await createPrize(db, TENANT, { name: "约束奖品", prizeType: "code" });
+    await importPrizeCodes(db, TENANT, prizeId, [{ code: "UNIQ-1", secret: "S1" }]);
+    // 绕过 importPrizeCodes 直接插入同码 → 必须被唯一索引拒绝（libsql 错误文案在 cause 链，不断言具体文案）
+    await expect(
+      db.insert(prizeCodes).values({
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        prizeId,
+        code: "UNIQ-1",
+        secret: "S1-dup",
+        status: "available",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("不同租户可拥有相同 code（唯一约束按租户隔离）", async () => {
+    const TENANT_B = "tenant-b-codes";
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO tenants (id, name, plan, status) VALUES (?, 'B', 'free', 'active')`,
+      args: [TENANT_B],
+    });
+    const { id: prizeA } = await createPrize(db, TENANT, { name: "A奖品", prizeType: "code" });
+    const { id: prizeB } = await createPrize(db, TENANT_B, { name: "B奖品", prizeType: "code" });
+    await importPrizeCodes(db, TENANT, prizeA, [{ code: "SAME-CODE", secret: "A" }]);
+    await importPrizeCodes(db, TENANT_B, prizeB, [{ code: "SAME-CODE", secret: "B" }]); // 不冲突
+    const rowsB = await db.select().from(prizeCodes).where(eq(prizeCodes.prizeId, prizeB));
+    expect(rowsB).toHaveLength(1);
+  });
+});
+
+// P1 修复（2026-08 审查）：里程碑按分享者 SUM 聚合计数 + 只标记足额发放项
+describe("推荐里程碑聚合与裁剪", () => {
+  async function seedMilestoneDraw(opts: {
+    rewards: Array<{ requireCount: number; rewardValue: number; rewardType?: string }>;
+    maxSpinsPerEntry?: number;
+    sharerEmail?: string;
+  }) {
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 7 * 86400_000).toISOString();
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "里程碑聚合测试",
+      startAt,
+      endAt,
+      participationMode: "open",
+      activityKind: "lottery",
+      experienceType: "wheel",
+      resultMode: "instant",
+      maxSpinsPerEntry: opts.maxSpinsPerEntry ?? 20,
+      winnerCount: 3,
+      promotionConfig: JSON.stringify({
+        viral: { enabled: true, extraSpinsPerInvite: 1, maxExtraSpins: 3, extraEntriesPerInvite: 1, maxExtraEntries: 3 },
+        referralRewards: opts.rewards,
+      }),
+    });
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeId, TENANT, "里程碑奖", "code", 10, 1],
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId: id, prizeId,
+      tierName: "一等奖", winnerCount: 3, sortOrder: 1, weight: 100,
+    });
+    for (let i = 0; i < 5; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeId, `MS-CODE-${i}`, "available"],
+      });
+    }
+    await publishDraw(db, TENANT, id, { credentialsEncryptionKey: PAYMENT_ENCRYPTION_KEY });
+
+    const sharer = await joinDraw(db, publicSlug, opts.sharerEmail ?? "ms-sharer@test.com");
+    const sharerEntryId = String(sharer.entryId || "");
+    return { drawId: id, publicSlug, sharerEntryId };
+  }
+
+  it("P1-3 回归：多码分享者按 SUM(joinedCount) 触发里程碑（旧实现永不触发）", async () => {
+    const { drawId, publicSlug, sharerEntryId } = await seedMilestoneDraw({
+      rewards: [{ requireCount: 5, rewardType: "bonus_spin", rewardValue: 5 }],
+    });
+
+    // 分享者 A 有两条码：joined 3 + 2 = 5（SUM 口径达到 requireCount=5）
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      sharerEntryId, shareCode: "ms-code-1", joinedCount: 3, clickedCount: 0,
+      rewardMilestonesGranted: "[]", leaderboardRewardedAt: "", createdAt: new Date().toISOString(),
+    });
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      sharerEntryId, shareCode: "ms-code-2", joinedCount: 2, clickedCount: 0,
+      rewardMilestonesGranted: "[]", leaderboardRewardedAt: "", createdAt: new Date().toISOString(),
+    });
+
+    // 用第二条码再拉 1 人触发评估
+    const inv = await joinDraw(db, publicSlug, "ms-invitee@test.com", "email", { refCode: "ms-code-2" });
+    expect(inv.joined).toBe(true);
+
+    const [entry] = await db
+      .select({ spinsTotalGranted: lotteryEntries.spinsTotalGranted })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, sharerEntryId))
+      .limit(1);
+    // join(1) + per-invite(1) + 里程碑(5) = 7（旧实现只读单码 2+1=3，永不触发 5）
+    expect(Number(entry?.spinsTotalGranted ?? 0)).toBe(7);
+
+    // 两条码都应标记已发放（幂等键覆盖该分享者全部记录）
+    const records = await db
+      .select({ granted: shareRecords.rewardMilestonesGranted })
+      .from(shareRecords)
+      .where(eq(shareRecords.sharerEntryId, sharerEntryId));
+    expect(records.length).toBe(2);
+    for (const r of records) expect(JSON.parse(String(r.granted || "[]"))).toEqual([5]);
+  });
+
+  it("P1-4 回归：maxSpins 预算不足以足额发放时，不发放也不标记（无静默损失）", async () => {
+    const { drawId, publicSlug, sharerEntryId } = await seedMilestoneDraw({
+      rewards: [{ requireCount: 1, rewardType: "bonus_spin", rewardValue: 2 }],
+      maxSpinsPerEntry: 5,
+    });
+
+    // 预置 granted=4（room=1 < rewardValue=2）
+    await db
+      .update(lotteryEntries)
+      .set({ spinsLeft: 4, spinsTotalGranted: 4 })
+      .where(eq(lotteryEntries.id, sharerEntryId));
+
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      sharerEntryId, shareCode: "ms-cap-1", joinedCount: 0, clickedCount: 0,
+      rewardMilestonesGranted: "[]", leaderboardRewardedAt: "", createdAt: new Date().toISOString(),
+    });
+
+    const inv = await joinDraw(db, publicSlug, "ms-cap-invitee@test.com", "email", { refCode: "ms-cap-1" });
+    expect(inv.joined).toBe(true);
+
+    // 预算不足 → 不发放（granted 保持 4 + per-invite 1 = 5，milestone 不生效）
+    const [entry] = await db
+      .select({ spinsTotalGranted: lotteryEntries.spinsTotalGranted })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, sharerEntryId))
+      .limit(1);
+    expect(Number(entry?.spinsTotalGranted ?? 0)).toBe(5);
+
+    // 不标记：rewardMilestonesGranted 仍为空（后续可再评估）
+    const [record] = await db
+      .select({ granted: shareRecords.rewardMilestonesGranted })
+      .from(shareRecords)
+      .where(eq(shareRecords.sharerEntryId, sharerEntryId))
+      .limit(1);
+    expect(JSON.parse(String(record?.granted || "[]"))).toEqual([]);
+
+    // 无 milestone 流水（无虚假发放记录）
+    const milestoneLogs = await db
+      .select({ refId: spinsLog.refId })
+      .from(spinsLog)
+      .where(and(eq(spinsLog.entryId, sharerEntryId), eq(spinsLog.reason, "viral")));
+    const msRefs = milestoneLogs.map((l) => String(l.refId || "")).filter((r) => r.startsWith("milestone:"));
+    expect(msRefs).toEqual([]);
   });
 });

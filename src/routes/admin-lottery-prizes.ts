@@ -111,11 +111,12 @@ route.post("/prizes/:id/codes/import", async (c) => {
   }
 
   try {
-    await importPrizeCodes(db, tenantId, prizeId, body.codes);
+    const result = await importPrizeCodes(db, tenantId, prizeId, body.codes);
+    // P0 修复：导入返回实际插入数 + 跳过数（重复码不再静默入库），运营可见
+    return ok(c, { imported: result.imported, skipped: result.skipped });
   } catch (err: any) {
     return fail(c, err?.message || "导入码失败", 400);
   }
-  return ok(c, { imported: body.codes.length });
 });
 
 /**

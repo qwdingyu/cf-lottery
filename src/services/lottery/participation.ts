@@ -861,17 +861,14 @@ async function processReferralMilestoneRewards(
   const maxSpins = Number(draw.maxSpinsPerEntry ?? 0);
   if (maxSpins < 1) return; // 仅 instant 活动有 spins 体系
 
-  // 读取分享记录：分享者 entryId + 总数 + 已发放里程碑
-  const [share] = await tx
-    .select({
-      sharerEntryId: shareRecords.sharerEntryId,
-      joinedCount: shareRecords.joinedCount,
-      rewardMilestonesGranted: shareRecords.rewardMilestonesGranted,
-    })
+  // 读取触发分享记录：定位分享者 entryId
+  const [triggerShare] = await tx
+    .select({ sharerEntryId: shareRecords.sharerEntryId })
     .from(shareRecords)
     .where(eq(shareRecords.id, shareRecordId))
     .limit(1);
-  if (!share?.sharerEntryId) return;
+  if (!triggerShare?.sharerEntryId) return;
+  const sharerEntryId = triggerShare.sharerEntryId;
 
   // 解析 referralRewards 配置；非法/未配置不抛异常，静默跳过（附加行为容错原则）
   let milestones: ReturnType<typeof normalizeReferralRewards> = [];
@@ -883,10 +880,38 @@ async function processReferralMilestoneRewards(
   }
   if (milestones.length === 0) return;
 
+  // P1 修复（2026-08 审查）：里程碑按【分享者全部 shareRecord】聚合计数（SUM joinedCount），
+  // 与排行榜/裂变统计 aggregateViralInviteCounts 同一口径——旧实现只读单条码的 joinedCount，
+  // 多码分享者（两条码各 3 人共 6 人）永远无法触发 requireCount=5 的里程碑（静默不发放）。
+  // 幂等键同步升级：已发放集合 = 该分享者名下全部记录 rewardMilestonesGranted 的并集，
+  // 同一 requireCount 只发放一次（写入全部记录，防并发重放）。
+  const sharerRecords = await tx
+    .select({
+      id: shareRecords.id,
+      joinedCount: shareRecords.joinedCount,
+      rewardMilestonesGranted: shareRecords.rewardMilestonesGranted,
+    })
+    .from(shareRecords)
+    .where(and(
+      eq(shareRecords.tenantId, draw.tenantId),
+      eq(shareRecords.drawId, draw.id),
+      eq(shareRecords.sharerEntryId, sharerEntryId),
+    ));
+  if (sharerRecords.length === 0) return;
+
+  const totalJoined = sharerRecords.reduce(
+    (sum, r) => sum + Math.max(0, Math.floor(Number(r.joinedCount) || 0)),
+    0,
+  );
+  const grantedSet = new Set<number>();
+  for (const r of sharerRecords) {
+    for (const n of parseGrantedMilestones(r.rewardMilestonesGranted)) grantedSet.add(n);
+  }
+
   const evaluation = evaluateReferralMilestones({
-    joinedCount: Number(share.joinedCount || 0),
+    joinedCount: totalJoined,
     milestones,
-    granted: parseGrantedMilestones(share.rewardMilestonesGranted),
+    granted: [...grantedSet],
   });
   if (evaluation.dueMilestones.length === 0 || evaluation.totalSpinBonus <= 0) return;
 
@@ -900,7 +925,7 @@ async function processReferralMilestoneRewards(
     })
     .from(lotteryEntries)
     .where(and(
-      eq(lotteryEntries.id, share.sharerEntryId),
+      eq(lotteryEntries.id, sharerEntryId),
       eq(lotteryEntries.tenantId, draw.tenantId),
       eq(lotteryEntries.drawId, draw.id),
     ))
@@ -908,20 +933,44 @@ async function processReferralMilestoneRewards(
   if (!sharer) return;
 
   // 阶梯不受 viral.maxExtra 预算约束，只受 maxSpinsPerEntry 总顶限制。
-  // 因为 requireCount 集合有限（不存在无限刷次风险），无需双封顶。
   const granted = Number(sharer.spinsTotalGranted || 0);
   const room = Math.max(0, maxSpins - granted);
-  const actual = Math.min(evaluation.totalSpinBonus, room);
-  if (actual <= 0) return;
 
-  const nextGranted = granted + actual;
+  // P1 修复（2026-08 审查）：只发放并标记【能全额覆盖】的里程碑，被 maxSpins 裁剪的完整保留。
+  // 旧实现无论 room 是否够都发放 partial 并把全部 due 写入 rewardMilestonesGranted，
+  // 造成"承诺奖励静默损失且无审计"。现在按 requireCount 升序贪心：
+  // - rewardValue ≤ 剩余预算的里程碑 → 足额发放并标记；
+  // - 首个放不下的里程碑及其后全部 → deferred（不发放、不标记，后续 join 重新评估，
+  //   spins_log refId 追加 :deferred:{门槛列表} 供运营对账，杜绝无归属的部分发放）。
+  let budget = room;
+  let grantTotal = 0;
+  const paidMilestones: number[] = [];
+  const deferredMilestones: number[] = [];
+  for (const m of evaluation.dueMilestones) {
+    if (m.rewardValue <= budget) {
+      budget -= m.rewardValue;
+      grantTotal += m.rewardValue;
+      paidMilestones.push(m.requireCount);
+    } else {
+      deferredMilestones.push(m.requireCount);
+    }
+  }
+  if (grantTotal <= 0) return; // 预算不足以足额发放任何里程碑 → 本次不发放（也不标记）
+
+  const nextGranted = [...grantedSet];
+  for (const req of paidMilestones) {
+    if (!nextGranted.includes(req)) nextGranted.push(req);
+  }
+  nextGranted.sort((a, b) => a - b);
+
+  const nextGrantedJson = JSON.stringify(nextGranted);
 
   // CAS：spinsTotalGranted 未被并发修改时写入（同事务内 grantViralSpinsToSharer 已先执行）
   const updateResult = await tx
     .update(lotteryEntries)
     .set({
-      spinsTotalGranted: nextGranted,
-      spinsLeft: sql`${lotteryEntries.spinsLeft} + ${actual}`,
+      spinsTotalGranted: sql`${lotteryEntries.spinsTotalGranted} + ${grantTotal}`,
+      spinsLeft: sql`${lotteryEntries.spinsLeft} + ${grantTotal}`,
     })
     .where(and(
       eq(lotteryEntries.id, sharer.id),
@@ -931,25 +980,32 @@ async function processReferralMilestoneRewards(
     ));
   if ((updateResult.rowsAffected ?? 0) === 0) return; // 并发已发放，放弃本次
 
-  // spins 流水日志：reason=viral，refId 标记里程碑审计
+  // spins 流水日志：reason=viral，refId 标记里程碑审计（含 deferred 对账）
+  const refIdParts = [`milestone:${paidMilestones.join(",")}`];
+  if (deferredMilestones.length > 0) {
+    refIdParts.push(`deferred:${deferredMilestones.join(",")}`);
+  }
   await recordSpinLog(tx, {
     tenantId: draw.tenantId,
     entryId: sharer.id,
     userId: sharer.identityValue ?? "",
-    delta: actual,
-    balanceAfter: Number(sharer.spinsLeft ?? 0) + actual,
+    delta: grantTotal,
+    balanceAfter: Number(sharer.spinsLeft ?? 0) + grantTotal,
     reason: "viral",
-    refId: `milestone:${evaluation.dueMilestones.map((m) => m.requireCount).join(",")}`,
+    refId: refIdParts.join(":"),
   });
 
-  // 标记已发放里程碑（与 spins 写入同事务，失败回滚 spins）
-  await tx
-    .update(shareRecords)
-    .set({ rewardMilestonesGranted: JSON.stringify(evaluation.nextGranted) })
-    .where(and(
-      eq(shareRecords.id, shareRecordId),
-      eq(shareRecords.rewardMilestonesGranted, String(share.rewardMilestonesGranted || "[]")),
-    ));
+  // 标记已发放里程碑（与 spins 写入同事务，失败回滚 spins）：
+  // 写入该分享者【全部】share_record，保证"按分享者聚合 + 按分享者幂等"在任意后续记录上成立。
+  for (const r of sharerRecords) {
+    await tx
+      .update(shareRecords)
+      .set({ rewardMilestonesGranted: nextGrantedJson })
+      .where(and(
+        eq(shareRecords.id, r.id),
+        eq(shareRecords.rewardMilestonesGranted, String(r.rewardMilestonesGranted || "[]")),
+      ));
+  }
 }
 
 type EntryIdentityForSelfInviteCheck = {

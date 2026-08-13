@@ -20,7 +20,7 @@
  * - 锁码防重：条件 UPDATE WHERE status = 'available'
  */
 import type { DbType } from "../db/client";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { enqueueEmailDelivery, dispatchEmailDeliveries } from "./email-delivery";
 import type { EmailEnv } from "./email-service";
 import {
@@ -78,15 +78,22 @@ export async function createPrize(
 
 /**
  * 导入奖品码（批量）。
- * 每个码独立 INSERT，不保证原子性。
- * 如果部分失败，已成功的码不会回滚。
+ *
+ * P0 修复（2026-08 审查）：
+ * - 旧实现注释声称"重复码通过 UNIQUE 约束自动跳过"（:99,117-133），但 prize_codes 无 code 唯一约束，
+ *   去重 catch 是死代码 → 重复卡密被静默入库，同一张卡可发给两人。
+ * - 现在：① 迁移 0063 已建 UNIQUE(tenant_id, prize_id, code) 硬约束（硬兜底）；
+ *   ② 本函数导入前显式查重，跳过已存在的码并返回 { imported, skipped }，运营可见跳过数。
+ * - 批次内重复码也只插入一次。
+ *
+ * @returns 实际插入数与跳过（重复/空码）数
  */
 export async function importPrizeCodes(
   db: DbType,
   tenantId: string,
   prizeId: string,
   codes: Array<{ code: string; secret?: string }>,
-) {
+): Promise<{ imported: number; skipped: number }> {
   // 校验奖品存在且属于当前租户
   const [prize] = await db
     .select()
@@ -96,18 +103,47 @@ export async function importPrizeCodes(
 
   if (!prize) throw new Error("奖品不存在");
 
-  // 批量 INSERT（一次写入替代 N 次往返），重复码通过 UNIQUE 约束自动跳过
+  // 1) 清洗 + 批次内去重（同 code 只取第一条）
+  const trimmed = codes.map((item) => ({
+    code: (item.code || "").trim(),
+    secret: (item.secret || "").trim(),
+  }));
+  const uniqueInBatch = new Map<string, { code: string; secret: string }>();
+  for (const item of trimmed) {
+    if (!item.code) continue; // 空码跳过
+    if (!uniqueInBatch.has(item.code)) uniqueInBatch.set(item.code, item);
+  }
+  const candidates = [...uniqueInBatch.values()];
+  const batchSkipped = trimmed.length - candidates.length; // 批次内重复 + 空码
+
+  // 2) 显式查重：同租户同奖品已存在的码跳过（防重复发放）
+  let toInsert = candidates;
+  let existingSkipped = 0;
+  if (candidates.length > 0) {
+    const existingRows = await db
+      .select({ code: prizeCodes.code })
+      .from(prizeCodes)
+      .where(and(
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.prizeId, prizeId),
+        inArray(prizeCodes.code, candidates.map((c) => c.code)),
+      ));
+    const existingSet = new Set(existingRows.map((r) => r.code));
+    toInsert = candidates.filter((c) => !existingSet.has(c.code));
+    existingSkipped = candidates.length - toInsert.length;
+  }
+
+  // 3) 批量 INSERT（一次写入替代 N 次往返）；唯一约束冲突（并发导入等竞态）回退逐条跳过
   let imported = 0;
-  // 分批插入：每批最多 200 条，避免单次 INSERT 过大
   const BATCH_SIZE = 200;
-  for (let offset = 0; offset < codes.length; offset += BATCH_SIZE) {
-    const batch = codes.slice(offset, offset + BATCH_SIZE);
-    const values = batch.map(item => ({
+  for (let offset = 0; offset < toInsert.length; offset += BATCH_SIZE) {
+    const batch = toInsert.slice(offset, offset + BATCH_SIZE);
+    const values = batch.map((item) => ({
       id: crypto.randomUUID(),
       tenantId,
       prizeId,
-      code: (item.code || "").trim(),
-      secret: (item.secret || "").trim(),
+      code: item.code,
+      secret: item.secret,
       status: "available" as const,
       createdAt: new Date().toISOString(),
     }));
@@ -115,15 +151,15 @@ export async function importPrizeCodes(
       await db.insert(prizeCodes).values(values);
       imported += batch.length;
     } catch (err: any) {
-      // UNIQUE 约束冲突时，回退到逐条插入以精确定位跳过的码
+      // UNIQUE 约束冲突（并发下另一请求已插入同码）：回退逐条插入，冲突单条跳过
       for (const item of batch) {
         try {
           await db.insert(prizeCodes).values({
             id: crypto.randomUUID(),
             tenantId,
             prizeId,
-            code: (item.code || "").trim(),
-            secret: (item.secret || "").trim(),
+            code: item.code,
+            secret: item.secret,
             status: "available",
             createdAt: new Date().toISOString(),
           });
@@ -134,9 +170,13 @@ export async function importPrizeCodes(
   }
 
   // 更新奖品 total_count（闭环：P0-1 已修复）
-  await db.update(prizes)
-    .set({ totalCount: sql`total_count + ${imported}`, updatedAt: new Date().toISOString() })
-    .where(eq(prizes.id, prizeId));
+  if (imported > 0) {
+    await db.update(prizes)
+      .set({ totalCount: sql`total_count + ${imported}`, updatedAt: new Date().toISOString() })
+      .where(eq(prizes.id, prizeId));
+  }
+
+  return { imported, skipped: batchSkipped + existingSkipped };
 }
 
 /* ── 定时开奖兜底 ─────────────────────────────────────────── */

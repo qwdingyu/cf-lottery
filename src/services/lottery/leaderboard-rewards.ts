@@ -3,11 +3,20 @@
  *
  * 根据活动裂变配置的 leaderboardRewards，在活动结束后按邀请人数排名发放 spins 奖励。
  * 与里程碑阶梯互补：里程碑是过程奖励（每个 requireCount 到达即发），排行榜奖励是结果奖励（活动结束按名次发）。
- * 同事务 CAS 幂等：leaderboard_rewarded_at 空串 → 发放并写入时间戳；非空 → 跳过。
+ *
+ * P0 修复（2026-08 审查）：
+ * - 旧实现按「单条 share_record 行」取 TopN 并逐行发放，CAS 幂等键是每行的 leaderboardRewardedAt；
+ *   同一分享者多条 shareCode 时（系统显式支持：aggregateViralInviteCounts 按 sharer SUM、penalty 多码反查），
+ *   同一条记录在 rankMap 中重复命中同一名次 → 同名次奖励被发放多次（超发）。
+ * - 修复：先按 sharerEntryId 聚合 joinedCount（与公开榜 aggregateViralInviteCounts 同一口径），
+ *   每个分享者只发放一次；幂等标记写入该分享者的【全部】share_record 行（任一行为空即视为未发放）。
+ * - 同票 tie-break 与公开榜「先到先得」一致：邀请数降序，同票按该分享者最早分享时间（created_at 升序）。
+ * - 契约对齐（docs/114 + publish-check）：viral.enabled 必须为真；leaderboardEnabled 仅显式 false 关闭（缺省开启）。
+ * - 发放受 maxSpinsPerEntry 总顶约束（granted ≤ maxSpins 不变量），超出部分按实际可发额度裁剪并留审计。
  */
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
-import { eq, and, desc, asc, sql, gte } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { shareRecords, lotteryEntries, lotteryDraws } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
 
@@ -53,17 +62,29 @@ export type GrantLeaderboardResult = {
 };
 
 /**
+ * 分享者聚合信息：邀请总人数 + 最早分享时间（同票先到先得）+ 名下全部 share_record id（幂等标记目标）。
+ */
+type SharerAggregate = {
+  invited: number;
+  firstSharedAt: string;
+  recordIds: string[];
+};
+
+/**
  * 发放排行榜奖励。
  *
  * 流程：
  * 1. 解析 draw.promotionConfig.viral.leaderboardRewards；空 → 直接返回。
- * 2. 按 joined_count DESC, created_at ASC 取前 N 名 shareRecords（N=最高 rank）。
- * 3. 对每个未发放的 shareRecord 按名次发放 spins → 更新 spins_left/spins_total_granted；
- *    写入 spins_log（reason: "viral", refId: "leaderboard:{rank}"），userId 取 entry.identityValue。
- * 4. CAS 更新 leaderboard_rewarded_at 防止并发重复发放。
+ *    viral.enabled 必须为真、leaderboardEnabled 显式 false 时关闭（缺省开启）。
+ * 2. 按 sharerEntryId 聚合全部 share_records（SUM joinedCount，joined=0 不参与排名），
+ *    邀请数降序、同票最早分享时间升序，取前 N 名（N=最高 rank）。
+ * 3. 对每个分享者按名次发放一次 spins（受 maxSpinsPerEntry 总顶裁剪）；
+ *    事务内 CAS：该分享者名下任一 share_record 的 leaderboardRewardedAt 为空 → 全部标记 + 发放；
+ *    并发下已被标记 → 跳过（幂等）。
+ * 4. 写 spins_log（reason: "viral"，refId: "leaderboard:{rank}" 或 "leaderboard:{rank}:capped"）。
  *
  * @param db 数据库实例
- * @param draw 活动对象（需含 tenantId, id, promotionConfig）
+ * @param draw 活动对象（需含 tenantId, id, promotionConfig, maxSpinsPerEntry）
  */
 export async function grantLeaderboardRewards(
   db: DbType,
@@ -71,14 +92,16 @@ export async function grantLeaderboardRewards(
 ): Promise<GrantLeaderboardResult> {
   const result: GrantLeaderboardResult = { granted: 0, skipped: 0, details: [] };
 
-  // 1. 解析配置
+  // 1. 解析配置（与 publish-check 同源 normalize，杜绝「预检说有、发放为零」偏差）
   let pc: Record<string, unknown> | null = null;
   try {
     pc = JSON.parse(draw.promotionConfig || "{}") as Record<string, unknown>;
   } catch { /* 非法 JSON 视为未配置 */ }
 
   const viral = pc?.viral as Record<string, unknown> | undefined;
-  if (!viral?.leaderboardEnabled) {
+  // 契约（docs/114 + viral-weight.isViralLeaderboardEnabled + publish-check）：enabled 必须为真；
+  // leaderboardEnabled 仅在显式 false 时关闭；缺省视为开启。
+  if (!viral || viral.enabled !== true || viral.leaderboardEnabled === false) {
     return result;
   }
 
@@ -86,124 +109,166 @@ export async function grantLeaderboardRewards(
   if (!rawRewards || !Array.isArray(rawRewards) || rawRewards.length === 0) {
     return result;
   }
-
-  // 归一化排行榜奖励配置，过滤无效项（与 publish-check 共用 normalizeLeaderboardRewards）
   const rewards = normalizeLeaderboardRewards(rawRewards);
   if (rewards.length === 0) return result;
 
   // 取最高 rank 作为 TOP N
   const topN = Math.max(...rewards.map((r) => r.rank));
 
-  // 2. 按邀请人数降序取前 N 名 shareRecords（含 entry identityValue 用于审计记录）
-  const topRecords = await db
+  // 2. 读取全部分享记录并按分享者聚合（与公开榜 aggregateViralInviteCounts 同一 SUM 口径）
+  const shareRows = await db
     .select({
       id: shareRecords.id,
       sharerEntryId: shareRecords.sharerEntryId,
       joinedCount: shareRecords.joinedCount,
-      leaderboardRewardedAt: shareRecords.leaderboardRewardedAt,
-      /** 分享者身份标识（email / platform_user_id），用于 spins_log.userId 审计 */
-      identityValue: lotteryEntries.identityValue,
+      createdAt: shareRecords.createdAt,
     })
     .from(shareRecords)
-    .leftJoin(lotteryEntries, and(
-      eq(lotteryEntries.id, shareRecords.sharerEntryId),
-      eq(lotteryEntries.tenantId, draw.tenantId),
-      eq(lotteryEntries.drawId, draw.id),
-    ))
     .where(and(
       eq(shareRecords.tenantId, draw.tenantId),
       eq(shareRecords.drawId, draw.id),
-      // 仅统计有效分享者（至少拉到 1 人）：joined_count=0 的分享记录不参与排名，
-      // 否则有效分享者不足 TOP N 时，无票分享者会被补位白拿排行榜奖励（docs/218 模式三）
-      gte(shareRecords.joinedCount, 1),
-    ))
-    // 名次排序：joined_count 降序为主；同票时先分享者优先（created_at 升序，先到先得）。
-    // ⚠️ 不能用 desc(created_at)：会把"后分享的人"排到前面，与"先到先得"语义相反。
-    .orderBy(desc(shareRecords.joinedCount), asc(shareRecords.createdAt))
-    .limit(topN);
+    ));
 
-  // 构建名次映射：entryId → rank（同票时先到先得）
-  const rankMap = new Map<string, number>();
-  for (let i = 0; i < topRecords.length; i++) {
-    const entryId = topRecords[i]!.sharerEntryId;
-    if (!rankMap.has(entryId)) {
-      rankMap.set(entryId, i + 1);
+  const bySharer = new Map<string, SharerAggregate>();
+  for (const row of shareRows) {
+    const id = String(row?.sharerEntryId || "").trim();
+    if (!id) continue;
+    const invited = Math.max(0, Math.floor(Number(row.joinedCount) || 0));
+    // 仅统计有效分享者（至少拉到 1 人）：joined_count=0 的分享记录不参与排名，
+    // 否则有效分享者不足 TOP N 时，无票分享者会被补位白拿排行榜奖励（docs/218 模式三）。
+    if (invited < 1) continue;
+    const cur = bySharer.get(id) || { invited: 0, firstSharedAt: "", recordIds: [] as string[] };
+    cur.invited += invited;
+    if (!cur.firstSharedAt || (row.createdAt && row.createdAt < cur.firstSharedAt)) {
+      cur.firstSharedAt = row.createdAt || "";
     }
+    cur.recordIds.push(row.id);
+    bySharer.set(id, cur);
   }
 
-  // 3. 按名次发放奖励
+  // 3. 名次：邀请人数降序；同票按最早分享时间升序（先到先得，与公开榜语义一致）。
+  const ranked = [...bySharer.entries()]
+    .sort((a, b) => b[1].invited - a[1].invited || String(a[1].firstSharedAt).localeCompare(String(b[1].firstSharedAt)))
+    .slice(0, topN);
+
+  // 4. 逐名次发放（每个分享者只发一次；事务内对该分享者全部记录 CAS 标记防并发重复发放）
+  const maxSpins = Math.max(0, Math.floor(Number(draw.maxSpinsPerEntry || 0)));
   const nowIso = new Date().toISOString();
 
-  for (const record of topRecords) {
-    const rank = rankMap.get(record.sharerEntryId) ?? 0;
+  for (let i = 0; i < ranked.length; i++) {
+    const [sharerEntryId] = ranked[i]!;
+    const rank = i + 1;
     const rewardCfg = rewards.find((r) => r.rank === rank);
     if (!rewardCfg) {
       result.skipped++;
-      result.details.push({ rank, entryId: record.sharerEntryId, rewardValue: 0, status: "skipped" });
+      result.details.push({ rank, entryId: sharerEntryId, rewardValue: 0, status: "skipped" });
       continue;
     }
 
-    // 已发放过 → 跳过
-    if (record.leaderboardRewardedAt) {
-      result.skipped++;
-      result.details.push({ rank, entryId: record.sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
-      continue;
-    }
-
-    // 事务内：CAS 更新 leaderboardRewardedAt + 发放 spins
+    // 事务内：先查该分享者名下是否已有任何记录被标记（幂等），无则全部标记 + 发放
     await withDbTransaction(db, async (tx) => {
-      // CAS 更新 leaderboard_rewarded_at（空串 → 非空，幂等）
-      const cas = await tx
-        .update(shareRecords)
-        .set({ leaderboardRewardedAt: nowIso })
+      // 重新读取该分享者的记录（事务内快照最新，防止并发下读到旧标记状态）
+      const records = await tx
+        .select({ id: shareRecords.id, leaderboardRewardedAt: shareRecords.leaderboardRewardedAt })
+        .from(shareRecords)
         .where(and(
-          eq(shareRecords.id, record.id),
           eq(shareRecords.tenantId, draw.tenantId),
-          // 仅更新空串（未发放）
-          sql`${shareRecords.leaderboardRewardedAt} = ''`,
+          eq(shareRecords.drawId, draw.id),
+          eq(shareRecords.sharerEntryId, sharerEntryId),
         ));
-
-      if ((cas.rowsAffected ?? 0) === 0) {
-        // 并发下已被其他请求发放 → 跳过
+      if (records.length === 0) {
         result.skipped++;
-        result.details.push({ rank, entryId: record.sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
+        result.details.push({ rank, entryId: sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
+        return;
+      }
+      // 任一记录已标记 → 该分享者已发放过，跳过（幂等）
+      if (records.some((r) => String(r.leaderboardRewardedAt || "") !== "")) {
+        result.skipped++;
+        result.details.push({ rank, entryId: sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
         return;
       }
 
-      // 发放 spins 到 entry
-      await tx
-        .update(lotteryEntries)
-        .set({
-          spinsLeft: sql`${lotteryEntries.spinsLeft} + ${rewardCfg.rewardValue}`,
-          spinsTotalGranted: sql`${lotteryEntries.spinsTotalGranted} + ${rewardCfg.rewardValue}`,
-        })
+      // CAS：全部记录 leaderboardRewardedAt 仍为空才标记；rowsAffected 必须等于记录数
+      const marked = await tx
+        .update(shareRecords)
+        .set({ leaderboardRewardedAt: nowIso })
         .where(and(
-          eq(lotteryEntries.id, record.sharerEntryId),
+          eq(shareRecords.tenantId, draw.tenantId),
+          eq(shareRecords.drawId, draw.id),
+          eq(shareRecords.sharerEntryId, sharerEntryId),
+          sql`${shareRecords.leaderboardRewardedAt} = ''`,
+        ));
+      if ((marked.rowsAffected ?? 0) !== records.length) {
+        // 并发下部分记录已被其他请求标记 → 放弃本次（防重复发放）
+        result.skipped++;
+        result.details.push({ rank, entryId: sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
+        return;
+      }
+
+      // 读取分享者 entry（含当前 granted，用于 maxSpins 裁剪与审计）
+      const [entry] = await tx
+        .select({
+          id: lotteryEntries.id,
+          identityValue: lotteryEntries.identityValue,
+          spinsLeft: lotteryEntries.spinsLeft,
+          spinsTotalGranted: lotteryEntries.spinsTotalGranted,
+        })
+        .from(lotteryEntries)
+        .where(and(
+          eq(lotteryEntries.id, sharerEntryId),
           eq(lotteryEntries.tenantId, draw.tenantId),
           eq(lotteryEntries.drawId, draw.id),
-        ));
-
-      // 事务内重新读取更新后的余额，用于审计快照
-      const [updatedEntry] = await tx
-        .select({ spinsLeft: lotteryEntries.spinsLeft })
-        .from(lotteryEntries)
-        .where(eq(lotteryEntries.id, record.sharerEntryId))
+        ))
         .limit(1);
+      if (!entry) {
+        // entry 不存在（已删除）→ 不发放，但记录已标记；状态 skipped 提示运营
+        result.skipped++;
+        result.details.push({ rank, entryId: sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
+        return;
+      }
 
-      // 记录 spins 流水日志（reason=viral，refId=leaderboard:{rank}）
-      await recordSpinLog(tx, {
-        tenantId: draw.tenantId,
-        entryId: record.sharerEntryId,
-        userId: record.identityValue || record.sharerEntryId,
-        delta: rewardCfg.rewardValue,
-        balanceAfter: Math.max(0, Number(updatedEntry?.spinsLeft ?? 0)),
-        reason: "viral",
-        refId: `leaderboard:${rank}`,
-      });
+      // maxSpins 总顶裁剪（P0 防 API 直写超大 rewardValue 把 granted 推爆）：
+      // granted ≤ maxSpinsPerEntry 不变量；超出部分按实际可发额度发放，refId 留 capped 审计。
+      const granted = Math.max(0, Math.floor(Number(entry.spinsTotalGranted || 0)));
+      const room = maxSpins >= 1 ? Math.max(0, maxSpins - granted) : rewardCfg.rewardValue;
+      const actual = Math.max(0, Math.min(rewardCfg.rewardValue, room));
+      const capped = actual < rewardCfg.rewardValue;
+
+      if (actual > 0) {
+        await tx
+          .update(lotteryEntries)
+          .set({
+            spinsLeft: sql`${lotteryEntries.spinsLeft} + ${actual}`,
+            spinsTotalGranted: sql`${lotteryEntries.spinsTotalGranted} + ${actual}`,
+          })
+          .where(and(
+            eq(lotteryEntries.id, entry.id),
+            eq(lotteryEntries.tenantId, draw.tenantId),
+            eq(lotteryEntries.drawId, draw.id),
+          ));
+
+        // 事务内重新读取更新后的余额，用于审计快照（与 spin-execution 同标准）
+        const [updatedEntry] = await tx
+          .select({ spinsLeft: lotteryEntries.spinsLeft })
+          .from(lotteryEntries)
+          .where(eq(lotteryEntries.id, entry.id))
+          .limit(1);
+
+        // 记录 spins 流水日志（reason=viral，refId=leaderboard:{rank}，裁剪时追加 :capped 供对账）
+        await recordSpinLog(tx, {
+          tenantId: draw.tenantId,
+          entryId: entry.id,
+          userId: entry.identityValue || entry.id,
+          delta: actual,
+          balanceAfter: Math.max(0, Number(updatedEntry?.spinsLeft ?? 0)),
+          reason: "viral",
+          refId: capped ? `leaderboard:${rank}:capped` : `leaderboard:${rank}`,
+        });
+      }
+
+      result.granted++;
+      result.details.push({ rank, entryId: sharerEntryId, rewardValue: actual, status: "granted" });
     });
-
-    result.granted++;
-    result.details.push({ rank, entryId: record.sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "granted" });
   }
 
   return result;

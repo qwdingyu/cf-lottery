@@ -2041,4 +2041,206 @@ describe("grantLeaderboardRewards", () => {
     expect(result.details[0]!.status).toBe("granted");
     expect(result.details[0]!.rank).toBe(1);
   });
+
+  it("P0 回归：同一分享者多条 shareCode 时同名次奖励只发放一次（按 sharer 聚合，不按行发放）", async () => {
+    const { id: drawId } = await seedLeaderboardDraw();
+
+    // 分享者 A 有两条码（joined 5 + 3 = 8），分享者 B 一条码（joined 2）
+    const a1 = await seedShareRecord(drawId, 5, TENANT, "sharerA@test.com");
+    // 第二条码属于同一分享者 A：手动插入（seedShareRecord 每次生成新 entry，这里复用 a1.entryId）
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId: a1.entryId,
+      shareCode: `sc-dup-${drawId.slice(0, 6)}-b`,
+      joinedCount: 3,
+      clickedCount: 0,
+      rewardMilestonesGranted: "[]",
+      leaderboardRewardedAt: "",
+      createdAt: new Date().toISOString(),
+    });
+    const b1 = await seedShareRecord(drawId, 2, TENANT, "sharerB@test.com");
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+
+    // A 聚合 8 票 → rank1（5 spins）只发一次；B 2 票 → rank2（3 spins）
+    expect(result.granted).toBe(2);
+    expect(result.skipped).toBe(0);
+
+    const [aEntry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft, spinsTotalGranted: lotteryEntries.spinsTotalGranted })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, a1.entryId))
+      .limit(1);
+    expect(Number(aEntry?.spinsLeft ?? 0)).toBe(5); // 只发一次，不是 5+5=10
+    expect(Number(aEntry?.spinsTotalGranted ?? 0)).toBe(5);
+
+    const [bEntry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, b1.entryId))
+      .limit(1);
+    expect(Number(bEntry?.spinsLeft ?? 0)).toBe(3);
+
+    // A 名下两条码都应被标记（幂等标记覆盖该分享者全部记录）
+    const aRecords = await db
+      .select({ rewardedAt: shareRecords.leaderboardRewardedAt })
+      .from(shareRecords)
+      .where(eq(shareRecords.sharerEntryId, a1.entryId));
+    expect(aRecords.length).toBe(2);
+    for (const r of aRecords) expect(r.rewardedAt).not.toBe("");
+
+    // 重复调用不再发放（幂等）
+    const again = await grantLeaderboardRewards(db, draw!);
+    expect(again.granted).toBe(0);
+    expect(again.skipped).toBe(2);
+  });
+
+  it("leaderboardEnabled 缺省（undefined）时视为开启并发放（契约对齐，P1 回归）", async () => {
+    const id = crypto.randomUUID();
+    const slug = `lb-undef${id.slice(0, 6)}`;
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 7 * 86400_000).toISOString();
+    // 配置 leaderboardEnabled 缺省（不写该字段）——旧数据/手工 JSON 场景
+    const promotion = {
+      viral: {
+        enabled: true,
+        leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 5 }],
+      },
+    };
+
+    await db.insert(lotteryDraws).values({
+      id,
+      tenantId: TENANT,
+      publicSlug: slug,
+      title: "lb undef test",
+      description: "",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "wheel",
+      drawTrigger: "manual",
+      resultMode: "delayed",
+      startAt,
+      endAt,
+      winnerCount: 5,
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify(promotion),
+    });
+
+    await seedShareRecord(id, 10, TENANT, "undef@test.com");
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, id))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+    expect(result.granted).toBe(1); // 缺省视为开启 → 正常发放
+    expect(result.skipped).toBe(0);
+
+    const [undefEntry] = await db
+      .select({ id: lotteryEntries.id })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.drawId, id), eq(lotteryEntries.identityValue, "undef@test.com")))
+      .limit(1);
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, undefEntry?.id || ""))
+      .limit(1);
+    // 直接验证 rank1 分享者获得 5 spins
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(5);
+  });
+
+  it("viral.enabled=false 时不发放排行榜奖励（P1 回归：enabled 必须为真）", async () => {
+    const id = crypto.randomUUID();
+    const slug = `lb-viraloff${id.slice(0, 6)}`;
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 7 * 86400_000).toISOString();
+    const promotion = {
+      viral: {
+        enabled: false,
+        leaderboardEnabled: true,
+        leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 5 }],
+      },
+    };
+
+    await db.insert(lotteryDraws).values({
+      id,
+      tenantId: TENANT,
+      publicSlug: slug,
+      title: "lb viral off test",
+      description: "",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "wheel",
+      drawTrigger: "manual",
+      resultMode: "delayed",
+      startAt,
+      endAt,
+      winnerCount: 5,
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify(promotion),
+    });
+
+    await seedShareRecord(id, 10, TENANT, "viraloff@test.com");
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, id))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+    expect(result.granted).toBe(0);
+    expect(result.skipped).toBe(0);
+  });
+
+  it("maxSpinsPerEntry 总顶裁剪：granted 接近上限时按实际可发额度发放并留 capped 审计", async () => {
+    const { id: drawId } = await seedLeaderboardDraw({
+      rewards: [{ rank: 1, rewardValue: 10 }],
+    });
+
+    const { entryId } = await seedShareRecord(drawId, 10, TENANT, "cap@test.com");
+    // 预置 granted=8（如已获 join 1 + 裂变 7），maxSpinsPerEntry=10 → room=2
+    await db
+      .update(lotteryEntries)
+      .set({ spinsLeft: 8, spinsTotalGranted: 8 })
+      .where(eq(lotteryEntries.id, entryId));
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+    expect(result.granted).toBe(1);
+
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft, spinsTotalGranted: lotteryEntries.spinsTotalGranted })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, entryId))
+      .limit(1);
+    // 裁剪后只发 room=2，不超 maxSpins=10
+    expect(Number(entry?.spinsTotalGranted ?? 0)).toBe(10);
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(10);
+
+    const log = (await db.select().from(spinsLog).where(eq(spinsLog.entryId, entryId))).find((l) => l.reason === "viral");
+    expect(log).toBeDefined();
+    expect(log!.delta).toBe(2);
+    expect(log!.refId).toBe("leaderboard:1:capped");
+  });
 });

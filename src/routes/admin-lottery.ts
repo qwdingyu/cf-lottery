@@ -51,6 +51,7 @@ import {
   normalizeOptionalPositiveInteger,
   normalizeOptionalNonNegativeInteger,
   defaultExperienceForActivity,
+  mergeJsonTopLevel,
 } from "./admin-lottery-helpers";
 
 export const adminLotteryRoute = new Hono<AppEnv>();
@@ -533,7 +534,10 @@ adminLotteryRoute.get("/draws/:id", async (c) => {
     .leftJoin(prizes, and(eq(prizes.id, lotteryPrizeTiers.prizeId), eq(prizes.tenantId, tenantId)))
     .where(and(eq(lotteryPrizeTiers.drawId, draw.id), eq(lotteryPrizeTiers.tenantId, tenantId)))
     .orderBy(lotteryPrizeTiers.sortOrder);
-  return ok(c, { draw, tiers });
+  // P0 修复（2026-08 审查）：详情不回传密码哈希（避免前端复制/回填把哈希当明文二次哈希），
+  // 改为 hasAccessPassword 布尔，供编辑表单显示"已设置密码，留空保持不变"。
+  const { accessPassword: _accessPassword, ...drawSafe } = draw;
+  return ok(c, { draw: { ...drawSafe, hasAccessPassword: Boolean(_accessPassword) }, tiers });
 });
 
 /** 获取活动模板列表
@@ -861,7 +865,15 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       ...(body.expectedParticipants !== undefined ? { expectedParticipants: normalizeOptionalNonNegativeInteger(body.expectedParticipants, "预计参与") ?? 0 } : {}),
       ...(maxSpinsUpdate !== undefined ? { maxSpinsPerEntry: maxSpinsUpdate } : {}),
       ...(maxParticipantsUpdate !== undefined ? { maxParticipants: maxParticipantsUpdate } : {}),
-      ...(body.accessPassword !== undefined ? { accessPassword: body.accessPassword ? await hashAccessPassword(String(body.accessPassword)) : "" } : {}),
+      // P0 修复（2026-08 审查）：accessPassword 三态语义——
+      //   null → 显式清空密码；""（空串）→ 跳过不修改（编辑表单不回填密码，保存必发空串，
+      //   旧实现把空串当"清空"导致编辑任意字段后访问门禁被静默移除）；
+      //   非空 → 重新哈希并设置（createDraw 也走 hashAccessPassword，语义一致）。
+      ...(body.accessPassword === null
+        ? { accessPassword: "" }
+        : body.accessPassword !== undefined && String(body.accessPassword || "").trim() !== ""
+          ? { accessPassword: await hashAccessPassword(String(body.accessPassword)) }
+          : {}),
       ...(body.showParticipantCount !== undefined ? { showParticipantCount: body.showParticipantCount ? 1 : 0 } : {}),
       ...(body.showWinnerCount !== undefined ? { showWinnerCount: body.showWinnerCount ? 1 : 0 } : {}),
       ...(body.showWinnerList !== undefined ? { showWinnerList: body.showWinnerList ? 1 : 0 } : {}),
@@ -875,17 +887,14 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
                   : JSON.stringify(body.productLink),
           }
         : {}),
+      // P1 修复（2026-08 审查）：promotionConfig / activityConfig 由"整包覆盖"改为"顶层键级 merge"，
+      // 前端重建整包时未知键（operational / prizeImage / 未来扩展块）原样保留，杜绝编辑静默擦除配置。
       ...(body.promotionConfig !== undefined
-        ? {
-            promotionConfig:
-              body.promotionConfig === null
-                ? "{}"
-                : typeof body.promotionConfig === "string"
-                  ? body.promotionConfig
-                  : JSON.stringify(body.promotionConfig),
-          }
+        ? { promotionConfig: mergeJsonTopLevel(draw.promotionConfig, body.promotionConfig) }
         : {}),
-      ...(body.activityConfig !== undefined ? { activityConfig: typeof body.activityConfig === "string" ? body.activityConfig : JSON.stringify(body.activityConfig) } : {}),
+      ...(body.activityConfig !== undefined
+        ? { activityConfig: mergeJsonTopLevel(draw.activityConfig, body.activityConfig) }
+        : {}),
       updatedAt: new Date().toISOString(),
     })
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)));

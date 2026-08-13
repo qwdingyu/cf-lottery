@@ -197,6 +197,11 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
       // 未配置或今日已领 → dailyFreeClaimed = false，走正常扣次路径。
       // ⚠️ 日期必须用 todayStr()（本地时区），与签到系统一致——若用 UTC 日期，
       // UTC+8 等时区下"每日"刷新点会偏移到当地早上 8 点，两套系统行为不一致。
+      // ⚠️ P1 修复（2026-08 审查）：不再更新 spinsTotalGranted。与签到奖励同语义——
+      // "每日免费/签到"是活动额度之外的额外次数，不应计入 maxSpinsPerEntry 上限。
+      // 若计入 granted，会毒化裂变/里程碑的 roomTotal = maxSpins - granted（spin-quota.ts:108），
+      // granted 被每日免费推高后邀请奖励被锁死（spin-execution.ts 注释 588-592 已明示签到路径的同一决策）。
+      // 副作用（与签到一致，docs/171 §11.4.2）：spinsUsed = granted - left 会低估免费次数，无用户感知。
       let dailyFreeClaimed = false;
       if (dailyFreeConfig.enabled && dailyFreeConfig.count >= 1) {
         const today = todayStr();
@@ -204,8 +209,6 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
           .update(lotteryEntries)
           .set({
             spinsLeft: sql`${lotteryEntries.spinsLeft} + ${dailyFreeConfig.count}`,
-            // 每日免费是活动级额外额度（区别于平台级签到奖励），同步累加总授予数（docs/218 模式二）
-            spinsTotalGranted: sql`${lotteryEntries.spinsTotalGranted} + ${dailyFreeConfig.count}`,
             lastDailyFreeSpinAt: today,
           })
           .where(and(

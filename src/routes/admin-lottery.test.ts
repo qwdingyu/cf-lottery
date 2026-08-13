@@ -1176,3 +1176,141 @@ describe("活动复制", () => {
     expect(newDraw!.activityConfig).toBe(JSON.stringify({ prizeImage: "https://example.com/img.png" }));
   });
 });
+
+// P0/P1 修复（2026-08 审查）：PATCH 编辑语义——JSON 键级 merge、accessPassword 三态、detail 脱敏
+describe("活动编辑 PATCH 语义", () => {
+  async function seedDraftDraw(opts: { accessPassword?: string; activityConfig?: string; promotionConfig?: string }) {
+    await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+    const drawId = crypto.randomUUID();
+    const now = new Date();
+    const { hashAccessPassword } = await import("../services/lottery/utils");
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT_A,
+      publicSlug: `patch-${drawId.slice(0, 8)}`,
+      title: "PATCH 测试",
+      status: "draft",
+      activityKind: "lottery",
+      participationMode: "password",
+      experienceType: "wheel",
+      drawTrigger: "manual",
+      resultMode: "manual",
+      startAt: new Date(now.getTime() - 60_000).toISOString(),
+      endAt: new Date(now.getTime() + 3_600_000).toISOString(),
+      winnerCount: 1,
+      showParticipantCount: 1,
+      showWinnerCount: 1,
+      showWinnerList: 0,
+      visible: 1,
+      accessPassword: opts.accessPassword ? await hashAccessPassword(opts.accessPassword) : "",
+      activityConfig: opts.activityConfig ?? "{}",
+      promotionConfig: opts.promotionConfig ?? "{}",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    });
+    return drawId;
+  }
+
+  it("P0 回归：PATCH 传空 accessPassword 不清空已有密码（编辑任意字段不再移除访问门禁）", async () => {
+    const drawId = await seedDraftDraw({ accessPassword: "secret123" });
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({ title: "改了标题", accessPassword: "" }), // 编辑表单恒发空串
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.title).toBe("改了标题");
+    expect(draw!.accessPassword).not.toBe(""); // 密码保留
+  });
+
+  it("PATCH accessPassword=null 显式清空密码；非空则重新哈希设置", async () => {
+    const drawId = await seedDraftDraw({ accessPassword: "oldpass" });
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    // 非空 → 更新（哈希带盐，用 verify 校验而非直接比对）
+    const res1 = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({ accessPassword: "newpass" }),
+    }, TEST_ENV);
+    expect(res1.status).toBe(200);
+    const { verifyAccessPassword } = await import("../services/lottery/utils");
+    const [afterSet] = await db.select({ pwd: lotteryDraws.accessPassword }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(await verifyAccessPassword("newpass", afterSet!.pwd)).toBe(true);
+    expect(await verifyAccessPassword("oldpass", afterSet!.pwd)).toBe(false);
+
+    // null → 清空
+    const res2 = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({ accessPassword: null }),
+    }, TEST_ENV);
+    expect(res2.status).toBe(200);
+    const [afterClear] = await db.select({ pwd: lotteryDraws.accessPassword }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(afterClear!.pwd).toBe("");
+  });
+
+  it("P1 回归：activityConfig 顶层键级 merge——未知键（operational/prizeImage）编辑后保留", async () => {
+    const drawId = await seedDraftDraw({
+      activityConfig: JSON.stringify({
+        version: 1,
+        kind: "lottery",
+        operational: { joinIpLimitPerMinute: 5 },
+        prizeImage: "https://example.com/img.png",
+        loserReward: { enabled: true, couponLabel: "安慰奖" },
+      }),
+    });
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    // 编辑表单重建整包（只含 loserReward）→ merge 后 operational/prizeImage 必须保留
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({
+        activityConfig: { version: 1, kind: "lottery", loserReward: { enabled: false, couponLabel: "" } },
+      }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    const merged = JSON.parse(draw!.activityConfig) as Record<string, unknown>;
+    expect(merged.loserReward).toEqual({ enabled: false, couponLabel: "" }); // 新值覆盖
+    expect((merged.operational as Record<string, unknown>).joinIpLimitPerMinute).toBe(5); // 未知键保留
+    expect(merged.prizeImage).toBe("https://example.com/img.png"); // 未知键保留
+    expect(merged.version).toBe(1);
+  });
+
+  it("P1 回归：promotionConfig merge 保留未回填块（flashSale 等）", async () => {
+    const drawId = await seedDraftDraw({
+      promotionConfig: JSON.stringify({ flashSale: { enabled: true, stockLimit: 100 } }),
+    });
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({ promotionConfig: { viral: { enabled: true } } }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    const merged = JSON.parse(draw!.promotionConfig) as Record<string, unknown>;
+    expect((merged.viral as Record<string, unknown>).enabled).toBe(true);
+    expect((merged.flashSale as Record<string, unknown>).enabled).toBe(true); // 旧块保留
+  });
+
+  it("P0 回归：detail 返回 hasAccessPassword 布尔，不泄露密码哈希", async () => {
+    const drawId = await seedDraftDraw({ accessPassword: "secret123" });
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, { headers }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const data = await res.json() as { draw: Record<string, unknown> };
+    expect(data.draw.hasAccessPassword).toBe(true);
+    expect(data.draw.accessPassword).toBeUndefined(); // 不回传哈希
+  });
+});
