@@ -47,7 +47,9 @@ export function normalizeLeaderboardRewards(raw: unknown): LeaderboardRewardConf
     const r = item as Record<string, unknown>;
     const rank = Math.floor(Number(r.rank) || 0);
     const rewardValue = Math.floor(Number(r.rewardValue) || 0);
-    if (rank >= 1 && rank <= MAX_LEADERBOARD_RANK && r.rewardType === "bonus_spin" && rewardValue >= 1) {
+    // 上限与前端表单一致（growth-config.ts）：rank 1..100、rewardValue 1..1000。
+    // 与 publish-check 共用，防止 API 直写超大 rewardValue 推爆 granted（P2 审查项）。
+    if (rank >= 1 && rank <= MAX_LEADERBOARD_RANK && r.rewardType === "bonus_spin" && rewardValue >= 1 && rewardValue <= 1000) {
       rewards.push({ rank, rewardType: "bonus_spin", rewardValue });
     }
   }

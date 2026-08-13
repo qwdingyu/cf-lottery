@@ -27,6 +27,7 @@ import { verifyAccessPassword } from "./utils";
 import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
 import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
 import { computeViralSpinGrant, initialSpinsForJoin, normalizeReferralRewards, evaluateReferralMilestones, parseGrantedMilestones } from "./spin-quota";
+import { isViralEnabled } from "./viral-weight";
 import { recordSpinLog } from "./spins-log";
 import {
   parseFlashSaleConfig,
@@ -732,7 +733,7 @@ async function maybeTriggerReward(
   // instant 裂变：有效 join → 邀请人 +spins（双封顶）；失败不回滚参与（docs/116）
   if (String(draw.resultMode || "") === "instant") {
     try {
-      await grantViralSpinsToSharer(tx, draw, attribution.sharerEntryId);
+      await grantViralSpinsToSharer(tx, draw, attribution.sharerEntryId, attribution.shareRecordId);
     } catch (err) {
       console.error(`[lottery] grantViralSpinsToSharer failed for ${draw.id}:`, err);
     }
@@ -772,11 +773,13 @@ async function maybeTriggerReward(
  * 邀请人 instant +spins：actual = min(perInvite, maxSpins-granted, maxExtra-viral)。
  * 配置优先 promotion_config.viral.extraSpinsPerInvite / maxExtraSpins；
  * 缺省回退 extraEntriesPerInvite / maxExtraEntries 数字（文案仍须 instant 分键）。
+ * @param shareRecordId 触发本次奖励的分享记录 id（P2 审查项：spins_log.refId 反查具体邀请事件）
  */
 async function grantViralSpinsToSharer(
   tx: DbType,
   draw: { id: string; tenantId: string; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
   sharerEntryId: string,
+  shareRecordId?: string,
 ) {
   const maxSpins = Number(draw.maxSpinsPerEntry ?? 0);
   if (maxSpins < 1) return;
@@ -794,7 +797,8 @@ async function grantViralSpinsToSharer(
       };
     };
     const viral = pc?.viral;
-    if (!viral?.enabled) return;
+    // P2 审查项：统一严格 ===true 判定（enabled="true" 字符串视为未启用，与排行榜/发布预检一致）
+    if (!isViralEnabled(viral) || !viral) return;
     extra = Number(viral.extraSpinsPerInvite ?? viral.extraEntriesPerInvite ?? 0);
     maxExtra = Number(viral.maxExtraSpins ?? viral.maxExtraEntries ?? 0);
   } catch {
@@ -849,7 +853,8 @@ async function grantViralSpinsToSharer(
     return;
   }
 
-  // 写入 spins 流水日志（docs/172 §5.5 P1）：记录裂变邀请奖励
+  // 写入 spins 流水日志（docs/172 §5.5 P1）：记录裂变邀请奖励。
+  // refId 关联触发本次奖励的 shareRecord（P2 审查项：与里程碑/排行榜一致，审计可反查具体邀请事件）。
   await recordSpinLog(tx, {
     tenantId: draw.tenantId,
     entryId: sharerEntryId,
@@ -857,6 +862,7 @@ async function grantViralSpinsToSharer(
     delta: grant.nextLeftDelta,
     balanceAfter: Number(sharer.spinsLeft ?? 0) + grant.nextLeftDelta,
     reason: "viral",
+    refId: shareRecordId ? `share:${shareRecordId}` : undefined,
   });
 }
 

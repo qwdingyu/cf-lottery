@@ -142,7 +142,7 @@ export type ReferralMilestoneReward = {
   rewardValue: number;
 };
 
-/** 归一化 promotion_config.referralRewards（容错 + 去重 + 排序）。 */
+/** 归一化推荐奖励阶梯（容错 + 去重 + 排序 + 上限校验）。 */
 export function normalizeReferralRewards(raw: unknown): ReferralMilestoneReward[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<number>();
@@ -152,7 +152,9 @@ export function normalizeReferralRewards(raw: unknown): ReferralMilestoneReward[
     const obj = item as Record<string, unknown>;
     const requireCount = floorNonNeg(obj.requireCount, 0);
     const rewardValue = floorNonNeg(obj.rewardValue, 0);
-    if (requireCount < 1 || rewardValue < 1) continue;
+    // 上限与前端表单一致（growth-config.ts）：requireCount 1..100、rewardValue 1..1000。
+    // 后端 normalize 与发布预检共用，防止 API 直写超大值绕过前端上限（P2 审查项）。
+    if (requireCount < 1 || requireCount > 100 || rewardValue < 1 || rewardValue > 1000) continue;
     // P0 仅支持 bonus_spin；未知类型静默剔除，不影响主流程（附加行为容错原则）
     if (String(obj.rewardType || "") !== "bonus_spin") continue;
     if (seen.has(requireCount)) continue; // 同 requireCount 首个生效
@@ -275,7 +277,9 @@ export function normalizePityConfig(raw: unknown): PityConfig {
   const enabled = node.enabled === true || node.enabled === 1 || node.enabled === "true";
   if (!enabled) return { enabled: false, threshold: 0 };
   const threshold = Math.floor(Number(node.threshold) || 0);
-  if (threshold < 1) return { enabled: false, threshold: 0 };
+  // 有效区间 2..100（与前端表单一致，growth-config.ts:599）；越界视为未启用，
+  // 发布预检会以 disabled_by_invalid_threshold 警告运营（P2 审查项：防 API 直写绕过前端上限）。
+  if (threshold < 2 || threshold > 100) return { enabled: false, threshold: 0 };
   return { enabled: true, threshold };
 }
 
@@ -299,6 +303,8 @@ export function normalizeDailyFreeSpinConfig(raw: unknown): DailyFreeSpinConfig 
   const enabled = node.enabled === true || node.enabled === 1 || node.enabled === "true";
   if (!enabled) return { enabled: false, count: 0 };
   const count = Math.floor(Math.max(0, Number(node.count) || 0));
-  if (count < 1) return { enabled: false, count: 0 };
+  // 有效区间 1..10（与前端表单一致，growth-config.ts:609）；越界视为未启用，
+  // 发布预检会以 disabled_by_invalid_count 警告运营（P2 审查项：防 API 直写绕过前端上限）。
+  if (count < 1 || count > 10) return { enabled: false, count: 0 };
   return { enabled: true, count };
 }

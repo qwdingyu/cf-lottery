@@ -647,19 +647,31 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
     notifyWinnerEnabled
   ) {
     void (async () => {
-      const [winner] = await db
-        .select({
-          email: lotteryEntries.identityValue,
-          identityType: lotteryEntries.identityType,
-        })
-        .from(lotteryEntries)
-        .where(and(
-          eq(lotteryEntries.id, fulfilledOrder.entryId),
-          eq(lotteryEntries.tenantId, fulfilledOrder.tenantId),
-          eq(lotteryEntries.drawId, fulfilledOrder.drawId),
-        ))
-        .limit(1);
-      if (!winner || winner.identityType !== "email") return;
+      // P2 审查项：收件人优先用订单 buyer 身份快照（buyerIdentityValue），
+      // 不再回查 lottery_entries 当前身份——entry 身份被改名/回收后订单仍按"谁在何时购买"发件
+      // （与订单找回 buyerIdentityIdx 同一口径，docs/158）。旧订单快照为空时回退 entry 查询兜底。
+      let recipientEmail = "";
+      if (fulfilledOrder.buyerIdentityType === "email" && String(fulfilledOrder.buyerIdentityValue || "").trim()) {
+        recipientEmail = String(fulfilledOrder.buyerIdentityValue).trim().toLowerCase();
+      } else {
+        const [winner] = await db
+          .select({
+            email: lotteryEntries.identityValue,
+            identityType: lotteryEntries.identityType,
+            identityValue: lotteryEntries.identityValue,
+          })
+          .from(lotteryEntries)
+          .where(and(
+            eq(lotteryEntries.id, fulfilledOrder.entryId),
+            eq(lotteryEntries.tenantId, fulfilledOrder.tenantId),
+            eq(lotteryEntries.drawId, fulfilledOrder.drawId),
+          ))
+          .limit(1);
+        if (winner && winner.identityType === "email") {
+          recipientEmail = String(winner.identityValue).trim().toLowerCase();
+        }
+      }
+      if (!recipientEmail) return;
 
       // 查活动标题（用于邮件中 drawName，避免展示 UUID）
       const [drawInfo] = await db
@@ -668,8 +680,9 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         .where(and(eq(lotteryDraws.id, fulfilledOrder.drawId), eq(lotteryDraws.tenantId, fulfilledOrder.tenantId)))
         .limit(1);
 
-      // V2：通过 order_items 查已发卡密（docs/158），不再依赖 order.prize_code_id。
-      const [codeInfo] = await db
+      // V2：通过 order_items 查全部已发卡密（docs/158）。
+      // P2 审查项：不再 limit(1)——多件订单邮件应包含本订单全部卡密清单，避免用户只收到 1 张。
+      const codeRows = await db
         .select({ code: prizeCodes.code, secret: prizeCodes.secret, prizeId: prizeCodes.prizeId })
         .from(paymentOrderItems)
         .innerJoin(prizeCodes, and(
@@ -681,18 +694,31 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
           eq(paymentOrderItems.paymentOrderId, fulfilledOrder.id),
           eq(paymentOrderItems.status, "fulfilled"),
         ))
-        .orderBy(paymentOrderItems.lineNo)
-        .limit(1);
+        .orderBy(paymentOrderItems.lineNo);
 
       // 查奖品名称（productName 应为奖品名，而非卡密值）
-      const productName = codeInfo?.prizeId
+      const productName = codeRows[0]?.prizeId
         ? await db
           .select({ name: prizes.name })
           .from(prizes)
-          .where(and(eq(prizes.id, codeInfo.prizeId), eq(prizes.tenantId, fulfilledOrder.tenantId)))
+          .where(and(eq(prizes.id, codeRows[0].prizeId), eq(prizes.tenantId, fulfilledOrder.tenantId)))
           .limit(1)
           .then((rows) => rows[0]?.name || "奖品")
         : "奖品";
+
+      // 多件订单：deliveryNote 附全部卡密清单（每行一张 code[:secret]），单件保持原有文案
+      const firstCode = codeRows[0];
+      let deliveryNote: string;
+      if (codeRows.length > 1) {
+        const codeList = codeRows
+          .map((row) => `  ${row.secret ? `${row.code}:${row.secret}` : row.code}`)
+          .join("\n");
+        deliveryNote = `支付已完成，本订单共 ${fulfilledOrder.quantity} 件，卡密如下：\n${codeList}\n请在活动页订单详情中再次查看。`;
+      } else if (fulfilledOrder.quantity > 1) {
+        deliveryNote = `支付已完成，本订单共 ${fulfilledOrder.quantity} 件；请在活动页订单详情查看全部卡密。`;
+      } else {
+        deliveryNote = "支付已完成，卡密已发放。如有疑问请联系主办方。";
+      }
 
       const { buildLotteryWinnerTemplateData } = await import("../services/email-service");
       const { enqueueEmailDelivery, dispatchEmailDeliveries } = await import("../services/email-delivery");
@@ -701,17 +727,15 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         drawId: fulfilledOrder.drawId,
         sourceType: "payment_order",
         sourceId: fulfilledOrder.id,
-        recipientEmail: winner.email,
+        recipientEmail,
         template: "lottery_winner",
         templateData: buildLotteryWinnerTemplateData({
           drawName: drawInfo?.title || "活动",
           productName,
           orderNo: fulfilledOrder.id,
-          accountLabel: codeInfo?.code || "",
-          deliverySecret: codeInfo?.secret || "",
-          deliveryNote: fulfilledOrder.quantity > 1
-            ? `支付已完成，本订单共 ${fulfilledOrder.quantity} 件；请在活动页订单详情查看全部卡密。`
-            : "支付已完成，卡密已发放。如有疑问请联系主办方。",
+          accountLabel: firstCode?.code || "",
+          deliverySecret: firstCode?.secret || "",
+          deliveryNote,
         }),
       });
       if (!queued.enqueued) return;

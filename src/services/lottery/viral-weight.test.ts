@@ -5,6 +5,7 @@ import {
   buildViralLeaderboardRanking,
   computeViralDrawWeight,
   computeViralExtraEntries,
+  isViralEnabled,
   isViralLeaderboardEnabled,
   normalizeViralWeightNumbers,
   weightedSampleUnique,
@@ -222,5 +223,19 @@ describe("buildViralLeaderboardRanking 真实名次（docs/109）", () => {
     const full = buildViralLeaderboardRanking(map, { topN: 10 });
     expect(full.entries.map((e) => e.rank)).toEqual([1, 2]);
     expect(full.entries.map((e) => e.entryId)).toEqual(["a", "b"]);
+  });
+});
+
+// P2 审查项：viral.enabled 幻值统一（严格 ===true，字符串 "true" 不视为启用）
+describe("isViralEnabled 严格判定（P2 审查修复）", () => {
+  it("enabled===true 才启用；布尔 false / 缺省 / 字符串 'true' / 数字 1 均视为未启用", () => {
+    expect(isViralEnabled({ enabled: true })).toBe(true);
+    expect(isViralEnabled({ enabled: false })).toBe(false);
+    expect(isViralEnabled({})).toBe(false);
+    expect(isViralEnabled(undefined)).toBe(false);
+    expect(isViralEnabled(null)).toBe(false);
+    // 幻值：手工 JSON 写字符串/数字（前端表单写入 boolean，脏数据按未启用处理）
+    expect(isViralEnabled({ enabled: "true" })).toBe(false);
+    expect(isViralEnabled({ enabled: 1 })).toBe(false);
   });
 });

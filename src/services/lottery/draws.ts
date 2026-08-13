@@ -22,6 +22,8 @@ import { DEFAULT_ACTIVITY_PARTICIPANT_CAP, DRAW_STATUS } from "./types";
 import { enforceTenantActivityQuota } from "./plan";
 import { hashAccessPassword } from "./utils";
 import { buildPublishCheckForDraw, type PublishCheckOptions } from "../publish-check-service";
+// P2 审查项：默认体验/结果模式收敛到 lib/activity-utils.ts（唯一来源），此处 import 供本文件使用
+import { defaultExperienceForActivity, defaultResultModeForActivity } from "../../lib/activity-utils";
 import {
   PAYMENT_ATTEMPT_STATUS,
   PAYMENT_ENTRY_STATUS,
@@ -332,48 +334,12 @@ function normalizeRequestedMaxParticipants(value: number | undefined): number | 
   return normalized;
 }
 
-function defaultExperienceForParticipation(participationMode: string): string {
-  if (participationMode === "invite_code") return "slot";
-  if (participationMode === "password") return "scratch";
-  if (participationMode === "roster") return "card";
-  return "wheel";
-}
-
-function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
-  if (activityKind === "signup_chain") return "list";
-  if (activityKind === "reservation") return "calendar";
-  if (activityKind === "vote") return "ballot";
-  if (activityKind === "survey") return "form";
-  if (activityKind === "checkin") return "checkin";
-  if (activityKind === "waitlist") return "queue";
-  if (activityKind === "approval") return "form";
-  if (activityKind === "claim") return "reveal";
-  return defaultExperienceForParticipation(participationMode);
-}
-
 /**
- * 根据活动类型和开奖触发方式计算默认结果模式。
- *
- * 这是活动引擎的规则入口：不同 activity_kind 对应不同的结果分配方式。
- * 抽奖类默认 manual（管理员手动开奖）或 scheduled（定时开奖）；
- * 接龙类默认 ordered_assignment（按报名顺序分配）；
- * 问卷/签到类默认 no_result（无结果分配）。
- *
- * 该函数同时被 lottery-service（创建活动）和 admin-lottery（路由层校验）使用，
- * 因此导出为公共函数，避免两处维护不同步。
+ * 默认体验/结果模式已收敛到 src/lib/activity-utils.ts（P2 审查项：
+ * 旧实现在此文件与 admin-lottery-helpers.ts 各写一份，新增活动类型需改两处）。
+ * 此处保留 re-export，维持 lottery-service `export *` 的既有导出 API 不变。
  */
-export function defaultResultModeForActivity(activityKind: string, drawTrigger: string): string {
-  if (activityKind === "signup_chain") return "ordered_assignment";
-  if (activityKind === "reservation") return "capacity_assignment";
-  if (activityKind === "vote") return "vote_tally";
-  if (activityKind === "survey") return "no_result";
-  if (activityKind === "checkin") return "no_result";
-  if (activityKind === "waitlist") return "ordered_assignment";
-  if (activityKind === "approval") return "review_decision";
-  if (activityKind === "claim") return "instant";
-  if (activityKind === "assignment") return "ordered_assignment";
-  return drawTrigger === "scheduled" ? "scheduled" : "manual";
-}
+export { defaultExperienceForActivity, defaultResultModeForActivity } from "../../lib/activity-utils";
 
 /**
  * 判断活动类型是否要求中奖名额。

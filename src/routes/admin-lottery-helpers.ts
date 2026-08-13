@@ -26,6 +26,12 @@ import {
 } from "../db/schema";
 import { and, count, eq, inArray } from "drizzle-orm";
 import { DELETABLE_DRAW_STATUSES } from "../services/lottery-service";
+// P2 审查项：默认体验/结果模式已收敛到 lib/activity-utils.ts（旧实现本地重复一份），
+// 此处仅做转发，保持 admin-lottery.ts 既有导入路径不变。
+import {
+  defaultExperienceForParticipation as libDefaultExperienceForParticipation,
+  defaultExperienceForActivity as libDefaultExperienceForActivity,
+} from "../lib/activity-utils";
 
 /** 单次 batch-delete 上限：防误炸与 Turso 长事务（docs/082 P2） */
 export const ADMIN_BATCH_DELETE_MAX = 100;
@@ -313,22 +319,11 @@ export function normalizeOptionalNonNegativeInteger(value: unknown, fieldName: s
 }
 
 export function defaultExperienceForParticipation(participationMode: string): string {
-  if (participationMode === "invite_code") return "slot";
-  if (participationMode === "password") return "scratch";
-  if (participationMode === "roster") return "card";
-  return "wheel";
+  return libDefaultExperienceForParticipation(participationMode);
 }
 
 export function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
-  if (activityKind === "signup_chain") return "list";
-  if (activityKind === "reservation") return "calendar";
-  if (activityKind === "vote") return "ballot";
-  if (activityKind === "survey") return "form";
-  if (activityKind === "checkin") return "checkin";
-  if (activityKind === "waitlist") return "queue";
-  if (activityKind === "approval") return "form";
-  if (activityKind === "claim") return "reveal";
-  return defaultExperienceForParticipation(participationMode);
+  return libDefaultExperienceForActivity(activityKind, participationMode);
 }
 
 export function tryParseJson(s: string): any {

@@ -18,6 +18,20 @@ export type ViralWeightConfig = {
   leaderboardEnabled?: boolean;
 };
 
+/**
+ * 裂变是否启用（严格判定，P2 审查项）。
+ *
+ * 统一全项目对 viral.enabled 的判定：必须严格 === true 才视为启用。
+ * 旧实现散落 truthy（"true"/1 字符串会被当成启用）与严格两种，行为不一致：
+ * - grantViralSpinsToSharer / publish-check 用 truthy → enabled="true" 时裂变加次生效；
+ * - isViralLeaderboardEnabled 严格 === true → 同一配置排行榜关闭（互相矛盾）。
+ * 前端表单写入 boolean；手工 JSON 写字符串 "true" 属脏数据，统一按未启用处理，
+ * 与 publish-check 的 enabled 幻值收敛（docs/220）同策略。
+ */
+export function isViralEnabled(viral?: { enabled?: unknown } | null): boolean {
+  return viral?.enabled === true;
+}
+
 /** 归一化裂变数字配置（非法/缺省时给出安全默认，enabled 不在此改写） */
 export function normalizeViralWeightNumbers(viral?: ViralWeightConfig | null): {
   extraEntriesPerInvite: number;

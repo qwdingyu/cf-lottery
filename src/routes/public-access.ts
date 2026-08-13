@@ -11,6 +11,8 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
 import { getDb, ok, fail } from "../lib/http";
+import { getClientIp } from "../lib/platform";
+import { checkPublicRateLimit } from "./public-lottery-helpers";
 import { consumeAccessToken } from "../services/platform/access-token";
 import {
   authIdentities,
@@ -34,6 +36,12 @@ export const publicAccessRoute = new Hono<AppEnv>();
  */
 publicAccessRoute.get("/card-codes", async (c) => {
   const db = getDb(c);
+  const ip = getClientIp(c);
+
+  // P2 审查项：公开卡密访问加 IP 限流（令牌一次性的同时，防止对有效令牌做暴力/枚举探测或日志轰炸）。
+  if (!(await checkPublicRateLimit(db, `card-codes:${ip}`, 10, 60000))) {
+    return fail(c, "访问过于频繁，请稍后再试", 429);
+  }
 
   const token = c.req.query("token");
   if (!token) return fail(c, "缺少令牌参数", 400);

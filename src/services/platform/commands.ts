@@ -604,7 +604,14 @@ async function executeCheckinCommand(
 
   // 6. 写入 spins 流水日志（docs/172 §5.5 P1）：记录签到奖励发放
   if (reward > 0) {
-    const balanceAfter = Number(entry.spinsLeft ?? 0) + reward;
+    // P2 审查项：balanceAfter 用 UPDATE 后重读的真实余额，不依赖事务外预读（并发下可能虚高）。
+    // 与 spin-execution.ts「事务内重读」标准一致；SQLite 单写者 + 命令串行处理下，此处重读即准确快照。
+    const [fresh] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, result.entryId))
+      .limit(1);
+    const balanceAfter = Math.max(0, Number(fresh?.spinsLeft ?? 0));
     await recordSpinLog(db, {
       tenantId: input.tenantId,
       entryId: result.entryId,
@@ -1038,8 +1045,11 @@ async function executeBindCommand(
   }
 
   // 模式 2：带参数 → 消费绑定码，完成身份合并
-  // 限流：全局每 10 秒最多消费一次，防止对绑定码做暴力破解（28^6 组合，短窗口内无限试探会降低安全性）
-  if (!await checkDbRateLimit(db, "bind_consume:global", 1, 10000)) {
+  // 限流：每用户每 10 秒最多消费一次绑定码，防止对绑定码做暴力破解。
+  // P2 审查项：原实现用全局键 "bind_consume:global"——任意用户的高频请求会阻塞所有用户
+  // 的绑定消费（全局互斥 DoS 面）；改为 per-user 键，单用户试探仍被限制、不影响他人。
+  // 绑定码本身 28^6 高熵 + 一次性 + 10 分钟短时效，per-user 限流足够兜底。
+  if (!await checkDbRateLimit(db, `bind_consume:${input.user.userId || input.user.identityValue || "unknown"}`, 1, 10000)) {
     return { handled: true, reply: "操作过于频繁，请稍后再试。" };
   }
   try {

@@ -15,6 +15,7 @@
  */
 import { and, eq, sql } from "drizzle-orm";
 import type { DbType } from "../../db/client";
+import { withDbTransaction } from "../../db/client";
 import { authIdentities, platformBindings, users } from "../../db/schema";
 
 /** 绑定码生成结果 */
@@ -171,39 +172,54 @@ export async function consumeBindingCode(
     return { ok: true, merged: false };
   }
 
-  // 6. CAS 式标记绑定码已使用（防并发重复消费）
-  const updated = await db
-    .update(platformBindings)
-    .set({ used: 1 })
-    .where(and(
-      eq(platformBindings.id, binding.id),
-      eq(platformBindings.used, 0),
-    ))
-    .returning({ id: platformBindings.id });
+  // 6-8. 合并执行（P2 审查项：CAS 标记 used + 重写 auth_identities.userId + 清理孤儿用户
+  // 原先分散在事务外三步执行——CAS 成功后若重写失败，绑定码被消费但合并未完成（半完成状态）。
+  // 现包进 withDbTransaction：任一步失败整体回滚，绑定码保持未用可重试。
+  const merged = await withDbTransaction(db, async (tx) => {
+    // CAS 式标记绑定码已使用（防并发重复消费）
+    const updated = await tx
+      .update(platformBindings)
+      .set({ used: 1 })
+      .where(and(
+        eq(platformBindings.id, binding.id),
+        eq(platformBindings.used, 0),
+      ))
+      .returning({ id: platformBindings.id });
 
-  if (updated.length === 0) {
-    return { ok: false, reason: "绑定码已被使用，请重新发送 /绑定 获取新的绑定码。" };
+    if (updated.length === 0) {
+      throw new BindingAlreadyConsumedError();
+    }
+
+    // 执行合并：将当前用户的 auth_identities.userId 重写为发起方的 userId
+    await tx
+      .update(authIdentities)
+      .set({ userId: binding.sourceUserId })
+      .where(and(
+        eq(authIdentities.provider, targetProvider),
+        eq(authIdentities.providerUserId, targetProviderUserId),
+      ));
+
+    // 尝试清理孤儿用户行（当前用户原 users.id）
+    // 注意：不清理 lottery_entries 等关联数据，保持存量约束。
+    // 若原用户有关联数据删除失败，忽略（不影响合并结果）。
+    try {
+      await tx.delete(users).where(eq(users.id, targetUserId));
+    } catch {
+      // 可能有关联数据，删除失败忽略
+    }
+
+    return true;
+  });
+
+  return { ok: true, merged };
+}
+
+/** 绑定码已被并发消费（事务内抛出 → 整体回滚，保持绑定码未用可重试）。 */
+class BindingAlreadyConsumedError extends Error {
+  constructor() {
+    super("绑定码已被使用，请重新发送 /绑定 获取新的绑定码。");
+    this.name = "BindingAlreadyConsumedError";
   }
-
-  // 7. 执行合并：将当前用户的 auth_identities.userId 重写为发起方的 userId
-  await db
-    .update(authIdentities)
-    .set({ userId: binding.sourceUserId })
-    .where(and(
-      eq(authIdentities.provider, targetProvider),
-      eq(authIdentities.providerUserId, targetProviderUserId),
-    ));
-
-  // 8. 尝试清理孤儿用户行（当前用户原 users.id）
-  // 注意：不清理 lottery_entries 等关联数据，保持存量约束。
-  // 若原用户有关联数据删除失败，忽略（不影响合并结果）。
-  try {
-    await db.delete(users).where(eq(users.id, targetUserId));
-  } catch {
-    // 可能有关联数据，删除失败忽略
-  }
-
-  return { ok: true, merged: true };
 }
 
 /**

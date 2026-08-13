@@ -26,7 +26,8 @@ import { PAYMENT_PROVIDER_CATALOG, type PaymentProviderCatalogItem } from "./pay
 import { decryptPaymentConfigValueResult, isEncryptedPaymentConfigValue } from "./payment/secret-config";
 import { DRAW_STATUS } from "./lottery/types";
 import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
-import { normalizeDailyFreeSpinConfig, normalizePityConfig } from "./lottery/spin-quota";
+import { isViralEnabled } from "./lottery/viral-weight";
+import { normalizeDailyFreeSpinConfig, normalizePityConfig, normalizeReferralRewards } from "./lottery/spin-quota";
 
 export type PublishCheckSection =
   | "basic"
@@ -661,9 +662,20 @@ async function validatePromotion(
   if (Array.isArray(referralRewards) && referralRewards.length > 0 && !isInstantResultMode(draw.resultMode)) {
     add(result.errors, "promotion", "promotion.referralRewards.delayed_not_supported", "推荐里程碑奖励仅支持即时开奖模式（result_mode=instant），当前模式不会触发里程碑逻辑");
   }
+  // P2 审查项：referralRewards 全为无效项（requireCount/rewardValue 越界或非 bonus_spin）时，
+  // 与 pity/dailyFree 的 disabled_by_invalid_* 同语义，warning 告知"配了但不会生效"（防遗忘闭环）。
+  // 用与运行时同一 normalizeReferralRewards 判定，杜绝"预检说有奖励、实际发放为零"偏差。
+  if (
+    isInstantResultMode(draw.resultMode) &&
+    Array.isArray(referralRewards) &&
+    referralRewards.length > 0 &&
+    normalizeReferralRewards(referralRewards).length === 0
+  ) {
+    add(result.warnings, "promotion", "promotion.referralRewards.invalid_entries", "推荐里程碑配置了条目但全部无效（requireCount 需 1–100、rewardValue 需 1–1000 且类型为 bonus_spin），奖励不会发放");
+  }
 
-  // 裂变配置校验
-  if (viral?.enabled) {
+  // 裂变配置校验（P2 审查项：统一严格 ===true 判定，enabled="true" 字符串不视为启用）
+  if (isViralEnabled(viral) && viral) {
     const perInvite = Number(viral.extraEntriesPerInvite ?? 0);
     const maxExtra = Number(viral.maxExtraEntries ?? 0);
     if (perInvite < 1) {

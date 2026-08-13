@@ -10,6 +10,8 @@ import {
   isInstantSpinQuotaConfigured,
   normalizeInstantSpinQuota,
   normalizeReferralRewards,
+  normalizePityConfig,
+  normalizeDailyFreeSpinConfig,
   parseGrantedMilestones,
   weightedPickTier,
 } from "./spin-quota";
@@ -245,5 +247,32 @@ describe("evaluateReferralMilestones（P0 发放判定）", () => {
     const r = evaluateReferralMilestones({ joinedCount: 3, milestones, granted: [0, -1, 1] });
     expect(r.dueMilestones.map((m) => m.requireCount)).toEqual([3]);
     expect(r.nextGranted).toEqual([1, 3]);
+  });
+});
+
+// P2 审查项：后端 normalize 上限校验（与前端表单一致，防 API 直写绕过）
+describe("normalize 上限校验（P2 审查修复）", () => {
+  it("pity threshold 有效区间 2..100，越界视为未启用", () => {
+    expect(normalizePityConfig({ enabled: true, threshold: 2 }).enabled).toBe(true);
+    expect(normalizePityConfig({ enabled: true, threshold: 100 }).enabled).toBe(true);
+    expect(normalizePityConfig({ enabled: true, threshold: 1 })).toEqual({ enabled: false, threshold: 0 });
+    expect(normalizePityConfig({ enabled: true, threshold: 101 })).toEqual({ enabled: false, threshold: 0 });
+  });
+
+  it("dailyFree count 有效区间 1..10，越界视为未启用", () => {
+    expect(normalizeDailyFreeSpinConfig({ enabled: true, count: 1 }).enabled).toBe(true);
+    expect(normalizeDailyFreeSpinConfig({ enabled: true, count: 10 }).enabled).toBe(true);
+    expect(normalizeDailyFreeSpinConfig({ enabled: true, count: 0 })).toEqual({ enabled: false, count: 0 });
+    expect(normalizeDailyFreeSpinConfig({ enabled: true, count: 11 })).toEqual({ enabled: false, count: 0 });
+  });
+
+  it("referralRewards requireCount>100 / rewardValue>1000 剔除", () => {
+    const r = normalizeReferralRewards([
+      { requireCount: 1, rewardType: "bonus_spin", rewardValue: 1000 },
+      { requireCount: 101, rewardType: "bonus_spin", rewardValue: 1 },
+      { requireCount: 5, rewardType: "bonus_spin", rewardValue: 1001 },
+      { requireCount: 3, rewardType: "bonus_spin", rewardValue: 2 },
+    ]);
+    expect(r.map((m) => m.requireCount)).toEqual([1, 3]);
   });
 });
