@@ -1543,9 +1543,9 @@
             :disabled="operatingId === expandedActionDraw.id"
             @click="runMoreAction(d => handleRetryEmail(d.id))"
           >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
-          <!-- 排行榜奖励发放：open（instant 模式手动触发）或 drawn 时均可调用，后端幂等处理 -->
+          <!-- 排行榜奖励发放：仅 lottery 活动，open（instant 模式手动触发）或 drawn 时均可调用，后端幂等处理 -->
           <button
-            v-if="expandedActionDraw.status === 'open' || expandedActionDraw.status === 'drawn'"
+            v-if="expandedActionDraw.activityKind === 'lottery' && (expandedActionDraw.status === 'open' || expandedActionDraw.status === 'drawn')"
             type="button"
             class="btn btn-ghost btn-xs table-actions-menu-item"
             role="menuitem"

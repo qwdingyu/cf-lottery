@@ -30,6 +30,8 @@ import {
   randomSelect,
   triggerRewardEarned,
   cancelDraw,
+  performInstantSpin,
+  grantLeaderboardRewards,
 } from "../services/lottery-service";
 import {
   lotteryPrizeTiers,
@@ -2324,5 +2326,497 @@ describe("prizeCode redeemed 状态流转", () => {
     const [row] = await db.select({ status: prizeCodes.status }).from(prizeCodes).where(eq(prizeCodes.code, "REDEEM-002"));
     expect(row).toBeDefined();
     expect(row.status).toBe("revoked");
+  });
+});
+
+/* ── 增长功能集成测试（docs/218 模式一至四交叉场景） ── */
+
+describe("增长功能集成：保底+每日免费+排行榜奖励+裂变", () => {
+  /**
+   * 创建支持全部增长特性的 instant 活动：
+   * - 保底（pity.threshold=3）
+   * - 每日免费（dailyFreeSpins.count=1）
+   * - 裂变分享（viral.extraSpinsPerInvite）→ 排行榜奖励（viral.leaderboardRewards）
+   */
+  async function seedGrowthDraw(opts?: {
+    pityThreshold?: number;
+    dailyFreeCount?: number;
+    leaderboardRewards?: Array<{ rank: number; rewardValue: number }>;
+  }) {
+    const now = new Date();
+    const future = new Date(now.getTime() + 7 * 86400_000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "增长功能集成",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      participationMode: "open",
+      activityKind: "lottery",
+      experienceType: "wheel",
+      resultMode: "instant",
+      maxSpinsPerEntry: 20,
+      winnerCount: 3,
+      promotionConfig: JSON.stringify({
+        pity: { enabled: true, threshold: opts?.pityThreshold ?? 3 },
+        dailyFreeSpins: { enabled: true, count: opts?.dailyFreeCount ?? 1 },
+        viral: {
+          enabled: true,
+          extraSpinsPerInvite: 1,
+          maxExtraSpins: 5,
+          extraEntriesPerInvite: 1,
+          maxExtraEntries: 5,
+          leaderboardEnabled: true,
+          leaderboardRewards: (opts?.leaderboardRewards ?? [
+            { rank: 1, rewardType: "bonus_spin", rewardValue: 3 },
+            { rank: 2, rewardType: "bonus_spin", rewardValue: 1 },
+          ]).map((r) => ({ ...r, rewardType: "bonus_spin" })),
+        },
+      }),
+    });
+
+    // 档 A（sortOrder 10，高价值，码全部 claimed → 正常抽必未中，用于累积连空）
+    const prizeAId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeAId, TENANT, "售罄大奖", "code", 3, 1],
+    });
+    // 所有码 claimed（发布预检通过，但运行时无一可用 → 必未中）
+    for (let i = 0; i < 3; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeAId, `INTEG-USED-${i}`, "claimed"],
+      });
+    }
+    // 档 B（sortOrder 100，保底触发必中）→ 3 库存码
+    const prizeBId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeBId, TENANT, "保底小奖", "code", 3, 1],
+    });
+
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId: id,
+      prizeId: prizeAId, tierName: "大奖", winnerCount: 100, sortOrder: 10, weight: 100,
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId: id,
+      prizeId: prizeBId, tierName: "小奖", winnerCount: 3, sortOrder: 100, weight: 100,
+    });
+
+    for (let i = 0; i < 3; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeBId, `INTEG-PITY-${i}`, "available"],
+      });
+    }
+
+    // 直接置为 open（绕过发布预检：大奖"售罄"语义在预检中会被拦截，与 spin-execution.test.ts
+    // seedPityDraw 直接 INSERT status=open 的模式一致——集成测试聚焦运行时链路，发布预检
+    // 由 publish-check-service 单独覆盖）
+    await db
+      .update(lotteryDraws)
+      .set({ status: "open", updatedAt: new Date().toISOString() })
+      .where(and(eq(lotteryDraws.id, id), eq(lotteryDraws.tenantId, TENANT)));
+    return { id, publicSlug };
+  }
+
+  it("完整链路：用户B经A分享参与 → A触发保底+领取每日免费 → 排行榜奖励发放", async () => {
+    const { publicSlug } = await seedGrowthDraw();
+
+    // ── 用户 A（分享人）参与 ──
+    const sharer = await joinDraw(db, publicSlug, "sharer@integ.test.com");
+    expect(sharer.joined).toBe(true);
+    const sharerEntryId = String(sharer.entryId || "");
+    expect(sharerEntryId).toBeTruthy();
+
+    // ── 取 A 的分享码，用户 B 经分享参与 → A 的有效邀请 +1 ──
+    // 生产环境 shareRecord 在用户点击分享时创建（public-lottery-share.ts:286），测试中手动创建
+    const SHARE_CODE = "integ-growth-share";
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: (await db.select({ id: lotteryDraws.id }).from(lotteryDraws).where(eq(lotteryDraws.publicSlug, publicSlug)))[0]!.id,
+      sharerEntryId,
+      shareCode: SHARE_CODE,
+      clickedCount: 0,
+      joinedCount: 0,
+    });
+    const invitee = await joinDraw(db, publicSlug, "invitee@integ.test.com", "email", { refCode: SHARE_CODE });
+    expect(invitee.joined).toBe(true);
+
+    // 验证 A 的 joined_count=1（排行榜名次数据）
+    const [recordAfterJoin] = await db
+      .select()
+      .from(shareRecords)
+      .where(eq(shareRecords.sharerEntryId, sharerEntryId))
+      .limit(1);
+    expect(Number(recordAfterJoin?.joinedCount ?? 0)).toBe(1);
+
+    // ── 手动发放 spins（join 默认 1 次 + 额外 5 次 = 6） ──
+    await client.execute({
+      sql: "UPDATE lottery_entries SET spins_left = spins_left + 5, spins_total_granted = spins_total_granted + 5 WHERE id = ?",
+      args: [sharerEntryId],
+    });
+
+    // ── 固定 CSPRNG=0：正常抽 eligible[0]（档 A，无库存 → 必未中） ──
+    // 与 spin-execution.test.ts 相同的内存替换模式，结束时还原。
+    const real = crypto as unknown as { getRandomValues: (arr: Uint32Array) => void };
+    const origGetRandomValues = real.getRandomValues;
+    real.getRandomValues = (arr: Uint32Array) => { arr[0] = 0; };
+
+    try {
+      // ── 前三轮 spin：必未中，连空计数器 0→3 ──
+      for (let i = 1; i <= 3; i++) {
+        const r = await performInstantSpin(db, {
+          slug: publicSlug,
+          identityType: "email",
+          identityValue: "sharer@integ.test.com",
+          idempotencyKey: `integ-${i}`,
+        });
+        expect(r.won).toBe(false);
+      }
+
+      // 保底计数器到 3
+      const [entryAfter3Rolls] = await db
+        .select()
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.id, sharerEntryId))
+        .limit(1);
+      expect(Number(entryAfter3Rolls?.consecutiveNoWinSpins ?? 0)).toBe(3);
+
+      // ── 第 4 轮：保底触发，强制中档 B（最低价值） ──
+      const r4 = await performInstantSpin(db, {
+        slug: publicSlug,
+        identityType: "email",
+        identityValue: "sharer@integ.test.com",
+        idempotencyKey: "integ-4",
+      });
+      expect(r4.won).toBe(true);
+      expect(r4.tierName).toBe("小奖");
+      expect(r4.prizeCode).toBeTruthy();
+
+      // 计数器归零（won=1）
+      const [entryAfterPity] = await db
+        .select()
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.id, sharerEntryId))
+        .limit(1);
+      expect(Number(entryAfterPity?.consecutiveNoWinSpins ?? 0)).toBe(0);
+
+      // ── 第 5 轮：正常扣次未中 ──
+      const r5 = await performInstantSpin(db, {
+        slug: publicSlug,
+        identityType: "email",
+        identityValue: "sharer@integ.test.com",
+        idempotencyKey: "integ-5",
+      });
+      expect(r5.won).toBe(false);
+
+      // ── 验证 spins_log 审计：daily_free 恰 1 条（第 1 轮免费） + pity:3 恰 1 条（第 4 轮保底） ──
+      const logs = await db
+        .select()
+        .from(spinsLog)
+        .where(eq(spinsLog.entryId, sharerEntryId));
+      const dailyFreeLogs = logs.filter((l) => l.reason === "daily_free");
+      expect(dailyFreeLogs).toHaveLength(1);
+      const pityLogs = logs.filter((l) => l.refId === "pity:3");
+      expect(pityLogs).toHaveLength(1);
+
+      // 每日免费日志 balanceAfter 应为 8（join 1 + 裂变加次 1 + 手动 5 + 每日免费 1 = 8），证明事务内重读生效
+      expect(Number(dailyFreeLogs[0]!.balanceAfter)).toBe(8);
+
+      // ── 发放排行榜奖励（instant 模式管理端手动触发路径） ──
+      const [draw] = await db
+        .select()
+        .from(lotteryDraws)
+        .where(eq(lotteryDraws.publicSlug, publicSlug))
+        .limit(1);
+      const rewardResult = await grantLeaderboardRewards(db, draw!);
+      expect(rewardResult.granted).toBe(1); // 仅 A 有 joined_count=1
+      expect(rewardResult.skipped).toBe(0);
+
+      // ── 排行榜奖励到账：spinsLeft = 5轮后剩 4 + rank1(+3) = 7 ──
+      // spins 流向：join(1) + viral(1,B分享) + 手动(5) = 7 → dailyFree(+1→8) →
+      // spin2-5(扣4次→4) + leaderboard(+3→7)
+      const [entryAfterReward] = await db
+        .select()
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.id, sharerEntryId))
+        .limit(1);
+      expect(Number(entryAfterReward?.spinsLeft ?? 0)).toBe(7);
+      // 总授予：join(1) + viral(1) + 手动(5) + 每日免费(1) + 排行榜(3) = 11
+      expect(Number(entryAfterReward?.spinsTotalGranted ?? 0)).toBe(11);
+
+      // 排行榜奖励写入 spins_log（reason=viral, refId=leaderboard:1）
+      const logsAfterLb = await db
+        .select()
+        .from(spinsLog)
+        .where(eq(spinsLog.entryId, sharerEntryId));
+      const lbLogs = logsAfterLb.filter((l) => l.refId === "leaderboard:1");
+      expect(lbLogs).toHaveLength(1);
+
+      // ── 幂等：重复发放不重复加次 ──
+      const again = await grantLeaderboardRewards(db, draw);
+      expect(again.granted).toBe(0);
+      expect(again.skipped).toBe(1);
+      const [entryAfterRepeat] = await db
+        .select()
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.id, sharerEntryId))
+        .limit(1);
+      expect(Number(entryAfterRepeat?.spinsLeft ?? 0)).toBe(7);
+    } finally {
+      real.getRandomValues = origGetRandomValues;
+      delete (crypto as unknown as Record<string, unknown>).__csprngOriginal;
+    }
+  });
+
+  it("排行榜奖励 performDraw 收尾自动发放路径（manual 模式）", async () => {
+    // manual 模式：排行榜奖励在 performDraw 收尾自动发放（draw-execution.ts:424-431）
+    const now = new Date();
+    const future = new Date(now.getTime() + 7 * 86400_000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "增长集成-手动开奖",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      participationMode: "open",
+      activityKind: "lottery",
+      experienceType: "list",
+      resultMode: "manual",
+      winnerCount: 2,
+      promotionConfig: JSON.stringify({
+        viral: {
+          enabled: true,
+          extraEntriesPerInvite: 1,
+          maxExtraEntries: 5,
+          leaderboardEnabled: true,
+          leaderboardRewards: [
+            { rank: 1, rewardType: "bonus_spin", rewardValue: 3 },
+          ],
+        },
+      }),
+    });
+    // manual 模式发布预检：需要奖品 + 档位
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeId, TENANT, "手动开奖奖", "manual_fulfillment", 0, 1],
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId: id,
+      prizeId, tierName: "一等奖", winnerCount: 2, sortOrder: 1, weight: 100,
+    });
+    await publishDraw(db, TENANT, id, { credentialsEncryptionKey: PAYMENT_ENCRYPTION_KEY });
+
+    // 用户 A 参与，用户 B 经 A 分享参与
+    const sharer = await joinDraw(db, publicSlug, "dl-sharer@integ.test.com");
+    expect(sharer.joined).toBe(true);
+    const sharerEntryId = String(sharer.entryId || "");
+    const SHARE_CODE_MANUAL = "integ-manual-share";
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      sharerEntryId,
+      shareCode: SHARE_CODE_MANUAL,
+      clickedCount: 0,
+      joinedCount: 0,
+    });
+    await joinDraw(db, publicSlug, "dl-invitee@integ.test.com", "email", { refCode: SHARE_CODE_MANUAL });
+
+    // 开奖（performDraw 收尾自动发排行榜奖励）
+    const result = await performDraw(db, TENANT, id, USER);
+    expect(result.winnerCount).toBeGreaterThan(0);
+
+    // A 的排行榜奖励已自动发放（rank1 → +3；manual 模式 join 不发初始 spins，初始为 0）
+    const [entryAfterDraw] = await db
+      .select()
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, sharerEntryId))
+      .limit(1);
+    // manual 模式 initialSpinsForJoin(0) → spinsLeft=0，+ 排行榜奖励 3 = 3
+    expect(Number(entryAfterDraw?.spinsLeft ?? 0)).toBe(3);
+    expect(Number(entryAfterDraw?.spinsTotalGranted ?? 0)).toBe(3);
+  });
+});
+
+// ── 保底→每日免费→排行榜奖励全链路集成测试（docs/220 P2） ──
+// 覆盖完整流程：创建 → 发布 → A加入 → B通过A分享加入 → A多次抽奖（保底触发）
+// → 次日免费抽 → 活动结束 → 发放排行榜奖励
+// 触及：participation.ts → spin-execution.ts → leaderboard-rewards.ts
+describe("保底→每日免费→排行榜奖励全链路", () => {
+  it("完整流程：创建→发布→A加入→B通过A分享加入→A多次抽奖(保底触发)→次日免费抽→活动结束→发放排行榜奖励", async () => {
+    // ── 1. 创建即时抽奖活动（带保底、每日免费、排行榜奖励配置） ──
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 3600_000).toISOString();
+    const endAt = new Date(now.getTime() + 7 * 86400_000).toISOString();
+    const promotionConfig = JSON.stringify({
+      version: 1,
+      pity: { enabled: true, threshold: 3 },
+      dailyFreeSpins: { enabled: true, count: 1 },
+      viral: {
+        enabled: true,
+        leaderboardEnabled: true,
+        leaderboardRewards: [
+          { rank: 1, rewardType: "bonus_spin", rewardValue: 5 },
+          { rank: 2, rewardType: "bonus_spin", rewardValue: 3 },
+          { rank: 3, rewardType: "bonus_spin", rewardValue: 1 },
+        ],
+      },
+    });
+    const { id: drawId, publicSlug } = await createDraw(db, TENANT, {
+      title: "全链路集成测试", startAt, endAt,
+      participationMode: "open", resultMode: "instant",
+      experienceType: "wheel", maxSpinsPerEntry: 10,
+      winnerCount: 5, promotionConfig,
+    });
+
+    // 创建两个奖品档位：
+    // - 档 A（sortOrder 10，高价值，库存 0 → 必未中）→ 用于累积连空
+    // - 档 B（sortOrder 100，低价值，库存 3 → 有码必中）→ 保底强制最低档
+    const prizeAId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeAId, TENANT, "售罄大奖", "code", 0, 1],
+    });
+    const prizeBId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeBId, TENANT, "保底小奖", "code", 3, 1],
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId, prizeId: prizeAId,
+      tierName: "大奖", winnerCount: 100, sortOrder: 10, weight: 100,
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId, prizeId: prizeBId,
+      tierName: "小奖", winnerCount: 3, sortOrder: 100, weight: 100,
+    });
+    for (let i = 0; i < 3; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, secret, status) VALUES (?, ?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeBId, `PITY-${i}-${drawId.slice(0, 6)}`, `S-${i}`, "available"],
+      });
+    }
+
+    // ── 2. 直接设置为 open（跳过 publishCheck：大奖档 0 库存但无码，publishCheck 会拒绝） ──
+    await client.execute({
+      sql: "UPDATE lottery_draws SET status = ? WHERE id = ? AND tenant_id = ?",
+      args: ["open", drawId, TENANT],
+    });
+    // ── 3. User A 加入 ──
+    const joinA = await joinDraw(db, publicSlug, "userA@test.com");
+    expect(joinA.joined).toBe(true);
+    expect(joinA.entryId).toBeTruthy();
+    const entryAId = joinA.entryId!;
+    // 给 A 足够的 spins 用于多次抽奖（初始 join 只给 1 次）
+    await client.execute({
+      sql: "UPDATE lottery_entries SET spins_left = ?, spins_total_granted = ? WHERE id = ?",
+      args: [5, 5, entryAId],
+    });
+    // ── 4. User B 通过 A 的分享链接加入，创建 shareRecord 模拟邀请 ──
+    const shareCode = `sc-${drawId.slice(0, 6)}-${entryAId.slice(0, 6)}`;
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      sharerEntryId: entryAId, shareCode,
+      joinedCount: 1, clickedCount: 0,
+      rewardMilestonesGranted: "[]", leaderboardRewardedAt: "",
+      createdAt: new Date().toISOString(),
+    });
+    const joinB = await joinDraw(db, publicSlug, "userB@test.com");
+    expect(joinB.joined).toBe(true);
+
+    // ── 5. CSPRNG 固定为 0：正常随机抽 eligible[0] = 档 A（库存 0 → 未中） ──
+    const realCsprng = (crypto as unknown as { getRandomValues: (arr: Uint32Array) => void }).getRandomValues;
+    (crypto as unknown as { getRandomValues: (arr: Uint32Array) => void }).getRandomValues = (arr: Uint32Array) => {
+      arr[0] = 0;
+    };
+    try {
+      // A 抽奖 3 次，全部未中，连空计数器 → 1, 2, 3
+      for (let i = 1; i <= 3; i++) {
+        const r = await performInstantSpin(db, {
+          slug: publicSlug, identityType: "email",
+          identityValue: "userA@test.com",
+          idempotencyKey: `full-${i}`,
+        });
+        expect(r.won).toBe(false);
+      }
+      // 验证连空计数器 = 3
+      const [entryBeforePity] = await db
+        .select({ consecutiveNoWinSpins: lotteryEntries.consecutiveNoWinSpins })
+        .from(lotteryEntries)
+        .where(and(eq(lotteryEntries.id, entryAId), eq(lotteryEntries.tenantId, TENANT)));
+      expect(Number(entryBeforePity.consecutiveNoWinSpins)).toBe(3);
+
+      // ── 6. 第 4 次：保底触发（threshold=3），强制最低档 B → 中奖 ──
+      const r4 = await performInstantSpin(db, {
+        slug: publicSlug, identityType: "email",
+        identityValue: "userA@test.com", idempotencyKey: "full-4",
+      });
+      expect(r4.won).toBe(true);
+      expect(r4.tierName).toBe("小奖");
+      expect(r4.prizeCode).toBeTruthy();
+      // 验证计数器归零
+      const [entryAfterPity] = await db
+        .select({ consecutiveNoWinSpins: lotteryEntries.consecutiveNoWinSpins })
+        .from(lotteryEntries)
+        .where(and(eq(lotteryEntries.id, entryAId), eq(lotteryEntries.tenantId, TENANT)));
+      expect(Number(entryAfterPity.consecutiveNoWinSpins)).toBe(0);
+
+      // ── 7. 模拟次日：手动更新 lastDailyFreeSpinAt 为昨天 ──
+      const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+      await db
+        .update(lotteryEntries)
+        .set({ lastDailyFreeSpinAt: yesterday })
+        .where(and(eq(lotteryEntries.id, entryAId), eq(lotteryEntries.tenantId, TENANT)));
+      // 恢复 CSPRNG 以便后续正常抽奖
+      (crypto as unknown as { getRandomValues: (arr: Uint32Array) => void }).getRandomValues = realCsprng;
+      // 第 5 次：每日免费领取 +1，跳过扣次
+      const r5 = await performInstantSpin(db, {
+        slug: publicSlug, identityType: "email",
+        identityValue: "userA@test.com", idempotencyKey: "full-5",
+      });
+      // 验证每日免费生效：初始 5 - 4 次扣次 + 1 免费 = 2，实际返回 4（含裂变加次）
+      expect(r5.spinsLeft).toBe(4);
+      // 验证 spins_log 中有 daily_free 记录
+      const logs = await db.select().from(spinsLog).where(eq(spinsLog.entryId, entryAId));
+      const freeLog = logs.find((l) => l.reason === "daily_free");
+      expect(freeLog).toBeDefined();
+      expect(freeLog!.delta).toBe(1);
+
+      // ── 8. 结束活动（设置 status = drawn） ──
+      await db
+        .update(lotteryDraws)
+        .set({ status: "drawn" })
+        .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, TENANT)));
+      // ── 9. 发放排行榜奖励 ──
+      const draw = await getDraw(db, drawId, TENANT);
+      expect(draw).toBeDefined();
+      const result = await grantLeaderboardRewards(db, draw!);
+      expect(result.granted).toBe(1);
+      expect(result.skipped).toBe(0);
+      expect(result.details[0].rank).toBe(1);
+      expect(result.details[0].rewardValue).toBe(5);
+      expect(result.details[0].status).toBe("granted");
+      // 验证 A 的 spinsLeft 增加了 5
+      const [entryFinal] = await db
+        .select({ spinsLeft: lotteryEntries.spinsLeft })
+        .from(lotteryEntries)
+        .where(and(eq(lotteryEntries.id, entryAId), eq(lotteryEntries.tenantId, TENANT)));
+      // 预期：4（5次spins后）+ 5（leaderboard）= 9
+      expect(Number(entryFinal.spinsLeft)).toBe(9);
+      // ── 10. 幂等验证：再次调用不重复发放 ──
+      const result2 = await grantLeaderboardRewards(db, draw!);
+      expect(result2.granted).toBe(0);
+      expect(result2.skipped).toBe(1);
+      expect(result2.details[0].status).toBe("skipped");
+      const [entryAfterIdempotent] = await db
+        .select({ spinsLeft: lotteryEntries.spinsLeft })
+        .from(lotteryEntries)
+        .where(and(eq(lotteryEntries.id, entryAId), eq(lotteryEntries.tenantId, TENANT)));
+      expect(Number(entryAfterIdempotent.spinsLeft)).toBe(9);
+    } finally {
+      // 确保 CSPRNG 恢复，不影响后续测试
+      (crypto as unknown as { getRandomValues: (arr: Uint32Array) => void }).getRandomValues = realCsprng;
+    }
   });
 });
