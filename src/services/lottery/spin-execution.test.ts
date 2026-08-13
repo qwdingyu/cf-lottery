@@ -1716,6 +1716,47 @@ describe("grantLeaderboardRewards", () => {
     await checkRewarded(s3.shareRecordId);
   });
 
+  it("joined_count=0 的分享者无资格获得排行榜奖励（有效分享者不足时不被补位）", async () => {
+    const { id: drawId } = await seedLeaderboardDraw();
+
+    // 2 个有效分享者（5、3 票）+ 1 个无票分享者（0 票，分享过但无人加入）
+    const s1 = await seedShareRecord(drawId, 5, TENANT, "valid1@test.com");
+    const s2 = await seedShareRecord(drawId, 3, TENANT, "valid2@test.com");
+    const s3 = await seedShareRecord(drawId, 0, TENANT, "novote@test.com");
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+
+    // 仅 2 个有效分享者获得奖励，无票者不补位 rank3
+    expect(result.granted).toBe(2);
+    expect(result.skipped).toBe(0);
+
+    // 无票者未获得任何 spins
+    const [novote] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft, spinsTotalGranted: lotteryEntries.spinsTotalGranted })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, s3.entryId))
+      .limit(1);
+    expect(Number(novote?.spinsLeft ?? 0)).toBe(0);
+
+    // 有效者正常获奖（rank 保持连续：rank1=5、rank2=3）
+    const check = async (entryId: string, expectedSpins: number) => {
+      const [entry] = await db
+        .select({ spinsLeft: lotteryEntries.spinsLeft })
+        .from(lotteryEntries)
+        .where(eq(lotteryEntries.id, entryId))
+        .limit(1);
+      expect(Number(entry?.spinsLeft ?? 0)).toBe(expectedSpins);
+    };
+    await check(s1.entryId, 5);
+    await check(s2.entryId, 3);
+  });
+
   it("幂等性：重复调用不重复发放，已发放的 records 被跳过", async () => {
     const { id: drawId } = await seedLeaderboardDraw();
 

@@ -7,7 +7,7 @@
  */
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, gte } from "drizzle-orm";
 import { shareRecords, lotteryEntries, lotteryDraws } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
 
@@ -106,6 +106,9 @@ export async function grantLeaderboardRewards(
     .where(and(
       eq(shareRecords.tenantId, draw.tenantId),
       eq(shareRecords.drawId, draw.id),
+      // 仅统计有效分享者（至少拉到 1 人）：joined_count=0 的分享记录不参与排名，
+      // 否则有效分享者不足 TOP N 时，无票分享者会被补位白拿排行榜奖励（docs/218 模式三）
+      gte(shareRecords.joinedCount, 1),
     ))
     .orderBy(desc(shareRecords.joinedCount), desc(shareRecords.createdAt))
     .limit(topN);
