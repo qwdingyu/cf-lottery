@@ -1347,6 +1347,48 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
     expect(entry.lastDailyFreeSpinAt).toBe(today);
   });
 
+  it("每日免费并发：两个并发 spin，恰 1 个领取免费，另一个正常扣次，不重复发放", async () => {
+    // 两个并发请求同时进入 dailyFree 原子条件 UPDATE，SQLite 串行化写锁保证
+    // 只有一个成功（WHERE lastDailyFreeSpinAt IS NULL），另一个走正常扣次。
+    const { slug } = await seedPityDraw({ dailyCount: 1, maxSpins: 3 });
+    const join = await joinDraw(db, slug, "conc-free@test.com");
+    expect(join.joined).toBe(true);
+    await grantSpins(client, join.entryId!, 2); // → left=2（join 1 + 2）
+    stubCsprng(0); // 抽 eligible[0]（档 A，无库存 → 必未中）
+
+    const results = await Promise.allSettled([
+      performInstantSpin(db, {
+        slug, identityType: "email", identityValue: "conc-free@test.com", idempotencyKey: "conc-a",
+      }),
+      performInstantSpin(db, {
+        slug, identityType: "email", identityValue: "conc-free@test.com", idempotencyKey: "conc-b",
+      }),
+    ]);
+
+    // 两个都 resolve（不抛异常）
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    expect(fulfilled).toHaveLength(2);
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(rejected).toHaveLength(0);
+
+    // 一个领取了免费（spinsLeft 含 +1 且未扣次），另一个正常扣次
+    // 最终 spinsLeft 应为 2（初始 2 + 免费 1 - 扣次 1 = 2）
+    const [entryAfter] = await db
+      .select()
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.id, join.entryId!), eq(lotteryEntries.tenantId, TENANT)));
+    expect(Number(entryAfter?.spinsLeft ?? 0)).toBe(2);
+
+    // 仅 1 条 daily_free 日志（不重复发放）
+    const logs = await db.select().from(spinsLog).where(eq(spinsLog.entryId, join.entryId!));
+    const freeLogs = logs.filter((l) => l.reason === "daily_free");
+    expect(freeLogs).toHaveLength(1);
+    expect(freeLogs[0]!.delta).toBe(1);
+
+    // 共 2 次 spin 记录（1 免费 + 1 正常扣次）
+    expect(logs.filter((l) => l.reason === "spin")).toHaveLength(1);
+  });
+
   it("每日免费：次日自动重置，可再次领取", async () => {
     const { slug } = await seedPityDraw({ dailyCount: 1, maxSpins: 3 });
     const join = await joinDraw(db, slug, "free1@test.com");

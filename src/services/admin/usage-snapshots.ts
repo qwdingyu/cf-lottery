@@ -11,6 +11,7 @@
 import type { DbType } from "../../db/client";
 import { tenants, lotteryDraws, lotteryEntries, lotteryWinners, activityEvents, webhookDeliveries, tenantUsageSnapshots } from "../../db/schema";
 import { eq, and, count, sql, max } from "drizzle-orm";
+import { todayStr } from "../platform/checkin-reward";
 
 /**
  * 从批查询结果构建 { tenantId → count } 映射。
@@ -41,7 +42,9 @@ export async function refreshAllTenantSnapshots(db: DbType): Promise<{ processed
 
   if (allTenants.length === 0) return { processed: 0 };
 
-  const today = new Date().toISOString().slice(0, 10);
+  // snapshotDate 用本地时区「今日」（与签到/每日免费 todayStr 一致）。
+  // 若用 UTC 日期，UTC+8 等偏移时区下管理员看到的「今日快照」会挂到昨天日期。
+  const today = todayStr();
   const now = new Date().toISOString();
 
   // 5 条批量 GROUP BY 查询（替代 5N 条逐租户 COUNT）

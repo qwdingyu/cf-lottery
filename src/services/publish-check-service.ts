@@ -25,6 +25,7 @@ import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../lib/flash-s
 import { PAYMENT_PROVIDER_CATALOG, type PaymentProviderCatalogItem } from "./payment/catalog";
 import { decryptPaymentConfigValueResult, isEncryptedPaymentConfigValue } from "./payment/secret-config";
 import { DRAW_STATUS } from "./lottery/types";
+import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
 
 export type PublishCheckSection =
   | "basic"
@@ -658,10 +659,21 @@ async function validatePromotion(
     if (viral.enabled === true && viral.leaderboardEnabled === false) {
       add(result.infos, "promotion", "viral.leaderboard.off", "裂变传播：排行榜未开启，参与者无法看到排行对比");
     }
+    // 归一化排行榜奖励（与 grantLeaderboardRewards 共用 normalizeLeaderboardRewards，
+    // 消除「发布预检说有奖励、实际发放为零」的校验与执行偏差）。
+    const leaderboardRewards = normalizeLeaderboardRewards(viral.leaderboardRewards);
+    // 排行榜奖励已配置但排行榜未开启：配置矛盾，警告运营奖励不会实际发放。
+    // 注意：孤立紧跟在 leaderboard.off 之后，两个 info 同时出现会互相矛盾，因此用 warning 级别强调。
+    if (viral.enabled === true && viral.leaderboardEnabled === false && leaderboardRewards.length > 0) {
+      add(result.warnings, "promotion", "viral.leaderboard.rewards_require_enabled", "排行榜奖励已配置但排行榜未开启，奖励不会发放，请检查裂变配置");
+    }
     // instant 模式排行榜奖励需管理员手动发放（delayed 在 performDraw 自动发放）。
     // 提示而非错误：配置合法，仅提醒运营在活动收尾时到操作菜单手动触发，
     // 避免排行榜奖励被遗忘（docs/218 模式三）。
-    if (isInstantResultMode(draw.resultMode) && Array.isArray(viral.leaderboardRewards) && viral.leaderboardRewards.length > 0) {
+    // ⚠️ 必须加 leaderboardEnabled !== false 守卫，避免与 leaderboard.off 矛盾：
+    //    leaderboardEnabled=false 时 grantLeaderboardRewards 直接 return 不发放，
+    //    若此时仍提示 manual_grant，运营会被误导去点按钮（结果 granted=0）。
+    if (viral.leaderboardEnabled !== false && isInstantResultMode(draw.resultMode) && leaderboardRewards.length > 0) {
       add(result.infos, "promotion", "viral.leaderboard.manual_grant", "即时开奖模式下排行榜奖励需在活动结束后手动发放（操作菜单 → 发放排行榜奖励），不会自动触发");
     }
   }

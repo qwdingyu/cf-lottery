@@ -18,6 +18,26 @@ export type LeaderboardRewardConfig = {
   rewardValue: number;
 };
 
+/**
+ * 归一化排行榜奖励配置，过滤无效项（rank<1 / 非 bonus_spin / rewardValue<1 全部剔除）。
+ * grantLeaderboardRewards 与 publish-check 共用同一函数，避免「发布预检说有奖励、
+ * 实际发放为零」的校验与执行偏差。空输入或全无效 → 返回空数组。
+ */
+export function normalizeLeaderboardRewards(raw: unknown): LeaderboardRewardConfig[] {
+  if (!Array.isArray(raw)) return [];
+  const rewards: LeaderboardRewardConfig[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const rank = Math.floor(Number(r.rank) || 0);
+    const rewardValue = Math.floor(Number(r.rewardValue) || 0);
+    if (rank >= 1 && r.rewardType === "bonus_spin" && rewardValue >= 1) {
+      rewards.push({ rank, rewardType: "bonus_spin", rewardValue });
+    }
+  }
+  return rewards;
+}
+
 /** 排行榜奖励发放结果 */
 export type GrantLeaderboardResult = {
   granted: number;
@@ -55,20 +75,13 @@ export async function grantLeaderboardRewards(
     return result;
   }
 
-  const rawRewards = viral.leaderboardRewards as Array<Record<string, unknown>> | undefined;
+  const rawRewards = viral.leaderboardRewards;
   if (!rawRewards || !Array.isArray(rawRewards) || rawRewards.length === 0) {
     return result;
   }
 
-  // 归一化排行榜奖励配置，过滤无效项
-  const rewards: LeaderboardRewardConfig[] = [];
-  for (const raw of rawRewards) {
-    const rank = Math.floor(Number(raw.rank) || 0);
-    const rewardValue = Math.floor(Number(raw.rewardValue) || 0);
-    if (rank >= 1 && raw.rewardType === "bonus_spin" && rewardValue >= 1) {
-      rewards.push({ rank, rewardType: "bonus_spin", rewardValue });
-    }
-  }
+  // 归一化排行榜奖励配置，过滤无效项（与 publish-check 共用 normalizeLeaderboardRewards）
+  const rewards = normalizeLeaderboardRewards(rawRewards);
   if (rewards.length === 0) return result;
 
   // 取最高 rank 作为 TOP N

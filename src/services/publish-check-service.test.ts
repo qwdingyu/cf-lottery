@@ -936,5 +936,46 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     await addManualTier(noRewards.id);
     const r3 = await buildPublishCheckForDraw(db, TENANT, noRewards as any);
     expect(r3.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
+
+    // instant + 排行榜未开启 + 已配置奖励 → rewards_require_enabled 警告，不提示 manual_grant
+    const offWithRewards = makeDraw({
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: false, leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 3 }] },
+      }),
+    });
+    await addManualTier(offWithRewards.id);
+    const r4 = await buildPublishCheckForDraw(db, TENANT, offWithRewards as any);
+    expect(r4.infos.some((item) => item.code === "viral.leaderboard.off")).toBe(true);
+    expect(r4.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
+    expect(r4.warnings.some((item) => item.code === "viral.leaderboard.rewards_require_enabled")).toBe(true);
+
+    // scheduled 模式 + leaderboardRewards → 不提示（performDraw 自动发放）
+    const scheduled = makeDraw({
+      resultMode: "scheduled",
+      drawTrigger: "manual",
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true, leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 3 }] },
+      }),
+    });
+    await addManualTier(scheduled.id);
+    const r5 = await buildPublishCheckForDraw(db, TENANT, scheduled as any);
+    expect(r5.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
+
+    // instant + 无效奖励项（rank=0）→ normalize 过滤后为空，不提示
+    const invalidRewards = makeDraw({
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true, leaderboardRewards: [{ rank: 0, rewardType: "bonus_spin", rewardValue: 3 }] },
+      }),
+    });
+    await addManualTier(invalidRewards.id);
+    const r6 = await buildPublishCheckForDraw(db, TENANT, invalidRewards as any);
+    expect(r6.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
   });
 });
