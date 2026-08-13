@@ -28,6 +28,7 @@ import {
 } from "./spin-quota";
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
 import { recordSpinLog } from "./spins-log";
+import { todayStr } from "../platform/checkin-reward";
 import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
 import { DRAW_STATUS } from "./types";
 
@@ -194,9 +195,11 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
       // 与签到（commands.ts:568）模式一致：WHERE 条件保证同一自然日内只有第一个并发请求能领取成功。
       // 领取成功后 spinsLeft += count，本次 spin 跳过扣次（免费）。
       // 未配置或今日已领 → dailyFreeClaimed = false，走正常扣次路径。
+      // ⚠️ 日期必须用 todayStr()（本地时区），与签到系统一致——若用 UTC 日期，
+      // UTC+8 等时区下"每日"刷新点会偏移到当地早上 8 点，两套系统行为不一致。
       let dailyFreeClaimed = false;
       if (dailyFreeConfig.enabled && dailyFreeConfig.count >= 1) {
-        const today = now.toISOString().slice(0, 10);
+        const today = todayStr();
         const claim = await tx
           .update(lotteryEntries)
           .set({

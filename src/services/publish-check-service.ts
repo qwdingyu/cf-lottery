@@ -658,6 +658,12 @@ async function validatePromotion(
     if (viral.enabled === true && viral.leaderboardEnabled === false) {
       add(result.infos, "promotion", "viral.leaderboard.off", "裂变传播：排行榜未开启，参与者无法看到排行对比");
     }
+    // instant 模式排行榜奖励需管理员手动发放（delayed 在 performDraw 自动发放）。
+    // 提示而非错误：配置合法，仅提醒运营在活动收尾时到操作菜单手动触发，
+    // 避免排行榜奖励被遗忘（docs/218 模式三）。
+    if (isInstantResultMode(draw.resultMode) && Array.isArray(viral.leaderboardRewards) && viral.leaderboardRewards.length > 0) {
+      add(result.infos, "promotion", "viral.leaderboard.manual_grant", "即时开奖模式下排行榜奖励需在活动结束后手动发放（操作菜单 → 发放排行榜奖励），不会自动触发");
+    }
   }
 
   // docs/130：秒杀壳配置。lottery 侧只校验「限时限量参与 + 导流」语义，不校验 shop 库存。

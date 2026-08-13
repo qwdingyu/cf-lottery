@@ -29,6 +29,14 @@ import { joinDraw, type JoinDrawResult } from "./participation";
 
 const TENANT = "tenant-spin-t";
 
+/** 本地时区 YYYY-MM-DD（与生产 todayStr() 一致，避免测试受 UTC 日期偏移影响） */
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 async function seedInstantDraw(
   db: DbType,
   client: Client,
@@ -1334,7 +1342,8 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
 
     // lastDailyFreeSpinAt 记录为今日
     const entry = await readEntry(join.entryId!);
-    const today = new Date().toISOString().slice(0, 10);
+    // 与生产 todayStr() 一致：本地时区 YYYY-MM-DD（非 UTC）
+    const today = localDateStr(new Date());
     expect(entry.lastDailyFreeSpinAt).toBe(today);
   });
 
@@ -1350,8 +1359,8 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
     });
     expect(r1.spinsLeft).toBe(3);
 
-    // 手动将 lastDailyFreeSpinAt 改为昨天，模拟次日
-    const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+    // 手动将 lastDailyFreeSpinAt 改为昨天（本地时区），模拟次日
+    const yesterday = localDateStr(new Date(Date.now() - 86400_000));
     await db
       .update(lotteryEntries)
       .set({ lastDailyFreeSpinAt: yesterday })
@@ -1365,7 +1374,7 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
 
     // lastDailyFreeSpinAt 更新为今日
     const entry = await readEntry(join.entryId!);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateStr(new Date());
     expect(entry.lastDailyFreeSpinAt).toBe(today);
   });
 it("每日免费未配置时保持原扣次行为，last_daily_free 保持 NULL", async () => {

@@ -901,4 +901,40 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(r5.errors.some((item) => item.code === "promotion.pity.delayed_not_supported")).toBe(false);
     expect(r5.errors.some((item) => item.code === "promotion.dailyFree.delayed_not_supported")).toBe(false);
   });
+
+  it("instant + 排行榜奖励：提示需手动发放；manual 模式不误报", async () => {
+    // instant + leaderboardRewards → info 提示手动发放
+    const instant = makeDraw({
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true, leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 3 }] },
+      }),
+    });
+    await addManualTier(instant.id);
+    const r1 = await buildPublishCheckForDraw(db, TENANT, instant as any);
+    expect(r1.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(true);
+
+    // manual 模式 + leaderboardRewards → 不提示（performDraw 自动发放）
+    const manual = makeDraw({
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true, leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 3 }] },
+      }),
+    });
+    await addManualTier(manual.id);
+    const r2 = await buildPublishCheckForDraw(db, TENANT, manual as any);
+    expect(r2.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
+
+    // instant + 未配置 leaderboardRewards → 不提示
+    const noRewards = makeDraw({
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 10, leaderboardEnabled: true } }),
+    });
+    await addManualTier(noRewards.id);
+    const r3 = await buildPublishCheckForDraw(db, TENANT, noRewards as any);
+    expect(r3.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
+  });
 });
