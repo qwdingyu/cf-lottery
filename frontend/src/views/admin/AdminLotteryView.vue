@@ -574,28 +574,28 @@
               </button>
             </div>
 
-            <div class="form-grid two-cols">
+            <!-- 时间三字段同排（2026-08 打磨）：开始/结束/开奖各占 1/3 一行，省竖向空间；
+                 hint 精简进 label 与 section desc，不再逐字段冗述（语义不丢） -->
+            <div class="form-grid time-grid three-cols">
               <label>
                 <span>{{ $t('lottery.adminStartTime') }}</span>
                 <input v-model="form.startTime" type="datetime-local" step="60" :lang="locale" required />
-                <small class="field-hint">{{ $t('lottery.adminStartTimeHint') }}</small>
               </label>
               <label>
                 <span>{{ $t('lottery.adminEndTime') }}</span>
                 <input v-model="form.endTime" type="datetime-local" step="60" :lang="locale" required />
-                <small class="field-hint">{{ $t('lottery.adminEndTimeHint') }}</small>
               </label>
-              <label class="field-span-2">
-                <template v-if="isInstantMode">
-                  <span>{{ $t('lottery.drawTime') }}</span>
-                  <div class="field-hint" style="margin-top: 4px;">{{ $t('lottery.adminDrawTimeInstantHint') }}</div>
-                </template>
-                <template v-else>
+              <template v-if="isInstantMode">
+                <div class="field-static-inline time-draw-instant-hint" role="status">
+                  {{ $t('lottery.adminDrawTimeInstantHint') }}
+                </div>
+              </template>
+              <template v-else>
+                <label>
                   <span>{{ $t('lottery.drawTime') }}</span>
                   <input v-model="form.drawTime" type="datetime-local" step="60" :lang="locale" required />
-                  <small class="field-hint">{{ $t('lottery.adminDrawTimeHint') }}</small>
-                </template>
-              </label>
+                </label>
+              </template>
             </div>
 
             <p
@@ -605,12 +605,12 @@
             >
               <template v-if="timeOrderError">{{ timeOrderError }}</template>
               <template v-else-if="form.startTime && form.endTime && (isInstantMode || form.drawTime)">
-                {{ $t('lottery.adminTimeOrderOk') }}
+                <span>{{ $t('lottery.adminTimeOrderOk') }}</span>
                 <strong>{{ formatLocalInput(form.startTime) }}</strong>
-                →
+                <span aria-hidden="true">→</span>
                 <strong>{{ formatLocalInput(form.endTime) }}</strong>
                 <template v-if="!isInstantMode">
-                  →
+                  <span aria-hidden="true">→</span>
                   <strong>{{ formatLocalInput(form.drawTime) }}</strong>
                 </template>
               </template>

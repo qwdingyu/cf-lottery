@@ -780,3 +780,33 @@
   content: '✓';
   font-weight: 700;
 }
+
+/* 时间设置紧凑化（2026-08 打磨）：
+   - 时间三字段（开始/结束/开奖）同排一行，各占 1/3；
+   - instant 模式无开奖时间时，第三格显示即时说明（不空行）；
+   - 时间线提示改为横向单行（覆写 cf-admin-fe 的纵向 flex）。 */
+.form-grid.three-cols {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.field-static-inline.time-draw-instant-hint {
+  display: flex;
+  align-items: flex-end;
+  min-height: 38px;
+  padding: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--tg-hint, #9ca3af);
+}
+
+.lottery-editor-form .time-timeline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.lottery-editor-form .time-timeline.is-invalid {
+  white-space: normal;
+}
