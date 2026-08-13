@@ -26,6 +26,7 @@ import { PAYMENT_PROVIDER_CATALOG, type PaymentProviderCatalogItem } from "./pay
 import { decryptPaymentConfigValueResult, isEncryptedPaymentConfigValue } from "./payment/secret-config";
 import { DRAW_STATUS } from "./lottery/types";
 import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
+import { normalizeDailyFreeSpinConfig, normalizePityConfig } from "./lottery/spin-quota";
 
 export type PublishCheckSection =
   | "basic"
@@ -628,16 +629,28 @@ async function validatePromotion(
   // 保底机制校验：仅支持即时开奖模式（result_mode=instant）。
   // 如果管理员在 delayed/manual 模式中配置了 pity.enabled=true，运行时
   // performInstantSpin 不会被调用，保底逻辑完全不执行，导致配置不生效的困惑。
-  const pity = promotionConfig?.pity as Record<string, unknown> | undefined;
-  if (pity?.enabled === true && !isInstantResultMode(draw.resultMode)) {
+  // 用 normalizePityConfig 判定「有效启用」而非裸读 enabled：与运行时同一来源，
+  // 避免 enabled 幻值（"true"/1）绕过阻断、或 threshold 无效时误报「不支持」。
+  const pityRaw = promotionConfig?.pity as Record<string, unknown> | undefined;
+  const pity = normalizePityConfig(pityRaw);
+  // 配置了开启意图但阈值无效被归一化禁用 → warning 告知，防止运营困惑「开了保底为什么不生效」
+  if (pityRaw?.enabled === true && !pity.enabled) {
+    add(result.warnings, "promotion", "promotion.pity.disabled_by_invalid_threshold", "保底机制已开启但阈值无效（需正整数 ≥1），保底不会生效");
+  }
+  if (pity.enabled && !isInstantResultMode(draw.resultMode)) {
     add(result.errors, "promotion", "promotion.pity.delayed_not_supported", "保底机制仅支持即时开奖模式（result_mode=instant），当前模式不会触发保底逻辑");
   }
 
   // 每日免费抽奖校验：与保底机制同理，仅支持即时开奖模式。
   // dailyFreeSpins 的领取逻辑在 performInstantSpin 事务内执行，delayed/manual
   // 模式不调用该函数，配置后不生效且无任何提示。
-  const dailyFree = promotionConfig?.dailyFreeSpins as Record<string, unknown> | undefined;
-  if (dailyFree?.enabled === true && !isInstantResultMode(draw.resultMode)) {
+  const dailyFreeRaw = promotionConfig?.dailyFreeSpins as Record<string, unknown> | undefined;
+  const dailyFree = normalizeDailyFreeSpinConfig(dailyFreeRaw);
+  // 配置了开启意图但次数无效被归一化禁用 → warning 告知
+  if (dailyFreeRaw?.enabled === true && !dailyFree.enabled) {
+    add(result.warnings, "promotion", "promotion.dailyFree.disabled_by_invalid_count", "每日免费抽奖已开启但次数无效（需 ≥1），每日免费不会生效");
+  }
+  if (dailyFree.enabled && !isInstantResultMode(draw.resultMode)) {
     add(result.errors, "promotion", "promotion.dailyFree.delayed_not_supported", "每日免费抽奖仅支持即时开奖模式（result_mode=instant），当前模式不会触发每日免费逻辑");
   }
 
@@ -668,13 +681,14 @@ async function validatePromotion(
       add(result.warnings, "promotion", "viral.leaderboard.rewards_require_enabled", "排行榜奖励已配置但排行榜未开启，奖励不会发放，请检查裂变配置");
     }
     // instant 模式排行榜奖励需管理员手动发放（delayed 在 performDraw 自动发放）。
-    // 提示而非错误：配置合法，仅提醒运营在活动收尾时到操作菜单手动触发，
-    // 避免排行榜奖励被遗忘（docs/218 模式三）。
+    // 用 warning 而非 info：前端发布确认框只展示 errors + warnings（check.infos 无展示通道），
+    // 若用 info 级，运营发布时看不到「需手动发放」提醒，奖励易被遗忘（docs/218 模式三防遗忘闭环失效）。
+    // warning 语义也匹配：配置合法，仅提醒运营在活动收尾时到操作菜单手动触发。
     // ⚠️ 必须加 leaderboardEnabled !== false 守卫，避免与 leaderboard.off 矛盾：
     //    leaderboardEnabled=false 时 grantLeaderboardRewards 直接 return 不发放，
     //    若此时仍提示 manual_grant，运营会被误导去点按钮（结果 granted=0）。
     if (viral.leaderboardEnabled !== false && isInstantResultMode(draw.resultMode) && leaderboardRewards.length > 0) {
-      add(result.infos, "promotion", "viral.leaderboard.manual_grant", "即时开奖模式下排行榜奖励需在活动结束后手动发放（操作菜单 → 发放排行榜奖励），不会自动触发");
+      add(result.warnings, "promotion", "viral.leaderboard.manual_grant", "即时开奖模式下排行榜奖励需在活动结束后手动发放（操作菜单 → 发放排行榜奖励），不会自动触发");
     }
   }
 

@@ -900,10 +900,36 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     const r5 = await buildPublishCheckForDraw(db, TENANT, disabled as any);
     expect(r5.errors.some((item) => item.code === "promotion.pity.delayed_not_supported")).toBe(false);
     expect(r5.errors.some((item) => item.code === "promotion.dailyFree.delayed_not_supported")).toBe(false);
+
+    // enabled 幻值（"true" 字符串）：normalize 判启用 → delayed 阻断（与运行时同一判定来源）
+    const pityTruthy = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, pity: { enabled: "true", threshold: 3 } }),
+    });
+    await addManualTier(pityTruthy.id);
+    const r6 = await buildPublishCheckForDraw(db, TENANT, pityTruthy as any);
+    expect(r6.errors.some((item) => item.code === "promotion.pity.delayed_not_supported")).toBe(true);
+
+    // threshold=0：normalize 归一化为禁用 → 不再误报「不支持」，但提示配置无效
+    const pityInvalidThreshold = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, pity: { enabled: true, threshold: 0 } }),
+    });
+    await addManualTier(pityInvalidThreshold.id);
+    const r7 = await buildPublishCheckForDraw(db, TENANT, pityInvalidThreshold as any);
+    expect(r7.errors.some((item) => item.code === "promotion.pity.delayed_not_supported")).toBe(false);
+    expect(r7.warnings.some((item) => item.code === "promotion.pity.disabled_by_invalid_threshold")).toBe(true);
+
+    // count=0：同样归一化禁用 + 配置无效警告
+    const dailyInvalidCount = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, dailyFreeSpins: { enabled: true, count: 0 } }),
+    });
+    await addManualTier(dailyInvalidCount.id);
+    const r8 = await buildPublishCheckForDraw(db, TENANT, dailyInvalidCount as any);
+    expect(r8.errors.some((item) => item.code === "promotion.dailyFree.delayed_not_supported")).toBe(false);
+    expect(r8.warnings.some((item) => item.code === "promotion.dailyFree.disabled_by_invalid_count")).toBe(true);
   });
 
-  it("instant + 排行榜奖励：提示需手动发放；manual 模式不误报", async () => {
-    // instant + leaderboardRewards → info 提示手动发放
+  it("instant + 排行榜奖励：warning 提示手动发放（发布确认框可见）；manual 模式不误报", async () => {
+    // instant + leaderboardRewards → warning 提示手动发放（info 级前端无展示通道，warning 才在发布确认框可见）
     const instant = makeDraw({
       resultMode: "instant",
       maxSpinsPerEntry: 10,
@@ -914,7 +940,8 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     });
     await addManualTier(instant.id);
     const r1 = await buildPublishCheckForDraw(db, TENANT, instant as any);
-    expect(r1.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(true);
+    expect(r1.warnings.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(true);
+    expect(r1.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
 
     // manual 模式 + leaderboardRewards → 不提示（performDraw 自动发放）
     const manual = makeDraw({
@@ -925,7 +952,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     });
     await addManualTier(manual.id);
     const r2 = await buildPublishCheckForDraw(db, TENANT, manual as any);
-    expect(r2.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
+    expect(r2.warnings.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
 
     // instant + 未配置 leaderboardRewards → 不提示
     const noRewards = makeDraw({
@@ -935,7 +962,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     });
     await addManualTier(noRewards.id);
     const r3 = await buildPublishCheckForDraw(db, TENANT, noRewards as any);
-    expect(r3.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
+    expect(r3.warnings.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
 
     // instant + 排行榜未开启 + 已配置奖励 → rewards_require_enabled 警告，不提示 manual_grant
     const offWithRewards = makeDraw({
@@ -949,7 +976,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     await addManualTier(offWithRewards.id);
     const r4 = await buildPublishCheckForDraw(db, TENANT, offWithRewards as any);
     expect(r4.infos.some((item) => item.code === "viral.leaderboard.off")).toBe(true);
-    expect(r4.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
+    expect(r4.warnings.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
     expect(r4.warnings.some((item) => item.code === "viral.leaderboard.rewards_require_enabled")).toBe(true);
 
     // scheduled 模式 + leaderboardRewards → 不提示（performDraw 自动发放）
@@ -963,7 +990,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     });
     await addManualTier(scheduled.id);
     const r5 = await buildPublishCheckForDraw(db, TENANT, scheduled as any);
-    expect(r5.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
+    expect(r5.warnings.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
 
     // instant + 无效奖励项（rank=0）→ normalize 过滤后为空，不提示
     const invalidRewards = makeDraw({
@@ -976,6 +1003,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     });
     await addManualTier(invalidRewards.id);
     const r6 = await buildPublishCheckForDraw(db, TENANT, invalidRewards as any);
+    expect(r6.warnings.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
     expect(r6.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
   });
 });
