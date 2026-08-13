@@ -1276,6 +1276,9 @@ export default {
     adminLeaderboardRewards: "Leaderboard rewards (one per line: rank:spins)",
     adminLeaderboardRewardsPlaceholder: "1:3\n2:1\n3:1",
     adminLeaderboardRewardsHint: "Ranked by invitations, granted at activity end (instant mode requires manual grant)",
+    adminReferralRewards: "Referral milestones (one per line: invites:spins)",
+    adminReferralRewardsPlaceholder: "1:2\n3:5\n5:10",
+    adminReferralRewardsHint: "One-time spins when invite count crosses a threshold, stacks with per-invite reward (instant mode only, not counted against viral cap)",
     /** claim: social sharing shows leaderboard only, no impact on purchase priority */
     adminSocialSection: "Social Sharing",
     adminSocialSectionDesc: "Enable to show invite leaderboard (leaderboard only, does not change purchase priority or draw results)",

@@ -1249,6 +1249,9 @@ export default {
     adminLeaderboardRewards: "排行榜奖励（每行 名次:次数）",
     adminLeaderboardRewardsPlaceholder: "1:3\n2:1\n3:1",
     adminLeaderboardRewardsHint: "按邀请人数排名，活动结束后按名次发放 spins（仅即时开奖需手动发放）",
+    adminReferralRewards: "推荐里程碑（每行 邀请数:次数）",
+    adminReferralRewardsPlaceholder: "1:2\n3:5\n5:10",
+    adminReferralRewardsHint: "邀请人数跨过门槛时一次性加次，与单次邀请奖励叠加（仅即时开奖，不占用裂变上限）",
     /** claim 秒杀：社交传播只展示排行榜，不影响购买优先级 */
     adminSocialSection: "社交传播",
     adminSocialSectionDesc: "开启后可展示邀请排行榜（仅展示榜单，不改变购买优先级和开奖结果）",

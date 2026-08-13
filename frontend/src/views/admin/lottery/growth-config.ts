@@ -35,6 +35,8 @@ export type GrowthFieldsFromDraw = {
   dailyFreeSpinsCount: number
   /** 排行榜奖励明细（docs/218 模式三）：多行 "名次:spins次数"，如 "1:3\n2:1" */
   leaderboardRewardsText: string
+  /** 推荐里程碑（docs/217）：多行 "邀请数:spins次数"，如 "1:2\n3:5"（仅 instant） */
+  referralRewardsText: string
   enableAfterWinCta: boolean
   afterWinCtaUrl: string
   afterWinCtaTitle: string
@@ -148,6 +150,45 @@ export function formatLeaderboardRewardsText(rewards: Array<{ rank: number; rewa
   return [...rewards]
     .sort((a, b) => a.rank - b.rank)
     .map((r) => `${r.rank}:${r.rewardValue}`)
+    .join('\n')
+}
+
+/** 推荐里程碑项（与后端 ReferralMilestoneReward 对齐） */
+export type ReferralRewardEntry = {
+  requireCount: number
+  rewardType: 'bonus_spin'
+  rewardValue: number
+}
+
+/**
+ * 解析推荐里程碑文本（多行 "邀请数:spins次数"，如 "1:2\n3:5"）。
+ * 非法行跳过；邀请数/次数必须为正整数，邀请数上限 100、次数上限 1000。
+ * 空输入 → []。
+ */
+export function parseReferralRewardsText(raw: string | null | undefined): ReferralRewardEntry[] {
+  const out: ReferralRewardEntry[] = []
+  const seen = new Set<number>()
+  for (const line of String(raw || '').split(/[\n,;；]/)) {
+    const s = line.trim()
+    if (!s) continue
+    const m = s.match(/^(\d+)\s*[:：]\s*(\d+)$/)
+    if (!m) continue
+    const requireCount = Number(m[1])
+    const rewardValue = Number(m[2])
+    if (requireCount < 1 || requireCount > 100 || rewardValue < 1 || rewardValue > 1000) continue
+    if (seen.has(requireCount)) continue
+    seen.add(requireCount)
+    out.push({ requireCount, rewardType: 'bonus_spin', rewardValue })
+  }
+  return out.sort((a, b) => a.requireCount - b.requireCount)
+}
+
+/** 推荐里程碑 → 多行文本（与 parseReferralRewardsText 互逆） */
+export function formatReferralRewardsText(rewards: Array<{ requireCount: number; rewardValue: number }> | null | undefined): string {
+  if (!Array.isArray(rewards) || rewards.length === 0) return ''
+  return [...rewards]
+    .sort((a, b) => a.requireCount - b.requireCount)
+    .map((r) => `${r.requireCount}:${r.rewardValue}`)
     .join('\n')
 }
 
@@ -322,6 +363,17 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
           })
         : null,
     ),
+    // docs/217 推荐里程碑（promotion.referralRewards）：编辑回填防整包覆盖擦掉
+    referralRewardsText: formatReferralRewardsText(
+      Array.isArray(promotion?.referralRewards)
+        ? (promotion!.referralRewards as Array<Record<string, unknown>>).flatMap((item) => {
+            const requireCount = Number(item?.requireCount)
+            const rewardValue = Number(item?.rewardValue)
+            if (!Number.isInteger(requireCount) || requireCount < 1 || !Number.isInteger(rewardValue) || rewardValue < 1) return []
+            return [{ requireCount, rewardValue }]
+          })
+        : null,
+    ),
     enableAfterWinCta,
     afterWinCtaUrl: String(afterWin?.url || ''),
     afterWinCtaTitle: String(afterWin?.title || ''),
@@ -349,7 +401,15 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
       enableAfterWinCta ||
       enableAfterLossCta ||
       hasExperience ||
-      enableFlashSale,
+      enableFlashSale ||
+      pity?.enabled === true ||
+      pity?.enabled === 1 ||
+      pity?.enabled === 'true' ||
+      dailyFree?.enabled === true ||
+      dailyFree?.enabled === 1 ||
+      dailyFree?.enabled === 'true' ||
+      (Array.isArray(viral?.leaderboardRewards) && viral!.leaderboardRewards.length > 0) ||
+      (Array.isArray(promotion?.referralRewards) && promotion!.referralRewards.length > 0),
   }
 }
 
@@ -380,6 +440,8 @@ export function buildPromotionConfigPayload(form: {
   dailyFreeSpinsCount?: number | null
   /** docs/218 排行榜奖励明细（多行 "名次:次数"） */
   leaderboardRewardsText?: string | null
+  /** docs/217 推荐里程碑（多行 "邀请数:次数"，仅 instant） */
+  referralRewardsText?: string | null
   /** instant 时双写 extraSpins*，与 runtime grant 对齐（docs/122） */
   resultMode?: string | null
   /** docs/128 游戏壳 */
@@ -412,8 +474,11 @@ export function buildPromotionConfigPayload(form: {
   const hasDailyFree = isInstantMode && form.enableDailyFreeSpins === true
   const leaderboardRewards = parseLeaderboardRewardsText(form.leaderboardRewardsText)
   const hasLeaderboardRewards = leaderboardRewards.length > 0
+  // docs/217 推荐里程碑（仅 instant 生效；编辑回填缺省保留）
+  const referralRewards = parseReferralRewardsText(form.referralRewardsText)
+  const hasReferralRewards = isInstantMode && referralRewards.length > 0
   const hasGrowth =
-    hasProduct || hasViral || hasWinCta || hasLossCta || hasFlashSale || hasPity || hasDailyFree || hasLeaderboardRewards
+    hasProduct || hasViral || hasWinCta || hasLossCta || hasFlashSale || hasPity || hasDailyFree || hasLeaderboardRewards || hasReferralRewards
 
   const prizePanelMode = normalizePrizePanelMode(form.prizePanelMode)
   const ritualPhrases = sanitizeRitualPhrasesForSave(
@@ -545,6 +610,17 @@ export function buildPromotionConfigPayload(form: {
       },
     }
   }
+  // docs/217 推荐里程碑：promotion.referralRewards（仅 instant，运行时 normalize 过滤）
+  let referralRewardsBlock: Record<string, unknown> = {}
+  if (hasReferralRewards) {
+    referralRewardsBlock = {
+      referralRewards: referralRewards.map((r) => ({
+        requireCount: r.requireCount,
+        rewardType: 'bonus_spin',
+        rewardValue: r.rewardValue,
+      })),
+    }
+  }
 
   return {
     version: 1,
@@ -591,6 +667,7 @@ export function buildPromotionConfigPayload(form: {
       : {}),
     ...pityBlock,
     ...dailyFreeBlock,
+    ...referralRewardsBlock,
     ctas: {
       ...(hasWinCta
         ? { after_win: { url: form.afterWinCtaUrl, title: form.afterWinCtaTitle || '' } }

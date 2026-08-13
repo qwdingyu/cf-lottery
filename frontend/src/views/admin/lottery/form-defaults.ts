@@ -47,6 +47,8 @@ export function emptyLotteryEditorForm(t: ActivityConfigTranslate): LotteryEdito
     dailyFreeSpinsCount: 1,
     // docs/218 排行榜奖励明细（多行 "名次:spins次数"）
     leaderboardRewardsText: '',
+    // docs/217 推荐里程碑（多行 "邀请数:spins次数"）
+    referralRewardsText: '',
     // 多状态 CTA
     enableAfterWinCta: false,
     afterWinCtaUrl: '',
