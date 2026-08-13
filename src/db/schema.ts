@@ -734,6 +734,13 @@ export const shareRecords = sqliteTable("share_records", {
   shareCode: text("share_code").notNull().unique(),
   clickedCount: integer("clicked_count").notNull().default(0),
   joinedCount: integer("joined_count").notNull().default(0),
+  /**
+   * 推荐奖励阶梯已发放里程碑（JSON 数组，元素为 requireCount 数值）。
+   * P0 幂等性存储（docs/217）：joinedCount 只增不减，rewardMilestonesGranted
+   * 单调追加；CAS UPDATE 时把新到达里程碑并入，永不回退。
+   * 每个 shareRecordId + requireCount 组合只发放一次奖励。
+   */
+  rewardMilestonesGranted: text("reward_milestones_granted").notNull().default("[]"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   shareDrawIdx: index("idx_share_draw").on(t.tenantId, t.drawId, t.createdAt),

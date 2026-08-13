@@ -26,7 +26,7 @@ import {
 import { verifyAccessPassword } from "./utils";
 import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
 import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
-import { computeViralSpinGrant, initialSpinsForJoin } from "./spin-quota";
+import { computeViralSpinGrant, initialSpinsForJoin, normalizeReferralRewards, evaluateReferralMilestones, parseGrantedMilestones } from "./spin-quota";
 import { recordSpinLog } from "./spins-log";
 import {
   parseFlashSaleConfig,
@@ -702,7 +702,7 @@ export async function cancelSignupChainEntry(
 async function maybeTriggerReward(
   tx: DbType,
   draw: { id: string; tenantId: string; resultMode?: string | null; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
-  attribution: { attributed: boolean; sharerEntryId?: string; refCode?: string },
+  attribution: { attributed: boolean; sharerEntryId?: string; refCode?: string; shareRecordId?: string },
 ) {
   if (!attribution.attributed || !attribution.sharerEntryId) return;
 
@@ -712,6 +712,15 @@ async function maybeTriggerReward(
       await grantViralSpinsToSharer(tx, draw, attribution.sharerEntryId);
     } catch (err) {
       console.error(`[lottery] grantViralSpinsToSharer failed for ${draw.id}:`, err);
+    }
+  }
+
+  // P0 推荐奖励阶梯：里程碑式一次性加次（仅 instant，不占用 viral.maxExtra 预算）
+  if (attribution.shareRecordId) {
+    try {
+      await processReferralMilestoneRewards(tx, draw, attribution.shareRecordId);
+    } catch (err) {
+      console.error(`[lottery] processReferralMilestoneRewards failed for ${draw.id}:`, err);
     }
   }
 
@@ -826,6 +835,121 @@ async function grantViralSpinsToSharer(
     balanceAfter: Number(sharer.spinsLeft ?? 0) + grant.nextLeftDelta,
     reason: "viral",
   });
+}
+
+/**
+ * 推荐奖励阶梯处理（P0，docs/217）。
+ *
+ * 在每次有效邀请后，检查分享记录的 joinedCount 是否达到任何未发放的
+ * requireCount 门槛；若达则发放一次性 bonus_spin 奖励。
+ *
+ * 设计原则：
+ * - 阶梯奖励是附加行为，非参与必需品；异常/未配置/配额不足时静默跳过。
+ * - 与 grantViralSpinsToSharer 同属 maybeTriggerReward 路径，但阶梯的
+ *   spins 发放不占用 viral.maxExtra 预算（requireCount 有限，无刷次风险），
+ *   只受 maxSpinsPerEntry 总顶约束。
+ * - 幂等性：已发放的 requireCount 写入 shareRecords.rewardMilestonesGranted，
+ *   CAS 防并发重放。
+ * - 仅 instant 模式生效（delayed 无 spins 体系，defer 到 P1）。
+ */
+async function processReferralMilestoneRewards(
+  tx: DbType,
+  draw: { id: string; tenantId: string; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
+  shareRecordId: string,
+) {
+  if (!shareRecordId) return;
+  const maxSpins = Number(draw.maxSpinsPerEntry ?? 0);
+  if (maxSpins < 1) return; // 仅 instant 活动有 spins 体系
+
+  // 读取分享记录：分享者 entryId + 总数 + 已发放里程碑
+  const [share] = await tx
+    .select({
+      sharerEntryId: shareRecords.sharerEntryId,
+      joinedCount: shareRecords.joinedCount,
+      rewardMilestonesGranted: shareRecords.rewardMilestonesGranted,
+    })
+    .from(shareRecords)
+    .where(eq(shareRecords.id, shareRecordId))
+    .limit(1);
+  if (!share?.sharerEntryId) return;
+
+  // 解析 referralRewards 配置；非法/未配置不抛异常，静默跳过（附加行为容错原则）
+  let milestones: ReturnType<typeof normalizeReferralRewards> = [];
+  try {
+    const pc = JSON.parse(draw.promotionConfig || "{}") as Record<string, unknown>;
+    milestones = normalizeReferralRewards((pc as any)?.referralRewards);
+  } catch {
+    return;
+  }
+  if (milestones.length === 0) return;
+
+  const evaluation = evaluateReferralMilestones({
+    joinedCount: Number(share.joinedCount || 0),
+    milestones,
+    granted: parseGrantedMilestones(share.rewardMilestonesGranted),
+  });
+  if (evaluation.dueMilestones.length === 0 || evaluation.totalSpinBonus <= 0) return;
+
+  // 读取分享者 entry 当前 spin 状态
+  const [sharer] = await tx
+    .select({
+      id: lotteryEntries.id,
+      identityValue: lotteryEntries.identityValue,
+      spinsLeft: lotteryEntries.spinsLeft,
+      spinsTotalGranted: lotteryEntries.spinsTotalGranted,
+    })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.id, share.sharerEntryId),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+    ))
+    .limit(1);
+  if (!sharer) return;
+
+  // 阶梯不受 viral.maxExtra 预算约束，只受 maxSpinsPerEntry 总顶限制。
+  // 因为 requireCount 集合有限（不存在无限刷次风险），无需双封顶。
+  const granted = Number(sharer.spinsTotalGranted || 0);
+  const room = Math.max(0, maxSpins - granted);
+  const actual = Math.min(evaluation.totalSpinBonus, room);
+  if (actual <= 0) return;
+
+  const nextGranted = granted + actual;
+
+  // CAS：spinsTotalGranted 未被并发修改时写入（同事务内 grantViralSpinsToSharer 已先执行）
+  const updateResult = await tx
+    .update(lotteryEntries)
+    .set({
+      spinsTotalGranted: nextGranted,
+      spinsLeft: sql`${lotteryEntries.spinsLeft} + ${actual}`,
+    })
+    .where(and(
+      eq(lotteryEntries.id, sharer.id),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+      eq(lotteryEntries.spinsTotalGranted, granted),
+    ));
+  if ((updateResult.rowsAffected ?? 0) === 0) return; // 并发已发放，放弃本次
+
+  // spins 流水日志：reason=viral，refId 标记里程碑审计
+  await recordSpinLog(tx, {
+    tenantId: draw.tenantId,
+    entryId: sharer.id,
+    userId: sharer.identityValue ?? "",
+    delta: actual,
+    balanceAfter: Number(sharer.spinsLeft ?? 0) + actual,
+    reason: "viral",
+    refId: `milestone:${evaluation.dueMilestones.map((m) => m.requireCount).join(",")}`,
+  });
+
+  // 标记已发放里程碑（与 spins 写入同事务，失败回滚 spins）
+  await tx
+    .update(shareRecords)
+    .set({ rewardMilestonesGranted: JSON.stringify(evaluation.nextGranted) })
+    .where(and(
+      eq(shareRecords.id, shareRecordId),
+      eq(shareRecords.rewardMilestonesGranted, String(share.rewardMilestonesGranted || "[]")),
+    ));
 }
 
 type EntryIdentityForSelfInviteCheck = {
