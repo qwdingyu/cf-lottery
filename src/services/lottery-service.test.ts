@@ -2511,14 +2511,14 @@ describe("增长功能集成：保底+每日免费+排行榜奖励+裂变", () =
       });
       expect(r5.won).toBe(false);
 
-      // ── 验证 spins_log 审计：daily_free 恰 1 条（第 1 轮免费） + pity:3 恰 1 条（第 4 轮保底） ──
+      // ── 验证 spins_log 审计：daily_free 恰 1 条（第 1 轮免费） + pity:3: 前缀恰 1 条（第 4 轮保底） ──
       const logs = await db
         .select()
         .from(spinsLog)
         .where(eq(spinsLog.entryId, sharerEntryId));
       const dailyFreeLogs = logs.filter((l) => l.reason === "daily_free");
       expect(dailyFreeLogs).toHaveLength(1);
-      const pityLogs = logs.filter((l) => l.refId === "pity:3");
+      const pityLogs = logs.filter((l) => l.refId?.startsWith("pity:3:"));
       expect(pityLogs).toHaveLength(1);
 
       // 每日免费日志 balanceAfter 应为 8（join 1 + 裂变加次 1 + 手动 5 + 每日免费 1 = 8），证明事务内重读生效

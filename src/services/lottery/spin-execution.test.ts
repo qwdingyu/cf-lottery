@@ -6,7 +6,7 @@
  * 中奖路径：单档 weight>0 + 有 available 码 → 确定性中奖（无随机跳过）。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { getTestDb, clearTestData } from "../../test-setup";
 import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
@@ -1277,8 +1277,8 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
     const entryAfter = await readEntry(join.entryId!);
     expect(Number(entryAfter.consecutiveNoWinSpins)).toBe(0);
 
-    // spins_log 中该 spin 记录 refId 应包含 "pity:3" 标识保底阈值
-    const logs = await db.select().from(spinsLog).where(eq(spinsLog.refId, `pity:3`));
+    // spins_log 中该 spin 记录 refId 应以 "pity:3:" 前缀标识保底阈值（后缀为 spinId，可追溯）
+    const logs = await db.select().from(spinsLog).where(sql`${spinsLog.refId} LIKE 'pity:3:%'`);
     expect(logs.length).toBeGreaterThanOrEqual(1);
     // 查该 spin 的 log: reason=spin, delta=-1（正常扣次，不免费）
     const spinLog = logs.find((l) => l.entryId === join.entryId);

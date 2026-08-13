@@ -463,7 +463,8 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
       // 写入 spins 流水日志（docs/172 §5.5 P1）：
       // - 每日免费：记录 reason=daily_free, delta=+count（发放次数，同时表示本次 spin 由
       //   免费额度支付，故未再写 spin 消耗流水）；refId 关联本次 spinId 形成审计闭环
-      // - 正常抽奖：记录 reason=spin, delta=-1；保底触发时 refId 标识触发阈值
+      // - 正常抽奖：记录 reason=spin, delta=-1；保底触发时 refId 前缀标识触发阈值，
+      //   后缀追加 spinId 保持与普通 spin 一致的审计追溯能力（可反查具体是哪一次 spin 触发保底）
       if (dailyFreeClaimed) {
         await recordSpinLog(tx, {
           tenantId: draw.tenantId,
@@ -482,7 +483,7 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
           delta: -1,
           balanceAfter: spinsLeftAfterDeduct,
           reason: "spin",
-          refId: pityTriggered ? `pity:${pityConfig.threshold}` : spinId,
+          refId: pityTriggered ? `pity:${pityConfig.threshold}:${spinId}` : spinId,
         });
       }
 

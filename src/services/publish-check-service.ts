@@ -632,6 +632,14 @@ async function validatePromotion(
     add(result.errors, "promotion", "promotion.pity.delayed_not_supported", "保底机制仅支持即时开奖模式（result_mode=instant），当前模式不会触发保底逻辑");
   }
 
+  // 每日免费抽奖校验：与保底机制同理，仅支持即时开奖模式。
+  // dailyFreeSpins 的领取逻辑在 performInstantSpin 事务内执行，delayed/manual
+  // 模式不调用该函数，配置后不生效且无任何提示。
+  const dailyFree = promotionConfig?.dailyFreeSpins as Record<string, unknown> | undefined;
+  if (dailyFree?.enabled === true && !isInstantResultMode(draw.resultMode)) {
+    add(result.errors, "promotion", "promotion.dailyFree.delayed_not_supported", "每日免费抽奖仅支持即时开奖模式（result_mode=instant），当前模式不会触发每日免费逻辑");
+  }
+
   // 裂变配置校验
   if (viral?.enabled) {
     const perInvite = Number(viral.extraEntriesPerInvite ?? 0);

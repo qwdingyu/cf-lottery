@@ -851,4 +851,54 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     const r5 = await buildPublishCheckForDraw(db, TENANT, ok as any);
     expect(r5.errors.some((item) => item.section === "promotion" && (item.code as string).startsWith("viral"))).toBe(false);
   });
+
+  it("保底/每日免费仅支持即时开奖：manual/delayed 模式阻断，instant 放行", async () => {
+    // manual 模式 + 保底 → 阻断
+    const pityManual = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, pity: { enabled: true, threshold: 3 } }),
+    });
+    await addManualTier(pityManual.id);
+    const r1 = await buildPublishCheckForDraw(db, TENANT, pityManual as any);
+    expect(r1.errors.some((item) => item.code === "promotion.pity.delayed_not_supported")).toBe(true);
+
+    // manual 模式 + 每日免费 → 阻断
+    const dailyManual = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, dailyFreeSpins: { enabled: true, count: 1 } }),
+    });
+    await addManualTier(dailyManual.id);
+    const r2 = await buildPublishCheckForDraw(db, TENANT, dailyManual as any);
+    expect(r2.errors.some((item) => item.code === "promotion.dailyFree.delayed_not_supported")).toBe(true);
+
+    // scheduled 模式 + 保底/每日免费 → 阻断（performInstantSpin 同样不执行）
+    const pityScheduled = makeDraw({
+      drawTrigger: "scheduled",
+      resultMode: "scheduled",
+      drawAt: new Date(Date.now() + 86400000).toISOString(),
+      promotionConfig: JSON.stringify({ version: 1, pity: { enabled: true, threshold: 3 }, dailyFreeSpins: { enabled: true, count: 1 } }),
+    });
+    await addManualTier(pityScheduled.id);
+    const r3 = await buildPublishCheckForDraw(db, TENANT, pityScheduled as any);
+    expect(r3.errors.some((item) => item.code === "promotion.pity.delayed_not_supported")).toBe(true);
+    expect(r3.errors.some((item) => item.code === "promotion.dailyFree.delayed_not_supported")).toBe(true);
+
+    // instant 模式 + 保底/每日免费 → 放行
+    const instant = makeDraw({
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({ version: 1, pity: { enabled: true, threshold: 3 }, dailyFreeSpins: { enabled: true, count: 1 } }),
+    });
+    await addManualTier(instant.id);
+    const r4 = await buildPublishCheckForDraw(db, TENANT, instant as any);
+    expect(r4.errors.some((item) => item.code === "promotion.pity.delayed_not_supported")).toBe(false);
+    expect(r4.errors.some((item) => item.code === "promotion.dailyFree.delayed_not_supported")).toBe(false);
+
+    // 未启用（enabled=false）→ 不误报
+    const disabled = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, pity: { enabled: false }, dailyFreeSpins: { enabled: false } }),
+    });
+    await addManualTier(disabled.id);
+    const r5 = await buildPublishCheckForDraw(db, TENANT, disabled as any);
+    expect(r5.errors.some((item) => item.code === "promotion.pity.delayed_not_supported")).toBe(false);
+    expect(r5.errors.some((item) => item.code === "promotion.dailyFree.delayed_not_supported")).toBe(false);
+  });
 });
