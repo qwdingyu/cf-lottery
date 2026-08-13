@@ -654,6 +654,14 @@ async function validatePromotion(
     add(result.errors, "promotion", "promotion.dailyFree.delayed_not_supported", "每日免费抽奖仅支持即时开奖模式（result_mode=instant），当前模式不会触发每日免费逻辑");
   }
 
+  // 推荐里程碑校验：与保底/每日免费同理，仅支持即时开奖模式。
+  // processReferralMilestoneRewards 仅在 InstantSpin 体系（maxSpins>=1）中执行，
+  // delayed/manual 模式配置后静默不生效且无提示。
+  const referralRewards = promotionConfig?.referralRewards;
+  if (Array.isArray(referralRewards) && referralRewards.length > 0 && !isInstantResultMode(draw.resultMode)) {
+    add(result.errors, "promotion", "promotion.referralRewards.delayed_not_supported", "推荐里程碑奖励仅支持即时开奖模式（result_mode=instant），当前模式不会触发里程碑逻辑");
+  }
+
   // 裂变配置校验
   if (viral?.enabled) {
     const perInvite = Number(viral.extraEntriesPerInvite ?? 0);
