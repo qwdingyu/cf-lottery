@@ -950,6 +950,14 @@ route.post("/draws/:id/leaderboard-rewards", async (c) => {
     return fail(c, "非即时开奖模式的排行榜奖励由开奖流程自动发放，无需手动操作", 400);
   }
 
+  // 活动未到结束时间禁止发放：活动进行中（endAt 未过）手动发放会锁定当前排名快照，
+  // 之后的邀请不再计入，导致排行榜奖励作废（与 payment-service.ts 的 endAt 校验同语义）。
+  // drawn 状态（开奖已结束）或 endAt 已过 → 允许发放。
+  const endAtMs = draw.endAt ? new Date(draw.endAt).getTime() : 0;
+  if (draw.status !== DRAW_STATUS.DRAWN && Date.now() < endAtMs) {
+    return fail(c, "活动未到结束时间，排行榜奖励将在活动结束后发放（请先等待活动结束或暂停活动）", 400);
+  }
+
   const result = await grantLeaderboardRewards(db, draw);
   return ok(c, result);
 });

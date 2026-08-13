@@ -1573,9 +1573,10 @@
             :disabled="operatingId === expandedActionDraw.id"
             @click="runMoreAction(d => handleRetryEmail(d.id))"
           >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminRetryEmail') }}</button>
-          <!-- 排行榜奖励发放：仅 instant 模式 lottery 活动需要手动触发（delayed/manual 在 performDraw 收尾自动发放，无需手动按钮） -->
+          <!-- 排行榜奖励发放：仅 instant 模式 lottery 活动，且活动已结束（endAt 已过或已开奖）才允许手动触发。
+               活动进行中发放会锁定当前排名快照，之后的邀请不再计入（后端端点有同语义校验） -->
           <button
-            v-if="expandedActionDraw.activityKind === 'lottery' && expandedActionDraw.resultMode === 'instant' && (expandedActionDraw.status === 'open' || expandedActionDraw.status === 'drawn')"
+            v-if="expandedActionDraw.activityKind === 'lottery' && expandedActionDraw.resultMode === 'instant' && isDrawEndedForLeaderboard(expandedActionDraw)"
             type="button"
             class="btn btn-ghost btn-xs table-actions-menu-item"
             role="menuitem"
@@ -3952,6 +3953,20 @@ async function handleRetryEmail(id: string) {
   } finally {
     operatingId.value = ''
   }
+}
+
+/**
+ * 排行榜奖励可发放判定：instant 活动须「已结束」才允许手动发放。
+ * 活动进行中发放会锁定当前排名快照，之后的邀请不再计入（与后端端点 endAt 校验同语义）。
+ * - drawn/closed：已开奖/已关闭 → 已结束
+ * - 无 endTime：视为可发放（与后端 endAt 为空时放行一致）
+ * - 否则 endTime 已过 → 已结束
+ */
+function isDrawEndedForLeaderboard(draw: { status?: string; endTime?: string | null }): boolean {
+  const status = String(draw.status || '')
+  if (status === 'drawn' || status === 'closed') return true
+  if (!draw.endTime) return true
+  return Date.now() >= new Date(draw.endTime).getTime()
 }
 
 /**

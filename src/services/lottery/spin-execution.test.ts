@@ -1562,6 +1562,16 @@ describe("normalizeLeaderboardRewards（publish-check 与发放共用同一归�
       { rank: 4, rewardType: "bonus_spin", rewardValue: 1 },
     ]);
   });
+
+  it("rank 超过 MAX_LEADERBOARD_RANK(100) 被剔除，边界值 100 保留", () => {
+    expect(normalizeLeaderboardRewards([
+      { rank: 100, rewardType: "bonus_spin", rewardValue: 1 },
+      { rank: 101, rewardType: "bonus_spin", rewardValue: 1 },
+      { rank: 9999, rewardType: "bonus_spin", rewardValue: 1 },
+    ])).toEqual([
+      { rank: 100, rewardType: "bonus_spin", rewardValue: 1 },
+    ]);
+  });
 });
 
 describe("grantLeaderboardRewards", () => {
@@ -1794,6 +1804,65 @@ describe("grantLeaderboardRewards", () => {
     };
     await check(s1.entryId, 5);
     await check(s2.entryId, 3);
+  });
+
+  it("同票时先到先得：created_at 早的分享者名次靠前（不因 desc 排序反挂后分享者）", async () => {
+    const { id: drawId } = await seedLeaderboardDraw();
+
+    // 两个同票（都 5 票）的分享者：s1 先分享（createdAt 早），s2 后分享
+    const T = "2026-08-01T00:00:00.000Z";
+    const seed = async (email: string, createdAt: string) => {
+      const entryId = crypto.randomUUID();
+      await db.insert(lotteryEntries).values({
+        id: entryId,
+        tenantId: TENANT,
+        drawId,
+        identityType: "email",
+        identityValue: email,
+        spinsLeft: 0,
+        spinsTotalGranted: 0,
+        spinsViralEarned: 0,
+        joinedAt: createdAt,
+      });
+      await db.insert(shareRecords).values({
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId,
+        sharerEntryId: entryId,
+        shareCode: `sc-tie-${email.slice(0, 5)}`,
+        joinedCount: 5,
+        clickedCount: 0,
+        rewardMilestonesGranted: "[]",
+        leaderboardRewardedAt: "",
+        createdAt,
+      });
+      return entryId;
+    };
+    const earlyEntryId = await seed("early@test.com", T);
+    const lateEntryId = await seed("late@test.com", new Date(Date.parse(T) + 3600_000).toISOString());
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId))
+      .limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+    expect(result.granted).toBe(2);
+
+    // 先分享者得 rank1（+5），后分享者得 rank2（+3）——先到先得
+    const [early] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, earlyEntryId))
+      .limit(1);
+    const [late] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, lateEntryId))
+      .limit(1);
+    expect(Number(early?.spinsLeft ?? 0)).toBe(5);
+    expect(Number(late?.spinsLeft ?? 0)).toBe(3);
   });
 
   it("幂等性：重复调用不重复发放，已发放的 records 被跳过", async () => {

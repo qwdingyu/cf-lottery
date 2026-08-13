@@ -7,7 +7,7 @@
  */
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
-import { eq, and, desc, sql, gte } from "drizzle-orm";
+import { eq, and, desc, asc, sql, gte } from "drizzle-orm";
 import { shareRecords, lotteryEntries, lotteryDraws } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
 
@@ -19,9 +19,16 @@ export type LeaderboardRewardConfig = {
 };
 
 /**
- * 归一化排行榜奖励配置，过滤无效项（rank<1 / 非 bonus_spin / rewardValue<1 全部剔除）。
- * grantLeaderboardRewards 与 publish-check 共用同一函数，避免「发布预检说有奖励、
- * 实际发放为零」的校验与执行偏差。空输入或全无效 → 返回空数组。
+ * 排行榜奖励名次上限（与前端表单 growth-config parseLeaderboardRewardsText 的 rank≤100 一致）。
+ * grantLeaderboardRewards 按 max(rank) 作为 topN 查询分享记录，若 API 直调配置超大 rank，
+ * 会触发超大排名查询与批量发放（性能隐患），因此归一化阶段直接剔除超限项。
+ */
+export const MAX_LEADERBOARD_RANK = 100;
+
+/**
+ * 归一化排行榜奖励配置，过滤无效项（rank<1 或 >MAX_LEADERBOARD_RANK / 非 bonus_spin /
+ * rewardValue<1 全部剔除）。grantLeaderboardRewards 与 publish-check 共用同一函数，
+ * 避免「发布预检说有奖励、实际发放为零」的校验与执行偏差。空输入或全无效 → 返回空数组。
  */
 export function normalizeLeaderboardRewards(raw: unknown): LeaderboardRewardConfig[] {
   if (!Array.isArray(raw)) return [];
@@ -31,7 +38,7 @@ export function normalizeLeaderboardRewards(raw: unknown): LeaderboardRewardConf
     const r = item as Record<string, unknown>;
     const rank = Math.floor(Number(r.rank) || 0);
     const rewardValue = Math.floor(Number(r.rewardValue) || 0);
-    if (rank >= 1 && r.rewardType === "bonus_spin" && rewardValue >= 1) {
+    if (rank >= 1 && rank <= MAX_LEADERBOARD_RANK && r.rewardType === "bonus_spin" && rewardValue >= 1) {
       rewards.push({ rank, rewardType: "bonus_spin", rewardValue });
     }
   }
@@ -110,7 +117,9 @@ export async function grantLeaderboardRewards(
       // 否则有效分享者不足 TOP N 时，无票分享者会被补位白拿排行榜奖励（docs/218 模式三）
       gte(shareRecords.joinedCount, 1),
     ))
-    .orderBy(desc(shareRecords.joinedCount), desc(shareRecords.createdAt))
+    // 名次排序：joined_count 降序为主；同票时先分享者优先（created_at 升序，先到先得）。
+    // ⚠️ 不能用 desc(created_at)：会把"后分享的人"排到前面，与"先到先得"语义相反。
+    .orderBy(desc(shareRecords.joinedCount), asc(shareRecords.createdAt))
     .limit(topN);
 
   // 构建名次映射：entryId → rank（同票时先到先得）

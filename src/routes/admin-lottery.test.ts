@@ -1066,6 +1066,61 @@ describe("导入名单 (roster)", () => {
       const res = await app.request(`/api/admin/draws/${INVITE_DRAW_ID}/invite-codes`, { headers: headersB }, TEST_ENV);
       expect(res.status).toBe(404);
     });
+
+    it("排行榜奖励发放：非 instant 模式 → 400 拒绝（delayed/manual 由开奖自动发放）", async () => {
+      await seedDraw();
+      const app = createTestApp();
+      const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+      // seedDraw 的 DRAW_ID 是 resultMode=scheduled
+      const res = await app.request(`/api/admin/draws/${DRAW_ID}/leaderboard-rewards`, {
+        method: "POST", headers,
+      }, TEST_ENV);
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error?: string };
+      expect(body.error).toContain("自动发放");
+    });
+
+    it("排行榜奖励发放：instant 未到结束时间 → 400 拒绝（防过早发放锁排名快照）", async () => {
+      await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+      const future = new Date(Date.now() + 7 * 86400_000).toISOString();
+      await db.insert(lotteryDraws).values({
+        id: "draw-lb-early", tenantId: TENANT_A, title: "未结束的instant", publicSlug: "lb-early",
+        status: "open", activityKind: "lottery", participationMode: "open",
+        experienceType: "wheel", resultMode: "instant",
+        startAt: new Date().toISOString(), endAt: future,
+        promotionConfig: JSON.stringify({ viral: { enabled: true, leaderboardEnabled: true, leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 3 }] } }),
+      });
+      const app = createTestApp();
+      const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+      const res = await app.request(`/api/admin/draws/draw-lb-early/leaderboard-rewards`, {
+        method: "POST", headers,
+      }, TEST_ENV);
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error?: string };
+      expect(body.error).toContain("未到结束时间");
+    });
+
+    it("排行榜奖励发放：instant 已到结束时间 → 200 发放成功", async () => {
+      await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+      const past = new Date(Date.now() - 86400_000).toISOString();
+      await db.insert(lotteryDraws).values({
+        id: "draw-lb-done", tenantId: TENANT_A, title: "已结束的instant", publicSlug: "lb-done",
+        status: "open", activityKind: "lottery", participationMode: "open",
+        experienceType: "wheel", resultMode: "instant",
+        startAt: new Date(Date.now() - 2 * 86400_000).toISOString(), endAt: past,
+        promotionConfig: JSON.stringify({ viral: { enabled: true, leaderboardEnabled: true, leaderboardRewards: [{ rank: 1, rewardType: "bonus_spin", rewardValue: 3 }] } }),
+      });
+      const app = createTestApp();
+      const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+      const res = await app.request(`/api/admin/draws/draw-lb-done/leaderboard-rewards`, {
+        method: "POST", headers,
+      }, TEST_ENV);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { granted?: number; skipped?: number };
+      expect(body.granted).toBe(0); // 无有效分享者 → 0 发放（幂等安全）
+      expect(body.skipped).toBe(0);
+    });
   });
 });
 
