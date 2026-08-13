@@ -783,8 +783,9 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
 
     expect(survey.errors.some((item) => item.section === "activity_config")).toBe(false);
     expect(vote.errors.some((item) => item.section === "activity_config")).toBe(false);
-    expect(survey.infos.some((item) => item.code === "survey.config.ready")).toBe(true);
-    expect(vote.infos.some((item) => item.code === "vote.config.ready")).toBe(true);
+    // config.ready 噪音已移除（"配置已完成"无行动价值，infos 通道只承载可行动的提示）
+    expect(survey.infos.some((item) => item.code === "survey.config.ready")).toBe(false);
+    expect(vote.infos.some((item) => item.code === "vote.config.ready")).toBe(false);
   });
 
   it("活动级运营参数非法时禁止发布，避免运行时静默忽略配置错误", async () => {

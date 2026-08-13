@@ -805,9 +805,8 @@ function validateActivityConfig(draw: LotteryDraw, result: PublishCheckResult) {
   for (const item of validation.issues) {
     add(result.errors, "activity_config", item.code, item.message);
   }
-  if ((draw.activityKind === "survey" || draw.activityKind === "vote") && validation.ok) {
-    add(result.infos, "activity_config", `${draw.activityKind}.config.ready`, "活动配置已完成，公开提交会按后端规则校验");
-  }
+  // 注意：不再添加 `${kind}.config.ready` info——"配置已完成"是发布的前置条件
+  // （errors 已保证），无行动价值，纯确认性噪音；infos 通道只应承载运营可据此行动的提示。
 }
 
 export async function buildPublishCheckForDraw(

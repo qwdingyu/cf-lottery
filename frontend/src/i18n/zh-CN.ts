@@ -1409,6 +1409,7 @@ export default {
     adminCatResearch: "调研分析",
     adminPublishErrorsPrefix: "发布前需要先处理：",
     adminPublishWarningsPrefix: "发布前仍有风险：",
+    adminPublishInfosPrefix: "发布提示：",
     adminPublishStill: "\n仍然发布吗？",
     adminMoreCheckItems: "\n还有 {count} 项，请查看发布前预检",
     adminAnalyticsLoadFailed: "活动数据加载失败",

@@ -3466,11 +3466,15 @@ async function handleOpen(draw: LotteryDraw) {
       if (!confirmed) return
     }
     await openLotteryDraw(draw.id)
+    // 发布成功后展示 info 级提示（errors/warnings 之外的非阻断信息：奖品默认图、未配置 Webhook 等）。
+    // 随成功 toast 一并展示、不打断发布（warnings 才需要确认）；此前 check.infos 无展示通道，运营看不到这些提示。
+    const publishNotes = formatPublishCheckItems(check.infos, t('lottery.adminPublishInfosPrefix'))
+    const openedMessage = publishNotes ? `${publishNotes}\n${t('lottery.adminOpenedWithLink')}` : t('lottery.adminOpenedWithLink')
     // 发布后复制公开 slug 链接，避免把内部活动 id 发给参与者导致公开页 404。
     // docs/075：默认勾选「打开用户页」，确认即预览，少一次「是否打开？」心智负担。
     try {
       await writeClipboardText(publicShareUrl(draw.publicSlug))
-      showToast(t('lottery.adminOpenedWithLink'), 'success')
+      showToast(openedMessage, 'success')
       if (await askOpenPublicPreview(t('lottery.adminOpenedWithPreview'))) {
         handleOpenPublic(draw)
       }

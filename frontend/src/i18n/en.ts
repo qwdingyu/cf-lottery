@@ -1436,6 +1436,7 @@ export default {
     adminCatResearch: "Research",
     adminPublishErrorsPrefix: "Fix before publishing: ",
     adminPublishWarningsPrefix: "Risks before publishing: ",
+    adminPublishInfosPrefix: "Publish notes: ",
     adminPublishStill: "\nPublish anyway?",
     adminMoreCheckItems: "\n{count} more items — check the pre-publish check",
     adminAnalyticsLoadFailed: "Failed to load activity data",
