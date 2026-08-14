@@ -676,16 +676,21 @@ async function validatePromotion(
 
   // 裂变配置校验（P2 审查项：统一严格 ===true 判定，enabled="true" 字符串不视为启用）
   if (isViralEnabled(viral) && viral) {
-    const perInvite = Number(viral.extraEntriesPerInvite ?? 0);
-    const maxExtra = Number(viral.maxExtraEntries ?? 0);
-    if (perInvite < 1) {
-      add(result.errors, "promotion", "viral.extra_entries.invalid", "裂变传播：每邀请额外次数必须大于 0");
-    }
-    if (maxExtra < 1) {
-      add(result.errors, "promotion", "viral.max_extra.invalid", "裂变传播：最多额外次数必须大于 0");
-    }
-    if (perInvite > maxExtra) {
-      add(result.warnings, "promotion", "viral.extra_exceeds_max", `裂变传播：每邀请 ${perInvite} 次超过了最多 ${maxExtra} 次上限，实际效果以最大值为准`);
+    // 邀请加次/加权数值仅对抽奖（lottery）有意义（instant 加 spins / delayed 开奖加权）；
+    // 接龙/问卷/投票/签到/审批/预约等类型无 spins 与加权语义，前端已隐藏参数，
+    // 此处同步跳过数值校验（排行榜能力仍校验），避免「UI 无入口却发布报错」的断链。
+    if (draw.activityKind === "lottery") {
+      const perInvite = Number(viral.extraEntriesPerInvite ?? 0);
+      const maxExtra = Number(viral.maxExtraEntries ?? 0);
+      if (perInvite < 1) {
+        add(result.errors, "promotion", "viral.extra_entries.invalid", "裂变传播：每邀请额外次数必须大于 0");
+      }
+      if (maxExtra < 1) {
+        add(result.errors, "promotion", "viral.max_extra.invalid", "裂变传播：最多额外次数必须大于 0");
+      }
+      if (perInvite > maxExtra) {
+        add(result.warnings, "promotion", "viral.extra_exceeds_max", `裂变传播：每邀请 ${perInvite} 次超过了最多 ${maxExtra} 次上限，实际效果以最大值为准`);
+      }
     }
     // 裂变开启但排行榜未开启时提示
     // 与 isViralLeaderboardEnabled 一致：仅显式关闭才提示（缺省开启不误报 off）

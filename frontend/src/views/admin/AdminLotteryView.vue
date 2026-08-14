@@ -906,22 +906,25 @@
                           <option value="eur">EUR</option>
                         </select>
                       </label>
-                      <label class="field-span-2">
+                      <label>
                         <span>{{ $t('lottery.adminFlashSalePaymentTitle') }}</span>
                         <input v-model="form.flashSaleTitle" maxlength="100" />
                       </label>
                     </template>
-                    <label class="field-span-2">
-                      <input v-model="form.flashSaleShowCountdown" type="checkbox" class="checkbox-inline" />
-                      <span>{{ $t('lottery.adminFlashSaleShowCountdown') }}</span>
-                    </label>
-                    <label class="field-span-2">
-                      <input v-model="form.flashSaleShowProgress" type="checkbox" class="checkbox-inline" />
-                      <span>{{ $t('lottery.adminFlashSaleShowProgress') }}</span>
-                    </label>
-                    <label class="field-span-2">
-                      <input v-model="form.flashSaleShowStock" type="checkbox" class="checkbox-inline" />
-                      <span>{{ $t('lottery.adminFlashSaleShowStock') }}</span>
+                    <!-- 三个展示开关同排（2026-08 打磨）：不各自占行 -->
+                    <label class="field-span-2 flash-sale-show-row">
+                      <label class="checkbox-label-inline">
+                        <input v-model="form.flashSaleShowCountdown" type="checkbox" />
+                        <span>{{ $t('lottery.adminFlashSaleShowCountdown') }}</span>
+                      </label>
+                      <label class="checkbox-label-inline">
+                        <input v-model="form.flashSaleShowProgress" type="checkbox" />
+                        <span>{{ $t('lottery.adminFlashSaleShowProgress') }}</span>
+                      </label>
+                      <label class="checkbox-label-inline">
+                        <input v-model="form.flashSaleShowStock" type="checkbox" />
+                        <span>{{ $t('lottery.adminFlashSaleShowStock') }}</span>
+                      </label>
                     </label>
                     <p class="field-span-2 field-hint">{{ $t('lottery.adminFlashSaleShopHint') }}</p>
                   </template>
@@ -976,7 +979,10 @@
                     <span>{{ form.activityKind === 'claim' ? $t('lottery.adminEnableSocial') : $t('lottery.adminEnableViral') }}</span>
                   </label>
                   <template v-if="form.enableViral">
-                    <template v-if="form.activityKind !== 'claim'">
+                    <!-- 邀请加次/加权参数仅对抽奖（lottery）有意义（instant 加 spins / delayed 加权开奖）；
+                         接龙/问卷/投票/签到/审批/预约等类型无 spins 与开奖加权语义，
+                         只保留「邀请排行榜」传播能力（publish-check 同步仅 lottery 校验数值）。 -->
+                    <template v-if="form.activityKind === 'lottery'">
                     <label>
                       <span>{{ form.resultMode === 'instant' ? $t('lottery.adminViralPerInviteSpinsLabel') : $t('lottery.adminViralPerInviteLabel') }}</span>
                       <input v-model.number="form.viralExtraEntriesPerInvite" type="number" min="1" max="10" />
@@ -1316,16 +1322,15 @@
                 <input v-model.number="form.expectedParticipants" type="number" min="0" max="999999" step="1" />
                 <small class="field-hint">{{ $t('lottery.expectedCountHint') }}</small>
               </label>
-              <label>
-                <span>{{ $t('lottery.adminDrawLimitPerEmail') }}</span>
-                <!-- 后端 UNIQUE(draw_id,email) 强制 1；只读展示 -->
-                <input type="number" :value="1" min="1" max="1" disabled />
-                <small class="field-hint">{{ $t('lottery.adminLimitHint') }}</small>
-              </label>
-              <label class="checkbox-label">
-                <input v-model="form.showWinners" type="checkbox" />
+              <label class="field-span-2">
                 <span>{{ $t('lottery.adminShowWinners') }}</span>
-                <small class="field-hint">{{ $t('lottery.adminShowWinnersHint') }}</small>
+                <label class="checkbox-label checkbox-inline-label">
+                  <input v-model="form.showWinners" type="checkbox" />
+                  <span>{{ $t('lottery.adminShowWinnersOn') }}</span>
+                </label>
+                <small class="field-hint">
+                  {{ $t('lottery.adminShowWinnersHint') }} {{ $t('lottery.adminLimitHint') }}
+                </small>
               </label>
             </div>
           </section>

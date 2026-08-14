@@ -853,6 +853,27 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(r5.errors.some((item) => item.section === "promotion" && (item.code as string).startsWith("viral"))).toBe(false);
   });
 
+  it("非 lottery 活动（接龙/问卷等）裂变数值不校验：perInvite=0 不报错（前端已隐藏参数，P2 打磨）", async () => {
+    // signup_chain + 裂变开启 + perInvite/maxExtra=0 → 不再报错（数值仅对 lottery 有意义）
+    const chain = makeDraw({
+      activityKind: "signup_chain",
+      resultMode: "ordered_assignment",
+      promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, leaderboardEnabled: true } }),
+    });
+    const r1 = await buildPublishCheckForDraw(db, TENANT, chain as any);
+    expect(r1.errors.some((item) => item.code === "viral.extra_entries.invalid")).toBe(false);
+    expect(r1.errors.some((item) => item.code === "viral.max_extra.invalid")).toBe(false);
+
+    // 排行榜能力仍保留校验（off 提示对非 lottery 也成立）
+    const chainNoBoard = makeDraw({
+      activityKind: "signup_chain",
+      resultMode: "ordered_assignment",
+      promotionConfig: JSON.stringify({ version: 1, viral: { enabled: true, leaderboardEnabled: false } }),
+    });
+    const r2 = await buildPublishCheckForDraw(db, TENANT, chainNoBoard as any);
+    expect(r2.infos.some((item) => item.code === "viral.leaderboard.off")).toBe(true);
+  });
+
   it("保底/每日免费仅支持即时开奖：manual/delayed 模式阻断，instant 放行", async () => {
     // manual 模式 + 保底 → 阻断
     const pityManual = makeDraw({
