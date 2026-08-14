@@ -3526,6 +3526,12 @@ function applyTemplate(tpl: any) {
   if (form.value.flashSalePricingTiers.length > 0) {
     form.value.flashSaleMaxPerUser = alignFlashSaleMaxPerUser(form.value.flashSalePricingTiers, form.value.flashSaleMaxPerUser)
   }
+  // 模板强制体验类型：确保用户更改类别后模板的 experienceType 仍被保留（如 claim+flash_sale）。
+  // 否则 handleActivityKindChange 先于模板应用执行，会把 experienceType 重置为默认（如 "reveal"），
+  // 导致后端保存奖项时拒绝（"只有抽奖活动或直付秒杀需要配置奖项"）。
+  if (tpl.defaults?.experienceType) {
+    form.value.experienceType = tpl.defaults.experienceType
+  }
   // 模板智能增强：不同类型预设更合理的默认值，减少重复配置
   if (tpl.id === 'signup-chain' || kind === 'signup_chain') {
     form.value.maxParticipants = 30   // 预设容量，运营者可调整
