@@ -2446,6 +2446,24 @@ function onFlashSaleTierPriceInput(index: number, event: Event) {
   setFlashSaleTierPriceYuan(index, (event.target as HTMLInputElement | null)?.value || '')
 }
 
+/**
+ * 对齐每人限购数与阶梯档位：flashSaleMaxPerUser 必须 >= 最大档位起步数。
+ * 否则模板预置档位（如 1/5 件起 → minQuantity=5）超过 max=1 时，浏览器原生
+ * min/max 校验在提交时尝试聚焦该输入框，控件不可聚焦会抛
+ * "An invalid form control with name='' is not focusable"，表单静默提交失败。
+ * 模板应用 / 编辑回填 / 复制回填三处入口统一调用，保证初始数据自洽。
+ */
+function alignFlashSaleMaxPerUser(
+  tiers: Array<{ minQuantity?: unknown }> | null | undefined,
+  current: number | null | undefined,
+): number {
+  const maxTier = (tiers || []).reduce((acc, t) => {
+    const n = Math.floor(Number(t?.minQuantity) || 1)
+    return n > acc ? n : acc
+  }, 1)
+  return Math.max(1, Math.floor(Number(current) || 1), maxTier)
+}
+
 function addFlashSalePricingTier() {
   if (form.value.flashSalePricingTiers.length >= 8) return
   const lastMin = form.value.flashSalePricingTiers
@@ -2455,6 +2473,9 @@ function addFlashSalePricingTier() {
     unitPriceCents: form.value.flashSalePriceCents || 0,
     label: '',
   })
+  // 每人限购同步扩容：新档位起步数可能超过当前限购（默认限购 1 时新增「2 件起」档），
+  // 否则 minQuantity > max 触发浏览器原生校验失败（"An invalid form control ... not focusable"）
+  form.value.flashSaleMaxPerUser = alignFlashSaleMaxPerUser(form.value.flashSalePricingTiers, form.value.flashSaleMaxPerUser)
 }
 
 function removeFlashSalePricingTier(index: number) {
@@ -3256,7 +3277,7 @@ async function handleDuplicate(draw: LotteryDraw) {
     enableFlashSale: growth.enableFlashSale,
     flashSaleSessionLabel: growth.flashSaleSessionLabel || '',
     flashSaleStockLimit: growth.flashSaleStockLimit,
-    flashSaleMaxPerUser: growth.flashSaleMaxPerUser || 1,
+    flashSaleMaxPerUser: alignFlashSaleMaxPerUser(growth.flashSalePricingTiers, growth.flashSaleMaxPerUser),
     flashSaleCtaLabel: growth.flashSaleCtaLabel,
     flashSaleShowCountdown: growth.flashSaleShowCountdown !== false,
     flashSaleShowProgress: growth.flashSaleShowProgress !== false,
@@ -3499,6 +3520,11 @@ function applyTemplate(tpl: any) {
       unitPriceCents: Number(tier.unitPriceCents || 0),
       label: String(tier.label || ''),
     })),
+  }
+  // 秒杀阶梯自洽：模板预置档位（如 1/5 件起）要求每人限购 >= 最大档位起步数，
+  // 否则 min=1 max=1（默认限购 1）下 minQuantity=5 触发表单原生校验失败
+  if (form.value.flashSalePricingTiers.length > 0) {
+    form.value.flashSaleMaxPerUser = alignFlashSaleMaxPerUser(form.value.flashSalePricingTiers, form.value.flashSaleMaxPerUser)
   }
   // 模板智能增强：不同类型预设更合理的默认值，减少重复配置
   if (tpl.id === 'signup-chain' || kind === 'signup_chain') {
@@ -4000,7 +4026,7 @@ async function handleEdit(draw: LotteryDraw) {
     enableFlashSale: growth.enableFlashSale,
     flashSaleSessionLabel: growth.flashSaleSessionLabel || '',
     flashSaleStockLimit: growth.flashSaleStockLimit,
-    flashSaleMaxPerUser: growth.flashSaleMaxPerUser || 1,
+    flashSaleMaxPerUser: alignFlashSaleMaxPerUser(growth.flashSalePricingTiers, growth.flashSaleMaxPerUser),
     flashSaleCtaLabel: growth.flashSaleCtaLabel,
     flashSaleShowCountdown: growth.flashSaleShowCountdown !== false,
     flashSaleShowProgress: growth.flashSaleShowProgress !== false,
