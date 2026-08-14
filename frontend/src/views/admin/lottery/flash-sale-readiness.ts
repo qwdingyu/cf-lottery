@@ -4,6 +4,7 @@ export type FlashSaleDirectChecklistKey =
   | 'stock'
   | 'payment'
   | 'codePrize'
+  | 'cta'
   | 'lotteryPaymentConflict'
 
 export interface FlashSaleDirectChecklistItem {
@@ -134,6 +135,15 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
       // 直付模式才要求恰好 1 个卡密奖品；导流模式视为完成（与后端一致）
       done: !needCodePrize || selectedCodePrizeCount === 1,
       labelKey: 'adminFlashSaleChecklistCodePrize',
+    },
+    {
+      key: 'cta',
+      done: !isDirect || !String(input.afterWin?.url || '').trim(),
+      error: isDirect && Boolean(String(input.afterWin?.url || '').trim()),
+      code: isDirect && Boolean(String(input.afterWin?.url || '').trim())
+        ? 'flash_sale.payment.cta_conflict'
+        : undefined,
+      labelKey: 'adminFlashSaleChecklistCtaConflict',
     },
   )
   return items

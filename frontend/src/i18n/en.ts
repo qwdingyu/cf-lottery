@@ -1224,6 +1224,7 @@ export default {
     adminFlashSaleModeRedirect: "Display & redirect (external purchase / coupon)",
     adminFlashSaleModeDirectSingle: "Direct payment (single item)",
     adminFlashSaleModeDirectBulk: "Direct payment & wholesale (qty tiers)",
+    adminFlashSaleChecklistCtaConflict: "No post-win external CTA is configured for direct payment",
     /** docs/222 P0 preview */
     adminFlashSalePreviewTitle: "⚡ Flash sale config preview",
     adminFlashSalePreviewStock: "Available stock",

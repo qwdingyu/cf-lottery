@@ -114,6 +114,24 @@ describe('flash-sale-readiness', () => {
     }).codePrize).toBe(true)
   })
 
+  it('直付模式配置中奖后导流 CTA 时明确提示冲突', () => {
+    const items = buildFlashSaleDirectChecklist({
+      enableFlashSale: true,
+      flashSalePaymentRequired: true,
+      flashSalePriceCents: 990,
+      flashSaleStockLimit: 100,
+      afterWin: { url: 'https://shop.example.com/after-win' },
+      tiers: [{ prizeId: 'active-code' }],
+      prizeOptions: [{ id: 'active-code', prizeType: 'code', active: 1 }],
+    })
+    const cta = items.find((item) => item.key === 'cta')
+    expect(cta).toMatchObject({
+      done: false,
+      error: true,
+      code: 'flash_sale.payment.cta_conflict',
+    })
+  })
+
   // ── docs/166 红线：lottery + 直付秒杀 发布必拒（对齐 promotion.lottery_payment.conflict） ──
   it('lottery + paymentRequired 时返回 error 级冲突条目（3a）', () => {
     const items = buildFlashSaleDirectChecklist({

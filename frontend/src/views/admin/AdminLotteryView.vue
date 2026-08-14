@@ -830,11 +830,11 @@
                       <input v-model.number="form.flashSaleStockLimit" type="number" min="1" max="1000000" :placeholder="$t('lottery.adminFlashSaleStockPlaceholder')" />
                       <small class="field-hint">{{ $t('lottery.adminFlashSaleStockHint') }}</small>
                     </label>
-                    <label>
+                    <label v-if="form.flashSaleSalesMode !== 'redirect'">
                       <span>{{ $t('lottery.adminFlashSaleMaxPerUser') }}</span>
                       <input v-model.number="form.flashSaleMaxPerUser" type="number" min="1" max="100" />
                     </label>
-                    <label class="field-span-2">
+                    <div class="field-span-2">
                       <span class="field-label-text">{{ $t('lottery.adminFlashSaleSalesMode') }}</span>
                       <div class="sales-mode-options">
                         <label class="radio-label-inline">
@@ -850,7 +850,7 @@
                           <span>{{ $t('lottery.adminFlashSaleModeDirectBulk') }}</span>
                         </label>
                       </div>
-                    </label>
+                    </div>
                     <!-- 3c：lottery + 直付秒杀 组合不硬阻断（后端发布预检会拒），但内联提示避免运营保存必拒组合 -->
                     <p
                       v-if="form.activityKind === 'lottery' && form.flashSaleSalesMode !== 'redirect'"
@@ -909,7 +909,7 @@
                                 <span>{{ $t('lottery.adminFlashSaleTierLabel') }}</span>
                                 <input v-model="tier.label" maxlength="32" :placeholder="$t('lottery.adminFlashSaleTierLabelPlaceholder')" />
                               </label>
-                              <button type="button" class="btn btn-ghost btn-xs" @click="removeFlashSalePricingTier(idx)">{{ $t('lottery.adminFlashSaleRemovePricingTier') }}</button>
+                              <button type="button" class="btn btn-ghost btn-xs" :disabled="form.flashSalePricingTiers.length <= 1" @click="removeFlashSalePricingTier(idx)">{{ $t('lottery.adminFlashSaleRemovePricingTier') }}</button>
                             </div>
                           </div>
                         </div>
@@ -955,7 +955,7 @@
                       </div>
                     </div>
                     <!-- 三个展示开关同排（2026-08 打磨）：不各自占行 -->
-                    <label class="field-span-2 flash-sale-show-row">
+                    <div class="field-span-2 flash-sale-show-row">
                       <label class="checkbox-label-inline">
                         <input v-model="form.flashSaleShowCountdown" type="checkbox" />
                         <span>{{ $t('lottery.adminFlashSaleShowCountdown') }}</span>
@@ -968,7 +968,7 @@
                         <input v-model="form.flashSaleShowStock" type="checkbox" />
                         <span>{{ $t('lottery.adminFlashSaleShowStock') }}</span>
                       </label>
-                    </label>
+                    </div>
                     <p class="field-span-2 field-hint">{{ $t('lottery.adminFlashSaleShopHint') }}</p>
                   </template>
                 </div>

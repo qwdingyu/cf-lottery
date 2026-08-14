@@ -1197,6 +1197,7 @@ export default {
     adminFlashSaleModeRedirect: "展示导流（外部购买/领券）",
     adminFlashSaleModeDirectSingle: "站内直付（单件购买）",
     adminFlashSaleModeDirectBulk: "站内直付批发（多件阶梯价）",
+    adminFlashSaleChecklistCtaConflict: "直付模式未配置中奖后外部导流 CTA",
     /** docs/222 P0 预览区 */
     adminFlashSalePreviewTitle: "⚡ 秒杀配置预览",
     adminFlashSalePreviewStock: "本场可售",
