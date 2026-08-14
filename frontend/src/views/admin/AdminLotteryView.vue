@@ -946,7 +946,7 @@
                         </span>
                         <span v-if="form.flashSaleSalesMode === 'direct_bulk' && form.flashSalePricingTiers.length > 0" class="preview-item preview-item-full">
                           <span class="preview-label">{{ $t('lottery.adminFlashSalePreviewTiers') }}</span>
-                          <span class="preview-value">{{ form.flashSalePricingTiers.map(t => `${t.minQuantity}${$t('lottery.adminFlashSalePreviewUnit')} ${flashSaleTierPriceYuan(form.flashSalePricingTiers.indexOf(t)) || '—'}${$t('lottery.adminCurrencyUnit')}`).join('; ') }}</span>
+                          <span class="preview-value">{{ form.flashSalePricingTiers.map((t, idx) => `${t.minQuantity}${$t('lottery.adminFlashSalePreviewUnit')} ${flashSaleTierPriceYuan(idx) || '—'}${$t('lottery.adminCurrencyUnit')}`).join('; ') }}</span>
                         </span>
                         <span class="preview-item">
                           <span class="preview-label">{{ $t('lottery.adminFlashSalePreviewPayment') }}</span>
@@ -2941,6 +2941,8 @@ function handleFlashSaleSalesModeChange() {
       label: '单件',
     })
   }
+  // 防御：限购必须 >= 最大档位起步数，否则提交时该档会被 buildPromotionConfigPayload 过滤
+  form.value.flashSaleMaxPerUser = alignFlashSaleMaxPerUser(form.value.flashSalePricingTiers, form.value.flashSaleMaxPerUser)
 }
 
 function handleActivityKindChange() {
