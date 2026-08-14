@@ -62,6 +62,7 @@ export function emptyLotteryEditorForm(t: ActivityConfigTranslate): LotteryEdito
     // docs/130：秒杀壳默认关；开启后写入 promotion.flashSale
     enableFlashSale: false,
     flashSaleSessionLabel: '',
+    flashSaleSalesMode: 'redirect',
     flashSaleStockLimit: null,
     flashSaleMaxPerUser: 1,
     flashSaleCtaLabel: '抢',

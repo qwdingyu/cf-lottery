@@ -1219,6 +1219,11 @@ export default {
     adminFlashSaleStockHint: "Cut-off & progress use this quota; blank = participation cap",
     adminFlashSaleMaxPerUser: "Per-user limit (display)",
     adminFlashSalePaymentRequired: "Enable cf-lottery direct payment and card issue",
+    /** docs/222 6.2.1 sales mode */
+    adminFlashSaleSalesMode: "Sales mode",
+    adminFlashSaleModeRedirect: "Display & redirect (external purchase / coupon)",
+    adminFlashSaleModeDirectSingle: "Direct payment (single item)",
+    adminFlashSaleModeDirectBulk: "Direct payment & wholesale (qty tiers)",
     adminFlashSaleLotteryConflict: "Lottery cannot enable direct-pay flash sale (payment conflicts with the draw result machine) — switch to claim or disable direct pay",
     adminFlashSalePriceYuan: "Unit price (yuan)",
     adminFlashSalePriceHint: "Enter price in yuan; stored as integer cents (1 yuan = 100 cents). Positive numbers only.",

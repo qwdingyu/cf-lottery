@@ -20,6 +20,18 @@ export type FlashSalePricingTier = {
   label: string
 }
 
+export type FlashSaleSalesMode = 'redirect' | 'direct_single' | 'direct_bulk'
+
+export function inferFlashSaleSalesMode(
+  paymentRequired: boolean,
+  maxPerUser: number,
+  pricingTiers: FlashSalePricingTier[],
+): FlashSaleSalesMode {
+  if (!paymentRequired) return 'redirect'
+  if (maxPerUser > 1 || pricingTiers.length > 1) return 'direct_bulk'
+  return 'direct_single'
+}
+
 export type GrowthFieldsFromDraw = {
   enableProductLink: boolean
   productLink: GrowthProductLink
@@ -56,6 +68,7 @@ export type GrowthFieldsFromDraw = {
    */
   enableFlashSale: boolean
   flashSaleSessionLabel: string
+  flashSaleSalesMode: FlashSaleSalesMode
   flashSaleStockLimit: number | null
   flashSaleMaxPerUser: number
   flashSaleCtaLabel: string
@@ -310,6 +323,11 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
         }]
       })
     : []
+  const flashSaleSalesMode = inferFlashSaleSalesMode(
+    flashSalePaymentRequired,
+    flashSaleMaxPerUser,
+    flashSalePricingTiers,
+  )
 
   const productUrl = String(productSrc?.url || '').trim()
   const enableProductLink = Boolean(productUrl)
@@ -384,6 +402,7 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
     ritualPhrasesText,
     enableFlashSale,
     flashSaleSessionLabel: String(flashSale?.sessionLabel ?? flashSale?.session_label ?? '').trim().slice(0, 32),
+    flashSaleSalesMode,
     flashSaleStockLimit,
     flashSaleMaxPerUser,
     flashSaleCtaLabel: String(flashSale?.ctaLabel ?? flashSale?.cta_label ?? '').trim().slice(0, 12) || '抢',
@@ -451,6 +470,7 @@ export function buildPromotionConfigPayload(form: {
   /** docs/130 秒杀壳 */
   enableFlashSale?: boolean
   flashSaleSessionLabel?: string | null
+  flashSaleSalesMode?: FlashSaleSalesMode | null
   flashSaleStockLimit?: number | null
   flashSaleMaxPerUser?: number | null
   flashSaleCtaLabel?: string | null
@@ -511,7 +531,14 @@ export function buildPromotionConfigPayload(form: {
     const maxPerUser =
       Number.isFinite(maxPer) && Number.isInteger(maxPer) && maxPer >= 1 && maxPer <= 100 ? maxPer : 1
     const cta = String(form.flashSaleCtaLabel || '').trim().slice(0, 12) || '抢'
-    const paymentRequired = form.flashSalePaymentRequired === true
+    const inferredMode = inferFlashSaleSalesMode(
+      form.flashSalePaymentRequired === true,
+      Number(form.flashSaleMaxPerUser ?? 1),
+      Array.isArray(form.flashSalePricingTiers) ? form.flashSalePricingTiers : [],
+    )
+    const salesMode = form.flashSaleSalesMode || inferredMode
+    const paymentRequired = salesMode !== 'redirect'
+    const effectiveMaxPerUser = salesMode === 'direct_single' ? 1 : maxPerUser
     const priceRaw = form.flashSalePriceCents
     let priceCents: number | null = null
     if (priceRaw !== null && priceRaw !== undefined && priceRaw !== ('' as unknown)) {
@@ -528,7 +555,7 @@ export function buildPromotionConfigPayload(form: {
           .flatMap((tier) => {
             const minQuantity = Number(tier?.minQuantity)
             const unitPriceCents = Number(tier?.unitPriceCents)
-            if (!Number.isInteger(minQuantity) || minQuantity < 1 || minQuantity > maxPerUser) return []
+            if (!Number.isInteger(minQuantity) || minQuantity < 1 || minQuantity > effectiveMaxPerUser) return []
             if (!Number.isInteger(unitPriceCents) || unitPriceCents < 1 || unitPriceCents > 100_000_000) return []
             return [{
               minQuantity,
@@ -543,7 +570,7 @@ export function buildPromotionConfigPayload(form: {
         enabled: true,
         sessionLabel: String(form.flashSaleSessionLabel || '').trim().slice(0, 32),
         ...(stockLimit != null ? { stockLimit } : {}),
-        maxPerUser,
+        maxPerUser: effectiveMaxPerUser,
         ctaLabel: cta,
         showCountdown: form.flashSaleShowCountdown !== false,
         showProgress: form.flashSaleShowProgress !== false,
@@ -554,7 +581,7 @@ export function buildPromotionConfigPayload(form: {
               ...(priceCents != null ? { priceCents } : {}),
               currency,
               ...(title ? { title } : {}),
-              ...(pricingTiers.length > 0 ? { pricingTiers } : {}),
+              ...(salesMode === 'direct_bulk' && pricingTiers.length > 0 ? { pricingTiers } : {}),
             }
           : {}),
       },

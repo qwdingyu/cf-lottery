@@ -1192,6 +1192,11 @@ export default {
     adminFlashSaleStockHint: "截单与进度按此名额；留空回退参与上限",
     adminFlashSaleMaxPerUser: "每人限次（展示）",
     adminFlashSalePaymentRequired: "启用 cf-lottery 直付发卡",
+    /** docs/222 6.2.1 销售模式 */
+    adminFlashSaleSalesMode: "销售模式",
+    adminFlashSaleModeRedirect: "展示导流（外部购买/领券）",
+    adminFlashSaleModeDirectSingle: "站内直付（单件购买）",
+    adminFlashSaleModeDirectBulk: "站内直付批发（多件阶梯价）",
     adminFlashSaleLotteryConflict: "抽奖活动不能启用直付秒杀（支付弹窗与抽奖结果机冲突），请改用 claim 活动类型或关闭直付",
     adminFlashSalePriceYuan: "直付单价(元)",
     adminFlashSalePriceHint: "运营侧按元填写，存储端自动转换为分(1元=100分)；仅支持正数",

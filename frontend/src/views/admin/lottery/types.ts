@@ -211,6 +211,8 @@ export type LotteryEditorForm = {
    */
   enableFlashSale: boolean
   flashSaleSessionLabel: string
+  /** docs/222 6.2.1 销售模式：redirect=展示导流, direct_single=直付单件, direct_bulk=直付批发 */
+  flashSaleSalesMode: 'redirect' | 'direct_single' | 'direct_bulk'
   flashSaleStockLimit: number | null
   flashSaleMaxPerUser: number
   flashSaleCtaLabel: string

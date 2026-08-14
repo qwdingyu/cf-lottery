@@ -835,16 +835,29 @@
                       <input v-model.number="form.flashSaleMaxPerUser" type="number" min="1" max="100" />
                     </label>
                     <label class="field-span-2">
-                      <input v-model="form.flashSalePaymentRequired" type="checkbox" class="checkbox-inline" />
-                      <span>{{ $t('lottery.adminFlashSalePaymentRequired') }}</span>
+                      <span class="field-label-text">{{ $t('lottery.adminFlashSaleSalesMode') }}</span>
+                      <div class="sales-mode-options">
+                        <label class="radio-label-inline">
+                          <input v-model="form.flashSaleSalesMode" type="radio" value="redirect" @change="handleFlashSaleSalesModeChange" />
+                          <span>{{ $t('lottery.adminFlashSaleModeRedirect') }}</span>
+                        </label>
+                        <label class="radio-label-inline">
+                          <input v-model="form.flashSaleSalesMode" type="radio" value="direct_single" @change="handleFlashSaleSalesModeChange" />
+                          <span>{{ $t('lottery.adminFlashSaleModeDirectSingle') }}</span>
+                        </label>
+                        <label class="radio-label-inline">
+                          <input v-model="form.flashSaleSalesMode" type="radio" value="direct_bulk" @change="handleFlashSaleSalesModeChange" />
+                          <span>{{ $t('lottery.adminFlashSaleModeDirectBulk') }}</span>
+                        </label>
+                      </div>
                     </label>
                     <!-- 3c：lottery + 直付秒杀 组合不硬阻断（后端发布预检会拒），但内联提示避免运营保存必拒组合 -->
                     <p
-                      v-if="form.activityKind === 'lottery' && form.flashSalePaymentRequired"
+                      v-if="form.activityKind === 'lottery' && form.flashSaleSalesMode !== 'redirect'"
                       class="field-span-2 flash-sale-warn-inline"
                       role="alert"
                     >{{ $t('lottery.adminFlashSaleLotteryConflict') }}</p>
-                    <template v-if="form.flashSalePaymentRequired">
+                    <template v-if="form.flashSaleSalesMode !== 'redirect'">
                       <div class="field-span-2 flash-sale-checklist" aria-live="polite">
                         <div class="flash-sale-checklist-head">
                           <strong>{{ $t('lottery.adminFlashSaleDirectChecklistTitle') }}</strong>
@@ -874,32 +887,34 @@
                         <input v-model="flashSalePriceYuan" type="number" min="0.01" step="0.01" max="1000000" placeholder="9.90" />
                         <small>{{ $t('lottery.adminFlashSalePriceHint') }}</small>
                       </label>
-                      <div class="field-span-2 flash-sale-tier-editor">
-                        <div class="flash-sale-tier-editor__head">
-                          <span>{{ $t('lottery.adminFlashSalePricingTiers') }}</span>
-                          <button type="button" class="btn btn-ghost btn-xs" :disabled="form.flashSalePricingTiers.length >= 8" @click="addFlashSalePricingTier">
-                            {{ $t('lottery.adminFlashSaleAddPricingTier') }}
-                          </button>
-                        </div>
-                        <div v-if="form.flashSalePricingTiers.length" class="flash-sale-tier-list">
-                          <div v-for="(tier, idx) in form.flashSalePricingTiers" :key="idx" class="flash-sale-tier-row">
-                            <label>
-                              <span>{{ $t('lottery.adminFlashSaleTierMinQuantity') }}</span>
-                              <input v-model.number="tier.minQuantity" type="number" min="1" :max="form.flashSaleMaxPerUser || 100" />
-                            </label>
-                            <label>
-                              <span>{{ $t('lottery.adminFlashSaleTierUnitPriceYuan') }}</span>
-                              <input :value="flashSaleTierPriceYuan(idx)" type="number" min="0.01" step="0.01" max="1000000" @input="onFlashSaleTierPriceInput(idx, $event)" />
-                            </label>
-                            <label>
-                              <span>{{ $t('lottery.adminFlashSaleTierLabel') }}</span>
-                              <input v-model="tier.label" maxlength="32" :placeholder="$t('lottery.adminFlashSaleTierLabelPlaceholder')" />
-                            </label>
-                            <button type="button" class="btn btn-ghost btn-xs" @click="removeFlashSalePricingTier(idx)">{{ $t('lottery.adminFlashSaleRemovePricingTier') }}</button>
+                      <template v-if="form.flashSaleSalesMode === 'direct_bulk'">
+                        <div class="field-span-2 flash-sale-tier-editor">
+                          <div class="flash-sale-tier-editor__head">
+                            <span>{{ $t('lottery.adminFlashSalePricingTiers') }}</span>
+                            <button type="button" class="btn btn-ghost btn-xs" :disabled="form.flashSalePricingTiers.length >= 8" @click="addFlashSalePricingTier">
+                              {{ $t('lottery.adminFlashSaleAddPricingTier') }}
+                            </button>
+                          </div>
+                          <div v-if="form.flashSalePricingTiers.length" class="flash-sale-tier-list">
+                            <div v-for="(tier, idx) in form.flashSalePricingTiers" :key="idx" class="flash-sale-tier-row">
+                              <label>
+                                <span>{{ $t('lottery.adminFlashSaleTierMinQuantity') }}</span>
+                                <input v-model.number="tier.minQuantity" type="number" min="1" :max="form.flashSaleMaxPerUser || 100" />
+                              </label>
+                              <label>
+                                <span>{{ $t('lottery.adminFlashSaleTierUnitPriceYuan') }}</span>
+                                <input :value="flashSaleTierPriceYuan(idx)" type="number" min="0.01" step="0.01" max="1000000" @input="onFlashSaleTierPriceInput(idx, $event)" />
+                              </label>
+                              <label>
+                                <span>{{ $t('lottery.adminFlashSaleTierLabel') }}</span>
+                                <input v-model="tier.label" maxlength="32" :placeholder="$t('lottery.adminFlashSaleTierLabelPlaceholder')" />
+                              </label>
+                              <button type="button" class="btn btn-ghost btn-xs" @click="removeFlashSalePricingTier(idx)">{{ $t('lottery.adminFlashSaleRemovePricingTier') }}</button>
+                            </div>
                           </div>
                         </div>
                         <small class="field-hint">{{ $t('lottery.adminFlashSalePricingTierHint') }}</small>
-                      </div>
+                      </template>
                       <label>
                         <span>{{ $t('lottery.adminFlashSaleCurrency') }}</span>
                         <select v-model="form.flashSaleCurrency">
@@ -1958,7 +1973,12 @@ import {
 } from './lottery/activity-config'
 import { emptyLotteryEditorForm } from './lottery/form-defaults'
 import { buildFlashSaleDirectChecklist } from './lottery/flash-sale-readiness'
-import { buildPromotionConfigPayload, growthFieldsFromDraw, sanitizeRitualPhrasesForSave } from './lottery/growth-config'
+import {
+  buildPromotionConfigPayload,
+  growthFieldsFromDraw,
+  inferFlashSaleSalesMode,
+  sanitizeRitualPhrasesForSave,
+} from './lottery/growth-config'
 import { buildTierProbabilities, normalizeTierWeight, buildTierWinnerCountSummary } from './lottery/tier-probability'
 import {
   isFieldScopedTemplate,
@@ -2868,6 +2888,34 @@ function handleExperienceChange() {
   }
 }
 
+function handleFlashSaleSalesModeChange() {
+  const mode = form.value.flashSaleSalesMode
+  if (mode === 'redirect') {
+    form.value.flashSalePaymentRequired = false
+    form.value.flashSalePriceCents = null
+    form.value.flashSaleMaxPerUser = 1
+    form.value.flashSalePricingTiers = []
+    return
+  }
+
+  form.value.flashSalePaymentRequired = true
+  if (mode === 'direct_single') {
+    form.value.flashSaleMaxPerUser = 1
+    form.value.flashSalePricingTiers = []
+    return
+  }
+
+  // 批发模式至少允许 2 件；若没有阶梯档位，先建立覆盖 1 件的基础档。
+  form.value.flashSaleMaxPerUser = Math.max(2, Number(form.value.flashSaleMaxPerUser || 1))
+  if (form.value.flashSalePricingTiers.length === 0) {
+    form.value.flashSalePricingTiers.push({
+      minQuantity: 1,
+      unitPriceCents: form.value.flashSalePriceCents || 0,
+      label: '单件',
+    })
+  }
+}
+
 function handleActivityKindChange() {
   const kind = form.value.activityKind || 'lottery'
   // 切换活动类型时保护直付秒杀配置：仅当目标类型为 claim 且当前体验已是 flash_sale 时保留，
@@ -3538,6 +3586,12 @@ function applyTemplate(tpl: any) {
     },
     enableFlashSale: tpl.defaults?.enableFlashSale === true,
     flashSaleSessionLabel: String(tpl.defaults?.flashSaleSessionLabel || ''),
+    flashSaleSalesMode: tpl.defaults?.flashSaleSalesMode
+      || inferFlashSaleSalesMode(
+        tpl.defaults?.flashSalePaymentRequired === true,
+        Number(tpl.defaults?.flashSaleMaxPerUser || 1),
+        tpl.defaults?.flashSalePricingTiers || [],
+      ),
     flashSaleStockLimit: tpl.defaults?.flashSaleStockLimit ?? null,
     flashSaleMaxPerUser: Number(tpl.defaults?.flashSaleMaxPerUser || 1),
     flashSalePaymentRequired: tpl.defaults?.flashSalePaymentRequired === true,
@@ -4060,6 +4114,7 @@ async function handleEdit(draw: LotteryDraw) {
     // docs/130：秒杀壳回填
     enableFlashSale: growth.enableFlashSale,
     flashSaleSessionLabel: growth.flashSaleSessionLabel || '',
+    flashSaleSalesMode: growth.flashSaleSalesMode,
     flashSaleStockLimit: growth.flashSaleStockLimit,
     flashSaleMaxPerUser: alignFlashSaleMaxPerUser(growth.flashSalePricingTiers, growth.flashSaleMaxPerUser),
     flashSaleCtaLabel: growth.flashSaleCtaLabel,

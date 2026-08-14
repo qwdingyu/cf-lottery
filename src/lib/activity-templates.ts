@@ -26,6 +26,7 @@ export interface ActivityTemplate {
     productLinkPrice?: string;
     enableFlashSale?: boolean;
     flashSaleSessionLabel?: string;
+    flashSaleSalesMode?: "redirect" | "direct_single" | "direct_bulk";
     flashSaleStockLimit?: number | null;
     flashSaleMaxPerUser?: number;
     flashSalePaymentRequired?: boolean;
@@ -250,6 +251,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       productLinkPrice: "",
       enableFlashSale: true,
       flashSaleSessionLabel: "12:00场",
+      flashSaleSalesMode: "direct_bulk",
       flashSaleStockLimit: 100,
       flashSaleMaxPerUser: 5,
       flashSalePaymentRequired: true,
