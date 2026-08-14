@@ -1004,26 +1004,31 @@
                 <!-- docs/218 增长玩法：保底 / 每日免费 / 排行榜奖励（仅即时开奖） -->
                 <template v-if="form.resultMode === 'instant' && form.activityKind === 'lottery'">
                   <div class="form-grid two-cols">
-                    <label class="field-span-2">
-                      <input v-model="form.enablePity" type="checkbox" class="checkbox-inline" />
-                      <span>{{ $t('lottery.adminPity') }}</span>
-                      <small>{{ $t('lottery.adminPityHint') }}</small>
-                    </label>
-                    <label v-if="form.enablePity">
-                      <span>{{ $t('lottery.adminPityThreshold') }}</span>
-                      <input v-model.number="form.pityThreshold" type="number" min="2" max="100" />
-                      <small>{{ $t('lottery.adminPityThresholdSuffix') }}</small>
-                    </label>
-                    <label class="field-span-2">
-                      <input v-model="form.enableDailyFreeSpins" type="checkbox" class="checkbox-inline" />
-                      <span>{{ $t('lottery.adminDailyFree') }}</span>
-                      <small>{{ $t('lottery.adminDailyFreeHint') }}</small>
-                    </label>
-                    <label v-if="form.enableDailyFreeSpins">
-                      <span>{{ $t('lottery.adminDailyFreeCount') }}</span>
-                      <input v-model.number="form.dailyFreeSpinsCount" type="number" min="1" max="10" />
-                      <small>{{ $t('lottery.adminDailyFreeCountSuffix') }}</small>
-                    </label>
+                    <!-- 开关+参数同排（2026-08 打磨）：保底/每日免费不再「开关整行 + 参数单列半空」 -->
+                    <div class="field-span-2 toggle-with-param">
+                      <label class="checkbox-label-inline">
+                        <input v-model="form.enablePity" type="checkbox" />
+                        <span>{{ $t('lottery.adminPity') }}</span>
+                      </label>
+                      <label v-if="form.enablePity" class="param-inline">
+                        <span>{{ $t('lottery.adminPityThreshold') }}</span>
+                        <input v-model.number="form.pityThreshold" type="number" min="2" max="100" />
+                        <small>{{ $t('lottery.adminPityThresholdSuffix') }}</small>
+                      </label>
+                    </div>
+                    <p v-if="form.enablePity" class="field-span-2 field-hint">{{ $t('lottery.adminPityHint') }}</p>
+                    <div class="field-span-2 toggle-with-param">
+                      <label class="checkbox-label-inline">
+                        <input v-model="form.enableDailyFreeSpins" type="checkbox" />
+                        <span>{{ $t('lottery.adminDailyFree') }}</span>
+                      </label>
+                      <label v-if="form.enableDailyFreeSpins" class="param-inline">
+                        <span>{{ $t('lottery.adminDailyFreeCount') }}</span>
+                        <input v-model.number="form.dailyFreeSpinsCount" type="number" min="1" max="10" />
+                        <small>{{ $t('lottery.adminDailyFreeCountSuffix') }}</small>
+                      </label>
+                    </div>
+                    <p v-if="form.enableDailyFreeSpins" class="field-span-2 field-hint">{{ $t('lottery.adminDailyFreeHint') }}</p>
                     <label class="field-span-2">
                       <span>{{ $t('lottery.adminLeaderboardRewards') }}</span>
                       <textarea v-model="form.leaderboardRewardsText" rows="3" :placeholder="$t('lottery.adminLeaderboardRewardsPlaceholder')"></textarea>
@@ -1052,7 +1057,8 @@
                     <small>{{ $t('lottery.adminAfterWinCtaHint') }}</small>
                   </label>
                   <template v-if="form.enableAfterWinCta">
-                    <label class="field-span-2"><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterWinCtaUrl" type="url" placeholder="https://..." /></label>
+                    <!-- url 与按钮文案同排（2026-08 打磨）：消除标题列半空；url 需全宽时在窄屏自动换行 -->
+                    <label><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterWinCtaUrl" type="url" placeholder="https://..." /></label>
                     <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterWinCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterWinCtaTitlePlaceholder')" /></label>
                   </template>
                   <label class="field-span-2">
@@ -1061,7 +1067,7 @@
                     <small>{{ $t('lottery.adminAfterLossCtaHint') }}</small>
                   </label>
                   <template v-if="form.enableAfterLossCta">
-                    <label class="field-span-2"><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterLossCtaUrl" type="url" placeholder="https://..." /></label>
+                    <label><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterLossCtaUrl" type="url" placeholder="https://..." /></label>
                     <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterLossCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterLossCtaTitlePlaceholder')" /></label>
                   </template>
                 </div>

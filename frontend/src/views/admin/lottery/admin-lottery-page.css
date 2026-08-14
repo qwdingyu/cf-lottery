@@ -810,3 +810,26 @@
 .lottery-editor-form .time-timeline.is-invalid {
   white-space: normal;
 }
+
+/* 开关+参数同排（2026-08 打磨）：保底/每日免费等「开关 + 单数值」不再分两行（消除参数列半空） */
+.toggle-with-param {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  min-width: 0;
+}
+.toggle-with-param .param-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.toggle-with-param .param-inline input[type='number'] {
+  width: 88px;
+}
+.toggle-with-param .param-inline small {
+  color: var(--tg-hint, #9ca3af);
+  font-size: 12px;
+  white-space: nowrap;
+}
