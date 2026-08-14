@@ -26,6 +26,7 @@ import {
   resumePendingPaymentOrder,
   retryPaymentOrder,
   retryPaymentFulfillment,
+  refundPaymentOrder,
 } from "./payment-service";
 import { encryptPaymentConfigValue } from "./secret-config";
 
@@ -2313,6 +2314,71 @@ describe("支付并发安全性", () => {
       expect(reserved).toHaveLength(0);
       const avail = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "available")));
       expect(avail.length).toBe(5);
+    });
+
+    it("cancelPaymentOrder 取消时释放预占卡密回 available", async () => {
+      const { orderInput } = await seedReserveCtx(5);
+      const failProvider = { ...providerMock, createPayment: vi.fn(async () => {
+        throw new EasyPayProviderError("param_error" as any, "参数错误");
+      }) };
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 2 }, failProvider)).rejects.toThrow();
+      const reserved = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved")));
+      expect(reserved).toHaveLength(0);
+      const avail = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "available")));
+      expect(avail.length).toBe(5);
+    });
+
+    describe("docs/222 P2 验收：退款闭环", () => {
+      async function seedPaidCtx(codeCount: number, quantity = 2) {
+        const { drawId, entryId, orderInput } = await seedReserveCtx(codeCount);
+        const unitPrice = orderInput.unitPriceCents || 9900;
+        const correctAmount = unitPrice * quantity;
+        const order = await createPaymentOrder(db, { ...orderInput, quantity, amountCents: correctAmount, unitPriceCents: unitPrice }, providerMock);
+        const [att] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, order.order.id)).limit(1);
+        const cbProvider = { ...providerMock, name: "alipay", verifyCallback: vi.fn(async () => ({
+          orderNo: att!.id, providerTradeNo: "EP-REFUND", amountCents: order.order.amountCents, currency: "cny", paidAt: new Date().toISOString(),
+        })) };
+        await handlePaymentCallback(db, TENANT_ID, cbProvider, {});
+        return { drawId, entryId, orderId: order.order.id, quantity };
+      }
+
+      it("退款后：订单 refunded、已发卡密 revoked、entry expired、名额按 quantity 释放", async () => {
+        const { drawId, entryId, orderId, quantity } = await seedPaidCtx(5, 2);
+        await refundPaymentOrder(db, TENANT_ID, orderId, "ops-user", { reason: "P2 测试退款" });
+        const [order] = await db.select({ status: paymentOrders.status }).from(paymentOrders).where(eq(paymentOrders.id, orderId));
+        expect(order?.status).toBe("refunded");
+        const revoked = await db.select().from(prizeCodes).where(and(eq(prizeCodes.paymentOrderId, orderId), eq(prizeCodes.status, "revoked")));
+        expect(revoked.length).toBe(quantity);
+        const items = await db.select({ status: paymentOrderItems.status }).from(paymentOrderItems).where(eq(paymentOrderItems.paymentOrderId, orderId));
+        expect(items.every(i => i.status === "refunded")).toBe(true);
+        const [entry] = await db.select({ paymentStatus: lotteryEntries.paymentStatus }).from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+        expect(entry?.paymentStatus).toBe("expired");
+        const [drawAfter] = await db.select({ count: lotteryDraws.activeParticipantCount }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+        expect(drawAfter?.count).toBe(0);
+      });
+
+      it("退款后有其他 PAID 订单 → entry 恢复 paid（名额保留）", async () => {
+        const { drawId, entryId, orderId } = await seedPaidCtx(5, 1);
+        // 同活动再下一单（V2 追加），用同一 drawId，数量 1 件金额 9900 分
+        const { orderInput } = await seedReserveCtx(5);
+        const second = await createPaymentOrder(db, { ...orderInput, drawId, entryId, quantity: 1, amountCents: 9900, unitPriceCents: 9900 }, providerMock);
+        const [att2] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, second.order.id)).limit(1);
+        const cb2 = { ...providerMock, name: "alipay", verifyCallback: vi.fn(async () => ({
+          orderNo: att2!.id, providerTradeNo: "EP-REFUND-2", amountCents: 9900, currency: "cny", paidAt: new Date().toISOString(),
+        })) };
+        await handlePaymentCallback(db, TENANT_ID, cb2, {});
+        await refundPaymentOrder(db, TENANT_ID, orderId, "ops-user", { reason: "退第一笔" });
+        const [entry] = await db.select({ paymentStatus: lotteryEntries.paymentStatus }).from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+        expect(entry?.paymentStatus).toBe("paid");
+        const [draw] = await db.select({ count: lotteryDraws.activeParticipantCount }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+        expect(draw?.count).toBeGreaterThanOrEqual(2);
+      });
+
+      it("已 refunded 订单再次退款被幂等拒绝", async () => {
+        const { orderId } = await seedPaidCtx(5, 1);
+        await refundPaymentOrder(db, TENANT_ID, orderId, "ops-user", { reason: "首次退款" });
+        await expect(refundPaymentOrder(db, TENANT_ID, orderId, "ops-user", { reason: "重复退款" })).rejects.toThrow("不允许退款");
+      });
     });
   });
 });
