@@ -31,7 +31,9 @@
         -->
         <template v-if="inviteShareAllowed">
           <div v-if="viralEnabled && shareLoaded" class="viral-card">
-            <div class="viral-headline">{{ $t('lottery.viralHeadline') }}</div>
+            <!-- 分享引导标题按参与结果状态差异化（docs/107 话术）：
+                 接龙占位 → 「已占位，邀好友一起加入」；抽奖待开奖 → 「邀好友一起赢」 -->
+            <div class="viral-headline">{{ $t(`lottery.${viralHeadlineKey}`) }}</div>
             <p class="viral-hint">{{ $t('lottery.viralInviteHint', { n: extraPerInvite }) }}</p>
 
             <div class="viral-stats">
@@ -116,6 +118,7 @@ import { shouldShowInviteShareCta } from '@/views/lottery/public-helpers'
 import {
   joinSuccessModalHintI18nKey,
   shouldShowJoinResultQueryCta,
+  viralHeadlineI18nKey,
 } from '@/views/lottery/joined-session'
 
 const props = defineProps<{
@@ -181,6 +184,11 @@ const statusIcon = computed(() => {
   if (isInstant.value) return '✨'
   return '✅'
 })
+
+/** 裂变分享引导标题 key（按结果状态差异化，纯函数单测锁定） */
+const viralHeadlineKey = computed(() =>
+  viralHeadlineI18nKey(props.resultMode, props.outcomeLabel),
+)
 
 /** 已开奖/取消：不拉分享、不展示邀请（docs/103） */
 const inviteShareAllowed = computed(() => shouldShowInviteShareCta(props.drawStatus))

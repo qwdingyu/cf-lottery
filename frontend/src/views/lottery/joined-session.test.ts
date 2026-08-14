@@ -5,6 +5,7 @@ import {
   isAlreadyJoinedResponse,
   isCheckinSignedToday,
   isSilentFetchOption,
+  viralHeadlineI18nKey,
   joinResultHintI18nKey,
   joinSuccessModalHintI18nKey,
   joinedOpenStatusHintKey,
@@ -131,5 +132,22 @@ describe('isCheckinSignedToday', () => {
     expect(isCheckinSignedToday('lottery', '2026-08-01T00:00:00Z', '2026-08-14')).toBe(true)
     expect(isCheckinSignedToday('signup_chain', '', '2026-08-14')).toBe(true)
     expect(isCheckinSignedToday(null, undefined, '2026-08-14')).toBe(true)
+  })
+})
+
+// 结果弹窗分享引导话术按结果状态差异化（2026-08）
+describe('viralHeadlineI18nKey', () => {
+  it('有 outcome（接龙占位/预约确认）→ outcome 话术', () => {
+    expect(viralHeadlineI18nKey('ordered_assignment', '第 3 位')).toBe('viralHeadlineOutcome')
+    expect(viralHeadlineI18nKey('manual', '已预约')).toBe('viralHeadlineOutcome')
+  })
+  it('无 outcome + instant（防御兜底）→ instant 话术', () => {
+    expect(viralHeadlineI18nKey('instant', '')).toBe('viralHeadlineInstant')
+    expect(viralHeadlineI18nKey('instant', null)).toBe('viralHeadlineInstant')
+  })
+  it('无 outcome + delayed/manual → 一起参与话术', () => {
+    expect(viralHeadlineI18nKey('manual', '')).toBe('viralHeadlineDelayed')
+    expect(viralHeadlineI18nKey('scheduled', null)).toBe('viralHeadlineDelayed')
+    expect(viralHeadlineI18nKey(undefined, undefined)).toBe('viralHeadlineDelayed')
   })
 })

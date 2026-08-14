@@ -64,7 +64,6 @@ let idleRaf = 0
 /** 奖品图缓存：索引与 props.prizes 一一对应；加载完成后触发一次重绘 */
 const prizeImages = ref<Array<HTMLImageElement | null>>([])
 
-const sliceAngle = computed(() => (2 * Math.PI) / Math.max(props.prizes.length, 1))
 /** 外圈灯：提交中或庆祝旋转都亮，给即时反馈 */
 const lightsActive = computed(() => spinning.value || props.loading)
 
@@ -80,17 +79,29 @@ function currentRot(): number {
   return parseFloat(wheelCanvasRef.value?.dataset?.rot || '0') || 0
 }
 
-function drawWheel(rotation: number) {
-  const cvs = wheelCanvasRef.value; if (!cvs) return
-  const ctx = cvs.getContext('2d'); if (!ctx) return
-  // docs/162 P2-2：Retina 高清适配；逻辑坐标不变（0..canvasSize）
+/**
+ * 离屏静态盘（2026-08 低端机性能优化）：
+ * 转盘旋转只改变角度，扇面渐变/奖品图/文字/描边与旋转无关——
+ * 原实现在每帧 rAF 里重绘全部扇面（含 shadowBlur 文字阴影），低端机 idle/庆祝旋转掉帧。
+ * 现把 0° 静态盘渲染到离屏 canvas（prizes 变化时重建一次），
+ * drawWheel 每帧只做「clear + translate/rotate + drawImage 合成」，中心钮单独绘制（不旋转）。
+ */
+let staticDisk: HTMLCanvasElement | null = null
+
+function renderStaticDisk() {
+  const cvs = document.createElement('canvas')
+  cvs.width = canvasSize * dpr
+  cvs.height = canvasSize * dpr
+  const ctx = cvs.getContext('2d')
+  if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  const cx = cvs.width / 2 / dpr, cy = cvs.height / 2 / dpr, r = cx - 6
-  ctx.clearRect(0, 0, cvs.width, cvs.height)
+  const cx = canvasSize / 2, cy = canvasSize / 2, r = cx - 6
+  ctx.clearRect(0, 0, canvasSize, canvasSize)
 
   const n = Math.max(props.prizes.length, 1)
+  const sliceAngle = (2 * Math.PI) / n
   for (let i = 0; i < n; i++) {
-    const sa = i * sliceAngle.value + rotation, ea = sa + sliceAngle.value
+    const sa = i * sliceAngle, ea = sa + sliceAngle
     const [c1, c2] = getColors(i)
     const g = ctx.createLinearGradient(cx, cy - r, cx, cy + r)
     g.addColorStop(0, c1); g.addColorStop(1, c2)
@@ -99,10 +110,9 @@ function drawWheel(rotation: number) {
     ctx.fillStyle = g; ctx.fill()
     ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2; ctx.stroke()
 
-    const mid = sa + sliceAngle.value / 2
+    const mid = sa + sliceAngle / 2
     const tx = cx + Math.cos(mid) * r * 0.62
     const ty = cy + Math.sin(mid) * r * 0.62
-    // 奖品图：有图时画在扇面外圈（圆形裁剪），文字下移到内圈，图为主、名为辅
     const img = prizeImages.value[i]
     if (img) {
       const ix = cx + Math.cos(mid) * r * 0.72
@@ -125,7 +135,28 @@ function drawWheel(rotation: number) {
     ctx.fillText(label, 0, 0)
     ctx.restore()
   }
+  staticDisk = cvs
+}
 
+function drawWheel(rotation: number) {
+  const cvs = wheelCanvasRef.value; if (!cvs) return
+  const ctx = cvs.getContext('2d'); if (!ctx) return
+  // docs/162 P2-2：Retina 高清适配；逻辑坐标不变（0..canvasSize）
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const cx = cvs.width / 2 / dpr, cy = cvs.height / 2 / dpr
+  ctx.clearRect(0, 0, cvs.width, cvs.height)
+
+  // 静态盘合成旋转（每帧 1 次 drawImage，替代全扇面重绘）
+  if (!staticDisk) renderStaticDisk()
+  if (staticDisk) {
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(rotation)
+    ctx.drawImage(staticDisk, -cx, -cy, canvasSize, canvasSize)
+    ctx.restore()
+  }
+
+  // 中心钮不随盘旋转（指针固定）
   ctx.beginPath(); ctx.arc(cx, cy, 32, 0, 2 * Math.PI)
   const g2 = ctx.createRadialGradient(cx, cy, 0, cx, cy, 32)
   g2.addColorStop(0, '#fff'); g2.addColorStop(1, '#e0e0e0')
@@ -242,20 +273,24 @@ async function runCelebrateSpin() {
 }
 
 watch(() => props.prizes, (list) => {
-  // 预加载奖品图：索引与 prizes 一一对应，全部 ready 后统一重绘一次（避免逐张闪烁）
+  // 预加载奖品图：索引与 prizes 一一对应；静态盘在每次就绪后重建一次（离屏缓存）
   prizeImages.value = new Array(list.length).fill(null)
+  let pending = 0
   list.forEach((p, i) => {
     const url = String(p?.imageUrl || '').trim()
     if (!url) return
+    pending++
     const im = new Image()
     im.onload = () => {
       prizeImages.value[i] = im
-      // 单张就绪即重绘；扇面少（≤8）时成本可忽略，且避免等待全部加载
+      staticDisk = null // 强制重建静态盘（含新图）
       drawWheel(currentRot())
+      pending--
     }
-    im.onerror = () => { prizeImages.value[i] = null }
+    im.onerror = () => { prizeImages.value[i] = null; pending-- }
     im.src = url
   })
+  if (pending === 0) staticDisk = null
   drawWheel(currentRot())
 }, { immediate: true })
 

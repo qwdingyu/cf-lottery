@@ -916,7 +916,10 @@ export default {
     viralMe: "我",
     viralEmptyHint: "还没有人邀请好友，快来成为第一个！",
     /** 诚实：加权票，禁止「再抽一次 / 再参与」误读（docs/115） */
-    viralHeadline: "邀请好友，提高开奖权重",
+        viralHeadline: "邀请好友，提高开奖权重",
+    viralHeadlineOutcome: "已占位成功，邀好友一起加入",
+    viralHeadlineInstant: "邀请好友，一起拼手气",
+    viralHeadlineDelayed: "参与成功，邀好友一起赢",
     viralMyInvite: "🎁 我的邀请",
     viralExtraProgress: "{earned} / {max} 额外票",
     viralGenerateHint: "点击下方按钮生成专属链接",

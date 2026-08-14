@@ -944,7 +944,10 @@ export default {
     viralMe: "Me",
     viralEmptyHint: "No invites yet. Be the first!",
     /** Honest: weight boost, not “spin again” (docs/115) */
-    viralHeadline: "Invite friends to boost draw weight",
+        viralHeadline: "Invite friends to boost draw weight",
+    viralHeadlineOutcome: "Spot secured — invite friends to join",
+    viralHeadlineInstant: "Invite friends and try your luck together",
+    viralHeadlineDelayed: "You are in — invite friends to win together",
     viralMyInvite: "🎁 My invites",
     viralExtraProgress: "{earned} / {max} extra tickets",
     viralGenerateHint: "Tap below for your invite link",

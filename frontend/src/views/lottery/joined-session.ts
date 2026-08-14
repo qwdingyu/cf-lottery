@@ -280,3 +280,21 @@ function localTodayStr(): string {
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
+
+/**
+ * 结果弹窗裂变分享引导标题（2026-08 话术差异化）：
+ * 分享 headline 不再固定，按「参与结果状态」给出有行动意图的话术——
+ * - 有 outcome（接龙占位/预约确认等）：已占位成功，邀好友一起加入
+ * - instant 兜底（理论上不进结果弹窗，防御分支）：拼手气
+ * - 其余（抽奖 delayed 参与成功、结果待开奖）：邀好友一起参与
+ * 纯函数便于单测锁定，调用方（GameResultModal）只消费 key。
+ */
+export function viralHeadlineI18nKey(
+  resultMode?: string | null,
+  outcomeLabel?: string | null,
+): string {
+  const hasOutcome = Boolean(outcomeLabel && String(outcomeLabel).trim())
+  if (hasOutcome) return 'viralHeadlineOutcome'
+  if (String(resultMode || '').toLowerCase() === 'instant') return 'viralHeadlineInstant'
+  return 'viralHeadlineDelayed'
+}
