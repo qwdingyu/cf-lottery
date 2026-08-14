@@ -2222,8 +2222,8 @@ describe("支付并发安全性", () => {
         tierName: "中奖", winnerCount: codeCount, sortOrder: 100, weight: 100,
       });
       const codes = Array.from({ length: codeCount }, (_, i) => ({
-        id: `reserve-code-${i}`, tenantId: TENANT_ID, prizeId,
-        code: `R-CODE-${i}`, secret: "s", status: "available" as const,
+        id: `reserve-code-${drawId}-${i}`, tenantId: TENANT_ID, prizeId,
+        code: `R-CODE-${drawId}-${i}`, secret: "s", status: "available" as const,
       }));
       if (codes.length > 0) await db.insert(prizeCodes).values(codes);
       const orderInput = {
@@ -2370,8 +2370,9 @@ describe("支付并发安全性", () => {
         await refundPaymentOrder(db, TENANT_ID, orderId, "ops-user", { reason: "退第一笔" });
         const [entry] = await db.select({ paymentStatus: lotteryEntries.paymentStatus }).from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
         expect(entry?.paymentStatus).toBe("paid");
+        // 第二笔 PAID 订单仍占 1 件名额（种子模型无 join base 1，order2 补占 1）
         const [draw] = await db.select({ count: lotteryDraws.activeParticipantCount }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
-        expect(draw?.count).toBeGreaterThanOrEqual(2);
+        expect(draw?.count).toBe(1);
       });
 
       it("已 refunded 订单再次退款被幂等拒绝", async () => {
