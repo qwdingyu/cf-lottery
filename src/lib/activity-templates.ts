@@ -251,7 +251,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       flashSaleSessionLabel: "12:00场",
       flashSaleStockLimit: 100,
       flashSalePaymentRequired: false,
-      flashSalePriceCents: null,
+      flashSalePriceCents: 990,
       flashSaleCurrency: "cny",
       flashSaleTitle: "限时抢购商品",
       // 阶梯定价：批发优惠预置 2 档（单件 / 5件起），运营可改；前端表单按 minQuantity 升序展示
