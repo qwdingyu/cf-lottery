@@ -27,6 +27,7 @@ export interface ActivityTemplate {
     enableFlashSale?: boolean;
     flashSaleSessionLabel?: string;
     flashSaleStockLimit?: number | null;
+    flashSaleMaxPerUser?: number;
     flashSalePaymentRequired?: boolean;
     flashSalePriceCents?: number | null;
     flashSaleCurrency?: string;
@@ -250,6 +251,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       enableFlashSale: true,
       flashSaleSessionLabel: "12:00场",
       flashSaleStockLimit: 100,
+      flashSaleMaxPerUser: 5,
       flashSalePaymentRequired: true,
       flashSalePriceCents: 990,
       flashSaleCurrency: "cny",

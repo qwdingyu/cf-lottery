@@ -3539,6 +3539,7 @@ function applyTemplate(tpl: any) {
     enableFlashSale: tpl.defaults?.enableFlashSale === true,
     flashSaleSessionLabel: String(tpl.defaults?.flashSaleSessionLabel || ''),
     flashSaleStockLimit: tpl.defaults?.flashSaleStockLimit ?? null,
+    flashSaleMaxPerUser: Number(tpl.defaults?.flashSaleMaxPerUser || 1),
     flashSalePaymentRequired: tpl.defaults?.flashSalePaymentRequired === true,
     flashSalePriceCents: tpl.defaults?.flashSalePriceCents ?? null,
     flashSaleCurrency: String(tpl.defaults?.flashSaleCurrency || 'cny'),
