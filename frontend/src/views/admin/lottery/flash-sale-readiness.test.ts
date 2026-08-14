@@ -27,6 +27,40 @@ describe('flash-sale-readiness', () => {
     })
   })
 
+  it('直付模式不要求外部商品链接', () => {
+    expect(doneMap({
+      enableFlashSale: true,
+      flashSalePaymentRequired: true,
+      flashSalePriceCents: 990,
+      flashSaleStockLimit: 100,
+      tiers: [{ prizeId: 'active-code' }],
+      prizeOptions: [{ id: 'active-code', prizeType: 'code', active: 1 }],
+    })).toMatchObject({
+      product: true,
+      price: true,
+      stock: true,
+      payment: true,
+      codePrize: true,
+    })
+  })
+
+  it('展示/导流模式只要求安全商品链接，不要求支付和卡密', () => {
+    const base = {
+      enableFlashSale: true,
+      flashSalePaymentRequired: false,
+      flashSaleStockLimit: 100,
+    }
+    expect(doneMap(base)).toMatchObject({
+      product: false,
+      payment: false,
+      codePrize: true,
+    })
+    expect(doneMap({
+      ...base,
+      productLink: { url: 'https://shop.example.com/p/1' },
+    }).product).toBe(true)
+  })
+
   it('卡密奖品必须恰好一个，避免支付后发卡目标不确定', () => {
     expect(doneMap({
       enableFlashSale: true,

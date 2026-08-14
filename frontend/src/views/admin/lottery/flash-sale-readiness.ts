@@ -79,7 +79,8 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
   const needCodePrize = input.enableFlashSale === true && input.flashSalePaymentRequired === true
 
   // 导流 URL 检查：productLink.url / destination.url / after_win.url 任一为安全 http(s) 即可。
-  // 为什么不再看 title：后端 publish-check 747-760 只认「安全的导流/购买链接」，
+  // 直付模式由站内支付承接，不要求外部商品链接；只有展示/导流模式才把链接作为发布必填。
+  // 为什么不再看 title：后端 publish-check 只认「安全的导流/购买链接」，
   // 光填商品名没有落地页，用户抢到后无法下单（flash_sale.destination.missing）。
   const hasSafeShopLink =
     isSafeHttpUrl(input.productLink?.url) ||
@@ -106,7 +107,7 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
   items.push(
     {
       key: 'product',
-      done: hasSafeShopLink,
+      done: input.flashSalePaymentRequired === true || hasSafeShopLink,
       labelKey: 'adminFlashSaleChecklistProduct',
     },
     {
