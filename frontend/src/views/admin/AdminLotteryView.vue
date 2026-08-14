@@ -721,7 +721,8 @@
                   <p class="form-section-desc">{{ $t('lottery.adminExperienceAdvancedDesc') }}</p>
                 </header>
                 <div class="form-grid two-cols">
-                  <label class="field-span-2">
+                  <!-- 体验 + 壳策略两列并排（2026-08 紧凑化）：两个下拉不再各占满行 -->
+                  <label :class="showPrizeShellSelector ? '' : 'field-span-2'">
                     <span>{{ $t('lottery.adminExperienceType') }}</span>
                     <select v-model="form.experienceType" @change="handleExperienceChange">
                       <option value="wheel">{{ $t('lottery.adminExpWheel') }}</option>
@@ -741,25 +742,8 @@
                     </select>
                     <small class="field-hint">{{ $t('lottery.adminExperienceHint') }}</small>
                   </label>
-                </div>
-              </section>
-
-              <!--
-                游戏壳奖品展示（docs/128）：
-                delayed 默认扇面=仪式短语；instant 默认真奖名。
-                与 experienceType 解耦：同一转盘可换「壳文案策略」。
-              -->
-              <section
-                v-if="form.activityKind === 'lottery' && editorVisibility.prizeShell"
-                class="form-section form-section--nested"
-                aria-labelledby="lottery-prize-shell"
-              >
-                <header class="form-section-head">
-                  <h4 id="lottery-prize-shell" class="form-section-title">{{ $t('lottery.adminPrizeShellSection') }}</h4>
-                  <p class="form-section-desc">{{ $t('lottery.adminPrizeShellSectionDesc') }}</p>
-                </header>
-                <div class="form-grid two-cols">
-                  <label class="field-span-2">
+                  <!-- 壳策略（lottery 时与体验同行；非 lottery 体验 select 自动占满行） -->
+                  <label v-if="showPrizeShellSelector">
                     <span>{{ $t('lottery.adminPrizePanelMode') }}</span>
                     <select v-model="form.prizePanelMode">
                       <option value="auto">{{ $t('lottery.adminPrizePanelAuto') }}</option>
@@ -783,6 +767,25 @@
                       {{ $t('lottery.adminPrizePanelModeConflict') }}
                     </small>
                   </label>
+                </div>
+              </section>
+
+              <!--
+                游戏壳奖品展示（docs/128）：
+                delayed 默认扇面=仪式短语；instant 默认真奖名。
+                与 experienceType 解耦：同一转盘可换「壳文案策略」。
+              -->
+              <section
+                v-if="form.activityKind === 'lottery' && editorVisibility.prizeShell"
+                class="form-section form-section--nested"
+                aria-labelledby="lottery-prize-shell"
+              >
+                <header class="form-section-head">
+                  <h4 id="lottery-prize-shell" class="form-section-title">{{ $t('lottery.adminPrizeShellSection') }}</h4>
+                  <p class="form-section-desc">{{ $t('lottery.adminPrizeShellSectionDesc') }}</p>
+                </header>
+                <div class="form-grid two-cols">
+                  <!-- 壳策略下拉已并入「体验类型」section 与体验同行（2026-08 紧凑化），此处只留仪式短语 -->
                   <label
                     v-if="form.prizePanelMode !== 'full_on_shell' && (form.resultMode !== 'instant' || form.prizePanelMode !== 'auto')"
                     class="field-span-2"
@@ -806,15 +809,18 @@
                   <p class="form-section-desc">{{ $t('lottery.adminFlashSaleSectionDesc') }}</p>
                 </header>
                 <div class="form-grid two-cols">
-                  <label class="field-span-2">
-                    <input v-model="form.enableFlashSale" type="checkbox" class="checkbox-inline" />
-                    <span>{{ $t('lottery.adminEnableFlashSale') }}</span>
-                  </label>
-                  <template v-if="form.enableFlashSale">
-                    <label>
+                  <!-- 开关 + 场次文案同排（2026-08 紧凑化）：秒杀开关不再占满行 -->
+                  <div class="field-span-2 toggle-with-param">
+                    <label class="checkbox-label-inline">
+                      <input v-model="form.enableFlashSale" type="checkbox" />
+                      <span>{{ $t('lottery.adminEnableFlashSale') }}</span>
+                    </label>
+                    <label v-if="form.enableFlashSale" class="param-inline flash-session-param">
                       <span>{{ $t('lottery.adminFlashSaleSessionLabel') }}</span>
                       <input v-model="form.flashSaleSessionLabel" maxlength="32" :placeholder="$t('lottery.adminFlashSaleSessionPlaceholder')" />
                     </label>
+                  </div>
+                  <template v-if="form.enableFlashSale">
                     <label>
                       <span>{{ $t('lottery.adminFlashSaleCtaLabel') }}</span>
                       <input v-model="form.flashSaleCtaLabel" maxlength="12" placeholder="抢" />
@@ -934,15 +940,18 @@
                   <p class="form-section-desc">{{ $t('lottery.adminTrafficSectionDesc') }}</p>
                 </header>
                 <div class="form-grid two-cols">
-                  <label class="field-span-2">
-                    <input v-model="form.enableProductLink" type="checkbox" class="checkbox-inline" />
-                    <span>{{ $t('lottery.adminEnableProductLink') }}</span>
-                  </label>
-                  <template v-if="form.enableProductLink">
-                    <label class="field-span-2">
+                  <!-- 开关 + 商品链接同排（2026-08 紧凑化）：不再「开关整行 + 链接另起一行」 -->
+                  <div class="field-span-2 toggle-with-param">
+                    <label class="checkbox-label-inline">
+                      <input v-model="form.enableProductLink" type="checkbox" />
+                      <span>{{ $t('lottery.adminEnableProductLink') }}</span>
+                    </label>
+                    <label v-if="form.enableProductLink" class="param-inline product-link-param">
                       <span>{{ $t('lottery.adminProductLink') }}</span>
                       <input v-model="form.productLink.url" type="url" placeholder="https://shop.example.com/product/123" />
                     </label>
+                  </div>
+                  <template v-if="form.enableProductLink">
                     <label>
                       <span>{{ $t('lottery.adminProductTitle') }}</span>
                       <input v-model="form.productLink.title" maxlength="100" :placeholder="$t('lottery.adminProductTitlePlaceholder')" />
@@ -970,9 +979,15 @@
                   </p>
                 </header>
                 <div class="form-grid two-cols">
-                  <label class="field-span-2">
+                  <!-- 开关并排（2026-08 紧凑化）：裂变总开关 + 邀请排行榜开关同行，不再各占满行 -->
+                  <label :class="form.enableViral ? '' : 'field-span-2'">
                     <input v-model="form.enableViral" type="checkbox" class="checkbox-inline" />
                     <span>{{ form.activityKind === 'claim' ? $t('lottery.adminEnableSocial') : $t('lottery.adminEnableViral') }}</span>
+                  </label>
+                  <label v-if="form.enableViral" class="checkbox-label-inline-with-hint">
+                    <input v-model="form.viralLeaderboardEnabled" type="checkbox" class="checkbox-inline" />
+                    <span>{{ $t('lottery.adminViralLeaderboard') }}</span>
+                    <small class="checkbox-hint-inline">{{ $t('lottery.adminViralLeaderboardHint') }}</small>
                   </label>
                   <template v-if="form.enableViral">
                     <!-- 邀请加次/加权参数仅对抽奖（lottery）有意义（instant 加 spins / delayed 加权开奖）；
@@ -990,11 +1005,7 @@
                       <small>{{ form.resultMode === 'instant' ? $t('lottery.adminViralMaxSpinsSuffix') : $t('lottery.adminViralMaxSuffix') }}</small>
                     </label>
                     </template>
-                    <label class="field-span-2">
-                      <input v-model="form.viralLeaderboardEnabled" type="checkbox" class="checkbox-inline" />
-                      <span>{{ $t('lottery.adminViralLeaderboard') }}</span>
-                      <small>{{ $t('lottery.adminViralLeaderboardHint') }}</small>
-                    </label>
+
                   </template>
                 </div>
                 <!-- docs/218 增长玩法：保底 / 每日免费 / 排行榜奖励（仅即时开奖） -->
@@ -1047,20 +1058,20 @@
                   <p class="form-section-desc">{{ $t('lottery.adminCtaSectionDesc') }}</p>
                 </header>
                 <div class="form-grid two-cols">
-                  <label class="field-span-2">
+                  <label class="checkbox-label-inline-with-hint">
                     <input v-model="form.enableAfterWinCta" type="checkbox" class="checkbox-inline" />
                     <span>{{ $t('lottery.adminAfterWinCta') }}</span>
-                    <small>{{ $t('lottery.adminAfterWinCtaHint') }}</small>
+                    <small class="checkbox-hint-inline">{{ $t('lottery.adminAfterWinCtaHint') }}</small>
                   </label>
                   <template v-if="form.enableAfterWinCta">
                     <!-- url 与按钮文案同排（2026-08 打磨）：消除标题列半空；url 需全宽时在窄屏自动换行 -->
                     <label><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterWinCtaUrl" type="url" placeholder="https://..." /></label>
                     <label><span>{{ $t('lottery.adminCtaTitle') }}</span><input v-model="form.afterWinCtaTitle" maxlength="60" :placeholder="$t('lottery.adminAfterWinCtaTitlePlaceholder')" /></label>
                   </template>
-                  <label class="field-span-2">
+                  <label class="checkbox-label-inline-with-hint">
                     <input v-model="form.enableAfterLossCta" type="checkbox" class="checkbox-inline" />
                     <span>{{ $t('lottery.adminAfterLossCta') }}</span>
-                    <small>{{ $t('lottery.adminAfterLossCtaHint') }}</small>
+                    <small class="checkbox-hint-inline">{{ $t('lottery.adminAfterLossCtaHint') }}</small>
                   </label>
                   <template v-if="form.enableAfterLossCta">
                     <label><span>{{ $t('lottery.adminCtaUrl') }}</span><input v-model="form.afterLossCtaUrl" type="url" placeholder="https://..." /></label>
@@ -1080,19 +1091,21 @@
                   <p class="form-section-desc">{{ $t('lottery.adminLoserRewardDesc') }}</p>
                 </header>
                 <div class="form-grid two-cols">
-                  <label class="field-span-2">
-                    <span>{{ $t('lottery.adminLoserRewardLabel') }}</span>
-                    <select v-model="loserRewardEnabled" @change="syncLoserReward">
-                      <option :value="false">{{ $t('lottery.adminOff') }}</option>
-                      <option :value="true">{{ $t('lottery.adminOn') }}</option>
-                    </select>
-                    <small class="field-hint">{{ $t('lottery.adminLoserRewardHint') }}</small>
-                  </label>
-                  <label v-if="loserRewardEnabled" class="field-span-2">
-                    <span>{{ $t('lottery.adminCouponLabel') }}</span>
-                    <input v-model="loserRewardCouponLabel" maxlength="50" :placeholder="$t('lottery.adminCouponLabelPlaceholder')" @change="syncLoserReward" />
-                    <small class="field-hint">{{ $t('lottery.adminCouponLabelHint') }}</small>
-                  </label>
+                  <!-- 发券开关 + 券文案同排（2026-08 紧凑化）：off/on 小 select 不再占满行 -->
+                  <div class="field-span-2 toggle-with-param">
+                    <label>
+                      <span>{{ $t('lottery.adminLoserRewardLabel') }}</span>
+                      <select v-model="loserRewardEnabled" @change="syncLoserReward">
+                        <option :value="false">{{ $t('lottery.adminOff') }}</option>
+                        <option :value="true">{{ $t('lottery.adminOn') }}</option>
+                      </select>
+                    </label>
+                    <label v-if="loserRewardEnabled" class="param-inline loser-coupon-param">
+                      <span>{{ $t('lottery.adminCouponLabel') }}</span>
+                      <input v-model="loserRewardCouponLabel" maxlength="50" :placeholder="$t('lottery.adminCouponLabelPlaceholder')" @change="syncLoserReward" />
+                    </label>
+                  </div>
+                  <p class="field-span-2 field-hint">{{ $t('lottery.adminLoserRewardHint') }} {{ $t('lottery.adminCouponLabelHint') }}</p>
                 </div>
               </section>
             </div>
@@ -2667,6 +2680,11 @@ const createPathHint = computed(() => {
  */
 const editorVisibility = computed(() =>
   resolveEditorFieldVisibility(activeTemplateId.value, { isEditing: isEditing.value }),
+)
+
+/** 高级区「体验类型 + 壳策略」是否两列并排（lottery 且壳配置可见时；非 lottery 体验 select 占满行） */
+const showPrizeShellSelector = computed(() =>
+  form.value.activityKind === 'lottery' && editorVisibility.value.prizeShell,
 )
 
 const tierProbabilities = computed(() => buildTierProbabilities(form.value.tiers))

@@ -852,3 +852,23 @@
 .activity-config-row.is-collapsed {
   border-color: rgba(255, 255, 255, 0.06);
 }
+
+/* 高级区开关并排（2026-08 紧凑化）：checkbox + 行内 hint 不换行；参数输入固定宽防挤 */
+.checkbox-label-inline-with-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.checkbox-label-inline-with-hint .checkbox-hint-inline {
+  color: var(--tg-hint, #9ca3af);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.toggle-with-param .product-link-param input[type='url'],
+.toggle-with-param .flash-session-param input {
+  min-width: 140px;
+}
+.toggle-with-param .loser-coupon-param input {
+  min-width: 160px;
+}
