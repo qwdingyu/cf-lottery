@@ -520,6 +520,42 @@
   text-align: right;
   white-space: nowrap;
 }
+/* 权重占比迷你条：直观展示各档「相对命中倾向」（权重占比），仅视觉辅助，不改变保存逻辑 */
+.tier-probability-bar {
+  display: block;
+  height: 4px;
+  width: 100%;
+  margin-bottom: 3px;
+  border-radius: 2px;
+  background: var(--border-subtle, #e8e8e8);
+  overflow: hidden;
+}
+.tier-probability-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--primary-soft, #4a7aff);
+  transition: width 0.2s ease;
+}
+.tier-probability-bar.is-zero .tier-probability-bar-fill {
+  background: var(--admin-danger, #ef4444);
+}
+/* 奖项名额合计汇总行：与活动中奖人数不一致时显式标黄 */
+.tier-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 2px 0;
+}
+.tier-summary.is-warning {
+  color: var(--admin-warning, #b8860b);
+}
+.tier-summary.is-warning .tier-summary-hint {
+  font-weight: 600;
+}
 /* 统一奖项配置行 select 与 input 高度，消除下拉框箭头图标多占的视觉偏移 */
 .tier-row select,
 .tier-row input[type="number"],

@@ -1279,9 +1279,31 @@
                       :class="{ 'is-zero': tierProbabilities[idx]?.weight === 0 }"
                       :title="$t('lottery.adminTierProbabilityHint')"
                     >
+                      <span
+                        class="tier-probability-bar"
+                        :class="{ 'is-zero': tierProbabilities[idx]?.weight === 0 }"
+                        aria-hidden="true"
+                      >
+                        <span
+                          class="tier-probability-bar-fill"
+                          :style="{ width: `${Math.max(0, Math.min(100, tierProbabilities[idx]?.percent || 0))}%` }"
+                        />
+                      </span>
                       {{ $t('lottery.adminTierProbabilityLabel') }} {{ tierProbabilities[idx]?.label || '0%' }}
                     </span>
                     <button type="button" class="btn btn-ghost btn-xs" @click="removeTier(idx)">✕</button>
+                  </div>
+                  <!-- 奖项名额合计（docs/220 优化）：开奖按各档中奖份数合计发放，与活动「中奖人数」不一致时提前提示 -->
+                  <div
+                    v-if="tierCountSummary"
+                    class="tier-summary"
+                    :class="{ 'is-warning': tierCountSummary.match === false }"
+                    role="note"
+                  >
+                    <span>{{ $t('lottery.adminTierTotalWinnerCount', { n: tierCountSummary.total }) }}</span>
+                    <span v-if="tierCountSummary.match === false" class="tier-summary-hint">
+                      {{ $t('lottery.adminTierWinnerCountMismatch', { m: tierCountSummary.drawWinnerCount }) }}
+                    </span>
                   </div>
                   <p
                     v-if="shouldShowTierProbability"
@@ -1937,7 +1959,7 @@ import {
 import { emptyLotteryEditorForm } from './lottery/form-defaults'
 import { buildFlashSaleDirectChecklist } from './lottery/flash-sale-readiness'
 import { buildPromotionConfigPayload, growthFieldsFromDraw, sanitizeRitualPhrasesForSave } from './lottery/growth-config'
-import { buildTierProbabilities, normalizeTierWeight } from './lottery/tier-probability'
+import { buildTierProbabilities, normalizeTierWeight, buildTierWinnerCountSummary } from './lottery/tier-probability'
 import {
   isFieldScopedTemplate,
   resolveEditorFieldVisibility,
@@ -2719,6 +2741,12 @@ const shouldShowTierProbability = computed(() => (
   && editorVisibility.value.tiers
   && form.value.tiers.length > 0
 ))
+
+/** 奖项名额合计（各档中奖份数之和）：与后端开奖逻辑一致（draw-execution 按奖项合计发放） */
+const tierCountSummary = computed(() => {
+  if (!editorVisibility.value.tiers || form.value.tiers.length === 0) return null
+  return buildTierWinnerCountSummary(form.value.tiers, form.value.winnerCount, form.value.activityKind || 'lottery')
+})
 
 /** 当前高亮步骤（点击步骤条时更新；不强制线性 Wizard） */
 const createStepFocus = ref(1)

@@ -44,3 +44,48 @@ function formatTierProbability(percent: number): string {
   if (percent >= 99.995 && percent < 100) return '>99.99%'
   return `${percent.toFixed(2).replace(/\.?0+$/, '')}%`
 }
+
+export type TierCountInput = {
+  winnerCount?: number | string | null
+}
+
+/**
+ * 奖项名额合计：各档位中奖份数之和（负数按 0 过滤，空值按 0）。
+ * 与后端开奖逻辑一致：有奖项配置时总中奖人数 = 各档 winnerCount 合计
+ * （draw-execution.ts:186-188），而非活动的 draw.winnerCount。
+ */
+export function sumTierWinnerCounts(tiers: TierCountInput[] | null | undefined): number {
+  return (tiers || []).reduce((sum, tier) => {
+    const n = Math.floor(Number(tier?.winnerCount) || 0)
+    return sum + Math.max(0, n)
+  }, 0)
+}
+
+export type TierWinnerCountSummary = {
+  total: number
+  /** lottery 时返回活动 draw.winnerCount；其他活动类型不参与对比（null） */
+  drawWinnerCount: number | null
+  /** true 表示一致/不适用；false 表示名额合计与活动设置不一致 */
+  match: boolean
+}
+
+/**
+ * 构建「奖项名额合计」汇总（期表单展示）。
+ * - total === 0（尚未填写份数）→ null，不展示提示
+ * - lottery：与 draw.winnerCount 对比，不一致时 match=false（与 publish-check
+ *   prizes.winner_count.mismatch 同规则，表单即时可见而非等到发布检查）
+ * - 其他活动类型（claim 直付秒杀等）：draw.winnerCount 无对比语义，match=true
+ */
+export function buildTierWinnerCountSummary(
+  tiers: TierCountInput[] | null | undefined,
+  drawWinnerCount: number | string | null | undefined,
+  activityKind: string,
+): TierWinnerCountSummary | null {
+  const total = sumTierWinnerCounts(tiers)
+  if (total === 0) return null
+  if (activityKind === 'lottery') {
+    const drawWC = Math.max(0, Math.floor(Number(drawWinnerCount) || 0))
+    return { total, drawWinnerCount: drawWC, match: total === drawWC }
+  }
+  return { total, drawWinnerCount: null, match: true }
+}

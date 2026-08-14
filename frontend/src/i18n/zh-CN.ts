@@ -1244,6 +1244,8 @@ export default {
     adminTierProbabilityLabel: "权重占比",
     adminTierProbabilityHint: "仅按当前各档 weight 估算单次命中本档的占比；实际发放还受库存、名额、用户剩余次数和卡密可用量限制。",
     adminTierProbabilityUnavailable: "请至少配置一个大于 0 的权重，否则即时抽奖无法形成有效随机分配。",
+    adminTierTotalWinnerCount: "奖项名额合计：{n} 位",
+    adminTierWinnerCountMismatch: "与活动「中奖人数」({m}) 不一致；开奖实际按奖项名额合计发放，建议统一避免运营困惑",
     adminViralLeaderboard: "展示邀请排行榜",
     adminViralLeaderboardHint: "参与者可见谁邀请了最多人",
     /** docs/218 保底 / 每日免费 / 排行榜奖励（仅 instant） */

@@ -1271,6 +1271,8 @@ export default {
     adminTierProbabilityLabel: "Weight share",
     adminTierProbabilityHint: "Estimated per-spin tier share from current weights only; actual fulfillment is still constrained by stock, tier slots, remaining user spins, and available codes.",
     adminTierProbabilityUnavailable: "Set at least one weight above 0 so instant spins have a valid random allocation.",
+    adminTierTotalWinnerCount: "Total winner slots: {n}",
+    adminTierWinnerCountMismatch: "Mismatches the activity winner count ({m}); the draw actually grants by total tier slots — align them to avoid confusion",
     adminViralLeaderboard: "Show invite leaderboard",
     adminViralLeaderboardHint: "Participants can see who invited the most people",
     /** docs/218 pity / daily free / leaderboard rewards (instant only) */
