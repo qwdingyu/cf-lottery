@@ -11,12 +11,15 @@ export type TierProbability = {
 /**
  * 计算即时抽奖各奖项档位的权重占比。
  *
+ * 使用原始输入值（不 floor），让用户看到的百分比与输入值一致。
+ * 后端保存时 floor 权重（与 floorNonNeg 一致），下次编辑回填时概率会重新计算。
+ *
  * 为什么只看 weight：后端即时抽奖先按可用档位权重抽取，再受库存、档位名额、
- * 用户剩余次数、卡密可用量等约束影响；后台这里展示的是运营配置的“相对命中倾向”，
+ * 用户剩余次数、卡密可用量等约束影响；后台这里展示的是运营配置的"相对命中倾向"，
  * 不能包装成最终真实发放率，否则会误导运营承诺中奖概率。
  */
 export function buildTierProbabilities(tiers: TierWeightInput[]): TierProbability[] {
-  const weights = tiers.map((tier) => normalizeTierWeight(tier.weight))
+  const weights = tiers.map((tier) => normalizeDisplayWeight(tier.weight))
   const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
   return weights.map((weight) => {
     const percent = totalWeight > 0 ? (weight / totalWeight) * 100 : 0
@@ -26,6 +29,16 @@ export function buildTierProbabilities(tiers: TierWeightInput[]): TierProbabilit
       label: formatTierProbability(percent),
     }
   })
+}
+
+/**
+ * 展示用权重归一化：保留原始值（不 floor），让用户看到的百分比与输入值一致。
+ * 后端保存时使用 normalizeTierWeight（floor），编辑回填时概率重新计算。
+ */
+function normalizeDisplayWeight(value: number | string | null | undefined): number {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 0
+  return Math.max(0, numeric)
 }
 
 /**

@@ -10,9 +10,20 @@ describe('tier-probability', () => {
     ])
   })
 
-  it('normalizes invalid and fractional weights before calculating', () => {
-    expect(buildTierProbabilities([{ weight: '2.9' }, { weight: -3 }, { weight: null }, { weight: 'bad' }])).toEqual([
-      { weight: 2, percent: 100, label: '100%' },
+  it('keeps fractional weights in display calculation (backend floors on save)', () => {
+    // 展示保留原始值，让用户看到的百分比与输入值一致
+    const result = buildTierProbabilities([{ weight: '2.9' }, { weight: '5.1' }])
+    expect(result).toHaveLength(2)
+    expect(result[0]!.weight).toBe(2.9)
+    expect(result[0]!.percent).toBeCloseTo(36.25, 2)
+    expect(result[0]!.label).toBe('36.25%')
+    expect(result[1]!.weight).toBe(5.1)
+    expect(result[1]!.percent).toBeCloseTo(63.75, 2)
+    expect(result[1]!.label).toBe('63.75%')
+  })
+
+  it('normalizes invalid display weights to zero', () => {
+    expect(buildTierProbabilities([{ weight: -3 }, { weight: null }, { weight: 'bad' }])).toEqual([
       { weight: 0, percent: 0, label: '0%' },
       { weight: 0, percent: 0, label: '0%' },
       { weight: 0, percent: 0, label: '0%' },
@@ -26,7 +37,7 @@ describe('tier-probability', () => {
     ])
   })
 
-  it('keeps display normalization aligned with publish/save constraints', () => {
+  it('keeps save normalization aligned with publish/save constraints', () => {
     expect(normalizeTierWeight(100000.9)).toBe(100000)
     expect(normalizeTierWeight(Number.NaN)).toBe(0)
   })

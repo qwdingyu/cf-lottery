@@ -250,7 +250,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
       enableFlashSale: true,
       flashSaleSessionLabel: "12:00场",
       flashSaleStockLimit: 100,
-      flashSalePaymentRequired: true,
+      flashSalePaymentRequired: false,
       flashSalePriceCents: null,
       flashSaleCurrency: "cny",
       flashSaleTitle: "限时抢购商品",
