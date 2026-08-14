@@ -252,3 +252,31 @@ export function isSilentFetchOption(opts?: { silent?: boolean } | Event): boolea
       (opts as { silent?: boolean }).silent,
   )
 }
+
+/**
+ * checkin（每日签到）活动是否「今天已签」——按本地日期判断（2026-08 公开端准确性修复）。
+ *
+ * 为什么需要：参与快照（joined）是持久化的，昨天/更早签过今天仍显示「已参与」，
+ * 用户将无法再次签到（后端 identity 带日期后缀，每日一签）。joined 语义对 checkin
+ * 必须退化为「当天是否已签」；非 checkin 活动恒返回按传入 joined 决定（不经此函数）。
+ * today 由调用方注入（默认本地日期 YYYY-MM-DD，与后端 lib/date-utils.todayStr 同语义）。
+ */
+export function isCheckinSignedToday(
+  activityKind: string | null | undefined,
+  joinedAt: string | null | undefined,
+  today?: string,
+): boolean {
+  if (String(activityKind || '') !== 'checkin') return true // 非签到活动：不按天判断
+  const day = joinedAt ? String(joinedAt).slice(0, 10) : ''
+  if (!day) return false
+  const t = today || localTodayStr()
+  return day === t
+}
+
+function localTodayStr(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}

@@ -3,6 +3,7 @@ import {
   clearJoinedHints,
   entryIdFromAlreadyJoined,
   isAlreadyJoinedResponse,
+  isCheckinSignedToday,
   isSilentFetchOption,
   joinResultHintI18nKey,
   joinSuccessModalHintI18nKey,
@@ -117,3 +118,18 @@ describe("joined-session", () => {
     expect(map[joinedHintKey("uuid-b")]?.drawId).toBe("uuid-b");
   });
 });
+
+// checkin 每日签到按天判断（2026-08 公开端准确性修复）
+describe('isCheckinSignedToday', () => {
+  it('checkin：今天签过 → true；昨天/更早 → false；无 joinedAt → false', () => {
+    expect(isCheckinSignedToday('checkin', '2026-08-14T10:00:00Z', '2026-08-14')).toBe(true)
+    expect(isCheckinSignedToday('checkin', '2026-08-13T23:59:00Z', '2026-08-14')).toBe(false)
+    expect(isCheckinSignedToday('checkin', '', '2026-08-14')).toBe(false)
+    expect(isCheckinSignedToday('checkin', undefined, '2026-08-14')).toBe(false)
+  })
+  it('非 checkin 活动：不按天判断（返回 true，由调用方决定 joined 语义）', () => {
+    expect(isCheckinSignedToday('lottery', '2026-08-01T00:00:00Z', '2026-08-14')).toBe(true)
+    expect(isCheckinSignedToday('signup_chain', '', '2026-08-14')).toBe(true)
+    expect(isCheckinSignedToday(null, undefined, '2026-08-14')).toBe(true)
+  })
+})

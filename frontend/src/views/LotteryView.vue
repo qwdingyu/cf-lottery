@@ -142,6 +142,15 @@
                   :disabled="joiningId === draw.id"
                   @change="setVoteOption(draw.id, opt.id)"
                 />
+                <!-- 投票选项图片（2026-08 补漏）：运营配置的 imageUrl 此前只在管理端配置里存在，
+                     公开端仅渲染 label/description——配置了图却不展示=「配置失效」感 -->
+                <img
+                  v-if="opt.imageUrl"
+                  :src="opt.imageUrl"
+                  :alt="opt.label"
+                  class="vote-option-img"
+                  loading="lazy"
+                />
                 <span>
                   <strong>{{ opt.label }}</strong>
                   <small v-if="opt.description">{{ opt.description }}</small>
@@ -1139,6 +1148,7 @@ import {
 import {
   entryIdFromAlreadyJoined,
   isAlreadyJoinedResponse,
+  isCheckinSignedToday,
   isSilentFetchOption,
   joinedOpenStatusHintKey,
   readJoinedHints,
@@ -1819,7 +1829,16 @@ function statusPathHint(draw: LotteryDraw) {
 }
 
 function isDrawJoined(draw: LotteryDraw): boolean {
-  return Boolean(myJoinedById.value[draw.id] || myJoinedById.value[draw.publicSlug || ''])
+  const joined = Boolean(myJoinedById.value[draw.id] || myJoinedById.value[draw.publicSlug || ''])
+  if (!joined) return false
+  // checkin 活动（每日签到）：joined 状态按「今天是否已签」判断——
+  // 昨天/更早签过今天仍可再签（后端 identity 带日期后缀，每日一签），
+  // 若沿用布尔快照会把「可再签」误显示为「已参与」导致无法再次签到。
+  if (draw.activityKind === 'checkin') {
+    const entry = myEntryList.value.find((r) => r.drawId === draw.id || r.drawId === draw.publicSlug)
+    if (!isCheckinSignedToday(draw.activityKind, entry?.joinedAt)) return false
+  }
+  return joined
 }
 
 function nonOpenPrimaryCta(draw: LotteryDraw) {
