@@ -6,7 +6,7 @@
  * 中奖路径：单档 weight>0 + 有 available 码 → 确定性中奖（无随机跳过）。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, count } from "drizzle-orm";
 import { getTestDb, clearTestData } from "../../test-setup";
 import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
@@ -1345,6 +1345,57 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
     // 与生产 todayStr() 一致：本地时区 YYYY-MM-DD（非 UTC）
     const today = localDateStr(new Date());
     expect(entry.lastDailyFreeSpinAt).toBe(today);
+  });
+
+  it("保底并发：两个并发 spin 在阈值前一档，恰 1 个触发保底中奖，另一个正常未中", async () => {
+    // 计数器串行化验证：entry 的 consecutiveNoWinSpins=2（threshold=3），两个并发 spin。
+    // SQLite BEGIN IMMEDIATE 单写者串行化 → 先执行的事务读 2 未触发（计数 → 3），
+    // 后执行的事务读 3 触发保底中奖（计数 → 0）。无论执行顺序，最终结果一致：
+    // 恰 1 个 won=true、1 个 won=false、计数器归零、保底档 B 消耗 1 码。
+    const { slug } = await seedPityDraw({ threshold: 3, maxSpins: 3 });
+    const join = await joinDraw(db, slug, "conc-pity@test.com");
+    expect(join.joined).toBe(true);
+    await grantSpins(client, join.entryId!, 3); // → left=3（join 1 + 覆盖 3）
+    // 模拟已连空 2 次：档 A 无库存必未中，故连空计数可达 2
+    await db
+      .update(lotteryEntries)
+      .set({ consecutiveNoWinSpins: 2 })
+      .where(and(eq(lotteryEntries.id, join.entryId!), eq(lotteryEntries.tenantId, TENANT)));
+    stubCsprng(0); // 正常抽 eligible[0]（档 A，无库存 → 未中）
+
+    const results = await Promise.allSettled([
+      performInstantSpin(db, {
+        slug, identityType: "email", identityValue: "conc-pity@test.com", idempotencyKey: "pity-a",
+      }),
+      performInstantSpin(db, {
+        slug, identityType: "email", identityValue: "conc-pity@test.com", idempotencyKey: "pity-b",
+      }),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled") as Array<PromiseFulfilledResult<Awaited<ReturnType<typeof performInstantSpin>>>>;
+    expect(fulfilled).toHaveLength(2);
+
+    // 恰 1 个触发保底中奖（档 B），1 个正常未中
+    const winners = fulfilled.filter((r) => r.value.won === true);
+    const losers = fulfilled.filter((r) => r.value.won === false);
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    expect(winners[0]!.value.prizeCode).toBeTruthy();
+
+    // 计数器归零（中奖后重置）
+    const [entryAfter] = await db
+      .select({ consecutiveNoWinSpins: lotteryEntries.consecutiveNoWinSpins })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, join.entryId!))
+      .limit(1);
+    expect(Number(entryAfter?.consecutiveNoWinSpins ?? 999)).toBe(0);
+
+    // 保底档 B 恰好消耗 1 个码（不双占；award 后码状态为 issued）
+    const [codesUsed] = await db
+      .select({ used: count() })
+      .from(prizeCodes)
+      .where(and(eq(prizeCodes.tenantId, TENANT), eq(prizeCodes.status, "issued")));
+    expect(Number(codesUsed?.used ?? 0)).toBe(1);
   });
 
   it("每日免费并发：两个并发 spin，恰 1 个领取免费，另一个正常扣次，不重复发放", async () => {
