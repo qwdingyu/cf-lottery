@@ -21,6 +21,7 @@ export interface FlashSaleDirectChecklistItem {
 
 export interface FlashSaleDirectChecklistInput {
   enableFlashSale?: boolean
+  flashSaleSalesMode?: 'redirect' | 'direct_single' | 'direct_bulk' | null
   flashSalePaymentRequired?: boolean
   flashSalePriceCents?: number | null
   flashSaleStockLimit?: number | null
@@ -67,6 +68,9 @@ export function isSafeHttpUrl(value: unknown): boolean {
 }
 
 export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInput): FlashSaleDirectChecklistItem[] {
+  const isDirect = input.flashSaleSalesMode
+    ? input.flashSaleSalesMode !== 'redirect'
+    : input.flashSalePaymentRequired === true
   const selectedPrizeIds = new Set((input.tiers || []).map((tier) => tier.prizeId).filter(Boolean))
   // 与后端 publish-check（validateFlashSalePayment）保持一致：
   // ① 仅直付模式（paymentRequired=true）要求恰好绑定 1 个 active 卡密奖品（发卡目标）；
@@ -76,7 +80,7 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
     && String(prize.prizeType || '').trim() === 'code'
     && Number(prize.active) !== 0,
   ).length
-  const needCodePrize = input.enableFlashSale === true && input.flashSalePaymentRequired === true
+  const needCodePrize = input.enableFlashSale === true && isDirect
 
   // 导流 URL 检查：productLink.url / destination.url / after_win.url 任一为安全 http(s) 即可。
   // 直付模式由站内支付承接，不要求外部商品链接；只有展示/导流模式才把链接作为发布必填。
@@ -90,7 +94,7 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
   // 红线：lottery + 直付秒杀 → 后端 promotion.lottery_payment.conflict 必拒（docs/166）。
   // lottery 的 performDraw 不校验 entry.paymentStatus，未付款用户也会进候选池被抽中（白嫖卡密）。
   const lotteryPaymentConflict =
-    input.activityKind === 'lottery' && input.flashSalePaymentRequired === true
+    input.activityKind === 'lottery' && isDirect
 
   const items: FlashSaleDirectChecklistItem[] = []
   if (lotteryPaymentConflict) {
@@ -107,7 +111,7 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
   items.push(
     {
       key: 'product',
-      done: input.flashSalePaymentRequired === true || hasSafeShopLink,
+      done: isDirect || hasSafeShopLink,
       labelKey: 'adminFlashSaleChecklistProduct',
     },
     {
@@ -122,7 +126,7 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
     },
     {
       key: 'payment',
-      done: input.enableFlashSale === true && input.flashSalePaymentRequired === true,
+      done: input.enableFlashSale === true && isDirect,
       labelKey: 'adminFlashSaleChecklistPayment',
     },
     {

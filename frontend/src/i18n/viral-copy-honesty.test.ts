@@ -38,7 +38,7 @@ const KEYS = [
  * lottery 对象含嵌套的 tpl 字段，不能整体断言为 Record<string, string>，
  * 用此辅助函数按需读取已知的字符串键。
  */
-function lotString(lottery: typeof zh.lottery, key: string): string {
+function lotString(lottery: Record<string, unknown>, key: string): string {
   const v = (lottery as Record<string, unknown>)[key]
   return typeof v === 'string' ? v : ''
 }
@@ -46,7 +46,7 @@ function lotString(lottery: typeof zh.lottery, key: string): string {
 describe('裂变文案加权票语义（docs/115）', () => {
   it('zh-CN 关键键不含「机会/再参与」类误导', () => {
     for (const key of KEYS) {
-      const text = lotString(zh.lottery, key)
+      const text = lotString(zh.lottery as Record<string, unknown>, key)
       expect(text.length, key).toBeGreaterThan(0)
       for (const re of ZH_FORBIDDEN) {
         expect(text, `${key} matches ${re}`).not.toMatch(re)
@@ -59,7 +59,7 @@ describe('裂变文案加权票语义（docs/115）', () => {
 
   it('en 关键键用 weight/tickets，不用 extra entries 当再参与', () => {
     for (const key of KEYS) {
-      const text = lotString(en.lottery, key)
+      const text = lotString(en.lottery as Record<string, unknown>, key)
       expect(text.length, key).toBeGreaterThan(0)
       for (const re of EN_FORBIDDEN) {
         expect(text, `${key} matches ${re}`).not.toMatch(re)

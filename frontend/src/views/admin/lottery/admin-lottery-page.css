@@ -556,10 +556,42 @@
 .tier-summary.is-warning .tier-summary-hint {
   font-weight: 600;
 }
-/* 统一奖项配置行 select 与 input 高度，消除下拉框箭头图标多占的视觉偏移 */
-.tier-row select,
-.tier-row input[type="number"],
-.tier-row input[type="text"] {
+/* 秒杀配置预览区（docs/222 P0）：展示最终生效的可售件数/限购/价格/阶梯/支付方式 */
+.flash-sale-preview {
+  background: var(--bg-subtle, #f8f9fa);
+  border: 1px solid var(--border-subtle, #e8e8e8);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.flash-sale-preview > strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--text-primary, #333);
+}
+.flash-sale-preview-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.preview-item {
+  display: inline-flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+.preview-item-full {
+  flex-basis: 100%;
+  white-space: normal;
+}
+.preview-label {
+  color: var(--text-muted, #888);
+}
+.preview-value {
+  font-weight: 600;
+  color: var(--text-primary, #333);
+}
   height: 32px;
   padding: 4px 8px;
   box-sizing: border-box;

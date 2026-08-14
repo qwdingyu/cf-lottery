@@ -928,6 +928,32 @@
                         <input v-model="form.flashSaleTitle" maxlength="100" />
                       </label>
                     </template>
+                    <!-- docs/222 P0 预览区：展示最终生效值（可售件数/限购/价格/阶梯/支付方式） -->
+                    <div v-if="form.enableFlashSale" class="field-span-2 flash-sale-preview" role="note">
+                      <strong>{{ $t('lottery.adminFlashSalePreviewTitle') }}</strong>
+                      <div class="flash-sale-preview-grid">
+                        <span class="preview-item">
+                          <span class="preview-label">{{ $t('lottery.adminFlashSalePreviewStock') }}</span>
+                          <span class="preview-value">{{ form.flashSaleStockLimit || form.maxParticipants || $t('lottery.adminFlashSalePreviewUnlimited') }}{{ $t('lottery.adminFlashSalePreviewUnit') }}</span>
+                        </span>
+                        <span class="preview-item">
+                          <span class="preview-label">{{ $t('lottery.adminFlashSalePreviewMaxPerUser') }}</span>
+                          <span class="preview-value">{{ form.flashSaleMaxPerUser }}{{ $t('lottery.adminFlashSalePreviewUnit') }}</span>
+                        </span>
+                        <span v-if="form.flashSaleSalesMode !== 'redirect'" class="preview-item">
+                          <span class="preview-label">{{ $t('lottery.adminFlashSalePreviewPrice') }}</span>
+                          <span class="preview-value">{{ flashSalePriceYuan || '—' }}{{ $t('lottery.adminCurrencyUnit') }}</span>
+                        </span>
+                        <span v-if="form.flashSaleSalesMode === 'direct_bulk' && form.flashSalePricingTiers.length > 0" class="preview-item preview-item-full">
+                          <span class="preview-label">{{ $t('lottery.adminFlashSalePreviewTiers') }}</span>
+                          <span class="preview-value">{{ form.flashSalePricingTiers.map(t => `${t.minQuantity}${$t('lottery.adminFlashSalePreviewUnit')} ${flashSaleTierPriceYuan(form.flashSalePricingTiers.indexOf(t)) || '—'}${$t('lottery.adminCurrencyUnit')}`).join('; ') }}</span>
+                        </span>
+                        <span class="preview-item">
+                          <span class="preview-label">{{ $t('lottery.adminFlashSalePreviewPayment') }}</span>
+                          <span class="preview-value">{{ form.flashSaleSalesMode === 'redirect' ? $t('lottery.adminFlashSaleModeRedirect') : (form.flashSaleSalesMode === 'direct_single' ? $t('lottery.adminFlashSaleModeDirectSingle') : $t('lottery.adminFlashSaleModeDirectBulk')) }}</span>
+                        </span>
+                      </div>
+                    </div>
                     <!-- 三个展示开关同排（2026-08 打磨）：不各自占行 -->
                     <label class="field-span-2 flash-sale-show-row">
                       <label class="checkbox-label-inline">
@@ -2531,6 +2557,7 @@ const prizeOptions = ref<any[]>([])
 const flashSaleDirectChecklist = computed(() => {
   return buildFlashSaleDirectChecklist({
     enableFlashSale: form.value.enableFlashSale,
+    flashSaleSalesMode: form.value.flashSaleSalesMode,
     flashSalePaymentRequired: form.value.flashSalePaymentRequired,
     flashSalePriceCents: form.value.flashSalePriceCents,
     flashSaleStockLimit: form.value.flashSaleStockLimit,
@@ -2793,7 +2820,7 @@ const createStepDone = computed(() => {
   let prizesOk = true
   if (form.value.activityKind === 'lottery') {
     prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
-  } else if (needsTiersMandatory(form.value.activityKind, form.value.experienceType || '', form.value.enableFlashSale, form.value.flashSalePaymentRequired)) {
+  } else if (needsTiersMandatory(form.value.activityKind, form.value.experienceType || '', form.value.enableFlashSale, form.value.flashSaleSalesMode !== 'redirect')) {
     // 直付秒杀（限时抢购）：必须绑定至少 1 个卡密奖品（发布清单 codePrize 检查项），
     // 否则创建后无法通过发布门禁。导流模式（非直付）不需要卡密奖品。
     prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
@@ -2815,7 +2842,7 @@ const createReadinessLabel = computed(() => {
   if (form.value.activityKind === 'lottery' && !createStepDone.value.prizes) {
     missing.push(t('lottery.adminCreateNeedPrize'))
   }
-  if (needsTiersMandatory(form.value.activityKind, form.value.experienceType || '', form.value.enableFlashSale, form.value.flashSalePaymentRequired)
+  if (needsTiersMandatory(form.value.activityKind, form.value.experienceType || '', form.value.enableFlashSale, form.value.flashSaleSalesMode !== 'redirect')
     && !form.value.tiers.some((tier) => Boolean(tier.prizeId))
   ) {
     missing.push(t('lottery.adminCreateNeedPrize'))
@@ -3352,6 +3379,7 @@ async function handleDuplicate(draw: LotteryDraw) {
     // 秒杀壳（growthFieldsFromDraw 解析 promotion.flashSale）
     enableFlashSale: growth.enableFlashSale,
     flashSaleSessionLabel: growth.flashSaleSessionLabel || '',
+    flashSaleSalesMode: growth.flashSaleSalesMode,
     flashSaleStockLimit: growth.flashSaleStockLimit,
     flashSaleMaxPerUser: alignFlashSaleMaxPerUser(growth.flashSalePricingTiers, growth.flashSaleMaxPerUser),
     flashSaleCtaLabel: growth.flashSaleCtaLabel,
