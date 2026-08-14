@@ -454,7 +454,7 @@
       max-width="720px"
       hide-actions
     >
-      <form class="modal-form lottery-editor-form" @submit.prevent="handleCreate">
+      <form class="modal-form lottery-editor-form" novalidate @submit.prevent="handleCreate">
         <!--
           055a：创建路径 3～4 步指示（不新路由、不 Wizard 框架）。
           步骤完成态 + 正确滚动锚点；不改提交语义。
@@ -4214,6 +4214,22 @@ async function handleCreate() {
   if (timeOrderError.value) {
     showToast(timeOrderError.value, 'error')
     return
+  }
+  // 原生约束校验已禁用（novalidate），补全必填项检查——否则 v-show 折叠区内
+  // 的 required/min/max 控件在值非法时浏览器会抛 "is not focusable" 崩溃。
+  if (form.value.activityKind === 'lottery') {
+    const wc = Number(form.value.winnerCount)
+    if (!wc || wc < 1 || wc > 9999 || !Number.isFinite(wc)) {
+      showToast(t('lottery.adminFillRequired'), 'error')
+      return
+    }
+    if (form.value.resultMode === 'instant') {
+      const ms = Number(form.value.maxSpinsPerEntry)
+      if (!ms || ms < 1 || ms > 100 || !Number.isFinite(ms)) {
+        showToast(t('lottery.adminFillRequired'), 'error')
+        return
+      }
+    }
   }
   creating.value = true
   try {
