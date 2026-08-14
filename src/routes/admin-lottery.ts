@@ -73,6 +73,7 @@ const EXPERIENCE_TYPES = new Set([
   "queue",
   "reveal",
   "grid",
+  "flash_sale",
 ]);
 const DRAW_TRIGGERS = new Set(["manual", "scheduled"]);
 const RESULT_MODES = new Set([
