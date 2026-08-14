@@ -833,3 +833,22 @@
   font-size: 12px;
   white-space: nowrap;
 }
+
+/* 问卷字段折叠（2026-08 打磨）：头部（label/类型）常显 + 详情可收起 */
+.survey-field-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.survey-field-main {
+  flex: 1;
+  min-width: 0;
+}
+.survey-field-toggle {
+  margin-top: 22px; /* 对齐 label 行（label 高度 + 间距），避免按钮错位 */
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.activity-config-row.is-collapsed {
+  border-color: rgba(255, 255, 255, 0.06);
+}

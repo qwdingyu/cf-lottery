@@ -169,13 +169,12 @@
             <th class="col-num">{{ $t('lottery.adminEntryCount') }}</th>
             <th class="col-num">{{ $t('lottery.winnerCount') }}</th>
             <th>{{ $t('lottery.adminEntryWindow') }}</th>
-            <th>{{ $t('lottery.drawTime') }}</th>
             <th class="col-actions">{{ $t('lottery.adminActions') }}</th>
           </tr>
         </thead>
         <tbody v-if="loading">
           <tr v-for="i in 5" :key="'sk' + i" class="skeleton-row">
-            <td :colspan="9"><div class="skeleton-cell" /></td>
+            <td :colspan="8"><div class="skeleton-cell" /></td>
           </tr>
         </tbody>
         <tbody v-else>
@@ -250,14 +249,11 @@
               </div>
             </td>
             <td>
+              <!-- 活动时间单列（2026-08 打磨）：时间窗主行 + 开奖时间小字（即时出奖不显示空行） -->
               <div class="time-stack">
-                <span>{{ formatDate(draw.startAt) }}</span>
-                <small>{{ $t('lottery.adminWindowTo') }} {{ formatDate(draw.endAt) }}</small>
-              </div>
-            </td>
-            <td>
-              <div class="time-stack">
-                <span>{{ formatDate(draw.drawAt) }}</span>
+                <span>{{ formatDate(draw.startAt) }} → {{ formatDate(draw.endAt) }}</span>
+                <small v-if="draw.drawAt">{{ $t('lottery.adminDrawAtPrefix') }} {{ formatDate(draw.drawAt) }}</small>
+                <small v-else-if="draw.resultMode === 'instant'">{{ $t('lottery.adminListInstantOutcome') }}</small>
               </div>
             </td>
             <td class="col-actions">
@@ -401,7 +397,7 @@
             </td>
           </tr>
           <tr v-if="filteredDraws.length === 0">
-            <td colspan="9" class="empty-text">
+            <td colspan="8" class="empty-text">
               <div v-if="hasListFilter" class="list-empty-block">
                 <p>{{ $t('lottery.adminNoMatch') }}</p>
                 <button
@@ -1114,57 +1110,74 @@
             </header>
 
             <div v-if="form.activityKind === 'survey'" class="activity-config-list">
+              <!-- 字段可折叠（2026-08 打磨）：字段多时减少滚动；label/类型常显保证核心必填可见，
+                   详情（长度/必填/选项）收起；新字段自动展开 -->
               <div
                 v-for="(field, index) in form.activityConfig.fields"
                 :key="field.id"
                 class="activity-config-row"
+                :class="{ 'is-collapsed': isSurveyFieldCollapsed(field.id) }"
               >
-                <div class="form-grid two-cols">
-                  <label>
-                    <span>{{ $t('lottery.adminFieldLabel') }}</span>
-                    <input v-model="field.label" maxlength="80" :placeholder="$t('lottery.adminFieldLabelPlaceholder')" />
-                  </label>
-                  <label>
-                    <span>{{ $t('lottery.adminFieldType') }}</span>
-                    <select v-model="field.type" @change="normalizeSurveyFieldOptions(field)">
-                      <option value="text">{{ $t('lottery.adminFieldTypeText') }}</option>
-                      <option value="email">{{ $t('lottery.adminFieldTypeEmail') }}</option>
-                      <option value="phone">{{ $t('lottery.adminFieldTypePhone') }}</option>
-                      <option value="textarea">{{ $t('lottery.adminFieldTypeTextarea') }}</option>
-                      <option value="select">{{ $t('lottery.adminFieldTypeSelect') }}</option>
-                      <option value="radio">{{ $t('lottery.adminFieldTypeRadio') }}</option>
-                      <option value="checkbox">{{ $t('lottery.adminFieldTypeCheckbox') }}</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>{{ $t('lottery.adminMaxLength') }}</span>
-                    <input v-model.number="field.maxLength" type="number" min="1" max="2000" step="1" />
-                  </label>
-                  <label class="checkbox-label">
-                    <input v-model="field.required" type="checkbox" />
-                    <span>{{ $t('lottery.adminRequired') }}</span>
-                  </label>
-                </div>
-                <div v-if="isChoiceSurveyField(field)" class="choice-options">
-                  <label
-                    v-for="option in field.options"
-                    :key="option.id"
-                    class="choice-option-row"
+                <div class="survey-field-head">
+                  <div class="form-grid two-cols survey-field-main">
+                    <label>
+                      <span>{{ $t('lottery.adminFieldLabel') }}</span>
+                      <input v-model="field.label" maxlength="80" :placeholder="$t('lottery.adminFieldLabelPlaceholder')" />
+                    </label>
+                    <label>
+                      <span>{{ $t('lottery.adminFieldType') }}</span>
+                      <select v-model="field.type" @change="normalizeSurveyFieldOptions(field)">
+                        <option value="text">{{ $t('lottery.adminFieldTypeText') }}</option>
+                        <option value="email">{{ $t('lottery.adminFieldTypeEmail') }}</option>
+                        <option value="phone">{{ $t('lottery.adminFieldTypePhone') }}</option>
+                        <option value="textarea">{{ $t('lottery.adminFieldTypeTextarea') }}</option>
+                        <option value="select">{{ $t('lottery.adminFieldTypeSelect') }}</option>
+                        <option value="radio">{{ $t('lottery.adminFieldTypeRadio') }}</option>
+                        <option value="checkbox">{{ $t('lottery.adminFieldTypeCheckbox') }}</option>
+                      </select>
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs survey-field-toggle"
+                    :aria-expanded="!isSurveyFieldCollapsed(field.id)"
+                    @click="toggleSurveyField(field.id)"
                   >
-                    <span>{{ $t('lottery.adminOption') }}</span>
-                    <input v-model="option.label" maxlength="80" :placeholder="$t('lottery.adminOptionName')" />
-                    <button type="button" class="btn btn-ghost btn-xs" @click="removeSurveyOption(field, option.id)">{{ $t('lottery.adminDelete') }}</button>
-                  </label>
-                  <button type="button" class="btn btn-ghost btn-xs" @click="addSurveyOption(field)">{{ $t('lottery.adminAddOption') }}</button>
+                    {{ isSurveyFieldCollapsed(field.id) ? $t('lottery.adminSurveyFieldExpand') : $t('lottery.adminSurveyFieldCollapse') }}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-xs"
-                  :disabled="form.activityConfig.fields.length <= 1"
-                  @click="removeSurveyField(Number(index))"
-                >
-                  {{ $t('lottery.adminRemoveField') }}
-                </button>
+                <div v-show="!isSurveyFieldCollapsed(field.id)" class="survey-field-detail">
+                  <div class="form-grid two-cols">
+                    <label>
+                      <span>{{ $t('lottery.adminMaxLength') }}</span>
+                      <input v-model.number="field.maxLength" type="number" min="1" max="2000" step="1" />
+                    </label>
+                    <label class="checkbox-label">
+                      <input v-model="field.required" type="checkbox" />
+                      <span>{{ $t('lottery.adminRequired') }}</span>
+                    </label>
+                  </div>
+                  <div v-if="isChoiceSurveyField(field)" class="choice-options">
+                    <label
+                      v-for="option in field.options"
+                      :key="option.id"
+                      class="choice-option-row"
+                    >
+                      <span>{{ $t('lottery.adminOption') }}</span>
+                      <input v-model="option.label" maxlength="80" :placeholder="$t('lottery.adminOptionName')" />
+                      <button type="button" class="btn btn-ghost btn-xs" @click="removeSurveyOption(field, option.id)">{{ $t('lottery.adminDelete') }}</button>
+                    </label>
+                    <button type="button" class="btn btn-ghost btn-xs" @click="addSurveyOption(field)">{{ $t('lottery.adminAddOption') }}</button>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="form.activityConfig.fields.length <= 1"
+                    @click="removeSurveyField(Number(index))"
+                  >
+                    {{ $t('lottery.adminRemoveField') }}
+                  </button>
+                </div>
               </div>
               <button type="button" class="btn btn-ghost btn-sm" @click="addSurveyField">{{ $t('lottery.adminAddField') }}</button>
             </div>
@@ -2819,17 +2832,39 @@ function handleParticipationModeChange() {
   }
 }
 
+/**
+ * 问卷字段折叠状态（2026-08 打磨）：collapsed 集合存「已折叠」字段 id；
+ * 默认全部展开（新字段自动展开），字段多时运营可逐个收起减少滚动。
+ */
+const collapsedSurveyFieldIds = ref<Set<string>>(new Set())
+
+function isSurveyFieldCollapsed(id: string): boolean {
+  return collapsedSurveyFieldIds.value.has(id)
+}
+
+function toggleSurveyField(id: string) {
+  const next = new Set(collapsedSurveyFieldIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  collapsedSurveyFieldIds.value = next
+}
+
 function addSurveyField() {
   const config = normalizeActivityConfig('survey', form.value.activityConfig) as Extract<ActivityConfigForm, { kind: 'survey' }>
-  config.fields.push({
+  const field: SurveyFieldForm = {
     id: makeStableId('field'),
     label: t('lottery.adminNewField'),
     type: 'text',
     required: false,
     maxLength: 120,
     options: [],
-  })
+  }
+  config.fields.push(field)
   form.value.activityConfig = config as any
+  // 新字段默认展开（便于立即配置；收起是用户主动行为）
+  const next = new Set(collapsedSurveyFieldIds.value)
+  next.delete(field.id)
+  collapsedSurveyFieldIds.value = next
 }
 
 function removeSurveyField(index: number) {
