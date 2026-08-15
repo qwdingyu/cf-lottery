@@ -35,9 +35,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { GameProps, GameEmits } from './types'
 import { cappedDevicePixelRatio } from './canvas-utils'
+import { rotationDeltaForWheelSector } from './wheel-motion'
 
 const props = withDefaults(defineProps<GameProps>(), {
   disabled: false,
@@ -59,8 +60,6 @@ const canvasSize = 320
 const dpr = cappedDevicePixelRatio()
 /** 避免 celebrateKey 初始 0 触发一次空庆祝 */
 let lastCelebrate = 0
-/** loading 期间慢速 idle 旋转的 rAF id */
-let idleRaf = 0
 /** 奖品图缓存：索引与 props.prizes 一一对应；加载完成后触发一次重绘 */
 const prizeImages = ref<Array<HTMLImageElement | null>>([])
 let imageLoadSeq = 0
@@ -165,41 +164,12 @@ function drawWheel(rotation: number) {
   ctx.strokeStyle = '#ccc'; ctx.lineWidth = 2; ctx.stroke()
 }
 
-function stopIdleSpin() {
-  if (idleRaf) {
-    cancelAnimationFrame(idleRaf)
-    idleRaf = 0
-  }
-}
-
-/**
- * 提交中慢速 idle 旋转：用户点中心后立刻看到盘在动，
- * 而不是等 OTP/网络才 celebrate（docs/093 时机问题）。
- * 不表示开奖结果；成功后由 runCelebrateSpin 接棒加速减速。
- */
 function prefersReducedMotion(): boolean {
   try {
     return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
   } catch {
     return false
   }
-}
-
-function startIdleSpin() {
-  stopIdleSpin()
-  // 无障碍：减少动态时仅靠按钮脉冲/文案，不持续转盘
-  if (prefersReducedMotion()) return
-  const tick = () => {
-    if (!props.loading || spinning.value) {
-      idleRaf = 0
-      return
-    }
-    const rot = (currentRot() + 0.04) % (Math.PI * 2)
-    drawWheel(rot)
-    if (wheelCanvasRef.value) wheelCanvasRef.value.dataset.rot = String(rot)
-    idleRaf = requestAnimationFrame(tick)
-  }
-  idleRaf = requestAnimationFrame(tick)
 }
 
 /** 点击：只表达参与/抽奖意图；不在此处开庆祝旋转（等 celebrateKey） */
@@ -209,33 +179,12 @@ function handleSpin() {
 }
 
 /**
- * 计算停角：指针在顶部（-π/2）。
- * 扇区 i 中心相对 canvas 0° 为 i*slice + slice/2；
- * 最终旋转使该中心落在指针下。
- */
-function rotationDeltaForSector(sectorIndex: number, startRot: number): number {
-  const n = Math.max(props.prizes.length, 1)
-  const idx = ((Math.floor(sectorIndex) % n) + n) % n
-  const slice = (2 * Math.PI) / n
-  // 扇区中心角（未旋转时，从正 x 轴）
-  const centerAtZero = idx * slice + slice / 2
-  // 指针在 -π/2（顶部）；需要 rotation 使 centerAtZero + rot ≡ -π/2 (mod 2π)
-  const desired = -Math.PI / 2 - centerAtZero
-  // 从 startRot 正向多转至少 5 圈再落到 desired
-  const turns = 5 + Math.random() * 2
-  let delta = desired - (startRot % (Math.PI * 2))
-  while (delta < Math.PI * 2 * turns) delta += Math.PI * 2
-  return delta
-}
-
-/**
  * 参与/spin 成功后的旋转。
  * - 有 targetSectorIndex：对准服务端 prizeIndex（instant）
  * - 无：随机停角（delayed 氛围，不代表中奖）
  */
 async function runCelebrateSpin() {
   if (spinning.value) return
-  stopIdleSpin()
   spinning.value = true
   const startRot = currentRot()
   const hasTarget =
@@ -243,7 +192,7 @@ async function runCelebrateSpin() {
     Number.isFinite(Number(props.targetSectorIndex)) &&
     props.prizes.length > 0
   const targetAngle = hasTarget
-    ? rotationDeltaForSector(Number(props.targetSectorIndex), startRot)
+    ? rotationDeltaForWheelSector(Number(props.targetSectorIndex), props.prizes.length, startRot, 5)
     : Math.PI * 2 * (5 + Math.random())
   const duration = hasTarget ? 3200 : 2800
   const start = performance.now()
@@ -302,11 +251,6 @@ watch(() => props.prizes, (list) => {
   })
 }, { immediate: true })
 
-watch(() => props.loading, (loading) => {
-  if (loading && !spinning.value) startIdleSpin()
-  else if (!loading) stopIdleSpin()
-})
-
 watch(() => props.celebrateKey, (key) => {
   const n = Number(key) || 0
   if (n <= 0 || n === lastCelebrate) return
@@ -314,9 +258,6 @@ watch(() => props.celebrateKey, (key) => {
   void runCelebrateSpin()
 })
 
-onUnmounted(() => {
-  stopIdleSpin()
-})
 </script>
 
 <style scoped>

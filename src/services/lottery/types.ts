@@ -72,6 +72,21 @@ export const ACTIVE_DRAW_STATUSES = [
   DRAW_STATUS.DRAWING,
 ] as const;
 
+/**
+ * 直付卡密池占用的唯一状态口径。
+ * draft 尚未对外售卖，不占用；open/paused/drawing 可能已有支付、补单或履约在途，必须独占。
+ */
+export const DIRECT_SALE_CODE_POOL_OCCUPYING_STATUSES = [
+  DRAW_STATUS.OPEN,
+  DRAW_STATUS.PAUSED,
+  DRAW_STATUS.DRAWING,
+] as const;
+
+/** 选择器提前反馈与发布预检共用，避免一处把“0 条占用”误判为冲突。 */
+export function hasDirectSaleCodePoolConflict(activeUsageCount: number): boolean {
+  return activeUsageCount > 0;
+}
+
 /** 可物理删除的活动状态；open/drawing 会影响参与和开奖并发，必须拒绝删除。 */
 export const DELETABLE_DRAW_STATUSES = [
   DRAW_STATUS.DRAFT,

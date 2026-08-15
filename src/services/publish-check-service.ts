@@ -24,7 +24,10 @@ import { validateActivityConfigForPublish } from "../lib/activity-config";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../lib/flash-sale-config";
 import { PAYMENT_PROVIDER_CATALOG, type PaymentProviderCatalogItem } from "./payment/catalog";
 import { decryptPaymentConfigValueResult, isEncryptedPaymentConfigValue } from "./payment/secret-config";
-import { DRAW_STATUS } from "./lottery/types";
+import {
+  DIRECT_SALE_CODE_POOL_OCCUPYING_STATUSES,
+  hasDirectSaleCodePoolConflict,
+} from "./lottery/types";
 import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
 import { isViralEnabled } from "./lottery/viral-weight";
 import { normalizeDailyFreeSpinConfig, normalizePityConfig, normalizeReferralRewards } from "./lottery/spin-quota";
@@ -285,9 +288,9 @@ async function validateFlashSalePayment(
       eq(lotteryPrizeTiers.tenantId, tenantId),
       eq(lotteryPrizeTiers.prizeId, codePrizeRows[0].prizeId),
       ne(lotteryDraws.id, draw.id),
-      inArray(lotteryDraws.status, [DRAW_STATUS.OPEN, DRAW_STATUS.PAUSED, DRAW_STATUS.DRAWING]),
+      inArray(lotteryDraws.status, DIRECT_SALE_CODE_POOL_OCCUPYING_STATUSES),
     ));
-  if (sharedPrizeDraws.length > 0) {
+  if (hasDirectSaleCodePoolConflict(sharedPrizeDraws.length)) {
     add(
       result.errors,
       "payment",

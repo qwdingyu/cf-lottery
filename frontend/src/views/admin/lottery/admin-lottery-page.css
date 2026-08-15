@@ -510,6 +510,42 @@
 }
 .tier-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .tier-prize { flex: 2; min-width: 0; }
+/* docs/225 P0：服务端搜索奖品选择器（替换原生下拉框） */
+.tier-prize-picker { flex: 2; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tier-prize-summary {
+  display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center;
+  font-size: 12px; padding: 4px 8px; border: 1px solid var(--border-subtle, #e8e8e8);
+  border-radius: 4px; background: var(--bg-subtle, #f8f9fa);
+}
+.tier-prize-summary.is-inactive { border-color: var(--admin-danger, #ef4444); }
+.tier-prize-name { font-weight: 600; color: var(--text-primary, #333); }
+.tier-prize-value { color: var(--text-muted, #888); }
+.tier-prize-stock { color: var(--text-muted, #888); }
+.tier-prize-inactive { color: var(--admin-danger, #ef4444); font-weight: 600; }
+/* 选择器浮层 */
+.prize-picker-overlay {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0, 0, 0, 0.4); display: flex; align-items: center; justify-content: center;
+}
+.prize-picker-panel {
+  width: min(560px, 92vw); max-height: 70vh; display: flex; flex-direction: column;
+  background: var(--bg-panel, #fff); border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+  overflow: hidden;
+}
+.prize-picker-head { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle, #e8e8e8); }
+.prize-picker-head input { flex: 1; }
+.prize-picker-loading { padding: 20px; text-align: center; color: var(--text-muted, #888); }
+.prize-picker-list { flex: 1; overflow-y: auto; margin: 0; padding: 4px 0; list-style: none; }
+.prize-picker-list li { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border-subtle, #f0f0f0); }
+.prize-picker-list li:hover { background: var(--bg-subtle, #f8f9fa); }
+.prize-picker-list li.is-ineligible { cursor: not-allowed; opacity: 0.6; }
+.prize-picker-item { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 13px; }
+.prize-picker-name { font-weight: 600; }
+.prize-picker-value, .prize-picker-type, .prize-picker-stock { color: var(--text-muted, #888); font-size: 12px; }
+.prize-picker-ineligible { color: var(--admin-danger, #ef4444); font-size: 12px; }
+.prize-picker-shortage { color: var(--admin-warning, #b8860b); font-size: 12px; }
+.prize-picker-empty { padding: 20px; text-align: center; color: var(--text-muted, #888); }
+.prize-picker-pagination { display: flex; gap: 8px; align-items: center; justify-content: center; padding: 8px 12px; border-top: 1px solid var(--border-subtle, #e8e8e8); font-size: 12px; }
 .tier-name { flex: 1.5; min-width: 0; }
 .tier-count { flex: 0.5; min-width: 70px; }
 .tier-probability {

@@ -7,11 +7,65 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
+import type { DbType } from "../db/client";
 import { getDb, ok, fail } from "../lib/http";
-import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
-import { prizes, prizeCodes, auditLogs } from "../db/schema";
+import { eq, and, desc, sql, count, inArray, ne } from "drizzle-orm";
+import { prizes, prizeCodes, auditLogs, lotteryPrizeTiers, lotteryDraws } from "../db/schema";
 import { importPrizeCodes, createPrize } from "../services/lottery-service";
+import {
+  DIRECT_SALE_CODE_POOL_OCCUPYING_STATUSES,
+  hasDirectSaleCodePoolConflict,
+} from "../services/lottery/types";
 import { escapeLike, parseAdminPagination, parseBatchDeleteIds } from "./admin-lottery-helpers";
+
+/**
+ * 批量统计候选奖品的可用卡密库存（docs/225 P0：避免逐条 N+1 查询）。
+ * 一次 GROUP BY 返回所有候选 prizeId 的 available 数量。
+ */
+async function batchAvailableCounts(db: DbType, tenantId: string, prizeIds: string[]): Promise<Map<string, number>> {
+  if (prizeIds.length === 0) return new Map();
+  const rows = await db
+    .select({ prizeId: prizeCodes.prizeId, total: count() })
+    .from(prizeCodes)
+    .where(and(
+      eq(prizeCodes.tenantId, tenantId),
+      eq(prizeCodes.status, "available"),
+      inArray(prizeCodes.prizeId, prizeIds),
+    ))
+    .groupBy(prizeCodes.prizeId);
+  return new Map(rows.map((r) => [r.prizeId, Number(r.total || 0)]));
+}
+
+/**
+ * 批量统计候选卡密奖品被「进行中活动」占用的数量（docs/225 P0：直付共享码池判定）。
+ * 与 publish-check-service 的 payment.fulfillment.code_prize.shared 同口径：
+ * 状态为 OPEN/PAUSED/DRAWING 的活动视为占用。前端只做提前反馈，保存/发布预检仍是权威门禁。
+ */
+async function batchActiveUsage(
+  db: DbType,
+  tenantId: string,
+  prizeIds: string[],
+  excludedDrawId: string,
+): Promise<Map<string, number>> {
+  if (prizeIds.length === 0) return new Map();
+  const conditions = [
+    eq(lotteryPrizeTiers.tenantId, tenantId),
+    inArray(lotteryPrizeTiers.prizeId, prizeIds),
+    inArray(lotteryDraws.status, DIRECT_SALE_CODE_POOL_OCCUPYING_STATUSES),
+  ];
+  // 编辑直付活动时，本活动自身的已绑定奖品不是“其他活动共享”。
+  if (excludedDrawId) conditions.push(ne(lotteryDraws.id, excludedDrawId));
+  const rows = await db
+    .select({ prizeId: lotteryPrizeTiers.prizeId, total: count() })
+    .from(lotteryPrizeTiers)
+    .innerJoin(lotteryDraws, and(
+      eq(lotteryDraws.id, lotteryPrizeTiers.drawId),
+      eq(lotteryDraws.tenantId, tenantId),
+    ))
+    .where(and(...conditions))
+    .groupBy(lotteryPrizeTiers.prizeId);
+  return new Map(rows.map((r) => [r.prizeId, Number(r.total || 0)]));
+}
 
 async function recordTenantAudit(c: Context<AppEnv>, action: string, targetType: string, targetId: string, metadata?: Record<string, unknown>) {
   const db = getDb(c);
@@ -31,27 +85,70 @@ async function recordTenantAudit(c: Context<AppEnv>, action: string, targetType:
 }
 
 export function setupPrizeRoutes(route: Hono<AppEnv>) {
-  /** 奖品列表（分页 + 搜索 + 类型筛选，与 AdminDraws 标准一致） */
+  /** 奖品列表（目录查询与活动选择器共用；派生字段须由调用方显式请求，docs/225 P0） */
   route.get("/prizes", async (c) => {
     const db = getDb(c);
     const tenantId = c.get("tenantId") as string;
     const { limit, offset } = parseAdminPagination(c, 50, 200);
     const search = c.req.query("search") || "";
     const prizeType = c.req.query("prizeType") || "";
+    const idsRaw = c.req.query("ids") || "";
+    const activeRaw = c.req.query("active"); // undefined=保持奖品目录既有“全部”语义
+    const includeAvailability = c.req.query("includeAvailability") === "1";
+    const directSaleDrawId = c.req.query("directSaleDrawId") || "";
 
     const conditions = [eq(prizes.tenantId, tenantId)];
-    if (search) conditions.push(sql`${prizes.name} LIKE ${`%${search.replace(/[%_]/g, "\\$&")}%`}`);
-    if (prizeType) conditions.push(eq(prizes.prizeType, prizeType));
+
+    // ids 回填模式：按 ID 精确获取（含停用），用于编辑旧活动回填已绑定奖品。
+    // 停用的历史奖品必须能显示名称，不能因 active 过滤而丢失。
+    const ids = idsRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    const isIdsMode = ids.length > 0;
+    if (isIdsMode) {
+      if (ids.length > 10) return fail(c, "一次最多回填 10 个奖品", 400);
+      if (search || prizeType || activeRaw !== undefined || directSaleDrawId) {
+        return fail(c, "ids 回填模式不能与搜索、类型、状态或直付占用查询混用", 400);
+      }
+      conditions.push(inArray(prizes.id, ids));
+    } else {
+      // 普通奖品目录沿用既有全量列表；活动选择器显式传 active=1。
+      if (activeRaw === "0") conditions.push(eq(prizes.active, 0));
+      else if (activeRaw === "1") conditions.push(eq(prizes.active, 1));
+      if (search) {
+        const keyword = `%${escapeLike(search)}%`;
+        conditions.push(sql`(${prizes.name} LIKE ${keyword} ESCAPE '\\' OR ${prizes.valueText} LIKE ${keyword} ESCAPE '\\')`);
+      }
+      if (prizeType) conditions.push(eq(prizes.prizeType, prizeType));
+    }
 
     const [{ total }] = await db.select({ total: count() }).from(prizes).where(and(...conditions));
     const rows = await db
       .select()
       .from(prizes)
       .where(and(...conditions))
-      .orderBy(desc(prizes.createdAt))
-      .limit(limit)
-      .offset(offset);
-    return ok(c, { prizes: rows, total });
+      .orderBy(desc(prizes.createdAt), desc(prizes.id))
+      .limit(isIdsMode ? ids.length : limit)
+      .offset(isIdsMode ? 0 : offset);
+
+    // 只有活动选择器需要库存；普通目录请求不额外执行聚合。
+    const prizeIds = rows.map((r) => r.id);
+    const availableCounts = includeAvailability
+      ? await batchAvailableCounts(db, tenantId, prizeIds)
+      : new Map<string, number>();
+
+    // directSaleDrawId 是选择器专用语义；发布预检仍为最终权威。
+    const activeUsage = directSaleDrawId
+      ? await batchActiveUsage(db, tenantId, prizeIds, directSaleDrawId === "new" ? "" : directSaleDrawId)
+      : new Map<string, number>();
+
+    const result = rows.map((p) => {
+      return {
+        ...p,
+        ...(includeAvailability ? { availableCount: p.prizeType === "code" ? (availableCounts.get(p.id) || 0) : null } : {}),
+        ...(directSaleDrawId ? { directSaleConflict: hasDirectSaleCodePoolConflict(activeUsage.get(p.id) || 0) } : {}),
+      };
+    });
+
+    return ok(c, { prizes: result, total });
   });
 
 /** 创建奖品 */

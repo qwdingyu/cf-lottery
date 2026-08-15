@@ -1323,10 +1323,20 @@
                 </div>
                 <div class="tier-list">
                   <div v-for="(tier, idx) in form.tiers" :key="idx" class="tier-row">
-                    <select v-model="tier.prizeId" class="tier-prize" :disabled="creating">
-                      <option value="">{{ $t('lottery.adminSelectPrize') }}</option>
-                      <option v-for="p in prizeOptions" :key="p.id" :value="p.id">{{ p.name }}</option>
-                    </select>
+                    <!-- docs/225 P0：服务端搜索选择器替换原生下拉框（避免只看到前 50 个奖品） -->
+                    <div class="tier-prize-picker">
+                      <template v-if="tierPrizeSummary(tier)">
+                        <div class="tier-prize-summary" :class="{ 'is-inactive': !tierPrizeSummary(tier)!.active }">
+                          <span class="tier-prize-name">{{ tierPrizeSummary(tier)!.name }}</span>
+                          <span v-if="tierPrizeSummary(tier)!.valueText" class="tier-prize-value">{{ tierPrizeSummary(tier)!.valueText }}</span>
+                          <span v-if="tierPrizeSummary(tier)!.availableCount != null" class="tier-prize-stock">{{ $t('lottery.adminPrizeAvailable', { n: tierPrizeSummary(tier)!.availableCount }) }}</span>
+                          <span v-if="!tierPrizeSummary(tier)!.active" class="tier-prize-inactive">{{ $t('lottery.adminPrizeInactive') }}</span>
+                        </div>
+                      </template>
+                      <button type="button" class="btn btn-ghost btn-xs" :disabled="creating" @click="openPrizePicker(idx)">
+                        {{ tierPrizeSummary(tier) ? $t('lottery.adminChangePrize') : $t('lottery.adminSelectPrize') }}
+                      </button>
+                    </div>
                     <input v-model="tier.tierName" class="tier-name" :placeholder="$t('lottery.adminTierNamePlaceholder')" maxlength="50" />
                     <input v-model.number="tier.winnerCount" type="number" class="tier-count" min="1" max="1000" :placeholder="$t('lottery.adminTierSlotsPlaceholder')" />
                     <input
@@ -1403,6 +1413,51 @@
                       {{ prizeOptions.length === 0 ? $t('lottery.adminEmptyPrizeHint') : $t('lottery.adminTierLimitHint') }}
                     </small>
                   </div>
+                  <!-- docs/225 P0：服务端搜索奖品选择器面板（Teleport 到 body，避免被 modal 裁剪） -->
+                  <Teleport to="body">
+                    <div v-if="prizePickerOpen" class="prize-picker-overlay" @click.self="closePrizePicker">
+                      <div class="prize-picker-panel" role="dialog" aria-modal="true">
+                        <div class="prize-picker-head">
+                          <input
+                            v-model="prizeSearchQuery"
+                            type="text"
+                            :placeholder="$t('lottery.adminSearchPrize')"
+                            @input="onPrizeSearchInput"
+                          />
+                          <button type="button" class="btn btn-ghost btn-xs" @click="closePrizePicker">✕</button>
+                        </div>
+                        <div v-if="prizeSearchLoading" class="prize-picker-loading">{{ $t('lottery.loadingText') }}</div>
+                        <ul v-else class="prize-picker-list">
+                          <li
+                            v-for="p in prizeSearchResults"
+                            :key="p.id"
+                            :class="{ 'is-ineligible': p.directSaleConflict === true }"
+                            @click="!p.directSaleConflict && selectPrize(p)"
+                          >
+                            <div class="prize-picker-item">
+                              <span class="prize-picker-name">{{ p.name }}</span>
+                              <span v-if="p.valueText" class="prize-picker-value">{{ p.valueText }}</span>
+                              <span class="prize-picker-type">{{ p.prizeType === 'code' ? $t('lottery.adminPrizeTypeCode') : $t('lottery.adminPrizeTypeManual') }}</span>
+                              <span v-if="p.availableCount != null" class="prize-picker-stock">{{ $t('lottery.adminPrizeAvailable', { n: p.availableCount }) }}</span>
+                              <span v-if="p.directSaleConflict" class="prize-picker-ineligible">{{ $t('lottery.adminPrizeSharedCodePool') }}</span>
+                            </div>
+                          </li>
+                          <li v-if="prizeSearchResults.length === 0 && !prizeSearchLoading" class="prize-picker-empty">
+                            {{ $t('lottery.adminNoPrizeMatch') }}
+                          </li>
+                        </ul>
+                        <div class="prize-picker-pagination">
+                          <button type="button" class="btn btn-ghost btn-xs" :disabled="prizeSearchPage === 0" @click="searchPrizes(prizeSearchPage - 1)">
+                            {{ $t('lottery.adminPrevPage') }}
+                          </button>
+                          <span>{{ prizeSearchPage + 1 }} / {{ Math.max(1, Math.ceil(prizeSearchTotal / prizeSearchLimit)) }}</span>
+                          <button type="button" class="btn btn-ghost btn-xs" :disabled="(prizeSearchPage + 1) * prizeSearchLimit >= prizeSearchTotal" @click="searchPrizes(prizeSearchPage + 1)">
+                            {{ $t('lottery.adminNextPage') }}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </Teleport>
                 </div>
               </div>
               <label v-if="form.activityKind === 'lottery'">
@@ -2581,6 +2636,109 @@ const rosterInput = ref('')
 const inviteCodeCount = ref(10)
 /** 奖品库（用于奖项配置下拉选择） */
 const prizeOptions = ref<any[]>([])
+/** docs/225 P0：已加载奖品映射（id → prize），用于奖项行摘要与开奖确认弹窗，避免只依赖前 50 条 */
+const prizeMap = ref<Record<string, any>>({})
+
+/** docs/225 P0：服务端搜索选择器状态 */
+const prizePickerOpen = ref(false)
+const prizePickerIdx = ref(-1)
+const prizeSearchQuery = ref('')
+const prizeSearchResults = ref<any[]>([])
+const prizeSearchTotal = ref(0)
+const prizeSearchPage = ref(0)
+const prizeSearchLoading = ref(false)
+const prizeSearchLimit = 20
+let prizeSearchSeq = 0 // 竞态防护：忽略过期搜索结果
+
+/** 打开奖品选择器（docs/225 P0：服务端检索 + 分页 + 业务摘要，替换原生下拉框） */
+function openPrizePicker(idx: number) {
+  prizePickerIdx.value = idx
+  prizePickerOpen.value = true
+  prizeSearchQuery.value = ''
+  prizeSearchPage.value = 0
+  searchPrizes(0)
+}
+
+/** 服务端搜索奖品（防抖 + 竞态防护） */
+async function searchPrizes(page: number) {
+  const seq = ++prizeSearchSeq
+  prizeSearchLoading.value = true
+  try {
+    const params = new URLSearchParams()
+    if (prizeSearchQuery.value.trim()) params.set('search', prizeSearchQuery.value.trim())
+    params.set('limit', String(prizeSearchLimit))
+    params.set('offset', String(page * prizeSearchLimit))
+    params.set('active', '1')
+    params.set('includeAvailability', '1')
+    // 直付场景：只显示卡密奖品 + 占用判定；普通抽奖：默认启用奖品
+    if (form.value.activityKind === 'claim' && form.value.experienceType === 'flash_sale') {
+      params.set('prizeType', 'code')
+      params.set('directSaleDrawId', form.value.id || 'new')
+    }
+    const data = await adminRequest<{ prizes: any[]; total: number }>(`/api/admin/prizes?${params.toString()}`)
+    if (seq !== prizeSearchSeq) return // 过期请求丢弃
+    prizeSearchResults.value = data.prizes || []
+    prizeSearchTotal.value = data.total || 0
+    prizeSearchPage.value = page
+    // 合并到 prizeMap，供奖项行摘要显示
+    for (const p of prizeSearchResults.value) prizeMap.value[p.id] = p
+  } catch {
+    if (seq === prizeSearchSeq) prizeSearchResults.value = []
+  } finally {
+    if (seq === prizeSearchSeq) prizeSearchLoading.value = false
+  }
+}
+
+/** 选择奖品并绑定到当前奖项行 */
+function selectPrize(prize: any) {
+  const idx = prizePickerIdx.value
+  if (idx >= 0 && form.value.tiers[idx]) {
+    form.value.tiers[idx].prizeId = prize.id
+    if (!form.value.tiers[idx].tierName) {
+      form.value.tiers[idx].tierName = prize.name || ''
+    }
+    prizeMap.value[prize.id] = prize
+  }
+  prizePickerOpen.value = false
+}
+
+/** 关闭选择器 */
+function closePrizePicker() {
+  prizePickerOpen.value = false
+}
+
+/** 搜索防抖（docs/225 P0：输入防抖 + 竞态防护） */
+let prizeSearchTimer: ReturnType<typeof setTimeout> | null = null
+function onPrizeSearchInput() {
+  if (prizeSearchTimer) clearTimeout(prizeSearchTimer)
+  prizeSearchTimer = setTimeout(() => {
+    prizeSearchPage.value = 0
+    searchPrizes(0)
+  }, 300)
+}
+
+/** 按 ids 回填已绑定奖品（编辑旧活动时，即使奖品已停用/不在当前页也要显示名称） */
+async function loadBoundPrizes(ids: string[]) {
+  const valid = ids.filter(Boolean)
+  if (valid.length === 0) return
+  try {
+    const data = await adminRequest<{ prizes: any[] }>(`/api/admin/prizes?ids=${encodeURIComponent(valid.join(','))}&includeAvailability=1`)
+    for (const p of data.prizes || []) prizeMap.value[p.id] = p
+  } catch { /* 回填失败不阻塞编辑 */ }
+}
+
+/** 奖项行已绑定奖品摘要（名称 + 价值 + 库存） */
+function tierPrizeSummary(tier: any): { name: string; valueText: string; availableCount: number | null; active: boolean } | null {
+  if (!tier?.prizeId) return null
+  const p = prizeMap.value[tier.prizeId]
+  if (!p) return null
+  return {
+    name: p.name || '',
+    valueText: p.valueText || '',
+    availableCount: p.availableCount == null ? null : Number(p.availableCount),
+    active: Number(p.active ?? 1) === 1,
+  }
+}
 
 const flashSaleDirectChecklist = computed(() => {
   return buildFlashSaleDirectChecklist({
@@ -3687,16 +3845,8 @@ function applyTemplate(tpl: any) {
   if (tpl.id === 'vote-pick') {
     // defaultActivityConfigForKind 已预设「选项 A」和「选项 B」2 个选项
   }
-  // 若奖品库已有可用奖品，自动挂到第一奖项，减少一次点击（不创建新奖品，避免脏数据）
-  if (kind === 'lottery' && prizeOptions.value.length > 0 && form.value.tiers[0] && !form.value.tiers[0].prizeId) {
-    const first = prizeOptions.value[0]
-    if (first?.id) {
-      form.value.tiers[0].prizeId = first.id
-      if (!form.value.tiers[0].tierName) {
-        form.value.tiers[0].tierName = first.name || t('lottery.adminTierName', { n: 1 })
-      }
-    }
-  }
+  // docs/225 P0：模板不再自动绑定任何奖品——「最新创建」不等于「适用」，自动绑定可能选到
+  // 停用/空码池/被占用/名称不符的奖品，造成误配置。奖品绑定必须由运营者显式确认。
   isEditing.value = false
   // 套模板创建非编辑：不残留「已设密码」提示
   editingHasAccessPassword.value = false
@@ -4194,6 +4344,8 @@ async function handleEdit(draw: LotteryDraw) {
     flashSalePricingTiers: growth.flashSalePricingTiers || [],
   }
   isEditing.value = true
+  // docs/225 P0：按 ids 回填已绑定奖品（即使停用/不在当前页也要显示名称）
+  loadBoundPrizes(tiers.map(t => t.prizeId))
   // 回填未中奖自动发券开关状态
   initLoserRewardFromConfig()
   // 编辑已设访问密码的 password 活动：表单内提示「留空保持不变」，
@@ -4567,6 +4719,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopWinnersStatusPolling()
+  if (prizeSearchTimer) clearTimeout(prizeSearchTimer)
   window.removeEventListener('scroll', onMoreMenuScroll, true)
   window.removeEventListener('resize', onMoreMenuResize)
   window.removeEventListener('keydown', onMoreMenuKeydown)
