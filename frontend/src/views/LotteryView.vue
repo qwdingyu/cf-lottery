@@ -66,6 +66,17 @@
               <span v-if="resultModeLabel(draw)" class="lottery-tag mode">{{ resultModeLabel(draw) }}</span>
               <span v-if="myWonById[draw.id]" class="lottery-tag won">🎉 {{ $t('lottery.wonTag') }}</span>
               <span v-else-if="isDrawJoined(draw)" class="lottery-tag joined">{{ $t('lottery.joined') }}</span>
+              <span
+                v-if="isInstantLottery(draw) && isDrawJoined(draw) && spinsLeftById[draw.id] != null"
+                class="lottery-tag spins"
+                role="status"
+                aria-live="polite"
+              >
+                {{ $t('lottery.spinsLeftHint', {
+                  left: spinsLeftById[draw.id],
+                  max: draw.maxSpinsPerEntry || spinsLeftById[draw.id],
+                }) }}
+              </span>
               <span v-if="draw.entryCount != null" class="lottery-tag count">{{ $t('lottery.drawCount', { count: draw.entryCount }) }}</span>
             </div>
           </div>
@@ -296,7 +307,7 @@
             <component
               :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
               :key="draw.id"
-              :prizes="shellPrizesFor(draw)"
+              :prizes="gamePrizesFor(draw)"
               :disabled="gameDisabled(draw)"
               :loading="joiningId === draw.id || spinningId === draw.id"
               :celebrate-key="celebrateKeyById[draw.id] || 0"
@@ -305,17 +316,8 @@
               :start-at="draw.startAt || draw.startTime || null"
               :end-at="draw.endAt || draw.endTime || null"
               @play="handleGamePlay(draw)"
+              @animation-complete="handleGameAnimationComplete(draw)"
             />
-            <!-- instant：剩余次数提示（docs/116） -->
-            <p
-              v-if="isInstantLottery(draw) && isDrawJoined(draw) && spinsLeftById[draw.id] != null"
-              class="lottery-spins-hint"
-            >
-              {{ $t('lottery.spinsLeftHint', {
-                left: spinsLeftById[draw.id],
-                max: draw.maxSpinsPerEntry || spinsLeftById[draw.id],
-              }) }}
-            </p>
           </div>
           <!--
             055a P1：有游戏壳时，游戏区即主 CTA（@play → handleJoin），底部不再放第二颗「参与」避免双入口。
@@ -1150,7 +1152,10 @@ import {
   publicStatusTagI18nKey,
   resultModeTagI18nKey,
 } from './lottery/public-helpers'
-import { buildPublicPrizeShellPayload } from './lottery/prize-shell-display'
+import {
+  buildPublicPrizeShellPayload,
+  withInstantWheelMissSector,
+} from './lottery/prize-shell-display'
 import {
   buildFlashSaleMerchCard,
   buildFlashSalePurchaseSummary,
@@ -1369,6 +1374,10 @@ function ambienceMsForDraw(drawId: string): number {
   return ambienceMsForExperience(draw?.experienceType, draw?.participationMode)
 }
 
+function usesWheelAnimation(draw: LotteryDraw | null | undefined): boolean {
+  return (draw?.experienceType || defaultExperienceForParticipation(draw?.participationMode || 'open')) === 'wheel'
+}
+
 /** 清除待展示的结果弹窗定时器（新成功 / 卸载） */
 function clearResultModalTimer() {
   if (resultModalTimer != null) {
@@ -1558,20 +1567,31 @@ function completeJoinSuccess(
     ...celebrateKeyById.value,
     [joinedDrawId]: (celebrateKeyById.value[joinedDrawId] || 0) + 1,
   }
-  showToast(
-    data.outcome?.resultLabel
-      ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel })
-      : t('lottery.joinSuccess'),
-  )
   closeLogin()
   joinAccessPassword.value = ''
   joinInviteCode.value = ''
+  const isWheel = usesWheelAnimation(draw)
+  if (isWheel) {
+    pendingAnimationById.value = {
+      ...pendingAnimationById.value,
+      [joinedDrawId]: { kind: 'join', outcomeLabel: data.outcome?.resultLabel },
+    }
+  }
   // 延迟出弹窗：让 celebrate 动效可见；短路径（submit/form）仍立即展示
   clearResultModalTimer()
   const delayMs = ambienceMsForDraw(joinedDrawId)
+  if (isWheel) {
+    // WheelGame 在动画结束时回调，避免提示早于视觉反馈。
+    return
+  }
   if (delayMs <= 0) {
     showResult.value = true
   } else {
+    showToast(
+      data.outcome?.resultLabel
+        ? t('lottery.joinSuccessWithOutcome', { outcome: data.outcome.resultLabel })
+        : t('lottery.joinSuccess'),
+    )
     resultModalTimer = setTimeout(() => {
       resultModalTimer = null
       showResult.value = true
@@ -1669,10 +1689,15 @@ async function handleInstantSpin(draw: LotteryDraw, opts?: { codeOverride?: stri
       myWonById.value = { ...myWonById.value, [draw.id]: true }
     }
 
-    // 先 spin 成功 → 再停扇（有 prizeIndex 时对准）
+    // 先 spin 成功 → 再停扇：中奖对准服务端 prizeIndex；未中奖固定停“谢谢参与”。
+    const targetSector = won && Number.isFinite(prizeIndex) && prizeIndex >= 0
+      ? prizeIndex
+      : usesWheelAnimation(draw)
+        ? gamePrizesFor(draw).length - 1
+        : null
     targetSectorById.value = {
       ...targetSectorById.value,
-      [draw.id]: Number.isFinite(prizeIndex) ? prizeIndex : null,
+      [draw.id]: targetSector,
     }
     celebrateKeyById.value = {
       ...celebrateKeyById.value,
@@ -1684,15 +1709,24 @@ async function handleInstantSpin(draw: LotteryDraw, opts?: { codeOverride?: stri
       outcomeLabel: won ? (data.prizeName || data.tierName || t('lottery.won')) : t('lottery.thanksForParticipating'),
     })
 
-    showToast(
-      won
-        ? t('lottery.spinWon', { prize: data.prizeName || data.tierName || '' })
-        : t('lottery.spinMiss'),
-      won ? 'success' : 'info',
-    )
+    const isWheel = usesWheelAnimation(draw)
+    if (isWheel) {
+      pendingAnimationById.value = {
+        ...pendingAnimationById.value,
+        [draw.id]: { kind: 'spin', won, prizeName: data.prizeName || data.tierName || '' },
+      }
+    } else {
+      showToast(
+        won
+          ? t('lottery.spinWon', { prize: data.prizeName || data.tierName || '' })
+          : t('lottery.spinMiss'),
+        won ? 'success' : 'info',
+      )
+    }
 
     // 延迟打开查结果弹窗（带 spins/wins）
     clearResultModalTimer()
+    if (isWheel) return
     resultModalTimer = setTimeout(() => {
       resultModalTimer = null
       openMyResult(draw)
@@ -1705,6 +1739,34 @@ async function handleInstantSpin(draw: LotteryDraw, opts?: { codeOverride?: stri
   } finally {
     if (spinningId.value === draw.id) spinningId.value = ''
   }
+}
+
+function handleGameAnimationComplete(draw: LotteryDraw) {
+  const pending = pendingAnimationById.value[draw.id]
+  if (!pending) return
+
+  const next = { ...pendingAnimationById.value }
+  delete next[draw.id]
+  pendingAnimationById.value = next
+
+  if (pending.kind === 'join') {
+    showToast(
+      pending.outcomeLabel
+        ? t('lottery.joinSuccessWithOutcome', { outcome: pending.outcomeLabel })
+        : t('lottery.joinSuccess'),
+    )
+    showResult.value = true
+    return
+  }
+
+  showToast(
+    pending.won
+      ? t('lottery.spinWon', { prize: pending.prizeName || '' })
+      : t('lottery.spinMiss'),
+    pending.won ? 'success' : 'info',
+  )
+  openMyResult(draw)
+  if (registeredToken.value || sessionEmail.value) void queryMyResult()
 }
 /**
  * docs/084：业务 JWT = 强会话（registered / open+JWT 免 OTP，可一键查）。
@@ -1896,6 +1958,11 @@ const spinningId = ref('')
  * Wheel/Slot/Grid 等 watch celebrateKey 再播动画，避免「未验证先转盘」。
  */
 const celebrateKeyById = ref<Record<string, number>>({})
+type PendingAnimation =
+  | { kind: 'join'; outcomeLabel?: string }
+  | { kind: 'spin'; won: boolean; prizeName?: string }
+/** 大转盘在动画结束前暂存反馈，避免 toast/弹窗早于转盘停稳。 */
+const pendingAnimationById = ref<Record<string, PendingAnimation>>({})
 /** instant：spin 成功后的停扇索引（与 celebrateKey 同步） */
 const targetSectorById = ref<Record<string, number | null>>({})
 /** instant：各活动剩余可抽次数（join/spin/my-result 回填） */
@@ -3283,6 +3350,16 @@ function shellPrizesFor(draw: LotteryDraw) {
   if (shell.shellPrizeItems.length > 0) return shell.shellPrizeItems
   // 无 prizes 的非 lottery 壳：中性占位，避免空盘与「奖品」硬编码
   return [{ name: t('lottery.shellPlaceholder'), color: '', imageUrl: '', valueText: '' }]
+}
+
+/**
+ * 即时大转盘追加固定“谢谢参与”扇区。
+ * 真实中奖 prizeIndex 仍对应原奖品索引；未中奖只允许停到追加项。
+ */
+function gamePrizesFor(draw: LotteryDraw) {
+  const items = shellPrizesFor(draw)
+  if (!isInstantLottery(draw) || !usesWheelAnimation(draw)) return items
+  return withInstantWheelMissSector(items, t('lottery.thanksForParticipating'))
 }
 
 /** 奖池条条目；hidden 返回 [] */

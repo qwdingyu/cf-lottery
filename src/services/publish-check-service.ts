@@ -470,7 +470,17 @@ async function validateParticipation(db: DbType, tenantId: string, draw: Lottery
 }
 
 async function validateLotteryPrizes(db: DbType, tenantId: string, draw: LotteryDraw, result: PublishCheckResult) {
-  if (draw.activityKind !== "lottery") return;
+  if (draw.activityKind !== "lottery") {
+    if (String(draw.experienceType || "").trim().toLowerCase() === "wheel") {
+      add(
+        result.errors,
+        "basic",
+        "basic.experience.wheel_requires_lottery",
+        "大转盘体验只适用于抽奖活动（activity_kind=lottery）；领取、秒杀、问卷、投票等活动请使用对应体验",
+      );
+    }
+    return;
+  }
 
   const isInstant = isInstantResultMode(draw.resultMode);
   const maxSpins = Number((draw as { maxSpinsPerEntry?: number }).maxSpinsPerEntry ?? 0);
@@ -533,7 +543,16 @@ async function validateLotteryPrizes(db: DbType, tenantId: string, draw: Lottery
     }
 
     if (!String(tier.valueText || "").trim()) {
-      add(result.infos, "prizes", "prizes.value.empty", `奖品"${tier.prizeName}"未填写价值展示文案`);
+      if (isInstant && String(draw.experienceType || "").trim().toLowerCase() === "wheel") {
+        add(
+          result.warnings,
+          "prizes",
+          "prizes.instant_wheel.value_required",
+          `即时大转盘奖品"${tier.prizeName}"未填写权益/价值说明；若用户无法理解奖品内容，请改用普通领取/结果展示体验`,
+        );
+      } else {
+        add(result.infos, "prizes", "prizes.value.empty", `奖品"${tier.prizeName}"未填写价值展示文案`);
+      }
     }
 
     if (tier.prizeType === "code") {

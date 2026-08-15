@@ -14,6 +14,7 @@
  * - `loading`：请求进行中，文案「提交中」；允许**轻量 idle**（慢转/晃动/脉冲）给即时反馈，
  *   **不要**用 loading 驱动「假装开奖」的长庆祝动画（那是 celebrateKey 的职责）
  * - `celebrateKey`：参与成功后递增；组件 watch 后播放诚实的「参与氛围」动效
+ * - `animation-complete`：氛围动画结束后通知父组件，父组件再展示成功/结果提示
  * - 动画**不得**在无服务端结果时宣称为个人中奖
  *
  * ## 新增游戏步骤
@@ -87,4 +88,6 @@ export interface GameProps {
 export interface GameEmits {
   /** 用户触发参与意图，父组件负责身份与 join API */
   play: []
+  /** 服务端确认成功后的氛围动画完成，父组件可安全展示结果提示 */
+  'animation-complete': []
 }

@@ -750,7 +750,7 @@
                   <label :class="showPrizeShellSelector ? '' : 'field-span-2'">
                     <span>{{ $t('lottery.adminExperienceType') }}</span>
                     <select v-model="form.experienceType" :disabled="editLocked" @change="handleExperienceChange">
-                      <option value="wheel">{{ $t('lottery.adminExpWheel') }}</option>
+                      <option value="wheel" :disabled="form.activityKind !== 'lottery'">{{ $t('lottery.adminExpWheel') }}</option>
                       <option value="slot">{{ $t('lottery.adminExpSlot') }}</option>
                       <option value="scratch">{{ $t('lottery.adminExpScratch') }}</option>
                       <option value="card">{{ $t('lottery.adminExpCard') }}</option>

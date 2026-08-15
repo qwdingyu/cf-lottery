@@ -1579,6 +1579,7 @@ export default {
         hints: [
           "Set maxSpinsPerEntry (≥1)",
           "Tiers need weight>0 and quotas; keep enough code stock for code prizes",
+          "Each sector must describe a benefit users understand; do not use the wheel for raw codes with unknown value or purpose",
           "Do not use “Draw now / Scheduled draw” — results come from user spins",
           "With referral on, successful invites add spins (double-capped); leaderboard still counts invites",
         ],

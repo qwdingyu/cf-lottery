@@ -6,9 +6,21 @@ import {
   parseExperienceShellConfig,
   resolvePrizePanelMode,
   sanitizeRitualPhrases,
+  withInstantWheelMissSector,
 } from './prize-shell-display'
 
 describe('prize-shell-display (frontend)', () => {
+  it('即时大转盘在真实奖品末尾追加固定未中奖扇区且不改变原索引', () => {
+    const prizes = [
+      { name: '一等奖', imageUrl: 'a.png', valueText: '100 元' },
+      { name: '二等奖', imageUrl: 'b.png', valueText: '50 元' },
+    ]
+    const result = withInstantWheelMissSector(prizes, '谢谢参与')
+    expect(result.map((item) => item.name)).toEqual(['一等奖', '二等奖', '谢谢参与'])
+    expect(result[0]).toEqual(prizes[0])
+    expect(result[1]).toEqual(prizes[1])
+  })
+
   it('与后端契约：auto 模式分支', () => {
     expect(resolvePrizePanelMode('instant', 'auto')).toBe('full_on_shell')
     expect(resolvePrizePanelMode('manual', 'auto')).toBe('shell_ritual_pool_full')

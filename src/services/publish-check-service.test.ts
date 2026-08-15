@@ -219,6 +219,16 @@ describe("发布预检 — 奖项与码池", () => {
 });
 
 describe("发布预检 — instant 结果机闸门", () => {
+  it("非 lottery 活动误配 wheel 时阻断发布", async () => {
+    const draw = makeDraw({
+      activityKind: "claim",
+      experienceType: "wheel",
+      resultMode: "instant",
+    });
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.errors.some((item) => item.code === "basic.experience.wheel_requires_lottery")).toBe(true);
+  });
+
   it("instant 缺 maxSpinsPerEntry 阻断", async () => {
     const draw = makeDraw({
       resultMode: "instant",
@@ -280,6 +290,23 @@ describe("发布预检 — instant 结果机闸门", () => {
     expect(goodResult.errors.some((item) => item.code === "prizes.instant.weight_required")).toBe(false);
     expect(goodResult.errors.some((item) => item.code === "basic.instant.scheduled_forbidden")).toBe(false);
     expect(goodResult.canPublish).toBe(true);
+  });
+
+  it("即时大转盘奖品缺少权益说明时给出发布可见警告", async () => {
+    const draw = makeDraw({
+      resultMode: "instant",
+      experienceType: "wheel",
+      drawTrigger: "manual",
+      maxSpinsPerEntry: 1,
+    });
+    await addManualTier(draw.id);
+    await client.execute({
+      sql: "UPDATE lottery_prize_tiers SET weight = 1 WHERE draw_id = ?",
+      args: [draw.id],
+    });
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.warnings.some((item) => item.code === "prizes.instant_wheel.value_required")).toBe(true);
   });
 
   it("lottery + 直付秒杀（paymentRequired）阻断，任何 resultMode 均不允许", async () => {

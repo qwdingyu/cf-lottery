@@ -203,6 +203,34 @@ export type PublicShellServerFields = {
   prizePoolDisplay?: string | null
 }
 
+export type WheelShellItem = {
+  name: string
+  color?: string
+  imageUrl?: string
+  valueText?: string
+}
+
+/**
+ * 即时大转盘固定追加未中奖扇区。
+ *
+ * 服务端中奖索引从 0 开始，未中奖返回 prizeIndex=-1。追加到末尾不会改变
+ * 真实奖品索引，同时避免未中奖时随机停在真实奖品上造成假中奖暗示。
+ */
+export function withInstantWheelMissSector(
+  items: WheelShellItem[],
+  missLabel: string,
+): WheelShellItem[] {
+  return [
+    ...items,
+    {
+      name: String(missLabel || '').trim() || '·',
+      color: '',
+      imageUrl: '',
+      valueText: '',
+    },
+  ]
+}
+
 /**
  * 组装公开页壳/奖池展示。优先信任服务端已解析字段（单一真相），本地仅作兜底。
  */

@@ -6,7 +6,7 @@
     </div>
     <!-- 转盘 -->
     <canvas ref="wheelCanvasRef" class="wheel-canvas" :width="canvasSize * dpr" :height="canvasSize * dpr" />
-    <!-- 指针按钮：点击只发 play；旋转仅在 celebrateKey 递增后 -->
+    <!-- 指针按钮：点击只发 play；旋转仅在服务端确认后由 celebrateKey 触发 -->
     <div
       class="wheel-pointer-wrap"
       role="button"
@@ -254,6 +254,7 @@ async function runCelebrateSpin() {
     drawWheel(finalRot)
     if (wheelCanvasRef.value) wheelCanvasRef.value.dataset.rot = String(finalRot)
     spinning.value = false
+    emit('animation-complete')
     return
   }
 
@@ -271,6 +272,7 @@ async function runCelebrateSpin() {
     requestAnimationFrame(tick)
   })
   spinning.value = false
+  emit('animation-complete')
 }
 
 watch(() => props.prizes, (list) => {
