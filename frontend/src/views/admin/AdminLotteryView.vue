@@ -1333,7 +1333,7 @@
                           <span v-if="!tierPrizeSummary(tier)!.active" class="tier-prize-inactive">{{ $t('lottery.adminPrizeInactive') }}</span>
                         </div>
                       </template>
-                      <button type="button" class="btn btn-ghost btn-xs" :disabled="creating" @click="openPrizePicker(idx)">
+                      <button type="button" class="btn btn-ghost btn-xs" :disabled="creating" @click="openPrizePicker(idx, $event)">
                         {{ tierPrizeSummary(tier) ? $t('lottery.adminChangePrize') : $t('lottery.adminSelectPrize') }}
                       </button>
                     </div>
@@ -1416,31 +1416,42 @@
                   <!-- docs/225 P0：服务端搜索奖品选择器面板（Teleport 到 body，避免被 modal 裁剪） -->
                   <Teleport to="body">
                     <div v-if="prizePickerOpen" class="prize-picker-overlay" @click.self="closePrizePicker">
-                      <div class="prize-picker-panel" role="dialog" aria-modal="true">
+                      <div
+                        class="prize-picker-panel"
+                        role="dialog"
+                        aria-modal="true"
+                        :aria-label="$t('lottery.adminSelectPrize')"
+                        @keydown.esc.prevent.stop="closePrizePicker"
+                      >
                         <div class="prize-picker-head">
                           <input
+                            ref="prizePickerSearchInput"
                             v-model="prizeSearchQuery"
                             type="text"
                             :placeholder="$t('lottery.adminSearchPrize')"
+                            :aria-label="$t('lottery.adminSearchPrize')"
                             @input="onPrizeSearchInput"
                           />
-                          <button type="button" class="btn btn-ghost btn-xs" @click="closePrizePicker">✕</button>
+                          <button type="button" class="btn btn-ghost btn-xs" :aria-label="$t('lottery.adminClose')" :title="$t('lottery.adminClose')" @click="closePrizePicker">✕</button>
                         </div>
                         <div v-if="prizeSearchLoading" class="prize-picker-loading">{{ $t('lottery.loadingText') }}</div>
                         <ul v-else class="prize-picker-list">
                           <li
                             v-for="p in prizeSearchResults"
                             :key="p.id"
-                            :class="{ 'is-ineligible': p.directSaleConflict === true }"
-                            @click="!p.directSaleConflict && selectPrize(p)"
                           >
-                            <div class="prize-picker-item">
+                            <button
+                              type="button"
+                              class="prize-picker-option"
+                              :disabled="p.directSaleConflict === true"
+                              @click="selectPrize(p)"
+                            >
                               <span class="prize-picker-name">{{ p.name }}</span>
                               <span v-if="p.valueText" class="prize-picker-value">{{ p.valueText }}</span>
                               <span class="prize-picker-type">{{ p.prizeType === 'code' ? $t('lottery.adminPrizeTypeCode') : $t('lottery.adminPrizeTypeManual') }}</span>
                               <span v-if="p.availableCount != null" class="prize-picker-stock">{{ $t('lottery.adminPrizeAvailable', { n: p.availableCount }) }}</span>
                               <span v-if="p.directSaleConflict" class="prize-picker-ineligible">{{ $t('lottery.adminPrizeSharedCodePool') }}</span>
-                            </div>
+                            </button>
                           </li>
                           <li v-if="prizeSearchResults.length === 0 && !prizeSearchLoading" class="prize-picker-empty">
                             {{ $t('lottery.adminNoPrizeMatch') }}
@@ -2649,14 +2660,19 @@ const prizeSearchPage = ref(0)
 const prizeSearchLoading = ref(false)
 const prizeSearchLimit = 20
 let prizeSearchSeq = 0 // 竞态防护：忽略过期搜索结果
+const prizePickerSearchInput = ref<HTMLInputElement>()
+let prizePickerTrigger: HTMLElement | null = null
 
 /** 打开奖品选择器（docs/225 P0：服务端检索 + 分页 + 业务摘要，替换原生下拉框） */
-function openPrizePicker(idx: number) {
+async function openPrizePicker(idx: number, event?: MouseEvent) {
+  prizePickerTrigger = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null
   prizePickerIdx.value = idx
   prizePickerOpen.value = true
   prizeSearchQuery.value = ''
   prizeSearchPage.value = 0
-  searchPrizes(0)
+  void searchPrizes(0)
+  await nextTick()
+  prizePickerSearchInput.value?.focus()
 }
 
 /** 服务端搜索奖品（防抖 + 竞态防护） */
@@ -2699,12 +2715,22 @@ function selectPrize(prize: any) {
     }
     prizeMap.value[prize.id] = prize
   }
-  prizePickerOpen.value = false
+  closePrizePicker()
 }
 
 /** 关闭选择器 */
 function closePrizePicker() {
+  // 让关闭后才返回的旧请求失效，避免下次打开时短暂显示上次搜索结果。
+  prizeSearchSeq += 1
+  if (prizeSearchTimer) {
+    clearTimeout(prizeSearchTimer)
+    prizeSearchTimer = null
+  }
   prizePickerOpen.value = false
+  prizePickerIdx.value = -1
+  const trigger = prizePickerTrigger
+  prizePickerTrigger = null
+  void nextTick(() => trigger?.focus())
 }
 
 /** 搜索防抖（docs/225 P0：输入防抖 + 竞态防护） */
