@@ -2792,7 +2792,9 @@ const flashSaleDirectChecklist = computed(() => {
     // after_win CTA 也是后端认可的导流落地页（promotion.ctas.after_win.url）
     afterWin: form.value.enableAfterWinCta ? { url: form.value.afterWinCtaUrl } : undefined,
     tiers: form.value.tiers,
-    prizeOptions: prizeOptions.value,
+    // prizeOptions 仅是首屏目录，prizeMap 还包含服务端搜索/旧活动回填的奖品。
+    // 合并后清单才能正确识别“从第 2 页以后选择的卡密奖品”；纯函数内部再按 id 去重。
+    prizeOptions: [...prizeOptions.value, ...Object.values(prizeMap.value)],
   })
 })
 

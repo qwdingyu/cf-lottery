@@ -61,6 +61,9 @@ export function isSafeHttpUrl(value: unknown): boolean {
     const url = new URL(value.trim())
     if (!['http:', 'https:'].includes(url.protocol)) return false
     if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') return false
+    // 与后端 isSafeHttpUrl 对齐：带凭据的链接容易在日志、分享消息或浏览器历史中泄露账号密码，
+    // 不能作为活动导流地址。此前前端误判为可用，直到发布预检才会失败。
+    if (url.username || url.password) return false
     if (url.href.length > 2000) return false
     return true
   } catch {
@@ -76,11 +79,18 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
   // 与后端 publish-check（validateFlashSalePayment）保持一致：
   // ① 仅直付模式（paymentRequired=true）要求恰好绑定 1 个 active 卡密奖品（发卡目标）；
   // ② 导流模式（不直付）不要求卡密奖品（后端不检查，用户无需绑定）。
-  const selectedCodePrizeCount = (input.prizeOptions || []).filter((prize) =>
-    selectedPrizeIds.has(prize.id)
-    && String(prize.prizeType || '').trim() === 'code'
-    && Number(prize.active) !== 0,
-  ).length
+  // 奖品选择器是服务端分页搜索，当前已选奖品可能不在初始第一页。
+  // 调用方会合并初始列表和已选奖品缓存；这里仍按 id 去重，避免同一奖品在两处出现时被误判为“绑定多个卡密池”。
+  const selectedCodePrizeIds = new Set(
+    (input.prizeOptions || [])
+      .filter((prize) =>
+        selectedPrizeIds.has(prize.id)
+        && String(prize.prizeType || '').trim() === 'code'
+        && Number(prize.active) !== 0,
+      )
+      .map((prize) => String(prize.id)),
+  )
+  const selectedCodePrizeCount = selectedCodePrizeIds.size
   const needCodePrize = input.enableFlashSale === true && isDirect
 
   // 导流 URL 检查：productLink.url / destination.url / after_win.url 任一为安全 http(s) 即可。
@@ -92,8 +102,8 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
     isSafeHttpUrl(input.destination?.url) ||
     isSafeHttpUrl(input.afterWin?.url)
 
-  // 红线：lottery + 直付秒杀 → 后端 promotion.lottery_payment.conflict 必拒（docs/166）。
-  // lottery 的 performDraw 不校验 entry.paymentStatus，未付款用户也会进候选池被抽中（白嫖卡密）。
+  // 红线：lottery + 直付秒杀 → 后端 promotion.lottery_payment.conflict 必拒（docs/222）。
+  // 历史开奖执行虽额外过滤未付款参与者，但抽奖开奖与付款即履约是两套结果和库存归属模型。
   const lotteryPaymentConflict =
     input.activityKind === 'lottery' && isDirect
 
@@ -104,8 +114,7 @@ export function buildFlashSaleDirectChecklist(input: FlashSaleDirectChecklistInp
       key: 'lotteryPaymentConflict',
       done: false,
       error: true,
-      // 与后端 code 对齐的前端稳定标识（前缀 flash_sale 表意所在清单域）
-      code: 'flash_sale.lottery_payment_conflict',
+      code: 'promotion.lottery_payment.conflict',
       labelKey: 'adminFlashSaleChecklistLotteryConflict',
     })
   }

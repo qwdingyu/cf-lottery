@@ -86,6 +86,25 @@ describe('flash-sale-readiness', () => {
     }).codePrize).toBe(true)
   })
 
+  it('导流链接带账号或密码时视为不安全，与后端发布门禁一致', () => {
+    expect(isSafeHttpUrl('https://operator:secret@shop.example.com/item')).toBe(false)
+    expect(isSafeHttpUrl('https://shop.example.com/item')).toBe(true)
+  })
+
+  it('同一卡密奖品同时来自目录和已选缓存时按一个奖品池计算', () => {
+    expect(doneMap({
+      enableFlashSale: true,
+      flashSalePaymentRequired: true,
+      flashSalePriceCents: 990,
+      flashSaleStockLimit: 10,
+      tiers: [{ prizeId: 'code-1' }],
+      prizeOptions: [
+        { id: 'code-1', prizeType: 'code', active: 1 },
+        { id: 'code-1', prizeType: 'code', active: 1 },
+      ],
+    }).codePrize).toBe(true)
+  })
+
   it('非 active 卡密奖品不计入 codePrize 检查——与后端 publish-check 一致（b6bd932）', () => {
     // 绑定 1 个 inactive 卡密 + 1 个 active 非卡密：直付模式应视为未绑定可用卡密
     expect(doneMap({
@@ -148,7 +167,7 @@ describe('flash-sale-readiness', () => {
     expect(conflict).toBeDefined()
     expect(conflict!.error).toBe(true)
     expect(conflict!.done).toBe(false)
-    expect(conflict!.code).toBe('flash_sale.lottery_payment_conflict')
+    expect(conflict!.code).toBe('promotion.lottery_payment.conflict')
   })
 
   it('非 lottery（claim 直付）不产生冲突条目——与后端 claim 豁免一致（3a）', () => {
