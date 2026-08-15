@@ -191,12 +191,12 @@ describe("PR: Prize CRUD (admin-lottery-prizes.ts)", () => {
       const base = Date.now();
       for (let i = 0; i < count; i++) {
         const id = crypto.randomUUID();
-        // createdAt 递增：ids[0] 最新（排最前），ids[count-1] 最旧（排最后，不在第一页）
+        // createdAt 递减：ids[0] 最新（desc 排最前），ids[count-1] 最旧（排最后，不在第一页）
         await db.insert(prizes).values({
           id, tenantId, name: `奖品-${i}`, prizeType: "code",
           description: "", imageUrl: "", valueText: `价值-${i}`, fulfillmentNote: "",
           totalCount: 0, usedCount: 0, active: 1,
-          createdAt: new Date(base + i).toISOString(),
+          createdAt: new Date(base - i).toISOString(),
         });
         ids.push(id);
       }
@@ -234,6 +234,56 @@ describe("PR: Prize CRUD (admin-lottery-prizes.ts)", () => {
       const body = await res.json() as { prizes: Array<{ id: string; active: number }> };
       expect(body.prizes).toHaveLength(2);
       expect(body.prizes.find((p) => p.id === inactiveId)?.active).toBe(0); // 停用奖品也能回填
+    });
+
+    it("ids 回填严格限制为最多 10 个，且不能与普通筛选混用", async () => {
+      await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+      const ids = await seedPrizes(11);
+      const app = createTestApp();
+      const headers = await authHeader(OWNER_A, TENANT_A);
+
+      const tooMany = await app.request(`/api/admin/prizes?ids=${ids.join(",")}`, { headers }, TEST_ENV);
+      expect(tooMany.status).toBe(400);
+
+      const mixed = await app.request(`/api/admin/prizes?ids=${ids[0]}&active=1`, { headers }, TEST_ENV);
+      expect(mixed.status).toBe(400);
+    });
+
+    it("普通奖品目录默认保留启用和停用奖品；选择器显式 active=1", async () => {
+      await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+      const [activeId, inactiveId] = await seedPrizes(2);
+      await db.update(prizes).set({ active: 0 }).where(eq(prizes.id, inactiveId));
+      const app = createTestApp();
+      const headers = await authHeader(OWNER_A, TENANT_A);
+
+      const catalog = await app.request("/api/admin/prizes", { headers }, TEST_ENV);
+      const catalogBody = await catalog.json() as { prizes: Array<{ id: string }> };
+      expect(catalogBody.prizes.map((p) => p.id)).toEqual(expect.arrayContaining([activeId, inactiveId]));
+
+      const picker = await app.request("/api/admin/prizes?active=1", { headers }, TEST_ENV);
+      const pickerBody = await picker.json() as { prizes: Array<{ id: string }> };
+      expect(pickerBody.prizes.map((p) => p.id)).toContain(activeId);
+      expect(pickerBody.prizes.map((p) => p.id)).not.toContain(inactiveId);
+    });
+
+    it("库存只在显式请求时返回，人工履约库存必须为 null", async () => {
+      await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+      const manualPrizeId = crypto.randomUUID();
+      await db.insert(prizes).values({
+        id: manualPrizeId, tenantId: TENANT_A, name: "人工奖", prizeType: "manual_fulfillment",
+        description: "", imageUrl: "", valueText: "", fulfillmentNote: "",
+        totalCount: 0, usedCount: 0, active: 1,
+      });
+      const app = createTestApp();
+      const headers = await authHeader(OWNER_A, TENANT_A);
+
+      const catalog = await app.request("/api/admin/prizes", { headers }, TEST_ENV);
+      const catalogBody = await catalog.json() as { prizes: Array<{ id: string; availableCount?: number | null }> };
+      expect(catalogBody.prizes.find((p) => p.id === manualPrizeId)?.availableCount).toBeUndefined();
+
+      const picker = await app.request("/api/admin/prizes?includeAvailability=1", { headers }, TEST_ENV);
+      const pickerBody = await picker.json() as { prizes: Array<{ id: string; availableCount?: number | null }> };
+      expect(pickerBody.prizes.find((p) => p.id === manualPrizeId)?.availableCount).toBeNull();
     });
 
     it("直付选择器：只返回卡密奖品，并标记其他进行中活动占用的码池", async () => {
@@ -279,6 +329,36 @@ describe("PR: Prize CRUD (admin-lottery-prizes.ts)", () => {
       expect(occupied?.availableCount).toBe(0);
       // 人工履约奖品不在卡密候选（prizeType=code 过滤）
       expect(body.prizes.some((p) => p.id === manualPrizeId)).toBe(false);
+    });
+
+    it("编辑当前直付活动时不把自身已绑定的码池误判为冲突", async () => {
+      await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+      const prizeId = crypto.randomUUID();
+      const drawId = crypto.randomUUID();
+      await db.insert(prizes).values({
+        id: prizeId, tenantId: TENANT_A, name: "独立卡密奖", prizeType: "code",
+        description: "", imageUrl: "", valueText: "10元", fulfillmentNote: "",
+        totalCount: 0, usedCount: 0, active: 1,
+      });
+      await db.insert(lotteryDraws).values({
+        id: drawId, tenantId: TENANT_A, publicSlug: `self-${drawId.slice(0, 8)}`, title: "当前活动",
+        status: "open", activityKind: "claim", participationMode: "open",
+        experienceType: "flash_sale", resultMode: "instant",
+        startAt: new Date(Date.now() - 60_000).toISOString(),
+        endAt: new Date(Date.now() + 3_600_000).toISOString(),
+        winnerCount: 1, showParticipantCount: 1, showWinnerCount: 1, showWinnerList: 0, visible: 1,
+        activityConfig: "{}", promotionConfig: "{}",
+      });
+      await db.insert(lotteryPrizeTiers).values({
+        id: crypto.randomUUID(), tenantId: TENANT_A, drawId, prizeId,
+        tierName: "一等奖", winnerCount: 1, sortOrder: 1, weight: 100,
+      });
+      const app = createTestApp();
+      const headers = await authHeader(OWNER_A, TENANT_A);
+
+      const res = await app.request(`/api/admin/prizes?prizeType=code&directSaleDrawId=${drawId}`, { headers }, TEST_ENV);
+      const body = await res.json() as { prizes: Array<{ id: string; directSaleConflict: boolean }> };
+      expect(body.prizes.find((p) => p.id === prizeId)?.directSaleConflict).toBe(false);
     });
 
     it("多租户隔离：A 租户 ids 查不到 B 租户奖品", async () => {
