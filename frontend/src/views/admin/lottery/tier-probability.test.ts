@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildTierProbabilities, normalizeTierWeight, sumTierWinnerCounts, buildTierWinnerCountSummary } from './tier-probability'
+import {
+  MAX_TIER_WEIGHT,
+  buildTierProbabilities,
+  normalizeTierWeight,
+  sumTierWinnerCounts,
+  buildTierWinnerCountSummary,
+} from './tier-probability'
 
 describe('tier-probability', () => {
   it('calculates relative hit tendency from configured weights', () => {
@@ -38,8 +44,16 @@ describe('tier-probability', () => {
   })
 
   it('keeps save normalization aligned with publish/save constraints', () => {
-    expect(normalizeTierWeight(100000.9)).toBe(100000)
+    expect(normalizeTierWeight(MAX_TIER_WEIGHT + 0.9)).toBe(MAX_TIER_WEIGHT)
+    expect(normalizeTierWeight(MAX_TIER_WEIGHT + 1)).toBe(MAX_TIER_WEIGHT)
     expect(normalizeTierWeight(Number.NaN)).toBe(0)
+  })
+
+  it('caps displayed probabilities at the same weight boundary used for saving', () => {
+    expect(buildTierProbabilities([{ weight: MAX_TIER_WEIGHT * 2 }, { weight: MAX_TIER_WEIGHT }])).toEqual([
+      { weight: MAX_TIER_WEIGHT, percent: 50, label: '50%' },
+      { weight: MAX_TIER_WEIGHT, percent: 50, label: '50%' },
+    ])
   })
 
   it('sums tier winner counts with negative/empty filtered to zero', () => {

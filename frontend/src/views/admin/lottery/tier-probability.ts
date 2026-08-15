@@ -8,6 +8,9 @@ export type TierProbability = {
   label: string
 }
 
+/** 与服务端奖项保存接口一致，避免前端展示、浏览器校验与实际落库上限分叉。 */
+export const MAX_TIER_WEIGHT = 100_000
+
 /**
  * 计算即时抽奖各奖项档位的权重占比。
  *
@@ -38,7 +41,7 @@ export function buildTierProbabilities(tiers: TierWeightInput[]): TierProbabilit
 function normalizeDisplayWeight(value: number | string | null | undefined): number {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return 0
-  return Math.max(0, numeric)
+  return Math.min(MAX_TIER_WEIGHT, Math.max(0, numeric))
 }
 
 /**
@@ -48,7 +51,7 @@ function normalizeDisplayWeight(value: number | string | null | undefined): numb
 export function normalizeTierWeight(value: number | string | null | undefined): number {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return 0
-  return Math.max(0, Math.floor(numeric))
+  return Math.min(MAX_TIER_WEIGHT, Math.max(0, Math.floor(numeric)))
 }
 
 function formatTierProbability(percent: number): string {

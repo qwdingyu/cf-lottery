@@ -647,15 +647,15 @@
               <h4 id="lottery-mode-title" class="form-section-title">{{ $t('lottery.adminParticipationMode') }}</h4>
               <p class="form-section-desc">{{ $t('lottery.adminParticipationModeDesc') }}</p>
             </header>
-            <div class="form-grid two-cols">
-              <label class="field-span-2">
+            <div class="form-grid mode-summary-grid">
+              <label>
                 <span>{{ $t('lottery.adminActivityKind') }}</span>
                 <select v-model="form.activityKind" :disabled="editLocked" @change="handleActivityKindChange">
                   <option v-for="opt in activityKindOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                 </select>
                 <small class="field-hint">{{ editLocked ? $t('lottery.adminEditLiveLockHint') : $t('lottery.adminActivityKindHint') }}</small>
               </label>
-              <label class="field-span-2">
+              <label>
                 <span>{{ $t('lottery.adminParticipationMode') }}</span>
                 <select v-model="form.participationMode" :disabled="editLocked" @change="handleParticipationModeChange">
                   <option v-for="opt in participationModeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
@@ -663,7 +663,7 @@
                 <small v-if="editLocked" class="field-hint">{{ $t('lottery.adminEditLiveLockHint') }}</small>
               </label>
               <!-- 只读摘要：模板/默认体验可见，完整 13 项在高级配置中改，避免主路径术语墙 -->
-              <p class="field-span-2 experience-summary" role="status">
+              <p class="experience-summary" role="status">
                 <span class="experience-summary-label">{{ $t('lottery.adminExperienceSummaryLabel') }}</span>
                 <strong>{{ experienceTypeLabel(form.experienceType) }}</strong>
                 <button
@@ -846,19 +846,21 @@
                     </label>
                   </div>
                   <template v-if="form.enableFlashSale">
-                    <label>
-                      <span>{{ $t('lottery.adminFlashSaleCtaLabel') }}</span>
-                      <input v-model="form.flashSaleCtaLabel" maxlength="12" placeholder="抢" />
-                    </label>
-                    <label>
-                      <span>{{ $t('lottery.adminFlashSaleStockLimit') }}</span>
-                      <input v-model.number="form.flashSaleStockLimit" type="number" min="1" max="1000000" :placeholder="$t('lottery.adminFlashSaleStockPlaceholder')" />
-                      <small class="field-hint">{{ $t('lottery.adminFlashSaleStockHint') }}</small>
-                    </label>
-                    <label v-if="form.flashSaleSalesMode !== 'redirect'">
-                      <span>{{ $t('lottery.adminFlashSaleMaxPerUser') }}</span>
-                      <input v-model.number="form.flashSaleMaxPerUser" type="number" min="1" max="100" />
-                    </label>
+                    <div class="field-span-2 flash-sale-core-fields">
+                      <label>
+                        <span>{{ $t('lottery.adminFlashSaleCtaLabel') }}</span>
+                        <input v-model="form.flashSaleCtaLabel" maxlength="12" placeholder="抢" />
+                      </label>
+                      <label>
+                        <span>{{ $t('lottery.adminFlashSaleStockLimit') }}</span>
+                        <input v-model.number="form.flashSaleStockLimit" type="number" min="1" max="1000000" :placeholder="$t('lottery.adminFlashSaleStockPlaceholder')" />
+                        <small class="field-hint">{{ $t('lottery.adminFlashSaleStockHint') }}</small>
+                      </label>
+                      <label v-if="form.flashSaleSalesMode !== 'redirect'">
+                        <span>{{ $t('lottery.adminFlashSaleMaxPerUser') }}</span>
+                        <input v-model.number="form.flashSaleMaxPerUser" type="number" min="1" max="100" />
+                      </label>
+                    </div>
                     <div class="field-span-2">
                       <span class="field-label-text">{{ $t('lottery.adminFlashSaleSalesMode') }}</span>
                       <div class="sales-mode-options">
@@ -907,11 +909,6 @@
                           </RouterLink>
                         </div>
                       </div>
-                      <label>
-                        <span>{{ $t('lottery.adminFlashSalePriceYuan') }}</span>
-                        <input v-model="flashSalePriceYuan" type="number" min="0.01" step="0.01" max="1000000" placeholder="9.90" />
-                        <small>{{ $t('lottery.adminFlashSalePriceHint') }}</small>
-                      </label>
                       <template v-if="form.flashSaleSalesMode === 'direct_bulk'">
                         <div class="field-span-2 flash-sale-tier-editor">
                           <div class="flash-sale-tier-editor__head">
@@ -940,18 +937,25 @@
                         </div>
                         <small class="field-hint">{{ $t('lottery.adminFlashSalePricingTierHint') }}</small>
                       </template>
-                      <label>
-                        <span>{{ $t('lottery.adminFlashSaleCurrency') }}</span>
-                        <select v-model="form.flashSaleCurrency">
-                          <option value="cny">CNY</option>
-                          <option value="usd">USD</option>
-                          <option value="eur">EUR</option>
-                        </select>
-                      </label>
-                      <label>
-                        <span>{{ $t('lottery.adminFlashSalePaymentTitle') }}</span>
-                        <input v-model="form.flashSaleTitle" maxlength="100" />
-                      </label>
+                      <div class="field-span-2 flash-sale-payment-fields">
+                        <label>
+                          <span>{{ $t('lottery.adminFlashSalePriceYuan') }}</span>
+                          <input v-model="flashSalePriceYuan" type="number" min="0.01" step="0.01" max="1000000" placeholder="9.90" />
+                          <small>{{ $t('lottery.adminFlashSalePriceHint') }}</small>
+                        </label>
+                        <label>
+                          <span>{{ $t('lottery.adminFlashSaleCurrency') }}</span>
+                          <select v-model="form.flashSaleCurrency">
+                            <option value="cny">CNY</option>
+                            <option value="usd">USD</option>
+                            <option value="eur">EUR</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>{{ $t('lottery.adminFlashSalePaymentTitle') }}</span>
+                          <input v-model="form.flashSaleTitle" maxlength="100" />
+                        </label>
+                      </div>
                     </template>
                     <!-- docs/222 P0 预览区：展示最终生效值（可售件数/限购/价格/阶梯/支付方式） -->
                     <div v-if="form.enableFlashSale" class="field-span-2 flash-sale-preview" role="note">
@@ -1311,7 +1315,7 @@
               <div v-if="editorVisibility.tiers && needsTiersActivity(form.activityKind, form.experienceType || '')" class="field-span-2">
                 <span class="field-label-text">{{ $t('lottery.adminTierConfig') }}</span>
                 <!-- 奖项配置表头（docs/206）：与阶梯价对齐，让运营者清楚每列含义 -->
-                <div v-if="form.tiers.length > 0" class="tier-header">
+                <div v-if="form.tiers.length > 0" class="tier-header" :class="{ 'tier-grid--instant': form.resultMode === 'instant' }">
                   <span class="tier-header-prize">{{ $t('lottery.adminTierHeaderPrize') }}</span>
                   <span class="tier-header-name">{{ $t('lottery.adminTierHeaderName') }}</span>
                   <span class="tier-header-count">{{ $t('lottery.adminTierHeaderWinnerCount') }}</span>
@@ -1322,7 +1326,7 @@
                   <span class="tier-header-actions"></span>
                 </div>
                 <div class="tier-list">
-                  <div v-for="(tier, idx) in form.tiers" :key="idx" class="tier-row">
+                  <div v-for="(tier, idx) in form.tiers" :key="idx" class="tier-row" :class="{ 'tier-grid--instant': form.resultMode === 'instant' }">
                     <!-- docs/225 P0：服务端搜索选择器替换原生下拉框（避免只看到前 50 个奖品） -->
                     <div class="tier-prize-picker">
                       <template v-if="tierPrizeSummary(tier)">
@@ -1345,7 +1349,7 @@
                       type="number"
                       class="tier-count"
                       min="0"
-                      max="100000"
+                      :max="MAX_TIER_WEIGHT"
                       :placeholder="$t('lottery.adminTierWeightPlaceholder')"
                       :title="$t('lottery.adminTierWeightHint')"
                     />
@@ -1367,7 +1371,7 @@
                       </span>
                       {{ $t('lottery.adminTierProbabilityLabel') }} {{ tierProbabilities[idx]?.label || '0%' }}
                     </span>
-                    <button type="button" class="btn btn-ghost btn-xs" @click="removeTier(idx)">✕</button>
+                    <button type="button" class="btn btn-ghost btn-xs tier-remove" :aria-label="$t('lottery.adminDelete')" :title="$t('lottery.adminDelete')" @click="removeTier(idx)">✕</button>
                   </div>
                   <!-- 奖项名额合计（docs/220 优化）：开奖按各档中奖份数合计发放，与活动「中奖人数」不一致时提前提示 -->
                   <div
@@ -1525,7 +1529,7 @@
 
         <div class="lottery-editor-footer modal-actions">
           <p v-if="!isEditing && createReadinessLabel" class="create-readiness" role="status">{{ createReadinessLabel }}</p>
-          <span style="flex:1" />
+          <span class="lottery-editor-footer-spacer" aria-hidden="true" />
           <button
             type="button"
             class="btn btn-ghost btn-sm"
@@ -2097,7 +2101,12 @@ import {
   inferFlashSaleSalesMode,
   sanitizeRitualPhrasesForSave,
 } from './lottery/growth-config'
-import { buildTierProbabilities, normalizeTierWeight, buildTierWinnerCountSummary } from './lottery/tier-probability'
+import {
+  MAX_TIER_WEIGHT,
+  buildTierProbabilities,
+  normalizeTierWeight,
+  buildTierWinnerCountSummary,
+} from './lottery/tier-probability'
 import {
   isFieldScopedTemplate,
   resolveEditorFieldVisibility,

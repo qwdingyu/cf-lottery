@@ -24,9 +24,9 @@
 
 .lottery-editor-footer.modal-actions {
   flex: 0 0 auto;
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
   gap: 10px;
   margin-top: 0;
   padding-top: 12px;
@@ -38,6 +38,10 @@
 .lottery-editor-footer .btn {
   min-width: 88px;
   max-width: 100%;
+}
+
+.lottery-editor-footer-spacer {
+  min-width: 0;
 }
 
 .flash-sale-checklist {
@@ -489,72 +493,90 @@
   border-radius: 4px;
 }
 
-/* 奖项配置 */
+/* 奖项配置：表头与数据行共用网格列，避免奖品摘要高度变化后名额、权重列漂移。 */
 .tier-list { display: flex; flex-direction: column; gap: 8px; }
 .tier-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(130px, 1.5fr) minmax(80px, 0.6fr) 32px;
   gap: 8px;
-  align-items: center;
+  align-items: start;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--tg-hint, #9aa4b2);
   padding: 0 2px;
   margin-bottom: 4px;
 }
-.tier-header-prize { flex: 2; min-width: 0; }
-.tier-header-name { flex: 1.5; min-width: 0; }
-.tier-header-count { flex: 0.5; min-width: 70px; }
-.tier-header-probability { flex: 0 0 118px; text-align: right; white-space: nowrap; }
-.tier-header-actions { flex: 0 0 28px; }
-@media (max-width: 720px) {
-  .tier-header-probability { flex-basis: 100%; text-align: left; }
+.tier-grid--instant {
+  grid-template-columns: minmax(180px, 2fr) minmax(130px, 1.5fr) minmax(80px, 0.6fr) minmax(80px, 0.6fr) minmax(118px, 1fr) 32px;
 }
-.tier-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.tier-prize { flex: 2; min-width: 0; }
+.tier-header-prize,
+.tier-header-name,
+.tier-header-count,
+.tier-header-probability,
+.tier-header-actions { min-width: 0; }
+.tier-header-probability { text-align: right; white-space: nowrap; }
+.tier-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(130px, 1.5fr) minmax(80px, 0.6fr) 32px;
+  gap: 8px;
+  align-items: start;
+}
 /* docs/225 P0：服务端搜索奖品选择器（替换原生下拉框） */
-.tier-prize-picker { flex: 2; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tier-prize-picker { min-width: 0; display: grid; gap: 4px; }
 .tier-prize-summary {
   display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center;
-  font-size: 12px; padding: 4px 8px; border: 1px solid var(--border-subtle, #e8e8e8);
-  border-radius: 4px; background: var(--bg-subtle, #f8f9fa);
+  min-height: 32px; box-sizing: border-box;
+  font-size: 12px; padding: 4px 8px; border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 4px; background: var(--tg-secondary-bg, #151b28);
 }
 .tier-prize-summary.is-inactive { border-color: var(--admin-danger, #ef4444); }
-.tier-prize-name { font-weight: 600; color: var(--text-primary, #333); }
-.tier-prize-value { color: var(--text-muted, #888); }
-.tier-prize-stock { color: var(--text-muted, #888); }
+.tier-prize-name { font-weight: 600; color: var(--tg-text, #f0f2f5); }
+.tier-prize-value,
+.tier-prize-stock { color: var(--tg-hint, #9aa4b2); }
 .tier-prize-inactive { color: var(--admin-danger, #ef4444); font-weight: 600; }
 /* 选择器浮层 */
 .prize-picker-overlay {
   position: fixed; inset: 0; z-index: 2000;
-  background: rgba(0, 0, 0, 0.4); display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.58); display: flex; align-items: center; justify-content: center;
 }
 .prize-picker-panel {
   width: min(560px, 92vw); max-height: 70vh; display: flex; flex-direction: column;
-  background: var(--bg-panel, #fff); border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+  color: var(--tg-text, #f0f2f5);
+  background: var(--tg-secondary-bg, #151b28);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px; box-shadow: 0 16px 40px rgba(0,0,0,0.46);
   overflow: hidden;
 }
-.prize-picker-head { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle, #e8e8e8); }
+.prize-picker-head { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.12)); }
 .prize-picker-head input { flex: 1; }
-.prize-picker-loading { padding: 20px; text-align: center; color: var(--text-muted, #888); }
+.prize-picker-loading { padding: 20px; text-align: center; color: var(--tg-hint, #9aa4b2); }
 .prize-picker-list { flex: 1; overflow-y: auto; margin: 0; padding: 4px 0; list-style: none; }
-.prize-picker-list li { border-bottom: 1px solid var(--border-subtle, #f0f0f0); }
+.prize-picker-list li { border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08)); }
 .prize-picker-option {
   display: flex; width: 100%; flex-wrap: wrap; gap: 4px 10px; align-items: center;
-  padding: 8px 12px; border: 0; background: transparent; color: inherit; cursor: pointer;
+  padding: 9px 12px; border: 0; background: transparent; color: inherit; cursor: pointer;
   font: inherit; text-align: left;
 }
-.prize-picker-option:hover:not(:disabled), .prize-picker-option:focus-visible { background: var(--bg-subtle, #f8f9fa); }
-.prize-picker-option:focus-visible { outline: 2px solid var(--brand, #2563eb); outline-offset: -2px; }
-.prize-picker-option:disabled { cursor: not-allowed; opacity: 0.6; }
+.prize-picker-option:hover:not(:disabled), .prize-picker-option:focus-visible { background: var(--surface-hover, rgba(255, 255, 255, 0.08)); }
+.prize-picker-option:focus-visible { outline: 2px solid var(--admin-accent, #f59e0b); outline-offset: -2px; }
+/* 禁用是卡密池正在被另一进行中直付活动占用，不是前端请求失败。保留完整可读性。 */
+.prize-picker-option:disabled {
+  cursor: not-allowed;
+  opacity: 1;
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--tg-hint, #9aa4b2);
+}
 .prize-picker-name { font-weight: 600; }
-.prize-picker-value, .prize-picker-type, .prize-picker-stock { color: var(--text-muted, #888); font-size: 12px; }
+.prize-picker-option:disabled .prize-picker-name { color: var(--tg-text, #f0f2f5); }
+.prize-picker-value, .prize-picker-type, .prize-picker-stock { color: var(--tg-hint, #9aa4b2); font-size: 12px; }
 .prize-picker-ineligible { color: var(--admin-danger, #ef4444); font-size: 12px; }
-.prize-picker-empty { padding: 20px; text-align: center; color: var(--text-muted, #888); }
-.prize-picker-pagination { display: flex; gap: 8px; align-items: center; justify-content: center; padding: 8px 12px; border-top: 1px solid var(--border-subtle, #e8e8e8); font-size: 12px; }
-.tier-name { flex: 1.5; min-width: 0; }
-.tier-count { flex: 0.5; min-width: 70px; }
+.prize-picker-empty { padding: 20px; text-align: center; color: var(--tg-hint, #9aa4b2); }
+.prize-picker-pagination { display: flex; gap: 8px; align-items: center; justify-content: center; padding: 8px 12px; border-top: 1px solid var(--border, rgba(255, 255, 255, 0.12)); font-size: 12px; }
+.tier-name,
+.tier-count { min-width: 0; width: 100%; }
 .tier-probability {
-  flex: 0 0 118px;
-  color: var(--text-muted);
+  min-width: 0;
+  padding-top: 4px;
+  color: var(--tg-hint, #9aa4b2);
   font-size: 12px;
   line-height: 1.3;
   text-align: right;
@@ -567,7 +589,7 @@
   width: 100%;
   margin-bottom: 3px;
   border-radius: 2px;
-  background: var(--border-subtle, #e8e8e8);
+  background: var(--border, rgba(255, 255, 255, 0.12));
   overflow: hidden;
 }
 .tier-probability-bar-fill {
@@ -587,7 +609,7 @@
   gap: 8px;
   flex-wrap: wrap;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--tg-hint, #9aa4b2);
   padding: 4px 2px 0;
 }
 .tier-summary.is-warning {
@@ -598,8 +620,8 @@
 }
 /* 秒杀配置预览区（docs/222 P0）：展示最终生效的可售件数/限购/价格/阶梯/支付方式 */
 .flash-sale-preview {
-  background: var(--bg-subtle, #f8f9fa);
-  border: 1px solid var(--border-subtle, #e8e8e8);
+  background: var(--surface, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
   border-radius: 6px;
   padding: 10px 14px;
   font-size: 12px;
@@ -609,7 +631,7 @@
   display: block;
   margin-bottom: 6px;
   font-size: 13px;
-  color: var(--text-primary, #333);
+  color: var(--tg-text, #f0f2f5);
 }
 .flash-sale-preview-grid {
   display: flex;
@@ -626,11 +648,11 @@
   white-space: normal;
 }
 .preview-label {
-  color: var(--text-muted, #888);
+  color: var(--tg-hint, #9aa4b2);
 }
 .preview-value {
   font-weight: 600;
-  color: var(--text-primary, #333);
+  color: var(--tg-text, #f0f2f5);
 }
 /* 统一奖项配置行 select 与 input 高度，消除下拉框箭头图标多占的视觉偏移 */
 .tier-row select,
@@ -645,19 +667,13 @@
 .tier-probability.is-zero { color: var(--admin-danger, #ef4444); }
 .tier-probability-summary {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--tg-hint, #9aa4b2);
   font-size: 12px;
   line-height: 1.5;
 }
 .tier-probability-summary.is-warning { color: var(--admin-danger, #ef4444); }
-.tier-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
-
-@media (max-width: 720px) {
-  .tier-probability {
-    flex-basis: 100%;
-    text-align: left;
-  }
-}
+.tier-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+.tier-remove { min-width: 32px; padding-inline: 0; }
 
 /*
  * docs/079：操作列保持单行紧凑；「更多」用 body 浮层，不再行内展开撑高。
@@ -796,6 +812,12 @@
   margin-left: auto;
 }
 
+/* 创建主路径的三个决策维度同排：活动类型、参与方式、当前体验是独立配置，应同时可见。 */
+.mode-summary-grid {
+  grid-template-columns: minmax(170px, 1fr) minmax(170px, 1fr) minmax(190px, 0.9fr);
+  align-items: start;
+}
+
 /* 055a P1：创建路径步骤条（轻量，非 Wizard 框架） */
 .create-path-steps {
   display: flex;
@@ -873,7 +895,6 @@
 }
 
 .lottery-editor-footer.modal-actions {
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -954,6 +975,82 @@
   color: var(--tg-hint, #9ca3af);
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* 秒杀的基础销量与支付信息是一个操作组；宽屏同排，窄屏自然收缩，避免表单无意义留白。 */
+.flash-sale-core-fields,
+.flash-sale-payment-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.sales-mode-options,
+.flash-sale-show-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+@media (max-width: 860px) {
+  .mode-summary-grid,
+  .flash-sale-core-fields,
+  .flash-sale-payment-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mode-summary-grid .experience-summary {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 720px) {
+  .tier-header {
+    display: none;
+  }
+
+  .tier-row,
+  .tier-row.tier-grid--instant {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .tier-prize-picker,
+  .tier-probability {
+    grid-column: 1 / -1;
+  }
+
+  .tier-probability {
+    padding-top: 0;
+    text-align: left;
+  }
+
+  .tier-remove {
+    justify-self: end;
+  }
+
+  .mode-summary-grid,
+  .flash-sale-core-fields,
+  .flash-sale-payment-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lottery-editor-footer.modal-actions {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .create-readiness,
+  .lottery-editor-footer-spacer {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+
+  .lottery-editor-footer .btn {
+    width: 100%;
+  }
 }
 
 /* 问卷字段折叠（2026-08 打磨）：头部（label/类型）常显 + 详情可收起 */
