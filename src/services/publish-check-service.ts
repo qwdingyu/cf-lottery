@@ -745,18 +745,47 @@ async function validatePromotion(
     add(result.errors, "promotion", item.code, item.message);
   }
   if (flashParsed.config) {
-    // docs/166 红线：lottery 禁止与 paymentRequired 组合（任何 resultMode）。
-    // lottery 的 performDraw 不校验 entry.paymentStatus，所有 entry 都在候选池中；
-    // 若允许组合，未付款用户可进入候选池并被抽中（白嫖卡密），且支付回调已通过
-    // direct fulfillment 发卡，导致 double-issuance。
-    // claim 活动（activityKind=claim）的 paymentRequired 是「直付发卡」语义，
-    // 通过支付回调发卡，不涉及 performDraw / spin，不受此限。
+    // flashSale 是“限时限量销售/导流”的完整业务体验，而非任意活动可附带的展示配置。
+    // 后台会在切换活动类型时清理残留值，但旧数据、API 写入和未来导入都可能绕过前端；
+    // 因而发布前必须只允许已定义过端到端语义的 lottery（免费登记）和 claim（导流/直付）。
+    if (draw.activityKind !== "lottery" && draw.activityKind !== "claim") {
+      add(
+        result.errors,
+        "promotion",
+        "flash_sale.activity_kind.conflict",
+        "秒杀体验仅支持 lottery（免费登记）或 claim（导流/直付）活动类型；请更换活动类型或关闭秒杀配置",
+      );
+    }
+
+    // 不能仅靠 flashSale JSON 触发公开页购买逻辑：experienceType 是用户交互和后台字段可见性的事实来源。
+    // 若允许两者不一致，运营会遇到“发布成功但预览不是秒杀页”或“UI 没有入口却运行直付”的断链。
+    if (!isFlashSaleExperience(draw.experienceType)) {
+      add(
+        result.errors,
+        "promotion",
+        "flash_sale.experience.required",
+        "已启用秒杀配置时，体验类型必须为 flash_sale；请切换为秒杀体验或关闭秒杀配置",
+      );
+    }
+
+    // docs/222 红线：lottery 禁止与 paymentRequired 组合（任何 resultMode）。
+    // 历史数据的开奖执行虽会额外过滤未付款 entry，但 lottery 的“抽奖结果”与直付的
+    // “付款即履约”仍是两套结果与库存归属模型，不能作为正式可发布组合。
+    // 直付发卡只能由 claim 承载，支付回调完成履约，不参与开奖或 spin。
     if (draw.activityKind === "lottery" && flashParsed.config.paymentRequired === true) {
       add(
         result.errors,
         "promotion",
         "promotion.lottery_payment.conflict",
-        "直付秒杀（需付款）不能与抽奖活动（lottery）组合：开奖结果机不校验付款状态，会导致未付款即中奖；请使用 claim 活动类型",
+        "直付秒杀（需付款）不能与抽奖活动（lottery）组合：抽奖开奖与付款即履约是两套结果和库存归属模型；请使用 claim 活动类型",
+      );
+    }
+    if (flashParsed.config.paymentRequired === true && draw.activityKind !== "claim") {
+      add(
+        result.errors,
+        "promotion",
+        "flash_sale.payment.activity_kind.required",
+        "站内直付秒杀只能使用 claim 活动类型；请切换为 claim 或关闭站内直付",
       );
     }
 
@@ -795,14 +824,6 @@ async function validatePromotion(
         "promotion",
         "flash_sale.destination.missing",
         "展示型秒杀必须配置安全的导流/购买链接（商品链接、destination 或 after_win CTA）；否则用户抢到后无法下单",
-      );
-    }
-    if (!isFlashSaleExperience(draw.experienceType)) {
-      add(
-        result.infos,
-        "promotion",
-        "flash_sale.experience.hint",
-        "已启用 flashSale 配置；建议 experience_type=flash_sale 以使用秒杀体验壳",
       );
     }
     await validateFlashSalePayment(db, tenantId, draw, flashParsed.config, effective, result, options);

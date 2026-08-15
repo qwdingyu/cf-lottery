@@ -355,6 +355,53 @@ describe("发布预检 — instant 结果机闸门", () => {
     const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
     expect(result.errors.some((item) => item.code === "promotion.lottery_payment.conflict")).toBe(false);
   });
+
+  it("秒杀配置只允许 lottery 或 claim，防止旧数据和 API 绕过后台类型联动", async () => {
+    const draw = makeDraw({
+      activityKind: "survey",
+      experienceType: "flash_sale",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, stockLimit: 10 },
+        destination: { url: "https://shop.example.com/p/1", title: "去购买" },
+      }),
+    });
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.activity_kind.conflict")).toBe(true);
+  });
+
+  it("启用秒杀配置但体验类型不是 flash_sale 时阻断发布", async () => {
+    const draw = makeDraw({
+      activityKind: "claim",
+      experienceType: "submit",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, stockLimit: 10 },
+        destination: { url: "https://shop.example.com/p/1", title: "去购买" },
+      }),
+    });
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.experience.required")).toBe(true);
+  });
+
+  it("非 claim 活动不能开启站内直付，即使它不是 lottery", async () => {
+    const draw = makeDraw({
+      activityKind: "signup_chain",
+      experienceType: "flash_sale",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, priceCents: 9900, stockLimit: 10, currency: "cny" },
+      }),
+    });
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.payment.activity_kind.required")).toBe(true);
+  });
 });
 
 describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
