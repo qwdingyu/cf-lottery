@@ -1096,7 +1096,7 @@ export default {
     adminConfirmToggleVisibility: "确认{action}？该活动已开奖，仅可切换可见性。",
     adminEditNonDraft: "仅草稿/进行中/已暂停状态可编辑；已开奖或已取消的活动不可修改。",
     /** docs/223：进行中活动编辑 */
-    adminEditLiveHint: "进行中的活动可修改标题、说明、展示开关、增长配置与结束时间",
+    adminEditLiveHint: "无参与、订单或结果时可完整修正；已有记录时仅可修改标题、说明、展示、外链和延长结束时间",
     adminEditLiveLockHint: "进行中的活动不可修改此字段（类型/模式/容量变更会影响已参与用户，如需调整请复制活动）",
     adminEditLiveEndOnlyHint: "结束时间只能延长，不能缩短",
     adminListCount: "显示 {shown} / 共 {total}",

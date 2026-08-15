@@ -1123,7 +1123,7 @@ export default {
     adminConfirmToggleVisibility: "Confirm {action}? This draw is completed — only visibility can be changed.",
     adminEditNonDraft: "Only draft / running / paused draws can be edited; drawn or cancelled are locked.",
     /** docs/223: editing a running draw */
-    adminEditLiveHint: "Running draws can edit title, description, display toggles, growth config and end time",
+    adminEditLiveHint: "With no entries, orders, or results, all settings can be corrected. Otherwise only title, description, display, external link, and a later end time can change",
     adminEditLiveLockHint: "This field is locked for running draws (type/mode/capacity changes affect existing participants — duplicate the draw instead)",
     adminEditLiveEndOnlyHint: "End time can only be extended, never shortened",
     adminListCount: "Showing {shown} / {total}",
