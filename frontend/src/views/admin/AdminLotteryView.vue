@@ -2067,6 +2067,7 @@ import type {
   LotteryDraw,
   LotteryWinner,
   PublishCheckItem,
+  PublishCheckResult,
   SurveyFieldForm,
 } from './lottery/types'
 import {
@@ -2235,6 +2236,27 @@ function clearDraftPublishBlocker(drawId: string) {
   const next = { ...draftPublishBlockers.value }
   delete next[drawId]
   draftPublishBlockers.value = next
+}
+
+/**
+ * 草稿保存后只检查当前活动一次，把服务端事实（支付凭据、码池占用、可用卡密等）前移到列表。
+ * 不在 loadData 中批量请求，避免列表 N+1；正式发布仍会重新检查，防止保存后库存或渠道状态变化。
+ */
+async function refreshDraftPublishBlocker(drawId: string): Promise<PublishCheckResult | null> {
+  try {
+    const check = await fetchPublishCheck(drawId)
+    if (check.canPublish) clearDraftPublishBlocker(drawId)
+    else setDraftPublishBlocker(drawId, check.errors[0]?.message)
+    return check
+  } catch {
+    // 保存已成功时，预检暂时不可用不能伪装成保存失败；用户点击发布仍会得到服务端最终裁决。
+    return null
+  }
+}
+
+function showSavedDraftPublishIssues(check: PublishCheckResult | null) {
+  if (!check || check.canPublish || check.errors.length === 0) return
+  showToast(formatPublishCheckItems(check.errors, t('lottery.adminPublishErrorsPrefix')), 'info')
 }
 
 /** 开启/创建成功后：默认勾选「打开用户页」，确认即预览（仍保留用户手势，避免 window.open 被拦） */
@@ -4686,6 +4708,11 @@ async function handleCreate() {
         form.value.ritualPhrasesText ?? '',
       ).join('\n')
       showToast(t('lottery.adminDrawUpdated'), 'success')
+      // draft 已有完整的活动、奖项与卡密绑定事实，保存后立即取一次服务端预检。
+      // 这样支付渠道/库存等无法由本地表单判定的问题，不必等到运营点击“开启”活动才暴露。
+      if (current?.status === 'draft') {
+        showSavedDraftPublishIssues(await refreshDraftPublishBlocker(form.value.id))
+      }
     } else {
       const created = await createLotteryDraw(payload)
       if (created?.id) {
@@ -4708,13 +4735,17 @@ async function handleCreate() {
         closeEditor()
         form.value = emptyForm()
         await loadData()
+        // 所有关联资源保存完成后再预检，否则会把尚未保存的奖项/名单误判为缺失。
+        const publishCheck = await refreshDraftPublishBlocker(created.id)
         if (lotteryMissingTier) {
           showToast(t('lottery.adminCreatedNeedPrizeHint'), 'success')
+          showSavedDraftPublishIssues(publishCheck)
           if (previewSlug && await askOpenPublicPreview(t('lottery.adminCreateNeedPrizeWithPreview'))) {
             handleOpenPublic({ publicSlug: previewSlug } as LotteryDraw)
           }
         } else {
           showToast(t('lottery.adminCreateDoneWithLink'), 'success')
+          showSavedDraftPublishIssues(publishCheck)
           if (previewSlug && await askOpenPublicPreview(t('lottery.adminCreateDoneWithPreview'))) {
             handleOpenPublic({ publicSlug: previewSlug } as LotteryDraw)
           }
