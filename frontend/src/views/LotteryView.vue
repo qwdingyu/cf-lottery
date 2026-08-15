@@ -240,20 +240,6 @@
                 <span v-else class="lottery-flash-merch-price lottery-flash-merch-price--missing">{{ $t('lottery.flashPriceMissing') }}</span>
                 <span v-if="flashSaleMerchCard(draw)?.remaining != null" class="lottery-flash-merch-stock">{{ $t('lottery.flashRemaining', { n: flashSaleMerchCard(draw)?.remaining }) }}</span>
               </div>
-              <div v-if="flashSalePurchaseSummary(draw)" class="lottery-flash-pricing" aria-live="polite">
-                <small class="lottery-flash-pricing-line">
-                  {{ $t('lottery.flashPurchaseUnitPrice') }}{{ flashSalePurchaseSummary(draw)?.unitPriceText }}
-                </small>
-                <small class="lottery-flash-pricing-line">
-                  {{ $t('lottery.flashPurchaseTotalPrice') }}{{ flashSalePurchaseSummary(draw)?.totalPriceText }}
-                </small>
-                <small
-                  v-if="flashSalePurchaseSummary(draw)?.tierLabel"
-                  class="lottery-flash-pricing-line lottery-flash-pricing-line--tier"
-                >
-                  {{ $t('lottery.flashPurchaseTierApplied', { label: flashSalePurchaseSummary(draw)?.tierLabel }) }}
-                </small>
-              </div>
               <div v-if="isDirectPaymentDraw(draw) && Number(draw.flashSale?.maxPerUser || 1) > 1" class="lottery-flash-quantity" @click.stop>
                 <span class="lottery-flash-quantity-label">{{ $t('lottery.flashPurchaseQuantity') }}</span>
                 <div class="lottery-flash-quantity-control">
@@ -281,6 +267,21 @@
                   >+</button>
                 </div>
                 <small class="lottery-flash-quantity-hint">{{ $t('lottery.flashPurchaseQuantityHint', { max: Number(draw.flashSale?.maxPerUser || 1) }) }}</small>
+              </div>
+              <div v-if="flashSalePurchaseSummary(draw)" class="lottery-flash-pricing" aria-live="polite">
+                <div class="lottery-flash-pricing-total">
+                  <span>{{ $t('lottery.flashPurchaseTotalPrice') }}</span>
+                  <strong>{{ flashSalePurchaseSummary(draw)?.totalPriceText }}</strong>
+                </div>
+                <div class="lottery-flash-pricing-meta">
+                  <span>{{ $t('lottery.flashPurchaseUnitPrice') }}{{ flashSalePurchaseSummary(draw)?.unitPriceText }}</span>
+                  <span
+                    v-if="flashSalePurchaseSummary(draw)?.tierLabel"
+                    class="lottery-flash-pricing-line--tier"
+                  >
+                    {{ $t('lottery.flashPurchaseTierApplied', { label: flashSalePurchaseSummary(draw)?.tierLabel }) }}
+                  </span>
+                </div>
               </div>
             </div>
           </div>

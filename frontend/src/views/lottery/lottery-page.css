@@ -355,40 +355,119 @@
 .lottery-flash-pricing {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin-top: 8px;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(251,113,133,.28);
+  border-radius: 8px;
+  background: rgba(251,113,133,.08);
 }
-.lottery-flash-pricing-line {
+.lottery-flash-pricing-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(255,255,255,.76);
+  font-size: 13px;
+}
+.lottery-flash-pricing-total strong {
+  color: #fb7185;
+  font-size: 22px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.lottery-flash-pricing-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: rgba(255,255,255,.62);
   font-size: 12px;
   line-height: 1.45;
-  color: rgba(255,255,255,.7);
 }
 .lottery-flash-pricing-line--tier {
   color: var(--brand-bright);
 }
 .lottery-flash-quantity {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(56px, auto) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px 12px;
   min-width: 0;
+  margin-top: 12px;
   color: rgba(255,255,255,.76);
   font-size: 12px;
 }
-.lottery-flash-quantity input {
-  width: 86px;
-  min-height: 32px;
-  border-radius: 6px;
-  border: 1px solid rgba(255,255,255,.16);
+.lottery-flash-quantity-label {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.lottery-flash-quantity-control {
+  display: inline-flex;
+  align-items: stretch;
+  justify-self: start;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 8px;
   background: rgba(0,0,0,.18);
+}
+.lottery-flash-qty-btn {
+  width: 38px;
+  min-width: 38px;
+  border: 0;
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.92);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.lottery-flash-qty-btn:hover:not(:disabled) {
+  background: rgba(251,113,133,.24);
+}
+.lottery-flash-qty-btn:disabled {
+  color: rgba(255,255,255,.3);
+  cursor: not-allowed;
+}
+.lottery-flash-quantity input {
+  width: 58px;
+  min-width: 58px;
+  min-height: 38px;
+  border: 0;
+  border-left: 1px solid rgba(255,255,255,.14);
+  border-right: 1px solid rgba(255,255,255,.14);
+  border-radius: 0;
+  background: transparent;
   color: rgba(255,255,255,.94);
   padding: 4px 8px;
   font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.lottery-flash-quantity input::-webkit-inner-spin-button,
+.lottery-flash-quantity input::-webkit-outer-spin-button {
+  margin: 0;
 }
 .lottery-flash-quantity-hint {
+  grid-column: 2;
   color: rgba(255,255,255,.45);
   font-size: 12px;
   line-height: 1.45;
+}
+
+@media (max-width: 560px) {
+  .lottery-flash-quantity {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+  .lottery-flash-quantity-control,
+  .lottery-flash-quantity-hint {
+    grid-column: 1;
+  }
+  .lottery-flash-pricing-total strong {
+    font-size: 20px;
+  }
 }
 .lottery-empty-hint {
   margin: 8px auto 0;
