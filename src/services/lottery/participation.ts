@@ -9,6 +9,7 @@
 import type { DbType, DbWriteScope } from "../../db/client";
 import { isFlashSaleExperience } from "../../lib/activity-utils";
 import { withDbTransaction } from "../../db/client";
+import { todayStr } from "../../lib/date-utils";
 import { and, eq, inArray, sql, asc, max } from "drizzle-orm";
 import {
   lotteryDraws,
@@ -117,7 +118,10 @@ export async function joinDraw(
   // 约束会阻止同一天重复签到。解决方案：identity_value 附加日期后缀（如 "user@test.com:2026-08-01"），
   // 使每天生成不同的 identity_value，既允许每日签到，又防止同一天重复。
   // 注意：黑名单和名单模式使用原始 value 做校验，只有写入时使用日期后缀 value。
-  const checkinDateSuffix = draw.activityKind === "checkin" ? `:${new Date().toISOString().slice(0, 10)}` : "";
+  // 日期用 todayStr()（本地时区），与 bot /签到（commands.ts:518）和每日免费（spin-execution.ts）
+  // 同源——若用 UTC 日期（toISOString().slice(0,10)），UTC+8 等偏移时区下"每日"刷新点会偏移，
+  // 导致 bot 签到与公开端 checkin 活动的"今日"不一致（同一用户同一天可能被判定为两天）。
+  const checkinDateSuffix = draw.activityKind === "checkin" ? `:${todayStr()}` : "";
   const uniqueValue = normalizedValue + checkinDateSuffix;
   // ── 黑名单检查 ──
   // 黑名单按邮箱配置（L2 运营者在管理台输入邮箱）。邮箱身份直接匹配；

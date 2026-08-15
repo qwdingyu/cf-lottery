@@ -297,6 +297,57 @@ describe("payment route", () => {
     expect(await db.select().from(paymentOrders)).toHaveLength(0);
   });
 
+  it("直付批发摘要按已支付订单累计限购，但不返回订单号或卡密", async () => {
+    await seedOrder();
+    await db.update(lotteryDraws).set({
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          maxPerUser: 5,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    }).where(eq(lotteryDraws.id, DRAW_ID));
+    await db.update(paymentOrders).set({ quantity: 2 }).where(eq(paymentOrders.id, ORDER_ID));
+
+    const app = createTestApp();
+    const forbidden = await app.request("/api/public/draws/payment-route/payment-orders/summary", {
+      method: "POST",
+      body: JSON.stringify({ entryId: ENTRY_ID, email: "attacker@example.com" }),
+      headers: { "Content-Type": "application/json" },
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+    expect(forbidden.status).toBe(403);
+
+    const res = await app.request("/api/public/draws/payment-route/payment-orders/summary", {
+      method: "POST",
+      body: JSON.stringify({ entryId: ENTRY_ID, email: EMAIL }),
+      headers: { "Content-Type": "application/json" },
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
+      ok: true,
+      latestOrderStatus: "paid",
+      purchasedQuantity: 2,
+      remainingQuantity: 3,
+      maxPerUser: 5,
+    });
+    expect(body).not.toHaveProperty("orderNo");
+    expect(body).not.toHaveProperty("prizeCode");
+  });
+
   it("创建批量直付订单时拒绝超过单笔购买上限的数量", async () => {
     await db.insert(tenants).values({ id: TENANT_ID, name: "payment-route" });
     await db.insert(lotteryDraws).values({

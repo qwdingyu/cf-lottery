@@ -1162,7 +1162,7 @@ describe("活动级运营参数闭环", () => {
  * docs/083：drawn 仅可切换 visible；公开详情拒绝 visible=0；open 不可靠 visible 下架。
  */
 describe("P0 活动可见性 visible", () => {
-  it("drawn 可 PATCH visible；open 拒绝；隐藏后公开详情 400", async () => {
+  it("drawn 可 PATCH visible；open 零参与可修正规则；有参与后锁定规则；隐藏后公开详情 400", async () => {
     const app = createTestApp();
     await seedOwner();
     const now = new Date().toISOString();
@@ -1221,6 +1221,35 @@ describe("P0 活动可见性 visible", () => {
       body: JSON.stringify({ visible: 0 }),
     }, TEST_ENV);
     expect(openHide.status).toBe(400);
+
+    // 候选池为空的进行中活动尚未产生用户合同，可修正错误的结构配置，不必取消重建。
+    const openFix = await app.request(`/api/admin/draws/${openId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ title: "进行中已修正", experienceType: "slot", winnerCount: 2 }),
+    }, TEST_ENV);
+    expect(openFix.status).toBe(200);
+
+    // 第一条参与记录落库后，体验/奖项等规则不可再变；仅安全字段由 live 白名单放行。
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_ID,
+      drawId: openId,
+      identityType: "email",
+      identityValue: "joined@example.com",
+    });
+    const liveRuleChange = await app.request(`/api/admin/draws/${openId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ experienceType: "wheel" }),
+    }, TEST_ENV);
+    expect(liveRuleChange.status).toBe(400);
+    const liveSafeEdit = await app.request(`/api/admin/draws/${openId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ title: "进行中说明修正" }),
+    }, TEST_ENV);
+    expect(liveSafeEdit.status).toBe(200);
 
     const drawnExtra = await app.request(`/api/admin/draws/${drawnId}`, {
       method: "PATCH",

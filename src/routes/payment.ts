@@ -3,6 +3,7 @@
  *
  * 路由组织：
  * - /api/public/draws/:slug/payment-orders — 创建/恢复订单（公开，需参与）
+ * - /api/public/draws/:slug/payment-orders/summary — 已参与用户的购买状态摘要（不返回卡密）
  * - /api/public/draws/:slug/payment-orders/recover — OTP 保护的订单找回
  * - /api/public/draws/:slug/payment-orders/:id — Bearer 保护的订单状态/卡密查询
  * - /api/payments/:tenantId/:provider/callback — 支付回调（支付平台调用，无鉴权）
@@ -385,6 +386,99 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
     accessToken,
     redirectUrl: safePaymentRedirectUrl(payResult.redirectUrl),
     qrCode: payResult.qrCode,
+  });
+});
+
+/**
+ * 直付批发采用 V2 的「一 entry : 多订单」模型。公开页在用户点击续付或追加前，
+ * 必须先获知在途订单与累计限购状态，不能把“已参与”误等同于“不能再购买”。
+ *
+ * 这里仅返回聚合状态，不返回订单号、支付入口或卡密。身份校验与创建订单端点一致；
+ * 卡密找回仍必须通过 OTP 的 /recover 或短期订单访问令牌。
+ */
+paymentPublicRoute.post("/draws/:slug/payment-orders/summary", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+  const ip = getClientIp(c);
+  if (!(await checkPublicRateLimit(db, `payment-summary:${ip}`, 20, 60000))) {
+    return fail(c, "支付状态查询过于频繁，请稍后再试", 429);
+  }
+
+  const [draw] = await db
+    .select({
+      id: lotteryDraws.id,
+      tenantId: lotteryDraws.tenantId,
+      promotionConfig: lotteryDraws.promotionConfig,
+    })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+
+  const { parseFlashSaleConfig } = await import("../lib/flash-sale-config");
+  const flashSale = parseFlashSaleConfig(draw.promotionConfig).config;
+  if (!flashSale?.paymentRequired) return fail(c, "该活动未启用直付支付", 400);
+
+  // 与创建订单入口保持同一状态视图：摘要若不先清理超时订单，
+  // 前端会把已过期的 pending 误显示为可续付，造成状态机分流漂移。
+  await expireOverdueOrders(db, draw.tenantId);
+
+  const body = await c.req.json<{ entryId?: string; email?: string }>().catch(
+    () => ({} as { entryId?: string; email?: string }),
+  );
+  const entryId = String(body.entryId || "").trim();
+  const email = String(body.email || "").trim().toLowerCase();
+  if (!entryId) return fail(c, "缺少 entryId", 400);
+  if (!isValidEmail(email)) return fail(c, "缺少或无效的 email", 400);
+
+  const [entry] = await db
+    .select({
+      id: lotteryEntries.id,
+      identityType: lotteryEntries.identityType,
+      identityValue: lotteryEntries.identityValue,
+    })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.id, entryId),
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+    ))
+    .limit(1);
+  if (!entry) return fail(c, "参与记录不存在", 404);
+  if (entry.identityType !== "email" || entry.identityValue.trim().toLowerCase() !== email) {
+    return fail(c, "支付请求与参与身份不匹配", 403);
+  }
+
+  const [latestOrder] = await db
+    .select({ status: paymentOrders.status })
+    .from(paymentOrders)
+    .where(and(
+      eq(paymentOrders.tenantId, draw.tenantId),
+      eq(paymentOrders.drawId, draw.id),
+      eq(paymentOrders.entryId, entry.id),
+    ))
+    .orderBy(desc(paymentOrders.createdAt))
+    .limit(1);
+  const [purchasedRow] = await db
+    .select({ total: sql<number>`COALESCE(SUM(${paymentOrders.quantity}), 0)` })
+    .from(paymentOrders)
+    .where(and(
+      eq(paymentOrders.tenantId, draw.tenantId),
+      eq(paymentOrders.drawId, draw.id),
+      eq(paymentOrders.entryId, entry.id),
+      inArray(paymentOrders.status, [
+        PAYMENT_ORDER_STATUS.PAID,
+        PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED,
+      ]),
+    ));
+
+  const purchasedQuantity = Math.max(0, Math.floor(Number(purchasedRow?.total || 0)));
+  const maxPerUser = Math.max(1, Math.floor(Number(flashSale.maxPerUser || 1)));
+  return ok(c, {
+    latestOrderStatus: latestOrder?.status || null,
+    purchasedQuantity,
+    remainingQuantity: Math.max(0, maxPerUser - purchasedQuantity),
+    maxPerUser,
   });
 });
 

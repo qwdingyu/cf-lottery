@@ -55,6 +55,7 @@ import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 import { encryptPaymentConfigValue } from "../services/payment/secret-config";
 import { sanitizePublicPromotionConfig } from "../lib/activity-utils";
+import { todayStr } from "../lib/date-utils";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: Awaited<ReturnType<typeof getTestDb>>["db"];
@@ -1949,7 +1950,8 @@ describe("签到活动", () => {
       sql: "SELECT identity_value FROM lottery_entries WHERE tenant_id = ? AND draw_id = ?",
       args: [TENANT, id],
     });
-    expect(rows.rows[0]?.identity_value).toBe(`daily@t.com:${new Date().toISOString().slice(0, 10)}`);
+    // 日期后缀用本地时区（todayStr），与 bot /签到 同源；不能用 UTC 日期断言（时区偏移会失败）
+    expect(rows.rows[0]?.identity_value).toBe(`daily@t.com:${todayStr()}`);
   });
 
   it("checkin：黑名单仍按原始身份校验，不能被日期后缀绕过", async () => {

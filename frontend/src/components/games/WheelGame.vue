@@ -35,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import type { GameProps, GameEmits } from './types'
 import { cappedDevicePixelRatio } from './canvas-utils'
 
@@ -63,6 +63,7 @@ let lastCelebrate = 0
 let idleRaf = 0
 /** 奖品图缓存：索引与 props.prizes 一一对应；加载完成后触发一次重绘 */
 const prizeImages = ref<Array<HTMLImageElement | null>>([])
+let imageLoadSeq = 0
 
 /** 外圈灯：提交中或庆祝旋转都亮，给即时反馈 */
 const lightsActive = computed(() => spinning.value || props.loading)
@@ -273,25 +274,30 @@ async function runCelebrateSpin() {
 }
 
 watch(() => props.prizes, (list) => {
-  // 预加载奖品图：索引与 prizes 一一对应；静态盘在每次就绪后重建一次（离屏缓存）
+  const seq = ++imageLoadSeq
+  // 首屏先画纯文字/色块盘，再异步补奖品图；低端手机不被图片加载阻塞首帧。
   prizeImages.value = new Array(list.length).fill(null)
-  let pending = 0
-  list.forEach((p, i) => {
-    const url = String(p?.imageUrl || '').trim()
-    if (!url) return
-    pending++
-    const im = new Image()
-    im.onload = () => {
-      prizeImages.value[i] = im
-      staticDisk = null // 强制重建静态盘（含新图）
-      drawWheel(currentRot())
-      pending--
-    }
-    im.onerror = () => { prizeImages.value[i] = null; pending-- }
-    im.src = url
-  })
-  if (pending === 0) staticDisk = null
+  staticDisk = null
   drawWheel(currentRot())
+  void nextTick(() => {
+    list.forEach((p, i) => {
+      const url = String(p?.imageUrl || '').trim()
+      if (!url) return
+      const im = new Image()
+      im.decoding = 'async'
+      im.onload = () => {
+        if (seq !== imageLoadSeq) return
+        prizeImages.value[i] = im
+        staticDisk = null
+        drawWheel(currentRot())
+      }
+      im.onerror = () => {
+        if (seq !== imageLoadSeq) return
+        prizeImages.value[i] = null
+      }
+      im.src = url
+    })
+  })
 }, { immediate: true })
 
 watch(() => props.loading, (loading) => {
@@ -333,10 +339,33 @@ onUnmounted(() => {
 .light-dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--brand-bright); box-shadow: 0 0 6px var(--brand-bright); }
 .light-dot.active { animation: blink 0.5s infinite alternate; }
 @keyframes blink { to { opacity: 0.3; transform: scale(0.7); } }
-.wheel-pointer-wrap { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; cursor: pointer; }
-.wheel-pointer { width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 22px solid var(--brand); margin: 0 auto -2px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
+.wheel-pointer-wrap {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 72px;
+  height: 72px;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.wheel-pointer {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-top: 22px solid var(--brand);
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+  pointer-events: none;
+}
 .wheel-pointer.spinning { animation: bounce 0.1s infinite alternate; }
-@keyframes bounce { to { transform: translateY(-2px); } }
+@keyframes bounce { to { transform: translate(-50%, -2px); } }
 .wheel-btn {
   width: 56px;
   height: 56px;

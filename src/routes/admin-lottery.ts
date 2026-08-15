@@ -11,7 +11,7 @@ import type { AppEnv } from "../bindings";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
 import { getEnv } from "../lib/platform";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, paymentOrders, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig } from "../db/schema";
 import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import {
   createDraw,
@@ -519,6 +519,20 @@ adminLotteryRoute.get("/draws/:id", async (c) => {
   const tenantId = c.get("tenantId") as string;
   const draw = await getDraw(db, c.req.param("id"), tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
+  // 进行中活动能否修改结构性字段不能只看 status；真正的分界是是否已产生
+  // entry / order / winner 事实。零参与活动仍可安全修正错误配置，避免只能取消重建。
+  const isLive = draw.status === DRAW_STATUS.OPEN || draw.status === DRAW_STATUS.PAUSED;
+  const [entryFact, orderFact, winnerFact] = isLive
+    ? await Promise.all([
+        db.select({ id: lotteryEntries.id }).from(lotteryEntries)
+          .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, draw.id))).limit(1),
+        db.select({ id: paymentOrders.id }).from(paymentOrders)
+          .where(and(eq(paymentOrders.tenantId, tenantId), eq(paymentOrders.drawId, draw.id))).limit(1),
+        db.select({ id: lotteryWinners.id }).from(lotteryWinners)
+          .where(and(eq(lotteryWinners.tenantId, tenantId), eq(lotteryWinners.drawId, draw.id))).limit(1),
+      ])
+    : [[], [], []];
+  const hasLifecycleFacts = entryFact.length > 0 || orderFact.length > 0 || winnerFact.length > 0;
   // 同时查询奖项配置（供编辑回填）
   const tiers = await db
     .select({
@@ -538,7 +552,16 @@ adminLotteryRoute.get("/draws/:id", async (c) => {
   // P0 修复（2026-08 审查）：详情不回传密码哈希（避免前端复制/回填把哈希当明文二次哈希），
   // 改为 hasAccessPassword 布尔，供编辑表单显示"已设置密码，留空保持不变"。
   const { accessPassword: _accessPassword, ...drawSafe } = draw;
-  return ok(c, { draw: { ...drawSafe, hasAccessPassword: Boolean(_accessPassword) }, tiers });
+  return ok(c, {
+    draw: { ...drawSafe, hasAccessPassword: Boolean(_accessPassword) },
+    tiers,
+    editPolicy: {
+      isLive,
+      hasLifecycleFacts,
+      // 前端只把该标志用于交互收口；后端 PATCH 仍是最终权威。
+      structuralFieldsLocked: isLive && hasLifecycleFacts,
+    },
+  });
 });
 
 /** 获取活动模板列表
@@ -796,7 +819,61 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     return ok(c, { updated: true, visible: nextVisible });
   }
 
-  if (draw.status !== DRAW_STATUS.DRAFT) return fail(c, "只有草稿状态的活动可以编辑", 400);
+  if (draw.status === DRAW_STATUS.CANCELLED) {
+    return fail(c, "已取消的活动不可编辑", 400);
+  }
+
+  // docs/223：进行中（OPEN）与暂停（PAUSED）的活动按是否已有业务事实分层编辑。
+  // 零参与、零订单、零结果时仍可完整修正配置；一旦产生事实，只允许安全字段，
+  // 避免改写已参与用户的资格、名额、价格、支付或结果语义。
+  const isLiveEditable = draw.status === DRAW_STATUS.OPEN || draw.status === DRAW_STATUS.PAUSED;
+  if (draw.status !== DRAW_STATUS.DRAFT && !isLiveEditable) {
+    return fail(c, "只有草稿状态的活动可以编辑", 400);
+  }
+
+  if (isLiveEditable) {
+    const [entryFact, orderFact, winnerFact] = await Promise.all([
+      db.select({ id: lotteryEntries.id }).from(lotteryEntries)
+        .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId))).limit(1),
+      db.select({ id: paymentOrders.id }).from(paymentOrders)
+        .where(and(eq(paymentOrders.tenantId, tenantId), eq(paymentOrders.drawId, drawId))).limit(1),
+      db.select({ id: lotteryWinners.id }).from(lotteryWinners)
+        .where(and(eq(lotteryWinners.tenantId, tenantId), eq(lotteryWinners.drawId, drawId))).limit(1),
+    ]);
+    const hasLifecycleFacts = entryFact.length > 0 || orderFact.length > 0 || winnerFact.length > 0;
+    const definedKeys = Object.keys(body || {}).filter((key) => body[key] !== undefined);
+
+    // docs/083：进行中活动不能靠 visible 假下架；必须走 pause/cancel 状态机，
+    // 否则公开列表消失而已持有链接的用户仍可能处于参与或支付流程。
+    if (definedKeys.includes("visible")) {
+      return fail(c, "进行中的活动不能修改可见性，请使用暂停或取消", 400);
+    }
+
+    if (hasLifecycleFacts) {
+      const LIVE_SAFE_FIELDS = new Set([
+        "title",
+        "description",
+        "endAt",
+        "expectedParticipants",
+        "showParticipantCount",
+        "showWinnerCount",
+        "showWinnerList",
+        "productLink",
+      ]);
+      const unsafeFields = definedKeys.filter((key) => !LIVE_SAFE_FIELDS.has(key));
+      if (unsafeFields.length > 0) {
+        return fail(c, `已有参与或支付记录，进行中的活动不可修改以下字段：${unsafeFields.join("、")}（如需调整请复制活动）`, 400);
+      }
+    }
+
+    // 已产生业务事实后，结束时间只能延长；零参与活动可以完整修正时间窗。
+    if (hasLifecycleFacts && body.endAt !== undefined && body.endAt !== null) {
+      const currentEnd = draw.endAt ? new Date(draw.endAt).getTime() : 0;
+      if (currentEnd > 0 && new Date(body.endAt).getTime() < currentEnd) {
+        return fail(c, "进行中的活动结束时间只能延长，不能缩短", 400);
+      }
+    }
+  }
 
   let maxSpinsUpdate: number | undefined;
   if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {

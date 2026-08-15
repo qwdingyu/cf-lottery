@@ -240,7 +240,7 @@
                 <span v-else class="lottery-flash-merch-price lottery-flash-merch-price--missing">{{ $t('lottery.flashPriceMissing') }}</span>
                 <span v-if="flashSaleMerchCard(draw)?.remaining != null" class="lottery-flash-merch-stock">{{ $t('lottery.flashRemaining', { n: flashSaleMerchCard(draw)?.remaining }) }}</span>
               </div>
-              <div v-if="isDirectPaymentDraw(draw) && Number(draw.flashSale?.maxPerUser || 1) > 1" class="lottery-flash-quantity" @click.stop>
+              <div v-if="shouldShowFlashSaleQuantityControl(draw)" class="lottery-flash-quantity" @click.stop>
                 <span class="lottery-flash-quantity-label">{{ $t('lottery.flashPurchaseQuantity') }}</span>
                 <div class="lottery-flash-quantity-control">
                   <button
@@ -255,19 +255,23 @@
                     type="number"
                     step="1"
                     min="1"
-                    :max="draw.flashSale?.maxPerUser || 1"
+                    :max="flashSalePurchaseLimit(draw)"
                     @input="onFlashSaleQuantityInput(draw, $event)"
                   />
                   <button
                     type="button"
                     class="lottery-flash-qty-btn"
-                    :disabled="flashSaleQuantityFor(draw) >= Number(draw.flashSale?.maxPerUser || 1)"
+                    :disabled="flashSaleQuantityFor(draw) >= flashSalePurchaseLimit(draw)"
                     @click="onFlashSaleQuantityChange(draw, 1)"
                     :aria-label="$t('lottery.flashQuantityIncrease')"
                   >+</button>
                 </div>
-                <small class="lottery-flash-quantity-hint">{{ $t('lottery.flashPurchaseQuantityHint', { max: Number(draw.flashSale?.maxPerUser || 1) }) }}</small>
+                <small class="lottery-flash-quantity-hint">{{ $t('lottery.flashPurchaseQuantityHint', { max: flashSalePurchaseLimit(draw) }) }}</small>
               </div>
+              <p
+                v-if="flashSalePurchaseAvailability(draw)"
+                class="lottery-flash-purchase-availability"
+              >{{ $t('lottery.flashPurchaseAvailability', flashSalePurchaseAvailability(draw)!) }}</p>
               <div v-if="flashSalePurchaseSummary(draw)" class="lottery-flash-pricing" aria-live="polite">
                 <div class="lottery-flash-pricing-total">
                   <span>{{ $t('lottery.flashPurchaseTotalPrice') }}</span>
@@ -285,7 +289,10 @@
               </div>
             </div>
           </div>
-          <div class="lottery-game-area">
+          <div
+            class="lottery-game-area"
+            :class="{ 'lottery-game-area--flash-sale': draw.experienceType === 'flash_sale' }"
+          >
             <component
               :is="getGameComponent(draw.experienceType || defaultExperienceForParticipation(draw.participationMode || 'open'))"
               :key="draw.id"
@@ -315,7 +322,11 @@
             无游戏组件（list/queue 等）时仍用底部按钮。已参与/非 open 仍用底部状态条。
           -->
           <div class="lottery-join-bar">
-            <template v-if="draw.status !== 'open'">
+            <!--
+              后端允许 paused 状态下恢复已有的 pending 订单，不能因为通用的非 open
+              状态条提前短路支付入口。暂停只禁止新订单和追加购买，不影响已发起支付的续付。
+            -->
+            <template v-if="draw.status !== 'open' && !(draw.status === 'paused' && isDrawJoined(draw) && isDirectPaymentDraw(draw))">
               <span class="lottery-join-hint">{{ statusPathHint(draw) || statusText(draw) }}</span>
               <div class="lottery-status-actions">
                 <button
@@ -363,8 +374,8 @@
                   type="button"
                   class="lottery-result-btn lottery-result-btn--primary"
                   :disabled="paymentLoading"
-                  @click="resumePaymentFromDraw(draw)"
-                >{{ paymentLoading ? $t('lottery.loadingText') : $t('lottery.paymentContinue') }}</button>
+                  @click="handleDirectPaymentAction(draw)"
+                >{{ paymentLoading ? $t('lottery.loadingText') : $t('lottery.paymentManagePurchase') }}</button>
                 <button
                   type="button"
                   class="lottery-result-btn"
@@ -1932,6 +1943,24 @@ function isInstantLottery(draw: { activityKind?: string; resultMode?: string } |
 /** 游戏区禁用：instant 已参与仍可 spin（有次数时） */
 function gameDisabled(draw: LotteryDraw): boolean {
   if (!isDrawJoinable(draw)) return true
+  // 直付批发的同一 entry 可在累计限购内追加新订单；单件直付仍保持已参与即禁用。
+  if (isDirectPaymentDraw(draw) && isDrawJoined(draw)) {
+    const purchaseState = flashSalePurchaseState(draw)
+    if (
+      purchaseState &&
+      (
+        purchaseState.remainingQuantity <= 0 ||
+        purchaseState.latestOrderStatus === 'pending' ||
+        purchaseState.latestOrderStatus === 'expired' ||
+        purchaseState.latestOrderStatus === 'cancelled' ||
+        purchaseState.latestOrderStatus === 'paid_fulfillment_failed' ||
+        purchaseState.latestOrderStatus === 'paid_late_needs_refund'
+      )
+    ) {
+      return true
+    }
+    return Number(draw.flashSale?.maxPerUser || 1) <= 1
+  }
   return isPublicGameDisabled({
     status: draw.status,
     joined: isDrawJoined(draw),
@@ -1944,6 +1973,10 @@ function gameDisabled(draw: LotteryDraw): boolean {
 function handleGamePlay(draw: LotteryDraw) {
   if (!isDrawJoinable(draw)) {
     showToast(joinDisabledText(draw), 'error')
+    return
+  }
+  if (isDrawJoined(draw) && isDirectPaymentDraw(draw)) {
+    void handleDirectPaymentAction(draw)
     return
   }
   if (isDrawJoined(draw) && isInstantLottery(draw)) {
@@ -1959,6 +1992,44 @@ function flashSaleMerchCard(draw: LotteryDraw) {
 
 function flashSalePurchaseSummary(draw: LotteryDraw) {
   return flashSalePurchaseSummaryByDrawId.value[draw.id] || null
+}
+
+type FlashSalePurchaseState = {
+  purchasedQuantity: number
+  remainingQuantity: number
+  maxPerUser: number
+  latestOrderStatus: string | null
+}
+
+const flashSalePurchaseStateByDrawId = ref<Record<string, FlashSalePurchaseState>>({})
+
+function flashSalePurchaseState(draw: LotteryDraw): FlashSalePurchaseState | null {
+  return flashSalePurchaseStateByDrawId.value[draw.id] || null
+}
+
+function flashSalePurchaseLimit(draw: LotteryDraw): number {
+  const configuredMax = Math.max(1, Math.floor(Number(draw.flashSale?.maxPerUser || 1)))
+  const summary = flashSalePurchaseState(draw)
+  if (!isDrawJoined(draw) || !summary) return configuredMax
+  return Math.min(configuredMax, Math.max(0, summary.remainingQuantity))
+}
+
+function flashSalePurchaseAvailability(draw: LotteryDraw): { purchased: number; remaining: number } | null {
+  const summary = flashSalePurchaseState(draw)
+  if (!summary) return null
+  return { purchased: summary.purchasedQuantity, remaining: summary.remainingQuantity }
+}
+
+function shouldShowFlashSaleQuantityControl(draw: LotteryDraw): boolean {
+  const purchaseState = flashSalePurchaseState(draw)
+  const mustResumeExistingOrder =
+    purchaseState?.latestOrderStatus === 'pending' ||
+    purchaseState?.latestOrderStatus === 'expired' ||
+    purchaseState?.latestOrderStatus === 'cancelled'
+  return isDirectPaymentDraw(draw)
+    && isDrawJoinable(draw)
+    && !mustResumeExistingOrder
+    && flashSalePurchaseLimit(draw) > 1
 }
 
 // ── 查询我的结果（中奖卡密/安慰奖券） ──
@@ -2144,14 +2215,15 @@ const paymentSupportSubject = computed(() => {
 })
 
 function flashSaleQuantityFor(draw: LotteryDraw): number {
-  const max = Math.max(1, Math.floor(Number(draw.flashSale?.maxPerUser || 1)))
+  const max = flashSalePurchaseLimit(draw)
+  if (max < 1) return 1
   const current = Math.floor(Number(flashSaleQuantityByDrawId.value[draw.id] || 1))
   return Math.min(max, Math.max(1, current))
 }
 
 function onFlashSaleQuantityInput(draw: LotteryDraw, event: Event) {
   const raw = Number((event.target as HTMLInputElement | null)?.value || 1)
-  const max = Math.max(1, Math.floor(Number(draw.flashSale?.maxPerUser || 1)))
+  const max = Math.max(1, flashSalePurchaseLimit(draw))
   const quantity = Number.isFinite(raw) ? Math.floor(raw) : 1
   flashSaleQuantityByDrawId.value = {
     ...flashSaleQuantityByDrawId.value,
@@ -2161,7 +2233,7 @@ function onFlashSaleQuantityInput(draw: LotteryDraw, event: Event) {
 
 /** 批量购买 +/- 步进：夹在 [1, maxPerUser] 内（docs/202 3.5） */
 function onFlashSaleQuantityChange(draw: LotteryDraw, change: number) {
-  const max = Math.max(1, Math.floor(Number(draw.flashSale?.maxPerUser || 1)))
+  const max = Math.max(1, flashSalePurchaseLimit(draw))
   const next = Math.min(max, Math.max(1, flashSaleQuantityFor(draw) + change))
   flashSaleQuantityByDrawId.value = {
     ...flashSaleQuantityByDrawId.value,
@@ -2360,11 +2432,91 @@ function showPaymentResumeError(draw: LotteryDraw, entryId: string | undefined, 
 function resumePaymentFromDraw(draw: LotteryDraw) {
   const entryId = buildPaymentEntryId(draw)
   const email = String(sessionEmail.value || '').trim().toLowerCase()
-  if (entryId && email) {
-    void showPaymentOrder(draw, entryId, email)
+  if (!entryId || !email) {
+    showPaymentResumeError(draw, entryId, email)
     return
   }
-  showPaymentResumeError(draw, entryId, email)
+  void handleDirectPaymentAction(draw)
+}
+
+async function loadFlashSalePurchaseState(
+  draw: LotteryDraw,
+  entryId: string,
+  email: string,
+): Promise<FlashSalePurchaseState> {
+  const slug = publicDrawPathKey(draw.id)
+  if (!slug) throw new Error(t('lottery.drawNotLoaded'))
+
+  const res = await fetch(`${API_BASE}/public/draws/${encodeURIComponent(slug)}/payment-orders/summary`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entryId, email }),
+  })
+  const data = await res.json().catch(() => null) as {
+    ok?: boolean
+    message?: string
+    purchasedQuantity?: number
+    remainingQuantity?: number
+    maxPerUser?: number
+    latestOrderStatus?: string | null
+  } | null
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.message || t('lottery.paymentQueryFailed'))
+  }
+
+  const state: FlashSalePurchaseState = {
+    purchasedQuantity: Math.max(0, Math.floor(Number(data.purchasedQuantity || 0))),
+    remainingQuantity: Math.max(0, Math.floor(Number(data.remainingQuantity || 0))),
+    maxPerUser: Math.max(1, Math.floor(Number(data.maxPerUser || draw.flashSale?.maxPerUser || 1))),
+    latestOrderStatus: data.latestOrderStatus ? String(data.latestOrderStatus) : null,
+  }
+  flashSalePurchaseStateByDrawId.value = {
+    ...flashSalePurchaseStateByDrawId.value,
+    [draw.id]: state,
+  }
+  const selectedQuantity = Math.floor(Number(flashSaleQuantityByDrawId.value[draw.id] || 1))
+  if (state.remainingQuantity > 0 && selectedQuantity > state.remainingQuantity) {
+    flashSaleQuantityByDrawId.value = {
+      ...flashSaleQuantityByDrawId.value,
+      [draw.id]: state.remainingQuantity,
+    }
+  }
+  return state
+}
+
+async function handleDirectPaymentAction(draw: LotteryDraw) {
+  const entryId = buildPaymentEntryId(draw)
+  const email = String(sessionEmail.value || '').trim().toLowerCase()
+  if (!entryId || !email) {
+    showPaymentResumeError(draw, entryId, email)
+    return
+  }
+
+  paymentLoading.value = true
+  try {
+    const summary = await loadFlashSalePurchaseState(draw, entryId, email)
+    if (summary.latestOrderStatus === 'pending') {
+      await showPaymentOrder(draw, entryId, email)
+      return
+    }
+    if (summary.latestOrderStatus === 'paid_fulfillment_failed') {
+      showToast(t('lottery.paymentFulfillmentFailed'), 'error')
+      return
+    }
+    if (summary.latestOrderStatus === 'paid_late_needs_refund') {
+      showToast(t('lottery.paymentLatePaid'), 'error')
+      return
+    }
+    if (summary.remainingQuantity <= 0) {
+      showToast(t('lottery.paymentPurchaseLimitReached'), 'error')
+      return
+    }
+    await showPaymentOrder(draw, entryId, email)
+  } catch (err) {
+    showToast(err instanceof Error ? err.message : t('lottery.paymentQueryFailed'), 'error')
+  } finally {
+    paymentLoading.value = false
+  }
 }
 
 async function refreshPaymentOrderStatus(opts?: { silent?: boolean }) {
@@ -2431,6 +2583,17 @@ async function refreshPaymentOrderStatus(opts?: { silent?: boolean }) {
       showToast(t('lottery.paymentLatePaid'), 'error')
     } else if (!shouldPollPaymentStatus(data.order.status)) {
       clearPaymentPollTimer()
+    }
+
+    // 订单状态变化后，主页面的“是否可追加 / 还可购买多少”必须以服务端累计值为准。
+    // 否则已创建订单时写入的 pending 本地状态会滞留，继续错误禁用批发追加入口。
+    const paymentDraw = draws.value.find((draw) => draw.id === state.drawId)
+    if (paymentDraw && state.entryId && state.email && data.order.status !== 'pending') {
+      try {
+        await loadFlashSalePurchaseState(paymentDraw, state.entryId, state.email)
+      } catch {
+        // 订单详情已成功刷新；摘要失败不覆盖用户当前可见的支付结果。
+      }
     }
 
     await syncPaymentQrCode(state.qrCode)
@@ -2517,6 +2680,18 @@ async function showPaymentOrder(draw: LotteryDraw, entryId: string, email: strin
       qrCode: data.qrCode || undefined,
       prizeCode: null,
       prizeCodes: [],
+    }
+    // 新单创建后立刻标记为在途，避免用户在轮询/支付回跳前再次触发一笔订单。
+    flashSalePurchaseStateByDrawId.value = {
+      ...flashSalePurchaseStateByDrawId.value,
+      [draw.id]: {
+        purchasedQuantity: flashSalePurchaseState(draw)?.purchasedQuantity || 0,
+        remainingQuantity: flashSalePurchaseState(draw)?.remainingQuantity ??
+          Math.max(0, Math.floor(Number(draw.flashSale?.maxPerUser || 1))),
+        maxPerUser: flashSalePurchaseState(draw)?.maxPerUser ??
+          Math.max(1, Math.floor(Number(draw.flashSale?.maxPerUser || 1))),
+        latestOrderStatus: String(data.status || 'pending'),
+      },
     }
     persistPaymentSession(paymentState.value)
     showPaymentModal.value = true
@@ -2628,6 +2803,11 @@ async function recoverPaymentOrderFromResult(
       }
       paymentQrDataUrl.value = ''
       showPaymentModal.value = true
+      try {
+        await loadFlashSalePurchaseState(draw, orderEntryId, email)
+      } catch {
+        // 订单找回已成功，摘要仅用于主页面的追加购买提示，不影响卡密展示。
+      }
       return
     }
 

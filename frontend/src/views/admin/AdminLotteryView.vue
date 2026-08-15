@@ -305,8 +305,16 @@
                     :disabled="operatingId === draw.id"
                     @click="handlePause(draw.id)"
                   >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminPause') }}</button>
+                  <!-- docs/223：进行中活动允许编辑非破坏性字段 -->
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    :title="$t('lottery.adminEditLiveHint')"
+                    @click="handleEdit(draw)"
+                  >{{ $t('lottery.adminEdit') }}</button>
                 </template>
-                <!-- open 非抽奖：分享（主）+ 暂停 -->
+                <!-- open 非抽奖：分享（主）+ 暂停 + 编辑 -->
                 <template v-else-if="draw.status === 'open'">
                   <button
                     type="button"
@@ -321,8 +329,15 @@
                     :disabled="operatingId === draw.id"
                     @click="handlePause(draw.id)"
                   >{{ operatingId === draw.id ? $t('lottery.loadingText') : $t('lottery.adminPause') }}</button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    :title="$t('lottery.adminEditLiveHint')"
+                    @click="handleEdit(draw)"
+                  >{{ $t('lottery.adminEdit') }}</button>
                 </template>
-                <!-- paused：恢复 + 分享 -->
+                <!-- paused：恢复 + 分享 + 编辑 -->
                 <template v-else-if="draw.status === 'paused'">
                   <button
                     type="button"
@@ -337,6 +352,13 @@
                     :title="$t('lottery.adminCopyLinkHint')"
                     @click="handleCopyShareLink(draw)"
                   >{{ $t('lottery.adminCopyLink') }}</button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs"
+                    :disabled="operatingId === draw.id"
+                    :title="$t('lottery.adminEditLiveHint')"
+                    @click="handleEdit(draw)"
+                  >{{ $t('lottery.adminEdit') }}</button>
                 </template>
                 <!-- drawing：恢复卡死 + 查看结果 -->
                 <template v-else-if="draw.status === 'drawing'">
@@ -575,11 +597,13 @@
             <div class="form-grid time-grid three-cols">
               <label>
                 <span>{{ $t('lottery.adminStartTime') }}</span>
-                <input v-model="form.startTime" type="datetime-local" step="60" :lang="locale" required />
+                <input v-model="form.startTime" type="datetime-local" step="60" :lang="locale" :disabled="editLocked" required />
+                <small v-if="editLocked" class="field-hint">{{ $t('lottery.adminEditLiveLockHint') }}</small>
               </label>
               <label>
                 <span>{{ $t('lottery.adminEndTime') }}</span>
                 <input v-model="form.endTime" type="datetime-local" step="60" :lang="locale" required />
+                <small v-if="editLocked" class="field-hint">{{ $t('lottery.adminEditLiveEndOnlyHint') }}</small>
               </label>
               <template v-if="isInstantMode">
                 <div class="field-static-inline time-draw-instant-hint" role="status">
@@ -626,16 +650,17 @@
             <div class="form-grid two-cols">
               <label class="field-span-2">
                 <span>{{ $t('lottery.adminActivityKind') }}</span>
-                <select v-model="form.activityKind" @change="handleActivityKindChange">
+                <select v-model="form.activityKind" :disabled="editLocked" @change="handleActivityKindChange">
                   <option v-for="opt in activityKindOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                 </select>
-                <small class="field-hint">{{ $t('lottery.adminActivityKindHint') }}</small>
+                <small class="field-hint">{{ editLocked ? $t('lottery.adminEditLiveLockHint') : $t('lottery.adminActivityKindHint') }}</small>
               </label>
               <label class="field-span-2">
                 <span>{{ $t('lottery.adminParticipationMode') }}</span>
-                <select v-model="form.participationMode" @change="handleParticipationModeChange">
+                <select v-model="form.participationMode" :disabled="editLocked" @change="handleParticipationModeChange">
                   <option v-for="opt in participationModeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
                 </select>
+                <small v-if="editLocked" class="field-hint">{{ $t('lottery.adminEditLiveLockHint') }}</small>
               </label>
               <!-- 只读摘要：模板/默认体验可见，完整 13 项在高级配置中改，避免主路径术语墙 -->
               <p class="field-span-2 experience-summary" role="status">
@@ -724,7 +749,7 @@
                   <!-- 体验 + 壳策略两列并排（2026-08 紧凑化）：两个下拉不再各占满行 -->
                   <label :class="showPrizeShellSelector ? '' : 'field-span-2'">
                     <span>{{ $t('lottery.adminExperienceType') }}</span>
-                    <select v-model="form.experienceType" @change="handleExperienceChange">
+                    <select v-model="form.experienceType" :disabled="editLocked" @change="handleExperienceChange">
                       <option value="wheel">{{ $t('lottery.adminExpWheel') }}</option>
                       <option value="slot">{{ $t('lottery.adminExpSlot') }}</option>
                       <option value="scratch">{{ $t('lottery.adminExpScratch') }}</option>
@@ -1408,9 +1433,10 @@
                   min="1"
                   max="999999"
                   step="1"
+                  :disabled="editLocked"
                   :placeholder="$t('lottery.maxParticipantsPlaceholder')"
                 />
-                <small class="field-hint">{{ $t('lottery.maxParticipantsHint') }}</small>
+                <small class="field-hint">{{ editLocked ? $t('lottery.adminEditLiveLockHint') : $t('lottery.maxParticipantsHint') }}</small>
               </label>
               <label>
                 <span>{{ $t('lottery.expectedCount') }}</span>
@@ -2484,6 +2510,8 @@ const emptyForm = () => emptyLotteryEditorForm(t)
 
 const form = ref(emptyForm())
 const isEditing = ref(false)
+/** docs/223：进行中/暂停活动编辑时锁定破坏性字段（类型/参与模式/体验/结果模式/容量/开始时间） */
+const editLocked = ref(false)
 const flashSalePriceYuan = computed({
   get: () => {
     const v = form.value.flashSalePriceCents
@@ -4073,8 +4101,11 @@ async function handleResume(id: string) {
 }
 
 async function handleEdit(draw: LotteryDraw) {
-  // 与后端 PATCH 一致：仅 draft 可改配置；paused 需先恢复或复制活动
-  if (draw.status !== 'draft') {
+  // docs/223：是否锁定结构字段取决于是否已有 entry/order/winner 事实，而非仅看活动状态。
+  // 详情请求失败时先 fail closed，避免把不完整的数据当成可安全修改。
+  const isLive = draw.status === 'open' || draw.status === 'paused'
+  editLocked.value = isLive
+  if (!['draft', 'open', 'paused'].includes(draw.status)) {
     showToast(t('lottery.adminEditNonDraft'), 'error')
     return
   }
@@ -4082,7 +4113,11 @@ async function handleEdit(draw: LotteryDraw) {
   let tiers: Array<{ prizeId: string; tierName: string; winnerCount: number; weight?: number }> = []
   let detailDraw: Record<string, any> | null = null
   try {
-    const detail = await adminRequest<{ draw: any; tiers: Array<{ prizeId: string; tierName: string; winnerCount: number; weight?: number }> }>(`/api/admin/draws/${draw.id}`)
+    const detail = await adminRequest<{
+      draw: any
+      tiers: Array<{ prizeId: string; tierName: string; winnerCount: number; weight?: number }>
+      editPolicy?: { structuralFieldsLocked?: boolean }
+    }>(`/api/admin/draws/${draw.id}`)
     if (detail.tiers) {
       tiers = detail.tiers.map(t => ({
         prizeId: t.prizeId || '',
@@ -4092,6 +4127,7 @@ async function handleEdit(draw: LotteryDraw) {
       }))
     }
     if (detail.draw) detailDraw = detail.draw
+    editLocked.value = Boolean(detail.editPolicy?.structuralFieldsLocked)
   } catch { /* 详情加载失败时使用空奖项 + 列表行上的字段 */ }
   // 详情优先（含完整 promotionConfig）；列表行作 fallback
   const source = detailDraw || (draw as Record<string, any>)
@@ -4326,6 +4362,8 @@ async function handleRecover(id: string) {
 }
 
 async function handleCreate() {
+  // 创建/复制时无锁定；仅 handleEdit 对 open/paused 设置 editLocked
+  editLocked.value = false
   if (creating.value) return
   if (!form.value.name || !form.value.startTime || !form.value.endTime) {
     showToast(t('lottery.adminFillNameTime'), 'error')
@@ -4422,18 +4460,35 @@ async function handleCreate() {
     }
     if (isEditing.value && form.value.id) {
       const current = draws.value.find((d) => d.id === form.value.id)
-      if (current && current.status !== 'draft') {
-        showToast(t('lottery.adminEditDraftOnly'), 'error')
+      if (current && !['draft', 'open', 'paused'].includes(current.status)) {
+        showToast(t('lottery.adminEditNonDraft'), 'error')
         closeEditor()
         form.value = emptyForm()
         return
       }
-      await updateLotteryDraw(form.value.id, payload)
+      // 已有参与事实的 live 编辑只提交后端明确允许的安全字段；不能让完整表单
+      // 隐式携带 promotionConfig、奖项或支付配置，破坏已经生效的用户合同。
+      const updatePayload = editLocked.value
+        ? {
+            title: payload.title,
+            description: payload.description,
+            endAt: payload.endAt,
+            expectedParticipants: payload.expectedParticipants,
+            showParticipantCount: payload.showParticipantCount,
+            showWinnerCount: payload.showWinnerCount,
+            showWinnerList: payload.showWinnerList,
+            productLink: payload.productLink,
+          }
+        : payload
+      await updateLotteryDraw(form.value.id, updatePayload)
       // ★ 创建与编辑共用：名单导入 / 邀请码生成 / 奖项配置（防止编辑分支遗漏）
-      await saveDrawRoster(form.value.id)
-      await saveDrawInviteCodes(form.value.id)
+      // 已有参与/支付事实时，这些资源也是规则的一部分，不能再通过后续接口绕过 PATCH 白名单。
+      if (!editLocked.value) {
+        await saveDrawRoster(form.value.id)
+        await saveDrawInviteCodes(form.value.id)
+      }
       // 仅抽奖或直付秒杀需要奖项配置；资料领取/领券等 claim 活动不调用（后端会拒绝）
-      if (needsTiersActivity(form.value.activityKind, form.value.experienceType || '')) {
+      if (!editLocked.value && needsTiersActivity(form.value.activityKind, form.value.experienceType || '')) {
         await saveDrawTiers(form.value.id)
       }
       // P1 体验：保存成功后回显清洗后的仪式短语，运营者立即看到哪些被保留/被拒。

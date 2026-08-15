@@ -1179,7 +1179,7 @@ describe("活动复制", () => {
 
 // P0/P1 修复（2026-08 审查）：PATCH 编辑语义——JSON 键级 merge、accessPassword 三态、detail 脱敏
 describe("活动编辑 PATCH 语义", () => {
-  async function seedDraftDraw(opts: { accessPassword?: string; activityConfig?: string; promotionConfig?: string }) {
+  async function seedDraftDraw(opts: { accessPassword?: string; activityConfig?: string; promotionConfig?: string } = {}) {
     await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
     const drawId = crypto.randomUUID();
     const now = new Date();
@@ -1312,5 +1312,107 @@ describe("活动编辑 PATCH 语义", () => {
     const data = await res.json() as { draw: Record<string, unknown> };
     expect(data.draw.hasAccessPassword).toBe(true);
     expect(data.draw.accessPassword).toBeUndefined(); // 不回传哈希
+  });
+
+  it("docs/223：零参与的进行中（open）活动允许修正结构与展示字段", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+    // 本组夹具不配置奖项，不能通过 publish 门禁；直接构造 open 状态来隔离 PATCH 规则。
+    await db.update(lotteryDraws).set({ status: "open" }).where(eq(lotteryDraws.id, drawId));
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({
+        title: "进行中改标题",
+        showWinnerList: 1,
+        experienceType: "slot",
+        winnerCount: 2,
+      }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select({ title: lotteryDraws.title, showWinnerList: lotteryDraws.showWinnerList, status: lotteryDraws.status }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.title).toBe("进行中改标题");
+    expect(draw!.showWinnerList).toBe(1);
+    expect(draw!.status).toBe("open"); // 编辑不改变活动状态
+  });
+
+  it("docs/223：已有参与事实的进行中活动拒改破坏性字段", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+    await db.update(lotteryDraws).set({ status: "open" }).where(eq(lotteryDraws.id, drawId));
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A,
+      drawId,
+      identityType: "email",
+      identityValue: "already-joined@example.com",
+    });
+
+    for (const key of ["activityKind", "participationMode", "experienceType", "resultMode", "allocationPolicy", "maxParticipants"]) {
+      const body: Record<string, unknown> = key === "activityKind"
+        ? { activityKind: "claim" }
+        : key === "participationMode"
+          ? { participationMode: "registered" }
+          : key === "experienceType"
+            ? { experienceType: "list" }
+            : key === "resultMode"
+              ? { resultMode: "instant" }
+              : key === "maxParticipants"
+                ? { maxParticipants: 5 }
+                : { allocationPolicy: "waitlist" };
+      const res = await app.request(`/api/admin/draws/${drawId}`, {
+        method: "PATCH", headers, body: JSON.stringify(body),
+      }, TEST_ENV);
+      expect(res.status).toBe(400);
+      expect((await res.json() as { error: string }).error).toContain("不可修改");
+    }
+  });
+
+  it("docs/223：已有参与事实的进行中活动结束时间只能延长、不能缩短", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+    await db.update(lotteryDraws).set({ status: "open" }).where(eq(lotteryDraws.id, drawId));
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A,
+      drawId,
+      identityType: "email",
+      identityValue: "time-locked@example.com",
+    });
+
+    // 缩短 → 拒绝
+    const shorter = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({ endAt: new Date(Date.now() + 600_000).toISOString() }), // 原 endAt 是 now+1h
+    }, TEST_ENV);
+    expect(shorter.status).toBe(400);
+    expect((await shorter.json() as { error: string }).error).toContain("只能延长");
+
+    // 延长 → 通过
+    const longer = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({ endAt: new Date(Date.now() + 7_200_000).toISOString() }),
+    }, TEST_ENV);
+    expect(longer.status).toBe(200);
+  });
+
+  it("docs/223：whenDrawn 只允许切可见性，取消的活动不可编辑", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+    // 取消（draft → cancelled）
+    const cancel = await app.request(`/api/admin/draws/${drawId}/cancel`, { method: "POST", headers }, TEST_ENV);
+    expect(cancel.status).toBe(200);
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({ title: "不能改" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toContain("不可编辑");
   });
 });

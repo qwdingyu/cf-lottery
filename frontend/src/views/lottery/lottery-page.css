@@ -387,6 +387,12 @@
 .lottery-flash-pricing-line--tier {
   color: var(--brand-bright);
 }
+.lottery-flash-purchase-availability {
+  margin: 0;
+  color: rgba(255,255,255,.58);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .lottery-flash-quantity {
   display: grid;
   grid-template-columns: minmax(56px, auto) auto;
@@ -569,15 +575,33 @@
 /* ── 移动端适配 ── */
 @media (max-width: 640px) {
   .lottery-view {
-    padding: 8px;
+    padding: 0 8px 8px;
     padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
   }
-  .lottery-header { flex-direction:column; align-items:flex-start; gap:8px; }
-  .lottery-header-left { flex-direction:column; align-items:flex-start; width: 100%; }
+  .lottery-header {
+    position: relative;
+    top: auto;
+    z-index: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin: 0 -8px 8px;
+    padding: 14px 16px 12px;
+    padding-top: max(12px, env(safe-area-inset-top, 0px));
+    background: rgba(10, 14, 23, .96);
+    backdrop-filter: none;
+  }
+  .lottery-header-left {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+  .lottery-title { font-size: 20px; line-height: 1.2; }
   .lottery-link-bar { width: 100%; }
-  .lottery-share-btn { width: 100%; justify-content: center; }
+  .lottery-share-btn { width: 100%; min-height: 40px; justify-content: center; }
   .lottery-header-actions { width: 100%; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .lottery-login-btn { flex: 1 1 auto; text-align: center; justify-content: center; }
+  .lottery-login-btn { flex: 1 1 auto; min-height: 40px; text-align: center; justify-content: center; }
   .lottery-card-head { flex-direction:column; align-items:flex-start; gap:8px; }
   .lottery-flash-merch { grid-template-columns: 96px 1fr; margin-inline: 12px; padding: 12px; }
   .lottery-flash-merch-title { font-size: 16px; }
@@ -585,8 +609,13 @@
   .lottery-join-btn { width:100%; min-height:48px; }
   .lottery-result-btn { width: 100%; }
   .lottery-join-bar { flex-direction:column; }
-  .lottery-main { padding:12px; }
+  .lottery-main { padding: 0 12px 12px; }
   .lottery-game-area { padding:16px; overflow-x:auto; max-width:100%; }
+  .lottery-game-area--flash-sale {
+    min-height: 0;
+    padding-top: 10px;
+    align-items: flex-start;
+  }
   .lottery-join-bar { flex-direction:column; gap:8px; padding-bottom: max(16px, env(safe-area-inset-bottom, 0px)); }
   .lottery-record { font-size:12px; }
   .lottery-skeleton { padding:12px; }
@@ -1034,4 +1063,28 @@
   object-fit: cover;
   flex: 0 0 auto;
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* 移动端最终覆盖：放在视觉增强规则之后，避免后置 .lottery-header 覆盖小屏紧凑布局。 */
+@media (max-width: 640px) {
+  .lottery-header {
+    position: relative;
+    top: auto;
+    z-index: auto;
+    margin: 0 -8px 8px;
+    padding: 14px 16px 12px;
+    padding-top: max(12px, env(safe-area-inset-top, 0px));
+    background: rgba(10, 14, 23, .96);
+    backdrop-filter: none;
+  }
+  .lottery-main--deep {
+    padding-top: 0;
+  }
+  .lottery-game-area--flash-sale {
+    min-height: 0;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    align-items: flex-start;
+    background: transparent;
+  }
 }

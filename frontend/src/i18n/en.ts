@@ -717,6 +717,8 @@ export default {
     paymentQuantity: "Quantity",
     paymentSlotLocked: "Slot reserved",
     paymentContinue: "Continue payment / view code",
+    paymentManagePurchase: "Continue payment or buy more",
+    paymentPurchaseLimitReached: "You have reached this activity's purchase limit",
     paymentOrderNo: "Order no.",
     paymentStatusLabel: "Order status",
     paymentQrHint: "Scan with the matching payment app or click Open Payment to continue.",
@@ -741,6 +743,7 @@ export default {
     flashPurchaseTotalPrice: "Total: ",
     flashPurchaseTierApplied: "Current tier: {label}",
     flashPurchaseQuantityHint: "Integers only. Values above the limit will be clamped to {max} item(s).",
+    flashPurchaseAvailability: "{purchased} purchased, {remaining} remaining",
     flashQuantityDecrease: "Decrease quantity",
     flashQuantityIncrease: "Increase quantity",
     // Admin
@@ -1118,7 +1121,11 @@ export default {
     adminVisibilityPublic: "Visible",
     adminVisibilityHidden: "Hidden",
     adminConfirmToggleVisibility: "Confirm {action}? This draw is completed — only visibility can be changed.",
-    adminEditNonDraft: "Only draft draws can be edited (server rule). Pause: resume or duplicate.",
+    adminEditNonDraft: "Only draft / running / paused draws can be edited; drawn or cancelled are locked.",
+    /** docs/223: editing a running draw */
+    adminEditLiveHint: "Running draws can edit title, description, display toggles, growth config and end time",
+    adminEditLiveLockHint: "This field is locked for running draws (type/mode/capacity changes affect existing participants — duplicate the draw instead)",
+    adminEditLiveEndOnlyHint: "End time can only be extended, never shortened",
     adminListCount: "Showing {shown} / {total}",
     adminNoMatch: "No matching draws — adjust filters or search",
 

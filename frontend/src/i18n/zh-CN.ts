@@ -676,6 +676,8 @@ export default {
     paymentQuantity: "购买件数",
     paymentSlotLocked: "名额已锁定",
     paymentContinue: "继续支付/查看卡密",
+    paymentManagePurchase: "继续支付或追加购买",
+    paymentPurchaseLimitReached: "已达到本活动购买上限",
     paymentOrderNo: "订单号",
     paymentStatusLabel: "订单状态",
     paymentQrHint: "请使用对应收款工具扫码，或点击“打开支付”继续完成支付。",
@@ -700,6 +702,7 @@ export default {
     flashPurchaseTotalPrice: "总价：",
     flashPurchaseTierApplied: "当前档位：{label}",
     flashPurchaseQuantityHint: "仅支持正整数，超出上限会自动收缩到 {max} 件",
+    flashPurchaseAvailability: "已购 {purchased} 件，还可购买 {remaining} 件",
     flashQuantityDecrease: "减少购买件数",
     flashQuantityIncrease: "增加购买件数",
     // 管理端
@@ -1091,7 +1094,11 @@ export default {
     adminVisibilityPublic: "用户可见",
     adminVisibilityHidden: "已隐藏",
     adminConfirmToggleVisibility: "确认{action}？该活动已开奖，仅可切换可见性。",
-    adminEditNonDraft: "仅草稿状态可编辑（与后端一致）；已暂停请恢复或复制活动。",
+    adminEditNonDraft: "仅草稿/进行中/已暂停状态可编辑；已开奖或已取消的活动不可修改。",
+    /** docs/223：进行中活动编辑 */
+    adminEditLiveHint: "进行中的活动可修改标题、说明、展示开关、增长配置与结束时间",
+    adminEditLiveLockHint: "进行中的活动不可修改此字段（类型/模式/容量变更会影响已参与用户，如需调整请复制活动）",
+    adminEditLiveEndOnlyHint: "结束时间只能延长，不能缩短",
     adminListCount: "显示 {shown} / 共 {total}",
     adminNoMatch: "无匹配活动，请调整筛选或搜索",
 
