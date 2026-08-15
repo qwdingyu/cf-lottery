@@ -32,7 +32,7 @@ import {
 } from "../db/schema";
 import { adminPaymentConfigRoute } from "./admin-payment-config";
 import { refundPaymentOrder } from "../services/payment/payment-service";
-import type { PaymentProvider } from "@usethink/cf-core/features/payment";
+import type { PaymentProvider } from "@usethink/cf-pay/catalog";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;

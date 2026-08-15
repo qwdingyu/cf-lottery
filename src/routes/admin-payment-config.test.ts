@@ -20,7 +20,7 @@ import {
   users,
 } from "../db/schema";
 import { adminPaymentConfigRoute } from "./admin-payment-config";
-import { encryptPaymentConfigValue } from "../services/payment/secret-config";
+import { encryptPaymentConfigValue } from "@usethink/cf-pay/config-store";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;

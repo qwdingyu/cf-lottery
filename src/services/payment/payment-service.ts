@@ -7,11 +7,11 @@
  * - 调用 cf-core Provider 创建支付（易支付/支付宝/Stripe）
  * - 支付回调验签 + 幂等 + 发卡密（prizeCodes available → issued 原子取卡）
  *
- * 复用 @usethink/cf-core/features/payment（Provider 抽象已在共享库）。
+ * 复用 @usethink/cf-pay/catalog + /config-store（Provider 抽象经 cf-pay 上收，业务项目不直连 cf-core）。
  */
-import { createProviderRegistry, isAmbiguousEasyPayProviderError } from "@usethink/cf-core/features/payment";
+import { isAmbiguousEasyPayProviderError, PAYMENT_PROVIDER_CATALOG_SERVICE } from "@usethink/cf-pay/catalog";
 import { isFlashSaleExperience } from "../../lib/activity-utils";
-import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-core/features/payment";
+import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-pay/catalog";
 import { eq, and, desc, sql, inArray, isNull, max, ne, notInArray } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { withDbTransaction } from "../../db/client";
@@ -28,8 +28,8 @@ import {
   lotteryDraws,
   auditLogs,
 } from "../../db/schema";
-import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "./catalog";
-import { decryptPaymentConfigValue, isEncryptedPaymentConfigValue } from "./secret-config";
+import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "@usethink/cf-pay/catalog";
+import { decryptPaymentConfigValue, isEncryptedPaymentConfigValue } from "@usethink/cf-pay/config-store";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../../lib/flash-sale-config";
 import {
   isPaidPaymentAttemptStatus,
@@ -665,7 +665,7 @@ export async function loadTenantConfig(
 
 /** 用租户配置创建 Provider 注册表并返回首选 Provider */
 export function createTenantProvider(env: Record<string, string>, currency?: string): PaymentProvider | null {
-  const registry = createProviderRegistry(env, PAYMENT_PROVIDER_CATALOG.map((i) => i.factory));
+  const registry = PAYMENT_PROVIDER_CATALOG_SERVICE.createRegistry(env);
   return registry.selectOnline(currency) ?? null;
 }
 

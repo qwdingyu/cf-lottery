@@ -53,7 +53,7 @@ import {
 } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
-import { encryptPaymentConfigValue } from "../services/payment/secret-config";
+import { encryptPaymentConfigValue } from "@usethink/cf-pay/config-store";
 import { sanitizePublicPromotionConfig } from "../lib/activity-utils";
 import { todayStr } from "../lib/date-utils";
 

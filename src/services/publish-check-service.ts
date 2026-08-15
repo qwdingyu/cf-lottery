@@ -22,8 +22,8 @@ import {
 } from "../db/schema";
 import { validateActivityConfigForPublish } from "../lib/activity-config";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../lib/flash-sale-config";
-import { PAYMENT_PROVIDER_CATALOG, type PaymentProviderCatalogItem } from "./payment/catalog";
-import { decryptPaymentConfigValueResult, isEncryptedPaymentConfigValue } from "./payment/secret-config";
+import { PAYMENT_PROVIDER_CATALOG, type PaymentProviderCatalogItem } from "@usethink/cf-pay/catalog";
+import { decryptPaymentConfigValueResult, isEncryptedPaymentConfigValue } from "@usethink/cf-pay/config-store";
 import {
   DIRECT_SALE_CODE_POOL_OCCUPYING_STATUSES,
   hasDirectSaleCodePoolConflict,

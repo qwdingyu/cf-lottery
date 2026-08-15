@@ -25,14 +25,14 @@ import {
   tenantConfigs,
 } from "../db/schema";
 import { parseAdminPagination, recordTenantAudit } from "./admin-lottery-helpers";
-import { PAYMENT_PROVIDER_CATALOG, getProviderMeta } from "../services/payment/catalog";
+import { PAYMENT_PROVIDER_CATALOG, getProviderMeta } from "@usethink/cf-pay/catalog";
 import { refundPaymentOrder, retryPaymentFulfillment } from "../services/payment/payment-service";
 import {
   decryptPaymentConfigValueResult,
   encryptPaymentConfigValue,
   isEncryptedPaymentConfigValue,
   isValidSecretEncryptionKey,
-} from "../services/payment/secret-config";
+} from "@usethink/cf-pay/config-store";
 import type { AppEnv } from "../bindings";
 import { sql } from "drizzle-orm";
 

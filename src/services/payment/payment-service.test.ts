@@ -14,8 +14,8 @@ import {
   tenantConfigs,
   tenants,
 } from "../../db/schema";
-import type { PaymentProvider } from "@usethink/cf-core/features/payment";
-import { EasyPayProviderError } from "@usethink/cf-core/features/payment";
+import type { PaymentProvider } from "@usethink/cf-pay/catalog";
+import { EasyPayProviderError } from "@usethink/cf-pay/catalog";
 import {
   createTenantProvider,
   createPaymentOrder,
@@ -28,7 +28,7 @@ import {
   retryPaymentFulfillment,
   refundPaymentOrder,
 } from "./payment-service";
-import { encryptPaymentConfigValue } from "./secret-config";
+import { encryptPaymentConfigValue } from "@usethink/cf-pay/config-store";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;

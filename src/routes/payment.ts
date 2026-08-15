@@ -12,7 +12,7 @@
  */
 import { Hono } from "hono";
 import { eq, and, desc, inArray, sql } from "drizzle-orm";
-import type { CreatePaymentResult } from "@usethink/cf-core/features/payment";
+import type { CreatePaymentResult } from "@usethink/cf-pay/catalog";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, fail, ok, isValidEmail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, paymentOrders, paymentOrderAttempts, paymentOrderItems, prizeCodes, prizes, systemConfig } from "../db/schema";
