@@ -253,6 +253,9 @@
       <p v-if="importPrize && codePoolLeft(importPrize) <= 0" class="notice-card pool-empty-banner" role="note">
         {{ $t('adminPrizes.poolEmptyModalHint') }}
       </p>
+      <p class="notice-card code-pool-contract-banner" role="note">
+        {{ $t('adminPrizes.homogeneousPoolHint') }}
+      </p>
       <div class="tabs" style="margin-bottom:12px">
         <button type="button" class="tab" :class="{ active: importTab === 'generate' }" @click="importTab = 'generate'">{{ $t('adminPrizes.generateTab') }}</button>
         <button type="button" class="tab" :class="{ active: importTab === 'paste' }" @click="importTab = 'paste'">{{ $t('adminPrizes.pasteTab') }}</button>
