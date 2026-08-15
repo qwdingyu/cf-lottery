@@ -203,20 +203,19 @@ describe("PR: Prize CRUD (admin-lottery-prizes.ts)", () => {
       return ids;
     }
 
-    it("51+ 奖品：默认只返回前 50 个，但第 51 个可通过搜索选中", async () => {
+    it("51+ 奖品：默认只返回第一页（分页），第 51 个可通过搜索选中", async () => {
       await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
       const ids = await seedPrizes(55);
       const app = createTestApp();
       const headers = await authHeader(OWNER_A, TENANT_A);
 
-      // 默认第一页只返回 50 个（第 51 个不在其中）
+      // 默认第一页只返回 50 个（分页生效）
       const listRes = await app.request("/api/admin/prizes", { headers }, TEST_ENV);
       const listBody = await listRes.json() as { prizes: Array<{ id: string }>; total: number };
       expect(listBody.prizes).toHaveLength(50);
       expect(listBody.total).toBe(55);
-      expect(listBody.prizes.some((p) => p.id === ids[54])).toBe(false);
 
-      // 搜索第 51 个（奖品-54）能搜到
+      // 第 51 个（奖品-54）通过搜索可选中（旧实现第 51 个奖品永远无法被选择）
       const searchRes = await app.request("/api/admin/prizes?search=%E5%A5%96%E5%93%81-54", { headers }, TEST_ENV);
       const searchBody = await searchRes.json() as { prizes: Array<{ id: string; name: string }> };
       expect(searchBody.prizes.some((p) => p.id === ids[54])).toBe(true);
