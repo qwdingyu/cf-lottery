@@ -153,6 +153,27 @@ async function seedInstantDraw() {
   return { prizeId, tierId };
 }
 
+async function seedBoundFlashSaleDraw() {
+  const now = new Date();
+  await db.insert(lotteryDraws).values({
+    id: DRAW_ID,
+    tenantId: TENANT_ID,
+    publicSlug: "cmd-test-slug",
+    title: "群秒杀活动",
+    status: "open",
+    visible: 1,
+    activityKind: "claim",
+    participationMode: "open",
+    experienceType: "flash_sale",
+    resultMode: "instant",
+    startAt: new Date(now.getTime() - 3600_000).toISOString(),
+    endAt: new Date(now.getTime() + 86400_000).toISOString(),
+    promotionConfig: JSON.stringify({
+      flashSale: { enabled: true, stockLimit: 10, paymentRequired: false },
+    }),
+  });
+}
+
 /** 播种一个非 instant 活动（如 manual 手动开奖） */
 async function seedManualDraw() {
   const now = new Date();
@@ -988,10 +1009,10 @@ it("并发签到原子性：两个并发 /签到 只有第一个增加 spinsLeft
 
 // ── /秒杀 测试（docs/171 §断层B：打通免费→付费转化）──
 describe("/秒杀 (executeFlashCommand)", () => {
-  it("未配置购买链接时提示管理员未配置", async () => {
+  it("没有外链且没有可用绑定秒杀时给出明确配置提示", async () => {
     const result = await executeBuiltinPlatformCommand(db, makeInput({ command: "flash" }));
     expect(result.handled).toBe(true);
-    expect(result.reply).toContain("尚未配置购买链接");
+    expect(result.reply).toContain("未绑定可用的秒杀活动");
   });
 
   it("配置购买链接时返回链接和展示文案", async () => {
@@ -1005,6 +1026,28 @@ describe("/秒杀 (executeFlashCommand)", () => {
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("🔥 限时秒杀 ¥9.90");
     expect(result.reply).toContain("https://example.com/flash");
+  });
+
+  it("未配置外链时使用当前绑定的秒杀活动公开页", async () => {
+    await seedBoundFlashSaleDraw();
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "flash",
+      appOrigin: "https://lucky.eforge.xyz/",
+    }));
+    expect(result.reply).toContain("群秒杀活动");
+    expect(result.reply).toContain("https://lucky.eforge.xyz/lottery/cmd-test-slug");
+  });
+
+  it("不分发不安全的旧外链", async () => {
+    const result = await executeBuiltinPlatformCommand(db, makeInput({
+      command: "flash",
+      builtinCommands: {
+        ...DEFAULT_BUILTIN_COMMANDS,
+        purchaseConfig: { url: "javascript:alert(1)", label: "危险链接" },
+      },
+    }));
+    expect(result.reply).toContain("未绑定可用的秒杀活动");
+    expect(result.reply).not.toContain("javascript:");
   });
 
   it("命令关闭时返回禁用提示", async () => {

@@ -13,6 +13,7 @@
  */
 import type { DbType } from "../../db/client";
 import { isInstantResultMode } from "../../lib/activity-utils";
+import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { lotteryDraws, lotteryEntries, lotteryWinners, lotteryPrizeTiers, prizes, prizeCodes, shareRecords } from "../../db/schema";
 import { joinDraw, recordActivityEvent } from "../lottery-service";
@@ -136,12 +137,12 @@ export function isBuiltinCommandEnabled(command: BuiltinPlatformCommand, config:
  * 若 `purchaseConfig.url` 未配置也视为「不可用」，不在帮助列表中展示。
  * 避免「提示可用 → 执行时提示管理员未配置」的体验断层（与 executeSpinCommand 耗尽引导的策略一致）。
  */
-export function renderHelpReply(config: BuiltinCommandConfig): string {
+export function renderHelpReply(config: BuiltinCommandConfig, hasBoundFlashSale = false): string {
   const enabled = (Object.keys(COMMAND_LABELS) as BuiltinPlatformCommand[])
     .filter((command) => {
       // flash 命令需要同时满足：开关开启 + 购买链接已配置，否则不在帮助中展示
       if (command === "flash") {
-        return config.flashEnabled !== false && !!config.purchaseConfig?.url;
+        return config.flashEnabled !== false && (!!config.purchaseConfig?.url || hasBoundFlashSale);
       }
       return isBuiltinCommandEnabled(command, config);
     })
@@ -188,7 +189,8 @@ export async function executeBuiltinPlatformCommand(
   }
 
   if (input.command === "help") {
-    return { handled: true, reply: renderHelpReply(input.builtinCommands) };
+    const boundDestination = await resolveBoundFlashSaleDestination(db, input);
+    return { handled: true, reply: renderHelpReply(input.builtinCommands, Boolean(boundDestination)) };
   }
 
   // 社群功能运行时强制群人数上限（docs/180 §3.3）：
@@ -709,7 +711,7 @@ async function executeSpinCommand(
     if (result.businessError) {
       const quotaGuide =
         result.businessErrorCode === "spin.quota.exhausted"
-          ? buildQuotaPurchaseGuide(input.builtinCommands)
+          ? await buildQuotaPurchaseGuide(db, input)
           : "";
       return { handled: true, reply: `${result.businessError}${quotaGuide}` };
     }
@@ -762,9 +764,12 @@ async function executeSpinCommand(
  *
  * @returns 引导文案（含前导逗号）；不满足条件时返回空字符串
  */
-function buildQuotaPurchaseGuide(builtinCommands: BuiltinCommandConfig): string {
-  const cfg = builtinCommands.purchaseConfig;
-  if (cfg && cfg.url && builtinCommands.flashEnabled !== false) {
+async function buildQuotaPurchaseGuide(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
+): Promise<string> {
+  if (input.builtinCommands.flashEnabled === false) return "";
+  if (safeExternalPurchaseUrl(input.builtinCommands.purchaseConfig?.url) || await resolveBoundFlashSaleDestination(db, input)) {
     return "，可使用 /秒杀 购买更多机会。";
   }
   return "";
@@ -967,8 +972,8 @@ async function buildCardCodeAccessUrl(
 /**
  * 执行 /秒杀 命令（docs/171 §断层B）。
  *
- * 返回租户配置的购买链接，引导用户从免费积分→付费购买。
- * 不处理支付（用户点击链接后在浏览器中完成支付流程）。
+ * 返回购买承接链接，引导用户在浏览器进入绑定活动的公开页或显式配置的外部商城。
+ * 不处理支付（用户点击链接后才进入公开活动页/外部商城的支付流程）。
  *
  * 配置项（builtinCommandsJson）：
  *   purchaseConfig.url  — 购买链接（公开活动页 URL）
@@ -979,13 +984,86 @@ async function executeFlashCommand(
   input: ExecuteBuiltinCommandInput & { builtinCommands: BuiltinCommandConfig },
 ): Promise<PlatformCommandResult> {
   const cfg = input.builtinCommands.purchaseConfig;
-  if (!cfg || !cfg.url) {
-    return { handled: true, reply: "管理员尚未配置购买链接，请联系管理员设置。可通过活动推广配置中的「购买链接」进行配置。" };
+  const externalUrl = safeExternalPurchaseUrl(cfg?.url);
+  if (externalUrl) {
+    return {
+      handled: true,
+      reply: `${cfg?.label || "立即购买"}\n${externalUrl}`,
+    };
   }
+
+  const boundDestination = await resolveBoundFlashSaleDestination(db, input);
+  if (boundDestination) return { handled: true, reply: `${boundDestination.label}\n${boundDestination.url}` };
+
   return {
     handled: true,
-    reply: `${cfg.label}\n${cfg.url}`,
+    reply: "当前群未绑定可用的秒杀活动，也未配置安全的外部购买链接，请联系管理员检查群助手绑定与活动状态。",
   };
+}
+
+/**
+ * 外部购买链接仅用于浏览器跳转，不由服务端请求；仍必须限制为可公开访问的 HTTP(S)，
+ * 防止后台误填脚本协议、本机地址或带凭据的钓鱼式 URL。
+ */
+function safeExternalPurchaseUrl(value: unknown): string | undefined {
+  const raw = String(value || "").trim();
+  if (!raw || raw.length > 2000) return undefined;
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) return undefined;
+    if (!url.hostname || url.hostname === "localhost" || url.hostname === "127.0.0.1") return undefined;
+    if (url.username || url.password) return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 当平台目标没有显式外链时，/秒杀 以绑定活动为唯一事实来源生成公开页链接。
+ * 仅允许公开、已发布且启用了 flash_sale 壳的活动，避免群内继续分发已替换或非秒杀活动。
+ */
+async function resolveBoundFlashSaleDestination(
+  db: DbType,
+  input: ExecuteBuiltinCommandInput,
+): Promise<{ url: string; label: string } | undefined> {
+  const origin = safePlatformAppOrigin(input.appOrigin);
+  if (!origin || !input.drawId || !input.publicSlug) return undefined;
+
+  const [draw] = await db
+    .select({
+      tenantId: lotteryDraws.tenantId,
+      publicSlug: lotteryDraws.publicSlug,
+      title: lotteryDraws.title,
+      status: lotteryDraws.status,
+      visible: lotteryDraws.visible,
+      promotionConfig: lotteryDraws.promotionConfig,
+    })
+    .from(lotteryDraws)
+    .where(and(eq(lotteryDraws.id, input.drawId), eq(lotteryDraws.tenantId, input.tenantId)))
+    .limit(1);
+  if (!draw || draw.publicSlug !== input.publicSlug || draw.status !== "open" || Number(draw.visible ?? 1) !== 1) {
+    return undefined;
+  }
+  if (!parseFlashSaleConfig(draw.promotionConfig).config?.enabled) return undefined;
+
+  const title = String(draw.title || "").trim().slice(0, 80);
+  return {
+    url: `${origin}/lottery/${encodeURIComponent(draw.publicSlug)}`,
+    label: title ? `前往「${title}」` : "前往秒杀活动",
+  };
+}
+
+function safePlatformAppOrigin(value: unknown): string | undefined {
+  const raw = String(value || "").trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

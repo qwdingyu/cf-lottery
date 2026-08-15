@@ -32,6 +32,7 @@ import {
 } from "../services/platform/adapter-config";
 import { isCommunityFeatureEnabled } from "../lib/system-config-registry";
 import { getEnv } from "../lib/platform";
+import { validateProductLink } from "./admin-lottery-helpers";
 /** 社群功能套餐配额校验（docs/180） */
 import { canTenantCreatePlatformTarget } from "../services/platform/community-policy";
 
@@ -127,6 +128,16 @@ function parseBuiltinCommandsInput(body: Record<string, unknown>): BuiltinComman
       ? { purchaseConfig: { url: purchaseUrl, label: purchaseLabel } }
       : {}),
   };
+}
+
+function validatePurchaseConfigInput(body: Record<string, unknown>): string | null {
+  const purchase = body.purchaseConfig && typeof body.purchaseConfig === "object"
+    ? body.purchaseConfig as Record<string, unknown>
+    : null;
+  const url = typeof purchase?.url === "string" ? purchase.url.trim() : "";
+  if (!url) return null;
+  const error = validateProductLink({ url });
+  return error ? `购买链接无效：${error}` : null;
 }
 
 /**
@@ -353,6 +364,8 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
     if (!adapterConfigResult.ok) return fail(c, adapterConfigResult.message);
     const adapterConfig = adapterConfigResult.value;
 
+    const purchaseConfigError = validatePurchaseConfigInput(body);
+    if (purchaseConfigError) return fail(c, purchaseConfigError);
     const builtinCommands = parseBuiltinCommandsInput(body as Record<string, unknown>);
     const assistantEnabled = body.assistantEnabled === false ? 0 : 1;
 
@@ -470,6 +483,8 @@ export function setupPlatformRoutes(route: Hono<AppEnv>) {
       patch.adapterConfigJson = JSON.stringify(adapterConfigResult.value);
     }
     if (body.builtinCommands && typeof body.builtinCommands === "object") {
+      const purchaseConfigError = validatePurchaseConfigInput(body.builtinCommands as Record<string, unknown>);
+      if (purchaseConfigError) return fail(c, purchaseConfigError);
       const merged = parseBuiltinCommandsInput(body.builtinCommands as Record<string, unknown>);
       patch.builtinCommandsJson = JSON.stringify(merged);
     }

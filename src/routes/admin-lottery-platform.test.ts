@@ -729,6 +729,23 @@ it("端到端闭环：rewardConfig linear 模式 → /签到 连续签到 → ch
     expect(cmds.purchaseConfig).toBeUndefined();
   });
 
+  it("创建时拒绝不安全的 purchaseConfig.url", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/platform-targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        targetId: "unsafe-purchase-url",
+        targetName: "危险购买链接群",
+        activeDrawId: DRAW_ID,
+        purchaseConfig: { url: "javascript:alert(1)", label: "危险链接" },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json() as Record<string, unknown>;
+    expect(String(data.message || "")).toContain("购买链接无效");
+  });
+
   it("purchaseConfig.label 为空时使用默认文案「立即购买」", async () => {
     const app = await createApp();
     const res = await app.request("/api/admin/platform-targets", {

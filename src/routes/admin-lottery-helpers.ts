@@ -250,6 +250,9 @@ export function validateProductLink(link: any): string | null {
     if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
       return "商品链接不能指向本地地址";
     }
+    if (url.username || url.password) {
+      return "商品链接不能包含用户名或密码";
+    }
     if (url.href.length > 2000) return "商品链接过长";
   } catch {
     return "商品链接格式无效";
