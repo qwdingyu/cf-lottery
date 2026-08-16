@@ -19,3 +19,6 @@ data/
 deploy-*.tar.gz
 cf-lottery-deploy-*.tar.gz
 backups/
+
+# 工具会话状态目录
+.omx/

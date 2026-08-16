@@ -39,11 +39,31 @@ import {
   PAYMENT_ORDER_ITEM_STATUS,
   PAYMENT_ORDER_STATUS,
 } from "./payment-status";
+import {
+  type FulfillmentProvider,
+  type FulfillmentResult,
+  type FulfillmentRetryResult,
+  isFulfillmentSuccessful,
+  isFulfillmentAnyFailed,
+} from "@usethink/cf-pay/fulfillment";
 
 // systemConfig 表（用于读取运行时配置订单超时/价格上限等）
 import { systemConfig as systemConfigTable } from "../../db/schema";
 
 export type PaymentProviderName = "easypay" | "stripe" | "alipay";
+
+/**
+ * 外部履约 provider 所需的业务上下文。
+ * 可由业务项目注入自定义 FulfillmentProvider，替换内置的卡密发卡逻辑。
+ */
+export interface LotteryContext {
+  db: DbType;
+  tenantId: string;
+  drawId: string;
+  entryId: string;
+  orderId: string;
+  quantity: number;
+}
 
 const PAYMENT_ACCESS_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -1193,6 +1213,7 @@ export async function handlePaymentCallback(
   tenantId: string,
   provider: PaymentProvider,
   params: Record<string, string>,
+  fulfillmentProvider?: FulfillmentProvider<LotteryContext>,
 ): Promise<{ processed: boolean; order?: typeof paymentOrders.$inferSelect; error?: string }> {
   // ── 支付回调校验链（6 重防护，docs/203 复核）──
   // ① 验签：provider.verifyCallback 返回 null/false 直接拒绝
@@ -1310,19 +1331,49 @@ export async function handlePaymentCallback(
     }
 
     const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
-    // 确认下单时预占的卡密（reserved → issued，P2 优化，docs/205）。
-    // 先确认预占：正常流程（createPaymentOrder 预占）下能命中 reserved 卡密。
-    let acquiredPrizeCodeIds = await confirmPrizeCodes(tx, current.id, quantity);
-    // 兼容兜底：若订单无预占卡密（seed/旧订单/人工补录），回退到从 available 领取。
-    // 避免这些历史订单回调时因无预占卡密而错误进入 FULFILLMENT_FAILED。
-    if (acquiredPrizeCodeIds.length < quantity) {
-      acquiredPrizeCodeIds = await acquirePrizeCodes(tx, tenantId, current.drawId, current.entryId, current.id, quantity);
+
+    // ── 履约分发：可注入外部 FulfillmentProvider，否则走内置卡密发卡 ──
+    // 外部 provider 的 fulfill() 返回 FulfillmentResult，据此决定订单/entry 状态：
+    //   fulfilled/not_applicable → PAID + entry PAID
+    //   failed/partial_failed     → FULFILLMENT_FAILED，entry 保持 PENDING 等待补发
+    let newStatus: string;
+    let fulfillmentOk: boolean;
+    let acquiredPrizeCodeIds: string[] = [];
+
+    if (fulfillmentProvider) {
+      const fulfillmentResult: FulfillmentResult = await fulfillmentProvider.fulfill({
+        db: tx,
+        tenantId,
+        drawId: current.drawId,
+        entryId: current.entryId,
+        orderId: current.id,
+        quantity,
+      });
+      fulfillmentOk = isFulfillmentSuccessful(fulfillmentResult);
+      newStatus = isFulfillmentAnyFailed(fulfillmentResult)
+        ? PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED
+        : PAYMENT_ORDER_STATUS.PAID;
+    } else {
+      // 确认下单时预占的卡密（reserved → issued，P2 优化，docs/205）。
+      // 先确认预占：正常流程（createPaymentOrder 预占）下能命中 reserved 卡密。
+      acquiredPrizeCodeIds = await confirmPrizeCodes(tx, current.id, quantity);
+      // 兼容兜底：若订单无预占卡密（seed/旧订单/人工补录），回退到从 available 领取。
+      // 避免这些历史订单回调时因无预占卡密而错误进入 FULFILLMENT_FAILED。
+      if (acquiredPrizeCodeIds.length < quantity) {
+        acquiredPrizeCodeIds = await acquirePrizeCodes(tx, tenantId, current.drawId, current.entryId, current.id, quantity);
+      }
+      // 卡密不足：标记 paid_fulfillment_failed（运营后台可见，docs/131 §7），不静默 null
+      newStatus = acquiredPrizeCodeIds.length === quantity
+        ? PAYMENT_ORDER_STATUS.PAID
+        : PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED;
+      fulfillmentOk = acquiredPrizeCodeIds.length === quantity;
+      // V2：把已领取的卡密依次绑定到订单明细（order_items），每件一条 fulfilled（docs/158）。
+      // 卡密不足时 acquirePrizeCodes 已原子回滚本次试领并返回 []，明细保持 pending。
+      if (acquiredPrizeCodeIds.length > 0) {
+        await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
+      }
     }
 
-    // 卡密不足：标记 paid_fulfillment_failed（运营后台可见，docs/131 §7），不静默 null
-    const newStatus = acquiredPrizeCodeIds.length === quantity
-      ? PAYMENT_ORDER_STATUS.PAID
-      : PAYMENT_ORDER_STATUS.FULFILLMENT_FAILED;
     const paidAttempt = await tx
       .update(paymentOrderAttempts)
       .set({
@@ -1338,12 +1389,6 @@ export async function handlePaymentCallback(
       .returning({ id: paymentOrderAttempts.id });
     if (paidAttempt.length === 0) {
       throw new Error("支付尝试状态已变化，请重试回调");
-    }
-
-    // V2：把已领取的卡密依次绑定到订单明细（order_items），每件一条 fulfilled（docs/158）。
-    // 卡密不足时 acquirePrizeCodes 已原子回滚本次试领并返回 []，明细保持 pending。
-    if (acquiredPrizeCodeIds.length > 0) {
-      await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
     }
 
     const paidOrder = await tx
@@ -1367,7 +1412,7 @@ export async function handlePaymentCallback(
     // entry 的 paid 只代表“已支付并完成发卡”。
     // 卡密不足时订单进入 paid_fulfillment_failed，entry 保持 pending 继续占位，
     // 等运营补发成功后再由 retryPaymentFulfillment 原子切换为 paid。
-    if (acquiredPrizeCodeIds.length === quantity) {
+    if (fulfillmentOk) {
       const paidEntry = await tx
         .update(lotteryEntries)
         .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PAID })
@@ -1399,6 +1444,7 @@ export async function retryPaymentFulfillment(
   db: DbType,
   tenantId: string,
   orderId: string,
+  fulfillmentProvider?: FulfillmentProvider<LotteryContext>,
 ): Promise<{ ok: boolean; order?: typeof paymentOrders.$inferSelect; error?: string }> {
   const order = await withDbTransaction(db, async (tx) => {
     const [current] = await tx
@@ -1412,34 +1458,48 @@ export async function retryPaymentFulfillment(
       return { error: "订单状态不允许补发" };
     }
 
-    const pendingItems = await tx
-      .select({ id: paymentOrderItems.id })
-      .from(paymentOrderItems)
-      .where(and(
-        eq(paymentOrderItems.tenantId, tenantId),
-        eq(paymentOrderItems.paymentOrderId, current.id),
-        eq(paymentOrderItems.status, PAYMENT_ORDER_ITEM_STATUS.PENDING),
-      ))
-      .orderBy(paymentOrderItems.lineNo);
-    if (pendingItems.length === 0) {
-      return { error: "订单没有可补发的待处理明细" };
+    if (fulfillmentProvider?.retry) {
+      const retryResult: FulfillmentRetryResult = await fulfillmentProvider.retry({
+        db: tx,
+        tenantId,
+        drawId: current.drawId,
+        entryId: current.entryId,
+        orderId: current.id,
+        quantity: Math.max(1, Math.floor(Number(current.quantity || 1))),
+      });
+      if (!retryResult.ok) {
+        return { error: retryResult.error || "补发失败" };
+      }
+    } else {
+      const pendingItems = await tx
+        .select({ id: paymentOrderItems.id })
+        .from(paymentOrderItems)
+        .where(and(
+          eq(paymentOrderItems.tenantId, tenantId),
+          eq(paymentOrderItems.paymentOrderId, current.id),
+          eq(paymentOrderItems.status, PAYMENT_ORDER_ITEM_STATUS.PENDING),
+        ))
+        .orderBy(paymentOrderItems.lineNo);
+      if (pendingItems.length === 0) {
+        return { error: "订单没有可补发的待处理明细" };
+      }
+      // FULFILLMENT_FAILED 残留预留码释放（P1 修复）：
+      // 回调流程先 confirmPrizeCodes（reserved→issued）再兜底 acquirePrizeCodes，卡密不足时 acquire 会原子回滚，
+      // 但任何未确认的预占码都会永久卡在 reserved。补发前先统一释放本订单残留的 reserved 码回 available，
+      // 避免码池永久泄漏（与 expireOverdueOrders / cancelPaymentOrder 的释放语义一致）。
+      await releaseReservedPrizeCodes(tx, current.id, tenantId);
+      const acquiredPrizeCodeIds = await acquirePrizeCodes(
+        tx,
+        tenantId,
+        current.drawId,
+        current.entryId,
+        current.id,
+        pendingItems.length,
+      );
+      if (acquiredPrizeCodeIds.length !== pendingItems.length) return { error: "没有足够可用卡密，请先补充码池" };
+      // V2：补发只绑定尚未履约的订单项，不能按订单总 quantity 重复领取卡密。
+      await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
     }
-    // FULFILLMENT_FAILED 残留预留码释放（P1 修复）：
-    // 回调流程先 confirmPrizeCodes（reserved→issued）再兜底 acquirePrizeCodes，卡密不足时 acquire 会原子回滚，
-    // 但任何未确认的预占码都会永久卡在 reserved。补发前先统一释放本订单残留的 reserved 码回 available，
-    // 避免码池永久泄漏（与 expireOverdueOrders / cancelPaymentOrder 的释放语义一致）。
-    await releaseReservedPrizeCodes(tx, current.id, tenantId);
-    const acquiredPrizeCodeIds = await acquirePrizeCodes(
-      tx,
-      tenantId,
-      current.drawId,
-      current.entryId,
-      current.id,
-      pendingItems.length,
-    );
-    if (acquiredPrizeCodeIds.length !== pendingItems.length) return { error: "没有足够可用卡密，请先补充码池" };
-    // V2：补发只绑定尚未履约的订单项，不能按订单总 quantity 重复领取卡密。
-    await fulfillOrderItems(tx, tenantId, current.id, acquiredPrizeCodeIds);
 
     // 如果 entry 已因其他订单 PAID（例如用户同时创建了多个订单，其中一个先补发成功），
     // 则跳过 entry 更新；只有 PENDING 状态才需要推进。避免"参与记录状态已变化"异常。
@@ -1729,7 +1789,7 @@ export async function refundPaymentOrder(
  * - 成功：返回 quantity 个 code id，并用 payment_order_id 建立订单级关联。
  * - 失败：释放本次已经试领的卡密，返回 []，避免用户已付款后只拿到半单。
  */
-async function acquirePrizeCodes(
+export async function acquirePrizeCodes(
   db: DbType,
   tenantId: string,
   drawId: string,
@@ -1928,7 +1988,7 @@ export async function releaseReservedPrizeCodes(
  * 如果领取的卡密数量与订单 pending 明细数量不一致，只会绑定到 min(领取数, 明细数) 件，
  * 余下的明细保持 pending（由人工补发/退款流程处理）。
  */
-async function fulfillOrderItems(
+export async function fulfillOrderItems(
   db: DbType,
   tenantId: string,
   orderId: string,

@@ -27,6 +27,7 @@ import {
 import { parseAdminPagination, recordTenantAudit } from "./admin-lottery-helpers";
 import { PAYMENT_PROVIDER_CATALOG, getProviderMeta } from "@usethink/cf-pay/catalog";
 import { refundPaymentOrder, retryPaymentFulfillment } from "../services/payment/payment-service";
+import { lotteryFulfillmentProvider } from "../services/payment/fulfillment-provider";
 import {
   decryptPaymentConfigValueResult,
   encryptPaymentConfigValue,
@@ -466,7 +467,7 @@ adminPaymentConfigRoute.post("/payment-orders/:id/retry-fulfillment", async (c) 
   const db = getDb(c);
   const tenantId = c.get("tenantId") || "";
   const orderId = c.req.param("id");
-  const result = await retryPaymentFulfillment(db, tenantId, orderId);
+  const result = await retryPaymentFulfillment(db, tenantId, orderId, lotteryFulfillmentProvider);
   if (!result.ok) {
     const status = result.error === "订单不存在"
       ? 404

@@ -8,7 +8,19 @@
  *
  * 不允许用 payment_orders.status 的字符串去判断 lottery_entries.payment_status，
  * 否则重试、迟到回调和发卡失败会把名额状态与支付审计状态混在一起。
+ *
+ * ── 派生于 @usethink/cf-pay/status ──
+ * 基础状态（pending/paid/cancelled/expired）抽取到 cf-pay/status，
+ * 这里只保留 cf-lottery 专属的衍生状态（FULFILLMENT_FAILED / LATE_NEEDS_REFUND 等）。
  */
+
+import {
+  ORDER_STATUS as BASE_ORDER_STATUS,
+  ATTEMPT_STATUS as BASE_ATTEMPT_STATUS,
+  isPaidAttemptStatus as isBasePaidAttemptStatus,
+} from "@usethink/cf-pay/status";
+
+import { ORDER_ITEM_STATUS as BASE_ORDER_ITEM_STATUS } from "@usethink/cf-pay/fulfillment";
 
 /**
  * lottery_entries.payment_status 的正常状态：
@@ -33,25 +45,19 @@ export type PaymentEntryStatus = typeof PAYMENT_ENTRY_STATUS[keyof typeof PAYMEN
 
 /** payment_orders.status：逻辑订单的支付和履约状态。 */
 export const PAYMENT_ORDER_STATUS = {
-  PENDING: "pending",
-  PAID: "paid",
+  ...BASE_ORDER_STATUS,
   FULFILLMENT_FAILED: "paid_fulfillment_failed",
   LATE_NEEDS_REFUND: "paid_late_needs_refund",
   REFUNDED: "refunded",
-  EXPIRED: "expired",
-  CANCELLED: "cancelled",
 } as const;
 
 export type PaymentOrderStatus = typeof PAYMENT_ORDER_STATUS[keyof typeof PAYMENT_ORDER_STATUS];
 
 /** payment_order_attempts.status：单次网关交易尝试的状态。 */
 export const PAYMENT_ATTEMPT_STATUS = {
-  PENDING: "pending",
-  PAID: "paid",
+  ...BASE_ATTEMPT_STATUS,
   LATE_NEEDS_REFUND: "paid_late_needs_refund",
   REFUNDED: "refunded",
-  EXPIRED: "expired",
-  FAILED: "failed",
   SUPERSEDED: "superseded",
 } as const;
 
@@ -74,8 +80,13 @@ export function isRetryablePaymentOrderStatus(status: string): boolean {
   return (RETRYABLE_PAYMENT_ORDER_STATUSES as readonly string[]).includes(status);
 }
 
+/**
+ * cf-lottery 扩展的已支付判断：除基础 paid 外，LATE_NEEDS_REFUND 和 REFUNDED 也视为"已支付"。
+ * LATE_NEEDS_REFUND：支付事实已发生但订单状态异常，需人工退款（不可重复履约）。
+ * REFUNDED：已退款，但支付事实发生过（不可重复发卡）。
+ */
 export function isPaidPaymentAttemptStatus(status: string): boolean {
-  return status === PAYMENT_ATTEMPT_STATUS.PAID
+  return isBasePaidAttemptStatus(status)
     || status === PAYMENT_ATTEMPT_STATUS.LATE_NEEDS_REFUND
     || status === PAYMENT_ATTEMPT_STATUS.REFUNDED;
 }
@@ -83,11 +94,12 @@ export function isPaidPaymentAttemptStatus(status: string): boolean {
 /**
  * V2 订单项（payment_order_items）状态（docs/158）。
  * 与 payment_orders.status 解耦：订单整体是 paid 但某一项可能 refunded（售后/换码）。
+ *
+ * 派生自 @usethink/cf-pay/fulfillment 的 ORDER_ITEM_STATUS，
+ * 保证基础状态常量与 cf-pay 履约模块一致。
  */
 export const PAYMENT_ORDER_ITEM_STATUS = {
-  PENDING: "pending",
-  FULFILLED: "fulfilled",
-  REFUNDED: "refunded",
+  ...BASE_ORDER_ITEM_STATUS,
 } as const;
 
 export type PaymentOrderItemStatus = typeof PAYMENT_ORDER_ITEM_STATUS[keyof typeof PAYMENT_ORDER_ITEM_STATUS];

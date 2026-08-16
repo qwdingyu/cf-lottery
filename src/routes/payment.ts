@@ -28,6 +28,7 @@ import {
   findPaymentOrderByAccessToken,
   resumePendingPaymentOrder,
 } from "../services/payment/payment-service";
+import { lotteryFulfillmentProvider } from "../services/payment/fulfillment-provider";
 import {
   isRetryablePaymentOrderStatus,
   PAYMENT_ENTRY_STATUS,
@@ -722,7 +723,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
   const provider = createTenantProvider(config.env, order.currency);
   if (!provider) return c.text("provider not available", 500);
 
-  const result = await handlePaymentCallback(db, order.tenantId, provider, params);
+  const result = await handlePaymentCallback(db, order.tenantId, provider, params, lotteryFulfillmentProvider);
   if (!result.processed) {
     return c.text(result.error || "fail", 400);
   }

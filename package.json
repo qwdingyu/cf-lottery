@@ -49,7 +49,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260726.1",
     "@intlify/message-compiler": "^11.4.8",
-    "@usethink/cf-pay": "file:../../../2-node/cf-pay",
+    "@usethink/cf-pay": "^0.1.0",
     "@vitest/coverage-v8": "4.1.7",
     "drizzle-kit": "^0.31.10",
     "javascript-obfuscator": "^5.5.0",
