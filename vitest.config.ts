@@ -83,6 +83,10 @@ export default defineConfig({
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {
       deps: {
+        // 框架/上游直接依赖其源码入口的包需 inline transform：
+        // 注：@usethink/cf-pay 从 dist 运行时 re-export @usethink/cf-core/features/payment，
+        // 但 cf-core 0.5.3+ 已移除 development→src 条件，统一走 dist 编译产物，
+        // 因此不再需要 inline @usethink。若后续 cf-core 恢复 development→src 则需加回。
         inline: ["better-auth", "@better-auth/oauth-provider"],
       },
     },

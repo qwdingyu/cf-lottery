@@ -1458,6 +1458,10 @@ export async function retryPaymentFulfillment(
       return { error: "订单状态不允许补发" };
     }
 
+    // 分支判据：`fulfillmentProvider?.retry` —— retry 是接口可选方法。
+    // 有外部补发能力时优先交给 provider.retry()；未实现 retry 的 provider
+    // （`?.` 取到 undefined）或未注入 provider 时，走下方内置兜底（释放残留预留码→重领卡密→绑定明细），
+    // 保证管理端补发入口对"是否注入 provider"完全幂等。
     if (fulfillmentProvider?.retry) {
       const retryResult: FulfillmentRetryResult = await fulfillmentProvider.retry({
         db: tx,
