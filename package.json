@@ -40,6 +40,7 @@
     "@hono/node-server": "^2.0.12",
     "@libsql/client": "^0.14.0",
     "@usethink/cf-core": "^0.5.3",
+    "@usethink/cf-pay": "^0.1.2",
     "better-auth": "^1.6.25",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.2",
@@ -49,7 +50,6 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260726.1",
     "@intlify/message-compiler": "^11.4.8",
-    "@usethink/cf-pay": "^0.1.2",
     "@vitest/coverage-v8": "4.1.7",
     "drizzle-kit": "^0.31.10",
     "javascript-obfuscator": "^5.5.0",
