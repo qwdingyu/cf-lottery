@@ -39,8 +39,8 @@
   "dependencies": {
     "@hono/node-server": "^2.0.12",
     "@libsql/client": "^0.14.0",
-    "@usethink/cf-core": "^0.5.3",
-    "@usethink/cf-pay": "^0.1.2",
+    "@usethink/cf-core": "^0.6.0",
+    "@usethink/cf-pay": "^0.2.0",
     "better-auth": "^1.6.25",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.2",
