@@ -84,7 +84,7 @@ export default defineConfig({
     server: {
       deps: {
         // 框架/上游直接依赖其源码入口的包需 inline transform：
-        // 注：@usethink/cf-pay 已独立为自包含包（不再依赖 @usethink/cf-core），
+        // 注：@usethink/cf-pay 支付域代码已归自身；config-store 复用 cf-core 加解密原语（声明为 peerDep），
         // 但 cf-core 0.5.3+ 已移除 development→src 条件，统一走 dist 编译产物，
         // 因此不再需要 inline @usethink。若后续 cf-core 恢复 development→src 则需加回。
         inline: ["better-auth", "@better-auth/oauth-provider"],
