@@ -1088,7 +1088,10 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
   // 的 stockLimit 优先逻辑不变（存量数据行为不变）。
   // 联动基于「合并后的 promotionConfig」（顶层键级 merge），与 update 语句写入的最终值同源；
   // 仅当请求体未显式传 maxParticipants 时联动（显式传了以显式为准，发布预检 error 兜底不一致）。
-  if (maxParticipantsUpdate === undefined) {
+  // ⚠️ 进行中活动（hasLifecycleFacts）禁止联动：maxParticipants 不在 LIVE_SAFE_FIELDS 白名单，
+  // 若联动写库会绕过「进行中活动不可修改参与上限」的门禁，静默篡改已发布活动的容量。
+  // 存量不一致的进行中活动保持原值，由发布预检 error 提示运营处理（docs/239 复核修复）。
+  if (maxParticipantsUpdate === undefined && !hasLifecycleFacts) {
     const nextPromoRaw = body.promotionConfig !== undefined
       ? mergeJsonTopLevel(draw.promotionConfig, body.promotionConfig)
       : draw.promotionConfig;
