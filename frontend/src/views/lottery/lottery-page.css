@@ -588,6 +588,10 @@
 .lottery-card-head--static { cursor: default; }
 .lottery-card-head--static:hover { background: transparent; }
 .lottery-main--deep { padding-top: 12px; }
+.lottery-main--flash-sale {
+  max-width: 1040px;
+  padding: 18px 24px 34px;
+}
 
 /* ── 空状态 ── */
 .empty-icon { font-size:48px; margin-bottom:12px; }
@@ -1132,6 +1136,22 @@
 .lottery-card--deep.lottery-card--flash-sale .lottery-card-body {
   border-top-color: rgba(244, 63, 94, 0.14);
 }
+@media (min-width: 821px) {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-card-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+    align-items: start;
+    gap: 0;
+  }
+  .lottery-card--deep.lottery-card--flash-sale .lottery-draw-desc,
+  .lottery-card--deep.lottery-card--flash-sale .lottery-status-banner,
+  .lottery-card--deep.lottery-card--flash-sale .lottery-prize-strip,
+  .lottery-card--deep.lottery-card--flash-sale .lottery-prize-shell-hint,
+  .lottery-card--deep.lottery-card--flash-sale .activity-submission,
+  .lottery-card--deep.lottery-card--flash-sale .lottery-join-bar {
+    grid-column: 1 / -1;
+  }
+}
 .lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch {
   grid-template-columns: 168px minmax(0, 1fr);
   gap: 20px;
@@ -1160,6 +1180,25 @@
   padding: 18px 22px 22px;
   background: transparent;
   align-items: stretch;
+}
+@media (min-width: 821px) {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch {
+    grid-column: 1;
+    min-height: 250px;
+    margin-right: 12px;
+  }
+  .lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch-media {
+    align-self: stretch;
+  }
+  .lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale {
+    grid-column: 2;
+    margin: 16px 22px 0 0;
+    padding: 16px;
+    border: 1px solid rgba(244, 63, 94, 0.24);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.035);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  }
 }
 .lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-sale-game {
   max-width: none;
@@ -1214,6 +1253,9 @@
   }
   .lottery-card--deep.lottery-card--flash-sale .lottery-card-title {
     font-size: 19px;
+  }
+  .lottery-main--flash-sale {
+    padding: 0 12px 12px;
   }
   .lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch {
     grid-template-columns: 104px minmax(0, 1fr);

@@ -51,7 +51,14 @@
     </div>
 
     <!-- 活动卡片 -->
-    <div v-else class="lottery-main" :class="{ 'lottery-main--deep': isDeepLinked }">
+    <div
+      v-else
+      class="lottery-main"
+      :class="{
+        'lottery-main--deep': isDeepLinked,
+        'lottery-main--flash-sale': isDeepLinked && hasDeepFlashSale,
+      }"
+    >
       <div
         v-for="draw in draws"
         :key="draw.id"
@@ -320,7 +327,7 @@
               :loading="joiningId === draw.id || spinningId === draw.id"
               :celebrate-key="celebrateKeyById[draw.id] || 0"
               :target-sector-index="targetSectorById[draw.id] ?? null"
-              :flash-sale="draw.flashSale || null"
+              :flash-sale="flashSaleDisplayForGame(draw)"
               :start-at="draw.startAt || draw.startTime || null"
               :end-at="draw.endAt || draw.endTime || null"
               @play="handleGamePlay(draw)"
@@ -1281,6 +1288,7 @@ const flashSaleMerchByDrawId = computed<Record<string, FlashSaleMerchCard>>(() =
   }
   return map
 })
+const hasDeepFlashSale = computed(() => draws.value.some((draw) => Boolean(flashSaleMerchByDrawId.value[draw.id])))
 const flashSalePurchaseSummaryByDrawId = computed<Record<string, FlashSalePurchaseSummary>>(() => {
   const map: Record<string, FlashSalePurchaseSummary> = {}
   for (const draw of draws.value) {
@@ -2063,6 +2071,16 @@ function handleGamePlay(draw: LotteryDraw) {
 
 function flashSaleMerchCard(draw: LotteryDraw) {
   return flashSaleMerchByDrawId.value[draw.id] || null
+}
+
+function flashSaleDisplayForGame(draw: LotteryDraw) {
+  if (!draw.flashSale) return null
+  if (!flashSaleMerchCard(draw)) return draw.flashSale
+  return {
+    ...draw.flashSale,
+    // 商品卡已展示库存；操作区保留倒计时、进度与主 CTA，避免重复“剩余 N 份”。
+    showStock: false,
+  }
 }
 
 function flashSalePurchaseSummary(draw: LotteryDraw) {
