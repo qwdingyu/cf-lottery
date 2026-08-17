@@ -6,7 +6,6 @@
         <RouterLink to="/" class="shop-home-link">{{ $t('common.backToHome') }}</RouterLink>
         <div class="shop-title-block">
           <h1 class="section-title">{{ store.name || $t('shop.title') }}</h1>
-          <span v-if="cards.length" class="shop-activity-count">{{ $t('shop.activityCount', { n: cards.length }) }}</span>
         </div>
         <button class="btn btn-ghost btn-sm" @click="refresh" :disabled="loading">{{ loading ? $t('shop.loading') : $t('shop.refresh') }}</button>
       </div>
@@ -340,11 +339,27 @@ onMounted(refresh)
 
 /* ── 工具栏 ── */
 .shop-toolbar { margin-bottom: 18px; }
-.shop-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.shop-title-block { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.shop-activity-count { color: var(--tg-hint); font-size: 12px; white-space: nowrap; }
-.shop-home-link { color: var(--tg-link); text-decoration: none; font-size: 14px; }
-.shop-home-link:hover { text-decoration: underline; }
+.shop-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.shop-title-block { display: flex; align-items: center; min-width: 0; }
+.shop-home-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tg-hint);
+  text-decoration: none;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.shop-home-link:hover { color: inherit; border-color: rgba(255, 255, 255, .2); }
+.shop-home-link:focus-visible {
+  outline: 2px solid var(--tg-link);
+  outline-offset: 2px;
+}
 .section-title { margin: 0; }
 .category-bar { display: flex; gap: 6px; }
 .cat-btn { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; color: var(--tg-hint); }
@@ -655,7 +670,7 @@ onMounted(refresh)
 /* ── 响应式 ── */
 @media (max-width: 640px) {
   .shop-view { padding: 16px; }
-  .shop-heading { align-items: flex-start; flex-wrap: wrap; }
+  .shop-heading { align-items: flex-start; }
   .shop-title-block { flex: 1; }
   .category-bar { width: 100%; overflow-x: auto; padding-bottom: 2px; }
   .cat-btn { flex: 0 0 auto; }
