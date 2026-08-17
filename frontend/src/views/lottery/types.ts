@@ -61,6 +61,11 @@ export type LotteryDraw = {
   productId?: string
   productTitle?: string
   productLink?: { url: string; title: string; imageUrl?: string; price?: string }
+  store?: {
+    name?: string
+    storeSlug?: string
+    brand?: Record<string, unknown>
+  }
   activityConfig?: ActivityConfig
   /** 运营者配置的多状态 CTA / 裂变（公开 API 已解析 JSON） */
   promotionConfig?: {

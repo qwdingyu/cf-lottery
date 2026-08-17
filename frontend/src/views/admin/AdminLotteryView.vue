@@ -2820,6 +2820,18 @@ const flashSaleDirectChecklist = computed(() => {
   })
 })
 
+/**
+ * 创建底部就绪提示与直付发布清单共用同一组阻塞项。
+ *
+ * 这里仅在「已开启秒杀 + 选择直付」时生效；导流模式不应被价格、
+ * 卡密等站内支付条件阻塞。支付渠道凭据、卡密库存等服务端事实仍由
+ * publish-check 负责，前端只提前提示表单中可以确定的缺项。
+ */
+const flashSaleDirectChecklistBlockers = computed(() => {
+  if (!form.value.enableFlashSale || form.value.flashSaleSalesMode === 'redirect') return []
+  return flashSaleDirectChecklist.value.filter((item) => !item.done || item.error)
+})
+
 // ── 活动后承接：未中奖自动发券开关（表单编辑用，保存时同步进 activityConfig.loserReward） ──
 const loserRewardEnabled = ref(false)
 const loserRewardCouponLabel = ref('')
@@ -3066,9 +3078,9 @@ const createStepDone = computed(() => {
   if (form.value.activityKind === 'lottery') {
     prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
   } else if (needsTiersMandatory(form.value.activityKind, form.value.experienceType || '', form.value.enableFlashSale, form.value.flashSaleSalesMode !== 'redirect')) {
-    // 直付秒杀（限时抢购）：必须绑定至少 1 个卡密奖品（发布清单 codePrize 检查项），
-    // 否则创建后无法通过发布门禁。导流模式（非直付）不需要卡密奖品。
-    prizesOk = form.value.tiers.some((tier) => Boolean(tier.prizeId))
+    // 直付秒杀必须同时满足前端清单中的可确定条件，尤其是唯一可用卡密奖品；
+    // 支付渠道凭据和实际卡密库存仍由服务端 publish-check 最终判定。
+    prizesOk = flashSaleDirectChecklistBlockers.value.length === 0
   } else {
     prizesOk = timeOk // 非 lottery/claim 直付：名额可选，时间齐即视为第 4 步可过
   }
@@ -3087,10 +3099,11 @@ const createReadinessLabel = computed(() => {
   if (form.value.activityKind === 'lottery' && !createStepDone.value.prizes) {
     missing.push(t('lottery.adminCreateNeedPrize'))
   }
-  if (needsTiersMandatory(form.value.activityKind, form.value.experienceType || '', form.value.enableFlashSale, form.value.flashSaleSalesMode !== 'redirect')
-    && !form.value.tiers.some((tier) => Boolean(tier.prizeId))
-  ) {
-    missing.push(t('lottery.adminCreateNeedPrize'))
+  const directChecklistBlockers = flashSaleDirectChecklistBlockers.value
+  if (needsTiersMandatory(form.value.activityKind, form.value.experienceType || '', form.value.enableFlashSale, form.value.flashSaleSalesMode !== 'redirect')) {
+    for (const item of directChecklistBlockers) {
+      missing.push(t(`lottery.${item.labelKey}`))
+    }
   }
   if (form.value.participationMode === 'password' && !String(form.value.accessPassword || '').trim()) {
     missing.push(t('lottery.adminCreateNeedPassword'))

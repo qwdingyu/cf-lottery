@@ -369,6 +369,12 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
   const joinWindow = resolvePublicJoinWindow(draw);
 
   const detailFlashConfig = parseFlashSaleConfig(draw.promotionConfig).config;
+  // 详情页需要把活动访客导回所属店铺；只暴露公开 slug/品牌信息，不暴露 tenantId。
+  const [publicStore] = await db
+    .select({ name: tenants.name, storeSlug: tenants.storeSlug, brandConfig: tenants.brandConfig })
+    .from(tenants)
+    .where(eq(tenants.id, draw.tenantId))
+    .limit(1);
   // 直付秒杀直接读取活动计数器；普通活动才扫描 entries。
   let total = 0;
   if (detailFlashConfig?.paymentRequired === true) {
@@ -420,6 +426,13 @@ publicLotteryRoute.get("/draws/:slug", async (c) => {
     serverNow: joinWindow.serverNow,
     // 导流：关联商品链接（仅在活动中开放时返回）
     productLink: draw.productLink && draw.productLink !== "{}" ? tryParseJson(draw.productLink) : undefined,
+    store: publicStore?.storeSlug
+      ? {
+          name: publicStore.name,
+          storeSlug: publicStore.storeSlug,
+          brand: tryParseJson(publicStore.brandConfig) || {},
+        }
+      : undefined,
     // 公开端脱敏：剔除内部激励参数（保底/每日免费/里程碑/排行榜奖励明细），保留展示所需（sanitizePublicPromotionConfig）
     promotionConfig: sanitizePublicPromotionConfig(draw.promotionConfig),
     // 公开端只接收经过后端白名单解析的配置；无效配置会由发布闸门阻断，不在这里暴露半成品。

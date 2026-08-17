@@ -4,7 +4,10 @@
     <div class="shop-toolbar">
       <div class="shop-heading">
         <RouterLink to="/" class="shop-home-link">{{ $t('common.backToHome') }}</RouterLink>
-        <h1 class="section-title">{{ store.name || $t('shop.title') }}</h1>
+        <div class="shop-title-block">
+          <h1 class="section-title">{{ store.name || $t('shop.title') }}</h1>
+          <span v-if="cards.length" class="shop-activity-count">{{ $t('shop.activityCount', { n: cards.length }) }}</span>
+        </div>
         <button class="btn btn-ghost btn-sm" @click="refresh" :disabled="loading">{{ loading ? $t('shop.loading') : $t('shop.refresh') }}</button>
       </div>
       <div class="category-bar" :aria-label="$t('landing.marketFilterAria')">
@@ -48,14 +51,22 @@
     </div>
 
     <!-- ═══ 活动卡片网格 ═══ -->
-    <section v-else class="product-grid">
-      <div
-        v-for="card in cards"
-        :key="card.publicSlug"
-        class="product-card"
-        :class="{ 'card-flash': card.flashSaleEnabled }"
-        @click="$router.push(card.href)"
-      >
+    <section v-else class="shop-sections">
+      <div v-if="flashCards.length" class="shop-section">
+        <div class="shop-section-heading">
+          <div>
+            <h2>{{ $t('shop.flashSectionTitle') }}</h2>
+            <p>{{ $t('shop.flashSectionDesc') }}</p>
+          </div>
+          <span class="section-count">{{ flashCards.length }}</span>
+        </div>
+        <div class="product-grid">
+          <div
+            v-for="card in flashCards"
+            :key="card.publicSlug"
+            class="product-card card-flash"
+            @click="$router.push(card.href)"
+          >
         <!-- ── 秒杀 Ribbon ── -->
         <div v-if="card.flashSaleEnabled" class="flash-ribbon">
           <span class="ribbon-icon">⚡</span>
@@ -121,14 +132,41 @@
           </div>
         </template>
 
-        <!-- ── 非秒杀：简洁信息 ── -->
-        <template v-else>
-          <div class="card-meta-row">
-            <span v-if="card.endAt" class="card-meta">{{ $t('shop.endsAt', { time: formatEndTime(card.endAt) }) }}</span>
-            <span v-if="card.phase === 'upcoming' && card.startAt" class="card-meta">{{ $t('shop.startsAt', { time: formatEndTime(card.startAt) }) }}</span>
-            <span v-else class="card-meta">{{ card.sessionLabel || $t(activityPhaseI18nKey(card.phase)) }}</span>
           </div>
-        </template>
+        </div>
+      </div>
+      <div v-if="freeCards.length" class="shop-section regular-section">
+        <div class="shop-section-heading">
+          <div>
+            <h2>{{ $t('shop.otherSectionTitle') }}</h2>
+            <p>{{ $t('shop.otherSectionDesc') }}</p>
+          </div>
+          <span class="section-count">{{ freeCards.length }}</span>
+        </div>
+        <div class="product-grid">
+          <div
+            v-for="card in freeCards"
+            :key="card.publicSlug"
+            class="product-card"
+            @click="$router.push(card.href)"
+          >
+            <div class="card-media" :class="{ 'card-media-empty': !card.imageUrl }">
+              <img v-if="card.imageUrl" :src="card.imageUrl" :alt="card.title" loading="lazy" />
+              <span v-else>{{ $t('shop.activityPlaceholder') }}</span>
+            </div>
+            <div class="card-head">
+              <span class="badge free">{{ $t('shop.freeTag') }}</span>
+              <span class="price">{{ card.priceText }}</span>
+            </div>
+            <h3 class="card-title">{{ card.title }}</h3>
+            <p v-if="card.description" class="card-desc">{{ card.description }}</p>
+            <div class="card-meta-row">
+              <span v-if="card.endAt" class="card-meta">{{ $t('shop.endsAt', { time: formatEndTime(card.endAt) }) }}</span>
+              <span v-if="card.phase === 'upcoming' && card.startAt" class="card-meta">{{ $t('shop.startsAt', { time: formatEndTime(card.startAt) }) }}</span>
+              <span v-else class="card-meta">{{ card.sessionLabel || $t(activityPhaseI18nKey(card.phase)) }}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </div>
@@ -208,6 +246,9 @@ const cards = computed(() => {
 
   return mapped
 })
+
+const flashCards = computed(() => cards.value.filter((card) => card.flashSaleEnabled))
+const freeCards = computed(() => cards.value.filter((card) => !card.flashSaleEnabled))
 
 // ── 秒杀英雄横幅（取最紧急的秒杀活动） ──
 const flashBanner = computed<LandingActivityCard | null>(() => {
@@ -293,6 +334,8 @@ onMounted(refresh)
 /* ── 工具栏 ── */
 .shop-toolbar { margin-bottom: 24px; }
 .shop-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.shop-title-block { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.shop-activity-count { color: var(--tg-hint); font-size: 12px; white-space: nowrap; }
 .shop-home-link { color: var(--tg-link); text-decoration: none; font-size: 14px; }
 .shop-home-link:hover { text-decoration: underline; }
 .section-title { margin: 0; }
@@ -369,6 +412,12 @@ onMounted(refresh)
 }
 
 /* ── 卡片网格 ── */
+.shop-sections { display: flex; flex-direction: column; gap: 28px; }
+.shop-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.shop-section-heading h2 { margin: 0; font-size: 18px; line-height: 1.3; }
+.shop-section-heading p { margin: 4px 0 0; color: var(--tg-hint); font-size: 12px; }
+.section-count { min-width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--shop-sale-soft); color: var(--shop-sale-strong); font-size: 12px; font-weight: 700; }
+.regular-section .section-count { background: var(--surface-2); color: var(--tg-hint); }
 .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 
 .product-card {
@@ -538,6 +587,11 @@ onMounted(refresh)
 .card-meta-row { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px 8px; }
 .card-meta { font-size: 12px; color: var(--tg-hint); }
 
+/* 普通活动保留商品图，但不强行替秒杀卡片增加高度 */
+.card-media { width: 100%; height: 104px; display: grid; place-items: center; overflow: hidden; border-radius: var(--r-md); background: var(--surface-2); }
+.card-media img { width: 100%; height: 100%; object-fit: contain; }
+.card-media-empty { color: var(--tg-hint); font-size: 12px; }
+
 /* ── 商品图片（秒杀卡片） ── */
 .flash-image {
   width: 100%;
@@ -564,6 +618,10 @@ onMounted(refresh)
 /* ── 响应式 ── */
 @media (max-width: 640px) {
   .shop-view { padding: 16px; }
+  .shop-heading { align-items: flex-start; flex-wrap: wrap; }
+  .shop-title-block { flex: 1; }
+  .category-bar { width: 100%; overflow-x: auto; padding-bottom: 2px; }
+  .cat-btn { flex: 0 0 auto; }
   .shop-flash-hero { flex-wrap: wrap; gap: 8px; }
   .flash-hero-countdown { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
 }
