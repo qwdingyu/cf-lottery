@@ -363,6 +363,7 @@ function activityRowAriaLabel(card: LandingActivityCard): string {
     card.flashSaleEnabled ? t('shop.flashTag') : t('shop.freeTag'),
     t(activityPhaseI18nKey(card.phase)),
     card.priceText,
+    card.flashSaleEnabled ? flashScarcityText(card) : '',
     card.flashSaleEnabled
       ? (card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) ? t('shop.viewActivity') : t('shop.flashCta'))
       : t('shop.viewActivity'),
