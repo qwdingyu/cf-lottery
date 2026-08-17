@@ -224,6 +224,30 @@ describe("GET /public/draws/:slug/og", () => {
   });
 });
 
+describe("GET /public/draws/:slug", () => {
+  it("公开详情带回店铺公开信息，但不暴露 tenantId", async () => {
+    await db.insert(tenants).values({ id: TENANT, name: "Detail Store", storeSlug: "detail-store" });
+    await seedDraw({
+      id: "detail-draw-id",
+      slug: "detail-draw-slug",
+      title: "详情页活动",
+      promotionConfig: { flashSale: { enabled: true, paymentRequired: true, priceCents: 990, currency: "cny", stockLimit: 10 } },
+    });
+
+    const res = await app().request("/public/draws/detail-draw-slug", {}, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; store?: { name?: string; storeSlug?: string; brand?: Record<string, unknown> } };
+
+    expect(body.ok).toBe(true);
+    expect(body.store).toMatchObject({
+      name: "Detail Store",
+      storeSlug: "detail-store",
+    });
+    expect(JSON.stringify(body)).not.toContain("tenant-public-home");
+    expect(JSON.stringify(body)).not.toContain("detail-draw-id");
+  });
+});
+
 describe("GET /public/shops/:storeSlug", () => {
   it("店铺首页直付秒杀按活动计数器计算进度，且不暴露内部 ID", async () => {
     await db.insert(tenants).values({ id: TENANT, name: "Public Shop Tenant", storeSlug: "token-shop" });
