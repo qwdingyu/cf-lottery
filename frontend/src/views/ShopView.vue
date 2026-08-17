@@ -50,7 +50,7 @@
       <small>{{ $t('landing.marketEmptyDesc') }}</small>
     </div>
 
-    <!-- ═══ 活动卡片网格 ═══ -->
+    <!-- ═══ 活动列表（横向一行一个） ═══ -->
     <section v-else class="shop-sections">
       <div v-if="flashCards.length" class="shop-section">
         <div class="shop-section-heading">
@@ -60,78 +60,57 @@
           </div>
           <span class="section-count">{{ flashCards.length }}</span>
         </div>
-        <div class="product-grid">
+        <div class="activity-list">
           <div
             v-for="card in flashCards"
             :key="card.publicSlug"
-            class="product-card card-flash"
+            class="activity-row activity-row-flash"
             @click="$router.push(card.href)"
           >
-        <!-- ── 秒杀 Ribbon ── -->
-        <div v-if="card.flashSaleEnabled" class="flash-ribbon">
-          <span class="ribbon-icon">⚡</span>
-          <span class="ribbon-text">{{ $t('shop.flashTag') }}</span>
-        </div>
-
-        <!-- ── 卡片头部：标签 + 价格 ── -->
-        <div class="card-head">
-          <span class="badge" :class="card.badge">{{ card.badge === 'flash' ? $t('shop.flashTag') : $t('shop.freeTag') }}</span>
-          <span class="price" :class="{ 'price-flash': card.flashSaleEnabled }">{{ card.priceText }}</span>
-        </div>
-
-        <!-- ── 标题 ── -->
-        <h3 class="card-title">{{ card.title }}</h3>
-        <p v-if="card.description" class="card-desc">{{ card.description }}</p>
-
-        <!-- ── 秒杀特有：倒计时 + 进度 + 库存 + 抢购按钮 ── -->
-        <template v-if="card.flashSaleEnabled">
-          <!-- 场次标签 -->
-          <div v-if="card.sessionLabel" class="flash-session-row">
-            <span class="flash-session-tag">{{ card.sessionLabel }}</span>
-          </div>
-
-          <!-- 倒计时（注意：不用 aria-live——每秒更新会让读屏持续播报，反模式；读屏用户导航到此处按需读取即可） -->
-          <div v-if="card.showCountdown" class="flash-countdown-row">
-            <span class="flash-cd-label">
-              {{ card.phase === 'upcoming' ? $t('shop.countdownStartIn') : card.phase === 'ended' ? $t('shop.countdownEnded') : $t('shop.countdownEndIn') }}
-            </span>
-            <span
-              class="flash-cd-digits"
-              :class="{ 'cd-urgent': cardUrgent(card), 'cd-ended': card.phase === 'ended' }"
-            >
-              {{ flashCountdown(card) }}
-            </span>
-          </div>
-
-          <!-- 商品图片（秒杀卡片展示，增加视觉锚点） -->
-          <img v-if="card.flashSaleEnabled && card.imageUrl" :src="card.imageUrl" :alt="card.title" class="flash-image" loading="lazy" />
-
-          <!-- 进度条 -->
-          <div v-if="card.showProgress && card.progressPercent > 0" class="flash-progress-wrap">
-            <div class="flash-progress-track" role="progressbar" :aria-label="$t('shop.grabedPercent', { n: card.progressPercent })" :aria-valuenow="card.progressPercent" aria-valuemin="0" aria-valuemax="100">
-              <div class="flash-progress-fill" :style="{ width: card.progressPercent + '%' }" />
+            <div class="activity-row-media" :class="{ 'activity-row-media-empty': !card.imageUrl }">
+              <img v-if="card.imageUrl" :src="card.imageUrl" :alt="card.title" loading="lazy" />
+              <span v-else>{{ $t('shop.activityPlaceholder') }}</span>
             </div>
-            <span class="flash-progress-label">{{ $t('shop.grabedPercent', { n: card.progressPercent }) }}</span>
-          </div>
-
-          <!-- 库存 -->
-          <p v-if="card.showStock && card.remaining != null" class="flash-stock">
-            {{ $t('shop.remaining', { n: card.remaining }) }}
-          </p>
-
-          <!-- 抢购/查看按钮 -->
-          <div class="flash-cta-row">
-            <button
-              type="button"
-              class="flash-grab-btn"
-              :class="{ 'flash-grab-soldout': card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) }"
-              @click.stop="$router.push(card.href)"
-            >
-              {{ card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) ? $t('shop.soldOut') : $t('shop.flashCta') }}
-            </button>
-          </div>
-        </template>
-
+            <div class="activity-row-body">
+              <div class="card-tags">
+                <span class="card-tag card-tag-flash">{{ $t('shop.flashTag') }}</span>
+                <span class="card-tag card-tag-phase">{{ $t(activityPhaseI18nKey(card.phase)) }}</span>
+                <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
+                <span v-if="card.remaining != null" class="card-tag">{{ $t('shop.remaining', { n: card.remaining }) }}</span>
+              </div>
+              <h3 class="card-title">{{ card.title }}</h3>
+              <p v-if="card.description" class="card-desc">{{ card.description }}</p>
+              <div v-if="card.showCountdown" class="flash-countdown-row">
+                <span class="flash-cd-label">
+                  {{ card.phase === 'upcoming' ? $t('shop.countdownStartIn') : card.phase === 'ended' ? $t('shop.countdownEnded') : $t('shop.countdownEndIn') }}
+                </span>
+                <span
+                  class="flash-cd-digits"
+                  :class="{ 'cd-urgent': cardUrgent(card), 'cd-ended': card.phase === 'ended' }"
+                >
+                  {{ flashCountdown(card) }}
+                </span>
+              </div>
+              <div v-if="card.showProgress && card.progressPercent > 0" class="flash-progress-wrap">
+                <div class="flash-progress-track" role="progressbar" :aria-label="$t('shop.grabedPercent', { n: card.progressPercent })" :aria-valuenow="card.progressPercent" aria-valuemin="0" aria-valuemax="100">
+                  <div class="flash-progress-fill" :style="{ width: card.progressPercent + '%' }" />
+                </div>
+                <span class="flash-progress-label">{{ $t('shop.grabedPercent', { n: card.progressPercent }) }}</span>
+              </div>
+            </div>
+            <div class="activity-row-side">
+              <div class="activity-row-price">
+                <span class="price" :class="{ 'price-flash': card.flashSaleEnabled }">{{ card.priceText }}</span>
+              </div>
+              <button
+                type="button"
+                class="activity-row-btn flash-grab-btn"
+                :class="{ 'flash-grab-soldout': card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) }"
+                @click.stop="$router.push(card.href)"
+              >
+                {{ card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) ? $t('shop.soldOut') : $t('shop.flashCta') }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -143,27 +122,38 @@
           </div>
           <span class="section-count">{{ freeCards.length }}</span>
         </div>
-        <div class="product-grid">
+        <div class="activity-list">
           <div
             v-for="card in freeCards"
             :key="card.publicSlug"
-            class="product-card"
+            class="activity-row"
             @click="$router.push(card.href)"
           >
-            <div class="card-media" :class="{ 'card-media-empty': !card.imageUrl }">
+            <div class="activity-row-media" :class="{ 'activity-row-media-empty': !card.imageUrl }">
               <img v-if="card.imageUrl" :src="card.imageUrl" :alt="card.title" loading="lazy" />
               <span v-else>{{ $t('shop.activityPlaceholder') }}</span>
             </div>
-            <div class="card-head">
-              <span class="badge free">{{ $t('shop.freeTag') }}</span>
-              <span class="price">{{ card.priceText }}</span>
+            <div class="activity-row-body">
+              <div class="card-tags">
+                <span class="card-tag card-tag-free">{{ $t('shop.freeTag') }}</span>
+                <span class="card-tag card-tag-phase">{{ $t(activityPhaseI18nKey(card.phase)) }}</span>
+                <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
+              </div>
+              <h3 class="card-title">{{ card.title }}</h3>
+              <p v-if="card.description" class="card-desc">{{ card.description }}</p>
+              <div class="card-meta-row">
+                <span v-if="card.endAt" class="card-meta">{{ $t('shop.endsAt', { time: formatEndTime(card.endAt) }) }}</span>
+                <span v-if="card.phase === 'upcoming' && card.startAt" class="card-meta">{{ $t('shop.startsAt', { time: formatEndTime(card.startAt) }) }}</span>
+                <span v-else class="card-meta">{{ card.sessionLabel || $t(activityPhaseI18nKey(card.phase)) }}</span>
+              </div>
             </div>
-            <h3 class="card-title">{{ card.title }}</h3>
-            <p v-if="card.description" class="card-desc">{{ card.description }}</p>
-            <div class="card-meta-row">
-              <span v-if="card.endAt" class="card-meta">{{ $t('shop.endsAt', { time: formatEndTime(card.endAt) }) }}</span>
-              <span v-if="card.phase === 'upcoming' && card.startAt" class="card-meta">{{ $t('shop.startsAt', { time: formatEndTime(card.startAt) }) }}</span>
-              <span v-else class="card-meta">{{ card.sessionLabel || $t(activityPhaseI18nKey(card.phase)) }}</span>
+            <div class="activity-row-side">
+              <div class="activity-row-price">
+                <span class="price">{{ card.priceText }}</span>
+              </div>
+              <button type="button" class="activity-row-btn activity-row-btn-ghost" @click.stop="$router.push(card.href)">
+                {{ $t('shop.viewActivity') }}
+              </button>
             </div>
           </div>
         </div>
@@ -418,81 +408,99 @@ onMounted(refresh)
 .shop-section-heading p { margin: 4px 0 0; color: var(--tg-hint); font-size: 12px; }
 .section-count { min-width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--shop-sale-soft); color: var(--shop-sale-strong); font-size: 12px; font-weight: 700; }
 .regular-section .section-count { background: var(--surface-2); color: var(--tg-hint); }
-.product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-
-.product-card {
-  position: relative;
+.activity-list { display: flex; flex-direction: column; gap: 12px; }
+.activity-row {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 172px;
+  gap: 16px;
+  align-items: stretch;
+  padding: 14px;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  padding: 16px;
-  cursor: pointer;
   background: var(--surface);
+  cursor: pointer;
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  overflow: hidden;
 }
-.product-card:hover {
+.activity-row:hover {
   border-color: var(--border-strong);
   box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
+  transform: translateY(-1px);
 }
-
-/* 秒杀卡片：玫红边框 + 渐变底 */
-.product-card.card-flash {
+.activity-row-flash {
   border-color: var(--shop-sale-border);
   background: linear-gradient(180deg, rgba(244, 63, 94, 0.06) 0%, var(--surface) 100%);
 }
-.product-card.card-flash:hover {
+.activity-row-flash:hover {
   border-color: var(--shop-sale-strong);
-  box-shadow: 0 0 20px rgba(244, 63, 94, 0.15), var(--shadow-md);
+  box-shadow: 0 0 18px rgba(244, 63, 94, 0.12), var(--shadow-md);
+}
+.activity-row-media {
+  width: 100%;
+  min-height: 160px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.activity-row-media img { width: 100%; height: 100%; object-fit: cover; }
+.activity-row-media-empty { color: var(--tg-hint); font-size: 12px; }
+.activity-row-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.activity-row-side {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  padding-left: 4px;
+}
+.activity-row-price { text-align: right; }
+.activity-row-btn {
+  min-width: 132px;
+  width: 100%;
+}
+.activity-row-btn-ghost {
+  min-height: 42px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  color: var(--tg-text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.activity-row-btn-ghost:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
 }
 
-/* ── 秒杀 Ribbon（右上角） ── */
-.flash-ribbon {
-  position: absolute;
-  top: 0;
-  right: 0;
-  display: flex;
+.card-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.card-tag {
+  display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 3px 10px 3px 8px;
-  border-radius: 0 var(--r-lg) 0 var(--r-md);
-  background: linear-gradient(135deg, var(--shop-sale-strong), #be123c);
-  color: #fff;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--tg-hint);
   font-size: 12px;
   font-weight: 700;
-  line-height: 1.4;
-  z-index: 1;
 }
-.ribbon-icon { font-size: 13px; }
-.ribbon-text { text-transform: uppercase; letter-spacing: 0.5px; }
-
-/* ── 卡片头部 ── */
-.card-head { display: flex; justify-content: space-between; align-items: center; }
-.badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; }
-/* 兜底色值：--danger/--success 未在全局定义过，回退到秒杀玫红/成功绿，避免白字无底色 */
-.badge.flash{background:var(--danger, #e11d48);color:#fff}.badge.free{background:var(--success, #16a34a);color:#fff}
-.price { font-weight: 700; font-size: 15px; }
-.price-flash { color: var(--shop-sale-strong); font-size: 18px; }
+.card-tag-flash { background: rgba(244, 63, 94, 0.14); color: var(--shop-sale-strong); }
+.card-tag-free { background: rgba(34, 197, 94, 0.14); color: #22c55e; }
+.card-tag-phase { background: rgba(59, 130, 246, 0.14); color: #60a5fa; }
+.price { font-weight: 800; font-size: 24px; line-height: 1.1; }
+.price-flash { color: var(--shop-sale-strong); font-size: 26px; }
 
 /* ── 标题/描述 ── */
-.card-title { margin: 0; font-size: 15px; line-height: 1.4; font-weight: 600; }
-.card-desc { margin: 0; font-size: 12px; color: var(--tg-hint); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-
-/* ── 秒杀场次 ── */
-.flash-session-row { margin: 0; }
-.flash-session-tag {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--shop-sale-text);
-  background: var(--shop-sale-soft);
-  border: 1px solid var(--shop-sale-border);
-  border-radius: 4px;
-  padding: 2px 8px;
-}
+.card-title { margin: 0; font-size: 18px; line-height: 1.35; font-weight: 700; }
+.card-desc { margin: 0; font-size: 13px; color: var(--tg-hint); line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ── 倒计时行 ── */
 .flash-countdown-row {
@@ -547,20 +555,18 @@ onMounted(refresh)
 .flash-progress-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--shop-sale), var(--shop-sale-strong)); transition: width 0.3s ease; }
 .flash-progress-label { font-size: 11px; color: var(--tg-hint); white-space: nowrap; }
 
-/* ── 库存文字 ── */
 .flash-stock { margin: 0; font-size: 13px; color: var(--shop-sale); text-align: center; font-weight: 600; }
 
 /* ── 抢购按钮 ── */
 .flash-cta-row { margin-top: auto; }
 .flash-grab-btn {
-  width: 100%;
-  min-height: 42px;
-  padding: 8px 16px;
+  min-height: 44px;
+  padding: 10px 18px;
   border: none;
   border-radius: var(--r-lg);
   background: linear-gradient(135deg, var(--shop-sale), var(--shop-sale-strong));
   color: #fff;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 800;
   cursor: pointer;
   transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
@@ -587,21 +593,6 @@ onMounted(refresh)
 .card-meta-row { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px 8px; }
 .card-meta { font-size: 12px; color: var(--tg-hint); }
 
-/* 普通活动保留商品图，但不强行替秒杀卡片增加高度 */
-.card-media { width: 100%; height: 104px; display: grid; place-items: center; overflow: hidden; border-radius: var(--r-md); background: var(--surface-2); }
-.card-media img { width: 100%; height: 100%; object-fit: contain; }
-.card-media-empty { color: var(--tg-hint); font-size: 12px; }
-
-/* ── 商品图片（秒杀卡片） ── */
-.flash-image {
-  width: 100%;
-  height: 120px;
-  object-fit: contain;
-  border-radius: var(--r-md);
-  background: var(--surface-2);
-  margin: 0;
-}
-
 /* ── 骨架屏 / 空态 ── */
 .skeleton-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .skeleton-card { border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -624,6 +615,18 @@ onMounted(refresh)
   .cat-btn { flex: 0 0 auto; }
   .shop-flash-hero { flex-wrap: wrap; gap: 8px; }
   .flash-hero-countdown { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
+  .activity-row { grid-template-columns: 92px minmax(0, 1fr); gap: 12px; }
+  .activity-row-media { min-height: 92px; border-radius: var(--r-md); }
+  .activity-row-side {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 0;
+  }
+  .activity-row-btn { min-width: 120px; width: auto; }
+  .activity-row-price { text-align: left; }
+  .price { font-size: 22px; }
+  .card-title { font-size: 16px; }
 }
 
 /* ── 无障碍：减少动画 ── */
@@ -631,7 +634,7 @@ onMounted(refresh)
   .flash-hero-badge,
   .flash-cd-digits.cd-urgent,
   .skeleton-line,
-  .product-card { animation: none !important; transition: none !important; }
+  .activity-row { animation: none !important; transition: none !important; }
   .shop-flash-hero,
   .flash-grab-btn { transition: none !important; }
 }
