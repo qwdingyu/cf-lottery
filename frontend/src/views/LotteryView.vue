@@ -2,18 +2,21 @@
   <div class="lottery-view">
     <header class="lottery-header">
       <div class="lottery-header-left">
-        <RouterLink to="/" class="lottery-home-link" style="color:var(--primary);text-decoration:none;font-size:13px">{{ $t('common.backToHome') }}</RouterLink>
+        <RouterLink to="/" class="lottery-home-link">{{ $t('common.backToHome') }}</RouterLink>
         <h1 class="lottery-title">{{ drawTitle }}</h1>
         <!-- 深链单活动：只保留分享，不提供「回全部/广场」（docs/055a ADR-055a-1） -->
-        <div v-if="isDeepLinked && draws[0]" class="lottery-link-bar">
-          <RouterLink
-            v-if="draws[0].store?.storeSlug"
-            :to="`/shop/${encodeURIComponent(draws[0].store.storeSlug)}`"
-            class="lottery-store-btn"
-          >
-            {{ $t('lottery.viewStore', { name: draws[0].store.name || $t('shop.title') }) }}
-          </RouterLink>
-          <button type="button" class="lottery-share-btn" @click="handleCopyPublicLink(draws[0].id)">📋 {{ $t('lottery.copyShareLink') }}</button>
+        <div v-if="isDeepLinked && draws[0]" class="lottery-link-panel" :class="{ 'lottery-link-panel--with-store': draws[0].store?.storeSlug }">
+          <div class="lottery-link-bar">
+            <RouterLink
+              v-if="draws[0].store?.storeSlug"
+              :to="`/shop/${encodeURIComponent(draws[0].store.storeSlug)}`"
+              class="lottery-store-btn"
+            >
+              {{ $t('lottery.viewStore', { name: draws[0].store.name || $t('shop.title') }) }}
+            </RouterLink>
+            <button type="button" class="lottery-share-btn" @click="handleCopyPublicLink(draws[0].id)">{{ $t('lottery.copyShareLink') }}</button>
+          </div>
+          <p v-if="draws[0].store?.storeSlug" class="lottery-store-closure-hint">{{ $t('lottery.storeClosureHint') }}</p>
         </div>
       </div>
       <div class="lottery-header-actions">

@@ -1103,6 +1103,7 @@ export default {
     backToAllDraws: "查看全部活动",
     copyShareLink: "复制活动链接",
     viewStore: "进入 {name} 店铺",
+    storeClosureHint: "去店铺首页继续看限时抢购和其他活动",
     shareLinkCopied: "活动链接已复制",
     shareLinkCopyFailed: "复制失败，请手动复制地址栏",
     adminVisibilityPublic: "用户可见",

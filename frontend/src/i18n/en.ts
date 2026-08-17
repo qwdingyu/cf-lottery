@@ -1130,6 +1130,7 @@ export default {
     backToAllDraws: "All draws",
     copyShareLink: "Copy link",
     viewStore: "Visit {name} store",
+    storeClosureHint: "Visit the store for more flash sales and activities",
     shareLinkCopied: "Draw link copied",
     shareLinkCopyFailed: "Copy failed; copy the URL from the address bar",
     adminVisibilityPublic: "Visible",
