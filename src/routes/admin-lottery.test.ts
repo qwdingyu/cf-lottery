@@ -1611,4 +1611,70 @@ describe("活动编辑 PATCH 语义", () => {
     expect(res.status).toBe(400);
     expect((await res.json() as { error: string }).error).toContain("不可编辑");
   });
+
+  it("安全回归：PATCH 拒绝无效时间，且不会污染数据库", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+    const [before] = await db.select({ endAt: lotteryDraws.endAt }).from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId)).limit(1);
+
+    for (const endAt of ["", "not-a-valid-date"]) {
+      const res = await app.request(`/api/admin/draws/${drawId}`, {
+        method: "PATCH", headers, body: JSON.stringify({ endAt }),
+      }, TEST_ENV);
+      expect(res.status).toBe(400);
+    }
+
+    const invalidStart = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ startAt: "invalid" }),
+    }, TEST_ENV);
+    expect(invalidStart.status).toBe(400);
+
+    const [after] = await db.select({ endAt: lotteryDraws.endAt }).from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(after?.endAt).toBe(before?.endAt);
+  });
+
+  it("安全回归：PATCH drawAt=null 清空开奖时间，非法开奖时间拒绝", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+    await db.update(lotteryDraws).set({
+      drawAt: new Date(Date.now() + 7_200_000).toISOString(),
+    }).where(eq(lotteryDraws.id, drawId));
+
+    const clear = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ drawAt: null }),
+    }, TEST_ENV);
+    expect(clear.status).toBe(200);
+
+    const [cleared] = await db.select({ drawAt: lotteryDraws.drawAt }).from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(cleared?.drawAt).toBeNull();
+
+    const invalid = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ drawAt: "invalid" }),
+    }, TEST_ENV);
+    expect(invalid.status).toBe(400);
+  });
+
+  it("安全回归：PATCH 拒绝非法枚举和 winnerCount 脏值", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    for (const body of [
+      { activityKind: "not-a-kind" },
+      { resultMode: "not-a-mode" },
+      { winnerCount: "NaN" },
+      { winnerCount: "abc" },
+      { winnerCount: 0 },
+    ]) {
+      const res = await app.request(`/api/admin/draws/${drawId}`, {
+        method: "PATCH", headers, body: JSON.stringify(body),
+      }, TEST_ENV);
+      expect(res.status).toBe(400);
+    }
+  });
 });

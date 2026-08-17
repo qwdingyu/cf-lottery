@@ -303,6 +303,18 @@ export function coerceEnum(value: unknown, allowed: Set<string>, fallback: strin
   return allowed.has(normalized) ? normalized : fallback;
 }
 
+export function parseEnum(value: unknown, allowed: Set<string>, fieldName: string, fallback?: string): string {
+  if (value === undefined) {
+    if (fallback !== undefined) return fallback;
+    throw new Error(`${fieldName}不能为空`);
+  }
+  const normalized = String(value).trim();
+  if (!normalized || !allowed.has(normalized)) {
+    throw new Error(`${fieldName}无效`);
+  }
+  return normalized;
+}
+
 export function normalizeOptionalPositiveInteger(value: unknown, fieldName: string): number | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   const normalized = Number(value);

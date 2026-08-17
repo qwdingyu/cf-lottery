@@ -47,7 +47,7 @@ import {
   encodeDrawCursor,
   decodeDrawCursor,
   validateProductLink,
-  coerceEnum,
+  parseEnum,
   normalizeOptionalPositiveInteger,
   normalizeOptionalNonNegativeInteger,
   defaultExperienceForActivity,
@@ -91,6 +91,33 @@ const DRAW_EXPORT_MAX_ROWS = 10_000;
 /** 管理端列表专用虚拟筛选值，不会写入 lottery_draws.status。 */
 const DRAW_STATUS_FILTER_ACTIVE = "active";
 const DRAW_STATUS_FILTERS = new Set<string>([DRAW_STATUS_FILTER_ACTIVE, ...DRAW_STATUS_VALUES]);
+
+const MAX_WINNER_COUNT = 9999;
+
+function parseActivityTime(value: unknown, fieldName: string): number {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${fieldName}不能为空`);
+  }
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) {
+    throw new Error(`${fieldName}格式无效`);
+  }
+  return time;
+}
+
+function parseWinnerCount(value: unknown, activityKind: string, fieldName = "中奖人数"): number {
+  if (value === null || (typeof value === "string" && !value.trim())) {
+    throw new Error(`${fieldName}必须为有效数字`);
+  }
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < 0 || count > MAX_WINNER_COUNT) {
+    throw new Error(`${fieldName}必须为 0-${MAX_WINNER_COUNT} 的整数`);
+  }
+  if (activityKind === "lottery" && count < 1) {
+    throw new Error("抽奖活动中奖人数必须至少为 1");
+  }
+  return count;
+}
 
 function applyDrawListFilters(
   tenantId: string,
@@ -594,6 +621,11 @@ adminLotteryRoute.post("/draws/:id/copy", async (c) => {
   const draw = await getDraw(db, drawId, tenantId);
   if (!draw) return fail(c, "活动不存在", 404);
 
+  const usage = await getTenantUsage(db, tenantId);
+  if (usage.limits.maxActivities !== null && usage.usage.activities >= usage.limits.maxActivities) {
+    return fail(c, `当前套餐最多可保留 ${usage.limits.maxActivities} 个活动，请升级套餐或删除草稿活动`, 400);
+  }
+
   // 复制活动配置，生成新的 public_slug（取 UUID 前 8 位，不可枚举）
   const newId = crypto.randomUUID();
   const newSlug = crypto.randomUUID().slice(0, 8);
@@ -668,7 +700,7 @@ adminLotteryRoute.post("/draws", async (c) => {
       if (err) return fail(c, err, 400);
     }
 
-    const activityKind = coerceEnum(body.activityKind, ACTIVITY_KINDS, "lottery");
+    const activityKind = parseEnum(body.activityKind, ACTIVITY_KINDS, "活动类型", "lottery");
     // 校验活动类型是否在平台启用列表中，同时读取运营侧配置的默认参数
     const config = await readSystemConfigMap(db, [
       "enabled_activity_kinds",
@@ -681,7 +713,7 @@ adminLotteryRoute.post("/draws", async (c) => {
     if (!enabledKinds.includes(activityKind)) {
       return fail(c, `活动类型 "${activityKind}" 当前未启用，请联系平台运营`, 400);
     }
-    const participationMode = coerceEnum(body.participationMode, PARTICIPATION_MODES, "open");
+    const participationMode = parseEnum(body.participationMode, PARTICIPATION_MODES, "参与模式", "open");
     // 校验参与模式是否在平台启用列表中（L3 平台运营者配置）
     const enabledModes = (config["enabled_participation_modes"] || "open,registered,roster,password,invite_code").split(",").map(s => s.trim());
     if (!enabledModes.includes(participationMode)) {
@@ -696,28 +728,34 @@ adminLotteryRoute.post("/draws", async (c) => {
       activityKind === "lottery" && hasDrawAt && body.drawTrigger === undefined
         ? "scheduled"
         : "manual";
-    const drawTrigger = coerceEnum(body.drawTrigger, DRAW_TRIGGERS, triggerFallback);
+    const drawTrigger = parseEnum(body.drawTrigger, DRAW_TRIGGERS, "开奖触发方式", triggerFallback);
 
     // 运营者可通过系统配置控制活动创建的默认参数（闭环：L3 配置 → L2 生效）
-    const defaultWinnerCount = parseInt(config["draw_default_winner_count"], 10) || 1;
+    const configuredDefaultWinnerCount = parseInt(config["draw_default_winner_count"], 10);
+    // 运营配置是外部可变输入；钳制到接口允许范围，避免错误配置让所有活动创建都失败。
+    const defaultWinnerCount = Number.isInteger(configuredDefaultWinnerCount)
+      ? Math.min(MAX_WINNER_COUNT, Math.max(1, configuredDefaultWinnerCount))
+      : 1;
     const systemMaxParticipants = parseInt(config["draw_max_participants"], 10) || undefined;
     const requestedMaxParticipants = normalizeOptionalPositiveInteger(body.maxParticipants, "参与人数上限");
     // 活动最长持续时间校验：防止运营者设置超长活动占用资源
     const maxDurationDays = parseInt(config["draw_max_duration_days"], 10) || 90;
     const startAt = String(body.startAt || "");
     const endAt = String(body.endAt || "");
-    if (startAt && endAt) {
-      const durationMs = new Date(endAt).getTime() - new Date(startAt).getTime();
-      if (durationMs > maxDurationDays * 86400000) {
-        return fail(c, `活动持续时间不能超过 ${maxDurationDays} 天`, 400);
-      }
+    const startMs = parseActivityTime(startAt, "开始时间");
+    const endMs = parseActivityTime(endAt, "结束时间");
+    if (startMs >= endMs) {
+      return fail(c, "参与开始时间必须早于结束时间", 400);
+    }
+    if (endMs - startMs > maxDurationDays * 86400000) {
+      return fail(c, `活动持续时间不能超过 ${maxDurationDays} 天`, 400);
     }
 
     // lottery + scheduled：若客户端仍传 resultMode=manual，与 drawTrigger 对齐，避免公开页文案说谎
     // lottery + instant：不因 drawAt 误推 scheduled（instant 无 performDraw）
     let resultModeInput = body.resultMode;
     const resolvedResultPeek = resultModeInput !== undefined
-      ? coerceEnum(resultModeInput, RESULT_MODES, defaultResultModeForActivity(activityKind, drawTrigger))
+      ? parseEnum(resultModeInput, RESULT_MODES, "结果模式", defaultResultModeForActivity(activityKind, drawTrigger))
       : defaultResultModeForActivity(activityKind, drawTrigger);
     if (
       activityKind === "lottery" &&
@@ -746,14 +784,14 @@ adminLotteryRoute.post("/draws", async (c) => {
       activityKind,
       participationMode,
       experienceType: body.experienceType !== undefined
-        ? coerceEnum(body.experienceType, EXPERIENCE_TYPES, defaultExperienceForActivity(activityKind, participationMode))
+        ? parseEnum(body.experienceType, EXPERIENCE_TYPES, "互动体验", defaultExperienceForActivity(activityKind, participationMode))
         : undefined,
       drawTrigger,
       resultMode: resultModeInput !== undefined
-        ? coerceEnum(resultModeInput, RESULT_MODES, defaultResultModeForActivity(activityKind, drawTrigger))
+        ? parseEnum(resultModeInput, RESULT_MODES, "结果模式", defaultResultModeForActivity(activityKind, drawTrigger))
         : undefined,
       allocationPolicy: body.allocationPolicy !== undefined
-        ? coerceEnum(body.allocationPolicy, ALLOCATION_POLICIES, "capacity")
+        ? parseEnum(body.allocationPolicy, ALLOCATION_POLICIES, "名额策略", "capacity")
         : undefined,
       policyVersion: 1,
       startAt: String(body.startAt || ""),
@@ -765,7 +803,9 @@ adminLotteryRoute.post("/draws", async (c) => {
       expectedParticipants: body.expectedParticipants !== undefined
         ? (normalizeOptionalNonNegativeInteger(body.expectedParticipants, "预计参与") ?? 0)
         : 0,
-      winnerCount: body.winnerCount !== undefined ? Number(body.winnerCount) : defaultWinnerCount,
+      winnerCount: body.winnerCount !== undefined
+        ? parseWinnerCount(body.winnerCount, activityKind)
+        : parseWinnerCount(defaultWinnerCount, activityKind),
       // 055a P1：模板 defaults 的展示开关可在创建时写入（createDraw 本就支持；此前路由未透传）
       ...(body.showParticipantCount !== undefined ? { showParticipantCount: body.showParticipantCount ? 1 : 0 } : {}),
       ...(body.showWinnerCount !== undefined ? { showWinnerCount: body.showWinnerCount ? 1 : 0 } : {}),
@@ -831,6 +871,17 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     return fail(c, "只有草稿状态的活动可以编辑", 400);
   }
 
+  let maxSpinsUpdate: number | undefined;
+  let maxParticipantsUpdate: number | null | undefined;
+  let nextActivityKind = draw.activityKind;
+  let nextParticipationMode = draw.participationMode;
+  let nextExperienceType = draw.experienceType || defaultExperienceForActivity(nextActivityKind, nextParticipationMode);
+  let nextDrawTrigger = draw.drawTrigger;
+  let nextResultMode = draw.resultMode || nextDrawTrigger;
+  let nextAllocationPolicy = draw.allocationPolicy || "capacity";
+  let nextWinnerCount: number | undefined;
+
+  try {
   if (isLiveEditable) {
     const [entryFact, orderFact, winnerFact] = await Promise.all([
       db.select({ id: lotteryEntries.id }).from(lotteryEntries)
@@ -868,31 +919,40 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
 
     // 已产生业务事实后，结束时间只能延长；零参与活动可以完整修正时间窗。
     if (hasLifecycleFacts && body.endAt !== undefined && body.endAt !== null) {
-      const currentEnd = draw.endAt ? new Date(draw.endAt).getTime() : 0;
-      if (currentEnd > 0 && new Date(body.endAt).getTime() < currentEnd) {
+      const currentEnd = parseActivityTime(draw.endAt, "当前结束时间");
+      const nextEnd = parseActivityTime(body.endAt, "结束时间");
+      if (nextEnd < currentEnd) {
         return fail(c, "进行中的活动结束时间只能延长，不能缩短", 400);
       }
     }
   }
 
-  let maxSpinsUpdate: number | undefined;
   if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
     const n = Number(body.maxSpinsPerEntry);
-    if (!Number.isFinite(n) || n < 0 || n > 100) {
+    if (!Number.isInteger(n) || n < 0 || n > 100) {
       return fail(c, "每人抽奖次数须为 0–100 的整数", 400);
     }
-    maxSpinsUpdate = Math.floor(n);
+    maxSpinsUpdate = n;
   }
 
-  // 校验时间顺序（如果一起修改了时间）
-  const startAt = body.startAt ?? draw.startAt;
-  const endAt = body.endAt ?? draw.endAt;
-  const drawAt = body.drawAt ?? draw.drawAt;
-  if (new Date(startAt) >= new Date(endAt)) {
+  // PATCH 三态语义：未传 = 保持，null 仅允许清空 drawAt，空字符串/非法时间一律拒绝。
+  const startAt = body.startAt === undefined ? draw.startAt : body.startAt;
+  const endAt = body.endAt === undefined ? draw.endAt : body.endAt;
+  const startMs = parseActivityTime(startAt, "开始时间");
+  const endMs = parseActivityTime(endAt, "结束时间");
+  if (startMs >= endMs) {
     return fail(c, "参与开始时间必须早于结束时间", 400);
   }
-  if (drawAt && new Date(endAt) >= new Date(drawAt)) {
-    return fail(c, "开奖时间必须在参与结束后", 400);
+  const drawAt = body.drawAt === null
+    ? null
+    : body.drawAt === undefined
+      ? draw.drawAt
+      : body.drawAt;
+  if (drawAt !== null && drawAt !== undefined) {
+    const drawMs = parseActivityTime(drawAt, "开奖时间");
+    if (endMs >= drawMs) {
+      return fail(c, "开奖时间必须在参与结束后", 400);
+    }
   }
 
   // 编辑时校验 productLink；null / 空对象表示清空导流，不走「必须有 url」校验
@@ -907,7 +967,6 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     }
   }
 
-  let maxParticipantsUpdate: number | null | undefined;
   if (body.maxParticipants !== undefined) {
     try {
       maxParticipantsUpdate = body.maxParticipants === null || body.maxParticipants === ""
@@ -925,21 +984,46 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     }
   }
 
+  nextActivityKind = body.activityKind === undefined
+    ? draw.activityKind
+    : parseEnum(body.activityKind, ACTIVITY_KINDS, "活动类型");
+  nextParticipationMode = body.participationMode === undefined
+    ? draw.participationMode
+    : parseEnum(body.participationMode, PARTICIPATION_MODES, "参与模式");
+  nextExperienceType = body.experienceType === undefined
+    ? draw.experienceType || defaultExperienceForActivity(nextActivityKind, nextParticipationMode)
+    : parseEnum(body.experienceType, EXPERIENCE_TYPES, "互动体验");
+  nextDrawTrigger = body.drawTrigger === undefined
+    ? draw.drawTrigger
+    : parseEnum(body.drawTrigger, DRAW_TRIGGERS, "开奖触发方式");
+  nextResultMode = body.resultMode === undefined
+    ? draw.resultMode || nextDrawTrigger
+    : parseEnum(body.resultMode, RESULT_MODES, "结果模式");
+  nextAllocationPolicy = body.allocationPolicy === undefined
+    ? draw.allocationPolicy || "capacity"
+    : parseEnum(body.allocationPolicy, ALLOCATION_POLICIES, "名额策略");
+  nextWinnerCount = body.winnerCount === undefined
+    ? undefined
+    : parseWinnerCount(body.winnerCount, nextActivityKind);
+  } catch (err) {
+    return fail(c, err instanceof Error ? err.message : "活动参数无效", 400);
+  }
+
   await db
     .update(lotteryDraws)
     .set({
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(body.description !== undefined ? { description: body.description } : {}),
-      ...(body.activityKind !== undefined ? { activityKind: coerceEnum(body.activityKind, ACTIVITY_KINDS, "lottery") } : {}),
-      ...(body.participationMode !== undefined ? { participationMode: coerceEnum(body.participationMode, PARTICIPATION_MODES, draw.participationMode) } : {}),
-      ...(body.experienceType !== undefined ? { experienceType: coerceEnum(body.experienceType, EXPERIENCE_TYPES, draw.experienceType || defaultExperienceForActivity(draw.activityKind || "lottery", draw.participationMode)) } : {}),
-      ...(body.drawTrigger !== undefined ? { drawTrigger: coerceEnum(body.drawTrigger, DRAW_TRIGGERS, draw.drawTrigger) } : {}),
-      ...(body.resultMode !== undefined ? { resultMode: coerceEnum(body.resultMode, RESULT_MODES, draw.resultMode || draw.drawTrigger) } : {}),
-      ...(body.allocationPolicy !== undefined ? { allocationPolicy: coerceEnum(body.allocationPolicy, ALLOCATION_POLICIES, draw.allocationPolicy || "capacity") } : {}),
+      ...(body.activityKind !== undefined ? { activityKind: nextActivityKind } : {}),
+      ...(body.participationMode !== undefined ? { participationMode: nextParticipationMode } : {}),
+      ...(body.experienceType !== undefined ? { experienceType: nextExperienceType } : {}),
+      ...(body.drawTrigger !== undefined ? { drawTrigger: nextDrawTrigger } : {}),
+      ...(body.resultMode !== undefined ? { resultMode: nextResultMode } : {}),
+      ...(body.allocationPolicy !== undefined ? { allocationPolicy: nextAllocationPolicy } : {}),
       ...(body.startAt !== undefined ? { startAt: body.startAt } : {}),
       ...(body.endAt !== undefined ? { endAt: body.endAt } : {}),
       ...(body.drawAt !== undefined ? { drawAt: body.drawAt } : {}),
-      ...(body.winnerCount !== undefined ? { winnerCount: Number(body.winnerCount) } : {}),
+      ...(nextWinnerCount !== undefined ? { winnerCount: nextWinnerCount } : {}),
       ...(body.expectedParticipants !== undefined ? { expectedParticipants: normalizeOptionalNonNegativeInteger(body.expectedParticipants, "预计参与") ?? 0 } : {}),
       ...(maxSpinsUpdate !== undefined ? { maxSpinsPerEntry: maxSpinsUpdate } : {}),
       ...(maxParticipantsUpdate !== undefined ? { maxParticipants: maxParticipantsUpdate } : {}),
