@@ -4712,8 +4712,8 @@ async function handleCreate() {
       activityKind,
       // lottery delayed：resultMode 跟 drawTrigger；instant 由 schedule 保留；非 lottery 保留表单默认
       resultMode: schedule.resultMode,
-      // instant：每人 spin 次数硬顶（后端 create 仅 lottery+instant 写入）
-      ...(schedule.resultMode === 'instant'
+      // instant：每人 spin 次数硬顶（后端仅 lottery+instant 写入；claim 等默认 instant 的类型不适用）
+      ...(activityKind === 'lottery' && schedule.resultMode === 'instant'
         ? { maxSpinsPerEntry: Math.max(1, Math.min(100, Math.floor(Number(form.value.maxSpinsPerEntry) || 1))) }
         : {}),
       allocationPolicy: form.value.allocationPolicy || 'capacity',

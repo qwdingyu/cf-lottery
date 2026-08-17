@@ -1767,4 +1767,138 @@ describe("活动编辑 PATCH 语义", () => {
       .where(eq(lotteryDraws.id, drawId)).limit(1);
     expect(draw!.winnerCount).toBe(0);
   });
+
+  // ── 小问题收尾（2026-08-17 评估）：maxSpins 语义统一 + activityKind 切换联动 ──
+
+  it("PATCH 即时抽奖活动 maxSpinsPerEntry=0 被拒绝（0 会锁死抽奖）", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+    // 构建 lottery + instant + maxSpins=5 的草稿
+    await db.update(lotteryDraws).set({
+      resultMode: "instant", drawTrigger: "manual", maxSpinsPerEntry: 5,
+    }).where(eq(lotteryDraws.id, drawId));
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ maxSpinsPerEntry: 0 }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toContain("至少为 1");
+
+    // DB 未被污染
+    const [draw] = await db.select({ maxSpinsPerEntry: lotteryDraws.maxSpinsPerEntry }).from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.maxSpinsPerEntry).toBe(5);
+  });
+
+  it("PATCH 非即时抽奖活动传 maxSpinsPerEntry>0 被拒绝（死配置）", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+    // 默认草稿是 lottery + manual（非即时）
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ maxSpinsPerEntry: 3 }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toContain("仅适用于即时开奖");
+  });
+
+  it("创建路由：非即时开奖活动传 maxSpinsPerEntry 被拒绝；小数被拒绝", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+    const base = {
+      title: "maxSpins 创建校验",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+
+    // lottery + manual + maxSpins=5 → 拒绝（仅适用于即时开奖）
+    const manual = await app.request("/api/admin/draws", {
+      method: "POST", headers,
+      body: JSON.stringify({ ...base, resultMode: "manual", maxSpinsPerEntry: 5 }),
+    }, TEST_ENV);
+    expect(manual.status).toBe(400);
+    expect((await manual.json() as { error: string }).error).toContain("仅适用于即时开奖");
+
+    // lottery + instant + maxSpins=5.5（小数）→ 拒绝（必须整数）
+    const fractional = await app.request("/api/admin/draws", {
+      method: "POST", headers,
+      body: JSON.stringify({ ...base, resultMode: "instant", maxSpinsPerEntry: 5.5 }),
+    }, TEST_ENV);
+    expect(fractional.status).toBe(400);
+    expect((await fractional.json() as { error: string }).error).toContain("1–100 的整数");
+
+    // lottery + instant + maxSpins=5 → 创建成功
+    const ok = await app.request("/api/admin/draws", {
+      method: "POST", headers,
+      body: JSON.stringify({ ...base, resultMode: "instant", maxSpinsPerEntry: 5 }),
+    }, TEST_ENV);
+    expect(ok.status).toBe(200);
+  });
+
+  it("PATCH 切换 activityKind 联动重置 experienceType/resultMode（消除语义分裂）", async () => {
+    const drawId = await seedDraftDraw(); // lottery + wheel + manual
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    // lottery → signup_chain：即使请求体只传 activityKind，experienceType/resultMode 也要联动重置
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ activityKind: "signup_chain" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select({
+      activityKind: lotteryDraws.activityKind,
+      experienceType: lotteryDraws.experienceType,
+      resultMode: lotteryDraws.resultMode,
+    }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.activityKind).toBe("signup_chain");
+    expect(draw!.experienceType).toBe("list");              // 默认体验：报名列表
+    expect(draw!.resultMode).toBe("ordered_assignment");    // 默认结果：按序分配
+  });
+
+  it("PATCH 切换活动到非即时抽奖时联动清除 maxSpins 残留", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+    // 构建 lottery + instant + maxSpins=5
+    await db.update(lotteryDraws).set({
+      resultMode: "instant", drawTrigger: "manual", maxSpinsPerEntry: 5,
+    }).where(eq(lotteryDraws.id, drawId));
+
+    // 切换到 signup_chain（非即时）→ maxSpins 联动清 0
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ activityKind: "signup_chain" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select({
+      resultMode: lotteryDraws.resultMode,
+      maxSpinsPerEntry: lotteryDraws.maxSpinsPerEntry,
+    }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.resultMode).toBe("ordered_assignment");
+    expect(draw!.maxSpinsPerEntry).toBe(0);
+  });
+
+  it("PATCH lottery+scheduled 未传 resultMode 时强制对齐 scheduled 并写库", async () => {
+    const drawId = await seedDraftDraw(); // lottery + manual + manual
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ drawTrigger: "scheduled" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select({
+      drawTrigger: lotteryDraws.drawTrigger,
+      resultMode: lotteryDraws.resultMode,
+    }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.drawTrigger).toBe("scheduled");
+    expect(draw!.resultMode).toBe("scheduled"); // 强制对齐，避免 Cron 永不扫描
+  });
 });

@@ -773,10 +773,15 @@ adminLotteryRoute.post("/draws", async (c) => {
     let maxSpinsPerEntry: number | undefined;
     if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
       const n = Number(body.maxSpinsPerEntry);
-      if (!Number.isFinite(n) || n < 1 || n > 100) {
+      if (!Number.isInteger(n) || n < 1 || n > 100) {
         return fail(c, "每人抽奖次数须为 1–100 的整数", 400);
       }
-      maxSpinsPerEntry = Math.floor(n);
+      // 与 PATCH 语义一致（2026-08 审查 P5）：maxSpinsPerEntry 仅对「即时开奖的 lottery」生效，
+      // 其它类型（含 claim+instant 直付秒杀）传该字段属于死配置，直接拒绝避免脏数据入库。
+      if (activityKind !== "lottery" || resultModeInput !== "instant") {
+        return fail(c, "每人抽奖次数仅适用于即时开奖的抽奖活动", 400);
+      }
+      maxSpinsPerEntry = n;
     }
 
     const { id, publicSlug } = await createDraw(db, tenantId, {
@@ -872,17 +877,8 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     return fail(c, "只有草稿状态的活动可以编辑", 400);
   }
 
-  let maxSpinsUpdate: number | undefined;
-  let maxParticipantsUpdate: number | null | undefined;
-  let nextActivityKind = draw.activityKind;
-  let nextParticipationMode = draw.participationMode;
-  let nextExperienceType = draw.experienceType || defaultExperienceForActivity(nextActivityKind, nextParticipationMode);
-  let nextDrawTrigger = draw.drawTrigger;
-  let nextResultMode = draw.resultMode || nextDrawTrigger;
-  let nextAllocationPolicy = draw.allocationPolicy || "capacity";
-  let nextWinnerCount: number | undefined;
-
-  try {
+  // ── 业务事实查询与分层编辑门禁（DB 异常自然向上传播为 500，不吞成 400）──
+  let hasLifecycleFacts = false;
   if (isLiveEditable) {
     const [entryFact, orderFact, winnerFact] = await Promise.all([
       db.select({ id: lotteryEntries.id }).from(lotteryEntries)
@@ -892,7 +888,7 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       db.select({ id: lotteryWinners.id }).from(lotteryWinners)
         .where(and(eq(lotteryWinners.tenantId, tenantId), eq(lotteryWinners.drawId, drawId))).limit(1),
     ]);
-    const hasLifecycleFacts = entryFact.length > 0 || orderFact.length > 0 || winnerFact.length > 0;
+    hasLifecycleFacts = entryFact.length > 0 || orderFact.length > 0 || winnerFact.length > 0;
     const definedKeys = Object.keys(body || {}).filter((key) => body[key] !== undefined);
 
     // docs/083：进行中活动不能靠 visible 假下架；必须走 pause/cancel 状态机，
@@ -917,7 +913,24 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
         return fail(c, `已有参与或支付记录，进行中的活动不可修改以下字段：${unsafeFields.join("、")}（如需调整请复制活动）`, 400);
       }
     }
+  }
 
+  // ── 参数校验（统一 400；parseEnum/parseActivityTime/parseWinnerCount 抛错在此捕获）──
+  let maxSpinsUpdate: number | undefined;
+  let maxParticipantsUpdate: number | null | undefined;
+  let nextActivityKind = draw.activityKind;
+  let nextParticipationMode = draw.participationMode;
+  let nextExperienceType = draw.experienceType || defaultExperienceForActivity(nextActivityKind, nextParticipationMode);
+  let nextDrawTrigger = draw.drawTrigger;
+  let nextResultMode = draw.resultMode || nextDrawTrigger;
+  let nextAllocationPolicy = draw.allocationPolicy || "capacity";
+  let nextWinnerCount: number | undefined;
+  // 联动标记：activityKind 切换 / lottery+scheduled 强制对齐时，即使请求体未显式传
+  // experienceType/resultMode，也要把联动后的值写入 DB（否则只算不写，语义分裂依旧）。
+  let kindChanged = false;
+  let resultModeForced = false;
+
+  try {
     // 已产生业务事实后，结束时间只能延长；零参与活动可以完整修正时间窗。
     // docs/226 恢复路径：DB 中旧值可能已被旧 P0 漏洞写入非法时间，此时无法比较长短，
     // 直接放行合法新值覆盖，以便运营修复已污染的活动。
@@ -928,59 +941,123 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
         return fail(c, "进行中的活动结束时间只能延长，不能缩短", 400);
       }
     }
+
+    // 先解析 next* 目标值（含 activityKind 切换时的联动重置），后续校验依赖它们。
+    nextActivityKind = body.activityKind === undefined
+      ? draw.activityKind
+      : parseEnum(body.activityKind, ACTIVITY_KINDS, "活动类型");
+    nextParticipationMode = body.participationMode === undefined
+      ? draw.participationMode
+      : parseEnum(body.participationMode, PARTICIPATION_MODES, "参与模式");
+    nextDrawTrigger = body.drawTrigger === undefined
+      ? draw.drawTrigger
+      : parseEnum(body.drawTrigger, DRAW_TRIGGERS, "开奖触发方式");
+    // 切换 activityKind 时联动重置 experienceType/resultMode 到新类型默认值，
+    // 避免出现「前端转盘 + 后端接龙」这类语义分裂组合（2026-08 审查 P3/P4）。
+    kindChanged = nextActivityKind !== draw.activityKind;
+    nextExperienceType = body.experienceType !== undefined
+      ? parseEnum(body.experienceType, EXPERIENCE_TYPES, "互动体验")
+      : kindChanged
+        ? defaultExperienceForActivity(nextActivityKind, nextParticipationMode)
+        : draw.experienceType || defaultExperienceForActivity(nextActivityKind, nextParticipationMode);
+    // lottery + scheduled：与创建路由对齐（docs/115）——resultMode 未显式传或传 manual 时强制 scheduled，
+    // 避免「Cron 只扫 scheduled 而 resultMode=manual」导致到点永不自动开奖。
+    let nextResultModeInput = body.resultMode === undefined
+      ? (kindChanged
+          ? defaultResultModeForActivity(nextActivityKind, nextDrawTrigger)
+          : draw.resultMode || nextDrawTrigger)
+      : parseEnum(body.resultMode, RESULT_MODES, "结果模式");
+    if (
+      nextActivityKind === "lottery" &&
+      nextDrawTrigger === "scheduled" &&
+      nextResultModeInput !== "instant" &&
+      (body.resultMode === undefined ||
+        body.resultMode === null ||
+        String(body.resultMode).trim() === "" ||
+        String(body.resultMode).trim().toLowerCase() === "manual")
+    ) {
+      nextResultModeInput = "scheduled";
+      resultModeForced = true;
+    }
+    nextResultMode = nextResultModeInput;
+    nextAllocationPolicy = body.allocationPolicy === undefined
+      ? draw.allocationPolicy || "capacity"
+      : parseEnum(body.allocationPolicy, ALLOCATION_POLICIES, "名额策略");
+    nextWinnerCount = body.winnerCount === undefined
+      ? undefined
+      : parseWinnerCount(body.winnerCount, nextActivityKind);
+
+    // maxSpinsPerEntry：仅对「即时开奖的 lottery」生效（2026-08 审查 P5）。
+    // - 即时抽奖：必须 ≥1（0 会锁死抽奖，关闭请走暂停状态机）；
+    // - 非即时活动：显式传 >0 拒绝；传 0 等价清理（无行为影响）；
+    // - 语义切换（instant → 其它）时联动清除残留配置。
+    if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
+      const n = Number(body.maxSpinsPerEntry);
+      if (!Number.isInteger(n) || n < 0 || n > 100) {
+        return fail(c, "每人抽奖次数须为 0–100 的整数", 400);
+      }
+      const isInstantLottery = nextActivityKind === "lottery" && nextResultMode === "instant";
+      if (isInstantLottery) {
+        if (n === 0) {
+          return fail(c, "即时开奖活动每人抽奖次数至少为 1；如需停止抽奖请暂停活动", 400);
+        }
+        maxSpinsUpdate = n;
+      } else if (n > 0) {
+        return fail(c, "每人抽奖次数仅适用于即时开奖的抽奖活动", 400);
+      }
+    }
+    // 联动清除：活动不再即时抽奖时，清掉残留的 maxSpinsPerEntry（避免死配置残留）。
+    if (maxSpinsUpdate === undefined && !(nextActivityKind === "lottery" && nextResultMode === "instant") && Number(draw.maxSpinsPerEntry || 0) > 0) {
+      maxSpinsUpdate = 0;
+    }
+
+    // PATCH 三态语义：未传 = 保持，null 仅允许清空 drawAt，空字符串/非法时间一律拒绝。
+    // docs/226 恢复路径：旧值可能已被旧 P0 漏洞写入非法时间。
+    // - 若请求体显式提供时间，则严格校验新值；
+    // - 若未提供，则保留旧值（即使已污染），不因此阻塞无关编辑；
+    // - 扩展检查（只能延长）对污染旧值自动放行，允许运营通过提供合法新值覆盖修复。
+    const startMs = body.startAt !== undefined
+      ? parseActivityTime(body.startAt, "开始时间")
+      : tryParseTime(draw.startAt);
+    const endMs = body.endAt !== undefined
+      ? parseActivityTime(body.endAt, "结束时间")
+      : tryParseTime(draw.endAt);
+    if (startMs !== null && endMs !== null && startMs >= endMs) {
+      return fail(c, "参与开始时间必须早于结束时间", 400);
+    }
+    const nextDrawAt = body.drawAt === null
+      ? null
+      : body.drawAt === undefined
+        ? draw.drawAt
+        : body.drawAt;
+    if (nextDrawAt !== null && nextDrawAt !== undefined) {
+      const drawMs = body.drawAt !== undefined
+        ? parseActivityTime(body.drawAt, "开奖时间")
+        : tryParseTime(draw.drawAt);
+      if (body.drawAt !== undefined && drawMs === null) {
+        return fail(c, "开奖时间格式无效，请提供有效值", 400);
+      }
+      if (drawMs !== null && endMs !== null && endMs >= drawMs) {
+        return fail(c, "开奖时间必须在参与结束后", 400);
+      }
+    }
+
+    // 编辑时校验 productLink；null / 空对象表示清空导流，不走「必须有 url」校验
+    if (body.productLink !== undefined && body.productLink !== null) {
+      const isEmptyClear =
+        typeof body.productLink === "object" &&
+        !Array.isArray(body.productLink) &&
+        !String((body.productLink as { url?: string }).url || "").trim();
+      if (!isEmptyClear) {
+        const err = validateProductLink(body.productLink);
+        if (err) return fail(c, err, 400);
+      }
+    }
+  } catch (err) {
+    return fail(c, err instanceof Error ? err.message : "活动参数无效", 400);
   }
 
-  if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
-    const n = Number(body.maxSpinsPerEntry);
-    if (!Number.isInteger(n) || n < 0 || n > 100) {
-      return fail(c, "每人抽奖次数须为 0–100 的整数", 400);
-    }
-    maxSpinsUpdate = n;
-  }
-
-  // PATCH 三态语义：未传 = 保持，null 仅允许清空 drawAt，空字符串/非法时间一律拒绝。
-  // docs/226 恢复路径：旧值可能已被旧 P0 漏洞写入非法时间。
-  // - 若请求体显式提供时间，则严格校验新值；
-  // - 若未提供，则保留旧值（即使已污染），不因此阻塞无关编辑；
-  // - 扩展检查（只能延长）对污染旧值自动放行，允许运营通过提供合法新值覆盖修复。
-  const startMs = body.startAt !== undefined
-    ? parseActivityTime(body.startAt, "开始时间")
-    : tryParseTime(draw.startAt);
-  const endMs = body.endAt !== undefined
-    ? parseActivityTime(body.endAt, "结束时间")
-    : tryParseTime(draw.endAt);
-  if (startMs !== null && endMs !== null && startMs >= endMs) {
-    return fail(c, "参与开始时间必须早于结束时间", 400);
-  }
-  const nextDrawAt = body.drawAt === null
-    ? null
-    : body.drawAt === undefined
-      ? draw.drawAt
-      : body.drawAt;
-  if (nextDrawAt !== null && nextDrawAt !== undefined) {
-    const drawMs = body.drawAt !== undefined
-      ? parseActivityTime(body.drawAt, "开奖时间")
-      : tryParseTime(draw.drawAt);
-    if (body.drawAt !== undefined && drawMs === null) {
-      return fail(c, "开奖时间格式无效，请提供有效值", 400);
-    }
-    if (drawMs !== null && endMs !== null && endMs >= drawMs) {
-      return fail(c, "开奖时间必须在参与结束后", 400);
-    }
-  }
-
-  // 编辑时校验 productLink；null / 空对象表示清空导流，不走「必须有 url」校验
-  if (body.productLink !== undefined && body.productLink !== null) {
-    const isEmptyClear =
-      typeof body.productLink === "object" &&
-      !Array.isArray(body.productLink) &&
-      !String((body.productLink as { url?: string }).url || "").trim();
-    if (!isEmptyClear) {
-      const err = validateProductLink(body.productLink);
-      if (err) return fail(c, err, 400);
-    }
-  }
-
+  // maxParticipants 参数解析（400 范围）与套餐配额校验（DB 异常自然 500）
   if (body.maxParticipants !== undefined) {
     try {
       maxParticipantsUpdate = body.maxParticipants === null || body.maxParticipants === ""
@@ -990,37 +1067,11 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       return fail(c, err instanceof Error ? err.message : "参与人数上限无效", 400);
     }
   }
-
   if (maxParticipantsUpdate !== undefined && maxParticipantsUpdate !== null) {
     const quota = await getTenantUsage(db, tenantId);
     if (maxParticipantsUpdate > quota.limits.maxParticipantsPerActivity) {
       return fail(c, `当前套餐单活动最多允许 ${quota.limits.maxParticipantsPerActivity} 人参与，请降低名额或升级套餐`, 403);
     }
-  }
-
-  nextActivityKind = body.activityKind === undefined
-    ? draw.activityKind
-    : parseEnum(body.activityKind, ACTIVITY_KINDS, "活动类型");
-  nextParticipationMode = body.participationMode === undefined
-    ? draw.participationMode
-    : parseEnum(body.participationMode, PARTICIPATION_MODES, "参与模式");
-  nextExperienceType = body.experienceType === undefined
-    ? draw.experienceType || defaultExperienceForActivity(nextActivityKind, nextParticipationMode)
-    : parseEnum(body.experienceType, EXPERIENCE_TYPES, "互动体验");
-  nextDrawTrigger = body.drawTrigger === undefined
-    ? draw.drawTrigger
-    : parseEnum(body.drawTrigger, DRAW_TRIGGERS, "开奖触发方式");
-  nextResultMode = body.resultMode === undefined
-    ? draw.resultMode || nextDrawTrigger
-    : parseEnum(body.resultMode, RESULT_MODES, "结果模式");
-  nextAllocationPolicy = body.allocationPolicy === undefined
-    ? draw.allocationPolicy || "capacity"
-    : parseEnum(body.allocationPolicy, ALLOCATION_POLICIES, "名额策略");
-  nextWinnerCount = body.winnerCount === undefined
-    ? undefined
-    : parseWinnerCount(body.winnerCount, nextActivityKind);
-  } catch (err) {
-    return fail(c, err instanceof Error ? err.message : "活动参数无效", 400);
   }
 
   await db
@@ -1030,9 +1081,11 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       ...(body.description !== undefined ? { description: body.description } : {}),
       ...(body.activityKind !== undefined ? { activityKind: nextActivityKind } : {}),
       ...(body.participationMode !== undefined ? { participationMode: nextParticipationMode } : {}),
-      ...(body.experienceType !== undefined ? { experienceType: nextExperienceType } : {}),
+      // 联动写入：切换 activityKind 时重置 experienceType（kindChanged），
+      // lottery+scheduled 对齐 resultMode（resultModeForced）——即使请求体未显式传也写库。
+      ...(body.experienceType !== undefined || kindChanged ? { experienceType: nextExperienceType } : {}),
       ...(body.drawTrigger !== undefined ? { drawTrigger: nextDrawTrigger } : {}),
-      ...(body.resultMode !== undefined ? { resultMode: nextResultMode } : {}),
+      ...(body.resultMode !== undefined || kindChanged || resultModeForced ? { resultMode: nextResultMode } : {}),
       ...(body.allocationPolicy !== undefined ? { allocationPolicy: nextAllocationPolicy } : {}),
       ...(body.startAt !== undefined ? { startAt: body.startAt } : {}),
       ...(body.endAt !== undefined ? { endAt: body.endAt } : {}),
