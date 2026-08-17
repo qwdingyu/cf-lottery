@@ -43,6 +43,7 @@ export default {
     activityPlaceholder: "No image",
     flashRush: "Live now",
     flashHurry: "Starting soon",
+    flashScarcityHint: "Limited stock",
     countdownStartIn: "Starts in",
     countdownEndIn: "Ends in",
     countdownEnded: "Ended",

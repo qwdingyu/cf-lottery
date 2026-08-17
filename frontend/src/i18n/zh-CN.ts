@@ -44,6 +44,7 @@ export default {
     activityPlaceholder: "暂无图片",
     flashRush: "抢购中",
     flashHurry: "马上开始",
+    flashScarcityHint: "手慢无",
     countdownStartIn: "距开始",
     countdownEndIn: "距结束",
     countdownEnded: "已结束",

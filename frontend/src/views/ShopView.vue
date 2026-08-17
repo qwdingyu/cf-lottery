@@ -121,6 +121,7 @@
               >
                 {{ card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) ? $t('shop.soldOut') : $t('shop.flashCta') }}
               </button>
+              <span v-if="card.phase !== 'ended'" class="scarcity-hint">{{ $t('shop.flashScarcityHint') }}</span>
             </div>
           </div>
         </div>
@@ -338,7 +339,7 @@ onMounted(refresh)
 .shop-view { max-width: 1120px; margin: 0 auto; padding: 24px; }
 
 /* ── 工具栏 ── */
-.shop-toolbar { margin-bottom: 24px; }
+.shop-toolbar { margin-bottom: 18px; }
 .shop-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .shop-title-block { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .shop-activity-count { color: var(--tg-hint); font-size: 12px; white-space: nowrap; }
@@ -355,8 +356,8 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 20px;
-  padding: 14px 18px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
   border-radius: var(--r-lg);
   background: linear-gradient(135deg, var(--shop-sale-soft) 0%, rgba(244, 63, 94, 0.28) 100%);
   border: 1px solid var(--shop-sale-border);
@@ -418,19 +419,19 @@ onMounted(refresh)
 }
 
 /* ── 横向促销列表 ── */
-.shop-sections { display: flex; flex-direction: column; gap: 28px; }
-.shop-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.shop-sections { display: flex; flex-direction: column; gap: 22px; }
+.shop-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .shop-section-heading h2 { margin: 0; font-size: 18px; line-height: 1.3; }
 .shop-section-heading p { margin: 4px 0 0; color: var(--tg-hint); font-size: 12px; }
 .section-count { min-width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--shop-sale-soft); color: var(--shop-sale-strong); font-size: 12px; font-weight: 700; }
 .regular-section .section-count { background: var(--surface-2); color: var(--tg-hint); }
-.activity-list { display: flex; flex-direction: column; gap: 12px; }
+.activity-list { display: flex; flex-direction: column; gap: 8px; }
 .activity-row {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 172px;
-  gap: 16px;
+  grid-template-columns: 152px minmax(0, 1fr) 150px;
+  gap: 12px;
   align-items: stretch;
-  padding: 14px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   background: var(--surface);
@@ -456,11 +457,11 @@ onMounted(refresh)
 }
 .activity-row-media {
   width: 100%;
-  min-height: 128px;
+  min-height: 104px;
   display: grid;
   place-items: center;
   overflow: hidden;
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface-2);
 }
 .activity-row-media img { width: 100%; height: 100%; object-fit: contain; }
@@ -469,14 +470,14 @@ onMounted(refresh)
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .activity-row-side {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
   align-items: flex-end;
-  gap: 12px;
+  gap: 6px;
   padding-left: 4px;
 }
 .activity-row-price { text-align: right; }
@@ -504,7 +505,7 @@ onMounted(refresh)
 .card-tag {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
+  min-height: 22px;
   padding: 0 8px;
   border-radius: 999px;
   background: var(--surface-2);
@@ -516,11 +517,11 @@ onMounted(refresh)
 .card-tag-urgent { background: rgba(239, 68, 68, 0.16); color: #f87171; }
 .card-tag-free { background: rgba(34, 197, 94, 0.14); color: #22c55e; }
 .card-tag-phase { background: rgba(59, 130, 246, 0.14); color: #60a5fa; }
-.price { font-weight: 800; font-size: 24px; line-height: 1.1; }
-.price-flash { color: var(--shop-sale-strong); font-size: 26px; }
+.price { font-weight: 800; font-size: 22px; line-height: 1.1; }
+.price-flash { color: var(--shop-sale-strong); font-size: 24px; }
 
 /* ── 标题/描述 ── */
-.card-title { margin: 0; font-size: 18px; line-height: 1.25; font-weight: 800; }
+.card-title { margin: 0; font-size: 17px; line-height: 1.22; font-weight: 800; }
 .card-desc { margin: 0; font-size: 13px; color: var(--tg-hint); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ── 倒计时行 ── */
@@ -532,20 +533,20 @@ onMounted(refresh)
   padding-top: 2px;
 }
 .flash-cd-label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--tg-hint);
   white-space: nowrap;
 }
 .flash-cd-digits {
   font-variant-numeric: tabular-nums;
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 800;
   color: var(--shop-sale-strong);
   background: var(--shop-sale-soft);
   border: 1px solid var(--shop-sale-border);
   border-radius: 6px;
-  padding: 2px 10px;
+  padding: 1px 8px;
   letter-spacing: 1px;
   line-height: 1.5;
 }
@@ -583,7 +584,7 @@ onMounted(refresh)
 /* ── 抢购按钮 ── */
 .flash-cta-row { margin-top: auto; }
 .flash-grab-btn {
-  min-height: 42px;
+  min-height: 38px;
   padding: 8px 16px;
   border: none;
   border-radius: var(--r-lg);
@@ -594,6 +595,12 @@ onMounted(refresh)
   cursor: pointer;
   transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
   letter-spacing: 0.5px;
+}
+.scarcity-hint {
+  color: var(--shop-sale-strong);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
 }
 .flash-grab-btn:hover {
   opacity: 0.92;
@@ -620,9 +627,9 @@ onMounted(refresh)
 .skeleton-list { display: flex; flex-direction: column; gap: 12px; }
 .skeleton-row {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 172px;
-  gap: 16px;
-  padding: 14px;
+  grid-template-columns: 152px minmax(0, 1fr) 150px;
+  gap: 12px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
 }
@@ -633,11 +640,11 @@ onMounted(refresh)
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
-.skeleton-media { min-height: 160px; border-radius: 12px; }
-.skeleton-body { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+.skeleton-media { min-height: 104px; border-radius: 10px; }
+.skeleton-body { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
 .skeleton-side { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; gap: 12px; }
 .skeleton-line { height: 12px; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hover) 50%, var(--surface) 75%); background-size: 200% 100%; border-radius: var(--r-sm); animation: shimmer 1.5s ease-in-out infinite; }
-.skeleton-block { width: 132px; height: 42px; border-radius: var(--r-lg); }
+.skeleton-block { width: 120px; height: 38px; border-radius: var(--r-lg); }
 .w-25{width:25%}.w-40{width:40%}.w-45{width:45%}.w-60{width:60%}.w-70{width:70%}.w-90{width:90%}
 @keyframes shimmer {
   0% { background-position: 200% 0; }
@@ -654,10 +661,10 @@ onMounted(refresh)
   .cat-btn { flex: 0 0 auto; }
   .shop-flash-hero { flex-wrap: wrap; gap: 8px; }
   .flash-hero-countdown { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
-  .activity-row { grid-template-columns: 92px minmax(0, 1fr); gap: 12px; }
-  .activity-row-media { min-height: 84px; border-radius: var(--r-md); }
-  .skeleton-row { grid-template-columns: 92px minmax(0, 1fr); gap: 12px; }
-  .skeleton-media { min-height: 84px; border-radius: var(--r-md); }
+  .activity-row { grid-template-columns: 78px minmax(0, 1fr); gap: 10px; padding: 10px; }
+  .activity-row-media { min-height: 78px; border-radius: var(--r-md); }
+  .skeleton-row { grid-template-columns: 78px minmax(0, 1fr); gap: 10px; }
+  .skeleton-media { min-height: 78px; border-radius: var(--r-md); }
   .skeleton-side {
     grid-column: 1 / -1;
     flex-direction: row;
@@ -671,8 +678,8 @@ onMounted(refresh)
   }
   .activity-row-btn { min-width: 120px; width: auto; }
   .activity-row-price { text-align: left; }
-  .price { font-size: 21px; }
-  .card-title { font-size: 16px; }
+  .price { font-size: 20px; }
+  .card-title { font-size: 15px; }
 }
 
 /* ── 无障碍：减少动画 ── */
