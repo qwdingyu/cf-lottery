@@ -111,7 +111,7 @@
                 </span>
               </div>
               <div class="activity-row-price">
-                <span class="price-label">{{ $t('shop.flashRush') }}</span>
+                <span class="price-label">{{ flashPriceLabel(card) }}</span>
                 <span class="price" :class="{ 'price-flash': card.flashSaleEnabled }">{{ card.priceText }}</span>
               </div>
               <button
@@ -120,7 +120,7 @@
                 :class="{ 'flash-grab-soldout': card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) }"
                 @click.stop="$router.push(card.href)"
               >
-                {{ card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) ? $t('shop.soldOut') : $t('shop.flashCta') }}
+                {{ card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) ? $t('shop.viewActivity') : $t('shop.flashCta') }}
               </button>
               <span v-if="card.phase !== 'ended'" class="scarcity-hint">{{ $t('shop.flashScarcityHint') }}</span>
             </div>
@@ -314,6 +314,13 @@ function flashCountdown(card: LandingActivityCard): string {
   const diff = targetMs - nowMs.value
   if (diff <= 0) return ''
   return formatCountdown(diff, t('shop.day'))
+}
+
+function flashPriceLabel(card: LandingActivityCard): string {
+  if (card.phase === 'ended') return t('shop.countdownEnded')
+  if (card.phase === 'upcoming') return t('shop.flashHurry')
+  if (card.remaining != null && card.remaining <= 0) return t('shop.soldOut')
+  return t('shop.flashRush')
 }
 
 async function refresh() {
@@ -694,7 +701,7 @@ onMounted(refresh)
 .flash-grab-soldout {
   background: var(--surface-2);
   color: var(--tg-hint);
-  cursor: default;
+  cursor: pointer;
 }
 .flash-grab-soldout:hover {
   opacity: 1;

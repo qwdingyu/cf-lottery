@@ -33,7 +33,7 @@ export default {
     notFound: "店铺不存在",
     loadFailed: "加载失败",
     // ── 秒杀化升级（docs/205） ──
-    flashBannerTitle: "⚡ 限时抢购",
+    flashBannerTitle: "限时抢购",
     flashBannerSub: "本店 {n} 场秒杀火热进行中，手慢无！",
     flashBannerUpcoming: "{n} 场即将开始",
     activityCount: "共 {n} 个活动",

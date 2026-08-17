@@ -32,7 +32,7 @@ export default {
     notFound: "Shop not found",
     loadFailed: "Failed to load",
     // ── Flash-sale upgrade (docs/205) ────────────────
-    flashBannerTitle: "⚡ Flash Sale",
+    flashBannerTitle: "Flash Sale",
     flashBannerSub: "{n} flash sales are live — first come, first served!",
     flashBannerUpcoming: "{n} starting soon",
     activityCount: "{n} activities",
