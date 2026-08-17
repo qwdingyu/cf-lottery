@@ -147,7 +147,7 @@
               >
                 {{ card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) ? $t('shop.viewActivity') : $t('shop.flashCta') }}
               </span>
-              <span v-if="card.phase !== 'ended'" class="scarcity-hint">{{ $t('shop.flashScarcityHint') }}</span>
+              <span class="scarcity-hint" :class="{ 'scarcity-hint--soldout': card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) }">{{ flashScarcityText(card) }}</span>
             </div>
           </div>
         </div>
@@ -346,6 +346,15 @@ function flashPriceLabel(card: LandingActivityCard): string {
   if (card.phase === 'upcoming') return t('shop.flashHurry')
   if (card.remaining != null && card.remaining <= 0) return t('shop.soldOut')
   return t('shop.flashRush')
+}
+
+function flashScarcityText(card: LandingActivityCard): string {
+  if (card.phase === 'ended') return t('shop.flashEndedHint')
+  if (card.phase === 'upcoming') return t('shop.flashUpcomingHint')
+  if (card.remaining != null && card.remaining <= 0) return t('shop.flashSoldOutHint')
+  if (card.remaining != null && card.remaining <= 3) return t('shop.flashLowStockHint')
+  if (card.progressPercent >= 70) return t('shop.flashHotHint')
+  return t('shop.flashScarcityHint')
 }
 
 function activityRowAriaLabel(card: LandingActivityCard): string {
@@ -809,6 +818,9 @@ onMounted(refresh)
   font-weight: 800;
   line-height: 1;
   text-align: center;
+}
+.scarcity-hint--soldout {
+  color: var(--tg-hint);
 }
 .activity-row-flash:hover .flash-grab-btn {
   opacity: 0.92;
