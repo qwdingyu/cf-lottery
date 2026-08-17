@@ -31,14 +31,19 @@
     </div>
 
     <!-- ═══ 加载 / 空态 / 错误 ═══ -->
-    <div v-if="loading" class="skeleton-grid" aria-busy="true">
-      <div v-for="i in 4" :key="i" class="skeleton-card">
-        <div class="skeleton-line w-25" />
-        <div class="skeleton-line w-60" />
-        <div class="skeleton-line w-45" />
-        <div class="skeleton-line w-90" />
-        <div class="skeleton-line w-40" />
-        <div class="skeleton-block" />
+    <div v-if="loading" class="skeleton-list" aria-busy="true">
+      <div v-for="i in 3" :key="i" class="skeleton-row">
+        <div class="skeleton-media" />
+        <div class="skeleton-body">
+          <div class="skeleton-line w-25" />
+          <div class="skeleton-line w-70" />
+          <div class="skeleton-line w-90" />
+          <div class="skeleton-line w-45" />
+        </div>
+        <div class="skeleton-side">
+          <div class="skeleton-line w-60" />
+          <div class="skeleton-block" />
+        </div>
       </div>
     </div>
     <div v-else-if="error" class="empty-state" role="alert">
@@ -65,7 +70,12 @@
             v-for="card in flashCards"
             :key="card.publicSlug"
             class="activity-row activity-row-flash"
+            role="link"
+            tabindex="0"
+            :aria-label="card.title"
             @click="$router.push(card.href)"
+            @keydown.enter.prevent="$router.push(card.href)"
+            @keydown.space.prevent="$router.push(card.href)"
           >
             <div class="activity-row-media" :class="{ 'activity-row-media-empty': !card.imageUrl }">
               <img v-if="card.imageUrl" :src="card.imageUrl" :alt="card.title" loading="lazy" />
@@ -127,7 +137,12 @@
             v-for="card in freeCards"
             :key="card.publicSlug"
             class="activity-row"
+            role="link"
+            tabindex="0"
+            :aria-label="card.title"
             @click="$router.push(card.href)"
+            @keydown.enter.prevent="$router.push(card.href)"
+            @keydown.space.prevent="$router.push(card.href)"
           >
             <div class="activity-row-media" :class="{ 'activity-row-media-empty': !card.imageUrl }">
               <img v-if="card.imageUrl" :src="card.imageUrl" :alt="card.title" loading="lazy" />
@@ -319,7 +334,7 @@ onMounted(refresh)
    使用现有主题变量（--shop-sale* / --tg-* / --surface* / --border），不破坏全局样式。
    ══════════════════════════════════════════════════════════ */
 
-.shop-view { max-width: 960px; margin: 0 auto; padding: 24px; }
+.shop-view { max-width: 1120px; margin: 0 auto; padding: 24px; }
 
 /* ── 工具栏 ── */
 .shop-toolbar { margin-bottom: 24px; }
@@ -401,7 +416,7 @@ onMounted(refresh)
   letter-spacing: 1px;
 }
 
-/* ── 卡片网格 ── */
+/* ── 横向促销列表 ── */
 .shop-sections { display: flex; flex-direction: column; gap: 28px; }
 .shop-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .shop-section-heading h2 { margin: 0; font-size: 18px; line-height: 1.3; }
@@ -426,6 +441,10 @@ onMounted(refresh)
   box-shadow: var(--shadow-md);
   transform: translateY(-1px);
 }
+.activity-row:focus-visible {
+  outline: 2px solid var(--tg-link);
+  outline-offset: 2px;
+}
 .activity-row-flash {
   border-color: var(--shop-sale-border);
   background: linear-gradient(180deg, rgba(244, 63, 94, 0.06) 0%, var(--surface) 100%);
@@ -443,7 +462,7 @@ onMounted(refresh)
   border-radius: 12px;
   background: var(--surface-2);
 }
-.activity-row-media img { width: 100%; height: 100%; object-fit: cover; }
+.activity-row-media img { width: 100%; height: 100%; object-fit: contain; }
 .activity-row-media-empty { color: var(--tg-hint); font-size: 12px; }
 .activity-row-body {
   min-width: 0;
@@ -594,11 +613,27 @@ onMounted(refresh)
 .card-meta { font-size: 12px; color: var(--tg-hint); }
 
 /* ── 骨架屏 / 空态 ── */
-.skeleton-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-.skeleton-card { border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.skeleton-list { display: flex; flex-direction: column; gap: 12px; }
+.skeleton-row {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 172px;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+.skeleton-media,
+.skeleton-block,
+.skeleton-line {
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hover) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+.skeleton-media { min-height: 160px; border-radius: 12px; }
+.skeleton-body { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+.skeleton-side { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; gap: 12px; }
 .skeleton-line { height: 12px; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hover) 50%, var(--surface) 75%); background-size: 200% 100%; border-radius: var(--r-sm); animation: shimmer 1.5s ease-in-out infinite; }
-/* 模拟按钮区域，占更多垂直空间 */
-.skeleton-block { height: 36px; border-radius: var(--r-lg); background: var(--surface-2); }
+.skeleton-block { width: 132px; height: 42px; border-radius: var(--r-lg); }
 .w-25{width:25%}.w-40{width:40%}.w-45{width:45%}.w-60{width:60%}.w-70{width:70%}.w-90{width:90%}
 @keyframes shimmer {
   0% { background-position: 200% 0; }
@@ -617,6 +652,13 @@ onMounted(refresh)
   .flash-hero-countdown { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
   .activity-row { grid-template-columns: 92px minmax(0, 1fr); gap: 12px; }
   .activity-row-media { min-height: 92px; border-radius: var(--r-md); }
+  .skeleton-row { grid-template-columns: 92px minmax(0, 1fr); gap: 12px; }
+  .skeleton-media { min-height: 92px; border-radius: var(--r-md); }
+  .skeleton-side {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+  }
   .activity-row-side {
     grid-column: 1 / -1;
     flex-direction: row;
@@ -634,6 +676,8 @@ onMounted(refresh)
   .flash-hero-badge,
   .flash-cd-digits.cd-urgent,
   .skeleton-line,
+  .skeleton-media,
+  .skeleton-block,
   .activity-row { animation: none !important; transition: none !important; }
   .shop-flash-hero,
   .flash-grab-btn { transition: none !important; }
