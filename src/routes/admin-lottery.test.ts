@@ -1783,7 +1783,7 @@ describe("活动编辑 PATCH 语义", () => {
       method: "PATCH", headers, body: JSON.stringify({ maxSpinsPerEntry: 0 }),
     }, TEST_ENV);
     expect(res.status).toBe(400);
-    expect((await res.json() as { error: string }).error).toContain("至少为 1");
+    expect((await res.json() as { error: string }).error).toContain("1–100 的整数");
 
     // DB 未被污染
     const [draw] = await db.select({ maxSpinsPerEntry: lotteryDraws.maxSpinsPerEntry }).from(lotteryDraws)
@@ -1791,7 +1791,7 @@ describe("活动编辑 PATCH 语义", () => {
     expect(draw!.maxSpinsPerEntry).toBe(5);
   });
 
-  it("PATCH 非即时抽奖活动传 maxSpinsPerEntry>0 被拒绝（死配置）", async () => {
+  it("PATCH 非即时抽奖活动传 maxSpinsPerEntry 被忽略（兼容旧前端 claim 必传）", async () => {
     const drawId = await seedDraftDraw();
     const app = createTestApp();
     const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
@@ -1800,11 +1800,15 @@ describe("活动编辑 PATCH 语义", () => {
     const res = await app.request(`/api/admin/draws/${drawId}`, {
       method: "PATCH", headers, body: JSON.stringify({ maxSpinsPerEntry: 3 }),
     }, TEST_ENV);
-    expect(res.status).toBe(400);
-    expect((await res.json() as { error: string }).error).toContain("仅适用于即时开奖");
+    expect(res.status).toBe(200);
+
+    // DB 未被污染（非即时活动的 maxSpins 保持 0）
+    const [draw] = await db.select({ maxSpinsPerEntry: lotteryDraws.maxSpinsPerEntry }).from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.maxSpinsPerEntry).toBe(0);
   });
 
-  it("创建路由：非即时开奖活动传 maxSpinsPerEntry 被拒绝；小数被拒绝", async () => {
+  it("创建路由：非即时开奖活动传 maxSpinsPerEntry 被忽略；lottery+instant 小数被拒绝", async () => {
     await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
     const app = createTestApp();
     const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
@@ -1816,13 +1820,16 @@ describe("活动编辑 PATCH 语义", () => {
       endAt: new Date(Date.now() + 3_600_000).toISOString(),
     };
 
-    // lottery + manual + maxSpins=5 → 拒绝（仅适用于即时开奖）
+    // lottery + manual + maxSpins=5 → 忽略（兼容旧前端，createDraw 对非即时强制 0）
     const manual = await app.request("/api/admin/draws", {
       method: "POST", headers,
       body: JSON.stringify({ ...base, resultMode: "manual", maxSpinsPerEntry: 5 }),
     }, TEST_ENV);
-    expect(manual.status).toBe(400);
-    expect((await manual.json() as { error: string }).error).toContain("仅适用于即时开奖");
+    expect(manual.status).toBe(200);
+    const manualId = (await manual.json() as { id: string }).id;
+    const [manualDraw] = await db.select({ maxSpinsPerEntry: lotteryDraws.maxSpinsPerEntry }).from(lotteryDraws)
+      .where(eq(lotteryDraws.id, manualId)).limit(1);
+    expect(manualDraw!.maxSpinsPerEntry).toBe(0);
 
     // lottery + instant + maxSpins=5.5（小数）→ 拒绝（必须整数）
     const fractional = await app.request("/api/admin/draws", {

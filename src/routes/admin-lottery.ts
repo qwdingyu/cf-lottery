@@ -770,18 +770,20 @@ adminLotteryRoute.post("/draws", async (c) => {
       resultModeInput = "scheduled";
     }
 
+    // maxSpinsPerEntry 仅对「即时开奖的 lottery」生效（createDraw 对非 lottery 强制 0）。
+    // 注意：仅 lottery+instant 才做严格校验；其它类型传该字段一律忽略——
+    // 生产旧前端（≤8e64bad）因 claim 默认 resultMode=instant，创建 claim 时必传
+    // maxSpinsPerEntry=1，严格拒绝会导致「新后端+旧前端」组合下 claim 创建/编辑全挂。
     let maxSpinsPerEntry: number | undefined;
-    if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
-      const n = Number(body.maxSpinsPerEntry);
-      if (!Number.isInteger(n) || n < 1 || n > 100) {
-        return fail(c, "每人抽奖次数须为 1–100 的整数", 400);
+    if (activityKind === "lottery" && resultModeInput === "instant") {
+      if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
+        const n = Number(body.maxSpinsPerEntry);
+        if (!Number.isInteger(n) || n < 1 || n > 100) {
+          return fail(c, "每人抽奖次数须为 1–100 的整数", 400);
+        }
+        maxSpinsPerEntry = n;
       }
-      // 与 PATCH 语义一致（2026-08 审查 P5）：maxSpinsPerEntry 仅对「即时开奖的 lottery」生效，
-      // 其它类型（含 claim+instant 直付秒杀）传该字段属于死配置，直接拒绝避免脏数据入库。
-      if (activityKind !== "lottery" || resultModeInput !== "instant") {
-        return fail(c, "每人抽奖次数仅适用于即时开奖的抽奖活动", 400);
-      }
-      maxSpinsPerEntry = n;
+      // 未传 → createDraw 会抛「即时开奖必须设置每人抽奖次数（≥1）」兜底
     }
 
     const { id, publicSlug } = await createDraw(db, tenantId, {
@@ -989,21 +991,16 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
 
     // maxSpinsPerEntry：仅对「即时开奖的 lottery」生效（2026-08 审查 P5）。
     // - 即时抽奖：必须 ≥1（0 会锁死抽奖，关闭请走暂停状态机）；
-    // - 非即时活动：显式传 >0 拒绝；传 0 等价清理（无行为影响）；
+    // - 非即时活动：忽略该字段（兼容旧前端 claim 必传 maxSpins=1 的行为，
+    //   避免「新后端+旧前端」组合下 claim 创建/编辑全挂）；
     // - 语义切换（instant → 其它）时联动清除残留配置。
-    if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
-      const n = Number(body.maxSpinsPerEntry);
-      if (!Number.isInteger(n) || n < 0 || n > 100) {
-        return fail(c, "每人抽奖次数须为 0–100 的整数", 400);
-      }
-      const isInstantLottery = nextActivityKind === "lottery" && nextResultMode === "instant";
-      if (isInstantLottery) {
-        if (n === 0) {
-          return fail(c, "即时开奖活动每人抽奖次数至少为 1；如需停止抽奖请暂停活动", 400);
+    if (nextActivityKind === "lottery" && nextResultMode === "instant") {
+      if (body.maxSpinsPerEntry !== undefined && body.maxSpinsPerEntry !== null && body.maxSpinsPerEntry !== "") {
+        const n = Number(body.maxSpinsPerEntry);
+        if (!Number.isInteger(n) || n < 1 || n > 100) {
+          return fail(c, "每人抽奖次数须为 1–100 的整数", 400);
         }
         maxSpinsUpdate = n;
-      } else if (n > 0) {
-        return fail(c, "每人抽奖次数仅适用于即时开奖的抽奖活动", 400);
       }
     }
     // 联动清除：活动不再即时抽奖时，清掉残留的 maxSpinsPerEntry（避免死配置残留）。
