@@ -51,8 +51,16 @@
       <button class="btn" @click="refresh">{{ $t('shop.refresh') }}</button>
     </div>
     <div v-else-if="cards.length === 0" class="empty-state">
-      <p>{{ $t('landing.marketEmptyTitle') }}</p>
-      <small>{{ $t('landing.marketEmptyDesc') }}</small>
+      <p>{{ activities.length > 0 ? $t('shop.filterEmptyTitle') : $t('landing.marketEmptyTitle') }}</p>
+      <small>{{ activities.length > 0 ? $t('shop.filterEmptyDesc') : $t('landing.marketEmptyDesc') }}</small>
+      <button
+        v-if="activities.length > 0"
+        type="button"
+        class="empty-reset-btn"
+        @click="activeTab = 'all'"
+      >
+        {{ $t('shop.viewAllActivities') }}
+      </button>
     </div>
 
     <!-- ═══ 活动列表（横向一行一个） ═══ -->
@@ -740,6 +748,24 @@ onMounted(refresh)
   100% { background-position: -200% 0; }
 }
 .empty-state { text-align: center; padding: 48px; color: var(--tg-hint); }
+.empty-state p { margin: 0 0 6px; color: var(--tg-text); font-weight: 800; }
+.empty-state small { display: block; line-height: 1.5; }
+.empty-reset-btn {
+  min-height: 40px;
+  margin-top: 14px;
+  padding: 8px 16px;
+  border: 1px solid var(--shop-sale-border);
+  border-radius: 10px;
+  background: var(--shop-sale-soft);
+  color: var(--shop-sale-text);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.empty-reset-btn:hover {
+  border-color: var(--shop-sale-strong);
+  color: #fff;
+}
 
 /* ── 响应式 ── */
 @media (max-width: 640px) {
