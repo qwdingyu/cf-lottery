@@ -868,6 +868,10 @@ export default {
     flashDirectPayment: "平台直付",
     flashExternalCheckout: "外部下单",
     flashQuota: "限量 {n} 份",
+    flashTrustDirectPay: "平台直付",
+    flashTrustExternal: "跳转购买",
+    flashTrustStockLock: "名额实时锁定",
+    flashTrustLimited: "限时限量",
     flashPriceMissing: "待配置价格",
     flashPurchaseQuantity: "购买件数",
     // 老虎机与转盘共用诚实语义；保留旧 key 别名避免残留引用

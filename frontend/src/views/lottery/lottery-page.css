@@ -1246,6 +1246,30 @@
   font-size: 19px;
   box-shadow: 0 10px 24px rgba(225, 29, 72, 0.20);
 }
+.lottery-card--deep.lottery-card--flash-sale .lottery-join-bar--flash-sale {
+  padding: 12px 22px 16px;
+  border-top-color: rgba(244, 63, 94, 0.12);
+}
+.lottery-flash-trust-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+.lottery-flash-trust-strip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 63, 94, 0.22);
+  background: rgba(244, 63, 94, 0.08);
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
 
 @media (max-width: 640px) {
   .lottery-card--deep.lottery-card--flash-sale .lottery-card-head {
@@ -1275,5 +1299,11 @@
   .lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-countdown {
     min-width: 126px;
     font-size: 14px;
+  }
+  .lottery-card--deep.lottery-card--flash-sale .lottery-join-bar--flash-sale {
+    padding: 10px 12px 14px;
+  }
+  .lottery-flash-trust-strip {
+    justify-content: flex-start;
   }
 }

@@ -338,12 +338,19 @@
             055a P1：有游戏壳时，游戏区即主 CTA（@play → handleJoin），底部不再放第二颗「参与」避免双入口。
             无游戏组件（list/queue 等）时仍用底部按钮。已参与/非 open 仍用底部状态条。
           -->
-          <div class="lottery-join-bar">
+          <div class="lottery-join-bar" :class="{ 'lottery-join-bar--flash-sale': Boolean(flashSaleMerchCard(draw)) }">
             <!--
               后端允许 paused 状态下恢复已有的 pending 订单，不能因为通用的非 open
               状态条提前短路支付入口。暂停只禁止新订单和追加购买，不影响已发起支付的续付。
             -->
-            <template v-if="draw.status !== 'open' && !(draw.status === 'paused' && isDrawJoined(draw) && isDirectPaymentDraw(draw))">
+            <template v-if="flashSaleMerchCard(draw) && hasInteractiveGame(draw) && isDrawJoinable(draw) && !isDrawJoined(draw)">
+              <div class="lottery-flash-trust-strip" role="note">
+                <span>{{ flashSaleMerchCard(draw)?.isDirectPayment ? $t('lottery.flashTrustDirectPay') : $t('lottery.flashTrustExternal') }}</span>
+                <span>{{ $t('lottery.flashTrustStockLock') }}</span>
+                <span>{{ $t('lottery.flashTrustLimited') }}</span>
+              </div>
+            </template>
+            <template v-else-if="draw.status !== 'open' && !(draw.status === 'paused' && isDrawJoined(draw) && isDirectPaymentDraw(draw))">
               <span class="lottery-join-hint">{{ statusPathHint(draw) || statusText(draw) }}</span>
               <div class="lottery-status-actions">
                 <button
