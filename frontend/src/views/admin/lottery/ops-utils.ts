@@ -537,6 +537,16 @@ export function needsTiersMandatory(
 }
 
 /**
+ * 奖档/商品绑定最大行数。
+ *
+ * 普通抽奖允许多奖档；直付批发是“同一商品多件阶梯价”，不是购物车多商品。
+ * 若允许多个商品行，支付订单、卡密库存与公开页“买 N 件同一商品”的语义会不一致。
+ */
+export function maxTierRowsForSalesMode(salesMode: string): number {
+  return salesMode === 'direct_bulk' ? 1 : 10
+}
+
+/**
  * 秒杀壳配置是否适用于当前（活动类型 × 体验类型）组合（2026-08 体验优化）。
  *
  * 为什么需要：切换活动类型/参与模式时，experienceType 会被重置为默认，但 enableFlashSale /

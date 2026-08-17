@@ -6,7 +6,7 @@
  * 保证前端 4 层判断（奖档区显示/saveDrawTiers/创建步骤/发布清单）与后端保持一致。
  */
 import { describe, expect, it } from 'vitest'
-import { needsTiersActivity, needsTiersMandatory } from './ops-utils'
+import { maxTierRowsForSalesMode, needsTiersActivity, needsTiersMandatory } from './ops-utils'
 
 describe('needsTiersActivity（壳层面：奖档区可显示/可保存）', () => {
   it('lottery 任意体验都需要奖项', () => {
@@ -64,5 +64,17 @@ describe('needsTiersMandatory（强制层面：必须配置奖项）', () => {
   it('其他活动类型不强制奖项', () => {
     expect(needsTiersMandatory('signup_chain', 'list', false, false)).toBe(false)
     expect(needsTiersMandatory('survey', 'form', true, true)).toBe(false)
+  })
+})
+
+describe('maxTierRowsForSalesMode（奖档/商品绑定行数上限）', () => {
+  it('直付批发只允许绑定 1 个发货商品', () => {
+    expect(maxTierRowsForSalesMode('direct_bulk')).toBe(1)
+  })
+
+  it('普通抽奖和单件直付仍保留既有最多 10 行奖档能力', () => {
+    expect(maxTierRowsForSalesMode('')).toBe(10)
+    expect(maxTierRowsForSalesMode('redirect')).toBe(10)
+    expect(maxTierRowsForSalesMode('direct_single')).toBe(10)
   })
 })

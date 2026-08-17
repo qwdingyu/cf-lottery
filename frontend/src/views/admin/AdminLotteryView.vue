@@ -1313,15 +1313,15 @@
             </header>
             <div class="form-grid two-cols">
               <div v-if="editorVisibility.tiers && needsTiersActivity(form.activityKind, form.experienceType || '')" class="field-span-2">
-                <span class="field-label-text">{{ $t('lottery.adminTierConfig') }}</span>
+                <span class="field-label-text">{{ $t(tierCopy.config) }}</span>
                 <!-- 奖项配置表头（docs/206）：与阶梯价对齐，让运营者清楚每列含义 -->
                 <div v-if="form.tiers.length > 0" class="tier-header" :class="{ 'tier-grid--instant': form.resultMode === 'instant' }">
-                  <span class="tier-header-prize">{{ $t('lottery.adminTierHeaderPrize') }}</span>
-                  <span class="tier-header-name">{{ $t('lottery.adminTierHeaderName') }}</span>
-                  <span class="tier-header-count">{{ $t('lottery.adminTierHeaderWinnerCount') }}</span>
+                  <span class="tier-header-prize">{{ $t(tierCopy.prize) }}</span>
+                  <span class="tier-header-name">{{ $t(tierCopy.name) }}</span>
+                  <span class="tier-header-count">{{ $t(tierCopy.count) }}</span>
                   <template v-if="form.resultMode === 'instant'">
-                    <span class="tier-header-count">{{ $t('lottery.adminTierHeaderWeight') }}</span>
-                    <span class="tier-header-probability">{{ $t('lottery.adminTierHeaderProbability') }}</span>
+                    <span class="tier-header-count">{{ $t(tierCopy.weight) }}</span>
+                    <span class="tier-header-probability">{{ $t(tierCopy.probability) }}</span>
                   </template>
                   <span class="tier-header-actions"></span>
                 </div>
@@ -1338,11 +1338,11 @@
                         </div>
                       </template>
                       <button type="button" class="btn btn-ghost btn-xs" :disabled="creating" @click="openPrizePicker(idx, $event)">
-                        {{ tierPrizeSummary(tier) ? $t('lottery.adminChangePrize') : $t('lottery.adminSelectPrize') }}
+                        {{ tierPrizeSummary(tier) ? $t(tierCopy.changePrize) : $t(tierCopy.selectPrize) }}
                       </button>
                     </div>
-                    <input v-model="tier.tierName" class="tier-name" :placeholder="$t('lottery.adminTierNamePlaceholder')" maxlength="50" />
-                    <input v-model.number="tier.winnerCount" type="number" class="tier-count" min="1" max="1000" :placeholder="$t('lottery.adminTierSlotsPlaceholder')" />
+                    <input v-model="tier.tierName" class="tier-name" :placeholder="$t(tierCopy.namePlaceholder)" maxlength="50" />
+                    <input v-model.number="tier.winnerCount" type="number" class="tier-count" min="1" max="1000" :placeholder="$t(tierCopy.countPlaceholder)" />
                     <input
                       v-if="form.resultMode === 'instant'"
                       v-model.number="tier.weight"
@@ -1350,14 +1350,14 @@
                       class="tier-count"
                       min="0"
                       :max="MAX_TIER_WEIGHT"
-                      :placeholder="$t('lottery.adminTierWeightPlaceholder')"
-                      :title="$t('lottery.adminTierWeightHint')"
+                      :placeholder="$t(tierCopy.weightPlaceholder)"
+                      :title="$t(tierCopy.weightHint)"
                     />
                     <span
                       v-if="form.resultMode === 'instant'"
                       class="tier-probability"
                       :class="{ 'is-zero': tierProbabilities[idx]?.weight === 0 }"
-                      :title="$t('lottery.adminTierProbabilityHint')"
+                      :title="$t(tierCopy.probabilityHint)"
                     >
                       <span
                         class="tier-probability-bar"
@@ -1369,7 +1369,7 @@
                           :style="{ width: `${Math.max(0, Math.min(100, tierProbabilities[idx]?.percent || 0))}%` }"
                         />
                       </span>
-                      {{ $t('lottery.adminTierProbabilityLabel') }} {{ tierProbabilities[idx]?.label || '0%' }}
+                      {{ $t(tierCopy.probabilityLabel) }} {{ tierProbabilities[idx]?.label || '0%' }}
                     </span>
                     <button type="button" class="btn btn-ghost btn-xs tier-remove" :aria-label="$t('lottery.adminDelete')" :title="$t('lottery.adminDelete')" @click="removeTier(idx)">✕</button>
                   </div>
@@ -1397,8 +1397,8 @@
                     }}
                   </p>
                   <div class="tier-actions">
-                    <button type="button" class="btn btn-ghost btn-xs" :disabled="form.tiers.length >= 10" @click="addTier">
-                      {{ $t('lottery.adminAddTier') }}
+                    <button type="button" class="btn btn-ghost btn-xs" :disabled="!canAddTier" @click="addTier">
+                      {{ $t(tierCopy.addTier) }}
                     </button>
                     <!-- 始终提供快速创建：无奖品库时是主 CTA（手动履约，可过发布门禁）；有奖品时仍可一键加新奖 -->
                     <button
@@ -1408,13 +1408,13 @@
                       :disabled="quickPrizeLoading"
                       @click="quickCreatePrize"
                     >
-                      {{ quickPrizeLoading ? $t('lottery.adminCreating') : $t('lottery.adminQuickCreatePrize') }}
+                      {{ quickPrizeLoading ? $t('lottery.adminCreating') : $t(tierCopy.quickCreatePrize) }}
                     </button>
                     <button v-if="prizeOptions.length > 0" type="button" class="btn btn-ghost btn-xs" @click="goToPrizes">
                       {{ $t('lottery.adminManagePrizes') }}
                     </button>
                     <small class="field-hint">
-                      {{ prizeOptions.length === 0 ? $t('lottery.adminEmptyPrizeHint') : $t('lottery.adminTierLimitHint') }}
+                      {{ prizeOptions.length === 0 ? $t(tierCopy.emptyHint) : $t(tierCopy.limitHint) }}
                     </small>
                   </div>
                   <!-- docs/225 P0：服务端搜索奖品选择器面板（Teleport 到 body，避免被 modal 裁剪） -->
@@ -2152,6 +2152,7 @@ import {
   formatPublishCheckItems as formatPublishCheckItemsRaw,
   needsTiersActivity,
   needsTiersMandatory,
+  maxTierRowsForSalesMode,
   publishFixSectionTargetId,
   resolveLotteryScheduleFields,
   statusClass,
@@ -2940,10 +2941,12 @@ async function saveDrawInviteCodes(drawId: string) {
 
 /** 添加一个奖项（最多 10 个） */
 function addTier() {
-  if (form.value.tiers.length >= 10) return
+  if (!canAddTier.value) return
   form.value.tiers.push({
     prizeId: '',
-    tierName: t('lottery.adminTierName', { n: form.value.tiers.length + 1 }),
+    tierName: isDirectBulkFlashSale.value
+      ? t('lottery.adminWholesaleDefaultName')
+      : t('lottery.adminTierName', { n: form.value.tiers.length + 1 }),
     winnerCount: 1,
     weight: form.value.resultMode === 'instant' ? 1 : 0,
   })
@@ -3038,6 +3041,59 @@ const tierProbabilities = computed(() => buildTierProbabilities(form.value.tiers
 // instant 模式（即时大转盘 / 直付秒杀）：结果由用户 spin/购买即时产生，无需设置开奖时间。
 // 表单不显示开奖时间输入框、创建步骤不要求 drawTime、payload 不写 drawAt（docs/116）。
 const isInstantMode = computed(() => String(form.value.resultMode || '') === 'instant')
+/** 直付批发仍复用 lottery_prize_tiers 存储“发货商品绑定”，但运营界面不能继续说奖项/中奖。 */
+const isDirectBulkFlashSale = computed(() => (
+  form.value.enableFlashSale === true
+  && form.value.flashSaleSalesMode === 'direct_bulk'
+))
+const tierCopy = computed(() => {
+  if (!isDirectBulkFlashSale.value) {
+    return {
+      config: 'lottery.adminTierConfig',
+      prize: 'lottery.adminTierHeaderPrize',
+      name: 'lottery.adminTierHeaderName',
+      count: 'lottery.adminTierHeaderWinnerCount',
+      weight: 'lottery.adminTierHeaderWeight',
+      probability: 'lottery.adminTierHeaderProbability',
+      selectPrize: 'lottery.adminSelectPrize',
+      changePrize: 'lottery.adminChangePrize',
+      namePlaceholder: 'lottery.adminTierNamePlaceholder',
+      countPlaceholder: 'lottery.adminTierSlotsPlaceholder',
+      weightPlaceholder: 'lottery.adminTierWeightPlaceholder',
+      weightHint: 'lottery.adminTierWeightHint',
+      probabilityHint: 'lottery.adminTierProbabilityHint',
+      probabilityLabel: 'lottery.adminTierProbabilityLabel',
+      addTier: 'lottery.adminAddTier',
+      quickCreatePrize: 'lottery.adminQuickCreatePrize',
+      emptyHint: 'lottery.adminEmptyPrizeHint',
+      limitHint: 'lottery.adminTierLimitHint',
+    }
+  }
+  return {
+    config: 'lottery.adminWholesaleProductConfig',
+    prize: 'lottery.adminWholesaleHeaderProduct',
+    name: 'lottery.adminWholesaleHeaderName',
+    count: 'lottery.adminWholesaleHeaderStock',
+    weight: 'lottery.adminWholesaleHeaderWeight',
+    probability: 'lottery.adminWholesaleHeaderShare',
+    selectPrize: 'lottery.adminSelectWholesaleProduct',
+    changePrize: 'lottery.adminChangeWholesaleProduct',
+    namePlaceholder: 'lottery.adminWholesaleNamePlaceholder',
+    countPlaceholder: 'lottery.adminWholesaleStockPlaceholder',
+    weightPlaceholder: 'lottery.adminWholesaleWeightPlaceholder',
+    weightHint: 'lottery.adminWholesaleWeightHint',
+    probabilityHint: 'lottery.adminWholesaleShareHint',
+    probabilityLabel: 'lottery.adminWholesaleShareLabel',
+    addTier: 'lottery.adminAddWholesaleProduct',
+    quickCreatePrize: 'lottery.adminQuickCreateWholesaleProduct',
+    emptyHint: 'lottery.adminWholesaleEmptyProductHint',
+    limitHint: 'lottery.adminWholesaleProductLimitHint',
+  }
+})
+const canAddTier = computed(() => {
+  const max = maxTierRowsForSalesMode(form.value.flashSaleSalesMode || '')
+  return form.value.tiers.length < max
+})
 const hasPositiveTierWeight = computed(() => tierProbabilities.value.some((item) => item.weight > 0))
 const shouldShowTierProbability = computed(() => (
   form.value.activityKind === 'lottery'
@@ -3050,6 +3106,12 @@ const shouldShowTierProbability = computed(() => (
 const tierCountSummary = computed(() => {
   if (!editorVisibility.value.tiers || form.value.tiers.length === 0) return null
   return buildTierWinnerCountSummary(form.value.tiers, form.value.winnerCount, form.value.activityKind || 'lottery')
+})
+
+watch(isDirectBulkFlashSale, (enabled) => {
+  if (!enabled || form.value.tiers.length <= 1) return
+  // 批发/阶梯价是一种“同一商品多件下单”的价格策略，不是多商品购物车；多商品会让发卡库存与订单履约语义失真。
+  form.value.tiers = [form.value.tiers[0]!]
 })
 
 /** 当前高亮步骤（点击步骤条时更新；不强制线性 Wizard） */
