@@ -7,7 +7,15 @@
         <div class="shop-title-block">
           <h1 class="section-title">{{ store.name || $t('shop.title') }}</h1>
         </div>
-        <button class="btn btn-ghost btn-sm" @click="refresh" :disabled="loading">{{ loading ? $t('shop.loading') : $t('shop.refresh') }}</button>
+        <button
+          class="shop-refresh-btn"
+          type="button"
+          @click="refresh"
+          :disabled="loading"
+          :aria-busy="loading"
+        >
+          {{ loading ? $t('shop.loading') : $t('shop.refresh') }}
+        </button>
       </div>
       <div class="category-bar" role="tablist" :aria-label="$t('landing.marketFilterAria')">
         <button
@@ -400,6 +408,34 @@ onMounted(refresh)
 }
 .shop-home-link:hover { color: inherit; border-color: rgba(255, 255, 255, .2); }
 .shop-home-link:focus-visible {
+  outline: 2px solid var(--tg-link);
+  outline-offset: 2px;
+}
+.shop-refresh-btn {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 13px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .035);
+  color: var(--tg-hint);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.shop-refresh-btn:hover:not(:disabled) {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .22);
+  background: rgba(255, 255, 255, .06);
+}
+.shop-refresh-btn:disabled {
+  cursor: wait;
+  opacity: .68;
+}
+.shop-refresh-btn:focus-visible {
   outline: 2px solid var(--tg-link);
   outline-offset: 2px;
 }
@@ -846,6 +882,9 @@ onMounted(refresh)
   .shop-view { padding: 16px; }
   .shop-heading { align-items: flex-start; }
   .shop-title-block { flex: 1; }
+  .shop-refresh-btn {
+    min-height: 38px;
+  }
   .category-bar {
     width: 100%;
     overflow-x: auto;
