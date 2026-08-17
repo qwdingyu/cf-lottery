@@ -4,15 +4,15 @@
       <div class="lottery-header-left">
         <RouterLink to="/" class="lottery-home-link" style="color:var(--primary);text-decoration:none;font-size:13px">{{ $t('common.backToHome') }}</RouterLink>
         <h1 class="lottery-title">{{ drawTitle }}</h1>
-        <RouterLink
-          v-if="isDeepLinked && draws[0]?.store?.storeSlug"
-          :to="`/shop/${encodeURIComponent(draws[0].store.storeSlug)}`"
-          class="lottery-store-link"
-        >
-          {{ $t('lottery.viewStore', { name: draws[0].store.name || $t('shop.title') }) }}
-        </RouterLink>
         <!-- 深链单活动：只保留分享，不提供「回全部/广场」（docs/055a ADR-055a-1） -->
         <div v-if="isDeepLinked && draws[0]" class="lottery-link-bar">
+          <RouterLink
+            v-if="draws[0].store?.storeSlug"
+            :to="`/shop/${encodeURIComponent(draws[0].store.storeSlug)}`"
+            class="lottery-store-btn"
+          >
+            {{ $t('lottery.viewStore', { name: draws[0].store.name || $t('shop.title') }) }}
+          </RouterLink>
           <button type="button" class="lottery-share-btn" @click="handleCopyPublicLink(draws[0].id)">📋 {{ $t('lottery.copyShareLink') }}</button>
         </div>
       </div>
