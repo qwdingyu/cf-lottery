@@ -42,6 +42,8 @@ export default {
     otherSectionTitle: "更多活动",
     otherSectionDesc: "浏览店铺内的其他公开活动",
     activityPlaceholder: "暂无图片",
+    flashRush: "抢购中",
+    flashHurry: "马上开始",
     countdownStartIn: "距开始",
     countdownEndIn: "距结束",
     countdownEnded: "已结束",

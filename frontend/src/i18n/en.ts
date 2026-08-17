@@ -41,6 +41,8 @@ export default {
     otherSectionTitle: "More activities",
     otherSectionDesc: "Browse other public activities in this store",
     activityPlaceholder: "No image",
+    flashRush: "Live now",
+    flashHurry: "Starting soon",
     countdownStartIn: "Starts in",
     countdownEndIn: "Ends in",
     countdownEnded: "Ended",

@@ -84,6 +84,7 @@
             <div class="activity-row-body">
               <div class="card-tags">
                 <span class="card-tag card-tag-flash">{{ $t('shop.flashTag') }}</span>
+                <span class="card-tag card-tag-urgent">{{ card.phase === 'running' ? $t('shop.flashRush') : $t('shop.flashHurry') }}</span>
                 <span class="card-tag card-tag-phase">{{ $t(activityPhaseI18nKey(card.phase)) }}</span>
                 <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
                 <span v-if="card.remaining != null" class="card-tag">{{ $t('shop.remaining', { n: card.remaining }) }}</span>
@@ -455,7 +456,7 @@ onMounted(refresh)
 }
 .activity-row-media {
   width: 100%;
-  min-height: 160px;
+  min-height: 128px;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -512,14 +513,15 @@ onMounted(refresh)
   font-weight: 700;
 }
 .card-tag-flash { background: rgba(244, 63, 94, 0.14); color: var(--shop-sale-strong); }
+.card-tag-urgent { background: rgba(239, 68, 68, 0.16); color: #f87171; }
 .card-tag-free { background: rgba(34, 197, 94, 0.14); color: #22c55e; }
 .card-tag-phase { background: rgba(59, 130, 246, 0.14); color: #60a5fa; }
 .price { font-weight: 800; font-size: 24px; line-height: 1.1; }
 .price-flash { color: var(--shop-sale-strong); font-size: 26px; }
 
 /* ── 标题/描述 ── */
-.card-title { margin: 0; font-size: 18px; line-height: 1.35; font-weight: 700; }
-.card-desc { margin: 0; font-size: 13px; color: var(--tg-hint); line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card-title { margin: 0; font-size: 18px; line-height: 1.25; font-weight: 800; }
+.card-desc { margin: 0; font-size: 13px; color: var(--tg-hint); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ── 倒计时行 ── */
 .flash-countdown-row {
@@ -527,6 +529,7 @@ onMounted(refresh)
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding-top: 2px;
 }
 .flash-cd-label {
   font-size: 12px;
@@ -569,6 +572,7 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-top: -2px;
 }
 .flash-progress-track { flex: 1; height: 6px; border-radius: 999px; background: var(--shop-sale-soft); overflow: hidden; }
 .flash-progress-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--shop-sale), var(--shop-sale-strong)); transition: width 0.3s ease; }
@@ -579,13 +583,13 @@ onMounted(refresh)
 /* ── 抢购按钮 ── */
 .flash-cta-row { margin-top: auto; }
 .flash-grab-btn {
-  min-height: 44px;
-  padding: 10px 18px;
+  min-height: 42px;
+  padding: 8px 16px;
   border: none;
   border-radius: var(--r-lg);
   background: linear-gradient(135deg, var(--shop-sale), var(--shop-sale-strong));
   color: #fff;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 800;
   cursor: pointer;
   transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
@@ -651,9 +655,9 @@ onMounted(refresh)
   .shop-flash-hero { flex-wrap: wrap; gap: 8px; }
   .flash-hero-countdown { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
   .activity-row { grid-template-columns: 92px minmax(0, 1fr); gap: 12px; }
-  .activity-row-media { min-height: 92px; border-radius: var(--r-md); }
+  .activity-row-media { min-height: 84px; border-radius: var(--r-md); }
   .skeleton-row { grid-template-columns: 92px minmax(0, 1fr); gap: 12px; }
-  .skeleton-media { min-height: 92px; border-radius: var(--r-md); }
+  .skeleton-media { min-height: 84px; border-radius: var(--r-md); }
   .skeleton-side {
     grid-column: 1 / -1;
     flex-direction: row;
@@ -667,7 +671,7 @@ onMounted(refresh)
   }
   .activity-row-btn { min-width: 120px; width: auto; }
   .activity-row-price { text-align: left; }
-  .price { font-size: 22px; }
+  .price { font-size: 21px; }
   .card-title { font-size: 16px; }
 }
 
