@@ -1529,7 +1529,7 @@
 
         <div class="lottery-editor-footer modal-actions">
           <p v-if="!isEditing && createReadinessLabel" class="create-readiness" role="status">{{ createReadinessLabel }}</p>
-          <span class="lottery-editor-footer-spacer" aria-hidden="true" />
+          <span v-else class="lottery-editor-footer-spacer" aria-hidden="true" />
           <button
             type="button"
             class="btn btn-ghost btn-sm"

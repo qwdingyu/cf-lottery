@@ -495,17 +495,27 @@
 
 /* 奖项配置：表头与数据行共用网格列，避免奖品摘要高度变化后名额、权重列漂移。 */
 .tier-list { display: flex; flex-direction: column; gap: 8px; }
-.tier-header {
+.tier-header,
+.tier-row {
   display: grid;
   grid-template-columns: minmax(180px, 2fr) minmax(130px, 1.5fr) minmax(80px, 0.6fr) 32px;
   gap: 8px;
   align-items: start;
+}
+.tier-header {
   font-size: 12px;
   color: var(--tg-hint, #9aa4b2);
   padding: 0 2px;
   margin-bottom: 4px;
 }
-.tier-grid--instant {
+
+/*
+ * 即时结果有「权重 + 概率」两列。选择器必须同时匹配表头与数据行：
+ * `.tier-row` 的基础规则若在普通 `.tier-grid--instant` 之后声明，会以同等
+ * 优先级把数据行退回四列，造成表头六列而输入项错位。
+ */
+.tier-header.tier-grid--instant,
+.tier-row.tier-grid--instant {
   grid-template-columns: minmax(180px, 2fr) minmax(130px, 1.5fr) minmax(80px, 0.6fr) minmax(80px, 0.6fr) minmax(118px, 1fr) 32px;
 }
 .tier-header-prize,
@@ -514,12 +524,6 @@
 .tier-header-probability,
 .tier-header-actions { min-width: 0; }
 .tier-header-probability { text-align: right; white-space: nowrap; }
-.tier-row {
-  display: grid;
-  grid-template-columns: minmax(180px, 2fr) minmax(130px, 1.5fr) minmax(80px, 0.6fr) 32px;
-  gap: 8px;
-  align-items: start;
-}
 /* docs/225 P0：服务端搜索奖品选择器（替换原生下拉框） */
 .tier-prize-picker { min-width: 0; display: grid; gap: 4px; }
 .tier-prize-summary {
