@@ -80,7 +80,7 @@
             class="activity-row activity-row-flash"
             role="link"
             tabindex="0"
-            :aria-label="card.title"
+            :aria-label="activityRowAriaLabel(card)"
             @click="$router.push(card.href)"
             @keydown.enter.prevent="$router.push(card.href)"
             @keydown.space.prevent="$router.push(card.href)"
@@ -122,14 +122,13 @@
                 <span class="price-label">{{ flashPriceLabel(card) }}</span>
                 <span class="price" :class="{ 'price-flash': card.flashSaleEnabled }">{{ card.priceText }}</span>
               </div>
-              <button
-                type="button"
+              <span
                 class="activity-row-btn flash-grab-btn"
                 :class="{ 'flash-grab-soldout': card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) }"
-                @click.stop="$router.push(card.href)"
+                aria-hidden="true"
               >
                 {{ card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) ? $t('shop.viewActivity') : $t('shop.flashCta') }}
-              </button>
+              </span>
               <span v-if="card.phase !== 'ended'" class="scarcity-hint">{{ $t('shop.flashScarcityHint') }}</span>
             </div>
           </div>
@@ -150,7 +149,7 @@
             class="activity-row"
             role="link"
             tabindex="0"
-            :aria-label="card.title"
+            :aria-label="activityRowAriaLabel(card)"
             @click="$router.push(card.href)"
             @keydown.enter.prevent="$router.push(card.href)"
             @keydown.space.prevent="$router.push(card.href)"
@@ -177,9 +176,9 @@
               <div class="activity-row-price">
                 <span class="price">{{ card.priceText }}</span>
               </div>
-              <button type="button" class="activity-row-btn activity-row-btn-ghost" @click.stop="$router.push(card.href)">
+              <span class="activity-row-btn activity-row-btn-ghost" aria-hidden="true">
                 {{ $t('shop.viewActivity') }}
-              </button>
+              </span>
             </div>
           </div>
         </div>
@@ -329,6 +328,19 @@ function flashPriceLabel(card: LandingActivityCard): string {
   if (card.phase === 'upcoming') return t('shop.flashHurry')
   if (card.remaining != null && card.remaining <= 0) return t('shop.soldOut')
   return t('shop.flashRush')
+}
+
+function activityRowAriaLabel(card: LandingActivityCard): string {
+  const parts = [
+    card.title,
+    card.flashSaleEnabled ? t('shop.flashTag') : t('shop.freeTag'),
+    t(activityPhaseI18nKey(card.phase)),
+    card.priceText,
+    card.flashSaleEnabled
+      ? (card.phase === 'ended' || (card.remaining != null && card.remaining <= 0) ? t('shop.viewActivity') : t('shop.flashCta'))
+      : t('shop.viewActivity'),
+  ]
+  return parts.filter(Boolean).join('，')
 }
 
 async function refresh() {
@@ -555,8 +567,13 @@ onMounted(refresh)
   color: var(--shop-sale-text);
 }
 .activity-row-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 132px;
   width: 100%;
+  text-align: center;
+  user-select: none;
 }
 .activity-row-btn-ghost {
   min-height: 42px;
@@ -567,9 +584,8 @@ onMounted(refresh)
   color: var(--tg-text);
   font-size: 14px;
   font-weight: 700;
-  cursor: pointer;
 }
-.activity-row-btn-ghost:hover {
+.activity-row:hover .activity-row-btn-ghost {
   border-color: var(--border-strong);
   background: var(--surface-hover);
 }
@@ -688,7 +704,6 @@ onMounted(refresh)
   color: #fff;
   font-size: 14px;
   font-weight: 800;
-  cursor: pointer;
   transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
   letter-spacing: 0.5px;
 }
@@ -699,19 +714,18 @@ onMounted(refresh)
   line-height: 1;
   text-align: center;
 }
-.flash-grab-btn:hover {
+.activity-row-flash:hover .flash-grab-btn {
   opacity: 0.92;
   transform: scale(1.02);
 }
-.flash-grab-btn:active {
+.activity-row-flash:active .flash-grab-btn {
   transform: scale(0.98);
 }
 .flash-grab-soldout {
   background: var(--surface-2);
   color: var(--tg-hint);
-  cursor: pointer;
 }
-.flash-grab-soldout:hover {
+.activity-row-flash:hover .flash-grab-soldout {
   opacity: 1;
   transform: none;
 }
