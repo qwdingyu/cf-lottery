@@ -861,7 +861,7 @@ export default {
     flashEnded: "本场已结束",
     flashNotStarted: "即将开始",
     flashStartsIn: "距开始 {time}",
-    flashEndsIn: "仅剩 {time}",
+    flashEndsIn: "距结束 {time}",
     flashClaimedPercent: "已抢{n}%",
     flashRemaining: "剩余 {n} 份",
     flashSaleProduct: "秒杀商品",

@@ -433,6 +433,16 @@ onMounted(refresh)
   letter-spacing: 1px;
 }
 
+/* 首屏横幅只负责提示紧迫性，控制高度，把注意力留给第一条商品。 */
+.shop-flash-hero {
+  min-height: 72px;
+  padding: 12px 18px;
+  border-radius: 12px;
+}
+.flash-hero-badge { font-size: 24px; }
+.flash-hero-title { font-size: 15px; }
+.flash-hero-digits { font-size: 20px; }
+
 /* ── 横向促销列表 ── */
 .shop-sections { display: flex; flex-direction: column; gap: 22px; }
 .shop-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
@@ -472,7 +482,7 @@ onMounted(refresh)
 }
 .activity-row-media {
   width: 100%;
-  min-height: 104px;
+  min-height: 92px;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -545,7 +555,7 @@ onMounted(refresh)
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-top: 2px;
+  padding-top: 1px;
 }
 .flash-cd-label {
   font-size: 11px;
@@ -555,7 +565,7 @@ onMounted(refresh)
 .flash-cd-digits {
   font-variant-numeric: tabular-nums;
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 800;
   color: var(--shop-sale-strong);
   background: var(--shop-sale-soft);
@@ -564,6 +574,14 @@ onMounted(refresh)
   padding: 1px 8px;
   letter-spacing: 1px;
   line-height: 1.5;
+}
+.activity-row-flash .flash-countdown-row {
+  justify-content: flex-start;
+  gap: 10px;
+}
+.activity-row-flash .flash-cd-label {
+  color: var(--shop-sale-text);
+  font-weight: 700;
 }
 /* 紧急态：不足 5 分钟，白字红底呼吸 */
 .flash-cd-digits.cd-urgent {
