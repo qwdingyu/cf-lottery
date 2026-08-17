@@ -65,7 +65,7 @@
                     {{ card.badge === 'flash' ? $t('landing.marketFlashTag') : $t('landing.marketFreeTag') }}
                   </span>
                   <span class="card-tag card-tag-phase">{{ $t(activityPhaseI18nKey(card.phase)) }}</span>
-                  <span class="card-tag card-tag-payment">{{ $t(paymentModeI18nKey(card.paymentMode)) }}</span>
+                  <span v-if="card.paymentMode !== 'free'" class="card-tag card-tag-payment">{{ $t(paymentModeI18nKey(card.paymentMode)) }}</span>
                   <span class="card-tag">{{ $t(eligibilityModeI18nKey(card.eligibilityMode)) }}</span>
                   <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
                 </div>
@@ -123,7 +123,7 @@
                   {{ card.badge === 'flash' ? $t('landing.marketFlashTag') : $t('landing.marketFreeTag') }}
                 </span>
                 <span class="card-tag card-tag-phase">{{ $t(activityPhaseI18nKey(card.phase)) }}</span>
-                <span class="card-tag card-tag-payment">{{ $t(paymentModeI18nKey(card.paymentMode)) }}</span>
+                <span v-if="card.paymentMode !== 'free'" class="card-tag card-tag-payment">{{ $t(paymentModeI18nKey(card.paymentMode)) }}</span>
                 <span class="card-tag">{{ $t(eligibilityModeI18nKey(card.eligibilityMode)) }}</span>
                 <span v-if="card.sessionLabel" class="card-tag">{{ card.sessionLabel }}</span>
                 <span v-if="card.remaining != null" class="card-tag">{{ $t('landing.marketRemaining', { n: card.remaining }) }}</span>
