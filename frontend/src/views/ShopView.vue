@@ -27,6 +27,7 @@
         <span class="flash-hero-label">{{ flashBannerLabel }}</span>
         <span class="flash-hero-digits">{{ flashBannerDigits }}</span>
       </div>
+      <span class="flash-hero-cta">{{ $t('shop.flashCta') }}</span>
     </div>
 
     <!-- ═══ 加载 / 空态 / 错误 ═══ -->
@@ -97,7 +98,7 @@
                 <span class="flash-progress-label">{{ $t('shop.grabedPercent', { n: card.progressPercent }) }}</span>
               </div>
             </div>
-            <div class="activity-row-side">
+            <div class="activity-row-side activity-row-side--flash">
               <div v-if="card.showCountdown" class="flash-countdown-row flash-countdown-side">
                 <span class="flash-cd-label">
                   {{ card.phase === 'upcoming' ? $t('shop.countdownStartIn') : card.phase === 'ended' ? $t('shop.countdownEnded') : $t('shop.countdownEndIn') }}
@@ -110,6 +111,7 @@
                 </span>
               </div>
               <div class="activity-row-price">
+                <span class="price-label">{{ $t('shop.flashRush') }}</span>
                 <span class="price" :class="{ 'price-flash': card.flashSaleEnabled }">{{ card.priceText }}</span>
               </div>
               <button
@@ -432,6 +434,20 @@ onMounted(refresh)
   font-family: var(--font-mono);
   letter-spacing: 1px;
 }
+.flash-hero-cta {
+  flex-shrink: 0;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--shop-sale), var(--shop-sale-strong));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: 0 8px 22px rgba(225, 29, 72, 0.18);
+}
 
 /* 首屏横幅只负责提示紧迫性，控制高度，把注意力留给第一条商品。 */
 .shop-flash-hero {
@@ -453,7 +469,7 @@ onMounted(refresh)
 .activity-list { display: flex; flex-direction: column; gap: 8px; }
 .activity-row {
   display: grid;
-  grid-template-columns: 152px minmax(0, 1fr) 150px;
+  grid-template-columns: 132px minmax(0, 1fr) 172px;
   gap: 12px;
   align-items: stretch;
   padding: 10px;
@@ -482,7 +498,7 @@ onMounted(refresh)
 }
 .activity-row-media {
   width: 100%;
-  min-height: 92px;
+  min-height: 86px;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -505,7 +521,24 @@ onMounted(refresh)
   gap: 8px;
   padding-left: 4px;
 }
+.activity-row-side--flash {
+  padding: 9px;
+  border-radius: 12px;
+  border: 1px solid rgba(244, 63, 94, 0.18);
+  background: rgba(244, 63, 94, 0.055);
+}
 .activity-row-price { text-align: right; }
+.price-label {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--tg-hint);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+.activity-row-flash .price-label {
+  color: var(--shop-sale-text);
+}
 .activity-row-btn {
   min-width: 132px;
   width: 100%;
@@ -543,7 +576,7 @@ onMounted(refresh)
 .card-tag-free { background: rgba(34, 197, 94, 0.14); color: #22c55e; }
 .card-tag-phase { background: rgba(59, 130, 246, 0.14); color: #60a5fa; }
 .price { font-weight: 800; font-size: 22px; line-height: 1.1; }
-.price-flash { color: var(--shop-sale-strong); font-size: 24px; }
+.price-flash { color: var(--shop-sale-strong); font-size: 25px; }
 
 /* ── 标题/描述 ── */
 .card-title { margin: 0; font-size: 17px; line-height: 1.22; font-weight: 800; }
@@ -632,13 +665,13 @@ onMounted(refresh)
 /* ── 抢购按钮 ── */
 .flash-cta-row { margin-top: auto; }
 .flash-grab-btn {
-  min-height: 38px;
+  min-height: 42px;
   padding: 8px 16px;
   border: none;
   border-radius: var(--r-lg);
   background: linear-gradient(135deg, var(--shop-sale), var(--shop-sale-strong));
   color: #fff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
   cursor: pointer;
   transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
@@ -649,6 +682,7 @@ onMounted(refresh)
   font-size: 11px;
   font-weight: 800;
   line-height: 1;
+  text-align: center;
 }
 .flash-grab-btn:hover {
   opacity: 0.92;
@@ -675,7 +709,7 @@ onMounted(refresh)
 .skeleton-list { display: flex; flex-direction: column; gap: 12px; }
 .skeleton-row {
   display: grid;
-  grid-template-columns: 152px minmax(0, 1fr) 150px;
+  grid-template-columns: 132px minmax(0, 1fr) 172px;
   gap: 12px;
   padding: 10px;
   border: 1px solid var(--border);
@@ -688,7 +722,7 @@ onMounted(refresh)
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }
-.skeleton-media { min-height: 104px; border-radius: 10px; }
+.skeleton-media { min-height: 86px; border-radius: 10px; }
 .skeleton-body { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
 .skeleton-side { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; gap: 12px; }
 .skeleton-line { height: 12px; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hover) 50%, var(--surface) 75%); background-size: 200% 100%; border-radius: var(--r-sm); animation: shimmer 1.5s ease-in-out infinite; }
@@ -708,9 +742,19 @@ onMounted(refresh)
   .category-bar { width: 100%; overflow-x: auto; padding-bottom: 2px; }
   .cat-btn { flex: 0 0 auto; }
   .shop-flash-hero { flex-wrap: wrap; gap: 8px; }
-  .flash-hero-countdown { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
-  .activity-row { grid-template-columns: 78px minmax(0, 1fr); gap: 10px; padding: 10px; }
-  .activity-row-media { min-height: 78px; border-radius: var(--r-md); }
+  .flash-hero-countdown {
+    flex: 1 1 auto;
+    min-width: 132px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .flash-hero-cta {
+    flex: 1 0 112px;
+    min-height: 36px;
+  }
+  .activity-row { grid-template-columns: 86px minmax(0, 1fr); gap: 10px; padding: 10px; }
+  .activity-row-media { min-height: 86px; border-radius: var(--r-md); }
   .skeleton-row { grid-template-columns: 78px minmax(0, 1fr); gap: 10px; }
   .skeleton-media { min-height: 78px; border-radius: var(--r-md); }
   .skeleton-side {
@@ -724,17 +768,37 @@ onMounted(refresh)
     align-items: center;
     padding-left: 0;
   }
+  .activity-row-side--flash {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 8px;
+  }
   .flash-countdown-side {
     width: auto;
-    min-width: 118px;
+    min-width: 0;
     align-items: flex-start;
   }
   .activity-row-flash .flash-countdown-side .flash-cd-digits {
+    width: auto;
+    min-width: 116px;
     min-height: 28px;
+  }
+  .activity-row-side--flash .activity-row-price {
+    min-width: 76px;
+  }
+  .activity-row-side--flash .activity-row-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+  }
+  .activity-row-side--flash .scarcity-hint {
+    grid-column: 1 / -1;
   }
   .activity-row-btn { min-width: 120px; width: auto; }
   .activity-row-price { text-align: left; }
   .price { font-size: 20px; }
+  .price-flash { font-size: 22px; }
   .card-title { font-size: 15px; }
 }
 
