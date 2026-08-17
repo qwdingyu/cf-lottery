@@ -35,6 +35,7 @@ export default {
     filterEmptyTitle: "当前分类暂无活动",
     filterEmptyDesc: "可以切回全部，继续浏览本店正在展示的活动。",
     viewAllActivities: "查看全部活动",
+    filterTabAria: "{label}，{count} 个活动",
     // ── 秒杀化升级（docs/205） ──
     flashBannerTitle: "限时抢购",
     flashBannerSub: "本店 {n} 场秒杀火热进行中，手慢无！",

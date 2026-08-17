@@ -34,6 +34,7 @@ export default {
     filterEmptyTitle: "No activities in this category",
     filterEmptyDesc: "Switch back to all activities to keep browsing this store.",
     viewAllActivities: "View all activities",
+    filterTabAria: "{label}, {count} activities",
     // ── Flash-sale upgrade (docs/205) ────────────────
     flashBannerTitle: "Flash Sale",
     flashBannerSub: "{n} flash sales are live — first come, first served!",

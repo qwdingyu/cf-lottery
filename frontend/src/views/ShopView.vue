@@ -9,8 +9,18 @@
         </div>
         <button class="btn btn-ghost btn-sm" @click="refresh" :disabled="loading">{{ loading ? $t('shop.loading') : $t('shop.refresh') }}</button>
       </div>
-      <div class="category-bar" :aria-label="$t('landing.marketFilterAria')">
-        <button v-for="tab in tabs" :key="tab.key" class="cat-btn" :class="{ active: activeTab === tab.key }" @click="activeTab = tab.key">
+      <div class="category-bar" role="tablist" :aria-label="$t('landing.marketFilterAria')">
+        <button
+          v-for="tab in tabs"
+          :key="tab.key"
+          type="button"
+          role="tab"
+          class="cat-btn"
+          :class="{ active: activeTab === tab.key }"
+          :aria-selected="activeTab === tab.key"
+          :aria-label="shopFilterAriaLabel(tab)"
+          @click="activeTab = tab.key"
+        >
           {{ tab.label }}<span class="cat-count">{{ tab.count }}</span>
         </button>
       </div>
@@ -343,6 +353,10 @@ function activityRowAriaLabel(card: LandingActivityCard): string {
   return parts.filter(Boolean).join('，')
 }
 
+function shopFilterAriaLabel(tab: { label: string; count: number }): string {
+  return t('shop.filterTabAria', { label: tab.label, count: tab.count })
+}
+
 async function refresh() {
   loading.value = true; error.value = ''
   try {
@@ -390,10 +404,56 @@ onMounted(refresh)
   outline-offset: 2px;
 }
 .section-title { margin: 0; }
-.category-bar { display: flex; gap: 6px; }
-.cat-btn { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; color: var(--tg-hint); }
-.cat-btn.active { background: var(--tg-btn); color: #fff; }
-.cat-count { font-size: 11px; margin-left: 4px; opacity: .7; }
+.category-bar {
+  display: inline-flex;
+  max-width: 100%;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, .10);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .035);
+}
+.cat-btn {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--tg-hint);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.cat-btn.active {
+  border-color: var(--shop-sale-border);
+  background: var(--shop-sale-soft);
+  color: var(--shop-sale-text);
+}
+.cat-btn:focus-visible {
+  outline: 2px solid var(--shop-sale);
+  outline-offset: 2px;
+}
+.cat-count {
+  min-width: 20px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+.cat-btn.active .cat-count {
+  background: rgba(244, 63, 94, .22);
+  color: #fff;
+}
 
 /* ── 秒杀英雄横幅 ── */
 .shop-flash-hero {
@@ -786,7 +846,13 @@ onMounted(refresh)
   .shop-view { padding: 16px; }
   .shop-heading { align-items: flex-start; }
   .shop-title-block { flex: 1; }
-  .category-bar { width: 100%; overflow-x: auto; padding-bottom: 2px; }
+  .category-bar {
+    width: 100%;
+    overflow-x: auto;
+    padding: 4px;
+    scrollbar-width: none;
+  }
+  .category-bar::-webkit-scrollbar { display: none; }
   .cat-btn { flex: 0 0 auto; }
   .shop-flash-hero { flex-wrap: wrap; gap: 8px; }
   .flash-hero-countdown {
