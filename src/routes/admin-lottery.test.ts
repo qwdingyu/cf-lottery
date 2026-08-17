@@ -1371,6 +1371,36 @@ describe("活动复制", () => {
     expect(newDraw!.participationMode).toBe("open");
     expect(newDraw!.activityConfig).toBe(JSON.stringify({ prizeImage: "https://example.com/img.png" }));
   });
+
+  it("P1 回归：复制活动遵守活动数量配额", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "copy-quota", "cq@test.com");
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    // 将免费套餐活动配额临时降为 1
+    await db.update(systemConfig).set({ value: "1" }).where(eq(systemConfig.key, "plan_free_max_activities"));
+
+    // 创建 1 个活动，占满配额
+    const first = await app.request("/api/admin/draws", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        title: "配额占满",
+        activityKind: "lottery",
+        participationMode: "open",
+        startAt: new Date(Date.now() - 60000).toISOString(),
+        endAt: new Date(Date.now() + 3600000).toISOString(),
+      }),
+    }, TEST_ENV);
+    expect(first.status).toBe(200);
+    const firstId = (await first.json() as { id: string }).id;
+
+    // 复制应被配额拦截
+    const copyRes = await app.request(`/api/admin/draws/${firstId}/copy`, {
+      method: "POST", headers,
+    }, TEST_ENV);
+    expect(copyRes.status).toBe(400);
+    expect((await copyRes.json() as { error: string }).error).toContain("升级套餐或删除草稿活动");
+  });
 });
 
 // P0/P1 修复（2026-08 审查）：PATCH 编辑语义——JSON 键级 merge、accessPassword 三态、detail 脱敏
@@ -1676,5 +1706,65 @@ describe("活动编辑 PATCH 语义", () => {
       }, TEST_ENV);
       expect(res.status).toBe(400);
     }
+  });
+
+  it("恢复路径：已参与的活动 endAt 被旧漏洞污染后，PATCH 合法 endAt 可修复", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    // 模拟旧 P0 写入的脏数据，并产生参与事实
+    await db.update(lotteryDraws).set({ status: "open", endAt: "" }).where(eq(lotteryDraws.id, drawId));
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(), tenantId: TENANT_A, drawId, identityType: "email", identityValue: "recovery@test.com",
+    });
+
+    const newEnd = new Date(Date.now() + 7_200_000).toISOString();
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ endAt: newEnd }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select({ endAt: lotteryDraws.endAt }).from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.endAt).toBe(newEnd);
+  });
+
+  it("恢复路径：已参与的活动时间被污染后，不涉及时间的编辑仍可执行", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    await db.update(lotteryDraws).set({ status: "open", endAt: "not-a-valid-date" }).where(eq(lotteryDraws.id, drawId));
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(), tenantId: TENANT_A, drawId, identityType: "email", identityValue: "recovery2@test.com",
+    });
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ title: "只改标题" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select({ title: lotteryDraws.title }).from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.title).toBe("只改标题");
+  });
+
+  it("PATCH 非 lottery 活动允许 winnerCount=0", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    // 先切换为非 lottery 类型
+    await db.update(lotteryDraws).set({ activityKind: "signup_chain" }).where(eq(lotteryDraws.id, drawId));
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ winnerCount: 0 }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select({ winnerCount: lotteryDraws.winnerCount }).from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.winnerCount).toBe(0);
   });
 });

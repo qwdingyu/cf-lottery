@@ -315,6 +315,16 @@ export function parseEnum(value: unknown, allowed: Set<string>, fieldName: strin
   return normalized;
 }
 
+/**
+ * 安全解析时间字符串，不抛错。
+ * 返回合法时间戳；空串/非法串返回 null，用于 PATCH 恢复路径中"保留旧值但旧值可能已污染"的场景。
+ */
+export function tryParseTime(value: unknown): number | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
 export function normalizeOptionalPositiveInteger(value: unknown, fieldName: string): number | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   const normalized = Number(value);

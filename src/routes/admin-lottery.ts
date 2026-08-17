@@ -48,6 +48,7 @@ import {
   decodeDrawCursor,
   validateProductLink,
   parseEnum,
+  tryParseTime,
   normalizeOptionalPositiveInteger,
   normalizeOptionalNonNegativeInteger,
   defaultExperienceForActivity,
@@ -918,10 +919,12 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     }
 
     // 已产生业务事实后，结束时间只能延长；零参与活动可以完整修正时间窗。
+    // docs/226 恢复路径：DB 中旧值可能已被旧 P0 漏洞写入非法时间，此时无法比较长短，
+    // 直接放行合法新值覆盖，以便运营修复已污染的活动。
     if (hasLifecycleFacts && body.endAt !== undefined && body.endAt !== null) {
-      const currentEnd = parseActivityTime(draw.endAt, "当前结束时间");
+      const currentEndMs = tryParseTime(draw.endAt);
       const nextEnd = parseActivityTime(body.endAt, "结束时间");
-      if (nextEnd < currentEnd) {
+      if (currentEndMs !== null && nextEnd < currentEndMs) {
         return fail(c, "进行中的活动结束时间只能延长，不能缩短", 400);
       }
     }
@@ -936,21 +939,32 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
   }
 
   // PATCH 三态语义：未传 = 保持，null 仅允许清空 drawAt，空字符串/非法时间一律拒绝。
-  const startAt = body.startAt === undefined ? draw.startAt : body.startAt;
-  const endAt = body.endAt === undefined ? draw.endAt : body.endAt;
-  const startMs = parseActivityTime(startAt, "开始时间");
-  const endMs = parseActivityTime(endAt, "结束时间");
-  if (startMs >= endMs) {
+  // docs/226 恢复路径：旧值可能已被旧 P0 漏洞写入非法时间。
+  // - 若请求体显式提供时间，则严格校验新值；
+  // - 若未提供，则保留旧值（即使已污染），不因此阻塞无关编辑；
+  // - 扩展检查（只能延长）对污染旧值自动放行，允许运营通过提供合法新值覆盖修复。
+  const startMs = body.startAt !== undefined
+    ? parseActivityTime(body.startAt, "开始时间")
+    : tryParseTime(draw.startAt);
+  const endMs = body.endAt !== undefined
+    ? parseActivityTime(body.endAt, "结束时间")
+    : tryParseTime(draw.endAt);
+  if (startMs !== null && endMs !== null && startMs >= endMs) {
     return fail(c, "参与开始时间必须早于结束时间", 400);
   }
-  const drawAt = body.drawAt === null
+  const nextDrawAt = body.drawAt === null
     ? null
     : body.drawAt === undefined
       ? draw.drawAt
       : body.drawAt;
-  if (drawAt !== null && drawAt !== undefined) {
-    const drawMs = parseActivityTime(drawAt, "开奖时间");
-    if (endMs >= drawMs) {
+  if (nextDrawAt !== null && nextDrawAt !== undefined) {
+    const drawMs = body.drawAt !== undefined
+      ? parseActivityTime(body.drawAt, "开奖时间")
+      : tryParseTime(draw.drawAt);
+    if (body.drawAt !== undefined && drawMs === null) {
+      return fail(c, "开奖时间格式无效，请提供有效值", 400);
+    }
+    if (drawMs !== null && endMs !== null && endMs >= drawMs) {
       return fail(c, "开奖时间必须在参与结束后", 400);
     }
   }
