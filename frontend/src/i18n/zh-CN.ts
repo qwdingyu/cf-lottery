@@ -1310,6 +1310,7 @@ export default {
     adminWholesaleDefaultName: "发货商品",
     adminWholesaleEmptyProductHint: "空商品库：先快速创建一个发货商品，后续到奖品页导入卡密码池。",
     adminWholesaleProductLimitHint: "批发阶梯价仅支持 1 个发货商品；多件优惠请在上方阶梯价配置。",
+    adminDirectPayEmptyProductHint: "直付模式必须绑定 1 个可用卡密商品；请先到奖品管理导入或生成卡密，再回到这里选择。",
     adminViralLeaderboard: "展示邀请排行榜",
     adminViralLeaderboardHint: "参与者可见谁邀请了最多人",
     /** docs/218 保底 / 每日免费 / 排行榜奖励（仅 instant） */

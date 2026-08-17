@@ -1337,6 +1337,7 @@ export default {
     adminWholesaleDefaultName: "Fulfillment product",
     adminWholesaleEmptyProductHint: "Empty catalog: quick-create one fulfillment product, then import card codes from the prize page.",
     adminWholesaleProductLimitHint: "Wholesale tier pricing supports exactly 1 fulfillment product; configure multi-unit discounts in tiered pricing above.",
+    adminDirectPayEmptyProductHint: "Direct pay requires exactly 1 available code product; import or generate codes in Prize Management, then select it here.",
     adminViralLeaderboard: "Show invite leaderboard",
     adminViralLeaderboardHint: "Participants can see who invited the most people",
     /** docs/218 pity / daily free / leaderboard rewards (instant only) */

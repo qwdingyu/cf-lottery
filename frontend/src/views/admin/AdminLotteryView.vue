@@ -1402,6 +1402,7 @@
                     </button>
                     <!-- 始终提供快速创建：无奖品库时是主 CTA（手动履约，可过发布门禁）；有奖品时仍可一键加新奖 -->
                     <button
+                      v-if="!isDirectPayFlashSale"
                       type="button"
                       class="btn btn-xs"
                       :class="prizeOptions.length === 0 ? 'btn-primary' : 'btn-ghost'"
@@ -1414,7 +1415,9 @@
                       {{ $t('lottery.adminManagePrizes') }}
                     </button>
                     <small class="field-hint">
-                      {{ prizeOptions.length === 0 ? $t(tierCopy.emptyHint) : $t(tierCopy.limitHint) }}
+                      {{ prizeOptions.length === 0
+                        ? $t(isDirectPayFlashSale ? 'lottery.adminDirectPayEmptyProductHint' : tierCopy.emptyHint)
+                        : $t(tierCopy.limitHint) }}
                     </small>
                   </div>
                   <!-- docs/225 P0：服务端搜索奖品选择器面板（Teleport 到 body，避免被 modal 裁剪） -->
@@ -3045,6 +3048,10 @@ const isInstantMode = computed(() => String(form.value.resultMode || '') === 'in
 const isDirectBulkFlashSale = computed(() => (
   form.value.enableFlashSale === true
   && form.value.flashSaleSalesMode === 'direct_bulk'
+))
+const isDirectPayFlashSale = computed(() => (
+  form.value.enableFlashSale === true
+  && form.value.flashSaleSalesMode !== 'redirect'
 ))
 const tierCopy = computed(() => {
   if (!isDirectBulkFlashSale.value) {
