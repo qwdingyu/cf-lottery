@@ -90,17 +90,6 @@
               </div>
               <h3 class="card-title">{{ card.title }}</h3>
               <p v-if="card.description" class="card-desc">{{ card.description }}</p>
-              <div v-if="card.showCountdown" class="flash-countdown-row">
-                <span class="flash-cd-label">
-                  {{ card.phase === 'upcoming' ? $t('shop.countdownStartIn') : card.phase === 'ended' ? $t('shop.countdownEnded') : $t('shop.countdownEndIn') }}
-                </span>
-                <span
-                  class="flash-cd-digits"
-                  :class="{ 'cd-urgent': cardUrgent(card), 'cd-ended': card.phase === 'ended' }"
-                >
-                  {{ flashCountdown(card) }}
-                </span>
-              </div>
               <div v-if="card.showProgress && card.progressPercent > 0" class="flash-progress-wrap">
                 <div class="flash-progress-track" role="progressbar" :aria-label="$t('shop.grabedPercent', { n: card.progressPercent })" :aria-valuenow="card.progressPercent" aria-valuemin="0" aria-valuemax="100">
                   <div class="flash-progress-fill" :style="{ width: card.progressPercent + '%' }" />
@@ -109,6 +98,17 @@
               </div>
             </div>
             <div class="activity-row-side">
+              <div v-if="card.showCountdown" class="flash-countdown-row flash-countdown-side">
+                <span class="flash-cd-label">
+                  {{ card.phase === 'upcoming' ? $t('shop.countdownStartIn') : card.phase === 'ended' ? $t('shop.countdownEnded') : $t('shop.countdownEndIn') }}
+                </span>
+                <span
+                  class="flash-cd-digits"
+                  :class="{ 'cd-urgent': cardUrgent(card), 'cd-ended': card.phase === 'ended' }"
+                >
+                  {{ flashCountdown(card) || '00:00:00' }}
+                </span>
+              </div>
               <div class="activity-row-price">
                 <span class="price" :class="{ 'price-flash': card.flashSaleEnabled }">{{ card.priceText }}</span>
               </div>
@@ -502,7 +502,7 @@ onMounted(refresh)
   flex-direction: column;
   justify-content: center;
   align-items: flex-end;
-  gap: 6px;
+  gap: 8px;
   padding-left: 4px;
 }
 .activity-row-price { text-align: right; }
@@ -575,13 +575,28 @@ onMounted(refresh)
   letter-spacing: 1px;
   line-height: 1.5;
 }
-.activity-row-flash .flash-countdown-row {
-  justify-content: flex-start;
-  gap: 10px;
+.flash-countdown-side {
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
 }
-.activity-row-flash .flash-cd-label {
+.activity-row-flash .flash-countdown-side .flash-cd-label {
   color: var(--shop-sale-text);
   font-weight: 700;
+  font-size: 10px;
+}
+.activity-row-flash .flash-countdown-side .flash-cd-digits {
+  width: 100%;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-color: rgba(244, 63, 94, 0.58);
+  background: rgba(244, 63, 94, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 /* 紧急态：不足 5 分钟，白字红底呼吸 */
 .flash-cd-digits.cd-urgent {
@@ -708,6 +723,14 @@ onMounted(refresh)
     flex-direction: row;
     align-items: center;
     padding-left: 0;
+  }
+  .flash-countdown-side {
+    width: auto;
+    min-width: 118px;
+    align-items: flex-start;
+  }
+  .activity-row-flash .flash-countdown-side .flash-cd-digits {
+    min-height: 28px;
   }
   .activity-row-btn { min-width: 120px; width: auto; }
   .activity-row-price { text-align: left; }

@@ -59,6 +59,7 @@
         :class="{
           expanded: isCardExpanded(draw.id),
           'lottery-card--deep': isDeepLinked,
+          'lottery-card--flash-sale': Boolean(flashSaleMerchCard(draw)),
         }"
       >
         <div

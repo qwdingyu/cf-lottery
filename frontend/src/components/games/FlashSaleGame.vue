@@ -202,6 +202,13 @@ const buttonLabel = computed(() => {
   background: var(--surface-2, rgba(255, 255, 255, 0.07));
   border-color: var(--border, rgba(255, 255, 255, 0.10));
 }
+.flash-countdown.soon {
+  color: #fff1f2;
+  background: #be123c;
+  border-color: #fb7185;
+  font-weight: 800;
+  box-shadow: 0 6px 18px rgba(225, 29, 72, 0.18);
+}
 .flash-progress-wrap {
   display: flex;
   align-items: center;
@@ -244,6 +251,9 @@ const buttonLabel = computed(() => {
   background: linear-gradient(90deg, #f43f5e, #e11d48) !important;
   border: none !important;
   border-radius: 12px !important;
+}
+.flash-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
 }
 .flash-btn.loading {
   cursor: wait;

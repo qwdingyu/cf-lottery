@@ -1116,23 +1116,23 @@
  * 目标：首屏优先呈现商品、价格、剩余量、距结束和唯一主 CTA；
  * 去掉旧游戏区的固定大高度，避免活动信息与“抢”按钮之间出现大面积空白。
  */
-.lottery-card--deep {
+.lottery-card--deep.lottery-card--flash-sale {
   border-color: rgba(244, 63, 94, 0.28);
   background: #171521;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
 }
-.lottery-card--deep .lottery-card-head {
+.lottery-card--deep.lottery-card--flash-sale .lottery-card-head {
   padding: 18px 22px 14px;
   background: linear-gradient(180deg, rgba(244, 63, 94, 0.10), transparent);
 }
-.lottery-card--deep .lottery-card-title {
+.lottery-card--deep.lottery-card--flash-sale .lottery-card-title {
   font-size: 22px;
   letter-spacing: 0;
 }
-.lottery-card--deep .lottery-card-body {
+.lottery-card--deep.lottery-card--flash-sale .lottery-card-body {
   border-top-color: rgba(244, 63, 94, 0.14);
 }
-.lottery-card--deep .lottery-flash-merch {
+.lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch {
   grid-template-columns: 168px minmax(0, 1fr);
   gap: 20px;
   margin: 16px 22px 0;
@@ -1140,43 +1140,43 @@
   border-radius: 14px;
   background: linear-gradient(135deg, rgba(244, 63, 94, 0.16), rgba(255, 255, 255, 0.035));
 }
-.lottery-card--deep .lottery-flash-merch-media {
+.lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch-media {
   aspect-ratio: 1 / 1;
   background: rgba(255, 255, 255, 0.07);
 }
-.lottery-card--deep .lottery-flash-merch-title {
+.lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch-title {
   font-size: 21px;
 }
-.lottery-card--deep .lottery-flash-merch-price {
+.lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch-price {
   font-size: 30px;
 }
-.lottery-card--deep .lottery-flash-pricing {
+.lottery-card--deep.lottery-card--flash-sale .lottery-flash-pricing {
   margin-top: 10px;
   padding: 11px 13px;
   border-radius: 10px;
 }
-.lottery-card--deep .lottery-game-area--flash-sale {
+.lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale {
   min-height: 0;
   padding: 18px 22px 22px;
   background: transparent;
   align-items: stretch;
 }
-.lottery-card--deep .lottery-game-area--flash-sale .flash-sale-game {
+.lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-sale-game {
   max-width: none;
   gap: 10px;
   padding: 0;
 }
-.lottery-card--deep .lottery-game-area--flash-sale .flash-header {
+.lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-header {
   min-height: 40px;
   padding: 0 2px;
 }
-.lottery-card--deep .lottery-game-area--flash-sale .flash-session {
+.lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-session {
   border: 0;
   padding: 0;
   color: rgba(255, 255, 255, 0.68);
   font-size: 13px;
 }
-.lottery-card--deep .lottery-game-area--flash-sale .flash-countdown {
+.lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-countdown {
   min-width: 138px;
   padding: 8px 12px;
   border-radius: 8px;
@@ -1188,19 +1188,19 @@
   text-align: center;
   box-shadow: 0 5px 18px rgba(225, 29, 72, 0.22);
 }
-.lottery-card--deep .lottery-game-area--flash-sale .flash-progress-wrap {
+.lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-progress-wrap {
   gap: 10px;
 }
-.lottery-card--deep .lottery-game-area--flash-sale .flash-progress-track {
+.lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-progress-track {
   height: 8px;
 }
-.lottery-card--deep .lottery-game-area--flash-sale .flash-stock {
+.lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-stock {
   align-self: flex-end;
   margin: -2px 0 0;
   color: #fb7185;
   font-weight: 800;
 }
-.lottery-card--deep .lottery-game-area--flash-sale .flash-btn {
+.lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-btn {
   min-height: 54px;
   margin-top: 4px;
   border-radius: 10px !important;
@@ -1209,28 +1209,28 @@
 }
 
 @media (max-width: 640px) {
-  .lottery-card--deep .lottery-card-head {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-card-head {
     padding: 14px 16px 12px;
   }
-  .lottery-card--deep .lottery-card-title {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-card-title {
     font-size: 19px;
   }
-  .lottery-card--deep .lottery-flash-merch {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch {
     grid-template-columns: 104px minmax(0, 1fr);
     gap: 12px;
     margin: 12px 12px 0;
     padding: 12px;
   }
-  .lottery-card--deep .lottery-flash-merch-title {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch-title {
     font-size: 17px;
   }
-  .lottery-card--deep .lottery-flash-merch-price {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch-price {
     font-size: 24px;
   }
-  .lottery-card--deep .lottery-game-area--flash-sale {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale {
     padding: 14px 12px 16px;
   }
-  .lottery-card--deep .lottery-game-area--flash-sale .flash-countdown {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-countdown {
     min-width: 126px;
     font-size: 14px;
   }
