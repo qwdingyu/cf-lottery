@@ -28,6 +28,7 @@ export default {
   // ── 店铺首页（ShopView） ──────────────────────────────
   shop: {
     title: "店铺",
+    subtitle: "本店限时抢购与公开活动",
     loading: "加载中…",
     refresh: "刷新",
     notFound: "店铺不存在",

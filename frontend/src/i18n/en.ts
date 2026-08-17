@@ -27,6 +27,7 @@ export default {
   // ── Shop storefront (ShopView) ─────────────────────────
   shop: {
     title: "Shop",
+    subtitle: "Flash sales and public activities from this store",
     loading: "Loading…",
     refresh: "Refresh",
     notFound: "Shop not found",

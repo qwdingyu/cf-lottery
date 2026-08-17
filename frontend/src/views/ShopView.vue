@@ -6,6 +6,7 @@
         <RouterLink to="/" class="shop-home-link">{{ $t('common.backToHome') }}</RouterLink>
         <div class="shop-title-block">
           <h1 class="section-title">{{ store.name || $t('shop.title') }}</h1>
+          <p class="shop-subtitle">{{ $t('shop.subtitle') }}</p>
         </div>
         <button
           class="shop-refresh-btn"
@@ -401,7 +402,14 @@ onMounted(refresh)
 /* ── 工具栏 ── */
 .shop-toolbar { margin-bottom: 18px; }
 .shop-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.shop-title-block { display: flex; align-items: center; min-width: 0; }
+.shop-title-block {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 180px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
 .shop-home-link {
   display: inline-flex;
   align-items: center;
@@ -449,7 +457,13 @@ onMounted(refresh)
   outline: 2px solid var(--tg-link);
   outline-offset: 2px;
 }
-.section-title { margin: 0; }
+.section-title { margin: 0; line-height: 1.18; }
+.shop-subtitle {
+  margin: 0;
+  color: var(--tg-hint);
+  font-size: 12px;
+  line-height: 1.25;
+}
 .category-bar {
   display: inline-flex;
   max-width: 100%;
