@@ -1543,10 +1543,32 @@ describe("最大参与人数和参与时间", () => {
     expect(result.message).toContain("名额已满");
   });
 
-  it("docs/130：秒杀 stockLimit 原子截单，满额返回 soldOut", async () => {
+  it("docs/239：秒杀 stockLimit 与 maxParticipants 不一致时发布被拒（预检 error 兜底）", async () => {
     const now = new Date();
     const future = new Date(now.getTime() + 3600000);
-    // maxParticipants 故意更大：硬截单必须认 flashSale.stockLimit=2，不能按 10 放行
+    // 直接调 createDraw（绕过路由联动）：构造不一致数据，验证预检 error 兜底
+    const { id } = await createDraw(db, TENANT, {
+      title: "秒杀截单",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      participationMode: "open",
+      winnerCount: 0,
+      maxParticipants: 10, // 故意与 stockLimit=2 不一致
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, stockLimit: 2, sessionLabel: "测试场" },
+        destination: { url: "https://shop.example.com/p/x", title: "去买" },
+      }),
+    });
+    await expect(publishDraw(db, TENANT, id)).rejects.toThrow("不一致");
+  });
+
+  it("docs/130：秒杀 stockLimit 原子截单（一致配置下按 stockLimit=2 截单）", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    // maxParticipants 与 stockLimit 一致（docs/239 方案 C 要求二者对齐）
     const { id, publicSlug } = await createDraw(db, TENANT, {
       title: "秒杀截单",
       startAt: now.toISOString(),
@@ -1556,7 +1578,7 @@ describe("最大参与人数和参与时间", () => {
       resultMode: "instant",
       participationMode: "open",
       winnerCount: 0,
-      maxParticipants: 10,
+      maxParticipants: 2,
       promotionConfig: JSON.stringify({
         flashSale: { enabled: true, stockLimit: 2, sessionLabel: "测试场" },
         destination: { url: "https://shop.example.com/p/x", title: "去买" },

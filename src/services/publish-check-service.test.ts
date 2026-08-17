@@ -451,7 +451,7 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(r2.canPublish).toBe(true);
   });
 
-  it("docs/130：秒杀 stockLimit 与 maxParticipants 不一致时警告", async () => {
+  it("docs/239：秒杀 stockLimit 与 maxParticipants 不一致时阻断发布（error，防御运营误解）", async () => {
     const draw = makeDraw({
       maxParticipants: 50,
       experienceType: "flash_sale",
@@ -462,7 +462,10 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     });
     await addManualTier(draw.id);
     const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
-    expect(result.warnings.some((item) => item.code === "flash_sale.stock.mismatch")).toBe(true);
+    // docs/239 方案 C：不一致从 warning 升级为 error，阻断发布
+    expect(result.canPublish).toBe(false);
+    expect(result.errors.some((item) => item.code === "flash_sale.stock.mismatch")).toBe(true);
+    expect(result.warnings.some((item) => item.code === "flash_sale.stock.mismatch")).toBe(false);
   });
 
   it("docs/130：导流秒杀没有购买链接时阻断发布，避免空抢购壳上线", async () => {

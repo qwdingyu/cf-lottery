@@ -798,7 +798,9 @@ async function validatePromotion(
         "秒杀活动必须设置名额上限（flashSale.stockLimit 或活动 maxParticipants）",
       );
     }
-    // stockLimit 与 maxParticipants 同时存在且不一致：硬截单与进度均以 stockLimit 优先（join 与公开 runtime 同源）
+    // docs/239 方案 C 温和版：秒杀启用且 stockLimit 设置时，创建/编辑路由已自动联动
+    // maxParticipants=stockLimit。此处兜底 API 直写 / 旧数据仍不一致的情况：
+    // 从 warning 升级为 error（阻断发布），消除「名额 200 但 6 单截单」的运营误解。
     if (
       flashParsed.config.stockLimit != null &&
       draw.maxParticipants != null &&
@@ -806,10 +808,10 @@ async function validatePromotion(
       flashParsed.config.stockLimit !== draw.maxParticipants
     ) {
       add(
-        result.warnings,
+        result.errors,
         "promotion",
         "flash_sale.stock.mismatch",
-        `秒杀 stockLimit=${flashParsed.config.stockLimit} 与 maxParticipants=${draw.maxParticipants} 不一致：进度与截单均按 stockLimit；建议二者对齐以免运营误解`,
+        `秒杀 stockLimit=${flashParsed.config.stockLimit} 与 maxParticipants=${draw.maxParticipants} 不一致，发布前请将活动参与上限改为 ${flashParsed.config.stockLimit} 以保持一致`,
       );
     }
     const destination = promotionConfig?.destination as Record<string, unknown> | undefined;

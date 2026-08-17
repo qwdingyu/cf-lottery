@@ -1342,7 +1342,25 @@
                       </button>
                     </div>
                     <input v-model="tier.tierName" class="tier-name" :placeholder="$t(tierCopy.namePlaceholder)" maxlength="50" />
-                    <input v-model.number="tier.winnerCount" type="number" class="tier-count" min="1" max="1000" :placeholder="$t(tierCopy.countPlaceholder)" />
+                    <!-- docs/239 方案 B：直付批发模式的「可售份数」为只读——由卡密库存决定（预检自动校验
+                         available ≥ stockLimit），不接受运营输入，消除「可售份数≠截单名额」的误导。 -->
+                    <input
+                      v-if="isDirectBulkFlashSale"
+                      class="tier-count"
+                      type="text"
+                      :value="tierPrizeSummary(tier)?.availableCount != null ? `${tierPrizeSummary(tier)!.availableCount} 张` : '—'"
+                      disabled
+                      :title="$t('lottery.adminWholesaleStockReadonlyHint')"
+                    />
+                    <input
+                      v-else
+                      v-model.number="tier.winnerCount"
+                      type="number"
+                      class="tier-count"
+                      min="1"
+                      max="1000"
+                      :placeholder="$t(tierCopy.countPlaceholder)"
+                    />
                     <input
                       v-if="form.resultMode === 'instant'"
                       v-model.number="tier.weight"
@@ -1506,10 +1524,10 @@
                   min="1"
                   max="999999"
                   step="1"
-                  :disabled="editLocked"
-                  :placeholder="$t('lottery.maxParticipantsPlaceholder')"
+                  :disabled="editLocked || form.enableFlashSale === true"
+                  :placeholder="form.enableFlashSale === true ? $t('lottery.adminFlashSaleStockFollowPlaceholder') : $t('lottery.maxParticipantsPlaceholder')"
                 />
-                <small class="field-hint">{{ editLocked ? $t('lottery.adminEditLiveLockHint') : $t('lottery.maxParticipantsHint') }}</small>
+                <small class="field-hint">{{ form.enableFlashSale === true ? $t('lottery.adminFlashSaleStockFollowHint', { n: form.flashSaleStockLimit || form.maxParticipants || '—' }) : (editLocked ? $t('lottery.adminEditLiveLockHint') : $t('lottery.maxParticipantsHint')) }}</small>
               </label>
               <label>
                 <span>{{ $t('lottery.expectedCount') }}</span>
@@ -3120,6 +3138,18 @@ watch(isDirectBulkFlashSale, (enabled) => {
   // 批发/阶梯价是一种“同一商品多件下单”的价格策略，不是多商品购物车；多商品会让发卡库存与订单履约语义失真。
   form.value.tiers = [form.value.tiers[0]!]
 })
+
+// docs/239 方案 C 温和版：秒杀启用且设置展示名额上限时，参与上限（maxParticipants）自动跟随，
+// 与后端创建/编辑路由的联动写库同源，避免「名额 200 但 6 单截单」的运营误解。
+watch(
+  () => [form.value.enableFlashSale, form.value.flashSaleStockLimit],
+  () => {
+    if (form.value.enableFlashSale === true && form.value.flashSaleStockLimit) {
+      form.value.maxParticipants = form.value.flashSaleStockLimit
+    }
+  },
+  { immediate: true },
+)
 
 /** 当前高亮步骤（点击步骤条时更新；不强制线性 Wizard） */
 const createStepFocus = ref(1)

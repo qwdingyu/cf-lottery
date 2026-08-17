@@ -739,6 +739,25 @@ adminLotteryRoute.post("/draws", async (c) => {
       : 1;
     const systemMaxParticipants = parseInt(config["draw_max_participants"], 10) || undefined;
     const requestedMaxParticipants = normalizeOptionalPositiveInteger(body.maxParticipants, "参与人数上限");
+    // 方案 C 温和版（docs/239）：秒杀启用且设置了 stockLimit 时，活动级参与上限自动跟随
+    // stockLimit，消除「名额 200 但 6 单截单」的运营误解。
+    // 红线：运行时 resolveEffectiveStockLimit 的 stockLimit 优先逻辑不变（存量数据行为不变）。
+    // 联动后仍走 createDraw 的套餐配额校验（stockLimit 超套餐上限会被拒绝，属预期收紧）。
+    let effectiveMaxParticipants = requestedMaxParticipants ?? systemMaxParticipants;
+    const promoNode = body.promotionConfig && typeof body.promotionConfig === "object" ? body.promotionConfig : undefined;
+    const flashNode = (promoNode as Record<string, unknown> | undefined)?.flashSale
+      ?? (promoNode as Record<string, unknown> | undefined)?.flash_sale;
+    if (flashNode && typeof flashNode === "object" && !Array.isArray(flashNode)) {
+      const flashObj = flashNode as Record<string, unknown>;
+      const enabled = flashObj.enabled === true || flashObj.enabled === 1 || flashObj.enabled === "true";
+      const stockRaw = flashObj.stockLimit ?? flashObj.stock_limit;
+      if (enabled && stockRaw !== undefined && stockRaw !== null && stockRaw !== "") {
+        const stockN = Number(stockRaw);
+        if (Number.isInteger(stockN) && stockN > 0) {
+          effectiveMaxParticipants = stockN;
+        }
+      }
+    }
     // 活动最长持续时间校验：防止运营者设置超长活动占用资源
     const maxDurationDays = parseInt(config["draw_max_duration_days"], 10) || 90;
     const startAt = String(body.startAt || "");
@@ -806,7 +825,7 @@ adminLotteryRoute.post("/draws", async (c) => {
       endAt: String(body.endAt || ""),
       drawAt: body.drawAt || undefined,
       accessPassword: String(body.accessPassword || ""),
-      maxParticipants: requestedMaxParticipants ?? systemMaxParticipants,
+      maxParticipants: effectiveMaxParticipants,
       // 预计参与人数（运营参考值）：非负整数，0 表示未设置
       expectedParticipants: body.expectedParticipants !== undefined
         ? (normalizeOptionalNonNegativeInteger(body.expectedParticipants, "预计参与") ?? 0)
@@ -1062,6 +1081,21 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
         : normalizeOptionalPositiveInteger(body.maxParticipants, "参与人数上限");
     } catch (err) {
       return fail(c, err instanceof Error ? err.message : "参与人数上限无效", 400);
+    }
+  }
+  // 方案 C 温和版（docs/239）：秒杀启用且设置了 stockLimit 时，活动级参与上限自动跟随
+  // stockLimit（消除「名额 200 但 6 单截单」误解）。红线：运行时 resolveEffectiveStockLimit
+  // 的 stockLimit 优先逻辑不变（存量数据行为不变）。
+  // 联动基于「合并后的 promotionConfig」（顶层键级 merge），与 update 语句写入的最终值同源；
+  // 仅当请求体未显式传 maxParticipants 时联动（显式传了以显式为准，发布预检 error 兜底不一致）。
+  if (maxParticipantsUpdate === undefined) {
+    const nextPromoRaw = body.promotionConfig !== undefined
+      ? mergeJsonTopLevel(draw.promotionConfig, body.promotionConfig)
+      : draw.promotionConfig;
+    const flashParsed = parseFlashSaleConfig(nextPromoRaw);
+    const stock = flashParsed.config?.stockLimit;
+    if (stock != null && stock > 0) {
+      maxParticipantsUpdate = stock;
     }
   }
   if (maxParticipantsUpdate !== undefined && maxParticipantsUpdate !== null) {

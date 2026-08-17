@@ -1908,4 +1908,119 @@ describe("活动编辑 PATCH 语义", () => {
     expect(draw!.drawTrigger).toBe("scheduled");
     expect(draw!.resultMode).toBe("scheduled"); // 强制对齐，避免 Cron 永不扫描
   });
+
+  // ── docs/239 方案 C 温和版：秒杀 stockLimit 与 maxParticipants 联动 ──
+
+  it("创建：秒杀启用且设置 stockLimit 时 maxParticipants 自动跟随", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    const res = await app.request("/api/admin/draws", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        title: "秒杀联动创建",
+        activityKind: "claim",
+        participationMode: "open",
+        experienceType: "flash_sale",
+        resultMode: "instant",
+        drawTrigger: "manual",
+        winnerCount: 0,
+        startAt: new Date(Date.now() - 60_000).toISOString(),
+        endAt: new Date(Date.now() + 3_600_000).toISOString(),
+        // 不传 maxParticipants，仅配置秒杀 stockLimit
+        promotionConfig: {
+          flashSale: { enabled: true, stockLimit: 6, paymentRequired: false },
+          destination: { url: "https://shop.example.com/item", title: "买" },
+        },
+      }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const { id } = await res.json() as { id: string };
+    const [draw] = await db.select({ maxParticipants: lotteryDraws.maxParticipants })
+      .from(lotteryDraws).where(eq(lotteryDraws.id, id)).limit(1);
+    expect(draw!.maxParticipants).toBe(6); // 自动跟随 stockLimit
+  });
+
+  it("创建：秒杀启用但 stockLimit 留空时 maxParticipants 不联动（保持显式值）", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    const res = await app.request("/api/admin/draws", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        title: "秒杀留空创建",
+        activityKind: "claim",
+        participationMode: "open",
+        experienceType: "flash_sale",
+        resultMode: "instant",
+        drawTrigger: "manual",
+        winnerCount: 0,
+        maxParticipants: 200,
+        startAt: new Date(Date.now() - 60_000).toISOString(),
+        endAt: new Date(Date.now() + 3_600_000).toISOString(),
+        promotionConfig: {
+          flashSale: { enabled: true, paymentRequired: false }, // 无 stockLimit
+          destination: { url: "https://shop.example.com/item", title: "买" },
+        },
+      }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const { id } = await res.json() as { id: string };
+    const [draw] = await db.select({ maxParticipants: lotteryDraws.maxParticipants })
+      .from(lotteryDraws).where(eq(lotteryDraws.id, id)).limit(1);
+    expect(draw!.maxParticipants).toBe(200); // 不联动，保留显式值
+  });
+
+  it("PATCH：修改秒杀 stockLimit 时 maxParticipants 自动跟随", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers,
+      body: JSON.stringify({
+        promotionConfig: { flashSale: { enabled: true, stockLimit: 6, paymentRequired: false } },
+      }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [draw] = await db.select({
+      maxParticipants: lotteryDraws.maxParticipants,
+      promotionConfig: lotteryDraws.promotionConfig,
+    }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    expect(draw!.maxParticipants).toBe(6); // PATCH 联动跟随 stockLimit
+    // promotionConfig 顶层键级 merge：flashSale 已合并
+    expect(String(draw!.promotionConfig)).toContain('"stockLimit":6');
+  });
+
+  it("创建：秒杀 stockLimit 超套餐参与上限时被配额校验拒绝（预期收紧）", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com"); // free 套餐 maxParticipantsPerActivity=200
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    const res = await app.request("/api/admin/draws", {
+      method: "POST", headers,
+      body: JSON.stringify({
+        title: "秒杀超配额",
+        activityKind: "claim",
+        participationMode: "open",
+        experienceType: "flash_sale",
+        resultMode: "instant",
+        drawTrigger: "manual",
+        winnerCount: 0,
+        startAt: new Date(Date.now() - 60_000).toISOString(),
+        endAt: new Date(Date.now() + 3_600_000).toISOString(),
+        promotionConfig: {
+          flashSale: { enabled: true, stockLimit: 1000, paymentRequired: false },
+          destination: { url: "https://shop.example.com/item", title: "买" },
+        },
+      }),
+    }, TEST_ENV);
+    // 联动 maxParticipants=1000 > free 套餐 200 → 创建被拒（docs/239 预期收紧）
+    expect(res.status).toBe(400);
+  });
 });
