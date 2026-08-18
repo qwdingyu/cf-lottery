@@ -16,6 +16,7 @@ import {
   users,
   tenantMembers,
   lotteryDraws,
+  lotterySpins,
   prizes,
   prizeCodes,
   auditLogs,
@@ -250,6 +251,47 @@ describe("POST /api/admin/draws/batch-delete", () => {
       .where(and(eq(auditLogs.tenantId, TENANT_ID), eq(auditLogs.action, "draw.batch_delete")));
     expect(audits).toHaveLength(1);
     expect(audits[0]?.metadataJson).toContain("force");
+  });
+
+  it("级联删除清理 lotterySpins（即时开奖 spin 审计行，docs/241 核查修复）", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader()) };
+    const now = new Date().toISOString();
+
+    await db.insert(lotteryDraws).values({
+      id: "spin-draw",
+      tenantId: TENANT_ID,
+      publicSlug: "spin-draw",
+      title: "即时开奖活动",
+      status: "drawn",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: now,
+      endAt: now,
+      winnerCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(lotterySpins).values({
+      id: "spin-1",
+      tenantId: TENANT_ID,
+      drawId: "spin-draw",
+      entryId: "entry-1",
+      idempotencyKey: "k-1",
+      won: 1,
+      createdAt: now,
+    });
+
+    const res = await app.request(
+      "/api/admin/draws/batch-delete",
+      { method: "POST", headers, body: JSON.stringify({ ids: ["spin-draw"] }) },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+
+    const left = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, "spin-draw"));
+    expect(left).toHaveLength(0); // spins 随活动级联删除，不留孤儿
   });
 });
 

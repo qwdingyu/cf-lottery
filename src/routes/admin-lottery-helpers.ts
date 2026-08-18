@@ -12,6 +12,7 @@ import {
   auditLogs,
   users,
   lotteryPrizeTiers,
+  lotterySpins,
   lotteryRosterMembers,
   lotteryInviteCodes,
   lotteryWinners,
@@ -156,6 +157,7 @@ export async function cascadeDeleteDraw(
   }
 
   await tx.delete(lotteryPrizeTiers).where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)));
+  await tx.delete(lotterySpins).where(and(eq(lotterySpins.drawId, drawId), eq(lotterySpins.tenantId, tenantId)));
   await tx.delete(lotteryRosterMembers).where(and(eq(lotteryRosterMembers.drawId, drawId), eq(lotteryRosterMembers.tenantId, tenantId)));
   await tx.delete(lotteryInviteCodes).where(and(eq(lotteryInviteCodes.drawId, drawId), eq(lotteryInviteCodes.tenantId, tenantId)));
   await tx.delete(lotteryWinners).where(and(eq(lotteryWinners.drawId, drawId), eq(lotteryWinners.tenantId, tenantId)));
