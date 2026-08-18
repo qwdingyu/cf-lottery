@@ -897,6 +897,10 @@ export default {
     gameRevealHint: "Click below to claim",
     // Flash sale shell (docs/130): claim activity quota; pay on shop
     flashGrab: "Grab",
+    flashGrabUrgent: "Buy now ({n} left)",
+    flashUrgencyLowStock: "⚡ Only {n} left — grab before it's gone!",
+    flashUrgencyCritical: "⚡ Only {n} left — hurry!",
+    flashSoldOutHintNext: "This session has ended. Watch for the next one",
     flashSoldOut: "Sold out",
     flashEnded: "Session ended",
     flashNotStarted: "Starting soon",

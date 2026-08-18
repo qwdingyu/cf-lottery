@@ -23,16 +23,30 @@
       {{ $t('lottery.flashRemaining', { n: remaining }) }}
     </p>
 
+    <!-- 低库存紧迫提示（docs/240）：数据来自公开 API 剩余计数，不是本地造假；
+         剩余 ≤10 提醒「抢完即止」，≤5 进入二级紧迫文案。 -->
+    <p v-if="isLowStock" class="flash-urgency" :class="{ critical: isCriticallyLow }" role="status">
+      {{ isCriticallyLow
+        ? $t('lottery.flashUrgencyCritical', { n: remaining })
+        : $t('lottery.flashUrgencyLowStock', { n: remaining }) }}
+    </p>
+
     <button
       type="button"
       class="btn btn-primary btn-lg flash-btn"
-      :class="{ loading, joined: disabled && !loading, soldout: isSoldOut }"
+      :class="{ loading, joined: disabled && !loading, soldout: isSoldOut, urgent: isCriticallyLow }"
       :disabled="disabled || loading || isSoldOut || phase === 'ended' || phase === 'upcoming'"
       @click="emit('play')"
     >
       <span v-if="loading" class="flash-spinner" aria-hidden="true" />
       {{ buttonLabel }}
     </button>
+
+    <!-- 售罄后引导（docs/240）：不提供「预约下一场」假按钮（后端无预约能力），
+         仅如实提示本场结束，避免制造无法兑现的交互。 -->
+    <p v-if="isSoldOut" class="flash-soldout-hint">
+      {{ $t('lottery.flashSoldOutHintNext') }}
+    </p>
   </div>
 </template>
 
@@ -112,6 +126,10 @@ const effectiveStockLimit = computed(() => {
 })
 const isSoldOut = computed(() => remaining.value === 0 && effectiveStockLimit.value != null)
 
+// 低库存紧迫度（docs/240）：≤10 显示紧迫提示，≤5 进入二级高亮（按钮变红+脉动）
+const isLowStock = computed(() => remaining.value != null && remaining.value > 0 && remaining.value <= 10)
+const isCriticallyLow = computed(() => remaining.value != null && remaining.value > 0 && remaining.value <= 5)
+
 const phase = computed<'upcoming' | 'running' | 'ended' | 'unknown'>(() => {
   const start = props.startAt ? Date.parse(props.startAt) : NaN
   const end = props.endAt ? Date.parse(props.endAt) : NaN
@@ -156,6 +174,10 @@ const buttonLabel = computed(() => {
   if (phase.value === 'ended') return t('lottery.flashEnded')
   if (phase.value === 'upcoming') return t('lottery.flashNotStarted')
   const custom = String(props.flashSale?.ctaLabel || '').trim()
+  // 低库存时按钮文案带剩余数（docs/240）：如「立即抢购（仅剩 3 份）」
+  if (isCriticallyLow.value && remaining.value != null) {
+    return t('lottery.flashGrabUrgent', { n: remaining.value })
+  }
   return custom || t('lottery.flashGrab')
 })
 </script>
@@ -238,6 +260,40 @@ const buttonLabel = computed(() => {
   font-size: 13px;
   color: var(--shop-sale, #fb7185);
   text-align: center;
+}
+/* 低库存紧迫提示（docs/240）：橙色提醒，≤5 转红色 + 脉动 */
+.flash-urgency {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  color: #f59e0b;
+}
+.flash-urgency.critical {
+  color: #f43f5e;
+  animation: flashUrgencyPulse 1.2s ease-in-out infinite;
+}
+@keyframes flashUrgencyPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+/* 售罄引导（docs/240）：如实提示本场结束，不提供无法兑现的「预约」按钮 */
+.flash-soldout-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--tg-hint, #9aa4b2);
+  text-align: center;
+}
+.flash-btn.urgent {
+  background: linear-gradient(90deg, #f43f5e, #be123c) !important;
+  box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.35);
+  animation: flashUrgencyPulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash-urgency.critical,
+  .flash-btn.urgent {
+    animation: none;
+  }
 }
 .flash-btn {
   min-height: 48px;

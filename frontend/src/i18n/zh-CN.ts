@@ -867,6 +867,10 @@ export default {
     gameRevealHint: "点击下方按钮领取资料",
     // 秒杀壳（docs/130）：抢的是活动名额，支付在 shop
     flashGrab: "抢",
+    flashGrabUrgent: "立即抢购（仅剩 {n} 份）",
+    flashUrgencyLowStock: "⚡ 仅剩 {n} 份，抢完即止！",
+    flashUrgencyCritical: "⚡ 仅剩 {n} 份，手慢无！",
+    flashSoldOutHintNext: "本场已结束，请关注下一场",
     flashSoldOut: "已抢光",
     flashEnded: "本场已结束",
     flashNotStarted: "即将开始",
