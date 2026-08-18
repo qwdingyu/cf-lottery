@@ -6,7 +6,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { cleanRateLimitLogsSafely } from "./index";
-import { rateLimitLog } from "./db/schema";
+import { processDueDraws } from "./services/lottery-service";
+import { rateLimitLog, lotteryDraws } from "./db/schema";
 import { clearTestData, getTestDb } from "./test-setup";
 import type { DbType } from "./db/client";
 import type { Client } from "@libsql/client";
@@ -70,5 +71,66 @@ describe("cleanRateLimitLogsSafely", () => {
       .where(eq(rateLimitLog.id, "rl-reward-window"))
       .limit(1);
     expect(rewardWindow?.key).toBe("reward:draw-a:entry-a");
+  });
+});
+
+describe("processDueDraws 到期关闭（docs/244）", () => {
+  it("非 lottery 活动过 endAt 后自动置为 drawn", async () => {
+    const now = new Date().toISOString();
+    const past = new Date(Date.now() - 3600000).toISOString(); // 1 小时前
+    const future = new Date(Date.now() + 3600000).toISOString();
+
+    // claim + flash_sale + instant，已过 endAt
+    await db.insert(lotteryDraws).values({
+      id: "expired-claim",
+      tenantId: "t-expire",
+      publicSlug: "expired-claim",
+      title: "过期秒杀",
+      status: "open",
+      activityKind: "claim",
+      participationMode: "open",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      drawTrigger: "manual",
+      winnerCount: 0,
+      startAt: past,
+      endAt: past, // 已过期
+      createdAt: now,
+      updatedAt: now,
+    });
+    // 未过期的 claim 不应被关闭
+    await db.insert(lotteryDraws).values({
+      id: "active-claim",
+      tenantId: "t-expire",
+      publicSlug: "active-claim",
+      title: "进行中秒杀",
+      status: "open",
+      activityKind: "claim",
+      participationMode: "open",
+      experienceType: "flash_sale",
+      resultMode: "instant",
+      drawTrigger: "manual",
+      winnerCount: 0,
+      startAt: past,
+      endAt: future, // 未过期
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await processDueDraws(db, { limit: 10 });
+
+    const [expired] = await db
+      .select({ status: lotteryDraws.status })
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, "expired-claim"))
+      .limit(1);
+    expect(expired?.status).toBe("drawn"); // 过期 → 自动关闭
+
+    const [active] = await db
+      .select({ status: lotteryDraws.status })
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, "active-claim"))
+      .limit(1);
+    expect(active?.status).toBe("open"); // 未过期 → 保持
   });
 });

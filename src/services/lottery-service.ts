@@ -34,6 +34,7 @@ import {
 // ── 拆分模块（docs/049 #17：除奖品/定时兜底外已全部迁至 services/lottery/） ──
 // 内部使用：定时兜底（processDueDraws）复用开奖核心域
 import { performDraw, healDrawingState } from "./lottery/draw-execution";
+import { DRAW_STATUS } from "./lottery/types";
 import { runBounded } from "./../lib/concurrency";
 
 // re-export：保持既有导出 API 不变（外部 import 本文件的符号继续可用）
@@ -197,6 +198,35 @@ export async function processDueDraws(
   const limit = Math.max(1, Math.min(50, options?.limit ?? 20));
   const emailEnv = options?.emailEnv;
   const now = new Date().toISOString();
+
+  // ── 到期关闭（docs/244）：非 lottery 活动（claim/flash_sale 等）到 endAt 后自动置为 drawn。
+  // 原因：processDueDraws 只对 activityKind='lottery' 的 scheduled 活动 performDraw，
+  // 而 claim 等类型无开奖流程（instant 走 spin），过 endAt 后若无人手动关闭会永远停留在
+  // open（进行中），管理后台与公开页显示误导。joinDraw 已按 endAt 拦截参与（功能安全），
+  // 此处仅修正状态显示。复用 drawn 状态，避免新增 closed 影响筛选/审计等消费点。
+  const expiredNonLottery = await db
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId })
+    .from(lotteryDraws)
+    .where(and(
+      eq(lotteryDraws.status, "open"),
+      sql`${lotteryDraws.activityKind} != 'lottery'`,
+      sql`${lotteryDraws.endAt} <= ${now}`,
+    ))
+    .limit(limit);
+  for (const draw of expiredNonLottery) {
+    try {
+      await db
+        .update(lotteryDraws)
+        .set({ status: DRAW_STATUS.DRAWN, updatedAt: now })
+        .where(and(
+          eq(lotteryDraws.id, draw.id),
+          eq(lotteryDraws.tenantId, draw.tenantId),
+          eq(lotteryDraws.status, "open"),
+        ));
+    } catch (err) {
+      console.error(`[cron] 到期关闭失败 draw=${draw.id}`, err);
+    }
+  }
 
   // 查询到期且未开奖的定时活动
   const due = await db
