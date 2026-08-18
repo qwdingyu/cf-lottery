@@ -418,6 +418,10 @@
   font-size: 12px;
   white-space: nowrap;
 }
+.lottery-flash-merch-stock.is-urgent {
+  color: #f43f5e;
+  font-weight: 700;
+}
 .lottery-flash-pricing {
   display: flex;
   flex-direction: column;

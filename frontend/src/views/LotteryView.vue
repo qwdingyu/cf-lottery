@@ -267,7 +267,11 @@
               <div class="lottery-flash-merch-bottom">
                 <strong v-if="flashSaleMerchCard(draw)?.priceText" class="lottery-flash-merch-price">{{ flashSaleMerchCard(draw)?.priceText }}</strong>
                 <span v-else class="lottery-flash-merch-price lottery-flash-merch-price--missing">{{ $t('lottery.flashPriceMissing') }}</span>
-                <span v-if="flashSaleMerchCard(draw)?.remaining != null" class="lottery-flash-merch-stock">{{ $t('lottery.flashRemaining', { n: flashSaleMerchCard(draw)?.remaining }) }}</span>
+                <span
+                  v-if="flashSaleMerchCard(draw)?.remaining != null"
+                  class="lottery-flash-merch-stock"
+                  :class="{ 'is-urgent': (flashSaleMerchCard(draw)?.remaining ?? Infinity) <= 5 }"
+                >{{ $t('lottery.flashRemaining', { n: flashSaleMerchCard(draw)?.remaining }) }}</span>
               </div>
               <div v-if="shouldShowFlashSaleQuantityControl(draw)" class="lottery-flash-quantity" @click.stop>
                 <span class="lottery-flash-quantity-label">{{ $t('lottery.flashPurchaseQuantity') }}</span>
