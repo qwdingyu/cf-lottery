@@ -24,8 +24,15 @@
     </p>
 
     <!-- 低库存紧迫提示（docs/240）：数据来自公开 API 剩余计数，不是本地造假；
-         剩余 ≤10 提醒「抢完即止」，≤5 进入二级紧迫文案。 -->
-    <p v-if="isLowStock" class="flash-urgency" :class="{ critical: isCriticallyLow }" role="status">
+         剩余 ≤10 提醒「抢完即止」，≤5 进入二级紧迫文案。
+         仅 running 阶段显示：upcoming（未开始）时剩余=stockLimit-0 会误报低库存，
+         ended/已参与（disabled）时紧迫文案无意义且会与按钮终态矛盾。 -->
+    <p
+      v-if="isLowStock && phase === 'running' && !disabled"
+      class="flash-urgency"
+      :class="{ critical: isCriticallyLow }"
+      role="status"
+    >
       {{ isCriticallyLow
         ? $t('lottery.flashUrgencyCritical', { n: remaining })
         : $t('lottery.flashUrgencyLowStock', { n: remaining }) }}
@@ -34,7 +41,7 @@
     <button
       type="button"
       class="btn btn-primary btn-lg flash-btn"
-      :class="{ loading, joined: disabled && !loading, soldout: isSoldOut, urgent: isCriticallyLow }"
+      :class="{ loading, joined: disabled && !loading, soldout: isSoldOut, urgent: isCriticallyLow && phase === 'running' && !disabled }"
       :disabled="disabled || loading || isSoldOut || phase === 'ended' || phase === 'upcoming'"
       @click="emit('play')"
     >
@@ -174,8 +181,9 @@ const buttonLabel = computed(() => {
   if (phase.value === 'ended') return t('lottery.flashEnded')
   if (phase.value === 'upcoming') return t('lottery.flashNotStarted')
   const custom = String(props.flashSale?.ctaLabel || '').trim()
-  // 低库存时按钮文案带剩余数（docs/240）：如「立即抢购（仅剩 3 份）」
-  if (isCriticallyLow.value && remaining.value != null) {
+  // 低库存时按钮文案带剩余数（docs/240）：如「立即抢购（仅剩 3 份）」。
+  // 仅 running 且未参与时生效——upcoming/ended/已参与走上方终态分支，不覆盖。
+  if (isCriticallyLow.value && phase.value === 'running' && !props.disabled && remaining.value != null) {
     return t('lottery.flashGrabUrgent', { n: remaining.value })
   }
   return custom || t('lottery.flashGrab')

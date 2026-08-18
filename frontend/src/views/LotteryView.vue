@@ -270,7 +270,7 @@
                 <span
                   v-if="flashSaleMerchCard(draw)?.remaining != null"
                   class="lottery-flash-merch-stock"
-                  :class="{ 'is-urgent': (flashSaleMerchCard(draw)?.remaining ?? Infinity) <= 5 }"
+                  :class="{ 'is-urgent': draw.status === 'open' && (flashSaleMerchCard(draw)?.remaining ?? Infinity) <= 5 }"
                 >{{ $t('lottery.flashRemaining', { n: flashSaleMerchCard(draw)?.remaining }) }}</span>
               </div>
               <div v-if="shouldShowFlashSaleQuantityControl(draw)" class="lottery-flash-quantity" @click.stop>
