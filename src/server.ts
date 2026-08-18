@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { app } from "./index";
 import { applyPendingMigrations, ensureDataDir } from "./db/apply-migrations";
+import { buildCsp, createCspNonce, injectCspNonce } from "./lib/csp";
 
 const PORT = parseInt(process.env.PORT || "8787", 10);
 const PUBLIC_DIR = join(process.cwd(), "public");
@@ -61,6 +62,35 @@ app.use("*", async (c, next) => {
     c.set("executionCtx", { waitUntil: undefined } as any);
   }
   await next();
+});
+
+/**
+ * CSP nonce 注入（docs/242）：对 HTML 响应生成一次性 nonce，写入 CSP 头并给
+ * <script> 补 nonce 属性。必须放在 serveStatic 之前——serveStatic 匹配到
+ * index.html 时直接返回响应（不调用 next），若 CSP 中间件在其后则永远不执行。
+ * 静态资源（js/css/img）与 API 响应不注入（无内联脚本，无需 nonce）。
+ */
+app.use("/*", async (c, next) => {
+  await next();
+  const res = c.res;
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("text/html")) return;
+  // 仅对 SPA 入口文档注入；API 返回的 HTML（如有）不处理
+  if (c.req.path.startsWith("/api/")) return;
+
+  const nonce = createCspNonce();
+  const html = await res.text();
+  const injected = injectCspNonce(html, nonce);
+  c.res = new Response(injected, {
+    status: res.status,
+    headers: {
+      ...Object.fromEntries(res.headers.entries()),
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": buildCsp(nonce),
+      // 入口文档 no-store：nonce 每次请求唯一，禁止浏览器/CDN 缓存复用
+      "Cache-Control": "no-store",
+    },
+  });
 });
 
 /**
