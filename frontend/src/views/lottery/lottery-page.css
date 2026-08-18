@@ -1219,7 +1219,9 @@
   .lottery-card--deep.lottery-card--flash-sale .lottery-prize-strip,
   .lottery-card--deep.lottery-card--flash-sale .lottery-prize-shell-hint,
   .lottery-card--deep.lottery-card--flash-sale .activity-submission,
-  .lottery-card--deep.lottery-card--flash-sale .lottery-join-bar {
+  .lottery-card--deep.lottery-card--flash-sale .lottery-join-bar,
+  .lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale,
+  .lottery-card--deep.lottery-card--flash-sale .viral-section {
     grid-column: 1 / -1;
   }
 }
@@ -1262,9 +1264,10 @@
     align-self: stretch;
   }
   .lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale {
-    grid-column: 2;
-    margin: 16px 22px 0 0;
-    padding: 16px;
+    /* 游戏区跨整行（grid-column: 1 / -1 已在上面统一设置），
+       不再作为右列窄框，改为与卡片同宽的独立区块。 */
+    margin: 16px 22px 0;
+    padding: 18px 22px 22px;
     border: 1px solid rgba(244, 63, 94, 0.24);
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.035);

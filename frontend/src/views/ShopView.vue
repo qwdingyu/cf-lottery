@@ -920,7 +920,11 @@ onMounted(refresh)
   }
   .category-bar::-webkit-scrollbar { display: none; }
   .cat-btn { flex: 0 0 auto; }
-  .shop-flash-hero { flex-wrap: wrap; gap: 8px; }
+  .shop-flash-hero { flex-wrap: nowrap; gap: 8px; }
+  /* 手机端 hero 不换行：badge + 标题 + 倒计时 + CTA 单行排布，
+     避免「限时抢购/本店1场秒杀」竖排导致区域过高（docs/244）。 */
+  .flash-hero-body { flex-direction: row; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .flash-hero-sub { flex-basis: 100%; }
   .flash-hero-countdown {
     flex: 1 1 auto;
     min-width: 132px;
