@@ -10,9 +10,13 @@
  *
  * 自 v0.5.0 起：委托 @usethink/cf-core/rate-limit 的 DbAtomicRateLimiter。
  */
+import type { Context } from "hono";
 import type { AtomicRateLimitDb } from "@usethink/cf-core/rate-limit";
 import { checkDbRateLimit as coreCheckDbRateLimit, cleanExpiredRateLimits as coreCleanExpiredRateLimits } from "@usethink/cf-core/rate-limit";
+import type { AppEnv } from "../bindings";
 import type { DbType } from "../db/client";
+import { getDb } from "./http";
+import { writeRequestLog } from "./request-log";
 
 /**
  * 数据库级限流检查
@@ -30,6 +34,26 @@ export async function checkDbRateLimit(
   windowMs: number = 60000,
 ): Promise<boolean> {
   return coreCheckDbRateLimit(db as unknown as AtomicRateLimitDb, key, limit, windowMs);
+}
+
+/**
+ * 增强限流检查：失败时自动写入 request_logs（docs/243）。
+ * 与 checkDbRateLimit 的区别仅在于多了 writeRequestLog 调用。
+ */
+export async function enforceRateLimit(
+  c: Context<AppEnv>,
+  key: string,
+  limit: number,
+  windowMs: number = 60000,
+  action?: string,
+): Promise<{ ok: true } | { ok: false; message: string; status: number }> {
+  const db = getDb(c);
+  const allowed = await coreCheckDbRateLimit(db as unknown as AtomicRateLimitDb, key, limit, windowMs);
+  if (!allowed) {
+    await writeRequestLog(c, action || key.split(":")[0] || "rate_limit", 429);
+    return { ok: false, message: "请求过于频繁", status: 429 };
+  }
+  return { ok: true };
 }
 
 /**

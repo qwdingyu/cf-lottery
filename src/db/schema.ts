@@ -4,7 +4,7 @@
  * 从 cf-shop 抽取，只保留抽奖核心表，新增 SaaS 多租户表。
  * 不包含：products、orders、cards、coupons、referral、voucher、storefront。
  */
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 // P1-13：cf-core 管理员审计日志表（统一审计入口，需迁移创建 admin_audit_logs）
 import { adminAuditLogs } from "@usethink/cf-core/db/schema";
@@ -198,6 +198,36 @@ export const rateLimitLog = sqliteTable("rate_limit_log", {
   keyActionIdx: index("idx_rate_limit_key_action").on(t.key, t.action, t.createdAt),
   /** maintenance 清理按 key 前缀 + created_at 判断保留窗口，补 key+created_at 索引降低大表扫描。 */
   keyCreatedIdx: index("idx_rate_limit_key_created").on(t.key, t.createdAt),
+}));
+
+/**
+ * 请求日志表（docs/243）：记录受限/关键请求。
+ * 由 writeRequestLog 写入；清理任务按保留策略删除过期数据。
+ */
+export const requestLogs = sqliteTable("request_logs", {
+  id: text("id").primaryKey(),
+  ipHash: text("ip_hash").notNull(),
+  method: text("method").notNull(),
+  path: text("path").notNull(),
+  action: text("action").notNull(),
+  statusCode: integer("status_code").notNull(),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  actionTimeIdx: index("idx_request_logs_action_time").on(t.action, t.createdAt),
+  createdIdx: index("idx_request_logs_created_at").on(t.createdAt),
+}));
+
+/**
+ * 一次性令牌消费表（docs/243）：同一 token 在 TTL 内仅允许成功消费一次。
+ * 复合主键 (action, subjectHash) 原子唯一；INSERT ... ON CONFLICT DO NOTHING 实现防重放。
+ */
+export const consumeOnceTokens = sqliteTable("consume_once_tokens", {
+  action: text("action").notNull(),
+  subjectHash: text("subject_hash").notNull(),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.action, t.subjectHash] }),
+  createdIdx: index("idx_consume_once_created_at").on(t.createdAt),
 }));
 
 /**

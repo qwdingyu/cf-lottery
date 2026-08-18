@@ -209,6 +209,8 @@ export async function clearTestData(client: Client) {
     "platform_members",
     "auth_identities",
     "rate_limit_log",
+    "request_logs",
+    "consume_once_tokens",
     "lottery_blacklist",
     "lottery_invite_codes",
     "lottery_roster_members",
