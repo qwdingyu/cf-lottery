@@ -185,6 +185,72 @@ describe("POST /api/admin/draws/batch-delete", () => {
     expect(audits).toHaveLength(1);
     expect(audits[0]?.targetId).toBe("batch");
   });
+
+  it("force=true 允许删除 open 活动（调试/测试清场），但审计记录 force 标志", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader()) };
+    const now = new Date().toISOString();
+
+    await db.insert(lotteryDraws).values([
+      {
+        id: "f-open",
+        tenantId: TENANT_ID,
+        publicSlug: "force-open",
+        title: "进行中（force测试）",
+        status: "open",
+        activityKind: "lottery",
+        participationMode: "open",
+        startAt: now,
+        endAt: now,
+        winnerCount: 1,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: "f-draft",
+        tenantId: TENANT_ID,
+        publicSlug: "force-draft",
+        title: "草稿（force测试）",
+        status: "draft",
+        activityKind: "lottery",
+        participationMode: "open",
+        startAt: now,
+        endAt: now,
+        winnerCount: 1,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    // force=true → 放行 open（草稿正常删除）
+    const res = await app.request(
+      "/api/admin/draws/batch-delete",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ids: ["f-open", "f-draft"], force: true }),
+      },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      deleted: number;
+      failed: number;
+      deletedIds: string[];
+    };
+    expect(body.deleted).toBe(2);
+    expect(body.failed).toBe(0);
+    expect(body.deletedIds.sort()).toEqual(["f-draft", "f-open"]);
+
+    // 审计记录 force 标志
+    const audits = await db
+      .select()
+      .from(auditLogs)
+      .where(and(eq(auditLogs.tenantId, TENANT_ID), eq(auditLogs.action, "draw.batch_delete")));
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.metadataJson).toContain("force");
+  });
 });
 
 describe("POST /api/admin/prizes/codes/batch-delete", () => {

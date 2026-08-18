@@ -795,6 +795,9 @@ export default {
     adminBatchProgress: "Progress {done}/{total}",
     adminConfirmBatchDelete:
       "Permanently delete {count} selected draws? {drawnCount} are completed.\n\nThis deletes draws, entries, and winner records. Generated lottery orders and issued card delivery records are retained. This cannot be undone.",
+    adminConfirmBatchDeleteForce:
+      "Permanently delete {count} selected draws? {liveCount} are in progress.\n\nCheck \"Include in-progress draws\" to also delete open/drawing draws (debug/test cleanup, test environments only); draws with payment orders are still protected. This cannot be undone.",
+    adminBatchDeleteForceOption: "Include in-progress draws (debug/test cleanup, test environments only)",
     adminConfirmBatchHide:
       "Hide {count} completed draw(s) from the public site?\n\nWinner records and admin data stay; public pages go dark. You can show them again anytime.",
     adminConfirmBatchPause:

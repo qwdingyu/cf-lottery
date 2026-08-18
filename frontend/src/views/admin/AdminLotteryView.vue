@@ -4252,7 +4252,22 @@ async function batchDeleteDraws() {
   const selectedDraws = draws.value.filter((draw) => ids.includes(draw.id) && canDeleteDraw(draw))
   if (selectedDraws.length === 0) return
   const drawnCount = selectedDraws.filter((draw) => draw.status === 'drawn').length
-  if (!(await askConfirm(t('lottery.adminConfirmBatchDelete', { count: selectedDraws.length, drawnCount })))) return
+
+  // 调试/测试清场（docs/241）：选中含 open/drawing 时提供「包含进行中活动」force 选项。
+  // 默认不勾选（安全删除）；勾选后后端放行 open/drawing，但 cascadeDeleteDraw 的
+  // paymentOrders fail-closed 保护仍生效（有支付订单永远拒绝，防资金事故）。
+  const hasLive = selectedDraws.some((draw) => draw.status === 'open' || draw.status === 'drawing')
+  let force = false
+  if (hasLive) {
+    const decision = await askConfirmWithOptions(
+      t('lottery.adminConfirmBatchDeleteForce', { count: selectedDraws.length, liveCount: selectedDraws.filter((d) => d.status === 'open' || d.status === 'drawing').length }),
+      { options: [{ key: 'force', label: t('lottery.adminBatchDeleteForceOption') }] },
+    )
+    if (!decision.confirmed) return
+    force = decision.options.force === true
+  } else if (!(await askConfirm(t('lottery.adminConfirmBatchDelete', { count: selectedDraws.length, drawnCount })))) {
+    return
+  }
 
   const targetIds = selectedDraws.map((d) => d.id)
   // 标记 busy 供 bulk-bar；勿与 runBatchSequential 重叠占用 operating
@@ -4260,7 +4275,7 @@ async function batchDeleteDraws() {
   batchCompleted.value = 0
   batchTotal.value = targetIds.length
   try {
-    const data = await batchDeleteLotteryDraws(targetIds)
+    const data = await batchDeleteLotteryDraws(targetIds, force)
     batchCompleted.value = targetIds.length
     if (data.deleted === 0 && data.failed === 0) {
       showToast(t('lottery.adminBatchNothingDone'), 'info')

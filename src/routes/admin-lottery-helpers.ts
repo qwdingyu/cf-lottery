@@ -102,10 +102,11 @@ export async function recordTenantAudit(
 }
 
 /**
- * 解析 batch-delete 请求体的 ids。
+ * 解析 batch-delete 请求体的 ids 与 force。
  * 去重、去空、上限 ADMIN_BATCH_DELETE_MAX；不在此做业务状态校验。
+ * force=true 时允许删除非安全状态（open/drawing）的活动，仅供调试/测试使用。
  */
-export function parseBatchDeleteIds(body: unknown): { ids: string[]; error?: string } {
+export function parseBatchDeleteIds(body: unknown): { ids: string[]; force?: boolean; error?: string } {
   if (!body || typeof body !== "object") {
     return { ids: [], error: "请求体无效" };
   }
@@ -126,7 +127,9 @@ export function parseBatchDeleteIds(body: unknown): { ids: string[]; error?: str
   if (ids.length > ADMIN_BATCH_DELETE_MAX) {
     return { ids: [], error: `单次最多删除 ${ADMIN_BATCH_DELETE_MAX} 条` };
   }
-  return { ids };
+  const rawForce = (body as { force?: unknown }).force;
+  const force = rawForce === true || rawForce === 1 || rawForce === "true";
+  return { ids, force };
 }
 
 /**

@@ -417,6 +417,8 @@ route.delete("/draws/:id", async (c) => {
 /**
  * 批量删除活动（docs/082 P2）。
  * - 同单条：open/drawing 计入 failed，不 force
+ * - force=true（调试/测试用）：允许删除 open/drawing 活动，但 cascadeDeleteDraw 的
+ *   paymentOrders fail-closed 保护仍生效（有支付订单永远拒绝，防资金事故）
  * - 顺序逐条级联（每条独立事务），避免长事务锁死
  * - 一条审计汇总：draw.batch_delete
  */
@@ -431,6 +433,7 @@ route.post("/draws/batch-delete", async (c) => {
   }
   const parsed = parseBatchDeleteIds(body);
   if (parsed.error) return fail(c, parsed.error, 400);
+  const force = parsed.force === true;
 
   const deleted: string[] = [];
   const failed: Array<{ id: string; reason: string }> = [];
@@ -446,7 +449,10 @@ route.post("/draws/batch-delete", async (c) => {
       failed.push({ id: drawId, reason: "活动不存在" });
       continue;
     }
-    if (!isDrawStatusDeletable(draw.status)) {
+    // 非 force：open/drawing 拒绝（与单条 DELETE 一致）
+    // force：放行 open/drawing（调试/测试清场），但 cascadeDeleteDraw 仍会因
+    // paymentOrders 存在而 fail-closed，不会破坏支付数据。
+    if (!force && !isDrawStatusDeletable(draw.status)) {
       failed.push({ id: drawId, reason: "进行中的活动不可删除，请先暂停或取消" });
       continue;
     }
@@ -468,6 +474,7 @@ route.post("/draws/batch-delete", async (c) => {
     requested: parsed.ids.length,
     deleted: deleted.length,
     failed: failed.length,
+    force,
     deletedIds: deleted.slice(0, 50),
     failedSample: failed.slice(0, 20),
   });
