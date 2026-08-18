@@ -11,7 +11,17 @@ import type { AppEnv } from "../bindings";
 import { getDb } from "./http";
 import { getClientIp } from "./platform";
 import { requestLogs, consumeOnceTokens } from "../db/schema";
-import { hashEventValue } from "../routes/public-lottery-helpers";
+
+/**
+ * SHA-256 hex 哈希（与参与流程 hashEventValue 同算法）。
+ * 本地实现避免 lib → routes 循环依赖（request-log → public-lottery-helpers → rate-limit → request-log）。
+ */
+async function hashValue(value: string): Promise<string> {
+  if (!value) return "";
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /**
  * 写入一条请求日志。
@@ -28,7 +38,7 @@ export async function writeRequestLog(
 ): Promise<void> {
   try {
     const db = getDb(c);
-    const hash = ipHash || (await hashEventValue(getClientIp(c) || ""));
+    const hash = ipHash || (await hashValue(getClientIp(c) || ""));
     await db.insert(requestLogs).values({
       id: crypto.randomUUID(),
       ipHash: hash,
@@ -63,7 +73,7 @@ export async function consumeOnce(
   if (!raw) return { ok: false, reason: "empty_token" };
 
   const db = getDb(c);
-  const subjectHash = await hashEventValue(`${action}:${raw}`);
+  const subjectHash = await hashValue(`${action}:${raw}`);
 
   // onConflictDoNothing：首个插入成功（affectedRows=1）→ consumed；
   // 重放冲突被忽略（affectedRows=0）→ already_used。原子防重放。
