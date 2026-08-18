@@ -55,6 +55,15 @@ function createTestApp() {
     const second = await consumeOnce(c, "test_token", "token-abc");
     return c.json({ first, second });
   });
+  // 测试路由：consumeOnce 并发（验证原子防重放）
+  app.post("/test/consume-concurrent", async (c) => {
+    const results = await Promise.all([
+      consumeOnce(c, "test_concurrent", "token-conc"),
+      consumeOnce(c, "test_concurrent", "token-conc"),
+      consumeOnce(c, "test_concurrent", "token-conc"),
+    ]);
+    return c.json(results);
+  });
   return app;
 }
 
@@ -103,5 +112,22 @@ describe("consumeOnce", () => {
       .from(consumeOnceTokens)
       .where(eq(consumeOnceTokens.action, "test_empty_token"));
     expect(tokens).toHaveLength(0);
+  });
+
+  it("并发消费同一 token 只成功一次（原子防重放）", async () => {
+    const app = createTestApp();
+    const res = await app.request("/test/consume-concurrent", { method: "POST" }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const results = await res.json() as Array<{ ok: boolean; reason?: string }>;
+    const okCount = results.filter((r) => r.ok).length;
+    expect(okCount).toBe(1); // 3 个并发只有 1 个成功
+    expect(results.filter((r) => !r.ok && r.reason === "already_used").length).toBe(2);
+
+    // DB 只有一条记录
+    const tokens = await db
+      .select()
+      .from(consumeOnceTokens)
+      .where(eq(consumeOnceTokens.action, "test_concurrent"));
+    expect(tokens).toHaveLength(1);
   });
 });

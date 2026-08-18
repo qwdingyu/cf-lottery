@@ -67,7 +67,6 @@ export async function consumeOnce(
   c: Context<AppEnv>,
   action: string,
   token: string,
-  ipHash?: string,
 ): Promise<{ ok: true } | { ok: false; reason: "already_used" | "empty_token" }> {
   const raw = String(token || "").trim();
   if (!raw) return { ok: false, reason: "empty_token" };
