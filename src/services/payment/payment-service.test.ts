@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../../test-setup";
 import type { DbType } from "../../db/client";
 import {
@@ -2380,6 +2380,260 @@ describe("支付并发安全性", () => {
         await refundPaymentOrder(db, TENANT_ID, orderId, "ops-user", { reason: "首次退款" });
         await expect(refundPaymentOrder(db, TENANT_ID, orderId, "ops-user", { reason: "重复退款" })).rejects.toThrow("不允许退款");
       });
+    });
+  });
+
+  // ── 促销审查：针对线上活动 8c5515ed 配置（stockLimit=10, maxPerUser=5, 阶梯价）的完整验证 ──
+  // 覆盖：超发 / 漏发 / 误发 / 订单超时释放 / 限购 / 阶梯价权威金额
+  describe("促销审查：线上活动 8c5515ed 关键路径（超发/漏发/误发/超时释放）", () => {
+    /**
+     * 构造与线上活动 8c5515ed 完全一致的直付秒杀配置：
+     * stockLimit=10, maxPerUser=5, priceCents=990, 阶梯价 1件9.9 / 5件起8.9。
+     * codeCount 为可用卡密数，activeParticipantCount 为已占名额（模拟 join 后 base 1）。
+     */
+    async function seedLiveCtx(codeCount: number, activeCount = 1) {
+      const drawId = crypto.randomUUID();
+      const entryId = crypto.randomUUID();
+      const prizeId = crypto.randomUUID();
+      await db.insert(tenants).values({ id: TENANT_ID, name: "tenant" }).onConflictDoNothing();
+      await db.insert(lotteryDraws).values({
+        id: drawId, tenantId: TENANT_ID, publicSlug: `live-${drawId}`,
+        title: "限时抢购", status: "open",
+        experienceType: "flash_sale", maxParticipants: 10,
+        activeParticipantCount: activeCount,
+        promotionConfig: JSON.stringify({
+          flashSale: {
+            enabled: true, sessionLabel: "12:00场", stockLimit: 10, maxPerUser: 5,
+            ctaLabel: "抢", showCountdown: true, showProgress: true, showStock: true,
+            paymentRequired: true, priceCents: 990, currency: "cny", title: "限时抢购商品",
+            pricingTiers: [
+              { minQuantity: 1, unitPriceCents: 990, label: "单件" },
+              { minQuantity: 5, unitPriceCents: 890, label: "5件起" },
+            ],
+          },
+        }),
+        startAt: new Date(Date.now() - 60_000).toISOString(),
+        endAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+      await db.insert(lotteryEntries).values({
+        id: entryId, tenantId: TENANT_ID, drawId,
+        identityType: "email", identityValue: "live@test.com", paymentStatus: "reserved",
+      });
+      await db.insert(prizes).values({
+        id: prizeId, tenantId: TENANT_ID, name: "限时抢购商品", prizeType: "code", totalCount: codeCount,
+      });
+      await db.insert(lotteryPrizeTiers).values({
+        id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, prizeId,
+        tierName: "中奖", winnerCount: codeCount, sortOrder: 100, weight: 100,
+      });
+      const codes = Array.from({ length: codeCount }, (_, i) => ({
+        id: `live-code-${drawId}-${i}`, tenantId: TENANT_ID, prizeId,
+        code: `L-CODE-${drawId}-${i}`, secret: "s", status: "available" as const,
+      }));
+      if (codes.length > 0) await db.insert(prizeCodes).values(codes);
+      return { drawId, entryId, prizeId };
+    }
+
+    function liveCbProvider(attemptId: string, amountCents: number) {
+      return {
+        ...providerMock,
+        name: "alipay" as const,
+        verifyCallback: vi.fn(async () => ({
+          orderNo: attemptId,
+          providerTradeNo: `EP-LIVE-${Date.now()}`,
+          amountCents,
+          currency: "cny",
+          paidAt: new Date().toISOString(),
+        })),
+      };
+    }
+
+    it("阶梯价权威金额：5件起按 8.9 元/件，服务端计算 amountCents=4450", async () => {
+      const { drawId, entryId } = await seedLiveCtx(10);
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email" as const, buyerIdentityValue: "live@test.com",
+        quantity: 5, unitPriceCents: 890,
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price", quantity: 5, unitPriceCents: 890, amountCents: 4450 }),
+        amountCents: 4450, currency: "cny" as const, provider: "alipay" as const,
+        notifyUrl: "https://cb.test", description: "限时抢购商品",
+      };
+      const order = await createPaymentOrder(db, orderInput, providerMock);
+      expect(order.order.amountCents).toBe(4450);
+      expect(order.order.unitPriceCents).toBe(890);
+      expect(order.order.quantity).toBe(5);
+    });
+
+    it("金额不一致被源头扼杀拒绝（防御路由层/网关篡改）", async () => {
+      const { drawId, entryId } = await seedLiveCtx(10);
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email" as const, buyerIdentityValue: "live@test.com",
+        quantity: 2, unitPriceCents: 990,
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        amountCents: 1000, // 故意与 990*2=1980 不一致
+        currency: "cny" as const, provider: "alipay" as const,
+        notifyUrl: "https://cb.test", description: "限时抢购商品",
+      };
+      await expect(createPaymentOrder(db, orderInput, providerMock)).rejects.toThrow("金额不一致");
+    });
+
+    it("限购：maxPerUser=5 累计已购 4 件后再买 2 件被拒", async () => {
+      const { drawId, entryId } = await seedLiveCtx(10);
+      // 先买 4 件并支付成功
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email" as const, buyerIdentityValue: "live@test.com",
+        quantity: 4, unitPriceCents: 890,
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        amountCents: 3560, currency: "cny" as const, provider: "alipay" as const,
+        notifyUrl: "https://cb.test", description: "限时抢购商品",
+      };
+      const order = await createPaymentOrder(db, orderInput, providerMock);
+      const [att] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, order.order.id)).limit(1);
+      await handlePaymentCallback(db, TENANT_ID, liveCbProvider(att!.id, 3560), {});
+
+      // 再买 2 件 → 4+2=6 > 5，被限购拦截
+      const secondInput = {
+        ...orderInput, quantity: 2, unitPriceCents: 990, amountCents: 1980,
+      };
+      await expect(createPaymentOrder(db, secondInput, providerMock)).rejects.toThrow("每人限购");
+    });
+
+    it("漏发防护：回调时卡密被并发耗尽 → 订单进入 FULFILLMENT_FAILED 而非静默成功，补发后恢复 paid", async () => {
+      // 预检需要足够卡密通过（源头扼杀），但回调前把卡密全部占用，模拟并发耗尽
+      const { drawId, entryId } = await seedLiveCtx(3);
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email" as const, buyerIdentityValue: "live@test.com",
+        quantity: 3, unitPriceCents: 890,
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        amountCents: 2670, currency: "cny" as const, provider: "alipay" as const,
+        notifyUrl: "https://cb.test", description: "限时抢购商品",
+      };
+      const order = await createPaymentOrder(db, orderInput, providerMock);
+      // 下单时预占 3 张卡密（reserved）
+      const reserved = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved")));
+      expect(reserved.length).toBe(3);
+
+      // 模拟并发：把 3 张预占卡密全部释放回 available 并立即被其他订单占用（issued）
+      // 这样 confirmPrizeCodes 找不到 reserved 卡密，acquirePrizeCodes 也拿不到 available
+      await db.update(prizeCodes)
+        .set({ status: "issued", winnerId: "other-entry", paymentOrderId: "other-order" })
+        .where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved")));
+
+      const [att] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, order.order.id)).limit(1);
+      const result = await handlePaymentCallback(db, TENANT_ID, liveCbProvider(att!.id, 2670), {});
+      // 卡密不足 → 订单 FULFILLMENT_FAILED，不静默成功（不漏发也不误发）
+      expect(result.order?.status).toBe("paid_fulfillment_failed");
+      // entry 保持 pending（占位，等待补发）
+      const [entry] = await db.select({ paymentStatus: lotteryEntries.paymentStatus }).from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+      expect(entry?.paymentStatus).toBe("pending");
+
+      // 运营补充 3 张卡密后补发 → 订单恢复 paid
+      const [prizeRow] = await db.select({ id: prizes.id }).from(prizes).where(eq(prizes.tenantId, TENANT_ID)).limit(1);
+      const extraCodes = Array.from({ length: 3 }, (_, i) => ({
+        id: `live-code-${drawId}-extra-${i}`, tenantId: TENANT_ID, prizeId: prizeRow!.id,
+        code: `L-EXTRA-${drawId}-${i}`, secret: "s", status: "available" as const,
+      }));
+      await db.insert(prizeCodes).values(extraCodes);
+      const retry = await retryPaymentFulfillment(db, TENANT_ID, order.order.id);
+      expect(retry.ok).toBe(true);
+      expect(retry.order?.status).toBe("paid");
+      // 该订单最终 3 张卡密 issued（不超发）
+      const issuedForOrder = await db.select().from(prizeCodes).where(and(
+        eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.paymentOrderId, order.order.id), eq(prizeCodes.status, "issued"),
+      ));
+      expect(issuedForOrder.length).toBe(3);
+    });
+
+    it("误发防护：金额不匹配的回调被拒绝，不发卡", async () => {
+      const { drawId, entryId } = await seedLiveCtx(5);
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email" as const, buyerIdentityValue: "live@test.com",
+        quantity: 1, unitPriceCents: 990,
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        amountCents: 990, currency: "cny" as const, provider: "alipay" as const,
+        notifyUrl: "https://cb.test", description: "限时抢购商品",
+      };
+      const order = await createPaymentOrder(db, orderInput, providerMock);
+      const [att] = await db.select({ id: paymentOrderAttempts.id }).from(paymentOrderAttempts).where(eq(paymentOrderAttempts.paymentOrderId, order.order.id)).limit(1);
+      // 回调金额 1000 ≠ 990 → 拒绝
+      const badCb = liveCbProvider(att!.id, 1000);
+      const result = await handlePaymentCallback(db, TENANT_ID, badCb, {});
+      expect(result.processed).toBe(false);
+      // 未发卡
+      const issued = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "issued")));
+      expect(issued).toHaveLength(0);
+    });
+
+    it("订单超时释放：超时 pending 订单释放名额与预占卡密，可被他人复用", async () => {
+      const { drawId, entryId } = await seedLiveCtx(5, 1);
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email" as const, buyerIdentityValue: "live@test.com",
+        quantity: 2, unitPriceCents: 990,
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        amountCents: 1980, currency: "cny" as const, provider: "alipay" as const,
+        notifyUrl: "https://cb.test", description: "限时抢购商品",
+      };
+      const order = await createPaymentOrder(db, orderInput, providerMock);
+      // 预占 2 张卡密
+      const reserved = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved")));
+      expect(reserved.length).toBe(2);
+
+      // 把订单改为超时（61 分钟前）
+      const past = new Date(Date.now() - 61 * 60_000).toISOString();
+      await db.update(paymentOrders).set({ createdAt: past }).where(eq(paymentOrders.id, order.order.id));
+      await db.update(paymentOrderAttempts).set({ createdAt: past }).where(eq(paymentOrderAttempts.paymentOrderId, order.order.id));
+
+      const count = await expireOverdueOrders(db, TENANT_ID);
+      expect(count).toBeGreaterThanOrEqual(1);
+
+      // 订单 → expired
+      const [expiredOrder] = await db.select({ status: paymentOrders.status }).from(paymentOrders).where(eq(paymentOrders.id, order.order.id));
+      expect(expiredOrder?.status).toBe("expired");
+      // entry → expired（名额释放）
+      const [entry] = await db.select({ paymentStatus: lotteryEntries.paymentStatus }).from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+      expect(entry?.paymentStatus).toBe("expired");
+      // 预占卡密释放回 available（可被他人复用）
+      const avail = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "available")));
+      expect(avail.length).toBe(5);
+      const remainingReserved = await db.select().from(prizeCodes).where(and(eq(prizeCodes.tenantId, TENANT_ID), eq(prizeCodes.status, "reserved")));
+      expect(remainingReserved).toHaveLength(0);
+      // 活动名额计数器已扣减（base 1 释放）
+      const [draw] = await db.select({ count: lotteryDraws.activeParticipantCount }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+      expect(draw?.count).toBe(0);
+    });
+
+    it("超时释放后同一身份可重新参与（复用原 entry 重新预约，不制造第二条参与记录）", async () => {
+      const { drawId, entryId } = await seedLiveCtx(5, 1);
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email" as const, buyerIdentityValue: "live@test.com",
+        quantity: 1, unitPriceCents: 990,
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        amountCents: 990, currency: "cny" as const, provider: "alipay" as const,
+        notifyUrl: "https://cb.test", description: "限时抢购商品",
+      };
+      const order = await createPaymentOrder(db, orderInput, providerMock);
+      const past = new Date(Date.now() - 61 * 60_000).toISOString();
+      await db.update(paymentOrders).set({ createdAt: past }).where(eq(paymentOrders.id, order.order.id));
+      await db.update(paymentOrderAttempts).set({ createdAt: past }).where(eq(paymentOrderAttempts.paymentOrderId, order.order.id));
+      await expireOverdueOrders(db, TENANT_ID);
+
+      // entry 已 expired，可重新参与（复用原 entry）
+      const [entry] = await db.select({ paymentStatus: lotteryEntries.paymentStatus }).from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+      expect(entry?.paymentStatus).toBe("expired");
+      // 重新预约：把 entry 从 expired 改回 reserved（模拟 joinDraw 的 reopened 分支）
+      await db.update(lotteryDraws).set({ activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + 1` })
+        .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, TENANT_ID)));
+      await db.update(lotteryEntries).set({ paymentStatus: "reserved" })
+        .where(and(eq(lotteryEntries.id, entryId), eq(lotteryEntries.paymentStatus, "expired")));
+      // 仍只有一条 entry（不制造第二条参与记录）
+      const entries = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+      expect(entries).toHaveLength(1);
     });
   });
 });
