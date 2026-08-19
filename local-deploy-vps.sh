@@ -27,12 +27,11 @@
 #   cd /root/cf-lottery
 #   tar -xzf /root/cf-lottery-deploy-YYYYMMDD-HHMMSS.tar.gz
 #   npm ci --omit=dev        # 若 SSH 不稳定，改用: nohup bash -c "npm ci --omit=dev && systemctl restart cf-lottery" > /tmp/deploy.log 2>&1 &
-#   install -m 0644 configs/cf-lottery-maintenance.service /etc/systemd/system/cf-lottery-maintenance.service
-#   install -m 0644 configs/cf-lottery-maintenance.timer /etc/systemd/system/cf-lottery-maintenance.timer
-#   systemctl daemon-reload
-#   systemctl enable --now cf-lottery-maintenance.timer
 #   systemctl restart cf-lottery
-# 注意：server.js 启动时自动执行数据库迁移，无需单独 npm run db:migrate
+#
+# 注意 1：本脚本上传前已在 VPS 执行 rm -rf public/assets（永久方案，docs/245），
+#   确保 tar 解压时不会累积旧 hash 文件，浏览器始终加载最新 chunk。
+# 注意 2：server.js 启动时自动执行数据库迁移，无需单独 npm run db:migrate
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -89,7 +88,10 @@ REMOTE_DIR="$(shell_quote "$VPS_PATH")"
 REMOTE_PACKAGE_PATH="$(shell_quote "${VPS_PATH%/}/$PACKAGE_FILE")"
 
 info "步骤 2/2：上传 $PACKAGE_FILE 到 $VPS_USER@$VPS_HOST:$VPS_PATH/ ..."
-ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "mkdir -p $REMOTE_DIR"
+# 清理旧 assets 后创建目录（永久方案，docs/245）：每次部署先清理 public/assets，
+# 避免 tar -xzf 解压到已有目录时旧 hash 文件累积，导致浏览器可能加载旧 chunk。
+# 本地构建脚本 build-for-vps.sh 已在构建前 rm -rf public/assets，此处确保 VPS 侧同步。
+ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "rm -rf ${REMOTE_DIR%/}/public/assets && mkdir -p $REMOTE_DIR"
 
 # 上传：cat + SSH pipe（scp 在部分 VPS 配置下存在连接重置问题）
 # 该 VPS SSH 会话不稳，加入自动重试（最多 3 次）+ 远端文件大小校验，防止半包误判成功
