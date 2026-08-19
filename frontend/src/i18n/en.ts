@@ -1302,7 +1302,7 @@ export default {
     adminFlashSaleCurrency: "Payment currency",
     adminFlashSalePaymentTitle: "Order title",
     adminFlashSaleImageUrl: "Product image URL",
-    adminFlashSaleImagePlaceholder: "https://img.example.com/product.jpg (blank = use traffic config image)",
+    adminFlashSaleImagePlaceholder: "https://img.example.com/product.jpg (blank = falls back to the activity prize image; the traffic-config image is only used in the post-join ad, never as the flash-sale product image)",
     adminFlashSaleDirectChecklistTitle: "Direct-pay publish checklist",
     adminFlashSaleDirectChecklistDesc: "Frontend hints only; server publish-check remains authoritative",
     adminFlashSaleChecklistProduct: "A safe traffic/purchase link is set (product link / destination / after_win)",

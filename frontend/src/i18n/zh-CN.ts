@@ -1275,7 +1275,7 @@ export default {
     adminFlashSaleCurrency: "支付币种",
     adminFlashSalePaymentTitle: "订单标题",
     adminFlashSaleImageUrl: "商品图片 URL",
-    adminFlashSaleImagePlaceholder: "https://img.example.com/product.jpg（留空则用导流配置的图片）",
+    adminFlashSaleImagePlaceholder: "https://img.example.com/product.jpg（留空则用活动奖品图兜底；导流配置的图片仅用于参与后的广告，不再作为秒杀商品图）",
     adminFlashSaleDirectChecklistTitle: "直付发布清单",
     adminFlashSaleDirectChecklistDesc: "前端仅提示关键项；最终仍以发布预检为准",
     adminFlashSaleChecklistProduct: "已配置安全的导流/购买链接（商品链接 / destination / after_win）",
