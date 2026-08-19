@@ -358,6 +358,25 @@
   .lottery-flash-merch-body {
     padding: 0 14px 14px;
   }
+  /* PC 端商品信息区左右分栏（docs/245）：左列标题+价格+剩余，右列购买件数控制。
+     用户反馈「剩余/购买件数/提示」太分散，应与「限时抢购商品 ¥9.90」同行。 */
+  .lottery-flash-merch-body {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "tags tags"
+      "title qty"
+      "bottom qty"
+      "pricing qty";
+    gap: 8px 20px;
+    align-items: start;
+  }
+  .lottery-flash-merch-tags { grid-area: tags; }
+  .lottery-flash-merch-title { grid-area: title; }
+  .lottery-flash-merch-bottom { grid-area: bottom; }
+  .lottery-flash-quantity { grid-area: qty; align-self: center; }
+  .lottery-flash-pricing { grid-area: pricing; }
+  .lottery-flash-purchase-availability { grid-area: pricing; }
 }
 .lottery-flash-merch-media {
   aspect-ratio: 1 / 1;
