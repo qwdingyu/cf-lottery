@@ -920,11 +920,13 @@ onMounted(refresh)
   }
   .category-bar::-webkit-scrollbar { display: none; }
   .cat-btn { flex: 0 0 auto; }
-  .shop-flash-hero { flex-wrap: nowrap; gap: 8px; }
-  /* 手机端 hero 不换行：badge + 标题 + 倒计时 + CTA 单行排布，
-     避免「限时抢购/本店1场秒杀」竖排导致区域过高（docs/244）。 */
-  .flash-hero-body { flex-direction: row; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-  .flash-hero-sub { flex-basis: 100%; }
+  .shop-flash-hero { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+  /* 手机端固定为「图标 / 文案 / 倒计时」三列，CTA 放到下一行，
+     防止 flex 子项被压到逐字换行，导致英雄区异常增高。 */
+  .flash-hero-body { min-width: 0; display: block; }
+  .flash-hero-title,
+  .flash-hero-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .flash-hero-sub { margin-top: 3px; }
   .flash-hero-countdown {
     flex: 1 1 auto;
     min-width: 132px;
@@ -933,7 +935,8 @@ onMounted(refresh)
     justify-content: space-between;
   }
   .flash-hero-cta {
-    flex: 1 0 112px;
+    grid-column: 2 / -1;
+    width: 100%;
     min-height: 36px;
   }
   .activity-row { grid-template-columns: 86px minmax(0, 1fr); gap: 10px; padding: 10px; }

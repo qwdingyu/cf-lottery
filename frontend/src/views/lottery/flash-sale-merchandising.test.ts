@@ -50,12 +50,44 @@ describe('flash-sale-merchandising', () => {
 
     expect(card).toMatchObject({
       title: '外部商城商品',
-      imageUrl: 'https://img.example.com/p.png',
+      imageUrl: '',
       priceText: '¥4.89',
       sessionLabel: '12:00场',
       isDirectPayment: false,
       hasExternalCheckout: true,
     })
+  })
+
+  it('productLink 的导流图片不会覆盖秒杀商品图片', () => {
+    const card = buildFlashSaleMerchCard({
+      title: '秒杀活动',
+      productTitle: '',
+      productLink: {
+        url: 'https://shop.example.com/p/1',
+        title: '导流商品',
+        imageUrl: 'https://img.example.com/promotion.png',
+        price: '¥299',
+      },
+      flashSale: {
+        enabled: true,
+        paymentRequired: false,
+        title: '秒杀商品',
+        imageUrl: '',
+        priceCents: null,
+        currency: 'cny',
+        sessionLabel: '12:00场',
+        stockLimit: 10,
+        maxPerUser: 1,
+        showCountdown: true,
+        showProgress: true,
+        showStock: true,
+        ctaLabel: '抢',
+        pricingTiers: [],
+      },
+      prizes: [],
+    }, () => '')
+
+    expect(card?.imageUrl).toBe('')
   })
 
   it('未启用秒杀壳时不渲染商品化抢购卡', () => {

@@ -1256,9 +1256,9 @@
 }
 @media (min-width: 821px) {
   .lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch {
-    grid-column: 1;
+    grid-column: 1 / -1;
     min-height: 250px;
-    margin-right: 12px;
+    margin-right: 22px;
   }
   .lottery-card--deep.lottery-card--flash-sale .lottery-flash-merch-media {
     align-self: stretch;
@@ -1266,6 +1266,7 @@
   .lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale {
     /* 游戏区跨整行（grid-column: 1 / -1 已在上面统一设置），
        不再作为右列窄框，改为与卡片同宽的独立区块。 */
+    grid-column: 1 / -1;
     margin: 16px 22px 0;
     padding: 18px 22px 22px;
     border: 1px solid rgba(244, 63, 94, 0.24);
@@ -1273,6 +1274,13 @@
     background: rgba(255, 255, 255, 0.035);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
   }
+}
+
+/* 桌面端邀请模块是活动卡的完整底栏，不能被 body 的两列商品布局挤进窄列。 */
+.lottery-card--deep.lottery-card--flash-sale .viral-section {
+  grid-column: 1 / -1;
+  width: auto;
+  margin: 16px 22px 4px;
 }
 .lottery-card--deep.lottery-card--flash-sale .lottery-game-area--flash-sale .flash-sale-game {
   max-width: none;

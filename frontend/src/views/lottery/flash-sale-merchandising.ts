@@ -51,11 +51,11 @@ export function buildFlashSaleMerchCard(
 
   return {
     title,
-    // 图片来源优先级（docs/245）：秒杀配置 imageUrl > 导流配置 productLink.imageUrl > 奖品图。
-    // 旧秒杀活动 flashSale.imageUrl 为空 → 回退 productLink.imageUrl，行为不变。
+    // 图片只属于秒杀商品配置，不再回退到 productLink.imageUrl。
+    // productLink 是参与后的外部导流广告，不能因为配置了导流图就改变秒杀主商品视觉。
+    // 旧活动没有独立秒杀图时，使用奖品图作为最后兜底；没有图片则由 UI 展示 SALE 占位。
     imageUrl: String(
       flashSale.imageUrl ||
-      productLink?.imageUrl ||
       draw.prizes?.find((item) => item.imageUrl)?.imageUrl ||
       '',
     ).trim(),
