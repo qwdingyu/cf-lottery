@@ -1229,7 +1229,7 @@ export default {
     adminInviteCodeCount: "生成邀请码数量",
     adminInviteCodeHint: "创建活动后将自动生成指定数量的邀请码，每码可使用 1 次",
     adminTrafficSection: "商品 / 导流配置",
-    adminTrafficSectionDesc: "关联商品卡；导流模式必填可下单链接",
+    adminTrafficSectionDesc: "免费活动参与后展示的导流商品卡；秒杀/批发模式商品图请用秒杀配置中的「商品图片」",
     adminEnableProductLink: "关联商品推广",
     // docs/130 秒杀壳管理端
     adminFlashSaleSection: "秒杀体验壳",
@@ -1274,6 +1274,8 @@ export default {
     adminFlashSalePricingTierHint: "达起购件数后整单按该档单价",
     adminFlashSaleCurrency: "支付币种",
     adminFlashSalePaymentTitle: "订单标题",
+    adminFlashSaleImageUrl: "商品图片 URL",
+    adminFlashSaleImagePlaceholder: "https://img.example.com/product.jpg（留空则用导流配置的图片）",
     adminFlashSaleDirectChecklistTitle: "直付发布清单",
     adminFlashSaleDirectChecklistDesc: "前端仅提示关键项；最终仍以发布预检为准",
     adminFlashSaleChecklistProduct: "已配置安全的导流/购买链接（商品链接 / destination / after_win）",

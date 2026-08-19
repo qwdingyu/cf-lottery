@@ -46,6 +46,8 @@ export type FlashSaleConfig = {
   currency: string;
   /** 秒杀商品标题（订单描述/展示） */
   title: string;
+  /** 秒杀商品图片 URL（docs/245：与导流配置 productLink.imageUrl 解耦） */
+  imageUrl: string;
   /**
    * 阶梯单价（分）。按 minQuantity 从小到大匹配，取不超过购买数量的最高阶梯。
    * 例：[{minQuantity: 1, unitPriceCents: 990}, {minQuantity: 10, unitPriceCents: 790}]
@@ -215,6 +217,7 @@ export function parseFlashSaleConfig(promotionConfig: unknown): FlashSaleParseRe
   }
   const currency = String(node.currency || "cny").toLowerCase().slice(0, 8);
   const title = String(node.title || "").trim().slice(0, 100);
+  const imageUrl = String(node.imageUrl ?? node.image_url ?? "").trim().slice(0, 500);
   const pricingTiers = parsePricingTiers(node, issues);
 
   const config: FlashSaleConfig = {
@@ -230,6 +233,7 @@ export function parseFlashSaleConfig(promotionConfig: unknown): FlashSaleParseRe
     priceCents,
     currency,
     title,
+    imageUrl,
     pricingTiers,
   };
 

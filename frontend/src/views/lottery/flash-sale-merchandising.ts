@@ -51,7 +51,14 @@ export function buildFlashSaleMerchCard(
 
   return {
     title,
-    imageUrl: String(productLink?.imageUrl || draw.prizes?.find((item) => item.imageUrl)?.imageUrl || '').trim(),
+    // 图片来源优先级（docs/245）：秒杀配置 imageUrl > 导流配置 productLink.imageUrl > 奖品图。
+    // 旧秒杀活动 flashSale.imageUrl 为空 → 回退 productLink.imageUrl，行为不变。
+    imageUrl: String(
+      flashSale.imageUrl ||
+      productLink?.imageUrl ||
+      draw.prizes?.find((item) => item.imageUrl)?.imageUrl ||
+      '',
+    ).trim(),
     priceText,
     sessionLabel: String(flashSale.sessionLabel || '').trim(),
     isDirectPayment,

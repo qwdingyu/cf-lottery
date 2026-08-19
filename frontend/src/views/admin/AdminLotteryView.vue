@@ -955,6 +955,10 @@
                           <span>{{ $t('lottery.adminFlashSalePaymentTitle') }}</span>
                           <input v-model="form.flashSaleTitle" maxlength="100" />
                         </label>
+                        <label class="field-span-2">
+                          <span>{{ $t('lottery.adminFlashSaleImageUrl') }}</span>
+                          <input v-model="form.flashSaleImageUrl" type="url" :placeholder="$t('lottery.adminFlashSaleImagePlaceholder')" />
+                        </label>
                       </div>
                     </template>
                     <!-- docs/222 P0 预览区：展示最终生效值（可售件数/限购/价格/阶梯/支付方式） -->
@@ -3749,6 +3753,7 @@ async function handleDuplicate(draw: LotteryDraw) {
     flashSalePriceCents: growth.flashSalePriceCents,
     flashSaleCurrency: growth.flashSaleCurrency || 'cny',
     flashSaleTitle: growth.flashSaleTitle || '',
+    flashSaleImageUrl: growth.flashSaleImageUrl || '',
     flashSalePricingTiers: growth.flashSalePricingTiers || [],
   }
   isEditing.value = false
@@ -4527,6 +4532,7 @@ async function handleEdit(draw: LotteryDraw) {
     flashSalePriceCents: growth.flashSalePriceCents,
     flashSaleCurrency: growth.flashSaleCurrency || 'cny',
     flashSaleTitle: growth.flashSaleTitle || '',
+    flashSaleImageUrl: growth.flashSaleImageUrl || '',
     flashSalePricingTiers: growth.flashSalePricingTiers || [],
   }
   isEditing.value = true

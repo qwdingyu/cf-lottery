@@ -79,6 +79,7 @@ export type GrowthFieldsFromDraw = {
   flashSalePriceCents: number | null
   flashSaleCurrency: string
   flashSaleTitle: string
+  flashSaleImageUrl: string
   flashSalePricingTiers: FlashSalePricingTier[]
   /** 是否已有增长配置：编辑时应用来展开高级区 */
   hasGrowthConfig: boolean
@@ -307,6 +308,7 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
   }
   const flashSaleCurrency = String(flashSale?.currency || 'cny').trim().toLowerCase().slice(0, 8) || 'cny'
   const flashSaleTitle = String(flashSale?.title || '').trim().slice(0, 100)
+  const flashSaleImageUrl = String(flashSale?.imageUrl ?? flashSale?.image_url ?? '').trim().slice(0, 500)
   const rawPricingTiers = flashSale?.pricingTiers ?? flashSale?.pricing_tiers
   const flashSalePricingTiers: FlashSalePricingTier[] = Array.isArray(rawPricingTiers)
     ? rawPricingTiers.slice(0, 8).flatMap((item) => {
@@ -413,6 +415,7 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
     flashSalePriceCents,
     flashSaleCurrency,
     flashSaleTitle,
+    flashSaleImageUrl,
     flashSalePricingTiers,
     hasGrowthConfig:
       enableProductLink ||
@@ -481,6 +484,7 @@ export function buildPromotionConfigPayload(form: {
   flashSalePriceCents?: number | null
   flashSaleCurrency?: string | null
   flashSaleTitle?: string | null
+  flashSaleImageUrl?: string | null
   flashSalePricingTiers?: FlashSalePricingTier[] | null
 }, opts: { isEditing: boolean }): Record<string, unknown> | undefined {
   const hasProduct = Boolean(form.enableProductLink && form.productLink?.url)
@@ -549,6 +553,7 @@ export function buildPromotionConfigPayload(form: {
     }
     const currency = String(form.flashSaleCurrency || 'cny').trim().toLowerCase().slice(0, 8) || 'cny'
     const title = String(form.flashSaleTitle || '').trim().slice(0, 100)
+    const imageUrl = String(form.flashSaleImageUrl || '').trim().slice(0, 500)
     const pricingTiers = Array.isArray(form.flashSalePricingTiers)
       ? form.flashSalePricingTiers
           .slice(0, 8)
@@ -581,6 +586,7 @@ export function buildPromotionConfigPayload(form: {
               ...(priceCents != null ? { priceCents } : {}),
               currency,
               ...(title ? { title } : {}),
+              ...(imageUrl ? { imageUrl } : {}),
               ...(salesMode === 'direct_bulk' && pricingTiers.length > 0 ? { pricingTiers } : {}),
             }
           : {}),

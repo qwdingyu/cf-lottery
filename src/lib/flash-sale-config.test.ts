@@ -298,7 +298,7 @@ describe("calculateFlashSalePrice", () => {
     const cfg = {
       enabled: true, sessionLabel: "", stockLimit: null, maxPerUser: 100,
       showCountdown: true, showProgress: true, showStock: true, ctaLabel: "抢",
-      paymentRequired: true, priceCents: 9900, currency: "cny", title: "",
+      paymentRequired: true, priceCents: 9900, currency: "cny", title: "", imageUrl: "",
       pricingTiers: [
         { minQuantity: 1, unitPriceCents: 9900, label: "原价" },
         { minQuantity: 100, unitPriceCents: 0, label: "免费" },

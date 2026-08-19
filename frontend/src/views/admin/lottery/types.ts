@@ -223,6 +223,7 @@ export type LotteryEditorForm = {
   flashSalePriceCents: number | null
   flashSaleCurrency: string
   flashSaleTitle: string
+  flashSaleImageUrl: string
   flashSalePricingTiers: Array<{ minQuantity: number; unitPriceCents: number; label: string }>
   /** 表单内按 kind 切换；模板直接读 fields/options，用 any 避免联合类型收窄失败 */
   activityConfig: any

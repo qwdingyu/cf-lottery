@@ -1256,7 +1256,7 @@ export default {
     adminInviteCodeCount: "Number of invite codes",
     adminInviteCodeHint: "Invite codes are generated after creation; each code can be used once",
     adminTrafficSection: "Product / traffic config",
-    adminTrafficSectionDesc: "Attach product card; traffic mode needs a purchasable URL",
+    adminTrafficSectionDesc: "Traffic product card shown after joining a free draw; for flash-sale/wholesale use the product image in the flash-sale config",
     adminEnableProductLink: "Linked product promotion",
     // docs/130 flash-sale admin
     adminFlashSaleSection: "Flash sale shell",
@@ -1301,6 +1301,8 @@ export default {
     adminFlashSalePricingTierHint: "At min quantity, whole order uses that tier price",
     adminFlashSaleCurrency: "Payment currency",
     adminFlashSalePaymentTitle: "Order title",
+    adminFlashSaleImageUrl: "Product image URL",
+    adminFlashSaleImagePlaceholder: "https://img.example.com/product.jpg (blank = use traffic config image)",
     adminFlashSaleDirectChecklistTitle: "Direct-pay publish checklist",
     adminFlashSaleDirectChecklistDesc: "Frontend hints only; server publish-check remains authoritative",
     adminFlashSaleChecklistProduct: "A safe traffic/purchase link is set (product link / destination / after_win)",

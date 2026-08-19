@@ -106,6 +106,7 @@ export type LotteryDraw = {
     pricingTiers?: Array<{ minQuantity?: number; unitPriceCents?: number; label?: string }>
     currency?: string
     title?: string
+    imageUrl?: string
     claimed?: number
     remaining?: number | null
     progressPercent?: number

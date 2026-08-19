@@ -46,6 +46,8 @@ export interface FlashSaleDisplay {
   stockLimit?: number | null
   effectiveStockLimit?: number | null
   maxPerUser?: number
+  /** 秒杀商品图片 URL（docs/245：与导流配置 productLink.imageUrl 解耦） */
+  imageUrl?: string
   showCountdown?: boolean
   showProgress?: boolean
   showStock?: boolean
