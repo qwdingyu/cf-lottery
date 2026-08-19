@@ -338,6 +338,27 @@
   border-radius: 12px;
   background: linear-gradient(135deg, rgba(244, 63, 94, .14), rgba(245, 158, 11, .08));
 }
+/* PC 端纵向布局（docs/245）：图片在上，商品信息在下（单列 grid）。
+   手机端保持纵向（媒体查询重写为 column）。 */
+@media (min-width: 821px) {
+  .lottery-flash-merch {
+    grid-template-columns: 1fr;
+    gap: 0;
+    margin: 14px 22px 0;
+    padding: 0;
+    border: none;
+    background: none;
+  }
+  .lottery-flash-merch-media {
+    aspect-ratio: 16 / 9;
+    max-height: 200px;
+    width: 100%;
+    border-radius: 10px 10px 0 0;
+  }
+  .lottery-flash-merch-body {
+    padding: 0 14px 14px;
+  }
+}
 .lottery-flash-merch-media {
   aspect-ratio: 1 / 1;
   min-width: 0;
