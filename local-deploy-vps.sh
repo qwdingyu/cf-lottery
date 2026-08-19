@@ -91,7 +91,8 @@ info "步骤 2/2：上传 $PACKAGE_FILE 到 $VPS_USER@$VPS_HOST:$VPS_PATH/ ..."
 # 清理旧 assets 后创建目录（永久方案，docs/245）：每次部署先清理 public/assets，
 # 避免 tar -xzf 解压到已有目录时旧 hash 文件累积，导致浏览器可能加载旧 chunk。
 # 本地构建脚本 build-for-vps.sh 已在构建前 rm -rf public/assets，此处确保 VPS 侧同步。
-ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "rm -rf ${REMOTE_DIR%/}/public/assets && mkdir -p $REMOTE_DIR"
+# 注意：部署目录是 /root/cf-lottery（不是 VPS_PATH=/root），要清理的是 /root/cf-lottery/public/assets。
+ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "rm -rf ${REMOTE_DIR%/}/cf-lottery/public/assets && mkdir -p $REMOTE_DIR"
 
 # 上传：cat + SSH pipe（scp 在部分 VPS 配置下存在连接重置问题）
 # 该 VPS SSH 会话不稳，加入自动重试（最多 3 次）+ 远端文件大小校验，防止半包误判成功
