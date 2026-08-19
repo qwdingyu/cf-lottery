@@ -1068,7 +1068,13 @@
               <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 {{ $t('lottery.shareActivityBtn') }}</button>
             </div>
             <div v-if="getResultCta(myResultDraw, 'after_win')" class="result-cta-card">
-              <a :href="getResultCta(myResultDraw, 'after_win')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
+              <a
+                :href="getResultCta(myResultDraw, 'after_win')!.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn btn-primary btn-sm"
+                @click="trackCtaClick(myResultDraw, 'after_win')"
+              >
                 {{ getResultCta(myResultDraw, 'after_win')!.title || $t('lottery.viewDetail') }}
               </a>
             </div>
@@ -1095,7 +1101,13 @@
             v-if="myResultFamily === 'lottery' && myResultData.joined !== false && !myResultData.won && isMyResultDrawFinal && getResultCta(myResultDraw, 'after_loss')"
             class="result-cta-card"
           >
-            <a :href="getResultCta(myResultDraw, 'after_loss')!.url" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm">
+            <a
+              :href="getResultCta(myResultDraw, 'after_loss')!.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn btn-primary btn-sm"
+              @click="trackCtaClick(myResultDraw, 'after_loss')"
+            >
               {{ getResultCta(myResultDraw, 'after_loss')!.title || $t('lottery.viewDetail') }}
             </a>
           </div>
@@ -3469,6 +3481,21 @@ function activityEventContext() {
     campaign: routeParam('utm_campaign'),
     refCode: routeParam('ref'),
   }
+}
+
+/**
+ * 记录导流卡点击事件（docs/246）：fire-and-forget，不阻塞跳转。
+ * 若 draw 未加载（如无 userData），静默跳过，用户跳转不受影响。
+ */
+function trackCtaClick(draw: LotteryDraw | null | undefined, mode: 'after_win' | 'after_loss') {
+  if (!draw?.id) return
+  const cta = getResultCta(draw, mode)
+  if (!cta?.url) return
+  void recordActivityEvent(draw.id, 'cta_click', {
+    mode,
+    url: cta.url,
+    title: cta.title || '',
+  })
 }
 
 async function recordActivityEvent(drawId: string, eventType: ActivityEventType, metadata?: Record<string, unknown>) {
