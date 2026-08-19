@@ -229,8 +229,10 @@ export function defaultOgImageUrl(pageUrl: string): string {
 }
 
 /**
- * 从活动配置中提取商品信息（productLink > promotionConfig.destination）。
+ * 从活动配置中提取商品信息（flashSale.imageUrl > productLink > promotionConfig.destination）。
  * 已移到 public-lottery-helpers，供 index.ts 社交爬虫和 public-lottery.ts OG 端点复用。
+ * docs/245：秒杀商品图与导流配置解耦——秒杀场景优先用 flashSale.imageUrl，
+ * 与活动页 buildFlashSaleMerchCard 的图片来源一致，避免店铺页/活动页显示不一致。
  */
 export function productFromPublicConfig(draw: {
   title: string;
@@ -242,9 +244,14 @@ export function productFromPublicConfig(draw: {
   const destination = promotion?.destination && typeof promotion.destination === "object" && !Array.isArray(promotion.destination)
     ? (promotion.destination as Record<string, unknown>)
     : null;
+  // 秒杀商品图优先（docs/245）：flashSale.imageUrl > productLink.imageUrl > destination.imageUrl
+  const flashSale = promotion?.flashSale && typeof promotion.flashSale === "object" && !Array.isArray(promotion.flashSale)
+    ? (promotion.flashSale as Record<string, unknown>)
+    : null;
+  const flashImage = String(flashSale?.imageUrl ?? flashSale?.image_url ?? "").trim();
   return {
-    title: String(productLink?.title || destination?.title || draw.title || "").trim(),
-    imageUrl: publicHttpUrl(productLink?.imageUrl || destination?.imageUrl),
+    title: String(flashSale?.title || productLink?.title || destination?.title || draw.title || "").trim(),
+    imageUrl: publicHttpUrl(flashImage || productLink?.imageUrl || destination?.imageUrl),
     priceText: String(productLink?.price || productLink?.priceText || destination?.priceText || "").trim(),
     url: publicHttpUrl(productLink?.url || destination?.url),
   };
