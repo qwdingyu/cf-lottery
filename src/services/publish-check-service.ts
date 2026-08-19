@@ -31,6 +31,7 @@ import {
 import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
 import { isViralEnabled } from "./lottery/viral-weight";
 import { normalizeDailyFreeSpinConfig, normalizePityConfig, normalizeReferralRewards } from "./lottery/spin-quota";
+import { normalizeReferralRewardDefs } from "./lottery/referral-rewards-engine";
 
 export type PublishCheckSection =
   | "basic"
@@ -694,6 +695,21 @@ async function validatePromotion(
     normalizeReferralRewards(referralRewards).length === 0
   ) {
     add(result.warnings, "promotion", "promotion.referralRewards.invalid_entries", "推荐里程碑配置了条目但全部无效（requireCount 需 1–100、rewardValue 需 1–1000 且类型为 bonus_spin），奖励不会发放");
+  }
+
+  // engine-powered 推荐奖励（docs/250）：referralRewardDefs 与 referralRewards 互斥。
+  // 两者共用 shareRecords.rewardMilestonesGranted 做幂等标记，但存储格式不同
+  // （referralRewards 存 requireCount 数值数组，referralRewardDefs 存 rewardId 字符串数组），
+  // 同时配置会导致双方互读对方的标记而误解，必须拦截。
+  const referralRewardDefs = promotionConfig?.referralRewardDefs;
+  const hasReferralRewards = Array.isArray(referralRewards) && referralRewards.length > 0;
+  const hasReferralRewardDefs = Array.isArray(referralRewardDefs) && referralRewardDefs.length > 0;
+  if (hasReferralRewards && hasReferralRewardDefs) {
+    add(result.errors, "promotion", "promotion.referralRewards.conflict", "不能同时配置 referralRewards 和 referralRewardDefs，请只保留一种推荐奖励配置");
+  }
+  // referralRewardDefs 全为无效项时 warning 告知（与 referralRewards.invalid_entries 同语义）
+  if (hasReferralRewardDefs && normalizeReferralRewardDefs(referralRewardDefs).length === 0) {
+    add(result.warnings, "promotion", "promotion.referralRewardDefs.invalid_entries", "推荐奖励配置了条目但全部无效（需包含 rewardId/type/target 且 rewardExit 为 bonus_spin 或 bonus_coupon），奖励不会发放");
   }
 
   // 裂变配置校验（P2 审查项：统一严格 ===true 判定，enabled="true" 字符串不视为启用）

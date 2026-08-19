@@ -29,6 +29,7 @@ import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
 import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
 import { computeViralSpinGrant, initialSpinsForJoin, normalizeReferralRewards, evaluateReferralMilestones, parseGrantedMilestones } from "./spin-quota";
 import { isViralEnabled } from "./viral-weight";
+import { processReferralRewardsEngine } from "./referral-rewards-engine";
 import { recordSpinLog } from "./spins-log";
 import {
   parseFlashSaleConfig,
@@ -749,6 +750,17 @@ async function maybeTriggerReward(
       await processReferralMilestoneRewards(tx, draw, attribution.shareRecordId);
     } catch (err) {
       console.error(`[lottery] processReferralMilestoneRewards failed for ${draw.id}:`, err);
+    }
+  }
+
+  // [4] engine-powered 推荐奖励（docs/250）：仅读取 referralRewardDefs，与 referralRewards 互斥。
+  // 与现有路径 [2] 同级，同一活动只会启用其中一个（发布预检拦截冲突）。
+  // 容错与 [2] 一致：try/catch 包裹，奖励失败不影响参与主流程。
+  if (attribution.shareRecordId) {
+    try {
+      await processReferralRewardsEngine(tx, draw, attribution.shareRecordId);
+    } catch (err) {
+      console.error(`[lottery] processReferralRewardsEngine failed for ${draw.id}:`, err);
     }
   }
 
