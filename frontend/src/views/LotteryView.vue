@@ -459,6 +459,7 @@
             :entry-id="resolveViralEntryId(draw)"
             :is-joined="isDrawJoined(draw)"
             :draw-status="draw.status"
+            :activity-kind="draw.activityKind"
             :viral-config="getDrawViral(draw)"
             @query-result="openMyResult(draw)"
           />

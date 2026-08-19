@@ -963,6 +963,7 @@ export default {
     gameSubmitJoined: "You're in",
     /** Extra draw weight — not another join (docs/108 / 115) */
     viralInviteHint: "+{n} draw tickets per successful invite (capped)",
+    viralSocialHint: "Invite friends and let the leaderboard show your influence",
     viralInvitedLabel: "Invited",
     viralMaxLabel: "Max extra tickets",
     /** Extra tickets earned (excludes base 1, docs/108) */

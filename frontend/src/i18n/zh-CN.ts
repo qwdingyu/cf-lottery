@@ -935,6 +935,7 @@ export default {
     gameSubmitJoined: "已成功参与",
     // 裂变：额外的是开奖加权票，不是「再参与一次」（docs/108 / 115）
     viralInviteHint: "每成功邀请 1 人，开奖时额外 +{n} 票（有上限）",
+    viralSocialHint: "邀请好友参与，排行榜见证你的号召力",
     viralInvitedLabel: "已邀请",
     viralMaxLabel: "额外票上限",
     /** 已赚取的额外加权票（不含基础 1，docs/108） */

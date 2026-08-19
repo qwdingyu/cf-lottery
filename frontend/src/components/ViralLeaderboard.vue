@@ -23,7 +23,8 @@
       <div v-if="showMyInviteBlock" class="my-viral-card" :class="{ 'my-viral-card--closed': !inviteOpen }">
         <div class="my-viral-head">
           <span class="my-viral-title">{{ $t('lottery.viralMyInvite') }}</span>
-          <span v-if="inviteOpen" class="my-viral-extra">{{ $t('lottery.viralInviteHint', { n: displayPerInvite }) }}</span>
+          <span v-if="inviteOpen && isLotteryKind" class="my-viral-extra">{{ $t('lottery.viralInviteHint', { n: displayPerInvite }) }}</span>
+          <span v-else-if="inviteOpen && !isLotteryKind" class="my-viral-extra">{{ $t('lottery.viralSocialHint') }}</span>
           <span v-else class="my-viral-extra my-viral-extra--muted">{{ $t('lottery.viralInviteClosedHint') }}</span>
         </div>
 
@@ -34,17 +35,18 @@
               <span class="my-viral-num">{{ effectiveStats.invitedCount }}</span>
               <span class="my-viral-label">{{ $t('lottery.viralInvitedLabel') }}</span>
             </div>
-            <div class="my-viral-stat">
+            <!-- 非 lottery 活动（秒杀/领券等）不展示额外票/权重（spins 专属语义，docs/246） -->
+            <div v-if="isLotteryKind" class="my-viral-stat">
               <span class="my-viral-num my-viral-num--extra">{{ effectiveStats.extraEntriesEarned }}</span>
               <span class="my-viral-label">{{ $t('lottery.viralExtraEarnedLabel') }}</span>
             </div>
-            <div class="my-viral-stat">
+            <div v-if="isLotteryKind" class="my-viral-stat">
               <span class="my-viral-num my-viral-num--weight">{{ effectiveStats.drawWeight }}</span>
               <span class="my-viral-label">{{ $t('lottery.viralDrawWeightLabel') }}</span>
             </div>
           </div>
 
-          <div class="my-viral-progress-wrap">
+          <div v-if="isLotteryKind" class="my-viral-progress-wrap">
             <div
               class="my-viral-progress"
               role="progressbar"
@@ -209,6 +211,7 @@ const props = defineProps<{
   isJoined?: boolean
   /** 活动 status：终态弱化邀请 CTA */
   drawStatus?: string | null
+  activityKind?: string | null
   viralConfig?: {
     enabled?: boolean
     extraEntriesPerInvite?: number
@@ -262,6 +265,8 @@ const inviteOpen = computed(() => {
   if (myStats.value?.inviteOpen === false) return false
   return inviteOpenByStatus.value
 })
+
+const isLotteryKind = computed(() => !props.activityKind || props.activityKind === 'lottery')
 
 const displayPerInvite = computed(() => {
   const fromStats = myStats.value?.extraEntriesPerInvite
