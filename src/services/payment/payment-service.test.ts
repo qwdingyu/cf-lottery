@@ -2707,5 +2707,38 @@ describe("支付并发安全性", () => {
       const [drawRow] = await db.select({ count: lotteryDraws.activeParticipantCount }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
       expect(drawRow?.count).toBe(2);
     });
+
+    it("重试支付：entry=reserved 且 quantity>1 时只补占 quantity-1（不重复计入已占的 1 份）", async () => {
+      const provider = uniqueTradeNoProvider();
+      const { drawId, entryId } = await seedLiveCtx(5, 1);
+      const orderInput = {
+        tenantId: TENANT_ID, drawId, entryId,
+        buyerIdentityType: "email" as const, buyerIdentityValue: "live@test.com",
+        quantity: 3, unitPriceCents: 990,
+        pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+        amountCents: 2970, currency: "cny" as const, provider: "alipay" as const,
+        notifyUrl: "https://cb.test", description: "限时抢购商品",
+      };
+      const order = await createPaymentOrder(db, orderInput, provider);
+      const past = new Date(Date.now() - 61 * 60_000).toISOString();
+      await db.update(paymentOrders).set({ createdAt: past }).where(eq(paymentOrders.id, order.order.id));
+      await db.update(paymentOrderAttempts).set({ createdAt: past }).where(eq(paymentOrderAttempts.paymentOrderId, order.order.id));
+      await expireOverdueOrders(db, TENANT_ID);
+
+      // joinDraw reopened 分支：活动计数 +1（占 1 份基础份额）+ entry expired → reserved
+      await db.update(lotteryDraws).set({ activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + 1` })
+        .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, TENANT_ID)));
+      await db.update(lotteryEntries).set({ paymentStatus: "reserved" })
+        .where(and(eq(lotteryEntries.id, entryId), eq(lotteryEntries.paymentStatus, "expired")));
+
+      // 重试：quantity=3，entry=reserved（已占 1 份）→ 只补占 2 份
+      const retried = await retryPaymentOrder(db, orderInput, provider, order.order.id);
+      expect(retried.order.status).toBe("pending");
+      const [entry] = await db.select({ paymentStatus: lotteryEntries.paymentStatus }).from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+      expect(entry?.paymentStatus).toBe("pending");
+      // 名额 = reopen 的 1 份 + 补占的 2 份 = 3（quantity），不得重复计入
+      const [drawRow] = await db.select({ count: lotteryDraws.activeParticipantCount }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
+      expect(drawRow?.count).toBe(3);
+    });
   });
 });
