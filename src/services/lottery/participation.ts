@@ -735,6 +735,14 @@ async function maybeTriggerReward(
 ) {
   if (!attribution.attributed || !attribution.sharerEntryId) return;
 
+  // ── 奖励触发条件差异（docs/254 审查确认）──
+  // 路径[1] grantViralSpinsToSharer：仅 resultMode === "instant" 触发（viral.extraSpinsPerInvite）
+  // 路径[2] processReferralMilestoneRewards：仅 instant + 有 shareRecordId（referralRewards）
+  // 路径[4] processReferralRewardsEngine：所有活动 + 有 shareRecordId（referralRewardDefs）
+  // 路径[1]/[2] 与路径[4] 的互斥由发布预检保证（referralRewards/referralRewardDefs 二选一，
+  // viral.extraSpinsPerInvite 与 referralRewardDefs 二选一），运行时不会同时触发两个加 spins 路径。
+  // 所有路径容错一致：try/catch 包裹，奖励失败不影响参与主流程（docs/116 容错原则）。
+
   // instant 裂变：有效 join → 邀请人 +spins（双封顶）；失败不回滚参与（docs/116）
   if (String(draw.resultMode || "") === "instant") {
     try {

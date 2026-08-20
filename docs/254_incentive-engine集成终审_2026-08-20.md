@@ -175,3 +175,44 @@ L3 监督 ───────────────────────�
 4. **UI 闭环**：L1 展示（won/未中奖都可见）+ L2 配置入口 + L2 可视化 全部就绪
 
 **剩余唯一 P2 项**（L1 自助核销优惠券）是现有优惠券系统的设计边界，涉及安全设计（验证码/OAuth），建议独立评估后再定。
+
+---
+
+## 九、第二轮终审（2026-08-20 追加）
+
+### 9.1 本轮发现并修复
+
+| # | 严重度 | 问题 | 修复 |
+|---|--------|------|------|
+| 1 | 🔴 | **registered 用户查券 bug**：`my-result` 用 identityValue（userId）匹配 recipientEmail，但发券存的是 users.email，永远匹配不上 | `my-result` 的 coupons 查询：user_id 身份用 email 匹配（`couponMatchKey`） |
+| 2 | 🟡 | **bonus_spin 审计缺失**：`grantBonusSpin` 只写 spins_log，不写 reward_earned，导致 L2 漏斗只统计 bonus_coupon | `grantBonusSpin` 补写 activityEvents（reward_earned） |
+| 3 | 🟢 | **hasGrowthConfig 缺 referralRewardDefs**：编辑时高级区不自动展开 | `hasGrowthConfig` 补 referralRewardDefs 检查 |
+| 4 | 🟢 | **advancedConfigSummary 缺芯片**：折叠摘要不显示引擎奖励 | 补 `adminChipReferralDefs` 芯片 + i18n |
+| 5 | 🟢 | **类型声明 nodeId 过严格**：声明 string，实际可能 null | 修正为 `string \| null` |
+
+### 9.2 新增测试
+
+- `auth-and-public.test.ts`：registered 用户查券（JWT 自签 + 完整链路）
+- `growth-config.test.ts`：4 个 referralRewardDefs 测试（parse/format/round-trip/非 instant）
+
+### 9.3 验证结果
+
+- **TypeScript**：0 errors
+- **vue-tsc**：0 errors
+- **全量测试**：96 文件、1402 测试全部通过，无回归
+
+### 9.4 最终闭环确认
+
+**referralRewardDefs 全链路闭环（含 P2 自助核销）已全部打通：**
+
+```
+L2 配置（UI textarea）→ 发布预检（白名单+适配性+冲突）→ L1 分享（?ref=）
+→ 归因（joinedCount+1）→ engine 计算（distributeByDefs）
+→ 发放（bonus_spin CAS+审计 / bonus_coupon CAS+recipientEmail+审计）
+→ L1 展示（coupons 数组 + spinsLeft，won/未中奖都可见）
+→ L1 自助核销（/public/coupons/redeem，归属+OTP+CAS）
+→ L2 可视化（reward_earned 漏斗 + 安慰券统计）
+→ L3 审计（activityEvents + spins_log）
+```
+
+**无剩余待办**。P2（L1 自助核销）已实施完毕，所有环节闭环。
