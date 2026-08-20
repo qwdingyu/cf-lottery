@@ -73,6 +73,16 @@ async function addManualTier(drawId: string, winnerCount = 1) {
   });
 }
 
+/** 导入租户级优惠券码池（coupon_codes 是租户级共享池，import API 从不写 draw_id） */
+async function addCoupons(total: number, label = "") {
+  for (let i = 0; i < total; i++) {
+    await client.execute({
+      sql: "INSERT INTO coupon_codes (id, tenant_id, code, label, status) VALUES (?, ?, ?, ?, ?)",
+      args: [crypto.randomUUID(), TENANT, `CPN-${label}-${i}-${crypto.randomUUID().slice(0, 6)}`, label, "available"],
+    });
+  }
+}
+
 async function addCodeTier(drawId: string, winnerCount: number, availableCodes: number) {
   const prizeId = crypto.randomUUID();
   await client.execute({
@@ -1430,6 +1440,135 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(warns[0]!.message).toContain("10");
     // 未超上限的条目不报
     expect(warns[0]!.message).not.toContain("small");
+  });
+
+  /**
+   * docs/255 §十七 R-7：bonus_coupon 券池预检必须查真实库存。
+   *
+   * 旧行为：只要有 bonus_coupon 出口就无条件 warning「请确保已导入券池」，
+   * 从不查 coupon_codes。已导入充足券池的租户每次发布都被同一条提示打扰，
+   * 运营被训练成"忽略这条 warning"——真的没券时也一并忽略，预检失去价值。
+   */
+  it("bonus_coupon 券池充足时不再无条件 warning（docs/255 R-7）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "inv", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    await addCoupons(3, "invite");
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(r.warnings.some((item) => item.code === "promotion.referralRewardDefs.bonus_coupon.need_pool")).toBe(false);
+  });
+
+  it("bonus_coupon 券池为空时按 label 聚合报 warning 并给出真实数量（docs/255 R-7）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "inv1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+          { rewardId: "inv2", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    // 只导入别的 label，目标 label 无码 → 运行时 grantBonusCoupon 按 label 过滤后取不到码
+    await addCoupons(5, "other");
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    const warns = r.warnings.filter((item) => item.code === "promotion.referralRewardDefs.bonus_coupon.need_pool");
+    // 同一 label 的多个奖励合并成一条，避免同一件事报 N 遍
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.message).toContain("invite");
+    expect(warns[0]!.message).toContain("0 张");
+    expect(warns[0]!.message).toContain("inv1");
+    expect(warns[0]!.message).toContain("inv2");
+  });
+
+  it("bonus_coupon 未指定 couponLabel 时按租户全池判定（docs/255 R-7）", async () => {
+    // 运行时 couponLabel 为空 → 不加 label 过滤，取任意 available 码，
+    // 因此预检也必须按"租户任意可用券"判定，不能按 label='' 判定。
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "any", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon" } },
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    await addCoupons(2, "other");
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(r.warnings.some((item) => item.code === "promotion.referralRewardDefs.bonus_coupon.need_pool")).toBe(false);
+  });
+
+  /**
+   * docs/255 §十七 R-8：安慰券（activityConfig.loserReward）预检从零到有。
+   *
+   * grantLoserRewards 只在 performDraw 里被调用，而 performDraw 对即时开奖模式
+   * 直接抛错「即时开奖活动请使用 spin，不能统一开奖」，因此即时活动上配置的
+   * loserReward 是永不生效的死配置——与已有的 bonus_spin.not_instant 同一类问题。
+   */
+  it("即时开奖活动配置安慰券 → 阻断（docs/255 R-8）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      activityConfig: JSON.stringify({ loserReward: { enabled: true, couponLabel: "sorry" } }),
+    });
+    await addManualTier(draw.id);
+    await addCoupons(5, "sorry");
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(r.errors.some((item) => item.code === "activity_config.loser_reward.instant_not_supported")).toBe(true);
+    expect(r.canPublish).toBe(false);
+  });
+
+  it("统一开奖活动的安慰券券池为空 → warning 给出真实数量（docs/255 R-8）", async () => {
+    const draw = makeDraw({
+      activityConfig: JSON.stringify({ loserReward: { enabled: true, couponLabel: "sorry" } }),
+    });
+    await addManualTier(draw.id);
+    await addCoupons(4, "other");
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    const warns = r.warnings.filter((item) => item.code === "activity_config.loser_reward.pool_empty");
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.message).toContain("sorry");
+    expect(warns[0]!.message).toContain("0 张");
+    // 券池是运营可后补的资源，不阻断发布
+    expect(r.errors.some((item) => item.code === "activity_config.loser_reward.pool_empty")).toBe(false);
+  });
+
+  it("统一开奖活动的安慰券券池充足 → 无提示（docs/255 R-8）", async () => {
+    const draw = makeDraw({
+      activityConfig: JSON.stringify({ loserReward: { enabled: true, couponLabel: "sorry" } }),
+    });
+    await addManualTier(draw.id);
+    await addCoupons(2, "sorry");
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(r.warnings.some((item) => item.code === "activity_config.loser_reward.pool_empty")).toBe(false);
+    expect(r.errors.some((item) => item.code === "activity_config.loser_reward.instant_not_supported")).toBe(false);
+  });
+
+  it("未启用安慰券时不做任何券池检查（docs/255 R-8）", async () => {
+    // 运行时 !loserReward?.enabled 直接 return，预检必须同样保持沉默
+    const draw = makeDraw({
+      activityConfig: JSON.stringify({ loserReward: { enabled: false, couponLabel: "sorry" } }),
+    });
+    await addManualTier(draw.id);
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(r.warnings.some((item) => item.code === "activity_config.loser_reward.pool_empty")).toBe(false);
+    expect(r.errors.some((item) => item.code === "activity_config.loser_reward.instant_not_supported")).toBe(false);
   });
 
   it("viral.extraSpinsPerInvite 与 referralRewardDefs 同时配置 → 阻断（docs/254 审查发现）", async () => {
