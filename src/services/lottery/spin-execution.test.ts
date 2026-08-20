@@ -7,6 +7,29 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { eq, and, sql, count } from "drizzle-orm";
+
+/**
+ * BUSY 重跑模拟开关（docs/255 §十七 R-9）。
+ *
+ * cf-core 的 withDbTransaction 在 SQLITE_BUSY/LOCKED 时**整体重跑回调**
+ * （src/db/client.ts retries=5），因此回调里累加的闭包状态会被重复计数——
+ * draw-execution.ts:238-245 的「F2 修复」注释记录的正是同一个陷阱。
+ * 开关关闭时完全透传真实实现，不影响本文件其余用例。
+ */
+const busyRetry = vi.hoisted(() => ({ enabled: false }));
+
+vi.mock("../../db/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../db/client")>();
+  return {
+    ...actual,
+    withDbTransaction: async (db: unknown, fn: unknown, options?: unknown) => {
+      const run = actual.withDbTransaction as unknown as (d: unknown, f: unknown, o?: unknown) => Promise<unknown>;
+      if (!busyRetry.enabled) return run(db, fn, options);
+      await run(db, fn, options);
+      return run(db, fn, options);
+    },
+  };
+});
 import { getTestDb, clearTestData } from "../../test-setup";
 import type { DbType } from "../../db/client";
 import type { Client } from "@libsql/client";
@@ -2300,5 +2323,44 @@ describe("grantLeaderboardRewards", () => {
     expect(log).toBeDefined();
     expect(log!.delta).toBe(2);
     expect(log!.refId).toBe("leaderboard:1:capped");
+  });
+
+  /**
+   * docs/255 §十七 R-9：发放报告必须对事务重跑免疫。
+   *
+   * granted/skipped/details 原先在 withDbTransaction 回调**内部**累加，
+   * 而 BUSY 时整个回调会被重跑：同一个分享者会被计两次（一次 granted、
+   * 一次幂等 skipped），运营在后台看到的发放条数比真实发放多。
+   * 这里模拟"回调被执行两次"，断言每个分享者在报告里只出现一次。
+   */
+  it("事务重跑时发放报告不重复计数（docs/255 R-9）", async () => {
+    const { id: drawId } = await seedLeaderboardDraw();
+    const s1 = await seedShareRecord(drawId, 10, TENANT);
+
+    const [draw] = await db
+      .select()
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.id, drawId))
+      .limit(1);
+
+    busyRetry.enabled = true;
+    let result: Awaited<ReturnType<typeof grantLeaderboardRewards>>;
+    try {
+      result = await grantLeaderboardRewards(db, draw!);
+    } finally {
+      busyRetry.enabled = false;
+    }
+
+    // 1 个有效分享者 → 报告里恰好 1 条明细，granted + skipped = 1
+    expect(result.details).toHaveLength(1);
+    expect(result.granted + result.skipped).toBe(1);
+
+    // 实际发放仍只发一次（CAS 幂等），报告口径必须与之一致
+    const [entry] = await db
+      .select({ spinsTotalGranted: lotteryEntries.spinsTotalGranted })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, s1.entryId))
+      .limit(1);
+    expect(Number(entry?.spinsTotalGranted ?? 0)).toBe(5);
   });
 });
