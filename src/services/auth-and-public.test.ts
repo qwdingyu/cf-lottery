@@ -1965,6 +1965,107 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/255 复审 B4：核销时的同码跨租户定界。
+   *
+   * couponCodes 唯一约束是 (tenantId, code)，同一个 code 可以存在于多个租户。
+   * 旧实现 `.where(eq(code)).limit(10)` 无 orderBy、不带租户：
+   * 同码行超过 10 个时，本人那一行可能根本不在结果集里（截断顺序由数据库任意决定），
+   * 合法持券人会永久核销失败。
+   *
+   * 修复后：带 slug 时按 slug → tenantId 收敛，且归属条件下推到 SQL，
+   * 不再依赖"取前 N 行再在内存里 find"。
+   */
+  it("L1 自助核销：同码在其它租户有 12 行时，本人凭 slug 仍能核销成功（B4）", async () => {
+    const app = createPublicTestApp();
+    const email = "b4-owner@test.com";
+    const drawId = crypto.randomUUID();
+    const plainOtp = "654321";
+    const SHARED_CODE = "COUPON-B4-CROSS-TENANT";
+
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: "b4-redeem-draw",
+        title: "跨租户同码核销", status: "drawn", participationMode: "open",
+        activityKind: "lottery", resultMode: "manual",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    // 先插 12 个其它租户的同码券（且同为 issued，确保旧实现的 issuedCandidate 前置检查会放行），
+    // 使本人那一行落在旧实现 .limit(10) 的截断之外。
+    const otherTenants = Array.from({ length: 12 }, (_, i) => `b4-other-tenant-${i}`);
+    await db.insert(tenants).values(otherTenants.map((id) => ({ id, name: id })));
+    await db.insert(couponCodes).values(otherTenants.map((tenantId) => ({
+      id: crypto.randomUUID(), tenantId, drawId: null,
+      code: SHARED_CODE, label: "other", status: "issued",
+      recipientEmail: `holder@${tenantId}.com`,
+    })));
+
+    // 本人的券最后插入
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: SHARED_CODE, label: "invite", status: "issued",
+      recipientEmail: email,
+    });
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(), email, drawId,
+      codeHash: await hashCode(plainOtp), expiresAt: futureTimeISO(10), used: 0,
+    });
+
+    const res = await app.request("/public/coupons/redeem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.81" },
+      body: JSON.stringify({ code: SHARED_CODE, email, otp: plainOtp, slug: "b4-redeem-draw" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.redeemed).toBe(true);
+    expect(body.label).toBe("invite");
+
+    // 只核销本人那一张，其它租户的同码券不受影响
+    const [mine] = await db.select().from(couponCodes)
+      .where(and(eq(couponCodes.tenantId, TENANT), eq(couponCodes.code, SHARED_CODE)));
+    expect(mine?.status).toBe("redeemed");
+    const others = await db.select().from(couponCodes)
+      .where(and(eq(couponCodes.code, SHARED_CODE), eq(couponCodes.tenantId, otherTenants[0]!)));
+    expect(others[0]?.status).toBe("issued");
+  });
+
+  /**
+   * docs/255 复审 B4：券只存在于其它租户时，带本租户 slug 必须是 404（不存在），
+   * 不能因为"别的租户有这个码且是 issued"而泄露该码的存在性
+   * （旧实现会先过 issuedCandidate 检查、再落到 403 归属失败，等于确认了码存在）。
+   */
+  it("L1 自助核销：券只存在于其它租户时，带本租户 slug 返回 404（B4 存在性泄露）", async () => {
+    const app = createPublicTestApp();
+    const email = "b4-probe@test.com";
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: "b4-probe-draw",
+        title: "存在性探测", status: "drawn", participationMode: "open",
+        activityKind: "lottery", resultMode: "manual",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(tenants).values({ id: "b4-foreign-tenant", name: "foreign" });
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: "b4-foreign-tenant", drawId: null,
+      code: "COUPON-B4-FOREIGN", label: "foreign", status: "issued",
+      recipientEmail: "someone-else@test.com",
+    });
+
+    const res = await app.request("/public/coupons/redeem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.82" },
+      body: JSON.stringify({ code: "COUPON-B4-FOREIGN", email, otp: "111111", slug: "b4-probe-draw" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(404);
+  });
+
+  /**
    * docs/254 端到端业务链路：A 分享 → B 通过 ?ref= 参与 → A 获奖励 → A 查券 → A 核销。
    *
    * 这是 referralRewardDefs 的完整业务闭环测试（非单方法测试）：
