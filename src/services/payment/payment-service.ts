@@ -477,25 +477,56 @@ async function armPaymentOrderForRetry(
       throw new Error("秒杀活动未配置可重试名额");
     }
 
-    // 过期 entry 已经被软释放，重试必须先通过活动计数器 CAS 重新预约名额。
-    // 不能先把 entry 改回 pending 再检查，否则并发下会把已释放名额重复占用。
-    const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
-    const reserved = await tx
-      .update(lotteryDraws)
-      .set({
-        activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + ${quantity}`,
-        updatedAt: sql`(datetime('now'))`,
-      })
+    // ── 重试时的名额补占计算（docs/255 §3.5 P0-1）──
+    // entry 的当前状态决定它此刻占用了几份名额（与 createPaymentOrder 的 base 1 语义一致）：
+    //   · EXPIRED  ：订单超时/取消时已软释放，占 0 份 → 本次需补占 quantity 份。
+    //   · RESERVED ：用户在超时后又调用 joinDraw 重新参与（reopened 分支已 +1），占 1 份
+    //                → 本次只需补占 quantity - 1 份，否则会把同一份名额重复计入（超发）。
+    // 其余状态（pending/paid）说明该 entry 另有生效中的订单，不允许在此重新预约。
+    const [entryState] = await tx
+      .select({ paymentStatus: lotteryEntries.paymentStatus })
+      .from(lotteryEntries)
       .where(and(
-        eq(lotteryDraws.id, input.drawId),
-        eq(lotteryDraws.tenantId, input.tenantId),
-        sql`${lotteryDraws.activeParticipantCount} + ${quantity} <= ${capacity}`,
+        eq(lotteryEntries.id, input.entryId),
+        eq(lotteryEntries.tenantId, input.tenantId),
+        eq(lotteryEntries.drawId, input.drawId),
       ))
-      .returning({ id: lotteryDraws.id });
-    if (reserved.length === 0) {
-      throw new Error("秒杀名额已被其他用户占用");
+      .limit(1);
+    if (!entryState) throw new Error("参与记录不存在");
+    const priorEntryStatus = entryState.paymentStatus;
+    if (
+      priorEntryStatus !== PAYMENT_ENTRY_STATUS.EXPIRED
+      && priorEntryStatus !== PAYMENT_ENTRY_STATUS.RESERVED
+    ) {
+      throw new Error("参与预约已失效，请重新参与");
     }
 
+    // 名额必须先通过活动计数器 CAS 预约，再改 entry 状态。
+    // 不能先把 entry 改回 pending 再检查，否则并发下会把已释放名额重复占用。
+    const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
+    const reserveQuantity = priorEntryStatus === PAYMENT_ENTRY_STATUS.RESERVED
+      ? quantity - 1
+      : quantity;
+    if (reserveQuantity > 0) {
+      const reserved = await tx
+        .update(lotteryDraws)
+        .set({
+          activeParticipantCount: sql`${lotteryDraws.activeParticipantCount} + ${reserveQuantity}`,
+          updatedAt: sql`(datetime('now'))`,
+        })
+        .where(and(
+          eq(lotteryDraws.id, input.drawId),
+          eq(lotteryDraws.tenantId, input.tenantId),
+          sql`${lotteryDraws.activeParticipantCount} + ${reserveQuantity} <= ${capacity}`,
+        ))
+        .returning({ id: lotteryDraws.id });
+      if (reserved.length === 0) {
+        throw new Error("秒杀名额已被其他用户占用");
+      }
+    }
+
+    // CAS 锁定读到的 entry 状态：若并发改变（如同时被 joinDraw / expireOverdueOrders 改写），
+    // 这里返回 0 行 → 抛错回滚，上面的名额补占一并撤销。
     const rearmedEntry = await tx
       .update(lotteryEntries)
       .set({ paymentStatus: PAYMENT_ENTRY_STATUS.PENDING })
@@ -503,7 +534,7 @@ async function armPaymentOrderForRetry(
         eq(lotteryEntries.id, input.entryId),
         eq(lotteryEntries.tenantId, input.tenantId),
         eq(lotteryEntries.drawId, input.drawId),
-        eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.EXPIRED),
+        eq(lotteryEntries.paymentStatus, priorEntryStatus),
       ))
       .returning({ id: lotteryEntries.id });
     if (rearmedEntry.length === 0) {
