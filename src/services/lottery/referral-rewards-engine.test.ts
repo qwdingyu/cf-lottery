@@ -655,4 +655,121 @@ describe("processReferralRewardsEngine", () => {
     // recipientEmail 应填充为分享者邮箱（seedSharer 用 sharer-xxx@test.com）
     expect(coupon?.recipientEmail).toMatch(/@test\.com$/);
   });
+
+  /**
+   * docs/255 复审 A4：bonus_coupon 部分发放（码池不足）不得写"已发满"标记。
+   *
+   * 反例（修复前）：配置发 3 张、码池只有 1 张 → 发 1 张后写 rewardMilestonesGranted=["c1"]，
+   * 运营补货后再也不会补发，运营承诺的 3 张永久只发出 1 张（静默少发）。
+   *
+   * 修复后：写部分标记 "c1:1"（已发张数），下次归因续发差额；
+   * 发满 3 张后才写成整标记 "c1"，之后不再发放（不会超发）。
+   */
+  it("bonus_coupon 部分发放：码池不足时写部分标记，补货后续发差额且总量精确", async () => {
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "c1", type: "FIXED", target: "SOURCE", fixedAmount: "3", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    await seedCoupon(db, drawId, "invite"); // 码池只有 1 张
+    const { shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+    const draw = { id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig };
+
+    await processReferralRewardsEngine(db, draw, shareRecordId);
+
+    // 只发出 1 张，标记为部分（不是整标记 "c1"）
+    let issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued).toHaveLength(1);
+    let [share] = await db.select().from(shareRecords).where(eq(shareRecords.id, shareRecordId));
+    let marks = JSON.parse(share?.rewardMilestonesGranted || "[]") as string[];
+    expect(marks).toContain("c1:1");
+    expect(marks).not.toContain("c1");
+
+    // 运营补 5 张货 → 下次归因只续发差额 2 张（总量 3，不超发）
+    await seedCoupon(db, drawId, "invite");
+    await seedCoupon(db, drawId, "invite");
+    await seedCoupon(db, drawId, "invite");
+    await seedCoupon(db, drawId, "invite");
+    await seedCoupon(db, drawId, "invite");
+    await processReferralRewardsEngine(db, draw, shareRecordId);
+
+    issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued).toHaveLength(3);
+    [share] = await db.select().from(shareRecords).where(eq(shareRecords.id, shareRecordId));
+    marks = JSON.parse(share?.rewardMilestonesGranted || "[]") as string[];
+    // 已发满 → 整标记，部分标记被替换
+    expect(marks).toContain("c1");
+    expect(marks).not.toContain("c1:3");
+
+    // 第三次归因：已发满，不再发放
+    await processReferralRewardsEngine(db, draw, shareRecordId);
+    issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued).toHaveLength(3);
+  });
+
+  it("bonus_coupon 一次发满：直接写整标记，不留部分标记", async () => {
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "c2", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    await seedCoupon(db, drawId, "invite");
+    await seedCoupon(db, drawId, "invite");
+    const { shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+
+    const issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued).toHaveLength(2);
+    const [share] = await db.select().from(shareRecords).where(eq(shareRecords.id, shareRecordId));
+    expect(JSON.parse(share?.rewardMilestonesGranted || "[]")).toEqual(["c2"]);
+  });
+
+  it("存量整标记（旧格式 rewardId）仍然生效：不因新增部分标记格式而重复发放", async () => {
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "c3", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    await seedCoupon(db, drawId, "invite");
+    await seedCoupon(db, drawId, "invite");
+    const { shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+    // 模拟存量数据：旧版本只写整标记
+    await db.update(shareRecords)
+      .set({ rewardMilestonesGranted: JSON.stringify(["c3"]) })
+      .where(eq(shareRecords.id, shareRecordId));
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+
+    const issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued).toHaveLength(0);
+  });
+
+  it("码池全空：不写任何标记（保持可重试），补货后仍能足额发放", async () => {
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "c4", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    const { shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+    const draw = { id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig };
+
+    await processReferralRewardsEngine(db, draw, shareRecordId);
+    const [share] = await db.select().from(shareRecords).where(eq(shareRecords.id, shareRecordId));
+    expect(JSON.parse(share?.rewardMilestonesGranted || "[]")).toEqual([]);
+
+    await seedCoupon(db, drawId, "invite");
+    await seedCoupon(db, drawId, "invite");
+    await processReferralRewardsEngine(db, draw, shareRecordId);
+    const issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued).toHaveLength(2);
+  });
 });

@@ -115,16 +115,27 @@ export async function grantBonusSpin(
 }
 
 /**
+ * 单次归因最多发放的优惠券张数（防单次归因一次性抽干码池）。
+ *
+ * 注意这是"每次调用的速率上限"，不是奖励总量上限：
+ * 调用方（referral-rewards-engine）按 rewardId 记录已发张数，
+ * 配置 amount > 本上限时会在后续归因中续发差额，最终仍会足额发满。
+ */
+export const MAX_COUPON_PER_GRANT = 10;
+
+/**
  * 发放 bonus_coupon（优惠券码）给分享者。
  *
  * 复用 grantLoserRewards 的 CAS 发券模式：
  * 从 couponCodes 表中取一张 available 的码，CAS 更新为 issued。
  * rowsAffected=0 时表示码已被其他请求占用，跳过本次。
  *
- * ⚠️ 码池耗尽场景（docs/254 审查确认）：
- * 若租户无可用券（或指定 couponLabel 无券），返回 false，调用方不标记幂等。
- * 这意味着每次归因都会重新尝试发券——但不会超发（没券发不出），
- * 只是运营需补充码池后，后续归因才能补发。这是"宁可重试、不可误发"的权衡。
+ * ⚠️ 码池耗尽 / 部分发放（docs/254 审查确认 + docs/255 复审 A4）：
+ * 本函数返回"实际发出的张数"，由调用方决定幂等标记怎么写：
+ * - 0 张（码池空）→ 调用方不标记，保持可重试
+ * - 1..target-1 张（码池不足）→ 调用方写部分标记（已发张数），下次归因续发差额
+ * - target 张 → 调用方写整标记，之后不再发放
+ * 这样既不会静默少发（补货后能续发），也不会超发（差额精确）。
  *
  * @param tx 事务实例
  * @param tenantId 租户 ID
@@ -132,6 +143,8 @@ export async function grantBonusSpin(
  * @param sharerEntryId 分享者 entryId（用于 recipient 追踪）
  * @param couponLabel 优惠券 label（为空时取任意 available 码）
  * @param rewardId 奖励 ID（用于审计）
+ * @param amount 本次期望发放张数（会被 MAX_COUPON_PER_GRANT 裁剪）
+ * @returns 实际发出的张数（0 表示一张都没发出）
  */
 export async function grantBonusCoupon(
   tx: DbType,
@@ -141,11 +154,9 @@ export async function grantBonusCoupon(
   couponLabel: string | undefined,
   rewardId: string,
   amount = 1,
-): Promise<boolean> {
-  // 数量语义（docs/255 P2-2）：amount 为配置的发放张数，循环发 min(amount, 上限) 张。
+): Promise<number> {
+  // 数量语义（docs/255 P2-2）：amount 为本次期望发放张数，循环发 min(amount, 上限) 张。
   // 修复前恒发 1 张（UI 允许 3:bonus_coupon:5 但实际只发 1 张，运营看到的和实际发的永久不一致）。
-  // 上限常量防单次归因一次性消耗过多码池（防刷）。
-  const MAX_COUPON_PER_GRANT = 10;
   const target = Math.max(1, Math.min(Math.floor(Number(amount) || 1), MAX_COUPON_PER_GRANT));
 
   // 解析分享者 recipientEmail（docs/252 §2.3 修复）：
@@ -241,5 +252,5 @@ export async function grantBonusCoupon(
     }
   }
 
-  return issuedCount > 0;
+  return issuedCount;
 }

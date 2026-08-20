@@ -261,6 +261,11 @@ export function collectReferralRewardDefIssues(raw: unknown): Array<{ rewardId: 
 /**
  * 解析已发放的 rewardId 列表（JSON 数组，容错：非法回退空集）。
  * 与现有路径 [2] 的 parseGrantedMilestones 语义一致，但存储的是 rewardId 字符串而非 requireCount 数值。
+ *
+ * 标记有两种形态（docs/255 复审 A4）：
+ * - 整标记 `rewardId`：该奖励已足额发完，之后不再发放
+ * - 部分标记 `rewardId:N`：该奖励只发出了 N 份（码池不足），后续归因续发差额
+ * 旧版本只写整标记，格式向后兼容。
  */
 function parseGrantedRewardIds(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -271,6 +276,34 @@ function parseGrantedRewardIds(raw: string | null | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * 把幂等标记拆成"已发满"集合与"部分已发"计数表。
+ *
+ * `rewardId:N` 形式（N 为正整数）视为部分标记；其余一律视为整标记，
+ * 因此 rewardId 自身含冒号时只会被当成整标记，不会误判成部分（保守方向：不重复发）。
+ */
+function splitGrantedMarks(marks: string[]): { full: Set<string>; partial: Map<string, number> } {
+  const full = new Set<string>();
+  const partial = new Map<string, number>();
+  for (const mark of marks) {
+    const idx = mark.lastIndexOf(":");
+    const suffix = idx > 0 ? mark.slice(idx + 1) : "";
+    if (idx > 0 && /^\d+$/.test(suffix) && Number(suffix) > 0) {
+      const rewardId = mark.slice(0, idx);
+      // 同一 rewardId 出现多个部分标记时取最大值（保守方向：不重复发）
+      partial.set(rewardId, Math.max(partial.get(rewardId) ?? 0, Number(suffix)));
+    } else {
+      full.add(mark);
+    }
+  }
+  return { full, partial };
+}
+
+/** 生成本次要写入的标记 token：发满写整标记，未发满写 `rewardId:已发数` */
+function buildGrantedMark(rewardId: string, issuedTotal: number, target: number): string {
+  return issuedTotal >= target ? rewardId : `${rewardId}:${issuedTotal}`;
 }
 
 /**
@@ -356,9 +389,10 @@ async function aggregateSharerData(
  * @param tenantId 租户 ID
  * @param drawId 活动 ID
  * @param recordIds 该分享者名下全部 share_record id 列表
- * @param currentGranted 当前已发放的 rewardId 列表（快照，用于计算新值）
- * @param newRewardId 本次新发放的 rewardId
- * @param oldValues 各 record 当前的 rewardMilestonesGranted 值（CAS 条件的基准）
+ * @param currentGranted 当前已发放的标记列表（快照，用于计算新值）
+ * @param newMark 本次要写入的标记（整标记 `rewardId` 或部分标记 `rewardId:N`）
+ * @param rewardId 本次奖励的 rewardId（用于清掉它的旧标记，避免 `c1:1` 与 `c1` 并存）
+ * @param currentValues 各 record 当前的 rewardMilestonesGranted 值（CAS 条件的基准）
  *   与 recordIds 一一对应，在 aggregateSharerData 阶段读取
  * @returns 全部 record 标记成功返回 true，任一失败返回 false
  */
@@ -366,10 +400,19 @@ async function markRewardIdsGranted(
   tx: DbType,
   recordIds: string[],
   currentGranted: string[],
-  newRewardId: string,
+  newMark: string,
+  rewardId: string,
   currentValues: string[],
 ): Promise<boolean> {
-  const nextGranted = [...new Set([...currentGranted, newRewardId])].sort();
+  // 先剔除同一 rewardId 的旧标记（整标记与任意部分标记），再写入本次标记，
+  // 保证同一 rewardId 在列表里只有一条、且始终是最新进度。
+  const stale = new Set<string>([rewardId]);
+  const kept = currentGranted.filter((mark) => {
+    if (stale.has(mark)) return false;
+    const idx = mark.lastIndexOf(":");
+    return !(idx > 0 && mark.slice(0, idx) === rewardId && /^\d+$/.test(mark.slice(idx + 1)));
+  });
+  const nextGranted = [...new Set([...kept, newMark])].sort();
   const nextGrantedJson = JSON.stringify(nextGranted);
 
   for (let i = 0; i < recordIds.length; i++) {
@@ -464,8 +507,10 @@ export async function processReferralRewardsEngine(
   // 第三重（总量约束）：maxSpins 总顶裁剪 / couponCodes 码池可用性
   // 三层独立保护，任何一层失效时仍有其他层兜底，不会超发。
   const maxSpins = Math.max(0, Math.floor(Number(draw.maxSpinsPerEntry || 0)));
-  // 当前已发放的 rewardId 集合（从全部 share_record 的 rewardMilestonesGranted 聚合而来）
-  const alreadyGranted = new Set(sharer.grantedRewardIds);
+  // 当前标记：full = 已足额发完；partial = 已发出的份数（码池不足时的续发进度，docs/255 A4）
+  const { full: fullyGranted, partial: partiallyGranted } = splitGrantedMarks(sharer.grantedRewardIds);
+  // 标记列表快照（写入时会剔除同 rewardId 的旧标记后重建）
+  let grantedMarks = [...sharer.grantedRewardIds];
 
   // 关键约束（docs/251 §2.3）：bonus_spin 出口只对 lottery + instant 有效。
   // performInstantSpin 严格限制 activityKind === "lottery"（spin-execution.ts:70），
@@ -484,9 +529,10 @@ export async function processReferralRewardsEngine(
   for (const record of records) {
     const rewardId = String(record.rewardId || "");
     if (!rewardId) continue;
-    // 幂等检查（第一重防护）：已发放的 rewardId 直接跳过，
+    // 幂等检查（第一重防护）：已足额发完的 rewardId 直接跳过，
     // 防止同一里程碑在同一分享者身上重复计算（如多次 join 触发同一奖励）。
-    if (alreadyGranted.has(rewardId)) continue;
+    // 部分标记（rewardId:N）不跳过——它表示"还差几份"，本次归因续发差额。
+    if (fullyGranted.has(rewardId)) continue;
 
     // 从原始 rewardDef 读取 metadata：
     // 注意！incentive-engine 的 distributeByDefs 输出 record.snapshot 只包含计算字段
@@ -504,21 +550,42 @@ export async function processReferralRewardsEngine(
     // 每个出口内部都有独立的 CAS 防护（第二重）：
     // - grantBonusSpin：spinsTotalGranted 乐观锁（行级）
     // - grantBonusCoupon：couponCodes.status='available' 原子更新
-    // 奖励失败（如码池耗尽、spins 已达上限）返回 false，不抛异常。
-    let success = false;
+    // 奖励失败（如码池耗尽、spins 已达上限）不抛异常，只是发不出去。
+    //
+    // newMark 语义（docs/255 复审 A4）：
+    // - bonus_spin：maxSpins 裁剪是活动硬顶，发少了也不该续发（续发会突破硬顶），
+    //   因此成功即写整标记
+    // - bonus_coupon：码池不足属临时缺货，写部分标记 `rewardId:已发份数`，
+    //   补货后下次归因续发差额；发满才写整标记
+    let newMark: string | null = null;
     switch (exit) {
-      case "bonus_spin":
-        success = await grantBonusSpin(
+      case "bonus_spin": {
+        const ok = await grantBonusSpin(
           tx, draw.tenantId, draw.id,
           sharer.sharerEntryId, amount, maxSpins, rewardId,
         );
+        if (ok) newMark = rewardId;
         break;
-      case "bonus_coupon":
-        success = await grantBonusCoupon(
+      }
+      case "bonus_coupon": {
+        const target = Math.max(1, amount);
+        const alreadyIssued = partiallyGranted.get(rewardId) ?? 0;
+        const remaining = target - alreadyIssued;
+        if (remaining <= 0) {
+          // 运营把张数改小了：已发的比现配置还多 → 直接收敛为整标记，不再发放
+          newMark = rewardId;
+          break;
+        }
+        const issued = await grantBonusCoupon(
           tx, draw.tenantId, draw.id,
-          sharer.sharerEntryId, meta.couponLabel, rewardId, amount,
+          sharer.sharerEntryId, meta.couponLabel, rewardId, remaining,
         );
+        if (issued > 0) {
+          newMark = buildGrantedMark(rewardId, alreadyIssued + issued, target);
+        }
+        // issued === 0（码池空）：不写任何标记，保持可重试
         break;
+      }
       default:
         // 未知奖励出口（白名单校验已拦截，这里是防御性兜底）
         break;
@@ -528,14 +595,24 @@ export async function processReferralRewardsEngine(
     // 用 CAS 条件（rewardMilestonesGranted == 旧值）防止并发覆盖。
     // mark 失败时（CAS 冲突），grant 已由上游的 CAS 防护，不会重复发放，
     // 只是下次归因需要多一次 CAS 检查。见 docs/252 §2.1。
-    if (success) {
+    if (newMark) {
       const markOk = await markRewardIdsGranted(
-        tx, sharer.recordIds, [...alreadyGranted], rewardId, sharer.oldValues,
+        tx, sharer.recordIds, grantedMarks, newMark, rewardId, sharer.oldValues,
       );
       if (markOk) {
-        alreadyGranted.add(rewardId);
+        // 同步内存快照：同事务内后续 rewardId 的标记要基于最新列表计算
+        grantedMarks = [
+          ...grantedMarks.filter((m) => m !== rewardId && !(m.startsWith(`${rewardId}:`))),
+          newMark,
+        ];
+        if (newMark === rewardId) {
+          fullyGranted.add(rewardId);
+          partiallyGranted.delete(rewardId);
+        } else {
+          partiallyGranted.set(rewardId, Number(newMark.slice(rewardId.length + 1)));
+        }
       }
-      // mark 失败时不加 alreadyGranted：下次归因 engine 会再次返回该 rewardId，
+      // mark 失败时不更新内存快照：下次归因 engine 会再次返回该 rewardId，
       // 但 grant 层的 CAS 会阻止重复发放（spinsTotalGranted / couponCodes.status）。
       // 这是"best effort"标记的权衡——宁可多一次 CAS 检查，不可多写一条误标记。
     }
