@@ -14,6 +14,7 @@ import {
   lotteryInviteCodes,
   lotteryPrizeTiers,
   lotteryRosterMembers,
+  couponCodes,
   prizeCodes,
   prizes,
   tenantConfigs,
@@ -761,6 +762,8 @@ async function validatePromotion(
     const validDefs = validReferralRewardDefs;
     const isLotteryKind = draw.activityKind === "lottery";
     const isInstantMode = isInstantResultMode(draw.resultMode);
+    /** couponLabel（""=不限 label）→ 使用该券池的 rewardId 列表，循环结束后按池统一查库存 */
+    const couponPoolUsage = new Map<string, string[]>();
     for (const def of validDefs) {
       const meta = (def.metadata || {}) as Record<string, unknown>;
       const exit = String(meta.rewardExit || "bonus_spin");
@@ -771,7 +774,14 @@ async function validatePromotion(
         add(result.errors, "promotion", "promotion.referralRewardDefs.bonus_spin.not_instant", `推荐奖励 ${def.rewardId} 使用 bonus_spin 出口，但当前结果模式不是 instant，delayed 模式无 spins 体系，奖励不会发放`);
       }
       if (exit === "bonus_coupon") {
-        add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_coupon.need_pool", `推荐奖励 ${def.rewardId} 使用 bonus_coupon 出口，请确保租户已导入优惠券码池（coupon_codes），否则奖励静默不发`);
+        // docs/255 §十七 R-7：先按券池（couponLabel）聚合，循环结束后再查真实库存。
+        // 旧实现在这里无条件 warning「请确保已导入券池」而从不查 coupon_codes：
+        // 已导足券的租户次次被同一条提示打扰，运营被训练成忽略它，
+        // 真的没券时也一并忽略——预检变成噪音就等于没有预检。
+        const couponLabel = String(meta.couponLabel || "");
+        const usedBy = couponPoolUsage.get(couponLabel);
+        if (usedBy) usedBy.push(def.rewardId);
+        else couponPoolUsage.set(couponLabel, [def.rewardId]);
         // 单次发放上限提示（docs/255 复审 B5）：grantBonusCoupon 每次调用最多发
         // MAX_COUPON_PER_GRANT 张（防单次归因把码池抽空），差额由后续归因按
         // 部分标记 `rewardId:N` 续发。FIXED 的张数在配置期即已确定，可提前告知；
@@ -781,6 +791,13 @@ async function validatePromotion(
           add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_coupon.exceeds_per_grant", `推荐奖励 ${def.rewardId} 配置 ${fixedShares} 张券，超过单次发放上限 ${MAX_COUPON_PER_GRANT} 张：一次归因只发 ${MAX_COUPON_PER_GRANT} 张，剩余张数会在该分享者后续被归因时续发`);
         }
       }
+    }
+
+    // 按券池一次性查库存：同一 label 的多个奖励合并为一条提示，并给出真实张数。
+    for (const [couponLabel, rewardIds] of couponPoolUsage) {
+      const available = await countAvailableCoupons(db, tenantId, couponLabel);
+      if (available > 0) continue;
+      add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_coupon.need_pool", `推荐奖励（${rewardIds.join("、")}）使用 bonus_coupon 出口，但券池${describeCouponPool(couponLabel)}当前可用 ${available} 张，奖励会静默不发，请先导入优惠券码`);
     }
   }
 
@@ -969,6 +986,56 @@ async function validateWebhooks(db: DbType, tenantId: string, result: PublishChe
   }
 }
 
+/**
+ * 统计租户当前可用（status=available）的优惠券张数。
+ *
+ * 必须与运行时取码条件严格一致，否则会出现"预检说有券、开奖发不出"或反向误报：
+ * - grantBonusCoupon（reward-exits.ts:198-205）与 grantLoserRewards（draw-execution.ts:823-828）
+ *   都只按 tenant + status='available' 过滤，couponLabel 为空时**不加** label 条件（取任意券）；
+ * - 两处都不看 expires_at，所以这里也不能自行加过期过滤（宁可与运行时同错，不可口径分叉）。
+ */
+async function countAvailableCoupons(db: DbType, tenantId: string, couponLabel: string): Promise<number> {
+  const conditions = [eq(couponCodes.tenantId, tenantId), eq(couponCodes.status, "available")];
+  if (couponLabel) conditions.push(eq(couponCodes.label, couponLabel));
+  const [row] = await db.select({ total: count() }).from(couponCodes).where(and(...conditions));
+  return Number(row?.total || 0);
+}
+
+function describeCouponPool(couponLabel: string): string {
+  return couponLabel ? `（label="${couponLabel}"）` : "（未指定 label，按租户全部可用券统计）";
+}
+
+/**
+ * 未中奖安慰券（activityConfig.loserReward）预检（docs/255 §十七 R-8）。
+ *
+ * 此前该配置**完全没有**发布预检：开启后配一个空券池的 label，发布一路绿灯，
+ * 开奖时静默零发放——运营以为"没中奖的人都收到了券"，实际一张也没发。
+ *
+ * 两条判定都严格对齐运行时 grantLoserRewards（draw-execution.ts:754-834）：
+ * - 启用判定用 truthy（`!loserReward?.enabled` 的等价否定），不是 ===true；
+ * - 即时开奖模式永不生效：grantLoserRewards 的唯一调用点是 performDraw（:407），
+ *   而 performDraw 对即时模式直接抛「即时开奖活动请使用 spin，不能统一开奖」（:69-79），
+ *   spin 链路完全不碰 coupon_codes。属死配置，与 bonus_spin.not_instant 同级按 error 拦截。
+ */
+async function validateLoserReward(db: DbType, tenantId: string, draw: LotteryDraw, result: PublishCheckResult) {
+  const config = parseJsonObject(draw.activityConfig);
+  const raw = config?.loserReward;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+  const loserReward = raw as Record<string, unknown>;
+  if (!loserReward.enabled) return;
+
+  if (isInstantResultMode(draw.resultMode)) {
+    add(result.errors, "activity_config", "activity_config.loser_reward.instant_not_supported", "未中奖安慰券仅支持统一开奖模式：即时开奖（result_mode=instant）走 spin 链路，不会执行安慰券发放，配置后一张券都不会发");
+    return;
+  }
+
+  // 券池可后补（开奖前导入即可生效），因此只 warning 不阻断发布。
+  const couponLabel = String(loserReward.couponLabel || "");
+  const available = await countAvailableCoupons(db, tenantId, couponLabel);
+  if (available > 0) return;
+  add(result.warnings, "activity_config", "activity_config.loser_reward.pool_empty", `未中奖安慰券已开启，但券池${describeCouponPool(couponLabel)}当前可用 ${available} 张，开奖时不会发出任何安慰券，请先导入优惠券码`);
+}
+
 function validateActivityConfig(draw: LotteryDraw, result: PublishCheckResult) {
   const validation = validateActivityConfigForPublish(draw.activityKind, draw.activityConfig);
   for (const item of validation.issues) {
@@ -997,6 +1064,7 @@ export async function buildPublishCheckForDraw(
   await validatePromotion(db, tenantId, draw, result, options);
   await validateWebhooks(db, tenantId, result);
   validateActivityConfig(draw, result);
+  await validateLoserReward(db, tenantId, draw, result);
 
   result.canPublish = result.errors.length === 0;
   return result;
