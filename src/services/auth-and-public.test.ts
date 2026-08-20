@@ -1860,6 +1860,158 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/254 端到端业务链路：A 分享 → B 通过 ?ref= 参与 → A 获奖励 → A 查券 → A 核销。
+   *
+   * 这是 referralRewardDefs 的完整业务闭环测试（非单方法测试）：
+   * - 通过 HTTP join 路由触发引擎（participation.ts 内自动归因 + processReferralRewardsEngine）
+   * - 验证 bonus_spin 发放给 A（spinsLeft +N）
+   * - 验证 bonus_coupon 发放给 A（couponCodes issued + recipientEmail）
+   * - A 查 my-result 看到 coupons
+   * - A 自助核销优惠券
+   */
+  it("端到端：A 分享 → B 经 ref 参与 → A 获 bonus_spin + bonus_coupon → A 查券 → A 核销", async () => {
+    const app = createPublicTestApp();
+    const emailA = "chain-a@test.com";
+    const emailB = "chain-b@test.com";
+    const drawId = crypto.randomUUID();
+    const slug = "chain-draw";
+    // 关闭邮箱 OTP（测试环境）
+    await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+    // 创建含 referralRewardDefs 的 instant lottery 活动（bonus_spin + bonus_coupon 混合）
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: slug,
+        title: "端到端链路", status: "open", participationMode: "open",
+        activityKind: "lottery", experienceType: "wheel", resultMode: "instant",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+        winnerCount: 1, maxSpinsPerEntry: 10,
+        promotionConfig: JSON.stringify({
+          version: 1,
+          referralRewardDefs: [
+            {
+              rewardId: "invite_1_spin", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+              conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "1" }],
+              metadata: { rewardExit: "bonus_spin" },
+            },
+            {
+              rewardId: "invite_1_coupon", type: "FIXED", target: "SOURCE", fixedAmount: "1",
+              conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "1" }],
+              metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" },
+            },
+          ],
+        }),
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    // 优惠券码池（bonus_coupon 出口需要）
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "CHAIN-COUPON-1", label: "invite", status: "available",
+    });
+
+    // 1. A 参与（open 模式，免 OTP）
+    const joinA = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.80" },
+      body: JSON.stringify({ email: emailA }),
+    }, TEST_ENV);
+    expect(joinA.status).toBe(200);
+    const joinABody = await joinA.json() as any;
+    expect(joinABody.ok).toBe(true);
+    const entryAId = joinABody.entryId;
+    // 记录 A 参与后的初始 spins（instant lottery 有初始 spins）
+    const [entryAInit] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryAId));
+    const initSpins = Number(entryAInit?.spinsTotalGranted ?? 0);
+
+    // 2. A 生成分享码
+    const shareRes = await app.request(`/public/draws/${slug}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.80" },
+      body: JSON.stringify({ entryId: entryAId }),
+    }, TEST_ENV);
+    expect(shareRes.status).toBe(200);
+    const shareBody = await shareRes.json() as any;
+    expect(shareBody.ok).toBe(true);
+    const shareUrl = String(shareBody.shareUrl || "");
+    const refMatch = shareUrl.match(/ref=([^&]+)/);
+    expect(refMatch).toBeTruthy();
+    const refCode = refMatch![1]!;
+
+    // 3. B 通过 ?ref= 参与（触发归因 + 引擎）
+    const joinB = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.81" },
+      body: JSON.stringify({ email: emailB, refCode }),
+    }, TEST_ENV);
+    expect(joinB.status).toBe(200);
+    const joinBBody = await joinB.json() as any;
+    expect(joinBBody.ok).toBe(true);
+
+    // 4. 断言 A 获得 bonus_spin（spinsTotalGranted 增加 2）
+    const [entryA] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryAId));
+    expect(Number(entryA?.spinsTotalGranted ?? 0)).toBe(initSpins + 2);
+    expect(Number(entryA?.spinsLeft ?? 0)).toBe(initSpins + 2);
+
+    // 5. 断言 A 获得 bonus_coupon（couponCodes issued + recipientEmail）
+    const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.code, "CHAIN-COUPON-1"));
+    expect(coupon?.status).toBe("issued");
+    expect(coupon?.recipientEmail).toBe(emailA);
+
+    // 6. A 查 my-result 看到 coupons（走 JWT 免 OTP）
+    const tokenA = await signJwt({ sub: crypto.randomUUID(), tenantId: TENANT, email: emailA }, TEST_ENV.JWT_SECRET, 3600);
+    const myResult = await app.request(`/public/draws/${slug}/my-result`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${tokenA}`,
+        "CF-Connecting-IP": "10.0.0.80",
+      },
+      body: JSON.stringify({ email: emailA, code: "" }),
+    }, TEST_ENV);
+    expect(myResult.status).toBe(200);
+    const myResultBody = await myResult.json() as any;
+    expect(Array.isArray(myResultBody.coupons)).toBe(true);
+    expect(myResultBody.coupons).toContain("CHAIN-COUPON-1");
+    expect(Number(myResultBody.spinsLeft ?? 0)).toBe(initSpins + 2);
+
+    // 7. A 自助核销优惠券（email + OTP 模式，open 用户）
+    //    手动 seed A 的 OTP（模拟 A 通过 access-code 获取验证码）
+    const plainOtp = "654321";
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email: emailA,
+      drawId,
+      codeHash: await hashCode(plainOtp),
+      expiresAt: futureTimeISO(10),
+      used: 0,
+    });
+    const redeemRes = await app.request("/public/coupons/redeem", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "CF-Connecting-IP": "10.0.0.80",
+      },
+      body: JSON.stringify({ code: "CHAIN-COUPON-1", email: emailA, otp: plainOtp }),
+    }, TEST_ENV);
+    expect(redeemRes.status).toBe(200);
+    const redeemBody = await redeemRes.json() as any;
+    expect(redeemBody.ok).toBe(true);
+    expect(redeemBody.redeemed).toBe(true);
+
+    // 8. 重复核销 → 400（CAS）
+    const repeatRes = await app.request("/public/coupons/redeem", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "CF-Connecting-IP": "10.0.0.80",
+      },
+      body: JSON.stringify({ code: "CHAIN-COUPON-1", email: emailA, otp: plainOtp }),
+    }, TEST_ENV);
+    expect(repeatRes.status).toBe(400);
+  });
+
+  /**
    * docs/099：share 的 entryId 必须属于本活动。
    */
   it("share：entry 不属于本活动则 404；属于则发码成功", async () => {
