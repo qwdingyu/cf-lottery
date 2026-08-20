@@ -63,6 +63,9 @@ export type GrantLeaderboardResult = {
   details: Array<{ rank: number; entryId: string; rewardValue: number; status: "granted" | "skipped" }>;
 };
 
+/** 单个分享者的事务内判定结果（事务外据此累加报告，见 R-9 注释） */
+type GrantVerdict = { status: "granted" | "skipped"; rewardValue: number };
+
 /**
  * 分享者聚合信息：邀请总人数 + 最早分享时间（同票先到先得）+ 名下全部 share_record id（幂等标记目标）。
  */
@@ -167,8 +170,14 @@ export async function grantLeaderboardRewards(
       continue;
     }
 
-    // 事务内：先查该分享者名下是否已有任何记录被标记（幂等），无则全部标记 + 发放
-    await withDbTransaction(db, async (tx) => {
+    // 事务内：先查该分享者名下是否已有任何记录被标记（幂等），无则全部标记 + 发放。
+    //
+    // 报告口径（docs/255 §十七 R-9）：回调只返回本次判定，granted/skipped/details
+    // 一律在事务**外**累加。cf-core 的 withDbTransaction 在 SQLITE_BUSY/LOCKED 时
+    // 整体重跑回调（src/db/client.ts retries=5），若在回调内 result.granted++，
+    // 重跑会把同一个分享者计两次（第一次 granted、重跑因已标记 skipped），
+    // 后台看到的发放条数多于真实发放——draw-execution.ts:238-245 的「F2 修复」同类陷阱。
+    const verdict = await withDbTransaction(db, async (tx): Promise<GrantVerdict> => {
       // 重新读取该分享者的记录（事务内快照最新，防止并发下读到旧标记状态）
       const records = await tx
         .select({ id: shareRecords.id, leaderboardRewardedAt: shareRecords.leaderboardRewardedAt })
@@ -179,15 +188,11 @@ export async function grantLeaderboardRewards(
           eq(shareRecords.sharerEntryId, sharerEntryId),
         ));
       if (records.length === 0) {
-        result.skipped++;
-        result.details.push({ rank, entryId: sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
-        return;
+        return { status: "skipped", rewardValue: rewardCfg.rewardValue };
       }
       // 任一记录已标记 → 该分享者已发放过，跳过（幂等）
       if (records.some((r) => String(r.leaderboardRewardedAt || "") !== "")) {
-        result.skipped++;
-        result.details.push({ rank, entryId: sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
-        return;
+        return { status: "skipped", rewardValue: rewardCfg.rewardValue };
       }
 
       // CAS：全部记录 leaderboardRewardedAt 仍为空才标记；rowsAffected 必须等于记录数
@@ -202,9 +207,7 @@ export async function grantLeaderboardRewards(
         ));
       if ((marked.rowsAffected ?? 0) !== records.length) {
         // 并发下部分记录已被其他请求标记 → 放弃本次（防重复发放）
-        result.skipped++;
-        result.details.push({ rank, entryId: sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
-        return;
+        return { status: "skipped", rewardValue: rewardCfg.rewardValue };
       }
 
       // 读取分享者 entry（含当前 granted，用于 maxSpins 裁剪与审计）
@@ -224,9 +227,7 @@ export async function grantLeaderboardRewards(
         .limit(1);
       if (!entry) {
         // entry 不存在（已删除）→ 不发放，但记录已标记；状态 skipped 提示运营
-        result.skipped++;
-        result.details.push({ rank, entryId: sharerEntryId, rewardValue: rewardCfg.rewardValue, status: "skipped" });
-        return;
+        return { status: "skipped", rewardValue: rewardCfg.rewardValue };
       }
 
       // maxSpins 总顶裁剪（P0 防 API 直写超大 rewardValue 把 granted 推爆）：
@@ -268,9 +269,12 @@ export async function grantLeaderboardRewards(
         });
       }
 
-      result.granted++;
-      result.details.push({ rank, entryId: sharerEntryId, rewardValue: actual, status: "granted" });
+      return { status: "granted", rewardValue: actual };
     });
+
+    if (verdict.status === "granted") result.granted++;
+    else result.skipped++;
+    result.details.push({ rank, entryId: sharerEntryId, rewardValue: verdict.rewardValue, status: verdict.status });
   }
 
   return result;
