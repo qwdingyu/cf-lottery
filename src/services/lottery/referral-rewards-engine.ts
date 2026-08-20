@@ -280,7 +280,14 @@ export async function processReferralRewardsEngine(
   if (records.length === 0) return;
 
   // 4. 幂等过滤 + 5. 执行奖励 + 6. 标记幂等
+  // ── 三重防超发架构（docs/254 §3.1）──
+  // 第一重（幂等层）：rewardMilestonesGranted 列表判断，同一 rewardId 只发放一次
+  // 第二重（出口 CAS）：grantBonusSpin 的 spinsTotalGranted 乐观锁 /
+  //                    grantBonusCoupon 的 couponCodes.status CAS
+  // 第三重（总量约束）：maxSpins 总顶裁剪 / couponCodes 码池可用性
+  // 三层独立保护，任何一层失效时仍有其他层兜底，不会超发。
   const maxSpins = Math.max(0, Math.floor(Number(draw.maxSpinsPerEntry || 0)));
+  // 当前已发放的 rewardId 集合（从全部 share_record 的 rewardMilestonesGranted 聚合而来）
   const alreadyGranted = new Set(sharer.grantedRewardIds);
 
   // 关键约束（docs/251 §2.3）：bonus_spin 出口只对 lottery + instant 有效。
@@ -300,10 +307,14 @@ export async function processReferralRewardsEngine(
   for (const record of records) {
     const rewardId = String(record.rewardId || "");
     if (!rewardId) continue;
-    // 幂等检查：已发放则跳过
+    // 幂等检查（第一重防护）：已发放的 rewardId 直接跳过，
+    // 防止同一里程碑在同一分享者身上重复计算（如多次 join 触发同一奖励）。
     if (alreadyGranted.has(rewardId)) continue;
 
-    // 从原始 rewardDef 读取 metadata（engine 的 snapshot 不透传 metadata）
+    // 从原始 rewardDef 读取 metadata：
+    // 注意！incentive-engine 的 distributeByDefs 输出 record.snapshot 只包含计算字段
+    // （rewardId/rewardType/target/rate/fixedAmount/sourceNodeId），不透传 rewardDef 的
+    // metadata。因此必须用 rewardId → rewardDef 映射从原始配置读取 rewardExit/couponLabel。
     const def = defByRewardId.get(rewardId);
     const meta = ((def?.metadata || {}) as ReferralRewardMeta);
     const exit = meta.rewardExit || "bonus_spin";
@@ -312,6 +323,11 @@ export async function processReferralRewardsEngine(
     // 非 lottery 类型 + bonus_spin 出口 → 跳过（见上方约束注释）
     if (exit === "bonus_spin" && !isLotteryKind) continue;
 
+    // 按 rewardExit 分发到具体奖励出口。
+    // 每个出口内部都有独立的 CAS 防护（第二重）：
+    // - grantBonusSpin：spinsTotalGranted 乐观锁（行级）
+    // - grantBonusCoupon：couponCodes.status='available' 原子更新
+    // 奖励失败（如码池耗尽、spins 已达上限）返回 false，不抛异常。
     let success = false;
     switch (exit) {
       case "bonus_spin":
@@ -327,7 +343,7 @@ export async function processReferralRewardsEngine(
         );
         break;
       default:
-        // 未知奖励出口，跳过
+        // 未知奖励出口（白名单校验已拦截，这里是防御性兜底）
         break;
     }
 

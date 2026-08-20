@@ -163,7 +163,10 @@ export async function grantBonusCoupon(
     }
   }
 
-  // CAS 原子发放：仅当仍为 available 时更新为 issued，并记录领取人
+  // CAS 原子发放（第二重防超发）：仅当仍为 available 时更新为 issued，并记录领取人。
+  // 关键：WHERE 带 status='available' 条件——并发下两个请求同时读到同一张 available 券时，
+  // 只有一个 UPDATE 能命中（rowsAffected=1），另一个 rowsAffected=0 返回 false 跳过。
+  // 这保证同一张优惠券码绝不会发给两个用户（超发防护）。
   const result = await tx
     .update(couponCodes)
     .set({
