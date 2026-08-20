@@ -1791,6 +1791,84 @@ describe("最大参与人数和参与时间", () => {
     expect(entries[0]?.paymentStatus).toBe("reserved");
   });
 
+  it("直付秒杀 expired entry 只要存在任一不可重试订单就阻断（最新订单是 cancelled 也不放行）", async () => {
+    // docs/255 复审 A3：V2 是 1:N 订单模型，"取最新一条订单判断"会被后来的
+    // cancelled/expired 订单掩盖历史 paid 订单——用户已付过钱，却被允许重新预约，
+    // 于是同一 entry 上再生成一笔订单，出现重复收款/重复发卡的资金风险。
+    // 正确语义：只要该 entry 名下存在任一不可重试状态（paid / pending /
+    // paid_late_needs_refund / refunded ...）的订单，就必须阻断并转人工。
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "直付历史已付订单阻断",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      participationMode: "open",
+      winnerCount: 0,
+      maxParticipants: 5,
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 5,
+          priceCents: 9900,
+          currency: "cny",
+        },
+      }),
+    });
+
+    // 直接置 open：本例只验证订单阻断分支，不需要完整发布前检流程
+    await db.update(lotteryDraws).set({ status: "open" }).where(eq(lotteryDraws.id, id));
+
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId: id,
+      identityType: "email",
+      identityValue: "paid-then-cancelled@test.com",
+      paymentStatus: "expired",
+      joinedAt: now.toISOString(),
+    });
+    // 旧订单已支付（不可重试），新订单已取消（可重试）
+    await db.insert(paymentOrders).values([
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId: id,
+        entryId,
+        buyerIdentityType: "email",
+        buyerIdentityValue: "paid-then-cancelled@test.com",
+        amountCents: 9900,
+        status: "paid",
+        provider: "easypay",
+        createdAt: new Date(now.getTime() - 7200_000).toISOString(),
+      },
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId: id,
+        entryId,
+        buyerIdentityType: "email",
+        buyerIdentityValue: "paid-then-cancelled@test.com",
+        amountCents: 9900,
+        status: "cancelled",
+        provider: "easypay",
+        createdAt: new Date(now.getTime() - 60_000).toISOString(),
+      },
+    ]);
+
+    const result = await joinDraw(db, publicSlug, "paid-then-cancelled@test.com");
+    expect(result.joined).toBe(false);
+    expect((result as { alreadyJoined?: boolean }).alreadyJoined).toBe(true);
+    expect(result.message).toContain("支付记录");
+    // 不得新增第二条 entry
+    const entries = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, id));
+    expect(entries).toHaveLength(1);
+  });
+
   it("取消直付秒杀会原子释放未支付预约并终止继续支付", async () => {
     const now = new Date();
     const future = new Date(now.getTime() + 3600000);

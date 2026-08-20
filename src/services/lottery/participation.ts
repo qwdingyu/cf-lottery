@@ -10,7 +10,7 @@ import type { DbType, DbWriteScope } from "../../db/client";
 import { isFlashSaleExperience } from "../../lib/activity-utils";
 import { withDbTransaction } from "../../db/client";
 import { todayStr } from "../../lib/date-utils";
-import { and, eq, inArray, sql, asc, desc, max } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql, asc, max } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
@@ -37,7 +37,7 @@ import {
 } from "../../lib/flash-sale-config";
 import { parseActivityOperationalConfig } from "../../lib/activity-config";
 import {
-  isRetryablePaymentOrderStatus,
+  RETRYABLE_PAYMENT_ORDER_STATUSES,
   PAYMENT_ENTRY_STATUS,
 } from "../payment/payment-status";
 import { DRAW_STATUS } from "./types";
@@ -227,18 +227,22 @@ export async function joinDraw(
           };
         }
         if (existingPaymentEntry?.paymentStatus === PAYMENT_ENTRY_STATUS.EXPIRED) {
-          const [existingOrder] = await tx
+          // docs/255 P2-8 + 复审 A3：V2 是 1:N 订单模型，判断必须是
+          // "存在任一不可重试订单就阻断"，而不是"取最新一条订单看是否可重试"。
+          // 反例：旧订单 paid（用户已付钱） + 新订单 cancelled，按最新一条会放行，
+          // 于是同一 entry 上再生成一笔订单 → 重复收款 / 重复发卡。
+          // 因此直接用 NOT IN (可重试终态) 探测是否存在任一"付款事实已发生或仍在进行"的订单。
+          const [blockingOrder] = await tx
             .select({ status: paymentOrders.status })
             .from(paymentOrders)
             .where(and(
               eq(paymentOrders.tenantId, draw.tenantId),
               eq(paymentOrders.drawId, draw.id),
               eq(paymentOrders.entryId, existingPaymentEntry.id),
+              notInArray(paymentOrders.status, [...RETRYABLE_PAYMENT_ORDER_STATUSES]),
             ))
-            // docs/255 P2-8：V2 1:N 订单模型下取最新订单（createdAt desc），避免 .limit(1) 结果不确定
-            .orderBy(desc(paymentOrders.createdAt))
             .limit(1);
-          if (existingOrder && !isRetryablePaymentOrderStatus(existingOrder.status)) {
+          if (blockingOrder) {
             return {
               joined: false,
               message: "该参与已有支付记录，请联系客服处理",
