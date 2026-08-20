@@ -1783,11 +1783,9 @@ describe("公开参与流程", () => {
         body: JSON.stringify(body),
       }, TEST_ENV);
 
-    // 1. 他人邮箱核销 → 400（OTP 验证先于归属校验：他人邮箱无有效 OTP，验证码无效）
-    //    安全说明：攻击者即使知道券码，用自己邮箱+自己 OTP 会通过 OTP 验证，
-    //    但归属校验（recipientEmail 不匹配）会拦截返回 403（见下方第 4 步）。
+    // 1. 他人邮箱核销 → 403（归属校验：recipientEmail 不匹配，在 OTP 验证前拦截）
     const otherRes = await doRedeem({ code: "COUPON-REDEEM-1", email: otherEmail, otp: plainOtp });
-    expect(otherRes.status).toBe(400);
+    expect(otherRes.status).toBe(403);
 
     // 2. 本人 + 正确 OTP → 成功
     const okRes = await doRedeem({ code: "COUPON-REDEEM-1", email, otp: plainOtp });

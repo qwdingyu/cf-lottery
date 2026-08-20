@@ -210,9 +210,45 @@ L2 配置（UI textarea）→ 发布预检（白名单+适配性+冲突）→ L1
 → 归因（joinedCount+1）→ engine 计算（distributeByDefs）
 → 发放（bonus_spin CAS+审计 / bonus_coupon CAS+recipientEmail+审计）
 → L1 展示（coupons 数组 + spinsLeft，won/未中奖都可见）
-→ L1 自助核销（/public/coupons/redeem，归属+OTP+CAS）
+→ L1 自助核销（/public/coupons/redeem，归属+OTP/JWT+CAS）
 → L2 可视化（reward_earned 漏斗 + 安慰券统计）
 → L3 审计（activityEvents + spins_log）
 ```
 
 **无剩余待办**。P2（L1 自助核销）已实施完毕，所有环节闭环。
+
+---
+
+## 十、第三轮终审（2026-08-20 追加）
+
+### 10.1 本轮发现并修复
+
+| # | 严重度 | 问题 | 修复 |
+|---|--------|------|------|
+| 1 | 🔴 | **registered 用户核销缺口**：`access-code` 端点对 registered 不生成 OTP，registered 用户（JWT 登录）无法用 P2 核销 API 核销 | `/public/coupons/redeem` 支持两种身份验证：email+OTP 或 JWT（验证 JWT → 查 users.email → 跳 OTP） |
+| 2 | 🟢 | **归属校验顺序**：P2 核销改支持 JWT 后，归属校验需在身份验证后执行（用 verifiedEmail） | 增加初步归属校验（请求体 email）+ 最终归属校验（verifiedEmail），保持他人邮箱立即 403 |
+
+### 10.2 审查确认（前两轮补充）
+
+- **maybeTriggerReward 路径交互**：路径 [1][2][3][4] 互斥由发布预检保证，运行时不会同时触发两个加 spins 路径，容错一致（try/catch）
+- **幂等边界**：`aggregateSharerData` 按分享者聚合全部 shareRecord，`markRewardIdsGranted` 标记全部记录（按分享者幂等）
+- **P2 核销与 L2 核销一致性**：都是 CAS 更新（status → redeemed），L1 多了归属校验（仅核销自己的券）+ 身份验证（OTP/JWT）
+
+### 10.3 新增测试
+
+- `auth-and-public.test.ts`：registered 用户 JWT 核销成功 + 重复核销失败
+
+### 10.4 验证结果
+
+- **TypeScript**：0 errors
+- **全量测试**：96 文件、1403 测试全部通过，无回归
+
+### 10.5 最终结论（第三轮）
+
+**本轮发现并修复了 registered 用户的核销闭环缺口**（这是前两轮遗漏的：`access-code` 端点对 registered 不生成 OTP，导致 registered 用户无法用 P2 核销 API 核销）。
+
+**至此，referralRewardDefs 全链路闭环（含 L1/L2/L3 三种身份的展示与核销）已全部打通，无剩余待办。**
+
+关键闭环确认：
+- **open 用户（email 身份）**：查券（email 匹配）✅ + 核销（email+OTP）✅
+- **registered 用户（user_id 身份）**：查券（email 匹配，修复）✅ + 核销（JWT，本轮修复）✅
