@@ -1554,6 +1554,7 @@ export default {
     adminChipPity: "保底",
     adminChipDailyFree: "每日免费",
     adminChipReferral: "里程碑",
+    adminChipReferralDefs: "引擎奖励",
     adminChipLeaderboard: "排行榜奖励",
     adminChipFlashSale: "秒杀壳",
     adminChipFlashSalePaid: "秒杀直付",

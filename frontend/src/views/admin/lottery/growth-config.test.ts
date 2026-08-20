@@ -9,6 +9,8 @@ import {
   formatLeaderboardRewardsText,
   parseReferralRewardsText,
   formatReferralRewardsText,
+  parseReferralRewardDefsText,
+  formatReferralRewardDefsText,
 } from './growth-config'
 
 describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () => {
@@ -562,6 +564,89 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
         { isEditing: false },
       )
       expect(manual).toBeUndefined() // 非 instant 里程碑不生效 → 无增长配置 → undefined
+    })
+  })
+
+  describe('docs/250/254 引擎推荐奖励（referralRewardDefs）', () => {
+    it('parseReferralRewardDefsText：正常解析、去重、非法行跳过、上下限', () => {
+      expect(parseReferralRewardDefsText('1:bonus_spin:2\n3:bonus_coupon:1:invite')).toEqual([
+        { requireCount: 1, rewardExit: 'bonus_spin', rewardValue: 2 },
+        { requireCount: 3, rewardExit: 'bonus_coupon', rewardValue: 1, couponLabel: 'invite' },
+      ])
+      // 乱序 → 排序；重复门槛保留首个；非法类型/数值跳过
+      expect(parseReferralRewardDefsText('3:bonus_spin:5\n1:bonus_spin:2\n3:bonus_spin:9')).toEqual([
+        { requireCount: 1, rewardExit: 'bonus_spin', rewardValue: 2 },
+        { requireCount: 3, rewardExit: 'bonus_spin', rewardValue: 5 },
+      ])
+      expect(parseReferralRewardDefsText('0:bonus_spin:2\n1:bad_type:2\n1:bonus_spin:-1\nabc\n101:bonus_spin:1\n1:bonus_spin:2000')).toEqual([])
+      expect(parseReferralRewardDefsText(null)).toEqual([])
+      expect(formatReferralRewardDefsText(null)).toBe('')
+    })
+
+    it('growthFieldsFromDraw：回填 referralRewardDefs（编辑防擦）', () => {
+      const g = growthFieldsFromDraw({
+        promotionConfig: JSON.stringify({
+          version: 1,
+          referralRewardDefs: [
+            {
+              rewardId: 'invite_1', type: 'FIXED', target: 'SOURCE', fixedAmount: '2',
+              conditions: [{ field: 'totalJoinedCount', operator: 'GTE', value: '1' }],
+              metadata: { rewardExit: 'bonus_spin' },
+            },
+            {
+              rewardId: 'invite_3', type: 'FIXED', target: 'SOURCE', fixedAmount: '1',
+              conditions: [{ field: 'totalJoinedCount', operator: 'GTE', value: '3' }],
+              metadata: { rewardExit: 'bonus_coupon', couponLabel: 'invite' },
+            },
+          ],
+        }),
+      })
+      expect(g.referralRewardDefsText).toBe('1:bonus_spin:2\n3:bonus_coupon:1:invite')
+      expect(g.hasGrowthConfig).toBe(true)
+    })
+
+    it('编辑回填后再提交：referralRewardDefs round-trip 不丢', () => {
+      const source = {
+        promotionConfig: JSON.stringify({
+          version: 1,
+          referralRewardDefs: [
+            {
+              rewardId: 'invite_1', type: 'FIXED', target: 'SOURCE', fixedAmount: '2',
+              conditions: [{ field: 'totalJoinedCount', operator: 'GTE', value: '1' }],
+              metadata: { rewardExit: 'bonus_spin' },
+            },
+          ],
+        }),
+      }
+      const form = growthFieldsFromDraw(source)
+      const payload = buildPromotionConfigPayload(
+        { resultMode: 'instant', referralRewardDefsText: form.referralRewardDefsText },
+        { isEditing: true },
+      )
+      expect((payload as any).referralRewardDefs).toEqual([
+        {
+          rewardId: 'invite_1', type: 'FIXED', target: 'SOURCE', fixedAmount: '2',
+          conditions: [{ field: 'totalJoinedCount', operator: 'GTE', value: '1' }],
+          metadata: { rewardExit: 'bonus_spin' },
+        },
+      ])
+    })
+
+    it('非 instant 的 bonus_coupon 也能提交（claim 等类型，不依赖 instant）', () => {
+      const manual = buildPromotionConfigPayload(
+        { resultMode: 'manual', referralRewardDefsText: '3:bonus_coupon:1:invite' },
+        { isEditing: false },
+      )
+      expect(manual).toMatchObject({
+        enabled: true,
+        referralRewardDefs: [
+          {
+            rewardId: 'invite_3', type: 'FIXED', target: 'SOURCE', fixedAmount: '1',
+            conditions: [{ field: 'totalJoinedCount', operator: 'GTE', value: '3' }],
+            metadata: { rewardExit: 'bonus_coupon', couponLabel: 'invite' },
+          },
+        ],
+      })
     })
   })
 })

@@ -2354,6 +2354,8 @@ const advancedConfigSummary = computed((): string[] => {
   if (growth.enablePity === true && Number(growth.pityThreshold || 0) >= 2) chips.push(t('lottery.adminChipPity'))
   if (growth.enableDailyFreeSpins === true && Number(growth.dailyFreeSpinsCount || 0) >= 1) chips.push(t('lottery.adminChipDailyFree'))
   if (String(growth.referralRewardsText || '').trim()) chips.push(t('lottery.adminChipReferral'))
+  // docs/250/254 引擎推荐奖励：折叠摘要展示芯片
+  if (String(growth.referralRewardDefsText || '').trim()) chips.push(t('lottery.adminChipReferralDefs'))
   if (String(growth.leaderboardRewardsText || '').trim()) chips.push(t('lottery.adminChipLeaderboard'))
   if (growth.enableFlashSale === true) {
     chips.push(growth.flashSalePaymentRequired === true

@@ -1581,6 +1581,7 @@ export default {
     adminChipPity: "Pity",
     adminChipDailyFree: "Daily free",
     adminChipReferral: "Milestones",
+    adminChipReferralDefs: "Engine rewards",
     adminChipLeaderboard: "Leaderboard",
     adminChipFlashSale: "Flash sale shell",
     adminChipFlashSalePaid: "Flash sale (paid)",

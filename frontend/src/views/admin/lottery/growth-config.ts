@@ -502,7 +502,9 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
       dailyFree?.enabled === 1 ||
       dailyFree?.enabled === 'true' ||
       (Array.isArray(viral?.leaderboardRewards) && viral!.leaderboardRewards.length > 0) ||
-      (Array.isArray(promotion?.referralRewards) && promotion!.referralRewards.length > 0),
+      (Array.isArray(promotion?.referralRewards) && promotion!.referralRewards.length > 0) ||
+      // docs/250/254 引擎推荐奖励：编辑已有 referralRewardDefs 的活动时高级区应自动展开
+      (Array.isArray(promotion?.referralRewardDefs) && promotion!.referralRewardDefs.length > 0),
   }
 }
 
