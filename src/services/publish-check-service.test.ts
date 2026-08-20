@@ -1560,6 +1560,67 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(r.errors.some((item) => item.code === "activity_config.loser_reward.instant_not_supported")).toBe(false);
   });
 
+  /**
+   * docs/255 §十七 R-10：未指定 couponLabel 时会跨批次抽走别人的券。
+   *
+   * grantBonusCoupon / grantLoserRewards 在 couponLabel 为空时不加 label 过滤，
+   * 直接取租户任意 available 券——租户为「双十一专场」导入的带 label 券会被
+   * 一个没配 label 的活动发走，且发完才发现。运行时收窄有静默停发风险，
+   * 因此在发布期把这件事说清楚（仅在租户确实存在带 label 可用券时提示）。
+   */
+  it("bonus_coupon 未指定 label 且租户存在带 label 券 → warning（docs/255 R-10）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "any", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon" } },
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    await addCoupons(2, "double11");
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    const warns = r.warnings.filter((item) => item.code === "promotion.referralRewardDefs.bonus_coupon.label_unset");
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.message).toContain("any");
+    expect(warns[0]!.message).toContain("2 张");
+  });
+
+  it("bonus_coupon 未指定 label 且租户只有无 label 券 → 不提示（docs/255 R-10）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "any", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon" } },
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    await addCoupons(2, "");
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(r.warnings.some((item) => item.code === "promotion.referralRewardDefs.bonus_coupon.label_unset")).toBe(false);
+  });
+
+  it("安慰券未指定 label 且租户存在带 label 券 → warning（docs/255 R-10）", async () => {
+    const draw = makeDraw({
+      activityConfig: JSON.stringify({ loserReward: { enabled: true } }),
+    });
+    await addManualTier(draw.id);
+    await addCoupons(3, "double11");
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    const warns = r.warnings.filter((item) => item.code === "activity_config.loser_reward.label_unset");
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.message).toContain("3 张");
+    // 券池非空 → 不应再报 pool_empty
+    expect(r.warnings.some((item) => item.code === "activity_config.loser_reward.pool_empty")).toBe(false);
+  });
+
   it("未启用安慰券时不做任何券池检查（docs/255 R-8）", async () => {
     // 运行时 !loserReward?.enabled 直接 return，预检必须同样保持沉默
     const draw = makeDraw({
