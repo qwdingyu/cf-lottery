@@ -1895,20 +1895,44 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
   if (!(await checkPublicRateLimit(db, `coupon-redeem:${ip}`, 10, 60000))) {
     return fail(c, "请求过于频繁，请稍后再试", 429);
   }
-  const body = await c.req.json<{ code: string; email: string; otp: string }>();
+  const body = await c.req.json<{ code: string; email: string; otp: string; slug?: string }>();
   const code = String(body.code || "").trim();
   const email = String(body.email || "").trim().toLowerCase();
   const otp = String(body.otp || "").trim();
+  const slug = String(body.slug || "").trim();
   if (!code) return fail(c, "请提供优惠券码", 400);
   // email 模式必须带 OTP；registered（JWT）模式免 OTP
   if (!email || (!otp && !(c.req.header("Authorization") || "").trim())) {
     return fail(c, "请提供邮箱和验证码（或登录态）", 400);
   }
 
-  // 1. 查优惠券候选（docs/255 P2-1：唯一约束是 (tenantId, code)，跨租户可能存在同码。
-  //    旧实现 .limit(1) 可能命中另一租户的行 → 合法用户永远核销失败。改为取全部同 code 候选，
-  //    身份验证后按 recipientEmail 唯一确定归属）
-  const couponCandidates = await db
+  // 0. 租户定界（docs/255 复审 B4）：前端在活动页发起核销，带上 slug 即可把查询
+  //    收敛到该租户。couponCodes 的唯一约束是 (tenantId, code)，不带租户时必须
+  //    全表按 code 扫描，同码跨租户会互相干扰。slug 解析失败不报错（老客户端不带
+  //    slug 仍可核销），只是退回全局按 code + 归属邮箱定位。
+  //    注意不按 drawId 收敛：券在活动 A 领取、用户在活动 B 页面核销是合法场景。
+  let scopedTenantId = "";
+  if (slug) {
+    const [scopeDraw] = await db
+      .select({ tenantId: lotteryDraws.tenantId })
+      .from(lotteryDraws)
+      .where(eq(lotteryDraws.publicSlug, slug))
+      .limit(1);
+    scopedTenantId = scopeDraw?.tenantId || "";
+  }
+
+  // 1. 查"属于本人"的优惠券（docs/255 P2-1 + 复审 B4）：
+  //    唯一约束是 (tenantId, code)，跨租户可能存在同码，因此必须用 recipientEmail 定位归属。
+  //    归属条件下推到 SQL（而不是取前 N 行再在内存里 find）：
+  //    旧实现 `.limit(10)` 无 orderBy —— 同码行超过 10 个时，本人那一行可能根本不在结果里，
+  //    合法用户会永久核销失败，且截断结果集由数据库任意顺序决定（不可复现）。
+  //    recipientEmail 落库时可能带大小写/空格差异，故按 lower(trim()) 比较。
+  const ownedConditions = [
+    eq(couponCodes.code, code),
+    sql`lower(trim(${couponCodes.recipientEmail})) = ${email}`,
+  ];
+  if (scopedTenantId) ownedConditions.push(eq(couponCodes.tenantId, scopedTenantId));
+  const ownedCandidates = await db
     .select({
       id: couponCodes.id,
       tenantId: couponCodes.tenantId,
@@ -1918,26 +1942,33 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
       label: couponCodes.label,
     })
     .from(couponCodes)
-    .where(eq(couponCodes.code, code))
-    .limit(10);
-  if (couponCandidates.length === 0) return fail(c, "优惠券不存在", 404);
+    .where(and(...ownedConditions))
+    // issued 优先：同一邮箱历史上可能持有同码的多张券（跨租户），可核销的那张排最前
+    .orderBy(sql`CASE WHEN ${couponCodes.status} = 'issued' THEN 0 ELSE 1 END`, couponCodes.createdAt);
 
-  // 3. 状态校验：任一候选可核销（available 是未发放的池，redeemed 已核销）
-  //    把「已 redeemed」的候选也保留，供归属判定（若命中已核销券 → 明确报「已核销」而非 404）
-  const issuedCandidate = couponCandidates.find((cc) => cc.status === "issued");
-  if (!issuedCandidate) {
-    return fail(c, "优惠券状态不可核销", 400);
+  // 2. 归属校验（在 OTP 之前，避免先走 OTP 才暴露券归属）：
+  //    本人无此券时，再判断该 code 是否存在，以保持 404（不存在）/ 403（非本人）的既有语义。
+  if (ownedCandidates.length === 0) {
+    const existsConditions = [eq(couponCodes.code, code)];
+    if (scopedTenantId) existsConditions.push(eq(couponCodes.tenantId, scopedTenantId));
+    const [anyCoupon] = await db
+      .select({ id: couponCodes.id })
+      .from(couponCodes)
+      .where(and(...existsConditions))
+      .limit(1);
+    if (!anyCoupon) return fail(c, "优惠券不存在", 404);
+    return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
   }
 
-  // 4. 身份验证：支持两种模式（docs/254 审查发现，修复 registered 核销缺口）
+  // 3. 身份验证：支持两种模式（docs/254 审查发现，修复 registered 核销缺口）
   //    - email + OTP（open 模式用户）：复用 verifyEmailAccessCode
   //    - JWT（registered 模式用户）：验证 JWT → 查 users.email → 跳 OTP
   let verifiedEmail = email;
   const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (bearerToken) {
     // ── JWT 模式（registered 用户）──
-    // 初步归属校验在此跳过：由 JWT 验证后的 verifiedEmail 归属校验兜底（见下方 2a），
-    // 避免请求体 email 与 users.email 不一致时误拦截（docs/254 审查发现）。
+    // 归属校验已用请求体 email 做过，这里再校验 JWT 邮箱与请求邮箱一致，
+    // 防拿他人 token 核销他人券（docs/254 审查发现）。
     const jwtSecret = getEnv(c, "JWT_SECRET");
     if (!jwtSecret) return fail(c, "服务器配置错误", 500);
     try {
@@ -1950,8 +1981,7 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
           .limit(1);
         if (!user?.email) return fail(c, "用户不存在", 404);
         verifiedEmail = user.email.trim().toLowerCase();
-        // 校验 JWT 邮箱与请求邮箱一致（防拿他人 token 核销他人券）
-        if (email && email !== verifiedEmail) return fail(c, "邮箱与登录身份不匹配", 403);
+        if (email !== verifiedEmail) return fail(c, "邮箱与登录身份不匹配", 403);
       } else {
         return fail(c, "登录状态无效", 401);
       }
@@ -1960,14 +1990,7 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
     }
   } else {
     // ── email + OTP 模式（open 模式用户）──
-    // 2a. 初步归属校验（用请求体 email）：他人邮箱立即 403，避免先走 OTP 暴露券归属
-    const selfCandidate = couponCandidates.find(
-      (cc) => String(cc.recipientEmail || "").trim().toLowerCase() === email,
-    );
-    if (!selfCandidate) {
-      return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
-    }
-    const otpDrawId = selfCandidate.drawId;
+    const otpDrawId = ownedCandidates[0]!.drawId;
     if (!otpDrawId) return fail(c, "优惠券缺少活动关联，无法核销", 400);
     if (!(await checkPublicIdentityRateLimit(db, "coupon-redeem", otpDrawId, email, 10, 60000))) {
       return fail(c, "请求过于频繁，请稍后再试", 429);
@@ -1976,14 +1999,8 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
     if (!validCode) return fail(c, "验证码无效或已过期", 400);
   }
 
-  // 2. 归属校验（在身份验证后执行，用 verifiedEmail）：
-  //    从同 code 候选中唯一确定归属券（docs/255 P2-1 去歧义）
-  const ownedCoupon = couponCandidates.find(
-    (cc) => String(cc.recipientEmail || "").trim().toLowerCase() === verifiedEmail,
-  );
-  if (!ownedCoupon) {
-    return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
-  }
+  // 4. 取本人可核销的券（verifiedEmail 与请求 email 已校验一致，候选集即为本人券）
+  const ownedCoupon = ownedCandidates[0]!;
   if (ownedCoupon.status !== "issued") {
     return fail(c, "优惠券状态不可核销", 400);
   }
