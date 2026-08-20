@@ -205,6 +205,71 @@ describe("retryPaymentOrder", () => {
     expect(["failed", "superseded"]).toContain(oldAttempt?.status);
   });
 
+  /**
+   * docs/255 §十五 R-1：重试支付必须重新预占卡密。
+   *
+   * 订单超时/取消时 expireOverdueOrders / cancelPaymentOrder 已把预占卡密释放回 available，
+   * 卡密可能已被别人买走。旧实现 retryPaymentOrder 只走 armPaymentOrderForRetry
+   * （只补名额，不碰 prize_codes），用户付款后回调只能落到 acquirePrizeCodes 兜底 →
+   * 必然 FULFILLMENT_FAILED，只能靠退款兜底。
+   */
+  it("重试时卡密已售罄必须拒绝，不得让用户进入支付（docs/255 R-1）", async () => {
+    await seedCallbackRows("expired");
+    // 卡密被别人买走
+    await db.update(prizeCodes).set({ status: "issued" }).where(eq(prizeCodes.id, PRIZE_CODE_ID));
+
+    await expect(retryPaymentOrder(
+      db,
+      {
+        tenantId: TENANT_ID,
+        drawId: DRAW_ID,
+        entryId: ENTRY_ID,
+        buyerIdentityType: "email",
+        buyerIdentityValue: "test@example.com",
+        amountCents: 9900,
+        currency: "cny",
+        provider: "alipay",
+        notifyUrl: "https://example.com/payments/callback",
+      },
+      providerMock,
+      ORDER_ID,
+    )).rejects.toThrow("可用 0 件，需要 1 件");
+
+    // 未进入支付流程，且名额补占与 entry 状态一并回滚
+    expect(providerMock.createPayment).not.toHaveBeenCalled();
+    const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, ORDER_ID));
+    expect(order?.status).toBe("expired");
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, ENTRY_ID));
+    expect(entry?.paymentStatus).toBe("expired");
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, DRAW_ID));
+    expect(draw?.activeParticipantCount).toBe(0);
+  });
+
+  it("重试成功时把卡密重新预占到本订单（reserved）", async () => {
+    await seedCallbackRows("expired");
+
+    await retryPaymentOrder(
+      db,
+      {
+        tenantId: TENANT_ID,
+        drawId: DRAW_ID,
+        entryId: ENTRY_ID,
+        buyerIdentityType: "email",
+        buyerIdentityValue: "test@example.com",
+        amountCents: 9900,
+        currency: "cny",
+        provider: "alipay",
+        notifyUrl: "https://example.com/payments/callback",
+      },
+      providerMock,
+      ORDER_ID,
+    );
+
+    const [code] = await db.select().from(prizeCodes).where(eq(prizeCodes.id, PRIZE_CODE_ID));
+    expect(code?.status).toBe("reserved");
+    expect(code?.paymentOrderId).toBe(ORDER_ID);
+  });
+
   it("rolls back to cancelled when retry fails", async () => {
     await seedBaseRows("expired");
     const failingProvider: PaymentProvider = {
