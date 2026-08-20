@@ -42,21 +42,41 @@ export interface ReferralRewardMeta {
 /**
  * 归一化 referralRewardDefs 配置。
  * 非法/空输入返回空数组（静默跳过）。
+ *
+ * 校验项（docs/254 审查）：
+ * - rewardId：非空字符串，且全局唯一（重复 rewardId 会导致幂等标记混乱）
+ * - type：白名单 DIRECT/LEVEL/FIXED/CUSTOM（非法 type 会让 engine 运行时抛异常被静默吞掉）
+ * - target：白名单 SOURCE/PARENT
+ * - FIXED 类型必须有 fixedAmount > 0（否则静默不发奖）
+ * - rewardExit：白名单 bonus_spin/bonus_coupon
  */
+const REWARD_TYPE_WHITELIST = new Set(["DIRECT", "LEVEL", "FIXED", "CUSTOM"]);
+const REWARD_TARGET_WHITELIST = new Set(["SOURCE", "PARENT"]);
+const REWARD_EXIT_WHITELIST = new Set(["bonus_spin", "bonus_coupon"]);
+
 export function normalizeReferralRewardDefs(raw: unknown): RewardDef[] {
   if (!Array.isArray(raw)) return [];
+  const seenRewardIds = new Set<string>();
   return raw.filter((item) => {
     if (!item || typeof item !== "object") return false;
     const def = item as Record<string, unknown>;
-    // 必须包含 rewardId、type、target
+    // rewardId：非空字符串 + 全局唯一
     if (!def.rewardId || typeof def.rewardId !== "string") return false;
-    if (!def.type || typeof def.type !== "string") return false;
-    if (!def.target || typeof def.target !== "string") return false;
-    // 检查 rewardExit（在 metadata 中）
+    if (seenRewardIds.has(def.rewardId)) return false; // 重复 rewardId 剔除
+    // type：白名单
+    if (typeof def.type !== "string" || !REWARD_TYPE_WHITELIST.has(def.type)) return false;
+    // target：白名单
+    if (typeof def.target !== "string" || !REWARD_TARGET_WHITELIST.has(def.target)) return false;
+    // FIXED 类型必须有 fixedAmount > 0
+    if (def.type === "FIXED") {
+      const fixedAmount = Number(def.fixedAmount);
+      if (!(fixedAmount > 0)) return false;
+    }
+    // rewardExit：白名单（在 metadata 中）
     const meta = (def.metadata || {}) as Record<string, unknown>;
     const exit = String(meta.rewardExit || "bonus_spin");
-    // 是否在白名单中
-    if (!["bonus_spin", "bonus_coupon"].includes(exit)) return false;
+    if (!REWARD_EXIT_WHITELIST.has(exit)) return false;
+    seenRewardIds.add(def.rewardId);
     return true;
   }) as RewardDef[];
 }
@@ -170,14 +190,14 @@ async function markRewardIdsGranted(
   recordIds: string[],
   currentGranted: string[],
   newRewardId: string,
-  oldValues: string[],
+  currentValues: string[],
 ): Promise<boolean> {
   const nextGranted = [...new Set([...currentGranted, newRewardId])].sort();
   const nextGrantedJson = JSON.stringify(nextGranted);
 
   for (let i = 0; i < recordIds.length; i++) {
     const recordId = recordIds[i]!;
-    const oldValue = oldValues[i] ?? "";
+    const oldValue = currentValues[i] ?? "";
     const result = await tx
       .update(shareRecords)
       .set({ rewardMilestonesGranted: nextGrantedJson })
@@ -189,6 +209,8 @@ async function markRewardIdsGranted(
     // 此时 grant 已由上游的 CAS 防护（spinsTotalGranted / couponCodes.status）
     // 防止重复发放，mark 不写不影响正确性，只是下次归因需要多一次 CAS 检查。
     if ((result.rowsAffected ?? 0) === 0) return false;
+    // 更新 currentValues，使同事务内后续 mark 调用使用最新值（docs/253 修复）
+    currentValues[i] = nextGrantedJson;
   }
   return true;
 }
