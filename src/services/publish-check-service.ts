@@ -29,7 +29,7 @@ import {
   hasDirectSaleCodePoolConflict,
 } from "./lottery/types";
 import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
-import { isViralEnabled } from "./lottery/viral-weight";
+import { isViralEnabled, readViralPerInvite } from "./lottery/viral-weight";
 import { normalizeDailyFreeSpinConfig, normalizePityConfig, normalizeReferralRewards } from "./lottery/spin-quota";
 import { normalizeReferralRewardDefs, collectReferralRewardDefIssues } from "./lottery/referral-rewards-engine";
 
@@ -749,7 +749,8 @@ async function validatePromotion(
     // 若同时配置，同一邀请会触发两次加次（各自 CAS 不超发，但语义重复、运营困惑）。
     // 必须二选一：用 referralRewardDefs 时，viral 的 per-invite 加次应关闭。
     if (hasReferralRewardDefs) {
-      const perInvite = Number(viral.extraSpinsPerInvite ?? viral.extraEntriesPerInvite ?? 0);
+      // docs/255 P2-4：统一用 readViralPerInvite 读取（优先 extraSpins*，回退 extraEntries*）
+      const { perInvite } = readViralPerInvite(viral);
       if (perInvite > 0) {
         add(result.errors, "promotion", "viral.extra_entries.conflict_with_reward_defs", "裂变传播：已配置 referralRewardDefs 引擎奖励，不能再配置 viral 每邀请加次（extraSpinsPerInvite/extraEntriesPerInvite），请二选一");
       }
@@ -758,8 +759,8 @@ async function validatePromotion(
     // 接龙/问卷/投票/签到/审批/预约等类型无 spins 与加权语义，前端已隐藏参数，
     // 此处同步跳过数值校验（排行榜能力仍校验），避免「UI 无入口却发布报错」的断链。
     if (draw.activityKind === "lottery") {
-      const perInvite = Number(viral.extraEntriesPerInvite ?? 0);
-      const maxExtra = Number(viral.maxExtraEntries ?? 0);
+      // docs/255 P2-4：统一用 readViralPerInvite 读取，避免用 extraSpins* 命名绕过数值区间校验
+      const { perInvite, maxExtra } = readViralPerInvite(viral);
       if (perInvite < 1) {
         add(result.errors, "promotion", "viral.extra_entries.invalid", "裂变传播：每邀请额外次数必须大于 0");
       }

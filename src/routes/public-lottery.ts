@@ -622,12 +622,28 @@ publicLotteryRoute.post("/draws/:slug/events", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
+  // docs/255 P2-6：entryId 归属校验——若提供 entryId，必须属于该 draw/租户，
+  // 否则丢弃 entryId（仍记录匿名事件），防伪造他人 entry 的漏斗事件污染 L2 转化报表
+  let verifiedEntryId = body.entryId;
+  if (verifiedEntryId) {
+    const [ownedEntry] = await db
+      .select({ id: lotteryEntries.id })
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.id, verifiedEntryId),
+        eq(lotteryEntries.drawId, draw.id),
+        eq(lotteryEntries.tenantId, draw.tenantId),
+      ))
+      .limit(1);
+    if (!ownedEntry) verifiedEntryId = undefined;
+  }
+
   const ipHash = await hashEventValue(getClientIp(c) || "");
   await recordActivityEvent(db, {
     tenantId: draw.tenantId,
     drawId: draw.id,
     eventType: body.eventType,
-    entryId: body.entryId,
+    entryId: verifiedEntryId,
     source: body.source,
     medium: body.medium,
     campaign: body.campaign,

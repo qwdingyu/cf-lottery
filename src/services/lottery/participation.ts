@@ -28,7 +28,7 @@ import { verifyAccessPassword } from "./utils";
 import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
 import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
 import { computeViralSpinGrant, initialSpinsForJoin, normalizeReferralRewards, evaluateReferralMilestones, parseGrantedMilestones } from "./spin-quota";
-import { isViralEnabled } from "./viral-weight";
+import { isViralEnabled, readViralPerInvite } from "./viral-weight";
 import { processReferralRewardsEngine } from "./referral-rewards-engine";
 import { recordSpinLog } from "./spins-log";
 import {
@@ -825,8 +825,10 @@ async function grantViralSpinsToSharer(
     const viral = pc?.viral;
     // P2 审查项：统一严格 ===true 判定（enabled="true" 字符串视为未启用，与排行榜/发布预检一致）
     if (!isViralEnabled(viral) || !viral) return;
-    extra = Number(viral.extraSpinsPerInvite ?? viral.extraEntriesPerInvite ?? 0);
-    maxExtra = Number(viral.maxExtraSpins ?? viral.maxExtraEntries ?? 0);
+    // docs/255 P2-4：统一用 readViralPerInvite 读取（优先 extraSpins*，回退 extraEntries*）
+    const perInviteCfg = readViralPerInvite(viral);
+    extra = perInviteCfg.perInvite;
+    maxExtra = perInviteCfg.maxExtra;
   } catch {
     return;
   }

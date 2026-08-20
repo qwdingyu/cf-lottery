@@ -46,6 +46,27 @@ export function normalizeViralWeightNumbers(viral?: ViralWeightConfig | null): {
 }
 
 /**
+ * 统一读取「每邀请加次」配置（docs/255 P2-4）。
+ *
+ * 裂变字段存在两套命名，语义不同但常被混用：
+ * - extraSpinsPerInvite / maxExtraSpins：instant 模式每邀请加 spins 次数（路径[1] grantViralSpinsToSharer）
+ * - extraEntriesPerInvite / maxExtraEntries：开奖加权票数（performDraw / my-viral-stats）
+ * 读取时优先 extraSpins*，缺省回退 extraEntries*（与 participation.ts:828-829 一致）。
+ * 抽成单一入口，避免 participation / publish-check 各自读取导致口径不一
+ * （publish-check 曾只校验 extraEntries*，用 extraSpins* 命名可绕过数值区间校验）。
+ */
+export function readViralPerInvite(viral?: {
+  extraSpinsPerInvite?: number;
+  maxExtraSpins?: number;
+  extraEntriesPerInvite?: number;
+  maxExtraEntries?: number;
+} | null): { perInvite: number; maxExtra: number } {
+  const perInvite = Number(viral?.extraSpinsPerInvite ?? viral?.extraEntriesPerInvite ?? 0);
+  const maxExtra = Number(viral?.maxExtraSpins ?? viral?.maxExtraEntries ?? 0);
+  return { perInvite, maxExtra };
+}
+
+/**
  * 已赚取的「额外」加权票数（不含基础 1）。
  * invitedCount：有效邀请人数（shareRecords.joinedCount 聚合，非点击）。
  */
