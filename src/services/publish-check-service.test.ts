@@ -1205,4 +1205,40 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(r3.errors.some((item) => item.code === "promotion.referralRewardDefs.bonus_spin.not_lottery")).toBe(false);
     expect(r3.errors.some((item) => item.code === "promotion.referralRewardDefs.bonus_spin.not_instant")).toBe(false);
   });
+
+  it("viral.extraSpinsPerInvite 与 referralRewardDefs 同时配置 → 阻断（docs/254 审查发现）", async () => {
+    // viral 每邀请加次 + referralRewardDefs 同时配置 → 阻断（同一邀请触发两次加次，语义重复）
+    const conflict = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraSpinsPerInvite: 1, maxExtraSpins: 10, leaderboardEnabled: true },
+        referralRewardDefs: [
+          { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+        ],
+      }),
+    });
+    await addManualTier(conflict.id);
+    const r1 = await buildPublishCheckForDraw(db, TENANT, conflict as any);
+    expect(r1.errors.some((item) => item.code === "viral.extra_entries.conflict_with_reward_defs")).toBe(true);
+
+    // viral 无每邀请加次（extraSpinsPerInvite 未配置）+ referralRewardDefs → 放行
+    const noConflict = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, leaderboardEnabled: true },
+        referralRewardDefs: [
+          { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+        ],
+      }),
+    });
+    await addManualTier(noConflict.id);
+    const r2 = await buildPublishCheckForDraw(db, TENANT, noConflict as any);
+    expect(r2.errors.some((item) => item.code === "viral.extra_entries.conflict_with_reward_defs")).toBe(false);
+  });
 });

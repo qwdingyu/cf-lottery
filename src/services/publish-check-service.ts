@@ -737,6 +737,16 @@ async function validatePromotion(
 
   // 裂变配置校验（P2 审查项：统一严格 ===true 判定，enabled="true" 字符串不视为启用）
   if (isViralEnabled(viral) && viral) {
+    // 冲突检查（docs/254 审查发现）：viral.extraSpinsPerInvite（路径[1] grantViralSpinsToSharer）
+    // 与 referralRewardDefs（路径[4] processReferralRewardsEngine）都是"邀请加 spins"语义，
+    // 若同时配置，同一邀请会触发两次加次（各自 CAS 不超发，但语义重复、运营困惑）。
+    // 必须二选一：用 referralRewardDefs 时，viral 的 per-invite 加次应关闭。
+    if (hasReferralRewardDefs) {
+      const perInvite = Number(viral.extraSpinsPerInvite ?? viral.extraEntriesPerInvite ?? 0);
+      if (perInvite > 0) {
+        add(result.errors, "promotion", "viral.extra_entries.conflict_with_reward_defs", "裂变传播：已配置 referralRewardDefs 引擎奖励，不能再配置 viral 每邀请加次（extraSpinsPerInvite/extraEntriesPerInvite），请二选一");
+      }
+    }
     // 邀请加次/加权数值仅对抽奖（lottery）有意义（instant 加 spins / delayed 开奖加权）；
     // 接龙/问卷/投票/签到/审批/预约等类型无 spins 与加权语义，前端已隐藏参数，
     // 此处同步跳过数值校验（排行榜能力仍校验），避免「UI 无入口却发布报错」的断链。
