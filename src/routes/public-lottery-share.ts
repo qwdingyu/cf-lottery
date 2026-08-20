@@ -185,10 +185,15 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
   if (!entry) return fail(c, "参与记录不存在或不属于本活动", 404);
 
   // 查询该参与者的分享记录（按创建时间降序：与 POST /share 复用「最新码」一致，docs/112）
+  // docs/255 P2-10：补 tenantId 过滤，防跨租户同 drawId 时读到他人分享记录
   const myShares = await db
     .select()
     .from(shareRecords)
-    .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.sharerEntryId, entryId)))
+    .where(and(
+      eq(shareRecords.tenantId, draw.tenantId),
+      eq(shareRecords.drawId, draw.id),
+      eq(shareRecords.sharerEntryId, entryId),
+    ))
     .orderBy(desc(shareRecords.createdAt));
 
   // 聚合统计：额外次数与开奖 performDraw 同一公式（invited × perInvite 封顶）

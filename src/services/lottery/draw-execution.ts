@@ -24,7 +24,7 @@ import {
   systemConfig,
 } from "../../db/schema";
 import { randomSelect, hashDrawSeed } from "./utils";
-import { enqueueWebhookEvent, dispatchWebhookDelivery } from "./integration";
+import { enqueueWebhookEvent, dispatchWebhookDelivery, recordActivityEvent } from "./integration";
 import { enqueuePlatformEvent } from "../platform/delivery";
 import { buildLotteryWinnerTemplateData, type EmailEnv } from "../email-service";
 import { enqueueEmailDelivery, dispatchEmailDeliveries } from "../email-delivery";
@@ -758,11 +758,24 @@ export async function grantLoserRewards(
 ): Promise<{ granted: number; totalLosers: number }> {
   // 读取活动配置，确认是否启用未中奖发券
   const [draw] = await db
-    .select({ activityConfig: lotteryDraws.activityConfig, title: lotteryDraws.title })
+    .select({
+      activityConfig: lotteryDraws.activityConfig,
+      promotionConfig: lotteryDraws.promotionConfig,
+      title: lotteryDraws.title,
+    })
     .from(lotteryDraws)
     .where(and(eq(lotteryDraws.id, drawId), eq(lotteryDraws.tenantId, tenantId)))
     .limit(1);
   if (!draw) return { granted: 0, totalLosers: 0 };
+
+  // paymentRequired 判定（docs/255 P2-3）：直付秒杀只有 PAID entry 才有资格获得安慰券。
+  // 与 performDraw 候选池只取 PAID 的纵深防御一致（:169-171），否则未付款/超时的
+  // entry 也会收到安慰券（重复发券 + 资金口径不一致）。
+  let paymentRequired = false;
+  try {
+    const pc = JSON.parse(draw.promotionConfig || "{}") as { flashSale?: { paymentRequired?: boolean | string } };
+    paymentRequired = pc.flashSale?.paymentRequired === true || pc.flashSale?.paymentRequired === "true";
+  } catch { /* 缺省 false */ }
 
   let config: { loserReward?: { enabled?: boolean; couponLabel?: string } } = {};
   try { config = JSON.parse(draw.activityConfig || "{}"); } catch { config = {}; }
@@ -770,7 +783,7 @@ export async function grantLoserRewards(
   // 默认关闭：未显式启用时不做任何发券，避免误发
   if (!loserReward?.enabled) return { granted: 0, totalLosers: 0 };
 
-  // 查询全部参与记录
+  // 查询全部参与记录（docs/255 P2-3：直付秒杀只给 PAID entry 发安慰券）
   const entries = await db
     .select({
       id: lotteryEntries.id,
@@ -779,7 +792,11 @@ export async function grantLoserRewards(
       identityType: lotteryEntries.identityType,
     })
     .from(lotteryEntries)
-    .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId)));
+    .where(and(
+      eq(lotteryEntries.tenantId, tenantId),
+      eq(lotteryEntries.drawId, drawId),
+      ...(paymentRequired ? [eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PAID)] : []),
+    ));
 
   // registered 用户（identity_type = user_id）：identity_value 是 userId 而非邮箱，
   // 必须先查出真实邮箱，否则安慰邮件 recipientEmail 落库成 UUID 会被投递过滤掉（收不到任何安慰邮件）。
@@ -839,7 +856,26 @@ export async function grantLoserRewards(
         eq(couponCodes.tenantId, tenantId),
         eq(couponCodes.status, "available"),
       ));
-    if ((result.rowsAffected ?? 0) > 0) granted++;
+    if ((result.rowsAffected ?? 0) > 0) {
+      granted++;
+      // 审计日志（docs/255 P2-3）：安慰券发放写 reward_earned，与 grantBonusCoupon 对齐
+      try {
+        await recordActivityEvent(db, {
+          tenantId,
+          drawId,
+          entryId: loser.id,
+          eventType: "reward_earned",
+          metadata: {
+            rewardExit: "bonus_coupon",
+            reason: "loser_reward",
+            couponCode: coupon.code,
+            recipientEmail,
+          },
+        });
+      } catch (err) {
+        console.error(`[lottery] recordActivityEvent loser_reward failed for ${drawId}:`, err);
+      }
+    }
   }
 
   return { granted, totalLosers: losers.length };

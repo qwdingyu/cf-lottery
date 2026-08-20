@@ -140,22 +140,13 @@ export async function grantBonusCoupon(
   sharerEntryId: string,
   couponLabel: string | undefined,
   rewardId: string,
+  amount = 1,
 ): Promise<boolean> {
-  // 从码池取一张 available 优惠券
-  const conditions = [
-    eq(couponCodes.tenantId, tenantId),
-    eq(couponCodes.status, "available"),
-  ];
-  if (couponLabel) {
-    conditions.push(eq(couponCodes.label, couponLabel));
-  }
-  const [available] = await tx
-    .select({ id: couponCodes.id, code: couponCodes.code })
-    .from(couponCodes)
-    .where(and(...conditions))
-    .orderBy(couponCodes.createdAt)
-    .limit(1);
-  if (!available) return false;
+  // 数量语义（docs/255 P2-2）：amount 为配置的发放张数，循环发 min(amount, 上限) 张。
+  // 修复前恒发 1 张（UI 允许 3:bonus_coupon:5 但实际只发 1 张，运营看到的和实际发的永久不一致）。
+  // 上限常量防单次归因一次性消耗过多码池（防刷）。
+  const MAX_COUPON_PER_GRANT = 10;
+  const target = Math.max(1, Math.min(Math.floor(Number(amount) || 1), MAX_COUPON_PER_GRANT));
 
   // 解析分享者 recipientEmail（docs/252 §2.3 修复）：
   // 与 grantLoserRewards 一致——registered 身份（identity_type=user_id）时
@@ -188,45 +179,67 @@ export async function grantBonusCoupon(
     }
   }
 
-  // CAS 原子发放（第二重防超发）：仅当仍为 available 时更新为 issued，并记录领取人。
-  // 关键：WHERE 带 status='available' 条件——并发下两个请求同时读到同一张 available 券时，
-  // 只有一个 UPDATE 能命中（rowsAffected=1），另一个 rowsAffected=0 返回 false 跳过。
-  // 这保证同一张优惠券码绝不会发给两个用户（超发防护）。
-  const result = await tx
-    .update(couponCodes)
-    .set({
-      status: "issued",
-      drawId,
-      recipientEmail,
-    })
-    .where(and(
-      eq(couponCodes.id, available.id),
+  // 循环发券：每张独立 CAS（available → issued），并发下不会重复发同一张。
+  // 码池不足时发到耗尽为止（部分发放），返回是否至少发了一张。
+  let issuedCount = 0;
+  for (let i = 0; i < target; i++) {
+    // 从码池取一张 available 优惠券（docs/255 P2-5：优先 drawId 匹配当前活动的券，
+    // 其次 drawId IS NULL 的共享池，避免为活动 B 导入的券被活动 A 发走）
+    const conditions = [
       eq(couponCodes.tenantId, tenantId),
       eq(couponCodes.status, "available"),
-    ));
-  if ((result.rowsAffected ?? 0) === 0) return false;
+    ];
+    if (couponLabel) {
+      conditions.push(eq(couponCodes.label, couponLabel));
+    }
+    const [available] = await tx
+      .select({ id: couponCodes.id, code: couponCodes.code })
+      .from(couponCodes)
+      .where(and(...conditions))
+      .orderBy(sql`CASE WHEN ${couponCodes.drawId} = ${drawId} THEN 0 ELSE 1 END`, couponCodes.createdAt)
+      .limit(1);
+    if (!available) break; // 码池耗尽，停止发放
 
-  // 审计日志（docs/252 §4.2）：bonus_coupon 发放写 activityEvents（reward_earned），
-  // 与 bonus_spin 写 spins_log 对齐，保证 L3 能跨租户追踪优惠券奖励发放。
-  // 与 triggerRewardEarned 的 reward_earned 事件同语义，metadata 记录奖励出口与码 label。
-  try {
-    await recordActivityEvent(tx, {
-      tenantId,
-      drawId,
-      entryId: sharerEntryId,
-      eventType: "reward_earned",
-      metadata: {
-        rewardExit: "bonus_coupon",
-        rewardId,
-        couponLabel: couponLabel || "",
-        couponCode: available.code,
+    // CAS 原子发放（第二重防超发）：仅当仍为 available 时更新为 issued，并记录领取人。
+    // 关键：WHERE 带 status='available' 条件——并发下两个请求同时读到同一张 available 券时，
+    // 只有一个 UPDATE 能命中（rowsAffected=1），另一个 rowsAffected=0 返回 false 跳过。
+    // 这保证同一张优惠券码绝不会发给两个用户（超发防护）。
+    const result = await tx
+      .update(couponCodes)
+      .set({
+        status: "issued",
+        drawId,
         recipientEmail,
-      },
-    });
-  } catch (err) {
-    // 审计失败不影响发券结果（与 recordSpinLog 的容错一致）
-    console.error(`[lottery] recordActivityEvent bonus_coupon failed for ${drawId}:`, err);
+      })
+      .where(and(
+        eq(couponCodes.id, available.id),
+        eq(couponCodes.tenantId, tenantId),
+        eq(couponCodes.status, "available"),
+      ));
+    if ((result.rowsAffected ?? 0) === 0) continue; // 并发被抢，尝试下一张
+
+    issuedCount++;
+    // 审计日志（docs/252 §4.2）：每张券发放写 activityEvents（reward_earned），
+    // 与 bonus_spin 写 spins_log 对齐，保证 L3 能跨租户追踪优惠券奖励发放。
+    try {
+      await recordActivityEvent(tx, {
+        tenantId,
+        drawId,
+        entryId: sharerEntryId,
+        eventType: "reward_earned",
+        metadata: {
+          rewardExit: "bonus_coupon",
+          rewardId,
+          couponLabel: couponLabel || "",
+          couponCode: available.code,
+          recipientEmail,
+        },
+      });
+    } catch (err) {
+      // 审计失败不影响发券结果（与 recordSpinLog 的容错一致）
+      console.error(`[lottery] recordActivityEvent bonus_coupon failed for ${drawId}:`, err);
+    }
   }
 
-  return true;
+  return issuedCount > 0;
 }

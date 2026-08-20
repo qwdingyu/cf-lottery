@@ -18,7 +18,11 @@ import {
   couponCodes,
   spinsLog,
 } from "../../db/schema";
-import { processReferralRewardsEngine, normalizeReferralRewardDefs } from "./referral-rewards-engine";
+import {
+  processReferralRewardsEngine,
+  normalizeReferralRewardDefs,
+  collectReferralRewardDefIssues,
+} from "./referral-rewards-engine";
 
 const TENANT = "tenant-referral-engine";
 
@@ -290,9 +294,131 @@ describe("normalizeReferralRewardDefs", () => {
       { rewardId: "lv", type: "LEVEL", target: "SOURCE", fixedAmount: "2" },
       { rewardId: "pa", type: "DIRECT", target: "PARENT", rate: "100" },
       { rewardId: "ok", type: "DIRECT", target: "SOURCE", rate: "100" },
-      { rewardId: "ok2", type: "CUSTOM", target: "SOURCE", metadata: { rewardExit: "bonus_spin" } },
+      // CUSTOM 必须能解析出金额（amount 或 amountFrom），否则 resolveCustomAmount 返回 null
+      { rewardId: "ok2", type: "CUSTOM", target: "SOURCE", amount: "2", metadata: { rewardExit: "bonus_spin" } },
     ]);
     expect(defs.map((d) => d.rewardId)).toEqual(["ok", "ok2"]);
+  });
+
+  // ── docs/255 二次审查 B1：非数值金额会让引擎抛 DecimalError ──
+  // Decimal 拒绝带空格/布尔/百分号，而校验用的 Number() 接受 " 5 " 与 true。
+  // 异常从 distributeByDefs 抛出后被 maybeTriggerReward 的 try/catch 吞掉，
+  // 该分享者整批推荐奖励静默丢失（join 不回滚、用户无感）。
+  it("FIXED fixedAmount 带空格 → 剔除（Decimal 会抛 DecimalError，Number 却接受）", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "ws", type: "FIXED", target: "SOURCE", fixedAmount: " 5 " },
+    ]).length).toBe(0);
+  });
+
+  it("FIXED fixedAmount 为布尔/百分号/科学计数 → 剔除", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "b", type: "FIXED", target: "SOURCE", fixedAmount: true },
+      { rewardId: "p", type: "FIXED", target: "SOURCE", fixedAmount: "5%" },
+      { rewardId: "e", type: "FIXED", target: "SOURCE", fixedAmount: "1e3" },
+    ]).length).toBe(0);
+  });
+
+  it("FIXED fixedAmount 为纯数字字符串/数字 → 保留", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "s", type: "FIXED", target: "SOURCE", fixedAmount: "5" },
+      { rewardId: "n", type: "FIXED", target: "SOURCE", fixedAmount: 3 },
+      { rewardId: "d", type: "FIXED", target: "SOURCE", fixedAmount: "2.5" },
+    ]).map((d) => d.rewardId)).toEqual(["s", "n", "d"]);
+  });
+
+  // ── docs/255 二次审查 B2：死配置 / 抛异常配置的对称校验 ──
+  it("DIRECT 缺 rate 或 rate 非数值 → 剔除（缺 rate 恒不发；'50%' 会抛 DecimalError）", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "norate", type: "DIRECT", target: "SOURCE" },
+      { rewardId: "pct", type: "DIRECT", target: "SOURCE", rate: "50%" },
+      { rewardId: "zero", type: "DIRECT", target: "SOURCE", rate: "0" },
+    ]).length).toBe(0);
+  });
+
+  it("CUSTOM 无 amount 且无 amountFrom → 剔除（resolveCustomAmount 返回 null，恒不发）", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "noamt", type: "CUSTOM", target: "SOURCE" },
+      { rewardId: "empty", type: "CUSTOM", target: "SOURCE", amount: "" },
+      { rewardId: "zero", type: "CUSTOM", target: "SOURCE", amount: "0" },
+    ]).length).toBe(0);
+  });
+
+  it("CUSTOM amountFrom 指向非数值字段 → 剔除（Decimal.gt('lottery','0') 会抛 DecimalError）", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "kind", type: "CUSTOM", target: "SOURCE", amountFrom: "event.attrs.activityKind" },
+      { rewardId: "unknown", type: "CUSTOM", target: "SOURCE", amountFrom: "event.attrs.notExist" },
+      { rewardId: "bad", type: "CUSTOM", target: "SOURCE", amountFrom: "whatever" },
+    ]).length).toBe(0);
+  });
+
+  it("CUSTOM amountFrom 指向数值字段 → 保留（eventValue / totalJoinedCount）", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "ev", type: "CUSTOM", target: "SOURCE", amountFrom: "eventValue" },
+      { rewardId: "tj", type: "CUSTOM", target: "SOURCE", amountFrom: "event.attrs.totalJoinedCount" },
+    ]).map((d) => d.rewardId)).toEqual(["ev", "tj"]);
+  });
+
+  it("排序算子 value 为数字 → 保留（引擎 _toComparable 会 String 化，不该误杀可用配置）", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "num", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+        conditions: [{ field: "totalJoinedCount", operator: "GTE", value: 3 }] },
+    ]).map((d) => d.rewardId)).toEqual(["num"]);
+  });
+
+  it("EQ/NE 缺 value → 剔除（NE 缺 value 时引擎恒 true，等于无条件超发）", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "eq", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+        conditions: [{ field: "totalJoinedCount", operator: "EQ" }] },
+      { rewardId: "ne", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+        conditions: [{ field: "totalJoinedCount", operator: "NE" }] },
+    ]).length).toBe(0);
+  });
+});
+
+describe("collectReferralRewardDefIssues（发布预检逐条报错，docs/255 B5）", () => {
+  /**
+   * 单一真相不变式：预检与运行时必须对同一份配置给出一致结论，
+   * 否则会出现"预检说合法但运行时剔除"（运营配了没生效）或
+   * "预检报错但运行时会发"（无法发布却已在发奖）的漂移。
+   * 不变式：normalize 保留数 + collect 报错数 === 输入条目数。
+   */
+  const SAMPLES: unknown[] = [
+    { rewardId: "ok", type: "FIXED", target: "SOURCE", fixedAmount: "2" },
+    { rewardId: "ok", type: "FIXED", target: "SOURCE", fixedAmount: "2" }, // 重复 rewardId
+    { rewardId: "", type: "FIXED", target: "SOURCE", fixedAmount: "2" },
+    null,
+    { rewardId: "lv", type: "LEVEL", target: "SOURCE", fixedAmount: "2" },
+    { rewardId: "pa", type: "FIXED", target: "PARENT", fixedAmount: "2" },
+    { rewardId: "amt", type: "FIXED", target: "SOURCE", fixedAmount: " 5 " },
+    { rewardId: "rate", type: "DIRECT", target: "SOURCE", rate: "50%" },
+    { rewardId: "cust", type: "CUSTOM", target: "SOURCE" },
+    { rewardId: "custok", type: "CUSTOM", target: "SOURCE", amountFrom: "eventValue" },
+    { rewardId: "exit", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "wire_transfer" } },
+    { rewardId: "cond", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: { field: "x" } },
+    { rewardId: "condok", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+      conditions: [{ field: "totalJoinedCount", operator: "GTE", value: 3 }] },
+  ];
+
+  it("normalize 保留数 + collect 报错数 === 输入条目数（预检与运行时同源）", () => {
+    const kept = normalizeReferralRewardDefs(SAMPLES).length;
+    const issues = collectReferralRewardDefIssues(SAMPLES).length;
+    expect(kept + issues).toBe(SAMPLES.length);
+    expect(kept).toBe(3); // ok / custok / condok
+  });
+
+  it("每个非法条目都带可读原因，且 rewardId 可定位", () => {
+    const issues = collectReferralRewardDefIssues(SAMPLES);
+    expect(issues.every((i) => i.reason.length > 0)).toBe(true);
+    expect(issues.map((i) => i.rewardId)).toContain("amt");
+    expect(issues.find((i) => i.rewardId === "amt")?.reason).toContain("fixedAmount");
+  });
+
+  it("全部合法 → 返回空数组（不产生噪音 error）", () => {
+    expect(collectReferralRewardDefIssues([
+      { rewardId: "a", type: "FIXED", target: "SOURCE", fixedAmount: "1" },
+      { rewardId: "b", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+        metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+    ])).toEqual([]);
   });
 });
 

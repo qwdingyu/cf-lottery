@@ -10,7 +10,7 @@ import type { DbType, DbWriteScope } from "../../db/client";
 import { isFlashSaleExperience } from "../../lib/activity-utils";
 import { withDbTransaction } from "../../db/client";
 import { todayStr } from "../../lib/date-utils";
-import { and, eq, inArray, sql, asc, max } from "drizzle-orm";
+import { and, eq, inArray, sql, asc, desc, max } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
@@ -235,6 +235,8 @@ export async function joinDraw(
               eq(paymentOrders.drawId, draw.id),
               eq(paymentOrders.entryId, existingPaymentEntry.id),
             ))
+            // docs/255 P2-8：V2 1:N 订单模型下取最新订单（createdAt desc），避免 .limit(1) 结果不确定
+            .orderBy(desc(paymentOrders.createdAt))
             .limit(1);
           if (existingOrder && !isRetryablePaymentOrderStatus(existingOrder.status)) {
             return {

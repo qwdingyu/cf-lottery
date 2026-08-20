@@ -43,26 +43,77 @@ export interface ReferralRewardMeta {
  * 归一化 referralRewardDefs 配置。
  * 非法/空输入返回空数组（静默跳过）。
  *
- * 校验项（docs/254 + docs/255 §六 P1-3）：
+ * 校验项（docs/254 + docs/255 §六 P1-3 + docs/255 二次审查 B1/B2）：
  * - rewardId：非空字符串，且全局唯一（重复 rewardId 会导致幂等标记混乱）
- * - type：白名单 {FIXED, CUSTOM}（剔除 LEVEL：cf-lottery 恒传 ancestors=[]，数学上永不发放；
+ * - type：白名单 {DIRECT, FIXED, CUSTOM}（剔除 LEVEL：cf-lottery 恒传 ancestors=[]，数学上永不发放；
  *   剔除会在直接调用时抛异常的未知类型）
  * - target：白名单 {SOURCE}（剔除 PARENT：cf-lottery 恒传 directParent=null，永不发放）
- * - FIXED 类型必须有 fixedAmount > 0（否则静默不发奖）
+ * - 金额：必须是 Decimal 能安全解析的十进制且 > 0
+ *   · FIXED → fixedAmount；DIRECT → rate；CUSTOM → amount 或 amountFrom
+ *   · 引擎用 Decimal 比较，而 Decimal 对 " 5 " / true / "5%" 直接抛 DecimalError，
+ *     异常会被 maybeTriggerReward 的 try/catch 吞掉 → 该分享者整批奖励静默丢失
  * - rewardExit：白名单 bonus_spin/bonus_coupon
  * - conditions：严格校验（非数组 FAIL-OPEN 根除；字段/算子白名单；逻辑节点递归；
- *   深度上限 5 防深树 DoS）
+ *   深度上限 5 防深树 DoS；排序算子 value 必须可解析数值；EQ/NE 必须有 value——
+ *   NE 缺 value 时引擎恒返回 true，等于无条件超发）
+ *
+ * ⚠️ 单一真相：本函数与 collectReferralRewardDefIssues 共用 validateReferralRewardDef，
+ * 禁止各写一份判断，否则预检与运行时会漂移（预检放行但运行时剔除，或反之）。
  */
 const REWARD_TYPE_WHITELIST = new Set(["DIRECT", "FIXED", "CUSTOM"]);
 const REWARD_TARGET_WHITELIST = new Set(["SOURCE"]);
 const REWARD_EXIT_WHITELIST = new Set(["bonus_spin", "bonus_coupon"]);
-/** conditions 字段白名单（对齐 referral-rewards-engine.ts:264-272 实际提供的 attrs） */
+/**
+ * CUSTOM.amountFrom 白名单：只允许指向数值来源。
+ * 指向 activityKind 等非数值字段时，resolveCustomAmount 会返回 "lottery"，
+ * 随后 Decimal.gt("lottery","0") 抛 DecimalError（同样静默丢失整批奖励）。
+ */
+const CUSTOM_AMOUNT_FROM_WHITELIST = new Set(["eventValue", "event.attrs.totalJoinedCount"]);
+/** conditions 字段白名单（对齐 processReferralRewardsEngine 实际提供的 attrs） */
 const CONDITION_FIELD_WHITELIST = new Set(["totalJoinedCount", "activityKind", "eventValue", "eventType"]);
 /** 排序类算子：value 必须可解析数值（引擎比较时非数值会恒 false） */
 const CONDITION_ORDERING_OPERATORS = new Set(["GTE", "GT", "LTE", "LT"]);
 const CONDITION_OPERATOR_WHITELIST = new Set(["GTE", "GT", "LTE", "LT", "EQ", "NE"]);
 const CONDITION_NODE_TYPE_WHITELIST = new Set(["COMPARE", "AND", "OR", "NOT"]);
 const MAX_CONDITION_DEPTH = 5;
+
+/**
+ * 金额是否为 Decimal 能安全解析的十进制值。
+ *
+ * 与引擎实现严格对齐（node_modules/@usethink/incentive-engine/src/decimal.js）：
+ * Decimal 接受有限数字与纯十进制字符串，但对带空格（" 5 "）、布尔、百分号（"5%"）、
+ * 空串直接抛 DecimalError。科学计数法（"1e3"）虽被 Decimal 接受，但运营配置里
+ * 出现即为误写（UI 只产出 String(整数)），一并剔除以免发出意料之外的金额。
+ */
+function isSafeDecimalAmount(raw: unknown): boolean {
+  if (typeof raw === "number") return Number.isFinite(raw);
+  if (typeof raw !== "string") return false;
+  if (raw === "" || raw !== raw.trim()) return false;
+  return /^\d+(\.\d+)?$/.test(raw);
+}
+
+/** 金额是否安全且 > 0（<=0 时引擎不产生记录，属死配置） */
+function isPositiveDecimalAmount(raw: unknown): boolean {
+  return isSafeDecimalAmount(raw) && Number(raw) > 0;
+}
+
+/**
+ * conditions 的 value 是否可解析为数值。
+ * 引擎 _toComparable 会 String().trim()，因此数字与带空格数字串都可用，
+ * 不应像金额那样严格（否则误杀 `{operator:"GTE", value: 3}` 这类合法配置）。
+ */
+function isNumericConditionValue(raw: unknown): boolean {
+  if (typeof raw === "number") return Number.isFinite(raw);
+  if (typeof raw !== "string") return false;
+  const s = raw.trim();
+  return s !== "" && Number.isFinite(Number(s));
+}
+
+/** EQ/NE 的 value 是否存在（缺失时 _toComparable(undefined)="" → NE 恒 true，无条件超发） */
+function isPresentConditionValue(raw: unknown): boolean {
+  if (typeof raw === "number") return Number.isFinite(raw);
+  return typeof raw === "string" && raw.trim() !== "";
+}
 
 /**
  * 递归校验单个 conditions 节点（元素）。
@@ -98,10 +149,11 @@ function isValidConditionNode(
   if (typeof n.operator !== "string" || !CONDITION_OPERATOR_WHITELIST.has(n.operator)) return false;
   // 排序类算子：value 必须可解析数值（引擎比较非数值恒 false，等于死配置）
   if (CONDITION_ORDERING_OPERATORS.has(n.operator)) {
-    const num = Number(n.value);
-    if (typeof n.value !== "string" || n.value.trim() === "" || !Number.isFinite(num)) return false;
+    return isNumericConditionValue(n.value);
   }
-  return true;
+  // EQ/NE：value 必须存在。缺失时引擎 _toComparable(undefined) 得 ""，
+  // EQ 恒 false（死配置）、NE 恒 true（无条件发奖，资金风险）。
+  return isPresentConditionValue(n.value);
 }
 
 /** 校验 referralRewardDefs 的 conditions 是否合法（非数组 → fail-open 根除） */
@@ -112,38 +164,83 @@ function isValidConditions(conditions: unknown): boolean {
   return conditions.every((c) => isValidConditionNode(c, 1, false));
 }
 
+/**
+ * 校验单条 referralRewardDef —— 校验逻辑的唯一实现。
+ *
+ * normalizeReferralRewardDefs（运行时剔除）与 collectReferralRewardDefIssues
+ * （发布预检报错）都必须走本函数，禁止各自复制判断，否则两者会漂移：
+ * 预检放行而运行时剔除（运营配了不生效），或预检报错而运行时会发（发不了却在发奖）。
+ *
+ * @param seenRewardIds 已出现过的 rewardId（用于唯一性判断）；校验通过时会写入
+ * @returns null 表示合法；否则返回可直接展示给运营的中文原因
+ */
+function validateReferralRewardDef(item: unknown, seenRewardIds: Set<string>): string | null {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return "条目不是对象";
+  const def = item as Record<string, unknown>;
+
+  // rewardId：非空字符串 + 全局唯一（rewardId 同时是幂等键，重复会导致标记混乱）
+  if (!def.rewardId || typeof def.rewardId !== "string") return "缺少 rewardId";
+  if (seenRewardIds.has(def.rewardId)) return "rewardId 重复";
+
+  // type：白名单（DIRECT/FIXED/CUSTOM；剔除 LEVEL 与未知类型）
+  if (typeof def.type !== "string" || !REWARD_TYPE_WHITELIST.has(def.type)) {
+    return `type 非法（仅支持 ${[...REWARD_TYPE_WHITELIST].join("/")}）`;
+  }
+  // target：白名单（SOURCE；剔除 PARENT——cf-lottery 恒传 directParent=null）
+  if (typeof def.target !== "string" || !REWARD_TARGET_WHITELIST.has(def.target)) {
+    return `target 非法（仅支持 ${[...REWARD_TARGET_WHITELIST].join("/")}）`;
+  }
+
+  // 金额：必须是 Decimal 能安全解析的十进制且 > 0（否则抛 DecimalError 或恒不发放）
+  if (def.type === "FIXED" && !isPositiveDecimalAmount(def.fixedAmount)) {
+    return "fixedAmount 必须是大于 0 的十进制数（不允许空格/百分号/布尔/科学计数法）";
+  }
+  if (def.type === "DIRECT" && !isPositiveDecimalAmount(def.rate)) {
+    return "rate 必须是大于 0 的十进制数（不允许空格/百分号/布尔/科学计数法）";
+  }
+  if (def.type === "CUSTOM") {
+    const hasAmountFrom = def.amountFrom !== undefined && def.amountFrom !== null && def.amountFrom !== "";
+    if (hasAmountFrom) {
+      if (typeof def.amountFrom !== "string" || !CUSTOM_AMOUNT_FROM_WHITELIST.has(def.amountFrom)) {
+        return `amountFrom 非法（仅支持 ${[...CUSTOM_AMOUNT_FROM_WHITELIST].join(" / ")}）`;
+      }
+      // amountFrom 取不到值时引擎会回退 amount，因此 amount 存在时也必须安全
+      if (def.amount !== undefined && def.amount !== null && def.amount !== "" && !isSafeDecimalAmount(def.amount)) {
+        return "amount 必须是十进制数（不允许空格/百分号/布尔/科学计数法）";
+      }
+    } else if (!isPositiveDecimalAmount(def.amount)) {
+      return "CUSTOM 必须提供大于 0 的 amount，或指向数值来源的 amountFrom";
+    }
+  }
+
+  // rewardExit：白名单（在 metadata 中）
+  const meta = (def.metadata || {}) as Record<string, unknown>;
+  const exit = String(meta.rewardExit || "bonus_spin");
+  if (!REWARD_EXIT_WHITELIST.has(exit)) {
+    return `rewardExit 非法（仅支持 ${[...REWARD_EXIT_WHITELIST].join("/")}）`;
+  }
+
+  // conditions：严格校验（非数组 fail-open 根除 + 白名单 + 递归 + 深度上限 + value 语义）
+  if (!isValidConditions(def.conditions)) {
+    return "conditions 非法（必须为数组，字段/算子需在白名单内，逻辑节点需显式 type，比较算子需有可用 value）";
+  }
+
+  seenRewardIds.add(def.rewardId);
+  return null;
+}
+
 export function normalizeReferralRewardDefs(raw: unknown): RewardDef[] {
   if (!Array.isArray(raw)) return [];
   const seenRewardIds = new Set<string>();
-  return raw.filter((item) => {
-    if (!item || typeof item !== "object") return false;
-    const def = item as Record<string, unknown>;
-    // rewardId：非空字符串 + 全局唯一
-    if (!def.rewardId || typeof def.rewardId !== "string") return false;
-    if (seenRewardIds.has(def.rewardId)) return false; // 重复 rewardId 剔除
-    // type：白名单（FIXED/CUSTOM/DIRECT；剔除 LEVEL 与未知类型）
-    if (typeof def.type !== "string" || !REWARD_TYPE_WHITELIST.has(def.type)) return false;
-    // target：白名单（SOURCE；剔除 PARENT）
-    if (typeof def.target !== "string" || !REWARD_TARGET_WHITELIST.has(def.target)) return false;
-    // FIXED 类型必须有 fixedAmount > 0（否则静默不发奖）
-    if (def.type === "FIXED") {
-      const fixedAmount = Number(def.fixedAmount);
-      if (!(fixedAmount > 0)) return false;
-    }
-    // rewardExit：白名单（在 metadata 中）
-    const meta = (def.metadata || {}) as Record<string, unknown>;
-    const exit = String(meta.rewardExit || "bonus_spin");
-    if (!REWARD_EXIT_WHITELIST.has(exit)) return false;
-    // conditions：严格校验（非数组 fail-open 根除 + 白名单 + 递归 + 深度上限）
-    if (!isValidConditions(def.conditions)) return false;
-    seenRewardIds.add(def.rewardId);
-    return true;
-  }) as RewardDef[];
+  return raw.filter((item) => validateReferralRewardDef(item, seenRewardIds) === null) as RewardDef[];
 }
 
 /**
  * 收集 referralRewardDefs 中每个非法条目的原因（docs/255 §6.6 P1-3）。
  * 供发布预检对每个非法条目单独报 error（而非只在"全部无效"时给一条 warning）。
+ *
+ * 不变式：normalizeReferralRewardDefs 保留数 + 本函数报错数 === 输入条目数。
+ *
  * @returns [{ rewardId, reason }] 非法条目列表；全部合法返回 []
  */
 export function collectReferralRewardDefIssues(raw: unknown): Array<{ rewardId: string; reason: string }> {
@@ -151,43 +248,12 @@ export function collectReferralRewardDefIssues(raw: unknown): Array<{ rewardId: 
   const issues: Array<{ rewardId: string; reason: string }> = [];
   const seenRewardIds = new Set<string>();
   for (const item of raw) {
-    if (!item || typeof item !== "object") {
-      issues.push({ rewardId: String((item as Record<string, unknown>)?.rewardId ?? "?"), reason: "条目不是对象" });
-      continue;
-    }
-    const def = item as Record<string, unknown>;
-    const rewardId = String(def.rewardId ?? "?");
-    if (!def.rewardId || typeof def.rewardId !== "string") {
-      issues.push({ rewardId, reason: "缺少 rewardId" });
-      continue;
-    }
-    if (seenRewardIds.has(def.rewardId)) {
-      issues.push({ rewardId, reason: "rewardId 重复" });
-      continue;
-    }
-    if (typeof def.type !== "string" || !REWARD_TYPE_WHITELIST.has(def.type)) {
-      issues.push({ rewardId, reason: `type 非法（仅支持 ${[...REWARD_TYPE_WHITELIST].join("/")}）` });
-      continue;
-    }
-    if (typeof def.target !== "string" || !REWARD_TARGET_WHITELIST.has(def.target)) {
-      issues.push({ rewardId, reason: `target 非法（仅支持 ${[...REWARD_TARGET_WHITELIST].join("/")}）` });
-      continue;
-    }
-    if (def.type === "FIXED" && !(Number(def.fixedAmount) > 0)) {
-      issues.push({ rewardId, reason: "FIXED 类型必须提供 fixedAmount > 0" });
-      continue;
-    }
-    const meta = (def.metadata || {}) as Record<string, unknown>;
-    const exit = String(meta.rewardExit || "bonus_spin");
-    if (!REWARD_EXIT_WHITELIST.has(exit)) {
-      issues.push({ rewardId, reason: `rewardExit 非法（仅支持 ${[...REWARD_EXIT_WHITELIST].join("/")}）` });
-      continue;
-    }
-    if (!isValidConditions(def.conditions)) {
-      issues.push({ rewardId, reason: "conditions 非法（必须为数组，字段/算子需在白名单内，逻辑节点需显式 type）" });
-      continue;
-    }
-    seenRewardIds.add(def.rewardId);
+    const reason = validateReferralRewardDef(item, seenRewardIds);
+    if (reason === null) continue;
+    const rewardId = String(
+      (item && typeof item === "object" ? (item as Record<string, unknown>).rewardId : undefined) ?? "?",
+    );
+    issues.push({ rewardId, reason });
   }
   return issues;
 }
@@ -450,7 +516,7 @@ export async function processReferralRewardsEngine(
       case "bonus_coupon":
         success = await grantBonusCoupon(
           tx, draw.tenantId, draw.id,
-          sharer.sharerEntryId, meta.couponLabel, rewardId,
+          sharer.sharerEntryId, meta.couponLabel, rewardId, amount,
         );
         break;
       default:
