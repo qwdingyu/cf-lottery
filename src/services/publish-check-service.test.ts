@@ -1206,6 +1206,141 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(r3.errors.some((item) => item.code === "promotion.referralRewardDefs.bonus_spin.not_instant")).toBe(false);
   });
 
+  /**
+   * docs/255 §6.6（P1-3）+ 本轮补测：referralRewardDefs 逐条报错。
+   *
+   * 旧行为只在「全部无效」时给一条 warning，部分非法时运营完全无感知
+   * （运行时被 normalizeReferralRewardDefs 静默剔除，奖励不发但预检放行）。
+   * 不变式：normalizeReferralRewardDefs 保留数 + invalid_entry 报错数 === 输入条目数。
+   */
+  it("referralRewardDefs 部分非法：逐条 error 且不报「全部无效」warning（docs/255 P1-3）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          // 合法
+          { rewardId: "good", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+          // type 非法（LEVEL 未在白名单）
+          { rewardId: "bad-type", type: "LEVEL", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_spin" } },
+          // fixedAmount 带空格 → Decimal 会抛 DecimalError
+          { rewardId: "bad-amount", type: "FIXED", target: "SOURCE", fixedAmount: " 5 ", metadata: { rewardExit: "bonus_spin" } },
+          // rewardExit 不在白名单 → 运行时无出口可走
+          { rewardId: "bad-exit", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "wire_transfer" } },
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+
+    const entryErrors = r.errors.filter((item) => item.code === "promotion.referralRewardDefs.invalid_entry");
+    // 3 个非法条目 → 3 条 error（1 合法 + 3 非法 === 输入 4 条）
+    expect(entryErrors).toHaveLength(3);
+    const joined = entryErrors.map((item) => item.message).join("\n");
+    expect(joined).toContain("bad-type");
+    expect(joined).toContain("bad-amount");
+    expect(joined).toContain("bad-exit");
+    // 合法条目不报错
+    expect(joined).not.toContain("good");
+    // 部分非法 ≠ 全部无效，不应出现「全部无效」warning
+    expect(r.warnings.some((item) => item.code === "promotion.referralRewardDefs.invalid_entries")).toBe(false);
+  });
+
+  it("referralRewardDefs 全部非法：warning + 逐条 error 同时出现（docs/255 P1-3）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "", type: "FIXED", target: "SOURCE", fixedAmount: "1" },           // 缺 rewardId
+          { rewardId: "t1", type: "FIXED", target: "PARENT", fixedAmount: "1" },         // target 非法
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(r.warnings.some((item) => item.code === "promotion.referralRewardDefs.invalid_entries")).toBe(true);
+    const entryErrors = r.errors.filter((item) => item.code === "promotion.referralRewardDefs.invalid_entry");
+    expect(entryErrors).toHaveLength(2);
+    expect(entryErrors.map((item) => item.message).join("\n")).toContain("target 非法");
+  });
+
+  it("referralRewardDefs rewardId 重复：后一条报错（rewardId 同时是幂等键）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "dup", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_spin" } },
+          { rewardId: "dup", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    const entryErrors = r.errors.filter((item) => item.code === "promotion.referralRewardDefs.invalid_entry");
+    expect(entryErrors).toHaveLength(1);
+    expect(entryErrors[0]!.message).toContain("rewardId 重复");
+  });
+
+  it("referralRewardDefs conditions 非法：逐条 error（字段/算子白名单 + 数组约束）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          // conditions 非数组 → 旧实现 fail-open 会当作"无条件"放行
+          { rewardId: "c1", type: "FIXED", target: "SOURCE", fixedAmount: "1", conditions: { field: "totalJoinedCount", operator: "GTE", value: "3" }, metadata: { rewardExit: "bonus_spin" } },
+          // 字段不在白名单（引擎 _resolveField 取不到会回退 0，条件恒不成立）
+          { rewardId: "c2", type: "FIXED", target: "SOURCE", fixedAmount: "1", conditions: [{ type: "COMPARE", field: "userLevel", operator: "GTE", value: "3" }], metadata: { rewardExit: "bonus_spin" } },
+          // 排序算子的 value 非数值（引擎比较恒 false）
+          { rewardId: "c3", type: "FIXED", target: "SOURCE", fixedAmount: "1", conditions: [{ type: "COMPARE", field: "totalJoinedCount", operator: "GTE", value: "many" }], metadata: { rewardExit: "bonus_spin" } },
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    const entryErrors = r.errors.filter((item) => item.code === "promotion.referralRewardDefs.invalid_entry");
+    expect(entryErrors).toHaveLength(3);
+    for (const item of entryErrors) expect(item.message).toContain("conditions 非法");
+  });
+
+  /**
+   * docs/255 复审 B5：bonus_coupon 单次发放上限（MAX_COUPON_PER_GRANT = 10）。
+   * FIXED 张数超过单次上限时，一次归因只发 10 张，差额靠后续归因续发
+   * （A4 的部分标记 `rewardId:N` 支持续发），运营需要知道"不会一次发完"。
+   */
+  it("referralRewardDefs bonus_coupon FIXED 张数超单次上限 → warning（docs/255 B5）", async () => {
+    const draw = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "big", type: "FIXED", target: "SOURCE", fixedAmount: "25", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+          { rewardId: "small", type: "FIXED", target: "SOURCE", fixedAmount: "3", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+        ],
+      }),
+    });
+    await addManualTier(draw.id);
+    const r = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    const warns = r.warnings.filter((item) => item.code === "promotion.referralRewardDefs.bonus_coupon.exceeds_per_grant");
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.message).toContain("big");
+    expect(warns[0]!.message).toContain("10");
+    // 未超上限的条目不报
+    expect(warns[0]!.message).not.toContain("small");
+  });
+
   it("viral.extraSpinsPerInvite 与 referralRewardDefs 同时配置 → 阻断（docs/254 审查发现）", async () => {
     // viral 每邀请加次 + referralRewardDefs 同时配置 → 阻断（同一邀请触发两次加次，语义重复）
     const conflict = makeDraw({
