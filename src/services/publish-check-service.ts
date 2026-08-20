@@ -264,11 +264,16 @@ async function validateFlashSalePayment(
     ))
     .where(and(eq(lotteryPrizeTiers.tenantId, tenantId), eq(lotteryPrizeTiers.drawId, draw.id)));
 
-  if (codePrizeRows.length === 0) {
+  // 按 prizeId 去重：多个奖档引用同一个卡密奖品是合法配置（一等奖/二等奖共用码池），
+  // 运行时 resolveCodePrizeForDraw 也按 prizeId 去重后判定唯一性（docs/255 §八 P2-9）。
+  // 这里若按奖档行数判断，会把运行时能正常发卡的配置挡在发布之外。
+  const codePrizes = [...new Map(codePrizeRows.map((row) => [row.prizeId, row])).values()];
+
+  if (codePrizes.length === 0) {
     add(result.errors, "payment", "payment.fulfillment.code_prize.required", "直付秒杀必须绑定且只绑定一个可用卡密奖品");
     return;
   }
-  if (codePrizeRows.length > 1) {
+  if (codePrizes.length > 1) {
     add(result.errors, "payment", "payment.fulfillment.code_prize.ambiguous", "直付秒杀只能绑定一个卡密奖品，避免支付成功后发卡目标不确定");
     return;
   }
@@ -288,7 +293,7 @@ async function validateFlashSalePayment(
     ))
     .where(and(
       eq(lotteryPrizeTiers.tenantId, tenantId),
-      eq(lotteryPrizeTiers.prizeId, codePrizeRows[0].prizeId),
+      eq(lotteryPrizeTiers.prizeId, codePrizes[0]!.prizeId),
       ne(lotteryDraws.id, draw.id),
       inArray(lotteryDraws.status, DIRECT_SALE_CODE_POOL_OCCUPYING_STATUSES),
     ));
@@ -308,7 +313,7 @@ async function validateFlashSalePayment(
       .from(prizeCodes)
       .where(and(
         eq(prizeCodes.tenantId, tenantId),
-        eq(prizeCodes.prizeId, codePrizeRows[0].prizeId),
+        eq(prizeCodes.prizeId, codePrizes[0]!.prizeId),
         eq(prizeCodes.status, "available"),
       ));
     const available = Number(total || 0);
