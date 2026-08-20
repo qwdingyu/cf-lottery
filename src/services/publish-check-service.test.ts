@@ -216,6 +216,59 @@ describe("发布预检 — 奖项与码池", () => {
     const enough = await buildPublishCheckForDraw(db, TENANT, enoughDraw as any);
     expect(enough.errors.some((item) => item.code === "prizes.codes.insufficient")).toBe(false);
   });
+
+  it("多个奖档共用同一码池时按 prizeId 聚合校验（docs/255 R-2）", async () => {
+    // 一等奖 2 名 + 二等奖 2 名共用同一个卡密奖品，码池只有 3 个：
+    // 逐档校验时每档都是 3 >= 2 通过，但实际需要 4 个码，开奖必然有人发不出卡。
+    const draw = makeDraw({ winnerCount: 4 });
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type) VALUES (?, ?, ?, ?)",
+      args: [prizeId, TENANT, "共享卡密奖品", "code"],
+    });
+    for (const tierName of ["一等奖", "二等奖"]) {
+      await client.execute({
+        sql: "INSERT INTO lottery_prize_tiers (id, tenant_id, draw_id, prize_id, winner_count, tier_name) VALUES (?, ?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, draw.id, prizeId, 2, tierName],
+      });
+    }
+    for (let i = 0; i < 3; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeId, `SHARED-${i}`, "available"],
+      });
+    }
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    const insufficient = result.errors.filter((item) => item.code === "prizes.codes.insufficient");
+    expect(insufficient.length).toBe(1);
+    expect(insufficient[0]!.message).toContain("可用码 3 个");
+    expect(insufficient[0]!.message).toContain("合计中奖名额 4 个");
+  });
+
+  it("多个奖档共用同一码池且码池充足时不报错", async () => {
+    const draw = makeDraw({ winnerCount: 4 });
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type) VALUES (?, ?, ?, ?)",
+      args: [prizeId, TENANT, "共享卡密奖品", "code"],
+    });
+    for (const tierName of ["一等奖", "二等奖"]) {
+      await client.execute({
+        sql: "INSERT INTO lottery_prize_tiers (id, tenant_id, draw_id, prize_id, winner_count, tier_name) VALUES (?, ?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, draw.id, prizeId, 2, tierName],
+      });
+    }
+    for (let i = 0; i < 4; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeId, `SHARED-${i}`, "available"],
+      });
+    }
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any);
+    expect(result.errors.some((item) => item.code === "prizes.codes.insufficient")).toBe(false);
+  });
 });
 
 describe("发布预检 — instant 结果机闸门", () => {
