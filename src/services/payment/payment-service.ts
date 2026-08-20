@@ -1954,9 +1954,16 @@ export async function reservePrizeCodes(
   quantityRaw: number,
 ): Promise<string[] | null> {
   const quantity = Math.max(1, Math.floor(Number(quantityRaw || 1)));
-  const tier = await findCodePrize(db, tenantId, drawId);
-  // 无卡密奖品（非秒杀直付）：返回 null 表示"无需预占"，调用方跳过卡密预占。
-  if (!tier?.prizeId) return null;
+  // docs/255 R-4：用 resolveCodePrizeForDraw 替代 findCodePrize，消除 null 二义性。
+  // findCodePrize 在 inactive/ambiguous 时也返回 null，调用方无法区分"无卡密奖"与"解析失败"。
+  // resolveCodePrizeForDraw 返回四态：
+  //   none       → 返回 null（无卡密奖品，非秒杀直付，跳过预占）
+  //   unique     → 预占卡密
+  //   inactive   → 返回 []（卡密奖品已停用，预占失败）
+  //   ambiguous  → 返回 []（多个卡密奖品，无法确定发卡目标，预占失败）
+  const resolved = await resolveCodePrizeForDraw(db, tenantId, drawId);
+  if (resolved.kind === "none") return null;
+  if (resolved.kind !== "unique") return []; // inactive / ambiguous → 预占失败
 
   const ids: string[] = [];
   for (let i = 0; i < quantity; i += 1) {
@@ -1970,10 +1977,11 @@ export async function reservePrizeCodes(
       .where(and(
         eq(prizeCodes.tenantId, tenantId),
         eq(prizeCodes.status, "available"),
+        eq(prizeCodes.prizeId, resolved.prizeId),
         eq(prizeCodes.id, sql<string>`(
           SELECT id FROM prize_codes
           WHERE tenant_id = ${tenantId}
-            AND prize_id = ${tier.prizeId}
+            AND prize_id = ${resolved.prizeId}
             AND status = 'available'
           ORDER BY id
           LIMIT 1
