@@ -796,8 +796,19 @@ async function validatePromotion(
     // 按券池一次性查库存：同一 label 的多个奖励合并为一条提示，并给出真实张数。
     for (const [couponLabel, rewardIds] of couponPoolUsage) {
       const available = await countAvailableCoupons(db, tenantId, couponLabel);
-      if (available > 0) continue;
-      add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_coupon.need_pool", `推荐奖励（${rewardIds.join("、")}）使用 bonus_coupon 出口，但券池${describeCouponPool(couponLabel)}当前可用 ${available} 张，奖励会静默不发，请先导入优惠券码`);
+      if (available <= 0) {
+        add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_coupon.need_pool", `推荐奖励（${rewardIds.join("、")}）使用 bonus_coupon 出口，但券池${describeCouponPool(couponLabel)}当前可用 ${available} 张，奖励会静默不发，请先导入优惠券码`);
+        continue;
+      }
+      // docs/255 §十七 R-10：未指定 couponLabel 时运行时不加 label 过滤，
+      // 会把为其他活动/批次导入的带 label 券一并发走（coupon_codes 是租户级共享池）。
+      // 只在租户确实存在带 label 可用券时提示，避免变成又一条恒亮噪音。
+      if (!couponLabel) {
+        const labeled = await countAvailableLabeledCoupons(db, tenantId);
+        if (labeled > 0) {
+          add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_coupon.label_unset", `推荐奖励（${rewardIds.join("、")}）未指定 couponLabel，发放时会从租户任意可用券中取码，可能占用其他活动专用的 ${labeled} 张带 label 券，建议显式指定 couponLabel`);
+        }
+      }
     }
   }
 
@@ -1001,6 +1012,24 @@ async function countAvailableCoupons(db: DbType, tenantId: string, couponLabel: 
   return Number(row?.total || 0);
 }
 
+/**
+ * 统计租户带 label 的可用券张数（label != ''）。
+ *
+ * 用于 R-10「未指定 couponLabel」的风险判定：只有租户确实存在带 label 的可用券时，
+ * 「不限 label 取码」才会真的把别的批次抽走；否则提示纯属噪音。
+ */
+async function countAvailableLabeledCoupons(db: DbType, tenantId: string): Promise<number> {
+  const [row] = await db
+    .select({ total: count() })
+    .from(couponCodes)
+    .where(and(
+      eq(couponCodes.tenantId, tenantId),
+      eq(couponCodes.status, "available"),
+      ne(couponCodes.label, ""),
+    ));
+  return Number(row?.total || 0);
+}
+
 function describeCouponPool(couponLabel: string): string {
   return couponLabel ? `（label="${couponLabel}"）` : "（未指定 label，按租户全部可用券统计）";
 }
@@ -1032,8 +1061,17 @@ async function validateLoserReward(db: DbType, tenantId: string, draw: LotteryDr
   // 券池可后补（开奖前导入即可生效），因此只 warning 不阻断发布。
   const couponLabel = String(loserReward.couponLabel || "");
   const available = await countAvailableCoupons(db, tenantId, couponLabel);
-  if (available > 0) return;
-  add(result.warnings, "activity_config", "activity_config.loser_reward.pool_empty", `未中奖安慰券已开启，但券池${describeCouponPool(couponLabel)}当前可用 ${available} 张，开奖时不会发出任何安慰券，请先导入优惠券码`);
+  if (available <= 0) {
+    add(result.warnings, "activity_config", "activity_config.loser_reward.pool_empty", `未中奖安慰券已开启，但券池${describeCouponPool(couponLabel)}当前可用 ${available} 张，开奖时不会发出任何安慰券，请先导入优惠券码`);
+    return;
+  }
+  // docs/255 §十七 R-10：与 bonus_coupon 同一风险——未指定 label 时按租户全池取码。
+  if (!couponLabel) {
+    const labeled = await countAvailableLabeledCoupons(db, tenantId);
+    if (labeled > 0) {
+      add(result.warnings, "activity_config", "activity_config.loser_reward.label_unset", `未中奖安慰券未指定 couponLabel，开奖时会从租户任意可用券中取码，可能占用其他活动专用的 ${labeled} 张带 label 券，建议显式指定 couponLabel`);
+    }
+  }
 }
 
 function validateActivityConfig(draw: LotteryDraw, result: PublishCheckResult) {
