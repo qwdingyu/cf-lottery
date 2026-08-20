@@ -143,6 +143,42 @@ describe("normalizeReferralRewardDefs", () => {
     ]);
     expect(defs.length).toBe(1);
   });
+
+  it("非法 type → 剔除（docs/254 校验）", () => {
+    const defs = normalizeReferralRewardDefs([
+      { rewardId: "m1", type: "INVALID", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+      { rewardId: "m2", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } }, // 合法
+    ]);
+    expect(defs.length).toBe(1);
+    expect(defs[0]!.rewardId).toBe("m2");
+  });
+
+  it("非法 target → 剔除（docs/254 校验）", () => {
+    const defs = normalizeReferralRewardDefs([
+      { rewardId: "m1", type: "FIXED", target: "INVALID", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+    ]);
+    expect(defs.length).toBe(0);
+  });
+
+  it("FIXED 缺 fixedAmount 或 <=0 → 剔除（docs/254 校验）", () => {
+    const defs = normalizeReferralRewardDefs([
+      { rewardId: "m1", type: "FIXED", target: "SOURCE", metadata: { rewardExit: "bonus_spin" } }, // 缺 fixedAmount
+      { rewardId: "m2", type: "FIXED", target: "SOURCE", fixedAmount: "0", metadata: { rewardExit: "bonus_spin" } }, // 0
+      { rewardId: "m3", type: "FIXED", target: "SOURCE", fixedAmount: "-1", metadata: { rewardExit: "bonus_spin" } }, // 负
+      { rewardId: "m4", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } }, // 合法
+    ]);
+    expect(defs.length).toBe(1);
+    expect(defs[0]!.rewardId).toBe("m4");
+  });
+
+  it("重复 rewardId → 剔除（docs/254 校验）", () => {
+    const defs = normalizeReferralRewardDefs([
+      { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+      { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "5", metadata: { rewardExit: "bonus_spin" } }, // 重复
+    ]);
+    expect(defs.length).toBe(1);
+    expect(defs[0]!.fixedAmount).toBe("2");
+  });
 });
 
 describe("processReferralRewardsEngine", () => {

@@ -49,6 +49,12 @@ export type GrowthFieldsFromDraw = {
   leaderboardRewardsText: string
   /** 推荐里程碑（docs/217）：多行 "邀请数:spins次数"，如 "1:2\n3:5"（仅 instant） */
   referralRewardsText: string
+  /**
+   * 引擎推荐奖励（docs/250/254）：多行 "邀请数:奖励类型:数量[:券label]"
+   * 如 "1:bonus_spin:2"（邀请1人获2次抽奖）、"3:bonus_coupon:1:invite"（邀请3人获1张invite券）
+   * 与 referralRewardsText 互斥（发布预检拦截同时配置）
+   */
+  referralRewardDefsText: string
   enableAfterWinCta: boolean
   afterWinCtaUrl: string
   afterWinCtaTitle: string
@@ -203,6 +209,65 @@ export function formatReferralRewardsText(rewards: Array<{ requireCount: number;
   return [...rewards]
     .sort((a, b) => a.requireCount - b.requireCount)
     .map((r) => `${r.requireCount}:${r.rewardValue}`)
+    .join('\n')
+}
+
+/**
+ * 引擎推荐奖励条目（docs/250/254）：与后端 referralRewardDefs 对齐
+ */
+export type ReferralRewardDefEntry = {
+  requireCount: number
+  rewardExit: 'bonus_spin' | 'bonus_coupon'
+  rewardValue: number
+  couponLabel?: string
+}
+
+/**
+ * 解析引擎推荐奖励文本（多行 "邀请数:奖励类型:数量[:券label]"）。
+ * 非法行跳过；邀请数/数量必须为正整数，奖励类型白名单 bonus_spin/bonus_coupon。
+ * 空输入 → []。
+ */
+export function parseReferralRewardDefsText(raw: string | null | undefined): ReferralRewardDefEntry[] {
+  const out: ReferralRewardDefEntry[] = []
+  const seen = new Set<number>()
+  for (const line of String(raw || '').split(/[\n,;；]/)) {
+    const s = line.trim()
+    if (!s) continue
+    // 格式：邀请数:奖励类型:数量[:券label]
+    const parts = s.split(':')
+    if (parts.length < 3) continue
+    const requireCount = Number(parts[0])
+    const rewardExit = parts[1]?.trim() as 'bonus_spin' | 'bonus_coupon'
+    const rewardValue = Number(parts[2])
+    if (!Number.isInteger(requireCount) || requireCount < 1 || requireCount > 100) continue
+    if (rewardExit !== 'bonus_spin' && rewardExit !== 'bonus_coupon') continue
+    if (!Number.isInteger(rewardValue) || rewardValue < 1 || rewardValue > 1000) continue
+    if (seen.has(requireCount)) continue
+    seen.add(requireCount)
+    const couponLabel = parts.length >= 4 ? parts.slice(3).join(':').trim() : undefined
+    out.push({ requireCount, rewardExit, rewardValue, couponLabel })
+  }
+  return out.sort((a, b) => a.requireCount - b.requireCount)
+}
+
+/** 引擎推荐奖励 → 多行文本（与 parseReferralRewardDefsText 互逆） */
+export function formatReferralRewardDefsText(defs: Array<Record<string, unknown>> | null | undefined): string {
+  if (!Array.isArray(defs) || defs.length === 0) return ''
+  return defs
+    .map((d) => {
+      // requireCount 在 conditions[0].value（GTE totalJoinedCount 阈值），不在顶层
+      const cond = (Array.isArray(d?.conditions) ? d.conditions[0] : null) as Record<string, unknown> | null
+      const requireCount = Number(cond?.value ?? 0)
+      const meta = (d?.metadata || {}) as Record<string, unknown>
+      const rewardExit = String(meta.rewardExit || 'bonus_spin')
+      const rewardValue = Number(d?.fixedAmount ?? d?.amount ?? 0)
+      const couponLabel = String(meta.couponLabel || '')
+      if (!Number.isInteger(requireCount) || requireCount < 1) return ''
+      if (rewardExit !== 'bonus_spin' && rewardExit !== 'bonus_coupon') return ''
+      if (!Number.isInteger(rewardValue) || rewardValue < 1) return ''
+      return couponLabel ? `${requireCount}:${rewardExit}:${rewardValue}:${couponLabel}` : `${requireCount}:${rewardExit}:${rewardValue}`
+    })
+    .filter(Boolean)
     .join('\n')
 }
 
@@ -394,6 +459,12 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
           })
         : null,
     ),
+    // docs/250/254 引擎推荐奖励（promotion.referralRewardDefs）：编辑回填防整包覆盖擦掉
+    referralRewardDefsText: formatReferralRewardDefsText(
+      Array.isArray(promotion?.referralRewardDefs)
+        ? (promotion!.referralRewardDefs as Array<Record<string, unknown>>)
+        : null,
+    ),
     enableAfterWinCta,
     afterWinCtaUrl: String(afterWin?.url || ''),
     afterWinCtaTitle: String(afterWin?.title || ''),
@@ -464,6 +535,8 @@ export function buildPromotionConfigPayload(form: {
   leaderboardRewardsText?: string | null
   /** docs/217 推荐里程碑（多行 "邀请数:次数"，仅 instant） */
   referralRewardsText?: string | null
+  /** docs/250/254 引擎推荐奖励（多行 "邀请数:奖励类型:数量[:券label]"） */
+  referralRewardDefsText?: string | null
   /** instant 时双写 extraSpins*，与 runtime grant 对齐（docs/122） */
   resultMode?: string | null
   /** docs/128 游戏壳 */
@@ -501,8 +574,12 @@ export function buildPromotionConfigPayload(form: {
   // docs/217 推荐里程碑（仅 instant 生效；编辑回填缺省保留）
   const referralRewards = parseReferralRewardsText(form.referralRewardsText)
   const hasReferralRewards = isInstantMode && referralRewards.length > 0
+  // docs/250/254 引擎推荐奖励：与 referralRewards 互斥（发布预检拦截同时配置）。
+  // 不限 instant——bonus_coupon 出口所有活动类型可用；bonus_spin 仅 lottery 运行时生效。
+  const referralRewardDefs = parseReferralRewardDefsText(form.referralRewardDefsText)
+  const hasReferralRewardDefs = referralRewardDefs.length > 0
   const hasGrowth =
-    hasProduct || hasViral || hasWinCta || hasLossCta || hasFlashSale || hasPity || hasDailyFree || hasLeaderboardRewards || hasReferralRewards
+    hasProduct || hasViral || hasWinCta || hasLossCta || hasFlashSale || hasPity || hasDailyFree || hasLeaderboardRewards || hasReferralRewards || hasReferralRewardDefs
 
   const prizePanelMode = normalizePrizePanelMode(form.prizePanelMode)
   const ritualPhrases = sanitizeRitualPhrasesForSave(
@@ -654,6 +731,24 @@ export function buildPromotionConfigPayload(form: {
       })),
     }
   }
+  // docs/250/254 引擎推荐奖励：promotion.referralRewardDefs（incentive-engine RewardDef 格式）
+  // 每条转成 FIXED + conditions（GTE totalJoinedCount 阈值）+ metadata.rewardExit
+  let referralRewardDefsBlock: Record<string, unknown> = {}
+  if (hasReferralRewardDefs) {
+    referralRewardDefsBlock = {
+      referralRewardDefs: referralRewardDefs.map((r) => ({
+        rewardId: `invite_${r.requireCount}`,
+        type: 'FIXED',
+        target: 'SOURCE',
+        fixedAmount: String(r.rewardValue),
+        conditions: [{ field: 'totalJoinedCount', operator: 'GTE', value: String(r.requireCount) }],
+        metadata: {
+          rewardExit: r.rewardExit,
+          ...(r.rewardExit === 'bonus_coupon' && r.couponLabel ? { couponLabel: r.couponLabel } : {}),
+        },
+      })),
+    }
+  }
 
   return {
     version: 1,
@@ -701,6 +796,7 @@ export function buildPromotionConfigPayload(form: {
     ...pityBlock,
     ...dailyFreeBlock,
     ...referralRewardsBlock,
+    ...referralRewardDefsBlock,
     ctas: {
       ...(hasWinCta
         ? { after_win: { url: form.afterWinCtaUrl, title: form.afterWinCtaTitle || '' } }

@@ -49,6 +49,8 @@ export function emptyLotteryEditorForm(t: ActivityConfigTranslate): LotteryEdito
     leaderboardRewardsText: '',
     // docs/217 推荐里程碑（多行 "邀请数:spins次数"）
     referralRewardsText: '',
+    // docs/250/254 引擎推荐奖励（多行 "邀请数:类型:数量[:券label]"）
+    referralRewardDefsText: '',
     // 多状态 CTA
     enableAfterWinCta: false,
     afterWinCtaUrl: '',

@@ -817,6 +817,7 @@ export default {
     shareAfterMiss: "还差一点！邀请好友获得额外抽奖机会",
     shareActivityBtn: "分享活动",
     gotConsolation: "获得安慰奖！",
+    earnedCoupons: "你获得的优惠券",
     couponLabel: "优惠券：",
     /** 仅「已开奖 + 未中奖」使用；勿用于人工履约中奖无码 */
     thanksForParticipating: "感谢参与，本次未抽中奖品",
@@ -1356,6 +1357,9 @@ export default {
     adminReferralRewards: "推荐里程碑（每行 邀请数:次数）",
     adminReferralRewardsPlaceholder: "1:2\n3:5\n5:10",
     adminReferralRewardsHint: "邀请跨门槛一次性加次（仅即时，不占裂变上限）",
+    adminReferralRewardDefs: "引擎推荐奖励（每行 邀请数:类型:数量[:券label]）",
+    adminReferralRewardDefsPlaceholder: "1:bonus_spin:2\n3:bonus_coupon:1:invite",
+    adminReferralRewardDefsHint: "bonus_spin=抽奖次数（仅抽奖即时）；bonus_coupon=优惠券（需先导入码池）。与上方推荐里程碑二选一",
     /** claim 秒杀：社交传播只展示排行榜，不影响购买优先级 */
     adminSocialSection: "社交传播",
     adminSocialSectionDesc: "展示邀请排行榜（不影响购买与开奖）",

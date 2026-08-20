@@ -855,6 +855,7 @@ export default {
     shareAfterMiss: "Almost there! Invite friends to get extra spin chances",
     shareActivityBtn: "Share",
     gotConsolation: "Consolation prize!",
+    earnedCoupons: "Your coupons",
     couponLabel: "Coupon:",
     /** Only after draw + not won; not for manual-fulfillment wins without a code */
     thanksForParticipating: "Thanks for joining — you didn’t win a prize this time",
@@ -1383,6 +1384,9 @@ export default {
     adminReferralRewards: "Referral milestones (one per line: invites:spins)",
     adminReferralRewardsPlaceholder: "1:2\n3:5\n5:10",
     adminReferralRewardsHint: "One-time bonus at invite thresholds (instant only; outside viral cap)",
+    adminReferralRewardDefs: "Engine referral rewards (one per line: invites:type:value[:couponLabel])",
+    adminReferralRewardDefsPlaceholder: "1:bonus_spin:2\n3:bonus_coupon:1:invite",
+    adminReferralRewardDefsHint: "bonus_spin=spin count (lottery instant only); bonus_coupon=coupon (import code pool first). Choose one with milestones above",
     /** claim: social sharing shows leaderboard only, no impact on purchase priority */
     adminSocialSection: "Social Sharing",
     adminSocialSectionDesc: "Shows invite leaderboard (no effect on purchase/draw)",

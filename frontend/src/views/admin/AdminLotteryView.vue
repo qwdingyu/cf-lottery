@@ -1121,6 +1121,12 @@
                       <textarea v-model="form.referralRewardsText" rows="3" :placeholder="$t('lottery.adminReferralRewardsPlaceholder')"></textarea>
                       <small>{{ $t('lottery.adminReferralRewardsHint') }}</small>
                     </label>
+                    <!-- docs/250/254 引擎推荐奖励：支持 bonus_spin / bonus_coupon 双出口 -->
+                    <label class="field-span-2">
+                      <span>{{ $t('lottery.adminReferralRewardDefs') }}</span>
+                      <textarea v-model="form.referralRewardDefsText" rows="3" :placeholder="$t('lottery.adminReferralRewardDefsPlaceholder')"></textarea>
+                      <small>{{ $t('lottery.adminReferralRewardDefsHint') }}</small>
+                    </label>
                   </div>
                 </template>
               </section>
@@ -3730,6 +3736,8 @@ async function handleDuplicate(draw: LotteryDraw) {
     leaderboardRewardsText: growth.leaderboardRewardsText,
     // docs/217 推荐里程碑：编辑回填防整包覆盖擦掉配置
     referralRewardsText: growth.referralRewardsText,
+    // docs/250/254 引擎推荐奖励：编辑回填防整包覆盖擦掉配置
+    referralRewardDefsText: growth.referralRewardDefsText,
     enableAfterWinCta: growth.enableAfterWinCta,
     afterWinCtaUrl: growth.afterWinCtaUrl,
     afterWinCtaTitle: growth.afterWinCtaTitle,
@@ -4509,6 +4517,8 @@ async function handleEdit(draw: LotteryDraw) {
     leaderboardRewardsText: growth.leaderboardRewardsText,
     // docs/217 推荐里程碑：编辑回填防整包覆盖擦掉配置
     referralRewardsText: growth.referralRewardsText,
+    // docs/250/254 引擎推荐奖励：编辑回填防整包覆盖擦掉配置
+    referralRewardDefsText: growth.referralRewardDefsText,
     enableAfterWinCta: growth.enableAfterWinCta,
     afterWinCtaUrl: growth.afterWinCtaUrl,
     afterWinCtaTitle: growth.afterWinCtaTitle,

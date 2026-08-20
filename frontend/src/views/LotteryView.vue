@@ -1079,6 +1079,22 @@
                 {{ getResultCta(myResultDraw, 'after_win')!.title || $t('lottery.viewDetail') }}
               </a>
             </div>
+            <!-- 中奖 + 邀请奖励券共存：独立于 won 分支展示（docs/254 修复 1C） -->
+            <div
+              v-if="myResultCoupons.length > 0"
+              class="result-coupons-block"
+            >
+              <div class="result-line">🎫 <strong>{{ $t('lottery.earnedCoupons') }}</strong></div>
+              <div
+                v-for="(cp, ci) in myResultCoupons"
+                :key="ci"
+                class="result-code-block"
+              >
+                <span class="result-code-label">{{ $t('lottery.couponLabel') }}</span>
+                <code class="result-code" @click="copyMyResult(cp)">{{ cp }}</code>
+                <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
+              </div>
+            </div>
           </template>
           <template v-else-if="myResultCoupons.length > 0">
             <div class="result-line">🎁 <strong>{{ $t('lottery.gotConsolation') }}</strong></div>
