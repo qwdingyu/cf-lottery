@@ -1090,6 +1090,58 @@ describe("公开参与流程", () => {
     expect(entry).toBeFalsy();
   });
 
+  /**
+   * docs/255 §五（P1-2）：/join 必须遵守与 access-code 同一个平台开关
+   * `system_config.enable_email_verification`（未配置 = 需验证）。
+   * 否则 open 活动可用任意邮箱字符串 + 自己的 refCode 批量刷邀请奖励。
+   */
+  it("open 模式：未配置 enable_email_verification 时 /join 拒绝免码参与（P1-2）", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "join-otp-gate",
+      title: "免码刷量测试", status: "open", participationMode: "open",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    const res = await app.request("/public/draws/join-otp-gate/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.41" },
+      body: JSON.stringify({ email: "farm-1@test.com", refCode: "SELF-REF" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.message).toContain("验证码");
+
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId)).limit(1);
+    expect(entry).toBeFalsy();
+  });
+
+  it("open 模式：enable_email_verification=false 时 /join 仍允许免码参与（P1-2 不误伤测试环境）", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    await db.insert(systemConfig).values({
+      key: "enable_email_verification", value: "false",
+    }).onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT, publicSlug: "join-otp-bypass",
+      title: "显式关闭验证码", status: "open", participationMode: "open",
+      startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+      winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    const res = await app.request("/public/draws/join-otp-bypass/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.42" },
+      body: JSON.stringify({ email: "bypass-ok@test.com" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.drawId, drawId)).limit(1);
+    expect(entry).toBeTruthy();
+  });
+
   it("registered 模式：my-result 带 JWT 按 userId 查到结果，无 JWT 拒绝", async () => {
     const app = createPublicTestApp();
     const drawId = crypto.randomUUID();
