@@ -1475,6 +1475,7 @@ export default {
     adminFunnelShares: "分享点击",
     adminFunnelJoins: "有效邀请",
     adminFunnelConversions: "外部回传",
+    adminFunnelRewards: "奖励发放",
     adminDefaultContactEmail: "联系邮箱",
     adminDefaultFeedback: "反馈内容",
     adminOptionNumber: "选项 {n}",

@@ -1080,11 +1080,15 @@
               </a>
             </div>
           </template>
-          <template v-else-if="myResultData.consolationCoupon">
+          <template v-else-if="myResultCoupons.length > 0">
             <div class="result-line">🎁 <strong>{{ $t('lottery.gotConsolation') }}</strong></div>
-            <div class="result-code-block">
+            <div
+              v-for="(cp, ci) in myResultCoupons"
+              :key="ci"
+              class="result-code-block"
+            >
               <span class="result-code-label">{{ $t('lottery.couponLabel') }}</span>
-              <code class="result-code" @click="copyMyResult(myResultData.consolationCoupon)">{{ myResultData.consolationCoupon }}</code>
+              <code class="result-code" @click="copyMyResult(cp)">{{ cp }}</code>
               <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
             </div>
           </template>
@@ -2178,6 +2182,8 @@ type MyResultPayload = {
   fulfillmentNote?: string | null
   tierName?: string | null
   consolationCoupon: string | null
+  /** 该用户在该活动下全部已发放的优惠券码（含安慰券 + 邀请奖励券，docs/253 缺口 A/B） */
+  coupons?: string[]
   /** instant 多奖 */
   wins?: Array<{
     winnerId?: string
@@ -2204,6 +2210,14 @@ type MyResultPayload = {
 }
 const myResultData = ref<MyResultPayload | null>(null)
 const myResultError = ref('')
+/** 该用户在该活动下全部已发放的优惠券码（含安慰券 + 邀请奖励券，docs/253 缺口 A/B） */
+const myResultCoupons = computed(() => {
+  const arr = myResultData.value?.coupons
+  if (Array.isArray(arr) && arr.length > 0) return arr
+  // 兼容旧后端：无 coupons 数组时回退单条 consolationCoupon
+  const single = myResultData.value?.consolationCoupon
+  return single ? [single] : []
+})
 /** my-result 当前是否 instant 活动 */
 const isMyResultInstant = computed(() =>
   isInstantLottery({

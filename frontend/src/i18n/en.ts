@@ -1502,6 +1502,7 @@ export default {
     adminFunnelShares: "Share clicks",
     adminFunnelJoins: "Attributed joins",
     adminFunnelConversions: "External conversions",
+    adminFunnelRewards: "Rewards issued",
     adminDefaultContactEmail: "Contact email",
     adminDefaultFeedback: "Feedback",
     adminOptionNumber: "Option {n}",

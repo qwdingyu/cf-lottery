@@ -730,7 +730,7 @@ export async function cancelSignupChainEntry(
  */
 async function maybeTriggerReward(
   tx: DbType,
-  draw: { id: string; tenantId: string; resultMode?: string | null; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
+  draw: { id: string; tenantId: string; activityKind?: string | null; resultMode?: string | null; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
   attribution: { attributed: boolean; sharerEntryId?: string; refCode?: string; shareRecordId?: string },
 ) {
   if (!attribution.attributed || !attribution.sharerEntryId) return;
