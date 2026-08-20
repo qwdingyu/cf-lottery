@@ -712,6 +712,29 @@ async function validatePromotion(
     add(result.warnings, "promotion", "promotion.referralRewardDefs.invalid_entries", "推荐奖励配置了条目但全部无效（需包含 rewardId/type/target 且 rewardExit 为 bonus_spin 或 bonus_coupon），奖励不会发放");
   }
 
+  // referralRewardDefs 的 rewardExit 与活动类型/结果模式的适配性校验（docs/252 §2.2）：
+  // - bonus_spin 出口只对 lottery + instant 有效（performInstantSpin 严格限制 activityKind==="lottery"，
+  //   非 lottery 活动即使加了 spins 也无法消费，spin 接口 400）
+  // - bonus_coupon 出口需要租户有可用优惠券码池，否则奖励静默不发
+  if (hasReferralRewardDefs) {
+    const validDefs = normalizeReferralRewardDefs(referralRewardDefs);
+    const isLotteryKind = draw.activityKind === "lottery";
+    const isInstantMode = isInstantResultMode(draw.resultMode);
+    for (const def of validDefs) {
+      const meta = (def.metadata || {}) as Record<string, unknown>;
+      const exit = String(meta.rewardExit || "bonus_spin");
+      if (exit === "bonus_spin" && !isLotteryKind) {
+        add(result.errors, "promotion", "promotion.referralRewardDefs.bonus_spin.not_lottery", `推荐奖励 ${def.rewardId} 使用 bonus_spin 出口，但当前活动类型不是 lottery，分享者无法消费抽奖次数（仅 lottery 支持即时抽奖）`);
+      }
+      if (exit === "bonus_spin" && isLotteryKind && !isInstantMode) {
+        add(result.errors, "promotion", "promotion.referralRewardDefs.bonus_spin.not_instant", `推荐奖励 ${def.rewardId} 使用 bonus_spin 出口，但当前结果模式不是 instant，delayed 模式无 spins 体系，奖励不会发放`);
+      }
+      if (exit === "bonus_coupon") {
+        add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_coupon.need_pool", `推荐奖励 ${def.rewardId} 使用 bonus_coupon 出口，请确保租户已导入优惠券码池（coupon_codes），否则奖励静默不发`);
+      }
+    }
+  }
+
   // 裂变配置校验（P2 审查项：统一严格 ===true 判定，enabled="true" 字符串不视为启用）
   if (isViralEnabled(viral) && viral) {
     // 邀请加次/加权数值仅对抽奖（lottery）有意义（instant 加 spins / delayed 开奖加权）；

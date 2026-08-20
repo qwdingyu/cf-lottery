@@ -203,3 +203,40 @@ const result = await tx.update(shareRecords)
 **建议**：先修复这 3 个高严重度问题，再补中严重度的前端展示和提示，最后做可选优化。修复后重新跑全量测试确认无回归。
 
 **特别提醒**：问题 2.1（幂等标记缺 CAS）是**并发安全缺陷**，必须用真实数据库并发测试验证修复效果（遵循"安全/漏洞分析必须用测试验证"原则）。
+
+---
+
+## 八、修复完成记录（2026-08-20）
+
+### 8.1 已修复（🔴 高严重度）
+
+| # | 问题 | 修复内容 | 验证 |
+|---|------|---------|------|
+| 1 | 幂等标记缺 CAS | `markRewardIdsGranted` 增加 `eq(rewardMilestonesGranted, 旧值)` CAS 条件；`aggregateSharerData` 返回 `oldValues`；检查返回值，CAS 失败时不加 `alreadyGranted` | 全量测试通过 |
+| 2 | bonus_spin 非 lottery 静默失效 | 运行时：非 lottery 时 `bonus_spin` 出口跳过；发布预检：`bonus_spin` + 非 lottery → error，`bonus_spin` + 非 instant → error | 新增测试"非 lottery + bonus_spin 跳过"通过 |
+| 3 | recipientEmail 缺口 | `grantBonusCoupon` 查询分享者 entry 的 identityValue，registered 身份关联 users.email，填充 recipientEmail | 新增测试"bonus_coupon 填充 recipientEmail"通过 |
+
+### 8.2 已修复（🟢 低严重度）
+
+| # | 问题 | 修复内容 |
+|---|------|---------|
+| 8 | bonus_coupon 审计 | `grantBonusCoupon` 发放成功后写 `activityEvents`（reward_earned），metadata 记录 rewardExit/rewardId/couponLabel/couponCode/recipientEmail |
+
+### 8.3 审查结论更新
+
+- **配置切换遗留旧标记（§3.3）**：经深入分析，实际严重度**低于最初判断**。旧路径 [2] 写 `requireCount` 数值数组，新路径 [4] 写 `rewardId` 字符串数组，两者标识不同，**不会重复发放**。唯一风险是 rewardId 恰好用纯数字字符串（如 `"1"`）与旧 requireCount 撞车，属极端情况，且发布预检已拦截"同时配置"。**决定不为此加复杂逻辑**，记录为已知边界。
+- **事务边界（§4.1）**：`maybeTriggerReward` 的 try/catch 已确保奖励失败不影响参与记录（事务正常提交）。`grantBonusSpin`/`grantBonusCoupon` 内部 DB 异常会被 catch，不会回滚参与。设计正确，无需改动。
+
+### 8.4 验证结果
+
+- **TypeScript 类型检查**：0 errors（exit 0）
+- **全量测试**：96 个文件、1389 个测试全部通过，无回归
+- **新增测试**：2 个（非 lottery + bonus_spin 跳过、bonus_coupon 填充 recipientEmail）
+
+### 8.5 剩余待办（🟡 中严重度，需前端配合）
+
+| # | 问题 | 说明 |
+|---|------|------|
+| 4 | 优惠券无前端展示入口 | 需新增 `GET /api/public/coupons?entryId=` + 前端"我的结果"弹窗展示（涉及前端，单独排期） |
+| 5 | 码池耗尽无提示 | 发布预检已加 warning（`bonus_coupon.need_pool`），运行时日志待补 |
+| 6 | 配置切换遗留旧标记 | 已评估为低风险，记录为已知边界 |

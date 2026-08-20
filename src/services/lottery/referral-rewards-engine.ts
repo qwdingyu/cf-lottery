@@ -84,6 +84,8 @@ interface SharerAggregate {
   sharerEntryId: string;
   recordIds: string[];
   grantedRewardIds: string[];
+  /** 各 record 当前的 rewardMilestonesGranted 值（与 recordIds 一一对应，CAS 标记的基准） */
+  oldValues: string[];
 }
 
 /**
@@ -138,36 +140,57 @@ async function aggregateSharerData(
     sharerEntryId,
     recordIds: sharerRecords.map((r) => r.id),
     grantedRewardIds: [...grantedSet],
+    oldValues: sharerRecords.map((r) => r.rewardMilestonesGranted ?? ""),
   };
 }
 
 /**
  * 标记已发放的 rewardId 到分享者的全部 share_record（幂等防护）。
- * 与现有路径 [2] 的标记方式一致：写入全部记录，保证"按分享者聚合 + 按分享者幂等"
- * 在任意后续记录上成立。
+ *
+ * 采用 CAS 乐观锁：UPDATE 时带 `rewardMilestonesGranted == 旧值` 条件，
+ * 防止并发下两个请求互相覆盖标记（审查 docs/252 §2.1）。
+ *
+ * 顺序：先 grant（CAS 防护），后 mark（CAS 防护，best effort）。
+ * 如果 mark 的 CAS 失败（rowsAffected=0），说明其他请求已先一步标记，
+ * 此时 grant 已成功（由 grant 层的 CAS 防护防止重复发放），
+ * mark 标记在下次归因时由 grant 层的 CAS 兜底。
+ *
+ * @param tx 事务实例
+ * @param tenantId 租户 ID
+ * @param drawId 活动 ID
+ * @param recordIds 该分享者名下全部 share_record id 列表
+ * @param currentGranted 当前已发放的 rewardId 列表（快照，用于计算新值）
+ * @param newRewardId 本次新发放的 rewardId
+ * @param oldValues 各 record 当前的 rewardMilestonesGranted 值（CAS 条件的基准）
+ *   与 recordIds 一一对应，在 aggregateSharerData 阶段读取
+ * @returns 全部 record 标记成功返回 true，任一失败返回 false
  */
 async function markRewardIdsGranted(
   tx: DbType,
-  tenantId: string,
-  drawId: string,
   recordIds: string[],
   currentGranted: string[],
   newRewardId: string,
+  oldValues: string[],
 ): Promise<boolean> {
   const nextGranted = [...new Set([...currentGranted, newRewardId])].sort();
   const nextGrantedJson = JSON.stringify(nextGranted);
 
-  let allSucceeded = true;
-  for (const recordId of recordIds) {
+  for (let i = 0; i < recordIds.length; i++) {
+    const recordId = recordIds[i]!;
+    const oldValue = oldValues[i] ?? "";
     const result = await tx
       .update(shareRecords)
       .set({ rewardMilestonesGranted: nextGrantedJson })
-      .where(eq(shareRecords.id, recordId));
-    if ((result.rowsAffected ?? 0) === 0) {
-      allSucceeded = false;
-    }
+      .where(and(
+        eq(shareRecords.id, recordId),
+        eq(shareRecords.rewardMilestonesGranted, oldValue),
+      ));
+    // CAS 失败（rowsAffected=0）：其他请求已先一步修改了该记录。
+    // 此时 grant 已由上游的 CAS 防护（spinsTotalGranted / couponCodes.status）
+    // 防止重复发放，mark 不写不影响正确性，只是下次归因需要多一次 CAS 检查。
+    if ((result.rowsAffected ?? 0) === 0) return false;
   }
-  return allSucceeded;
+  return true;
 }
 
 /**
@@ -238,6 +261,13 @@ export async function processReferralRewardsEngine(
   const maxSpins = Math.max(0, Math.floor(Number(draw.maxSpinsPerEntry || 0)));
   const alreadyGranted = new Set(sharer.grantedRewardIds);
 
+  // 关键约束（docs/251 §2.3）：bonus_spin 出口只对 lottery + instant 有效。
+  // performInstantSpin 严格限制 activityKind === "lottery"（spin-execution.ts:70），
+  // 非 lottery 活动即使给分享者加了 spins，分享者也无法消费（spin 接口 400）。
+  // 因此非 lottery 类型时，bonus_spin 出口静默跳过（不发放、不标记），
+  // 避免"发了但用不了"的奖励污染。发布预检会拦截这种配置（docs/252 §2.2）。
+  const isLotteryKind = String(draw.activityKind || "") === "lottery";
+
   // 建立 rewardId → rewardDef 的映射，用于读取 metadata（engine 的 snapshot 不透传 metadata）
   const defByRewardId = new Map<string, RewardDef>();
   for (const def of rewardDefs) {
@@ -256,6 +286,9 @@ export async function processReferralRewardsEngine(
     const meta = ((def?.metadata || {}) as ReferralRewardMeta);
     const exit = meta.rewardExit || "bonus_spin";
     const amount = parseInt(String(record.amount || "0"), 10);
+
+    // 非 lottery 类型 + bonus_spin 出口 → 跳过（见上方约束注释）
+    if (exit === "bonus_spin" && !isLotteryKind) continue;
 
     let success = false;
     switch (exit) {
@@ -277,12 +310,19 @@ export async function processReferralRewardsEngine(
     }
 
     // 标记幂等（仅奖励成功时标记，防止"标记了但没发"的错账）
+    // 用 CAS 条件（rewardMilestonesGranted == 旧值）防止并发覆盖。
+    // mark 失败时（CAS 冲突），grant 已由上游的 CAS 防护，不会重复发放，
+    // 只是下次归因需要多一次 CAS 检查。见 docs/252 §2.1。
     if (success) {
-      await markRewardIdsGranted(
-        tx, draw.tenantId, draw.id,
-        sharer.recordIds, [...alreadyGranted], rewardId,
+      const markOk = await markRewardIdsGranted(
+        tx, sharer.recordIds, [...alreadyGranted], rewardId, sharer.oldValues,
       );
-      alreadyGranted.add(rewardId);
+      if (markOk) {
+        alreadyGranted.add(rewardId);
+      }
+      // mark 失败时不加 alreadyGranted：下次归因 engine 会再次返回该 rewardId，
+      // 但 grant 层的 CAS 会阻止重复发放（spinsTotalGranted / couponCodes.status）。
+      // 这是"best effort"标记的权衡——宁可多一次 CAS 检查，不可多写一条误标记。
     }
   }
 }

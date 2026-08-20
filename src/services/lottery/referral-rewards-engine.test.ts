@@ -335,4 +335,47 @@ describe("processReferralRewardsEngine", () => {
     expect(logs[0]?.reason).toBe("viral");
     expect(logs[0]?.refId).toBe("engine:m1");
   });
+
+  it("非 lottery 类型 + bonus_spin 出口 → 跳过，不发放（docs/252 §2.2）", async () => {
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+      ],
+    });
+    // activityKind = claim（非 lottery）
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10, activityKind: "claim" });
+    const { entryId, shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "claim", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+
+    // spins 不增加（bonus_spin 对非 lottery 跳过）
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(0);
+    // 不写 spins_log
+    const logs = await db.select().from(spinsLog).where(eq(spinsLog.entryId, entryId));
+    expect(logs.length).toBe(0);
+  });
+
+  it("bonus_coupon 发券填充 recipientEmail（docs/252 §2.3）", async () => {
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "c1", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    await seedCoupon(db, drawId, "invite");
+    // email 身份分享者
+    const { shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+
+    const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.tenantId, TENANT));
+    expect(coupon?.status).toBe("issued");
+    // recipientEmail 应填充为分享者邮箱（seedSharer 用 sharer-xxx@test.com）
+    expect(coupon?.recipientEmail).toMatch(/@test\.com$/);
+  });
 });

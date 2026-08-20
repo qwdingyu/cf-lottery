@@ -13,8 +13,9 @@
  */
 import type { DbType } from "../../db/client";
 import { and, eq, sql } from "drizzle-orm";
-import { lotteryEntries, couponCodes } from "../../db/schema";
+import { lotteryEntries, couponCodes, users } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
+import { recordActivityEvent } from "./integration";
 
 /**
  * 发放 bonus_spin（额外抽奖次数）给分享者。
@@ -131,13 +132,44 @@ export async function grantBonusCoupon(
     .limit(1);
   if (!available) return false;
 
-  // CAS 原子发放：仅当仍为 available 时更新为 issued
+  // 解析分享者 recipientEmail（docs/252 §2.3 修复）：
+  // 与 grantLoserRewards 一致——registered 身份（identity_type=user_id）时
+  // identity_value 是 userId（UUID），需关联 users.email 才能拿到真实邮箱；
+  // email 身份直接用 identity_value。否则 recipientEmail 落库成 UUID，
+  // 后续邮件投递会被过滤掉（收不到优惠券通知）。
+  let recipientEmail = "";
+  const [sharer] = await tx
+    .select({
+      identityType: lotteryEntries.identityType,
+      identityValue: lotteryEntries.identityValue,
+    })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.id, sharerEntryId),
+      eq(lotteryEntries.tenantId, tenantId),
+      eq(lotteryEntries.drawId, drawId),
+    ))
+    .limit(1);
+  if (sharer) {
+    if (sharer.identityType === "user_id" && sharer.identityValue) {
+      const [user] = await tx
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, sharer.identityValue))
+        .limit(1);
+      recipientEmail = user?.email || "";
+    } else {
+      recipientEmail = sharer.identityValue || "";
+    }
+  }
+
+  // CAS 原子发放：仅当仍为 available 时更新为 issued，并记录领取人
   const result = await tx
     .update(couponCodes)
     .set({
       status: "issued",
       drawId,
-      // recipientEmail 由调用方负责填充（如果知道的话）
+      recipientEmail,
     })
     .where(and(
       eq(couponCodes.id, available.id),
@@ -145,6 +177,28 @@ export async function grantBonusCoupon(
       eq(couponCodes.status, "available"),
     ));
   if ((result.rowsAffected ?? 0) === 0) return false;
+
+  // 审计日志（docs/252 §4.2）：bonus_coupon 发放写 activityEvents（reward_earned），
+  // 与 bonus_spin 写 spins_log 对齐，保证 L3 能跨租户追踪优惠券奖励发放。
+  // 与 triggerRewardEarned 的 reward_earned 事件同语义，metadata 记录奖励出口与码 label。
+  try {
+    await recordActivityEvent(tx, {
+      tenantId,
+      drawId,
+      entryId: sharerEntryId,
+      eventType: "reward_earned",
+      metadata: {
+        rewardExit: "bonus_coupon",
+        rewardId,
+        couponLabel: couponLabel || "",
+        couponCode: available.code,
+        recipientEmail,
+      },
+    });
+  } catch (err) {
+    // 审计失败不影响发券结果（与 recordSpinLog 的容错一致）
+    console.error(`[lottery] recordActivityEvent bonus_coupon failed for ${drawId}:`, err);
+  }
 
   return true;
 }
