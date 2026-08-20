@@ -819,6 +819,10 @@ export default {
     gotConsolation: "获得安慰奖！",
     earnedCoupons: "你获得的优惠券",
     couponLabel: "优惠券：",
+    redeemCoupon: "核销",
+    redeemSuccess: "优惠券已核销",
+    redeemFailed: "核销失败",
+    redeemNeedCode: "请先输入邮箱验证码",
     /** 仅「已开奖 + 未中奖」使用；勿用于人工履约中奖无码 */
     thanksForParticipating: "感谢参与，本次未抽中奖品",
     resultPendingDraw: "你已参与，结果尚未公布",

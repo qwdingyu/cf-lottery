@@ -857,6 +857,10 @@ export default {
     gotConsolation: "Consolation prize!",
     earnedCoupons: "Your coupons",
     couponLabel: "Coupon:",
+    redeemCoupon: "Redeem",
+    redeemSuccess: "Coupon redeemed",
+    redeemFailed: "Redeem failed",
+    redeemNeedCode: "Please enter the email verification code first",
     /** Only after draw + not won; not for manual-fulfillment wins without a code */
     thanksForParticipating: "Thanks for joining — you didn’t win a prize this time",
     resultPendingDraw: "You’re in — results aren’t out yet",

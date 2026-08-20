@@ -1093,6 +1093,14 @@
                 <span class="result-code-label">{{ $t('lottery.couponLabel') }}</span>
                 <code class="result-code" @click="copyMyResult(cp)">{{ cp }}</code>
                 <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm result-redeem-btn"
+                  :disabled="redeemingCoupon === cp"
+                  @click="redeemCoupon(cp)"
+                >
+                  {{ redeemingCoupon === cp ? $t('lottery.loadingText') : $t('lottery.redeemCoupon') }}
+                </button>
               </div>
             </div>
           </template>
@@ -1106,6 +1114,14 @@
               <span class="result-code-label">{{ $t('lottery.couponLabel') }}</span>
               <code class="result-code" @click="copyMyResult(cp)">{{ cp }}</code>
               <small class="result-hint">{{ $t('lottery.clickToCopy') }}</small>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm result-redeem-btn"
+                :disabled="redeemingCoupon === cp"
+                @click="redeemCoupon(cp)"
+              >
+                {{ redeemingCoupon === cp ? $t('lottery.loadingText') : $t('lottery.redeemCoupon') }}
+              </button>
             </div>
           </template>
           <!-- 仅抽奖族 + 已开奖 + 未中奖 -->
@@ -2234,6 +2250,8 @@ const myResultCoupons = computed(() => {
   const single = myResultData.value?.consolationCoupon
   return single ? [single] : []
 })
+/** 正在核销的优惠券码（docs/254 P2 L1 自助核销） */
+const redeemingCoupon = ref('')
 /** my-result 当前是否 instant 活动 */
 const isMyResultInstant = computed(() =>
   isInstantLottery({
@@ -3200,6 +3218,51 @@ function copyMyResult(text: string) {
   if (!text) return
   writeClipboardText(text)
   showToast(t('lottery.copied'), 'success')
+}
+
+/**
+ * L1 自助核销优惠券（docs/254 P2）。
+ * 复用 my-result 弹窗的邮箱 + 验证码（myResultEmail / myResultCode），
+ * 调 /public/coupons/redeem 核销自己领取的券。
+ * 核销成功后从 coupons 列表移除该券。
+ */
+async function redeemCoupon(couponCode: string) {
+  if (!myResultDraw.value) return
+  const email = myResultEmail.value.trim()
+  const otp = myResultCode.value.trim()
+  if (!email.includes('@')) {
+    myResultError.value = t('lottery.invalidEmail')
+    return
+  }
+  if (!otp) {
+    myResultError.value = t('lottery.redeemNeedCode')
+    return
+  }
+  redeemingCoupon.value = couponCode
+  myResultError.value = ''
+  try {
+    const res = await fetch(API_BASE + '/public/coupons/redeem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: couponCode, email, otp }),
+    })
+    const data = await res.json() as any
+    if (data.ok && data.redeemed) {
+      showToast(t('lottery.redeemSuccess'), 'success')
+      // 从 coupons 列表移除已核销的券
+      const remaining = (myResultData.value?.coupons || []).filter((c) => c !== couponCode)
+      if (myResultData.value) {
+        myResultData.value = { ...myResultData.value, coupons: remaining }
+      }
+      myResultCode.value = ''
+    } else {
+      myResultError.value = data.message || t('lottery.redeemFailed')
+    }
+  } catch {
+    myResultError.value = t('lottery.networkError') || ''
+  } finally {
+    redeemingCoupon.value = ''
+  }
 }
 
 /**

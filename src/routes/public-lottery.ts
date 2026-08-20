@@ -1817,3 +1817,94 @@ publicLotteryRoute.post("/draws/:slug/result", async (c) => {
 
   return ok(c, result);
 });
+
+// ═════════════════════════════════════════════════════════
+// L1 自助核销优惠券（docs/254 §六.3 P2）
+// ═════════════════════════════════════════════════════════
+
+/**
+ * L1 用户自助核销自己领取的优惠券。
+ *
+ * 安全设计（docs/254 §五）：
+ * - 身份验证：邮箱 + OTP 验证码（复用 verifyEmailAccessCode，需 drawId）
+ * - 归属校验：核销时校验 couponCodes.recipientEmail === email，只能核销自己领取的券
+ *   （防他人冒用他人券码）
+ * - CAS 更新：status='issued' → 'redeemed'，防并发重复核销
+ * - 限流：IP + 邮箱双维度，防枚举/爆破
+ *
+ * 与 L2 管理端 /coupons/redeem 的区别：
+ * - L2 端：requireAuth + requireTenantMember，可核销任意券（运营操作）
+ * - L1 端：公开 + OTP 验证，只能核销自己领取的券（自助操作）
+ */
+publicLotteryRoute.post("/coupons/redeem", async (c) => {
+  const db = getDb(c);
+  const ip = getClientIp(c);
+  if (!(await checkPublicRateLimit(db, `coupon-redeem:${ip}`, 10, 60000))) {
+    return fail(c, "请求过于频繁，请稍后再试", 429);
+  }
+  const body = await c.req.json<{ code: string; email: string; otp: string }>();
+  const code = String(body.code || "").trim();
+  const email = String(body.email || "").trim().toLowerCase();
+  const otp = String(body.otp || "").trim();
+  if (!code || !email || !otp) return fail(c, "请提供优惠券码、邮箱和验证码", 400);
+
+  // 1. 查优惠券（按 code 定位）
+  const [coupon] = await db
+    .select({
+      id: couponCodes.id,
+      tenantId: couponCodes.tenantId,
+      drawId: couponCodes.drawId,
+      recipientEmail: couponCodes.recipientEmail,
+      status: couponCodes.status,
+      label: couponCodes.label,
+    })
+    .from(couponCodes)
+    .where(eq(couponCodes.code, code))
+    .limit(1);
+  if (!coupon) return fail(c, "优惠券不存在", 404);
+
+  // 2. 归属校验：只能核销自己领取的券（recipientEmail 必须匹配当前用户邮箱）
+  if (String(coupon.recipientEmail || "").trim().toLowerCase() !== email) {
+    return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
+  }
+  // 3. 状态校验：仅 issued 可核销（available 是未发放的池，redeemed 已核销）
+  if (coupon.status !== "issued") {
+    return fail(c, "优惠券状态不可核销", 400);
+  }
+
+  // 4. 身份验证：邮箱 + OTP（复用 verifyEmailAccessCode，需 drawId）
+  if (!coupon.drawId) return fail(c, "优惠券缺少活动关联，无法核销", 400);
+  if (!(await checkPublicIdentityRateLimit(db, "coupon-redeem", coupon.drawId, email, 10, 60000))) {
+    return fail(c, "请求过于频繁，请稍后再试", 429);
+  }
+  const validCode = await verifyEmailAccessCode(db, email, coupon.drawId, otp);
+  if (!validCode) return fail(c, "验证码无效或已过期", 400);
+
+  // 5. CAS 核销：仅当仍为 issued 时更新为 redeemed（防并发重复核销）
+  const result = await db
+    .update(couponCodes)
+    .set({ status: "redeemed", redeemedAt: new Date().toISOString() })
+    .where(and(
+      eq(couponCodes.id, coupon.id),
+      eq(couponCodes.tenantId, coupon.tenantId),
+      eq(couponCodes.status, "issued"),
+    ));
+  if ((result.rowsAffected ?? 0) === 0) {
+    return fail(c, "优惠券已被核销或状态已变化", 400);
+  }
+
+  // 6. 记录活动事件（核销审计）
+  try {
+    await recordActivityEvent(db, {
+      tenantId: coupon.tenantId,
+      drawId: coupon.drawId || "",
+      entryId: "",
+      eventType: "coupon_redeemed",
+      metadata: { couponCode: code, couponLabel: coupon.label || "", redeemedBy: email },
+    });
+  } catch (err) {
+    console.error(`[lottery] recordActivityEvent coupon_redeemed failed:`, err);
+  }
+
+  return ok(c, { redeemed: true, label: coupon.label || "" });
+});

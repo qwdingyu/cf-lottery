@@ -109,6 +109,8 @@ export type ActivityEventType =
   | "external_conversion_reported"
   /** 奖励意图已生成（通知中转站发卡时记录） */
   | "reward_earned"
+  /** 优惠券已核销（L1 自助核销或 L2 运营核销，docs/254 P2） */
+  | "coupon_redeemed"
   /** 处罚请求已发起（波及名单计算后记录） */
   | "penalty_requested"
   /** 外部事件：退群上报 */

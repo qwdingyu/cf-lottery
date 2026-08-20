@@ -1684,6 +1684,70 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/254 P2：L1 自助核销优惠券。
+   * 安全边界：只能核销自己领取的券（recipientEmail 匹配）+ OTP 验证 + CAS 防并发。
+   */
+  it("L1 自助核销优惠券：本人 + OTP 验证成功，他人 + 重复核销失败", async () => {
+    const app = createPublicTestApp();
+    const email = "redeem-owner@test.com";
+    const otherEmail = "redeem-other@test.com";
+    const drawId = crypto.randomUUID();
+    const plainOtp = "888888";
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: "coupon-redeem-draw",
+        title: "核销测试", status: "drawn", participationMode: "open",
+        activityKind: "lottery", resultMode: "manual",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    // 券属于 owner
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      code: "COUPON-REDEEM-1",
+      label: "invite",
+      status: "issued",
+      recipientEmail: email,
+    });
+    // owner 的活动验证码（purpose=query 发码）
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email,
+      drawId,
+      codeHash: await hashCode(plainOtp),
+      expiresAt: futureTimeISO(10),
+      used: 0,
+    });
+
+    const doRedeem = (body: { code: string; email: string; otp: string }) =>
+      app.request("/public/coupons/redeem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.71" },
+        body: JSON.stringify(body),
+      }, TEST_ENV);
+
+    // 1. 本人 + 正确 OTP → 成功
+    const okRes = await doRedeem({ code: "COUPON-REDEEM-1", email, otp: plainOtp });
+    const okBody = await okRes.json() as any;
+    expect(okRes.status).toBe(200);
+    expect(okBody.ok).toBe(true);
+    expect(okBody.redeemed).toBe(true);
+
+    // 2. 重复核销 → 失败（CAS：status 已变 redeemed）
+    const repeatRes = await doRedeem({ code: "COUPON-REDEEM-1", email, otp: plainOtp });
+    expect(repeatRes.status).toBe(400);
+    const repeatBody = await repeatRes.json() as any;
+    expect(repeatBody.ok).toBe(false);
+
+    // 3. 他人邮箱核销 → 403（归属校验：recipientEmail 不匹配）
+    const otherRes = await doRedeem({ code: "COUPON-REDEEM-1", email: otherEmail, otp: plainOtp });
+    expect(otherRes.status).toBe(403);
+  });
+
+  /**
    * docs/099：share 的 entryId 必须属于本活动。
    */
   it("share：entry 不属于本活动则 404；属于则发码成功", async () => {
