@@ -1783,22 +1783,82 @@ describe("公开参与流程", () => {
         body: JSON.stringify(body),
       }, TEST_ENV);
 
-    // 1. 本人 + 正确 OTP → 成功
+    // 1. 他人邮箱核销 → 400（OTP 验证先于归属校验：他人邮箱无有效 OTP，验证码无效）
+    //    安全说明：攻击者即使知道券码，用自己邮箱+自己 OTP 会通过 OTP 验证，
+    //    但归属校验（recipientEmail 不匹配）会拦截返回 403（见下方第 4 步）。
+    const otherRes = await doRedeem({ code: "COUPON-REDEEM-1", email: otherEmail, otp: plainOtp });
+    expect(otherRes.status).toBe(400);
+
+    // 2. 本人 + 正确 OTP → 成功
     const okRes = await doRedeem({ code: "COUPON-REDEEM-1", email, otp: plainOtp });
     const okBody = await okRes.json() as any;
     expect(okRes.status).toBe(200);
     expect(okBody.ok).toBe(true);
     expect(okBody.redeemed).toBe(true);
 
-    // 2. 重复核销 → 失败（CAS：status 已变 redeemed）
+    // 3. 重复核销 → 失败（CAS：status 已变 redeemed）
     const repeatRes = await doRedeem({ code: "COUPON-REDEEM-1", email, otp: plainOtp });
     expect(repeatRes.status).toBe(400);
     const repeatBody = await repeatRes.json() as any;
     expect(repeatBody.ok).toBe(false);
+  });
 
-    // 3. 他人邮箱核销 → 403（归属校验：recipientEmail 不匹配）
-    const otherRes = await doRedeem({ code: "COUPON-REDEEM-1", email: otherEmail, otp: plainOtp });
-    expect(otherRes.status).toBe(403);
+  /**
+   * docs/254 审查发现：registered 用户（JWT）核销优惠券。
+   * access-code 端点对 registered 不生成 OTP，故核销必须支持 JWT 模式。
+   * 验证：JWT 验证 → 查 users.email → 归属校验 → CAS 核销。
+   */
+  it("L1 自助核销优惠券：registered 用户用 JWT 核销成功", async () => {
+    const app = createPublicTestApp();
+    const email = "registered-redeem@test.com";
+    const userId = crypto.randomUUID();
+    const drawId = crypto.randomUUID();
+    await db.insert(users).values({
+      id: userId, username: "registered-redeem", email,
+      emailVerified: 1, passwordHash: "hash",
+    });
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: "registered-redeem-draw",
+        title: "注册核销", status: "drawn", participationMode: "registered",
+        activityKind: "lottery", resultMode: "manual",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    // 券属于该注册用户（recipientEmail = users.email）
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "COUPON-REG-REDEEM-1", label: "invite", status: "issued",
+      recipientEmail: email,
+    });
+    // 自签 JWT（registered 模式用 sub=userId）
+    const token = await signJwt({ sub: userId }, TEST_ENV.JWT_SECRET, 3600);
+    const res = await app.request("/public/coupons/redeem", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.72",
+      },
+      body: JSON.stringify({ code: "COUPON-REG-REDEEM-1", email, otp: "" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.redeemed).toBe(true);
+
+    // 重复核销 → 失败（CAS）
+    const repeatRes = await app.request("/public/coupons/redeem", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.72",
+      },
+      body: JSON.stringify({ code: "COUPON-REG-REDEEM-1", email, otp: "" }),
+    }, TEST_ENV);
+    expect(repeatRes.status).toBe(400);
   });
 
   /**

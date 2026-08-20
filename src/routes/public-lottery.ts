@@ -10,7 +10,7 @@ import { isInstantResultMode, sanitizePublicPromotionConfig } from "../lib/activ
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins, tenants } from "../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins, tenants, users } from "../db/schema";
 import { eq, and, count, asc, ne, desc, gt, inArray, sql } from "drizzle-orm";
 import {
   getActivityOutcome,
@@ -1855,7 +1855,11 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
   const code = String(body.code || "").trim();
   const email = String(body.email || "").trim().toLowerCase();
   const otp = String(body.otp || "").trim();
-  if (!code || !email || !otp) return fail(c, "请提供优惠券码、邮箱和验证码", 400);
+  if (!code) return fail(c, "请提供优惠券码", 400);
+  // email 模式必须带 OTP；registered（JWT）模式免 OTP
+  if (!email || (!otp && !(c.req.header("Authorization") || "").trim())) {
+    return fail(c, "请提供邮箱和验证码（或登录态）", 400);
+  }
 
   // 1. 查优惠券（按 code 定位）
   const [coupon] = await db
@@ -1872,22 +1876,58 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
     .limit(1);
   if (!coupon) return fail(c, "优惠券不存在", 404);
 
-  // 2. 归属校验：只能核销自己领取的券（recipientEmail 必须匹配当前用户邮箱）
-  if (String(coupon.recipientEmail || "").trim().toLowerCase() !== email) {
-    return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
-  }
   // 3. 状态校验：仅 issued 可核销（available 是未发放的池，redeemed 已核销）
   if (coupon.status !== "issued") {
     return fail(c, "优惠券状态不可核销", 400);
   }
 
-  // 4. 身份验证：邮箱 + OTP（复用 verifyEmailAccessCode，需 drawId）
-  if (!coupon.drawId) return fail(c, "优惠券缺少活动关联，无法核销", 400);
-  if (!(await checkPublicIdentityRateLimit(db, "coupon-redeem", coupon.drawId, email, 10, 60000))) {
-    return fail(c, "请求过于频繁，请稍后再试", 429);
+  // 2a. 初步归属校验（用请求体 email）：他人邮箱立即 403，避免先走 OTP 暴露券归属
+  if (email && String(coupon.recipientEmail || "").trim().toLowerCase() !== email) {
+    return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
   }
-  const validCode = await verifyEmailAccessCode(db, email, coupon.drawId, otp);
-  if (!validCode) return fail(c, "验证码无效或已过期", 400);
+
+  // 4. 身份验证：支持两种模式（docs/254 审查发现，修复 registered 核销缺口）
+  //    - email + OTP（open 模式用户）：复用 verifyEmailAccessCode
+  //    - JWT（registered 模式用户）：验证 JWT → 查 users.email → 跳 OTP
+  let verifiedEmail = email;
+  const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (bearerToken) {
+    // JWT 模式：验证 JWT → 查 users.email → 跳 OTP
+    const jwtSecret = getEnv(c, "JWT_SECRET");
+    if (!jwtSecret) return fail(c, "服务器配置错误", 500);
+    try {
+      const payload = await verifyJwt(bearerToken, jwtSecret);
+      if (payload?.sub) {
+        const [user] = await db
+          .select({ email: users.email })
+          .from(users)
+          .where(eq(users.id, payload.sub))
+          .limit(1);
+        if (!user?.email) return fail(c, "用户不存在", 404);
+        verifiedEmail = user.email.trim().toLowerCase();
+        // 校验 JWT 邮箱与请求邮箱一致（防拿他人 token 核销他人券）
+        if (email && email !== verifiedEmail) return fail(c, "邮箱与登录身份不匹配", 403);
+      } else {
+        return fail(c, "登录状态无效", 401);
+      }
+    } catch {
+      return fail(c, "登录状态无效", 401);
+    }
+  } else {
+    // email + OTP 模式
+    if (!coupon.drawId) return fail(c, "优惠券缺少活动关联，无法核销", 400);
+    if (!(await checkPublicIdentityRateLimit(db, "coupon-redeem", coupon.drawId, email, 10, 60000))) {
+      return fail(c, "请求过于频繁，请稍后再试", 429);
+    }
+    const validCode = await verifyEmailAccessCode(db, email, coupon.drawId, otp);
+    if (!validCode) return fail(c, "验证码无效或已过期", 400);
+  }
+
+  // 2. 归属校验（在身份验证后执行，用 verifiedEmail）：
+  //    只能核销自己领取的券（recipientEmail 必须匹配当前用户邮箱）
+  if (String(coupon.recipientEmail || "").trim().toLowerCase() !== verifiedEmail) {
+    return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
+  }
 
   // 5. CAS 核销：仅当仍为 issued 时更新为 redeemed（防并发重复核销）
   const result = await db
