@@ -1738,6 +1738,59 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/255 §四（P1-1 越权读）：registered 模式下 my-result 跳过 bearer 邮箱校验，
+   * 旧实现直接用请求体 email 作为 couponCodes.recipientEmail 匹配键，
+   * 任意持有合法 JWT 的用户都能读到他人已发放的券码（券码即价值凭证）。
+   * 修复后：user_id 身份必须用 users.email 服务端反查作为匹配键，请求体 email 不授信。
+   */
+  it("my-result coupons：registered 用自己 JWT + 他人 email 不得读到他人券（P1-1 越权读）", async () => {
+    const app = createPublicTestApp();
+    const victimEmail = "coupon-victim@test.com";
+    const attackerEmail = "coupon-attacker@test.com";
+    const victimId = crypto.randomUUID();
+    const attackerId = crypto.randomUUID();
+    const drawId = crypto.randomUUID();
+    await db.insert(users).values([
+      { id: victimId, username: "coupon-victim", email: victimEmail, emailVerified: 1, passwordHash: "hash" },
+      { id: attackerId, username: "coupon-attacker", email: attackerEmail, emailVerified: 1, passwordHash: "hash" },
+    ]);
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: "coupon-leak-draw",
+        title: "越权读测试", status: "drawn", participationMode: "registered",
+        activityKind: "lottery", experienceType: "wheel", resultMode: "manual",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(lotteryEntries).values([
+      { id: crypto.randomUUID(), tenantId: TENANT, drawId, identityType: "user_id", identityValue: victimId, joinedAt: new Date().toISOString() },
+      { id: crypto.randomUUID(), tenantId: TENANT, drawId, identityType: "user_id", identityValue: attackerId, joinedAt: new Date().toISOString() },
+    ]);
+    // 券只属于受害者
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "COUPON-VICTIM-ONLY", label: "invite", status: "issued",
+      recipientEmail: victimEmail,
+    });
+    // 攻击者用自己的 JWT，但请求体填受害者邮箱
+    const token = await signJwt({ sub: attackerId }, TEST_ENV.JWT_SECRET, 3600);
+    const res = await app.request("/public/draws/coupon-leak-draw/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.72",
+      },
+      body: JSON.stringify({ email: victimEmail, code: "" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.coupons).toEqual([]);
+    expect(body.consolationCoupon).toBeNull();
+  });
+
+  /**
    * docs/254 P2：L1 自助核销优惠券。
    * 安全边界：只能核销自己领取的券（recipientEmail 匹配）+ OTP 验证 + CAS 防并发。
    */
