@@ -196,6 +196,8 @@ export const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "attributed_join",
   "external_conversion_reported",
   "reward_earned",
+  /** 优惠券已核销（L1 自助核销或 L2 运营核销，docs/254 P2） */
+  "coupon_redeemed",
   "penalty_requested",
   "ext:member.left_group",
   "ext:reward.issued",

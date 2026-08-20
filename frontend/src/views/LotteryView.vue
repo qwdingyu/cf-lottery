@@ -3230,20 +3230,24 @@ async function redeemCoupon(couponCode: string) {
   if (!myResultDraw.value) return
   const email = myResultEmail.value.trim()
   const otp = myResultCode.value.trim()
+  // registered 用户（JWT）核销：带 Bearer token，后端走 JWT 分支（docs/254 §十）
+  const bearer = registeredToken.value
   if (!email.includes('@')) {
     myResultError.value = t('lottery.invalidEmail')
     return
   }
-  if (!otp) {
+  if (!otp && !bearer) {
     myResultError.value = t('lottery.redeemNeedCode')
     return
   }
   redeemingCoupon.value = couponCode
   myResultError.value = ''
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (bearer) headers['Authorization'] = 'Bearer ' + bearer
     const res = await fetch(API_BASE + '/public/coupons/redeem', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ code: couponCode, email, otp }),
     })
     const data = await res.json() as any
