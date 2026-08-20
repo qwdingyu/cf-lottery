@@ -121,6 +121,11 @@ export async function grantBonusSpin(
  * 从 couponCodes 表中取一张 available 的码，CAS 更新为 issued。
  * rowsAffected=0 时表示码已被其他请求占用，跳过本次。
  *
+ * ⚠️ 码池耗尽场景（docs/254 审查确认）：
+ * 若租户无可用券（或指定 couponLabel 无券），返回 false，调用方不标记幂等。
+ * 这意味着每次归因都会重新尝试发券——但不会超发（没券发不出），
+ * 只是运营需补充码池后，后续归因才能补发。这是"宁可重试、不可误发"的权衡。
+ *
  * @param tx 事务实例
  * @param tenantId 租户 ID
  * @param drawId 活动 ID
