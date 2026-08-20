@@ -2145,6 +2145,92 @@ describe("支付并发安全性", () => {
         .rejects.toThrow("库存不足");
     });
 
+    /**
+     * docs/255 §八 P2-9 复核：库存预检与发卡必须用同一个卡密奖品解析器。
+     *
+     * 旧实现取 lotteryPrizeTiers 的任意一行（`.limit(1)` 无 orderBy），
+     * 再判断该行的奖品是否 prizeType='code'。活动有多个奖档时（例如
+     * 「实物奖 + 卡密奖」），预检可能命中实物奖那一行 → 整个库存检查被跳过，
+     * 用户在零卡密库存下付款成功，只能进 FULFILLMENT_FAILED 再退款。
+     * 而真正发卡走的是 findCodePrize（内联 prizes 且要求 prizeType='code' + active=1）。
+     */
+    /**
+     * docs/255 §八 P2-9 复核：库存预检与发卡必须用同一个卡密奖品解析器。
+     *
+     * 旧实现取 lotteryPrizeTiers 的任意一行（`.limit(1)` 无 orderBy），
+     * 再判断该行的奖品是否 prizeType='code'。活动有多个奖档时（例如
+     * 「实物奖 + 卡密奖」），预检可能命中实物奖那一行 → 源头库存预检整体失效，
+     * 只能落到事务内 reservePrizeCodes 的兜底报错，用户拿到的是笼统的
+     * 「卡密库存不足」而不是「可用 0 件，需要 1 件」。
+     * 真正发卡走的是 findCodePrize（内联 prizes 且要求 prizeType='code' + active=1）。
+     */
+    it("多奖档（实物奖排在卡密奖之前）时库存预检不得被跳过（docs/255 P2-9）", async () => {
+      const { orderInput, drawId, prizeId } = await seedOrderTestData();
+      // 重排奖档物理顺序：实物奖档先插入，成为无 orderBy 查询取到的首行
+      await db.delete(lotteryPrizeTiers).where(eq(lotteryPrizeTiers.drawId, drawId));
+      const manualPrizeId = crypto.randomUUID();
+      await db.insert(prizes).values({
+        id: manualPrizeId, tenantId: TENANT_ID, name: "实物奖", prizeType: "manual_fulfillment", totalCount: 5,
+      });
+      await db.insert(lotteryPrizeTiers).values({
+        id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, prizeId: manualPrizeId,
+        tierName: "实物", winnerCount: 5, sortOrder: 1, weight: 100,
+      });
+      await db.insert(lotteryPrizeTiers).values({
+        id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, prizeId,
+        tierName: "卡密", winnerCount: 10, sortOrder: 2, weight: 100,
+      });
+      // 卡密库存清零
+      await db.update(prizeCodes).set({ status: "issued" }).where(eq(prizeCodes.prizeId, prizeId));
+
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
+        .rejects.toThrow("可用 0 件，需要 1 件");
+    });
+
+    /**
+     * docs/255 §八 P2-9 复核：多个 active 卡密奖品时 findCodePrize fail-closed 返回 null，
+     * reservePrizeCodes 把 null 当成「非卡密活动，无需预占」→ 订单照样创建、用户照样付款，
+     * 回调时 acquirePrizeCodes 同样返回 [] → 必然 FULFILLMENT_FAILED，只能靠退款兜底。
+     * 必须在下单前（付款前）拒绝。
+     */
+    it("活动存在多个卡密奖品时拒绝下单（发卡侧 fail-closed，付款前拦截）", async () => {
+      const { orderInput, drawId } = await seedOrderTestData();
+      const secondCodePrizeId = crypto.randomUUID();
+      await db.insert(prizes).values({
+        id: secondCodePrizeId, tenantId: TENANT_ID, name: "第二个卡密奖", prizeType: "code", totalCount: 10,
+      });
+      await db.insert(lotteryPrizeTiers).values({
+        id: crypto.randomUUID(), tenantId: TENANT_ID, drawId, prizeId: secondCodePrizeId,
+        tierName: "二等", winnerCount: 10, sortOrder: 200, weight: 100,
+      });
+      await db.insert(prizeCodes).values({
+        id: crypto.randomUUID(), tenantId: TENANT_ID, prizeId: secondCodePrizeId,
+        code: "SK-CODE-SECOND", secret: "secret", status: "available",
+      });
+
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
+        .rejects.toThrow("多个卡密奖品");
+      const orders = await db.select({ id: paymentOrders.id }).from(paymentOrders)
+        .where(eq(paymentOrders.drawId, drawId));
+      expect(orders).toHaveLength(0);
+    });
+
+    /**
+     * docs/255 §八 P2-9 复核：卡密奖品被停用（active=0）时，findCodePrize 同样返回 null →
+     * reservePrizeCodes 跳过预占 → 订单创建成功、付款后必然发卡失败。
+     * 旧预检没有 active 过滤，还会把停用奖品的码池算成有库存。必须付款前拒绝。
+     */
+    it("卡密奖品已停用（active=0）时拒绝下单，不把停用码池算作库存", async () => {
+      const { orderInput, drawId, prizeId } = await seedOrderTestData();
+      await db.update(prizes).set({ active: 0 }).where(eq(prizes.id, prizeId));
+
+      await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
+        .rejects.toThrow("卡密奖品已停用");
+      const orders = await db.select({ id: paymentOrders.id }).from(paymentOrders)
+        .where(eq(paymentOrders.drawId, drawId));
+      expect(orders).toHaveLength(0);
+    });
+
     it("追加购买时累计超过 maxPerUser 拒绝", async () => {
       const { orderInput, drawId, entryId } = await seedOrderTestData();
       await db.insert(paymentOrders).values({
