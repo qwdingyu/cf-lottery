@@ -529,6 +529,7 @@ async function validateLotteryPrizes(db: DbType, tenantId: string, draw: Lottery
 
   let tierWinnerTotal = 0;
   let weightSum = 0;
+  const codeDemandByPrize = new Map<string, { prizeName: string; demand: number; tierNames: string[] }>();
   for (const tier of tiers) {
     const tierName = tier.tierName || "未命名奖项";
     tierWinnerTotal += Math.max(0, Number(tier.winnerCount || 0));
@@ -561,19 +562,39 @@ async function validateLotteryPrizes(db: DbType, tenantId: string, draw: Lottery
     }
 
     if (tier.prizeType === "code") {
-      const [{ total }] = await db
-        .select({ total: count() })
-        .from(prizeCodes)
-        .where(and(
-          eq(prizeCodes.tenantId, tenantId),
-          eq(prizeCodes.prizeId, tier.prizeId),
-          eq(prizeCodes.status, "available"),
-        ));
-      const available = Number(total || 0);
-      if (available < tier.winnerCount) {
-        add(result.errors, "prizes", "prizes.codes.insufficient", `奖项"${tierName}"可用码 ${available} 个，中奖名额 ${tier.winnerCount} 个，发布后会发放失败`);
+      // 按 prizeId 聚合需求，循环结束后再统一比对码池（docs/255 §十六 R-2）。
+      // 逐档独立查询会漏判"多个奖档共用同一码池"：3 个码 + 两个 2 名奖档，
+      // 每档都是 3>=2 通过，但实际需要 4 个码，开奖必然有人发不出卡。
+      const demand = Math.max(0, Number(tier.winnerCount || 0));
+      const existing = codeDemandByPrize.get(tier.prizeId);
+      if (existing) {
+        existing.demand += demand;
+        existing.tierNames.push(tierName);
+      } else {
+        codeDemandByPrize.set(tier.prizeId, {
+          prizeName: tier.prizeName,
+          demand,
+          tierNames: [tierName],
+        });
       }
     }
+  }
+
+  for (const [prizeId, need] of codeDemandByPrize) {
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(prizeCodes)
+      .where(and(
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.prizeId, prizeId),
+        eq(prizeCodes.status, "available"),
+      ));
+    const available = Number(total || 0);
+    if (available >= need.demand) continue;
+    const message = need.tierNames.length === 1
+      ? `奖项"${need.tierNames[0]}"可用码 ${available} 个，中奖名额 ${need.demand} 个，发布后会发放失败`
+      : `奖品"${need.prizeName}"可用码 ${available} 个，关联奖项（${need.tierNames.join("、")}）合计中奖名额 ${need.demand} 个，发布后会发放失败`;
+    add(result.errors, "prizes", "prizes.codes.insufficient", message);
   }
 
   if (isInstant && weightSum <= 0) {
