@@ -36,7 +36,7 @@ declare module "@usethink/incentive-engine" {
    * 引擎计算结果记录
    */
   export interface EngineRecord {
-    nodeId: string;
+    nodeId: string | null;
     rewardId: string;
     rewardType: string;
     amount: string;
