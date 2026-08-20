@@ -2628,9 +2628,9 @@ describe("增长功能集成：保底+每日免费+排行榜奖励+裂变", () =
       const pityLogs = logs.filter((l) => l.refId?.startsWith("pity:3:"));
       expect(pityLogs).toHaveLength(1);
 
-      // 每日免费日志 balanceAfter 应为 7（join 1 + 裂变加次 1 + 手动 5 + 每日免费 1 - 本次扣 1 = 7；
-      // docs/255 §7.3 P1-4：count 已含当次，领取后仍扣本次）
-      expect(Number(dailyFreeLogs[0]!.balanceAfter)).toBe(7);
+      // 每日免费日志 balanceAfter 应为 8（docs/255 B3：逐条运行余额语义，
+      // daily_free 的 +1 发生在 spin 的 -1 之前，因此 balanceAfter = 最终余额(7) + 1 = 8）
+      expect(Number(dailyFreeLogs[0]!.balanceAfter)).toBe(8);
 
       // ── 发放排行榜奖励（instant 模式管理端手动触发路径） ──
       const [draw] = await db
