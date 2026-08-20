@@ -1690,6 +1690,7 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
         resultMode: lotteryDraws.resultMode,
         drawTrigger: lotteryDraws.drawTrigger,
         maxSpinsPerEntry: lotteryDraws.maxSpinsPerEntry,
+        participationMode: lotteryDraws.participationMode,
       })
       .from(lotteryDraws)
       .where(eq(lotteryDraws.publicSlug, c.req.param("slug")))
@@ -1697,6 +1698,22 @@ publicLotteryRoute.post("/draws/:slug/join", async (c) => {
     if (!draw) return fail(c, "活动不存在", 404);
     const joinWindow = resolvePublicJoinWindow(draw);
     if (!joinWindow.canJoin) return fail(c, joinWindow.joinDisabledMessage || "不在参与时间内", 400);
+    // ── 邮箱验证码开关（docs/255 §五 P1-2）──
+    // 必须与 access-code:815-819 用同一个平台开关、同一套默认值（未配置 = 需验证）。
+    // 否则 open 活动可用任意邮箱字符串 + 自己的 refCode 批量参与刷邀请里程碑奖励
+    // （换邮箱即绕过身份级限流）。registered 模式不在此拦截，仍由 joinDraw 服务层报「需登录」，
+    // 以保持「未登录 → 提示登录」的错误语义。
+    if (draw.participationMode !== "registered") {
+      const [emailBypassCfg] = await db
+        .select({ value: systemConfig.value })
+        .from(systemConfig)
+        .where(eq(systemConfig.key, "enable_email_verification"))
+        .limit(1);
+      // fail-closed：未配置 / 读不到 → 视为需验证码
+      if (emailBypassCfg?.value !== "false") {
+        return fail(c, "请通过邮箱验证码参与本活动", 400);
+      }
+    }
     const joinIpLimit = activityJoinIpLimit(draw, globalJoinLimit);
     if (!(await checkPublicRateLimit(db, `join:${draw.id}:${ip}`, joinIpLimit, 60000))) {
       return fail(c, "参与过于频繁，请稍后再试", 429);

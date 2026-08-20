@@ -52,6 +52,10 @@ async function seedOwner() {
   await db.insert(users).values({ id: OWNER_ID, username: "p0owner", email: "p0@test.com", emailVerified: 1, passwordHash: "hash" });
   await db.insert(tenantMembers).values({ tenantId: TENANT_ID, userId: OWNER_ID, role: "owner" });
   await db.insert(systemConfig).values({ key: "enabled_activity_kinds", value: "lottery,signup_chain,claim,survey,vote,checkin,approval,reservation" });
+  // 本套用例统一走 /join 快捷参与（免邮箱 OTP）。docs/255 §五 P1-2 起，该端点遵守
+  // 平台开关 enable_email_verification（未配置 = 需验证码），故这里显式声明为「已关闭」，
+  // 与「无 Resend 的测试环境」一致；带 OTP 的路径由 access-code / verify-join 用例覆盖。
+  await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" });
 }
 
 async function authHeader() {
