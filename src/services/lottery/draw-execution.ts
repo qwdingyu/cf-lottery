@@ -768,14 +768,13 @@ export async function grantLoserRewards(
     .limit(1);
   if (!draw) return { granted: 0, totalLosers: 0 };
 
-  // paymentRequired 判定（docs/255 P2-3）：直付秒杀只有 PAID entry 才有资格获得安慰券。
-  // 与 performDraw 候选池只取 PAID 的纵深防御一致（:169-171），否则未付款/超时的
-  // entry 也会收到安慰券（重复发券 + 资金口径不一致）。
-  let paymentRequired = false;
-  try {
-    const pc = JSON.parse(draw.promotionConfig || "{}") as { flashSale?: { paymentRequired?: boolean | string } };
-    paymentRequired = pc.flashSale?.paymentRequired === true || pc.flashSale?.paymentRequired === "true";
-  } catch { /* 缺省 false */ }
+  // paymentRequired 判定（docs/255 P2-3 + 复审 A2）：直付秒杀只有 PAID entry 才有资格获得安慰券。
+  // 必须复用 parseFlashSaleConfig（与 performDraw 候选池 :161-162 同源），不可手写 JSON.parse：
+  // - 手写版忽略 flashSale.enabled → 秒杀未启用（无付款环节，paymentStatus 为 NULL）时
+  //   仍按 PAID 过滤，导致一张安慰券都发不出去
+  // - 手写版只认 camelCase flashSale → 读不到 snake_case flash_sale，直付秒杀下
+  //   未付款 entry 也会拿到安慰券（资金口径不一致）
+  const paymentRequired = parseFlashSaleConfig(draw.promotionConfig).config?.paymentRequired === true;
 
   let config: { loserReward?: { enabled?: boolean; couponLabel?: string } } = {};
   try { config = JSON.parse(draw.activityConfig || "{}"); } catch { config = {}; }
