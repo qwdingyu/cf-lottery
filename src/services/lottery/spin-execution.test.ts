@@ -1320,10 +1320,20 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
     const freeLog = logs1.find((l) => l.reason === "daily_free");
     expect(freeLog).toBeDefined();
     expect(freeLog!.delta).toBe(1);          // 发放 1 次
-    expect(freeLog!.balanceAfter).toBe(1);   // 扣次后的最终余额
+    // balanceAfter 必须是"本条流水发生后"的余额（逐条运行余额），不是事务最终余额（docs/255 B3）：
+    // 初始 1 → daily_free +1 → 2 → spin -1 → 1
+    expect(freeLog!.balanceAfter).toBe(2);
     const spinLog = logs1.find((l) => l.reason === "spin");
     expect(spinLog).toBeDefined();
     expect(spinLog!.delta).toBe(-1);         // 本次消耗 1
+    expect(spinLog!.balanceAfter).toBe(1);   // 扣次后的最终余额
+    // 逐条运行余额恒等式：每条 balanceAfter - delta === 上一条 balanceAfter
+    const ordered = [freeLog!, spinLog!];
+    let prevBalance = 1; // join 授予的初始 spinsLeft
+    for (const log of ordered) {
+      expect(log.balanceAfter - log.delta).toBe(prevBalance);
+      prevBalance = log.balanceAfter;
+    }
 
     // 第二次 spin：当日已领，正常扣次 → spinsLeft = 0
     const r2 = await performInstantSpin(db, {

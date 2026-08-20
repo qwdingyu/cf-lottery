@@ -468,13 +468,17 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
       // - 正常抽奖：记录 reason=spin, delta=-1；保底触发时 refId 前缀标识触发阈值，
       //   后缀追加 spinId 保持与普通 spin 一致的审计追溯能力（可反查具体是哪一次 spin 触发保底）
       if (dailyFreeClaimed) {
-        // 第一条：免费领取流水（发多少记多少，balanceAfter 用扣次后的最终余额）
+        // 第一条：免费领取流水（发多少记多少）
+        // balanceAfter 语义是"本条流水发生后的余额"（逐条运行余额，spins-log 的审计约定），
+        // 而 daily_free 的 +count 发生在 spin 的 -1 之前，因此这里是最终余额 + 1。
+        // 修复前两条流水都写事务最终余额，导致 balanceAfter - delta 与上一条余额不闭合，
+        // 对账脚本按逐条运行余额校验时会把每一次每日免费判成错账（docs/255 B3）。
         await recordSpinLog(tx, {
           tenantId: draw.tenantId,
           entryId: entry.id,
           userId: entry.identityValue,
           delta: dailyFreeConfig.count,
-          balanceAfter: spinsLeftAfterDeduct,
+          balanceAfter: spinsLeftAfterDeduct + 1,
           reason: "daily_free",
           refId: spinId,
         });
