@@ -226,6 +226,14 @@ export type ReferralRewardDefEntry = {
  * 解析引擎推荐奖励文本（多行 "邀请数:奖励类型:数量[:券label]"）。
  * 非法行跳过；邀请数/数量必须为正整数，奖励类型白名单 bonus_spin/bonus_coupon。
  * 空输入 → []。
+ *
+ * ⚠️ 设计限制（docs/254 审查确认）：同一 requireCount 只保留第一条（seen 按 requireCount 去重）。
+ * 原因：rewardId 生成规则是 `invite_${requireCount}`，若同一邀请数配置两种奖励（如
+ * `1:bonus_spin:2` 和 `1:bonus_coupon:1`），rewardId 会重复（都是 invite_1），
+ * 后端 normalizeReferralRewardDefs 会剔除重复 rewardId 导致一种奖励丢失。
+ * 因此当前限制"同一邀请数只能配置一种奖励"。若需同条件多奖励，需扩展 rewardId
+ * 生成规则（如 invite_1_spin / invite_1_coupon）并同步幂等标记兼容（P2 评估）。
+ * 此限制不造成超发/误发（安全），仅功能受限。
  */
 export function parseReferralRewardDefsText(raw: string | null | undefined): ReferralRewardDefEntry[] {
   const out: ReferralRewardDefEntry[] = []
