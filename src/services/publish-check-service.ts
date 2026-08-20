@@ -31,7 +31,7 @@ import {
 import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
 import { isViralEnabled } from "./lottery/viral-weight";
 import { normalizeDailyFreeSpinConfig, normalizePityConfig, normalizeReferralRewards } from "./lottery/spin-quota";
-import { normalizeReferralRewardDefs } from "./lottery/referral-rewards-engine";
+import { normalizeReferralRewardDefs, collectReferralRewardDefIssues } from "./lottery/referral-rewards-engine";
 
 export type PublishCheckSection =
   | "basic"
@@ -710,6 +710,13 @@ async function validatePromotion(
   // referralRewardDefs 全为无效项时 warning 告知（与 referralRewards.invalid_entries 同语义）
   if (hasReferralRewardDefs && normalizeReferralRewardDefs(referralRewardDefs).length === 0) {
     add(result.warnings, "promotion", "promotion.referralRewardDefs.invalid_entries", "推荐奖励配置了条目但全部无效（需包含 rewardId/type/target 且 rewardExit 为 bonus_spin 或 bonus_coupon），奖励不会发放");
+  }
+  // docs/255 §6.6（P1-3）：对每个非法条目单独报 error（含 conditions 校验原因），
+  // 而非只在"全部无效"时给一条 warning——部分非法时运营能定位到具体 rewardId。
+  if (hasReferralRewardDefs) {
+    for (const issue of collectReferralRewardDefIssues(referralRewardDefs)) {
+      add(result.errors, "promotion", "promotion.referralRewardDefs.invalid_entry", `推荐奖励 ${issue.rewardId} 配置无效：${issue.reason}`);
+    }
   }
 
   // referralRewardDefs 的 rewardExit 与活动类型/结果模式的适配性校验（docs/252 §2.2）：

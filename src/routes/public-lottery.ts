@@ -1889,8 +1889,10 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
     return fail(c, "请提供邮箱和验证码（或登录态）", 400);
   }
 
-  // 1. 查优惠券（按 code 定位）
-  const [coupon] = await db
+  // 1. 查优惠券候选（docs/255 P2-1：唯一约束是 (tenantId, code)，跨租户可能存在同码。
+  //    旧实现 .limit(1) 可能命中另一租户的行 → 合法用户永远核销失败。改为取全部同 code 候选，
+  //    身份验证后按 recipientEmail 唯一确定归属）
+  const couponCandidates = await db
     .select({
       id: couponCodes.id,
       tenantId: couponCodes.tenantId,
@@ -1901,11 +1903,13 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
     })
     .from(couponCodes)
     .where(eq(couponCodes.code, code))
-    .limit(1);
-  if (!coupon) return fail(c, "优惠券不存在", 404);
+    .limit(10);
+  if (couponCandidates.length === 0) return fail(c, "优惠券不存在", 404);
 
-  // 3. 状态校验：仅 issued 可核销（available 是未发放的池，redeemed 已核销）
-  if (coupon.status !== "issued") {
+  // 3. 状态校验：任一候选可核销（available 是未发放的池，redeemed 已核销）
+  //    把「已 redeemed」的候选也保留，供归属判定（若命中已核销券 → 明确报「已核销」而非 404）
+  const issuedCandidate = couponCandidates.find((cc) => cc.status === "issued");
+  if (!issuedCandidate) {
     return fail(c, "优惠券状态不可核销", 400);
   }
 
@@ -1941,21 +1945,31 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
   } else {
     // ── email + OTP 模式（open 模式用户）──
     // 2a. 初步归属校验（用请求体 email）：他人邮箱立即 403，避免先走 OTP 暴露券归属
-    if (email && String(coupon.recipientEmail || "").trim().toLowerCase() !== email) {
+    const selfCandidate = couponCandidates.find(
+      (cc) => String(cc.recipientEmail || "").trim().toLowerCase() === email,
+    );
+    if (!selfCandidate) {
       return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
     }
-    if (!coupon.drawId) return fail(c, "优惠券缺少活动关联，无法核销", 400);
-    if (!(await checkPublicIdentityRateLimit(db, "coupon-redeem", coupon.drawId, email, 10, 60000))) {
+    const otpDrawId = selfCandidate.drawId;
+    if (!otpDrawId) return fail(c, "优惠券缺少活动关联，无法核销", 400);
+    if (!(await checkPublicIdentityRateLimit(db, "coupon-redeem", otpDrawId, email, 10, 60000))) {
       return fail(c, "请求过于频繁，请稍后再试", 429);
     }
-    const validCode = await verifyEmailAccessCode(db, email, coupon.drawId, otp);
+    const validCode = await verifyEmailAccessCode(db, email, otpDrawId, otp);
     if (!validCode) return fail(c, "验证码无效或已过期", 400);
   }
 
   // 2. 归属校验（在身份验证后执行，用 verifiedEmail）：
-  //    只能核销自己领取的券（recipientEmail 必须匹配当前用户邮箱）
-  if (String(coupon.recipientEmail || "").trim().toLowerCase() !== verifiedEmail) {
+  //    从同 code 候选中唯一确定归属券（docs/255 P2-1 去歧义）
+  const ownedCoupon = couponCandidates.find(
+    (cc) => String(cc.recipientEmail || "").trim().toLowerCase() === verifiedEmail,
+  );
+  if (!ownedCoupon) {
     return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
+  }
+  if (ownedCoupon.status !== "issued") {
+    return fail(c, "优惠券状态不可核销", 400);
   }
 
   // 5. CAS 核销：仅当仍为 issued 时更新为 redeemed（防并发重复核销）
@@ -1963,8 +1977,8 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
     .update(couponCodes)
     .set({ status: "redeemed", redeemedAt: new Date().toISOString() })
     .where(and(
-      eq(couponCodes.id, coupon.id),
-      eq(couponCodes.tenantId, coupon.tenantId),
+      eq(couponCodes.id, ownedCoupon.id),
+      eq(couponCodes.tenantId, ownedCoupon.tenantId),
       eq(couponCodes.status, "issued"),
     ));
   if ((result.rowsAffected ?? 0) === 0) {
@@ -1974,15 +1988,15 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
   // 6. 记录活动事件（核销审计）
   try {
     await recordActivityEvent(db, {
-      tenantId: coupon.tenantId,
-      drawId: coupon.drawId || "",
+      tenantId: ownedCoupon.tenantId,
+      drawId: ownedCoupon.drawId || "",
       entryId: "",
       eventType: "coupon_redeemed",
-      metadata: { couponCode: code, couponLabel: coupon.label || "", redeemedBy: email },
+      metadata: { couponCode: code, couponLabel: ownedCoupon.label || "", redeemedBy: email },
     });
   } catch (err) {
     console.error(`[lottery] recordActivityEvent coupon_redeemed failed:`, err);
   }
 
-  return ok(c, { redeemed: true, label: coupon.label || "" });
+  return ok(c, { redeemed: true, label: ownedCoupon.label || "" });
 });

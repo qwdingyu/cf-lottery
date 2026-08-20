@@ -1303,42 +1303,39 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
   }
 // ── 每日免费抽奖 ──
 
-  it("每日免费：首次领取成功+1，当日不重复累加，spinsLeft 不扣本次", async () => {
+  it("每日免费：首次领取+1并扣本次，当日实际=初始+count（docs/255 §7.3 P1-4）", async () => {
     const { slug } = await seedPityDraw({ dailyCount: 1, maxSpins: 2 });
     const join = await joinDraw(db, slug, "free0@test.com");
     expect(join.joined).toBe(true);
     // 初始 spinsLeft = 1（join grant）
 
-    // 第一次 spin：每日免费领取 +1 → spinsLeft = 2，跳过扣次
+    // 第一次 spin：每日免费领取 +1（count=1 已含当次）且扣本次 → spinsLeft = 1 + 1 - 1 = 1
     const r1 = await performInstantSpin(db, {
       slug, identityType: "email", identityValue: "free0@test.com", idempotencyKey: "f0-1",
     });
-    expect(r1.spinsLeft).toBe(2); // 初始 1 + 免费 1，本次未扣
+    expect(r1.spinsLeft).toBe(1); // 修复前为 2（count+1 槽点），修复后 1（count 含当次）
 
-    // spins_log 有 daily_free 记录
+    // spins_log 有两条：daily_free（+count）与 spin（-1），Σdelta 恒等式成立
     const logs1 = await db.select().from(spinsLog).where(eq(spinsLog.entryId, join.entryId!));
     const freeLog = logs1.find((l) => l.reason === "daily_free");
     expect(freeLog).toBeDefined();
     expect(freeLog!.delta).toBe(1);          // 发放 1 次
-    expect(freeLog!.balanceAfter).toBe(2);   // 余额 2
+    expect(freeLog!.balanceAfter).toBe(1);   // 扣次后的最终余额
+    const spinLog = logs1.find((l) => l.reason === "spin");
+    expect(spinLog).toBeDefined();
+    expect(spinLog!.delta).toBe(-1);         // 本次消耗 1
 
-    // 第二次 spin：当日已领，正常扣次 → spinsLeft = 1
+    // 第二次 spin：当日已领，正常扣次 → spinsLeft = 0
     const r2 = await performInstantSpin(db, {
       slug, identityType: "email", identityValue: "free0@test.com", idempotencyKey: "f0-2",
     });
-    expect(r2.spinsLeft).toBe(1);
+    expect(r2.spinsLeft).toBe(0);
 
-    // 第三次 spin：正常扣次 → spinsLeft = 0
+    // 第三次 spin：次数耗尽（当日总可抽 = 初始 1 + count 1 = 2，修复前为 3）
     const r3 = await performInstantSpin(db, {
       slug, identityType: "email", identityValue: "free0@test.com", idempotencyKey: "f0-3",
     });
-    expect(r3.spinsLeft).toBe(0);
-
-    // 第四次 spin：次数耗尽
-    const r4 = await performInstantSpin(db, {
-      slug, identityType: "email", identityValue: "free0@test.com", idempotencyKey: "f0-4",
-    });
-    expect(r4.businessErrorCode).toBe("spin.quota.exhausted");
+    expect(r3.businessErrorCode).toBe("spin.quota.exhausted");
 
     // lastDailyFreeSpinAt 记录为今日
     const entry = await readEntry(join.entryId!);
@@ -1422,13 +1419,13 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
     const rejected = results.filter((r) => r.status === "rejected");
     expect(rejected).toHaveLength(0);
 
-    // 一个领取了免费（spinsLeft 含 +1 且未扣次），另一个正常扣次
-    // 最终 spinsLeft 应为 2（初始 2 + 免费 1 - 扣次 1 = 2）
+    // 一个领取了免费（spinsLeft +1 且扣本次），另一个正常扣次
+    // 最终 spinsLeft 应为 1（初始 2 + 免费 1 - 扣 2 次 = 1；docs/255 §7.3 P1-4）
     const [entryAfter] = await db
       .select()
       .from(lotteryEntries)
       .where(and(eq(lotteryEntries.id, join.entryId!), eq(lotteryEntries.tenantId, TENANT)));
-    expect(Number(entryAfter?.spinsLeft ?? 0)).toBe(2);
+    expect(Number(entryAfter?.spinsLeft ?? 0)).toBe(1);
 
     // 仅 1 条 daily_free 日志（不重复发放）
     const logs = await db.select().from(spinsLog).where(eq(spinsLog.entryId, join.entryId!));
@@ -1436,8 +1433,8 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
     expect(freeLogs).toHaveLength(1);
     expect(freeLogs[0]!.delta).toBe(1);
 
-    // 共 2 次 spin 记录（1 免费 + 1 正常扣次）
-    expect(logs.filter((l) => l.reason === "spin")).toHaveLength(1);
+    // 共 2 次 spin 记录（免费领取的 spin 也写 -1 流水；docs/255 §7.3 P1-4）
+    expect(logs.filter((l) => l.reason === "spin")).toHaveLength(2);
   });
 
   it("每日免费：次日自动重置，可再次领取", async () => {
@@ -1446,11 +1443,11 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
     expect(join.joined).toBe(true);
     await grantSpins(client, join.entryId!, 2); // 覆盖为 2 → spinsLeft=2（join 1 + 覆盖 2 取后值 2）
 
-    // 第一次 spin：领取免费 +1 → spinsLeft = 3
+    // 第一次 spin：领取免费 +1 且扣本次 → spinsLeft = 2（2 + 1 - 1；docs/255 §7.3 P1-4）
     const r1 = await performInstantSpin(db, {
       slug, identityType: "email", identityValue: "free1@test.com", idempotencyKey: "f1-1",
     });
-    expect(r1.spinsLeft).toBe(3);
+    expect(r1.spinsLeft).toBe(2);
 
     // 手动将 lastDailyFreeSpinAt 改为昨天（本地时区），模拟次日
     const yesterday = localDateStr(new Date(Date.now() - 86400_000));
@@ -1459,11 +1456,11 @@ describe("保底机制与每日免费抽奖（docs/218 模式一/模式二）", 
       .set({ lastDailyFreeSpinAt: yesterday })
       .where(and(eq(lotteryEntries.id, join.entryId!), eq(lotteryEntries.tenantId, TENANT)));
 
-    // 第二次 spin：应再次领取免费 +1 → spinsLeft = 4（3+1，跳过扣次）
+    // 第二次 spin：应再次领取免费 +1 且扣本次 → spinsLeft = 2（2 + 1 - 1）
     const r2 = await performInstantSpin(db, {
       slug, identityType: "email", identityValue: "free1@test.com", idempotencyKey: "f1-2",
     });
-    expect(r2.spinsLeft).toBe(4); // 3 + 1，未扣
+    expect(r2.spinsLeft).toBe(2);
 
     // lastDailyFreeSpinAt 更新为今日
     const entry = await readEntry(join.entryId!);
@@ -1540,35 +1537,35 @@ it("每日免费未配置时保持原扣次行为，last_daily_free 保持 NULL"
     await grantSpins(client, join.entryId!, 4); // 覆盖为 4 → spinsLeft=4
     stubCsprng(0); // 正常抽档 A → 必未中
 
-    // spin1：免费领取 +1 → spinsLeft = 5，跳过扣次，未中 → counter 0→1
+    // spin1：免费领取 +1 且扣本次 → spinsLeft = 4（4 + 1 - 1；docs/255 §7.3 P1-4），未中 → counter 0→1
     const r1 = await performInstantSpin(db, {
       slug, identityType: "email", identityValue: "combo@test.com", idempotencyKey: "c-1",
     });
-    expect(r1.spinsLeft).toBe(5);
+    expect(r1.spinsLeft).toBe(4);
     expect(r1.won).toBe(false);
 
-    // spin2：正常扣次 → spinsLeft = 4，未中 → counter 1→2
+    // spin2：正常扣次 → spinsLeft = 3，未中 → counter 1→2
     const r2 = await performInstantSpin(db, {
       slug, identityType: "email", identityValue: "combo@test.com", idempotencyKey: "c-2",
     });
-    expect(r2.spinsLeft).toBe(4);
+    expect(r2.spinsLeft).toBe(3);
     expect(r2.won).toBe(false);
 
-    // spin3：正常扣次 → spinsLeft = 3，未中 → counter 2→3（本轮仍正常抽）
+    // spin3：正常扣次 → spinsLeft = 2，未中 → counter 2→3（本轮仍正常抽）
     const r3 = await performInstantSpin(db, {
       slug, identityType: "email", identityValue: "combo@test.com", idempotencyKey: "c-3",
     });
-    expect(r3.spinsLeft).toBe(3);
+    expect(r3.spinsLeft).toBe(2);
     expect(r3.won).toBe(false);
 
-    // spin4：正常扣次 → spinsLeft = 2，counter=3 ≥ threshold → 保底触发！强制中档 B
+    // spin4：正常扣次 → spinsLeft = 1，counter=3 ≥ threshold → 保底触发！强制中档 B
     const r4 = await performInstantSpin(db, {
       slug, identityType: "email", identityValue: "combo@test.com", idempotencyKey: "c-4",
     });
     expect(r4.won).toBe(true);
     expect(r4.tierName).toBe("小奖");
     expect(r4.prizeCode).toBeTruthy();
-    expect(r4.spinsLeft).toBe(2); // 正常扣次 1
+    expect(r4.spinsLeft).toBe(1); // 正常扣次 1
 
     // 计数器归零
     const entry = await readEntry(join.entryId!);

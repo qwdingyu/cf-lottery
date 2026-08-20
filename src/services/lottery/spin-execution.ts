@@ -222,9 +222,13 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         }
       }
 
-      // ── CAS 扣次（每日免费领取成功时跳过） ──
+      // ── CAS 扣次（docs/255 §7.3 P1-4：每日免费领取后也扣本次） ──
+      // 原实现：每日免费领取成功时跳过本次扣次 → 当日实际可抽 count+1 次（成本翻倍）。
+      // 采纳方案：count 已包含当次，领取后仍执行 -1 扣次，当日实际可抽 = 初始 + count。
+      // 流水拆两条（daily_free +count / spin -1）保持 spinsLeft = Σdelta 审计恒等式。
+      // 不可能扣穿：claim 在同一事务内已 +count（count≥1），随后 WHERE spinsLeft>=1 必命中。
       let spinsLeftAfterDeduct: number;
-      if (!dailyFreeClaimed) {
+      {
         const deduct = await tx
           .update(lotteryEntries)
           .set({ spinsLeft: sql`${lotteryEntries.spinsLeft} - 1` })
@@ -255,14 +259,6 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         }
         // 扣次成功后，事务内重新读取真实余额，用于审计日志 balanceAfter。
         // 不依赖事务外预读的 entry.spinsLeft（并发下可能偏高），与 leaderboard-rewards.ts:162-166 一致。
-        const [fresh] = await tx
-          .select({ spinsLeft: lotteryEntries.spinsLeft })
-          .from(lotteryEntries)
-          .where(eq(lotteryEntries.id, entry.id))
-          .limit(1);
-        spinsLeftAfterDeduct = Math.max(0, Number(fresh?.spinsLeft ?? 0));
-      } else {
-        // 每日免费领取成功后，事务内重新读取真实余额，用于审计日志 balanceAfter
         const [fresh] = await tx
           .select({ spinsLeft: lotteryEntries.spinsLeft })
           .from(lotteryEntries)
@@ -466,12 +462,13 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
         .set({ consecutiveNoWinSpins: newConsecutive })
         .where(and(eq(lotteryEntries.id, entry.id), eq(lotteryEntries.tenantId, draw.tenantId)));
 
-      // 写入 spins 流水日志（docs/172 §5.5 P1）：
-      // - 每日免费：记录 reason=daily_free, delta=+count（发放次数，同时表示本次 spin 由
-      //   免费额度支付，故未再写 spin 消耗流水）；refId 关联本次 spinId 形成审计闭环
+      // 写入 spins 流水日志（docs/255 §7.3 P1-4）：
+      // - 每日免费：先写 daily_free（+count），再写 spin（-1），两条流水使得
+      //   spinsLeft = Σdelta 审计恒等式成立（原实现跳过扣次，当日净得 count+1 次）。
       // - 正常抽奖：记录 reason=spin, delta=-1；保底触发时 refId 前缀标识触发阈值，
       //   后缀追加 spinId 保持与普通 spin 一致的审计追溯能力（可反查具体是哪一次 spin 触发保底）
       if (dailyFreeClaimed) {
+        // 第一条：免费领取流水（发多少记多少，balanceAfter 用扣次后的最终余额）
         await recordSpinLog(tx, {
           tenantId: draw.tenantId,
           entryId: entry.id,
@@ -481,17 +478,17 @@ export async function performInstantSpin(db: DbType, input: SpinInput): Promise<
           reason: "daily_free",
           refId: spinId,
         });
-      } else {
-        await recordSpinLog(tx, {
-          tenantId: draw.tenantId,
-          entryId: entry.id,
-          userId: entry.identityValue,
-          delta: -1,
-          balanceAfter: spinsLeftAfterDeduct,
-          reason: "spin",
-          refId: pityTriggered ? `pity:${pityConfig.threshold}:${spinId}` : spinId,
-        });
       }
+      // 第二条：本次 spin 消耗流水（无论是否免费，都扣了 1 次）
+      await recordSpinLog(tx, {
+        tenantId: draw.tenantId,
+        entryId: entry.id,
+        userId: entry.identityValue,
+        delta: -1,
+        balanceAfter: spinsLeftAfterDeduct,
+        reason: "spin",
+        refId: pityTriggered ? `pity:${pityConfig.threshold}:${spinId}` : spinId,
+      });
 
       if (won === 1 && tierId) {
         await tx.insert(lotteryWinners).values({

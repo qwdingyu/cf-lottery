@@ -2550,8 +2550,9 @@ describe("增长功能集成：保底+每日免费+排行榜奖励+裂变", () =
       const pityLogs = logs.filter((l) => l.refId?.startsWith("pity:3:"));
       expect(pityLogs).toHaveLength(1);
 
-      // 每日免费日志 balanceAfter 应为 8（join 1 + 裂变加次 1 + 手动 5 + 每日免费 1 = 8），证明事务内重读生效
-      expect(Number(dailyFreeLogs[0]!.balanceAfter)).toBe(8);
+      // 每日免费日志 balanceAfter 应为 7（join 1 + 裂变加次 1 + 手动 5 + 每日免费 1 - 本次扣 1 = 7；
+      // docs/255 §7.3 P1-4：count 已含当次，领取后仍扣本次）
+      expect(Number(dailyFreeLogs[0]!.balanceAfter)).toBe(7);
 
       // ── 发放排行榜奖励（instant 模式管理端手动触发路径） ──
       const [draw] = await db
@@ -2563,15 +2564,15 @@ describe("增长功能集成：保底+每日免费+排行榜奖励+裂变", () =
       expect(rewardResult.granted).toBe(1); // 仅 A 有 joined_count=1
       expect(rewardResult.skipped).toBe(0);
 
-      // ── 排行榜奖励到账：spinsLeft = 5轮后剩 4 + rank1(+3) = 7 ──
-      // spins 流向：join(1) + viral(1,B分享) + 手动(5) = 7 → dailyFree(+1→8) →
-      // spin2-5(扣4次→4) + leaderboard(+3→7)
+      // ── 排行榜奖励到账：spinsLeft = 5轮后剩 3 + rank1(+3) = 6 ──
+      // spins 流向：join(1) + viral(1,B分享) + 手动(5) = 7 → dailyFree(+1 且扣本次→7) →
+      // spin2-5(扣4次→3) + leaderboard(+3→6)（docs/255 §7.3 P1-4：每日免费扣本次）
       const [entryAfterReward] = await db
         .select()
         .from(lotteryEntries)
         .where(eq(lotteryEntries.id, sharerEntryId))
         .limit(1);
-      expect(Number(entryAfterReward?.spinsLeft ?? 0)).toBe(7);
+      expect(Number(entryAfterReward?.spinsLeft ?? 0)).toBe(6);
       // 总授予：join(1) + viral(1) + 手动(5) + 排行榜(3) = 10
       // （P1 修复：每日免费不再计入 spinsTotalGranted，与签到同语义——避免毒化裂变/里程碑 room）
       expect(Number(entryAfterReward?.spinsTotalGranted ?? 0)).toBe(10);
@@ -2593,7 +2594,7 @@ describe("增长功能集成：保底+每日免费+排行榜奖励+裂变", () =
         .from(lotteryEntries)
         .where(eq(lotteryEntries.id, sharerEntryId))
         .limit(1);
-      expect(Number(entryAfterRepeat?.spinsLeft ?? 0)).toBe(7);
+      expect(Number(entryAfterRepeat?.spinsLeft ?? 0)).toBe(6);
     } finally {
       real.getRandomValues = origGetRandomValues;
       delete (crypto as unknown as Record<string, unknown>).__csprngOriginal;
@@ -2800,13 +2801,13 @@ describe("保底→每日免费→排行榜奖励全链路", () => {
         .where(and(eq(lotteryEntries.id, entryAId), eq(lotteryEntries.tenantId, TENANT)));
       // 恢复 CSPRNG 以便后续正常抽奖
       (crypto as unknown as { getRandomValues: (arr: Uint32Array) => void }).getRandomValues = realCsprng;
-      // 第 5 次：每日免费领取 +1，跳过扣次
+      // 第 5 次：每日免费领取 +1 且扣本次（docs/255 §7.3 P1-4）
       const r5 = await performInstantSpin(db, {
         slug: publicSlug, identityType: "email",
         identityValue: "userA@test.com", idempotencyKey: "full-5",
       });
-      // 验证每日免费生效：初始 5 - 4 次扣次 + 1 免费 = 2，实际返回 4（含裂变加次）
-      expect(r5.spinsLeft).toBe(4);
+      // 验证每日免费生效：初始 5 - 4 次扣次 + 裂变加次 1 + 免费 1 - 本次扣 1 = 2
+      expect(r5.spinsLeft).toBe(2);
       // 验证 spins_log 中有 daily_free 记录
       const logs = await db.select().from(spinsLog).where(eq(spinsLog.entryId, entryAId));
       const freeLog = logs.find((l) => l.reason === "daily_free");
@@ -2832,8 +2833,8 @@ describe("保底→每日免费→排行榜奖励全链路", () => {
         .select({ spinsLeft: lotteryEntries.spinsLeft })
         .from(lotteryEntries)
         .where(and(eq(lotteryEntries.id, entryAId), eq(lotteryEntries.tenantId, TENANT)));
-      // 预期：4（5次spins后）+ 5（leaderboard）= 9
-      expect(Number(entryFinal.spinsLeft)).toBe(9);
+      // 预期：2（5次spins后，含每日免费扣本次）+ 5（leaderboard）= 7（docs/255 §7.3 P1-4）
+      expect(Number(entryFinal.spinsLeft)).toBe(7);
       // ── 10. 幂等验证：再次调用不重复发放 ──
       const result2 = await grantLeaderboardRewards(db, draw!);
       expect(result2.granted).toBe(0);
@@ -2843,7 +2844,7 @@ describe("保底→每日免费→排行榜奖励全链路", () => {
         .select({ spinsLeft: lotteryEntries.spinsLeft })
         .from(lotteryEntries)
         .where(and(eq(lotteryEntries.id, entryAId), eq(lotteryEntries.tenantId, TENANT)));
-      expect(Number(entryAfterIdempotent.spinsLeft)).toBe(9);
+      expect(Number(entryAfterIdempotent.spinsLeft)).toBe(7);
     } finally {
       // 确保 CSPRNG 恢复，不影响后续测试
       (crypto as unknown as { getRandomValues: (arr: Uint32Array) => void }).getRandomValues = realCsprng;
