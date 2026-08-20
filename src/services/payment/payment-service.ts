@@ -809,32 +809,33 @@ async function validateOrderPreconditions(
   // 3. 库存充足性预检（docs/203 §2.2）
   const flashSaleParsed = parseFlashSaleConfig(draw.promotionConfig);
   // 源头扼杀：在用户下单时就检查卡密库存，不让用户为空库存创建订单并付款。
-  // 通过 lotteryPrizeTiers 关联活动奖品，确认奖品类型为卡密（code）后再检查 prizeCodes 可用库存。
-  // 无奖档或奖品类型非卡密时跳过（非卡密奖品不占用 prizeCodes 库存，由名额 CAS 管理）。
-  const tiers = await tx
-    .select({ prizeId: lotteryPrizeTiers.prizeId })
-    .from(lotteryPrizeTiers)
-    .where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)))
-    .limit(1);
-  if (tiers.length > 0 && tiers[0].prizeId) {
-    const [prizeRow] = await tx
-      .select({ prizeType: prizes.prizeType })
-      .from(prizes)
-      .where(and(eq(prizes.id, tiers[0].prizeId), eq(prizes.tenantId, tenantId)))
-      .limit(1);
-    if (prizeRow?.prizeType === "code") {
-      const [stockRow] = await tx
-        .select({ count: sql<number>`COUNT(*)` })
-        .from(prizeCodes)
-        .where(and(
-          eq(prizeCodes.prizeId, tiers[0].prizeId),
-          eq(prizeCodes.tenantId, tenantId),
-          eq(prizeCodes.status, "available"),
-        ));
-      const availableStock = Number(stockRow?.count ?? 0);
-      if (availableStock < quantity) {
-        return { ok: false, error: `库存不足（可用 ${availableStock} 件，需要 ${quantity} 件）` };
-      }
+  // 必须与发卡侧（reservePrizeCodes / acquirePrizeCodes → findCodePrize）用同一个解析器，
+  // 否则预检与发卡对"哪个奖品是卡密奖"的判断会分叉（docs/255 §八 P2-9）：
+  //   - 旧实现取 lotteryPrizeTiers 任意一行（LIMIT 1 无 orderBy）再判类型，
+  //     多奖档活动（实物奖 + 卡密奖）下预检整体失效；
+  //   - 旧实现没有 active 过滤，会把已停用奖品的码池算成有库存；
+  //   - 多卡密奖品 / 卡密奖品停用时发卡侧 fail-closed，而 reservePrizeCodes 把 null
+  //     当作"非卡密活动无需预占"，订单照样创建并收款，回调时必然 FULFILLMENT_FAILED。
+  // 因此这三种"发卡不可能成功"的配置必须在付款前拒绝。
+  const codePrize = await resolveCodePrizeForDraw(tx, tenantId, drawId);
+  if (codePrize.kind === "ambiguous") {
+    return { ok: false, error: `活动配置了多个卡密奖品（${codePrize.count} 个），无法确定发卡目标，请联系运营调整奖品配置` };
+  }
+  if (codePrize.kind === "inactive") {
+    return { ok: false, error: "活动的卡密奖品已停用，暂不可下单" };
+  }
+  if (codePrize.kind === "unique") {
+    const [stockRow] = await tx
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(prizeCodes)
+      .where(and(
+        eq(prizeCodes.prizeId, codePrize.prizeId),
+        eq(prizeCodes.tenantId, tenantId),
+        eq(prizeCodes.status, "available"),
+      ));
+    const availableStock = Number(stockRow?.count ?? 0);
+    if (availableStock < quantity) {
+      return { ok: false, error: `库存不足（可用 ${availableStock} 件，需要 ${quantity} 件）` };
     }
   }
 
@@ -2056,28 +2057,58 @@ export async function fulfillOrderItems(
 }
 
 /**
+ * 活动卡密奖品解析结果（docs/255 §八 P2-9）。
+ *
+ * 下单预检与发卡必须共用这一份判断，避免"预检说有库存、发卡说没奖品"的分叉：
+ * - none      ：活动没有任何卡密奖档（虚拟/链接/邀请等玩法），不占用 prizeCodes 库存
+ * - unique    ：唯一可用卡密奖品，可发卡
+ * - inactive  ：有卡密奖档但奖品全部被停用（active=0），发卡必然失败
+ * - ambiguous ：多个 active 卡密奖品，无法确定发卡目标，必须 fail-closed
+ */
+type CodePrizeResolution =
+  | { kind: "none" }
+  | { kind: "unique"; prizeId: string }
+  | { kind: "inactive" }
+  | { kind: "ambiguous"; count: number };
+
+async function resolveCodePrizeForDraw(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+): Promise<CodePrizeResolution> {
+  const rows = await db
+    .select({ prizeId: lotteryPrizeTiers.prizeId, active: prizes.active })
+    .from(lotteryPrizeTiers)
+    .innerJoin(prizes, and(
+      eq(prizes.id, lotteryPrizeTiers.prizeId),
+      eq(prizes.tenantId, tenantId),
+      eq(prizes.prizeType, "code"),
+    ))
+    .where(and(eq(lotteryPrizeTiers.tenantId, tenantId), eq(lotteryPrizeTiers.drawId, drawId)));
+  if (rows.length === 0) return { kind: "none" };
+  // 按 prizeId 去重：多个奖档指向同一个卡密奖品是合法配置（一等奖/二等奖共用同一码池），
+  // 不去重会被误判成 ambiguous，导致整个活动发不出卡。
+  const activePrizeIds = [...new Set(rows.filter((r) => r.active === 1).map((r) => r.prizeId))];
+  if (activePrizeIds.length === 0) return { kind: "inactive" };
+  if (activePrizeIds.length > 1) return { kind: "ambiguous", count: activePrizeIds.length };
+  return { kind: "unique", prizeId: activePrizeIds[0]! };
+}
+
+/**
  * 查询活动唯一的卡密奖品（prizeType=code）的 prizeId，用于发卡。
  *
  * 发布预检会阻断多卡密奖品，但运行时仍必须 fail closed；否则脏配置下
  * `LIMIT 1` 会随机选中一个奖品，造成支付成功后发错卡。
  */
 async function findCodePrize(db: DbType, tenantId: string, drawId: string) {
-  const rows = await db
-    .select({ prizeId: lotteryPrizeTiers.prizeId })
-    .from(lotteryPrizeTiers)
-    .innerJoin(prizes, and(
-      eq(prizes.id, lotteryPrizeTiers.prizeId),
-      eq(prizes.tenantId, tenantId),
-      eq(prizes.prizeType, "code"),
-      eq(prizes.active, 1),
-    ))
-    .where(and(eq(lotteryPrizeTiers.tenantId, tenantId), eq(lotteryPrizeTiers.drawId, drawId)));
-  if (rows.length > 1) {
+  const resolved = await resolveCodePrizeForDraw(db, tenantId, drawId);
+  if (resolved.kind === "ambiguous") {
     // 多个卡密奖品命中：fail-closed 返回 null 且必须留日志，否则运营看不到发卡失败的真因（docs/202 §5.3-22）。
-    console.error(`[payment] 活动 ${drawId} 存在 ${rows.length} 个卡密奖品，无法确定发卡目标（fail-closed）`);
+    console.error(`[payment] 活动 ${drawId} 存在 ${resolved.count} 个卡密奖品，无法确定发卡目标（fail-closed）`);
   }
-  return rows.length === 1 ? rows[0] : null;
+  return resolved.kind === "unique" ? { prizeId: resolved.prizeId } : null;
 }
+
 
 /**
  * 卡密过期维护（cron 调用，docs/111 §7.3 + docs/114 §4）。
