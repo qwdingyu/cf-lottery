@@ -497,8 +497,14 @@ export async function processReferralRewardsEngine(
   // 记录 rewardIds 以便定位是哪份配置触发，然后按"奖励失败不影响参与主流程"静默返回。
   let records: Array<{ rewardId?: string | null; amount?: string | number | null }> = [];
   try {
+    // 4.0.0 破坏性变更（docs/255）：distributeByDefs 新增 sourceNode 必传校验。
+    // target="SOURCE" 时 _resolveGateNode 要求 sourceNode 非空，否则抛错
+    // （"请给 distributeByDefs 传入 sourceNode"）。cf-lottery 的 rewardDefs 全部用
+    // target="SOURCE"，因此必须传 sourceNode = 分享者节点对象（id = sharerEntryId）。
+    // 不传会导致升级后 distributeByDefs 抛错 → try/catch 捕获 → 邀请奖励全部静默失效。
     records = engine.Distribute.distributeByDefs({
       event,
+      sourceNode: { id: sharer.sharerEntryId, attrs: event.attrs },
       directParent: null,
       ancestors: [],
       rewardDefs,

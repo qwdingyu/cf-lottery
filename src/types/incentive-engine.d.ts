@@ -45,6 +45,8 @@ declare module "@usethink/incentive-engine" {
 
   export interface DistributeByDefsParams {
     event: EngineEvent;
+    /** 事件来源节点对象（4.0.0 新增必传：target="SOURCE" 时 _resolveGateNode 要求非空） */
+    sourceNode?: { id: string; attrs?: Record<string, unknown> } | null;
     directParent?: { id: string; rankRate?: string } | null;
     ancestors?: Array<{ id: string; rankRate?: string }>;
     rewardDefs: RewardDef[];
