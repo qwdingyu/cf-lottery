@@ -179,6 +179,121 @@ describe("normalizeReferralRewardDefs", () => {
     expect(defs.length).toBe(1);
     expect(defs[0]!.fixedAmount).toBe("2");
   });
+
+  // ── docs/255 §六（P1-3）：conditions 校验，根除引擎 fail-open ──
+
+  it("conditions 缺省或空数组 → 保留（无条件档，语义合法）", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "c0", type: "FIXED", target: "SOURCE", fixedAmount: "2" },
+    ]).length).toBe(1);
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "c0b", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [] },
+    ]).length).toBe(1);
+  });
+
+  it("conditions 不是数组 → 剔除（引擎 _meetsRewardCondition 会 fail-open 放行）", () => {
+    const defs = normalizeReferralRewardDefs([
+      {
+        rewardId: "invite_3", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+        // 运营/API 直写成对象而非数组：引擎 !Array.isArray(conditions) → return true → 首次邀请即发 3 人档奖
+        conditions: { type: "COMPARE", field: "totalJoinedCount", operator: "GTE", value: "3" },
+      },
+    ]);
+    expect(defs.length).toBe(0);
+  });
+
+  it("合法 conditions（COMPARE / AND / OR / NOT 树）→ 保留", () => {
+    const defs = normalizeReferralRewardDefs([
+      { rewardId: "c1", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [{ type: "COMPARE", field: "totalJoinedCount", operator: "GTE", value: "3" }] },
+      { rewardId: "c2", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "3" }] },
+      {
+        rewardId: "c3", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+        conditions: [{
+          type: "AND",
+          children: [
+            { type: "COMPARE", field: "totalJoinedCount", operator: "GTE", value: "3" },
+            { type: "NOT", children: [{ type: "COMPARE", field: "activityKind", operator: "NE", value: "lottery" }] },
+          ],
+        }],
+      },
+    ]);
+    expect(defs.map((d) => d.rewardId)).toEqual(["c1", "c2", "c3"]);
+  });
+
+  it("conditions 字段名不在白名单 → 剔除（引擎 _resolveField 缺失字段返回 0 → 永久不发）", () => {
+    const defs = normalizeReferralRewardDefs([
+      { rewardId: "typo", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [{ field: "joinedCount", operator: "GTE", value: "3" }] },
+    ]);
+    expect(defs.length).toBe(0);
+  });
+
+  it("conditions 算子非法 / 排序算子比较值非数值 → 剔除", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "op1", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [{ field: "totalJoinedCount", operator: "BETWEEN", value: "3" }] },
+    ]).length).toBe(0);
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "op2", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "三" }] },
+    ]).length).toBe(0);
+    // EQ/NE 允许非数值（字符串枚举比较）
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "op3", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [{ field: "activityKind", operator: "EQ", value: "lottery" }] },
+    ]).length).toBe(1);
+  });
+
+  it("conditions 逻辑节点缺 children / 未知节点类型 → 剔除", () => {
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "n1", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [{ type: "AND", children: [] }] },
+    ]).length).toBe(0);
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "n2", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [{ type: "XOR", children: [{ field: "totalJoinedCount", operator: "GTE", value: "1" }] }] },
+    ]).length).toBe(0);
+  });
+
+  it("conditions 嵌套子节点缺 type → 剔除（顶层免 type 由 _meetsRewardCondition 包装，子节点不会）", () => {
+    // 引擎 evaluateCondition：`if (!condition || !condition.type) return false`
+    // 顶层数组元素会被 _meetsRewardCondition 补成 COMPARE，但 AND/OR/NOT 的 children 不会 → 永久 false
+    const defs = normalizeReferralRewardDefs([
+      {
+        rewardId: "nested_notype", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+        conditions: [{ type: "AND", children: [{ field: "totalJoinedCount", operator: "GTE", value: "3" }] }],
+      },
+    ]);
+    expect(defs.length).toBe(0);
+  });
+
+  it("conditions 嵌套子节点字段非法 → 剔除（递归校验，不只看顶层）", () => {
+    const defs = normalizeReferralRewardDefs([
+      {
+        rewardId: "nested_typo", type: "FIXED", target: "SOURCE", fixedAmount: "2",
+        conditions: [{
+          type: "OR",
+          children: [
+            { type: "COMPARE", field: "totalJoinedCount", operator: "GTE", value: "3" },
+            { type: "COMPARE", field: "inviteCount", operator: "GTE", value: "5" }, // 字段不存在 → _resolveField 返回 0
+          ],
+        }],
+      },
+    ]);
+    expect(defs.length).toBe(0);
+  });
+
+  it("conditions 嵌套过深（>5 层）→ 剔除（防深树 DoS）", () => {
+    let node: Record<string, unknown> = { type: "COMPARE", field: "totalJoinedCount", operator: "GTE", value: "1" };
+    for (let i = 0; i < 6; i++) node = { type: "NOT", children: [node] };
+    expect(normalizeReferralRewardDefs([
+      { rewardId: "deep", type: "FIXED", target: "SOURCE", fixedAmount: "2", conditions: [node] },
+    ]).length).toBe(0);
+  });
+
+  it("LEVEL / *|PARENT 组合 → 剔除（cf-lottery 恒传 ancestors=[] / directParent=null，数学上永不发放）", () => {
+    const defs = normalizeReferralRewardDefs([
+      { rewardId: "lv", type: "LEVEL", target: "SOURCE", fixedAmount: "2" },
+      { rewardId: "pa", type: "DIRECT", target: "PARENT", rate: "100" },
+      { rewardId: "ok", type: "DIRECT", target: "SOURCE", rate: "100" },
+      { rewardId: "ok2", type: "CUSTOM", target: "SOURCE", metadata: { rewardExit: "bonus_spin" } },
+    ]);
+    expect(defs.map((d) => d.rewardId)).toEqual(["ok", "ok2"]);
+  });
 });
 
 describe("processReferralRewardsEngine", () => {
