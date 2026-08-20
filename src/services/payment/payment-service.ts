@@ -541,6 +541,59 @@ async function armPaymentOrderForRetry(
       throw new Error("秒杀名额已被其他用户占用");
     }
 
+    // ── 重试时的卡密库存补占（docs/255 §十五 R-1）──
+    // 订单超时/取消时 expireOverdueOrders / cancelPaymentOrder 已把预占卡密释放回 available，
+    // 期间卡密可能被别人买走。若重试只补名额而不重新预占，用户付款后回调只能落到
+    // acquirePrizeCodes 兜底，拿不到卡密就必然 FULFILLMENT_FAILED，只能靠退款兜底。
+    // 与 createPaymentOrder 的源头扼杀语义对齐：拿不到足量卡密就拒绝重试
+    // （抛错回滚整个事务，上面的名额补占与 entry 状态改写一并撤销）。
+    const codePrize = await resolveCodePrizeForDraw(tx, input.tenantId, input.drawId);
+    if (codePrize.kind === "ambiguous") {
+      throw new Error(`活动配置了多个卡密奖品（${codePrize.count} 个），无法确定发卡目标，请联系运营调整奖品配置`);
+    }
+    if (codePrize.kind === "inactive") {
+      throw new Error("活动的卡密奖品已停用，暂不可支付");
+    }
+    if (codePrize.kind === "unique") {
+      // 幂等：正常路径下重试前预占已释放；若本订单仍持有 reserved 卡密
+      //（并发释放竞态 / 人工补录的历史订单），只补差额，避免重复预占放大占用。
+      const [heldRow] = await tx
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(prizeCodes)
+        .where(and(
+          eq(prizeCodes.tenantId, input.tenantId),
+          eq(prizeCodes.paymentOrderId, orderId),
+          eq(prizeCodes.status, "reserved"),
+        ));
+      const needQuantity = quantity - Number(heldRow?.count ?? 0);
+      if (needQuantity > 0) {
+        const [stockRow] = await tx
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(prizeCodes)
+          .where(and(
+            eq(prizeCodes.tenantId, input.tenantId),
+            eq(prizeCodes.prizeId, codePrize.prizeId),
+            eq(prizeCodes.status, "available"),
+          ));
+        const availableStock = Number(stockRow?.count ?? 0);
+        if (availableStock < needQuantity) {
+          throw new Error(`库存不足（可用 ${availableStock} 件，需要 ${needQuantity} 件）`);
+        }
+        const reservedCodeIds = await reservePrizeCodes(
+          tx,
+          input.tenantId,
+          input.drawId,
+          input.entryId,
+          orderId,
+          needQuantity,
+        );
+        // 并发下 COUNT 与预占之间仍可能被抢走，这里是最终判定。
+        if ((reservedCodeIds?.length ?? 0) < needQuantity) {
+          throw new Error("卡密库存不足");
+        }
+      }
+    }
+
     const [attemptNumber] = await tx
       .select({ value: max(paymentOrderAttempts.attemptNo) })
       .from(paymentOrderAttempts)
