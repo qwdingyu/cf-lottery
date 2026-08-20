@@ -3245,10 +3245,13 @@ async function redeemCoupon(couponCode: string) {
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (bearer) headers['Authorization'] = 'Bearer ' + bearer
+    // docs/255 复审 B4：带上 slug，让后端把同码查询收敛到本租户
+    // （coupon code 的唯一约束是 (tenantId, code)，跨租户可能存在同码）
+    const slug = myResultDraw.value.publicSlug || props.id || ''
     const res = await fetch(API_BASE + '/public/coupons/redeem', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ code: couponCode, email, otp }),
+      body: JSON.stringify({ code: couponCode, email, otp, slug }),
     })
     const data = await res.json() as any
     if (data.ok && data.redeemed) {
