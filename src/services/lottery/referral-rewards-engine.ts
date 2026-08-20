@@ -491,12 +491,25 @@ export async function processReferralRewardsEngine(
     },
   };
 
-  const records = engine.Distribute.distributeByDefs({
-    event,
-    directParent: null,
-    ancestors: [],
-    rewardDefs,
-  });
+  // 引擎计算失败必须在本函数内收敛（docs/255 复审 B2）：
+  // normalizeReferralRewardDefs 已把已知的抛异常路径（非法 type/target、Decimal 不接受的金额）
+  // 挡在外面，但引擎是外部依赖（版本升级可能新增抛错分支），因此这里显式兜底：
+  // 记录 rewardIds 以便定位是哪份配置触发，然后按"奖励失败不影响参与主流程"静默返回。
+  let records: Array<{ rewardId?: string | null; amount?: string | number | null }> = [];
+  try {
+    records = engine.Distribute.distributeByDefs({
+      event,
+      directParent: null,
+      ancestors: [],
+      rewardDefs,
+    });
+  } catch (err) {
+    console.error(
+      `[lottery] distributeByDefs failed for ${draw.id} (rewardIds=${rewardDefs.map((d) => d.rewardId).join(",")}):`,
+      err,
+    );
+    return;
+  }
   if (records.length === 0) return;
 
   // 4. 幂等过滤 + 5. 执行奖励 + 6. 标记幂等
@@ -541,7 +554,14 @@ export async function processReferralRewardsEngine(
     const def = defByRewardId.get(rewardId);
     const meta = ((def?.metadata || {}) as ReferralRewardMeta);
     const exit = meta.rewardExit || "bonus_spin";
-    const amount = parseInt(String(record.amount || "0"), 10);
+    // 份数解析（docs/255 复审 B2）：引擎金额是十进制字符串（DIRECT 的 rate 是百分比，
+    // Decimal.pct = eventValue × rate / 100，因此 rate=10 + 邀请 3 人算出 "0.3"）。
+    // 奖励出口只能发整份（抽奖次数/优惠券张数），故向下取整；不足 1 份视为"尚未达标"：
+    // 不发放也不写标记，等邀请人数涨够再发。
+    // 反面示例（修复前）：bonus_coupon 侧 Math.max(1, 0) 把 0.3 份凑成 1 张并写整标记，
+    // 等于提前超发且永久锁死该档；bonus_spin 侧则是 NaN/负数可能被带进 SQL 表达式。
+    const amount = Math.floor(Number(record.amount ?? 0));
+    if (!Number.isFinite(amount) || amount < 1) continue;
 
     // 非 lottery 类型 + bonus_spin 出口 → 跳过（见上方约束注释）
     if (exit === "bonus_spin" && !isLotteryKind) continue;
@@ -558,37 +578,45 @@ export async function processReferralRewardsEngine(
     // - bonus_coupon：码池不足属临时缺货，写部分标记 `rewardId:已发份数`，
     //   补货后下次归因续发差额；发满才写整标记
     let newMark: string | null = null;
-    switch (exit) {
-      case "bonus_spin": {
-        const ok = await grantBonusSpin(
-          tx, draw.tenantId, draw.id,
-          sharer.sharerEntryId, amount, maxSpins, rewardId,
-        );
-        if (ok) newMark = rewardId;
-        break;
-      }
-      case "bonus_coupon": {
-        const target = Math.max(1, amount);
-        const alreadyIssued = partiallyGranted.get(rewardId) ?? 0;
-        const remaining = target - alreadyIssued;
-        if (remaining <= 0) {
-          // 运营把张数改小了：已发的比现配置还多 → 直接收敛为整标记，不再发放
-          newMark = rewardId;
+    // 单条奖励级容错（docs/255 复审 B2）：出口抛异常（如底层 DB 错误）时只丢这一条奖励，
+    // 不能让同一分享者的其他 rewardId 跟着丢失。修复前异常直接冒泡到
+    // maybeTriggerReward 的 try/catch，records 里排在后面的奖励全部静默丢失。
+    try {
+      switch (exit) {
+        case "bonus_spin": {
+          const ok = await grantBonusSpin(
+            tx, draw.tenantId, draw.id,
+            sharer.sharerEntryId, amount, maxSpins, rewardId,
+          );
+          if (ok) newMark = rewardId;
           break;
         }
-        const issued = await grantBonusCoupon(
-          tx, draw.tenantId, draw.id,
-          sharer.sharerEntryId, meta.couponLabel, rewardId, remaining,
-        );
-        if (issued > 0) {
-          newMark = buildGrantedMark(rewardId, alreadyIssued + issued, target);
+        case "bonus_coupon": {
+          const target = amount;
+          const alreadyIssued = partiallyGranted.get(rewardId) ?? 0;
+          const remaining = target - alreadyIssued;
+          if (remaining <= 0) {
+            // 运营把张数改小了：已发的比现配置还多 → 直接收敛为整标记，不再发放
+            newMark = rewardId;
+            break;
+          }
+          const issued = await grantBonusCoupon(
+            tx, draw.tenantId, draw.id,
+            sharer.sharerEntryId, meta.couponLabel, rewardId, remaining,
+          );
+          if (issued > 0) {
+            newMark = buildGrantedMark(rewardId, alreadyIssued + issued, target);
+          }
+          // issued === 0（码池空）：不写任何标记，保持可重试
+          break;
         }
-        // issued === 0（码池空）：不写任何标记，保持可重试
-        break;
+        default:
+          // 未知奖励出口（白名单校验已拦截，这里是防御性兜底）
+          break;
       }
-      default:
-        // 未知奖励出口（白名单校验已拦截，这里是防御性兜底）
-        break;
+    } catch (err) {
+      console.error(`[lottery] referral reward exit ${exit} failed for ${draw.id} reward ${rewardId}:`, err);
+      continue;
     }
 
     // 标记幂等（仅奖励成功时标记，防止"标记了但没发"的错账）

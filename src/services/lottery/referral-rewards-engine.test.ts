@@ -772,4 +772,53 @@ describe("processReferralRewardsEngine", () => {
     const issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
     expect(issued).toHaveLength(2);
   });
+
+  // ── 计算金额不足 1 份的处理（docs/255 复审 B2）──
+
+  it("DIRECT 百分比算出不足 1 份时不发券、不写标记；人数涨到够 1 份后才发", async () => {
+    // DIRECT 的 rate 是百分比（引擎 Decimal.pct = value × rate / 100）：
+    // rate=10 + 邀请 3 人 → 0.3 份。不足 1 份必须等于「还没达标」，
+    // 既不能凑整发 1 张（提前超发），也不能写标记（会永久锁死后续续发）。
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "d1", type: "DIRECT", target: "SOURCE", rate: "10", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    const { shareRecordId } = await seedSharer(db, drawId, { joinedCount: 3 });
+    await seedCoupon(db, drawId, "invite");
+    const draw = { id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig };
+
+    await processReferralRewardsEngine(db, draw, shareRecordId);
+    const issued1 = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued1).toHaveLength(0); // 0.3 份 → 不发
+    const [share1] = await db.select().from(shareRecords).where(eq(shareRecords.id, shareRecordId));
+    expect(JSON.parse(share1?.rewardMilestonesGranted || "[]")).toEqual([]); // 不写标记，保持可续发
+
+    // 邀请人数涨到 10 → 10 × 10% = 1 份 → 正常发 1 张并写整标记
+    await db.update(shareRecords).set({ joinedCount: 10 }).where(eq(shareRecords.id, shareRecordId));
+    await processReferralRewardsEngine(db, draw, shareRecordId);
+    const issued2 = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued2).toHaveLength(1);
+    const [share2] = await db.select().from(shareRecords).where(eq(shareRecords.id, shareRecordId));
+    expect(JSON.parse(share2?.rewardMilestonesGranted || "[]")).toEqual(["d1"]);
+  });
+
+  it("DIRECT 百分比算出不足 1 次时 bonus_spin 不加次、不写标记", async () => {
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "d2", type: "DIRECT", target: "SOURCE", rate: "10", metadata: { rewardExit: "bonus_spin" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    const { entryId, shareRecordId } = await seedSharer(db, drawId, { joinedCount: 3 });
+    const draw = { id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig };
+
+    await processReferralRewardsEngine(db, draw, shareRecordId);
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(entry?.spinsLeft).toBe(0);
+    expect(entry?.spinsTotalGranted).toBe(0);
+    const [share] = await db.select().from(shareRecords).where(eq(shareRecords.id, shareRecordId));
+    expect(JSON.parse(share?.rewardMilestonesGranted || "[]")).toEqual([]);
+  });
 });
