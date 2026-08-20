@@ -1881,18 +1881,15 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
     return fail(c, "优惠券状态不可核销", 400);
   }
 
-  // 2a. 初步归属校验（用请求体 email）：他人邮箱立即 403，避免先走 OTP 暴露券归属
-  if (email && String(coupon.recipientEmail || "").trim().toLowerCase() !== email) {
-    return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
-  }
-
   // 4. 身份验证：支持两种模式（docs/254 审查发现，修复 registered 核销缺口）
   //    - email + OTP（open 模式用户）：复用 verifyEmailAccessCode
   //    - JWT（registered 模式用户）：验证 JWT → 查 users.email → 跳 OTP
   let verifiedEmail = email;
   const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (bearerToken) {
-    // JWT 模式：验证 JWT → 查 users.email → 跳 OTP
+    // ── JWT 模式（registered 用户）──
+    // 初步归属校验在此跳过：由 JWT 验证后的 verifiedEmail 归属校验兜底（见下方 2a），
+    // 避免请求体 email 与 users.email 不一致时误拦截（docs/254 审查发现）。
     const jwtSecret = getEnv(c, "JWT_SECRET");
     if (!jwtSecret) return fail(c, "服务器配置错误", 500);
     try {
@@ -1914,7 +1911,11 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
       return fail(c, "登录状态无效", 401);
     }
   } else {
-    // email + OTP 模式
+    // ── email + OTP 模式（open 模式用户）──
+    // 2a. 初步归属校验（用请求体 email）：他人邮箱立即 403，避免先走 OTP 暴露券归属
+    if (email && String(coupon.recipientEmail || "").trim().toLowerCase() !== email) {
+      return fail(c, "该优惠券不属于此邮箱，无法核销", 403);
+    }
     if (!coupon.drawId) return fail(c, "优惠券缺少活动关联，无法核销", 400);
     if (!(await checkPublicIdentityRateLimit(db, "coupon-redeem", coupon.drawId, email, 10, 60000))) {
       return fail(c, "请求过于频繁，请稍后再试", 429);
