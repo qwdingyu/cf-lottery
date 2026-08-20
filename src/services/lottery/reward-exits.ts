@@ -91,6 +91,26 @@ export async function grantBonusSpin(
     refId: `engine:${rewardId}`,
   });
 
+  // 审计日志（docs/254 §4.2）：bonus_spin 发放也写 activityEvents（reward_earned），
+  // 与 bonus_coupon 对齐，保证 L2 漏斗卡片的 reward_earned 计数完整统计两种出口。
+  // 之前只写 spins_log，导致漏斗只统计 bonus_coupon、漏掉 bonus_spin（审计不一致）。
+  try {
+    await recordActivityEvent(tx, {
+      tenantId,
+      drawId,
+      entryId: sharerEntryId,
+      eventType: "reward_earned",
+      metadata: {
+        rewardExit: "bonus_spin",
+        rewardId,
+        amount: actual,
+      },
+    });
+  } catch (err) {
+    // 审计失败不影响发券结果（与 recordSpinLog 的容错一致）
+    console.error(`[lottery] recordActivityEvent bonus_spin failed for ${drawId}:`, err);
+  }
+
   return true;
 }
 
