@@ -1607,6 +1607,83 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/253 §3.2 缺口 A/B：my-result 返回 coupons 数组（含邀请奖励券），
+   * 非 lottery 活动也能查到邀请券（旧实现仅 lottery 未中奖时返回单条安慰券）。
+   */
+  it("my-result coupons 数组：非 lottery 活动返回邀请奖励券", async () => {
+    const app = createPublicTestApp();
+    const email = "coupon-reward@test.com";
+    const drawId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: "coupon-reward-draw",
+        title: "资料领取", status: "drawn", participationMode: "open",
+        activityKind: "claim", experienceType: "reveal", resultMode: "instant",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      identityType: "email", identityValue: email, joinedAt: new Date().toISOString(),
+    });
+    // 邀请奖励券（grantBonusCoupon 发放，recipientEmail = 分享者邮箱）
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      code: "COUPON-INVITE-1",
+      label: "invite",
+      status: "issued",
+      recipientEmail: email,
+    });
+    // 安慰券（grantLoserRewards 发放）
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      code: "COUPON-LOSER-1",
+      label: "loser",
+      status: "issued",
+      recipientEmail: email,
+    });
+    const codeHash = "unused-hash-for-query";
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(),
+      email,
+      drawId,
+      codeHash,
+      used: 0,
+      expiresAt: futureTimeISO(10),
+    });
+    // 走 JWT 免 OTP
+    const token = await signJwt(
+      { sub: crypto.randomUUID(), tenantId: TENANT, email },
+      TEST_ENV.JWT_SECRET,
+      3600,
+    );
+    const res = await app.request("/public/draws/coupon-reward-draw/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.70",
+      },
+      body: JSON.stringify({ email, code: "" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.joined).toBe(true);
+    // coupons 数组应包含两张券（邀请券 + 安慰券），且不依赖 resultFamily === "lottery"
+    expect(Array.isArray(body.coupons)).toBe(true);
+    expect(body.coupons).toContain("COUPON-INVITE-1");
+    expect(body.coupons).toContain("COUPON-LOSER-1");
+    // 兼容字段：consolationCoupon 取第一条
+    expect(body.consolationCoupon).toBe("COUPON-INVITE-1");
+  });
+
+  /**
    * docs/099：share 的 entryId 必须属于本活动。
    */
   it("share：entry 不属于本活动则 404；属于则发码成功", async () => {

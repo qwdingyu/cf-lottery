@@ -131,3 +131,38 @@
 - 🟡 **L1 自助核销**：现有设计边界，非新问题
 
 **建议**：P1 的缺口 A（非 lottery 邀请券展示）是 `bonus_coupon` 出口形成完整 L1 闭环的关键，建议优先排期。缺口 C（L2 前端展示 reward_earned）成本极低（一个卡片），可一并做。缺口 D（L1 自助核销）涉及安全设计，建议评估后再定。
+
+---
+
+## 六、P1 修复完成记录（2026-08-20）
+
+### 6.1 已修复（缺口 A/B：my-result 返回 coupons 数组）
+
+**后端**（`src/routes/public-lottery.ts`）：
+- `my-result` 的 `consolationCoupon` 单条查询改为 `coupons` 数组查询
+- 查询条件去掉 `resultFamily === "lottery"` 限制，改为**所有活动类型**都查该用户的 issued 券
+- 返回 `coupons: string[]`（含安慰券 + 邀请奖励券），保留 `consolationCoupon` 字段（兼容旧前端，取第一条）
+
+**前端**（`frontend/src/views/LotteryView.vue`）：
+- `MyResultPayload` 新增 `coupons?: string[]` 字段
+- 新增 `myResultCoupons` 计算属性（优先 coupons 数组，回退单条 consolationCoupon）
+- 展示模板改为 `v-for` 遍历所有券码
+
+### 6.2 已修复（缺口 C：L2 前端展示 reward_earned）
+
+**前端**（`frontend/src/views/admin/lottery/useDrawAnalytics.ts`）：
+- 漏斗卡片新增 `reward_earned` 项（读 `events.totals.reward_earned`）
+- i18n 新增 `adminFunnelRewards`（zh: "奖励发放" / en: "Rewards issued"）
+
+### 6.3 验证结果
+
+- **TypeScript**：0 errors（exit 0）
+- **vue-tsc**：0 errors（exit 0）
+- **全量测试**：96 文件、1391 测试全部通过，无回归
+- **新增测试**：1 个（my-result coupons 数组：非 lottery 活动返回邀请奖励券）
+
+### 6.4 剩余待办（P2，需安全设计）
+
+| # | 缺口 | 说明 |
+|---|------|------|
+| D | L1 无自助核销优惠券 | 新增公开核销 API `POST /api/public/coupons/redeem`（需安全设计：验证码/OAuth） |
