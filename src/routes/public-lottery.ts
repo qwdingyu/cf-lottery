@@ -1343,24 +1343,35 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   //    现改为：所有活动类型都查该用户的 issued 券，返回 coupons 数组。
   //    保留 consolationCoupon 字段（兼容旧前端，取第一条），新增 coupons 数组。
   //
-  //    ⚠️ recipientEmail 匹配 key（docs/254 审查发现）：
+  //    ⚠️ recipientEmail 匹配 key（docs/254 审查发现 + docs/255 §四 P1-1 收敛）：
   //    发券时（grantLoserRewards / grantBonusCoupon）对 user_id 身份存的是 users.email，
   //    对 email 身份存的是 identityValue。因此查询时必须用与发券一致的 key：
-  //    - user_id 身份 → 用 email（请求体邮箱，与发券存的 users.email 一致）
-  //    - email 身份 → 用 identityValue（即 email 本身）
-  //    若统一用 identityValue（user_id 时是 userId），会匹配不上发券存的 email，
-  //    导致用户查不到自己的券（bug）。
-  const couponMatchKey = identity.identityType === "user_id" ? email : identityValue;
-  const issuedCoupons = await db
-    .select({ code: couponCodes.code, status: couponCodes.status })
-    .from(couponCodes)
-    .where(and(
-      eq(couponCodes.tenantId, draw.tenantId),
-      eq(couponCodes.drawId, draw.id),
-      eq(couponCodes.recipientEmail, couponMatchKey),
-      eq(couponCodes.status, "issued"),
-    ))
-    .orderBy(couponCodes.createdAt);
+  //    - user_id 身份 → 服务端按 JWT.sub 反查 users.email（绝不能用请求体 email！
+  //      registered 模式跳过了 bearer 邮箱校验，若信任请求体 email，任意合法 JWT 持有者
+  //      都能读到他人已发放的券码——券码本身即价值凭证，属越权读，docs/255 §四）
+  //    - email 身份 → 用 identityValue（即已通过 OTP / bearer 校验的 email）
+  let couponMatchKey = identityValue;
+  if (identity.identityType === "user_id") {
+    const [couponOwner] = await db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, identity.identityValue))
+      .limit(1);
+    // 与发券侧写入完全一致（draw-execution.ts:826 用 users.email 原值，不做大小写变换）
+    couponMatchKey = String(couponOwner?.email || "");
+  }
+  const issuedCoupons = couponMatchKey
+    ? await db
+      .select({ code: couponCodes.code, status: couponCodes.status })
+      .from(couponCodes)
+      .where(and(
+        eq(couponCodes.tenantId, draw.tenantId),
+        eq(couponCodes.drawId, draw.id),
+        eq(couponCodes.recipientEmail, couponMatchKey),
+        eq(couponCodes.status, "issued"),
+      ))
+      .orderBy(couponCodes.createdAt)
+    : [];
   const coupons = issuedCoupons.map((c) => c.code);
   // 兼容旧前端：consolationCoupon 取第一条（若存在）
   const consolationCoupon = coupons.length > 0 ? coupons[0]! : null;
