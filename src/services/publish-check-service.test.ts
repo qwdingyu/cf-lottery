@@ -781,6 +781,44 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(result.errors.some((item) => item.code === "flash_sale.pricing_tier.too_many")).toBe(true);
   });
 
+  it("docs/255 R-3：同一卡密奖品被多个奖档引用时不得误判为发卡目标不确定", async () => {
+    // 运行时 resolveCodePrizeForDraw 已按 prizeId 去重（P2-9），
+    // 预检若按奖档行数判断 ambiguous，会把运行时能正常发卡的配置挡在发布之外。
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type) VALUES (?, ?, ?, ?)",
+      args: [prizeId, TENANT, "唯一卡密池", "code"],
+    });
+    for (let i = 0; i < 2; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeId, `UNIQ-${i}`, "available"],
+      });
+    }
+    const draw = makeDraw({
+      maxParticipants: 2,
+      activityKind: "claim",
+      experienceType: "flash_sale",
+      winnerCount: 0,
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 2, priceCents: 9900, currency: "cny" },
+      }),
+    });
+    for (const tierName of ["一等奖", "二等奖"]) {
+      await client.execute({
+        sql: "INSERT INTO lottery_prize_tiers (id, tenant_id, draw_id, prize_id, winner_count, tier_name) VALUES (?, ?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, draw.id, prizeId, 1, tierName],
+      });
+    }
+    await addEasyPayConfig();
+
+    const result = await buildPublishCheckForDraw(db, TENANT, draw as any, {
+      credentialsEncryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY,
+    });
+    expect(result.errors.some((item) => item.code === "payment.fulfillment.code_prize.ambiguous")).toBe(false);
+    expect(result.errors.some((item) => item.code === "payment.fulfillment.code_prize.required")).toBe(false);
+  });
+
   it("docs/131：进行中活动不能共享同一卡密池，避免发布后竞争库存", async () => {
     const sharedPrizeId = crypto.randomUUID();
     await client.execute({
