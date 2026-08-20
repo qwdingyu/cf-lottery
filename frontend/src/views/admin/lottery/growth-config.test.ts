@@ -648,5 +648,17 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
         ],
       })
     })
+    it('rewardId 必须恒为 invite_${requireCount}（幂等键契约，加出口后缀会导致存量重复发奖）', () => {
+      // docs/255 P2-11 审查结论：rewardId 就是后端幂等键
+      // （share_records.rewardMilestonesGranted 按字符串比对），而编辑回填不读 rewardId，
+      // 所以格式一旦变化，存量活动重新保存后已发过的档位会被再发一次。
+      // 本用例锁死格式：改动必须同时提供存量迁移，否则这里会红。
+      const payload = buildPromotionConfigPayload(
+        { resultMode: 'instant', referralRewardDefsText: '2:bonus_spin:3\n5:bonus_coupon:1:invite' },
+        { isEditing: false },
+      )
+      const ids = ((payload as any).referralRewardDefs as Array<{ rewardId: string }>).map((d) => d.rewardId)
+      expect(ids).toEqual(['invite_2', 'invite_5'])
+    })
   })
 })

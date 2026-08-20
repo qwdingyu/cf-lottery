@@ -232,7 +232,9 @@ export type ReferralRewardDefEntry = {
  * `1:bonus_spin:2` 和 `1:bonus_coupon:1`），rewardId 会重复（都是 invite_1），
  * 后端 normalizeReferralRewardDefs 会剔除重复 rewardId 导致一种奖励丢失。
  * 因此当前限制"同一邀请数只能配置一种奖励"。若需同条件多奖励，需扩展 rewardId
- * 生成规则（如 invite_1_spin / invite_1_coupon）并同步幂等标记兼容（P2 评估）。
+ * 生成规则（如 invite_1_spin / invite_1_coupon）——但 rewardId 是幂等键，改格式必须
+ * 同时为存量 share_records.rewardMilestonesGranted 写迁移，否则存量活动重新保存后
+ * 会重复发奖（docs/255 P2-11 审查结论）。
  * 此限制不造成超发/误发（安全），仅功能受限。
  */
 export function parseReferralRewardDefsText(raw: string | null | undefined): ReferralRewardDefEntry[] {
@@ -747,6 +749,16 @@ export function buildPromotionConfigPayload(form: {
   if (hasReferralRewardDefs) {
     referralRewardDefsBlock = {
       referralRewardDefs: referralRewardDefs.map((r) => ({
+        // ⚠️ rewardId 是幂等键，格式一旦变更会导致存量奖励重复发放，禁止随意修改。
+        // 后端把已发放的 rewardId 存入 share_records.rewardMilestonesGranted
+        // （referral-rewards-engine.ts:423 按字符串比对判断"是否已发"）；
+        // 而编辑回填 formatReferralRewardDefsText 是从 conditions[0].value 反推邀请数、
+        // 不读 rewardId，所以存量活动只要在后台再保存一次，rewardId 就会整体变形，
+        // 已发过 invite_3 的分享者会被再发一次（bonus_spin 在 maxSpinsPerEntry<=0 时无上限，
+        // bonus_coupon 直接从码池再扣一张真券）。
+        // 若将来要支持"同一邀请数配多种出口"，必须三件事一起做：放开下方 parse 的
+        // requireCount 去重、改 rewardId 规则、并为存量 rewardMilestonesGranted 写迁移
+        // （或让幂等判断兼容 invite_N 覆盖 invite_N_*）。见 docs/255 P2-11。
         rewardId: `invite_${r.requireCount}`,
         type: 'FIXED',
         target: 'SOURCE',
