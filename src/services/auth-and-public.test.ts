@@ -1684,6 +1684,60 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/254 审查发现：user_id 身份（registered 模式）查券 bug。
+   * 发券时（grantLoserRewards/grantBonusCoupon）对 user_id 身份存 recipientEmail = users.email，
+   * 但 my-result 旧实现用 identityValue（userId）匹配 recipientEmail，永远匹配不上。
+   * 修复后：user_id 身份用 email 匹配，应能查到券。
+   */
+  it("my-result coupons：user_id 身份（registered）用 email 匹配能查到券", async () => {
+    const app = createPublicTestApp();
+    const email = "registered-coupon@test.com";
+    const userId = crypto.randomUUID();
+    const drawId = crypto.randomUUID();
+    // 注册用户（users 表）
+    await db.insert(users).values({
+      id: userId, username: "registered-coupon", email,
+      emailVerified: 1, passwordHash: "hash",
+    });
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: "registered-coupon-draw",
+        title: "注册用户领券", status: "drawn", participationMode: "registered",
+        activityKind: "lottery", experienceType: "wheel", resultMode: "manual",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(-10),
+        winnerCount: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    // user_id 身份 entry（identityValue = userId）
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      identityType: "user_id", identityValue: userId, joinedAt: new Date().toISOString(),
+    });
+    // 邀请券：recipientEmail 存的是 users.email（与 grantBonusCoupon 一致）
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "COUPON-REG-1", label: "invite", status: "issued",
+      recipientEmail: email,
+    });
+    // 自签 JWT（registered 模式用 sub=userId）
+    const token = await signJwt({ sub: userId }, TEST_ENV.JWT_SECRET, 3600);
+    const res = await app.request("/public/draws/registered-coupon-draw/my-result", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "CF-Connecting-IP": "10.0.0.71",
+      },
+      body: JSON.stringify({ email, code: "" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    // 修复后：user_id 身份用 email 匹配，应能查到邀请券
+    expect(Array.isArray(body.coupons)).toBe(true);
+    expect(body.coupons).toContain("COUPON-REG-1");
+  });
+
+  /**
    * docs/254 P2：L1 自助核销优惠券。
    * 安全边界：只能核销自己领取的券（recipientEmail 匹配）+ OTP 验证 + CAS 防并发。
    */

@@ -1342,13 +1342,22 @@ publicLotteryRoute.post("/draws/:slug/my-result", async (c) => {
   //    非 lottery 活动的邀请券查不到（缺口 A），且只取第一条会隐藏邀请券（缺口 B）。
   //    现改为：所有活动类型都查该用户的 issued 券，返回 coupons 数组。
   //    保留 consolationCoupon 字段（兼容旧前端，取第一条），新增 coupons 数组。
+  //
+  //    ⚠️ recipientEmail 匹配 key（docs/254 审查发现）：
+  //    发券时（grantLoserRewards / grantBonusCoupon）对 user_id 身份存的是 users.email，
+  //    对 email 身份存的是 identityValue。因此查询时必须用与发券一致的 key：
+  //    - user_id 身份 → 用 email（请求体邮箱，与发券存的 users.email 一致）
+  //    - email 身份 → 用 identityValue（即 email 本身）
+  //    若统一用 identityValue（user_id 时是 userId），会匹配不上发券存的 email，
+  //    导致用户查不到自己的券（bug）。
+  const couponMatchKey = identity.identityType === "user_id" ? email : identityValue;
   const issuedCoupons = await db
     .select({ code: couponCodes.code, status: couponCodes.status })
     .from(couponCodes)
     .where(and(
       eq(couponCodes.tenantId, draw.tenantId),
       eq(couponCodes.drawId, draw.id),
-      eq(couponCodes.recipientEmail, identityValue),
+      eq(couponCodes.recipientEmail, couponMatchKey),
       eq(couponCodes.status, "issued"),
     ))
     .orderBy(couponCodes.createdAt);
