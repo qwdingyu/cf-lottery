@@ -32,6 +32,7 @@ import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
 import { isViralEnabled, readViralPerInvite } from "./lottery/viral-weight";
 import { normalizeDailyFreeSpinConfig, normalizePityConfig, normalizeReferralRewards } from "./lottery/spin-quota";
 import { normalizeReferralRewardDefs, collectReferralRewardDefIssues } from "./lottery/referral-rewards-engine";
+import { MAX_COUPON_PER_GRANT } from "./lottery/reward-exits";
 
 export type PublishCheckSection =
   | "basic"
@@ -707,14 +708,21 @@ async function validatePromotion(
   if (hasReferralRewards && hasReferralRewardDefs) {
     add(result.errors, "promotion", "promotion.referralRewards.conflict", "不能同时配置 referralRewards 和 referralRewardDefs，请只保留一种推荐奖励配置");
   }
+  // 合法条目与非法原因各求值一次（docs/255 复审 B5）：
+  // 三处校验（全部无效 warning、逐条 error、出口适配性）原先各自调用
+  // normalizeReferralRewardDefs / collectReferralRewardDefIssues，
+  // 同一份配置被遍历三遍；两个函数共用 validateReferralRewardDef，
+  // 结果必然一致，故只算一次并复用，避免后续有人只改其中一处而漂移。
+  const validReferralRewardDefs = hasReferralRewardDefs ? normalizeReferralRewardDefs(referralRewardDefs) : [];
+  const referralRewardDefIssues = hasReferralRewardDefs ? collectReferralRewardDefIssues(referralRewardDefs) : [];
   // referralRewardDefs 全为无效项时 warning 告知（与 referralRewards.invalid_entries 同语义）
-  if (hasReferralRewardDefs && normalizeReferralRewardDefs(referralRewardDefs).length === 0) {
+  if (hasReferralRewardDefs && validReferralRewardDefs.length === 0) {
     add(result.warnings, "promotion", "promotion.referralRewardDefs.invalid_entries", "推荐奖励配置了条目但全部无效（需包含 rewardId/type/target 且 rewardExit 为 bonus_spin 或 bonus_coupon），奖励不会发放");
   }
   // docs/255 §6.6（P1-3）：对每个非法条目单独报 error（含 conditions 校验原因），
   // 而非只在"全部无效"时给一条 warning——部分非法时运营能定位到具体 rewardId。
   if (hasReferralRewardDefs) {
-    for (const issue of collectReferralRewardDefIssues(referralRewardDefs)) {
+    for (const issue of referralRewardDefIssues) {
       add(result.errors, "promotion", "promotion.referralRewardDefs.invalid_entry", `推荐奖励 ${issue.rewardId} 配置无效：${issue.reason}`);
     }
   }
@@ -724,7 +732,7 @@ async function validatePromotion(
   //   非 lottery 活动即使加了 spins 也无法消费，spin 接口 400）
   // - bonus_coupon 出口需要租户有可用优惠券码池，否则奖励静默不发
   if (hasReferralRewardDefs) {
-    const validDefs = normalizeReferralRewardDefs(referralRewardDefs);
+    const validDefs = validReferralRewardDefs;
     const isLotteryKind = draw.activityKind === "lottery";
     const isInstantMode = isInstantResultMode(draw.resultMode);
     for (const def of validDefs) {
@@ -738,6 +746,14 @@ async function validatePromotion(
       }
       if (exit === "bonus_coupon") {
         add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_coupon.need_pool", `推荐奖励 ${def.rewardId} 使用 bonus_coupon 出口，请确保租户已导入优惠券码池（coupon_codes），否则奖励静默不发`);
+        // 单次发放上限提示（docs/255 复审 B5）：grantBonusCoupon 每次调用最多发
+        // MAX_COUPON_PER_GRANT 张（防单次归因把码池抽空），差额由后续归因按
+        // 部分标记 `rewardId:N` 续发。FIXED 的张数在配置期即已确定，可提前告知；
+        // DIRECT/CUSTOM 的张数取决于运行时 eventValue，无法在预检期算出，故不判。
+        const fixedShares = def.type === "FIXED" ? Math.floor(Number((def as { fixedAmount?: unknown }).fixedAmount ?? 0)) : 0;
+        if (fixedShares > MAX_COUPON_PER_GRANT) {
+          add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_coupon.exceeds_per_grant", `推荐奖励 ${def.rewardId} 配置 ${fixedShares} 张券，超过单次发放上限 ${MAX_COUPON_PER_GRANT} 张：一次归因只发 ${MAX_COUPON_PER_GRANT} 张，剩余张数会在该分享者后续被归因时续发`);
+        }
       }
     }
   }
