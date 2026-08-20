@@ -1157,4 +1157,52 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(r6.warnings.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
     expect(r6.infos.some((item) => item.code === "viral.leaderboard.manual_grant")).toBe(false);
   });
+
+  it("referralRewardDefs 适配性校验：bonus_spin 非 lottery/非 instant 阻断（docs/253 §3.1）", async () => {
+    // claim + bonus_spin → 阻断（非 lottery 不能消费抽奖次数）
+    const claim = makeDraw({
+      activityKind: "claim",
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+        ],
+      }),
+    });
+    await addManualTier(claim.id);
+    const r1 = await buildPublishCheckForDraw(db, TENANT, claim as any);
+    expect(r1.errors.some((item) => item.code === "promotion.referralRewardDefs.bonus_spin.not_lottery")).toBe(true);
+
+    // lottery + manual（非 instant）+ bonus_spin → 阻断
+    const manual = makeDraw({
+      activityKind: "lottery",
+      resultMode: "manual",
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+        ],
+      }),
+    });
+    await addManualTier(manual.id);
+    const r2 = await buildPublishCheckForDraw(db, TENANT, manual as any);
+    expect(r2.errors.some((item) => item.code === "promotion.referralRewardDefs.bonus_spin.not_instant")).toBe(true);
+
+    // lottery + instant + bonus_spin + bonus_coupon → 放行（bonus_coupon 仅 warning 缺码池）
+    const instant = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+        ],
+      }),
+    });
+    await addManualTier(instant.id);
+    const r3 = await buildPublishCheckForDraw(db, TENANT, instant as any);
+    expect(r3.errors.some((item) => item.code === "promotion.referralRewardDefs.bonus_spin.not_lottery")).toBe(false);
+    expect(r3.errors.some((item) => item.code === "promotion.referralRewardDefs.bonus_spin.not_instant")).toBe(false);
+  });
 });
