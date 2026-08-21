@@ -103,6 +103,8 @@ export type ActivityEventType =
   | "outcome_assigned"
   | "cta_impression"
   | "cta_click"
+  /** 导流商品卡点击（docs/246/249：与 cta_click 并行，专门用于"曝光→点击→转化"漏斗） */
+  | "click_traffic"
   | "share_created"
   | "share_click"
   | "attributed_join"
@@ -191,6 +193,8 @@ export const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "outcome_assigned",
   "cta_impression",
   "cta_click",
+  /** 导流商品卡点击（docs/246/249） */
+  "click_traffic",
   "share_created",
   "share_click",
   "attributed_join",

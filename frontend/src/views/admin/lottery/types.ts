@@ -102,6 +102,8 @@ export type ActivityEventSummary = {
   pageViews: number
   participationCompleted: number
   ctaClicks: number
+  /** 导流商品卡点击（docs/246/249） */
+  trafficClicks: number
   shareClicks: number
   attributedJoins: number
   externalConversionsReported: number

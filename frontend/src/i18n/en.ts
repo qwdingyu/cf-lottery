@@ -1514,6 +1514,7 @@ export default {
     adminFunnelStarted: "Started",
     adminFunnelCompleted: "Completed",
     adminFunnelCta: "CTA clicks",
+    adminFunnelTraffic: "Traffic clicks",
     adminFunnelShares: "Share clicks",
     adminFunnelJoins: "Attributed joins",
     adminFunnelConversions: "External conversions",

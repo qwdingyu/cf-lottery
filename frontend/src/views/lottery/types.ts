@@ -160,4 +160,6 @@ export type ActivityEventType =
   | 'participation_started'
   | 'participation_completed'
   | 'cta_click'
+  /** 导流商品卡点击（docs/246/249） */
+  | 'click_traffic'
   | 'share_click'

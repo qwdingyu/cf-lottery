@@ -71,6 +71,7 @@ export async function getActivityEventSummary(db: DbType, tenantId: string, draw
     pageViews: totals.page_view || 0,
     participationCompleted: totals.participation_completed || 0,
     ctaClicks: totals.cta_click || 0,
+    trafficClicks: totals.click_traffic || 0,
     shareClicks: totals.share_click || 0,
     attributedJoins: totals.attributed_join || 0,
     externalConversionsReported: totals.external_conversion_reported || 0,

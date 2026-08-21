@@ -3587,12 +3587,21 @@ function activityEventContext() {
 /**
  * 记录导流卡点击事件（docs/246）：fire-and-forget，不阻塞跳转。
  * 若 draw 未加载（如无 userData），静默跳过，用户跳转不受影响。
+ * 同时记录两类事件（docs/246/249 导流转化追踪）：
+ * - cta_click：通用 CTA 点击（保留，兼容既有漏斗）
+ * - click_traffic：导流商品卡专用点击（新增，"曝光→点击→转化"漏斗的"点击"环节）
  */
 function trackCtaClick(draw: LotteryDraw | null | undefined, mode: 'after_win' | 'after_loss') {
   if (!draw?.id) return
   const cta = getResultCta(draw, mode)
   if (!cta?.url) return
   void recordActivityEvent(draw.id, 'cta_click', {
+    mode,
+    url: cta.url,
+    title: cta.title || '',
+  })
+  // 导流商品卡专用事件：与 cta_click 并行记录，用于区分"导流商品卡"点击与普通 CTA
+  void recordActivityEvent(draw.id, 'click_traffic', {
     mode,
     url: cta.url,
     title: cta.title || '',

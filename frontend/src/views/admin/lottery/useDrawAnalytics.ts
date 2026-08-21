@@ -33,6 +33,8 @@ export function useDrawAnalytics(opts: {
       { key: 'participation_started', label: t('lottery.adminFunnelStarted'), value: events?.totals.participation_started ?? 0 },
       { key: 'participation_completed', label: t('lottery.adminFunnelCompleted'), value: events?.participationCompleted ?? 0 },
       { key: 'cta_click', label: t('lottery.adminFunnelCta'), value: events?.ctaClicks ?? 0 },
+      // 导流商品卡点击（docs/246/249）：与 cta_click 并行，专门统计导流卡点击
+      { key: 'click_traffic', label: t('lottery.adminFunnelTraffic'), value: events?.trafficClicks ?? 0 },
       { key: 'share_click', label: t('lottery.adminFunnelShares'), value: events?.shareClicks ?? 0 },
       { key: 'attributed_join', label: t('lottery.adminFunnelJoins'), value: events?.attributedJoins ?? 0 },
       { key: 'external_conversion_reported', label: t('lottery.adminFunnelConversions'), value: events?.externalConversionsReported ?? 0 },

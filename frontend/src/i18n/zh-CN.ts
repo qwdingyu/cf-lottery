@@ -1487,6 +1487,7 @@ export default {
     adminFunnelStarted: "开始参与",
     adminFunnelCompleted: "完成参与",
     adminFunnelCta: "CTA 点击",
+    adminFunnelTraffic: "导流点击",
     adminFunnelShares: "分享点击",
     adminFunnelJoins: "有效邀请",
     adminFunnelConversions: "外部回传",
