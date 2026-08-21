@@ -2205,6 +2205,57 @@ describe("裂变加权开奖", () => {
     expect(result.winnerCount).toBe(1);
     expect(result.candidateCount).toBe(2);
   });
+
+  /**
+   * docs/255 §8 P2-4：`viral.enabled` 必须严格 `=== true` 才算开启。
+   * 历史实现此处用 truthy 判定，导致 `enabled: "true"`（字符串，前端/导入常见）
+   * 时「开奖按裂变加权、排行榜奖励却按未开启跳过」的互相矛盾行为。
+   *
+   * 判别方法（把两条路径都变成确定性输出）：CSPRNG 恒为 0 时
+   * - 等权 randomSelect([p0,p1,p2], 2)：i=2 → swap(2,0)、i=1 → swap(1,0)
+   *   → 数组变 [p1,p2,p0]，取尾部 2 个 = {p2, p0}；
+   * - 加权 weightedSampleUnique(u=0)：每轮 r=0 必落池首 → {p0, p1}。
+   * 因此「p1 中奖」即证明错误地走了加权路径。
+   */
+  it("viral.enabled 为字符串 \"true\" 时不得启用加权（必须走等权路径）", async () => {
+    const { id, publicSlug } = await setupDraw("open", { winnerCount: 2 });
+    await client.execute({
+      sql: "UPDATE lottery_draws SET promotion_config = ? WHERE id = ?",
+      args: [JSON.stringify({
+        version: 1,
+        viral: { enabled: "true", extraEntriesPerInvite: 1, maxExtraEntries: 10 },
+      }), id],
+    });
+    await joinDraw(db, publicSlug, "u1@t.com");
+    await joinDraw(db, publicSlug, "u2@t.com");
+    await joinDraw(db, publicSlug, "u3@t.com");
+
+    // 与 draw-execution 完全同款的候选池查询（无 ORDER BY），取得真实抽样顺序，
+    // 避免测试对物理行序做隐含假设。
+    const pool = await db
+      .select({ id: lotteryEntries.id })
+      .from(lotteryEntries)
+      .where(and(eq(lotteryEntries.drawId, id), eq(lotteryEntries.tenantId, TENANT)));
+    expect(pool).toHaveLength(3);
+
+    const real = crypto as unknown as { getRandomValues: (arr: Uint32Array) => void };
+    const origGetRandomValues = real.getRandomValues;
+    real.getRandomValues = (arr: Uint32Array) => { arr[0] = 0; };
+    try {
+      const result = await performDraw(db, TENANT, id, USER);
+      expect(result.winnerCount).toBe(2);
+      expect(result.candidateCount).toBe(3);
+    } finally {
+      real.getRandomValues = origGetRandomValues;
+    }
+
+    const rows = await client.execute({
+      sql: "SELECT entry_id FROM lottery_winners WHERE tenant_id = ? AND draw_id = ?",
+      args: [TENANT, id],
+    });
+    const winnerIds = new Set(rows.rows.map((row) => String(row.entry_id)));
+    expect(winnerIds).toEqual(new Set([pool[0]!.id, pool[2]!.id]));
+  });
 });
 
 // ── 处罚波及名单测试（docs/111 §5 阶段二） ──

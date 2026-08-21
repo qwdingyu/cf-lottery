@@ -36,8 +36,10 @@ import { grantLeaderboardRewards } from "./leaderboard-rewards";
 import {
   aggregateViralInviteCounts,
   computeViralDrawWeight,
+  isViralEnabled,
   normalizeViralWeightNumbers,
   weightedSampleUnique,
+  type ViralWeightConfig,
 } from "./viral-weight";
 import { DRAW_STATUS, type DrawResult } from "./types";
 
@@ -196,11 +198,11 @@ export async function performDraw(
     // 未开启裂变：等权 Fisher-Yates（randomSelect）。
     let pc: Record<string, unknown> | null = null;
     try { pc = JSON.parse(draw.promotionConfig || "{}"); } catch { /* 忽略非法 JSON */ }
-    const viral = pc?.viral as { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean } | undefined;
+    const viral = pc?.viral as ViralWeightConfig | undefined;
     const inviteMap = new Map<string, number>();  // entryId → 有效邀请人数（joinedCount 聚合）
 
     let selected: typeof entries;
-    if (viral?.enabled) {
+    if (isViralEnabled(viral)) {
       const { extraEntriesPerInvite, maxExtraEntries } = normalizeViralWeightNumbers(viral);
 
       const shareRows = await db
