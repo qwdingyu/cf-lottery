@@ -740,6 +740,7 @@ export default {
     paymentManagePurchase: "Continue payment or buy more",
     paymentContinuePaymentOnly: "Continue payment",
     paymentReopenOrder: "Reopen payment",
+    paymentPayNow: "Pay now",
     paymentBuyMore: "Buy more",
     paymentViewOrder: "View order",
     paymentPendingOrderNotice: "Payment pending — the purchase counts only once paid. Your slot is reserved.",

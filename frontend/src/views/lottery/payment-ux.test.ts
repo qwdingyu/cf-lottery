@@ -215,6 +215,9 @@ describe('resolveFlashSalePurchasePhase', () => {
     expect(resolveFlashSalePurchasePhase({ ...base, latestOrderStatus: null })).toBe('resume_payment')
     expect(resolveFlashSalePurchasePhase({ ...base, latestOrderStatus: undefined })).toBe('resume_payment')
     expect(resolveFlashSalePurchasePhase({ ...base, latestOrderStatus: 'weird' })).toBe('resume_payment')
+    // 尚无订单/状态未知 → 第一次支付，CTA 说「立即支付」而不是「继续支付」
+    expect(flashSalePurchaseCtaI18nKey('resume_payment', null)).toBe('paymentPayNow')
+    expect(flashSalePurchaseCtaI18nKey('resume_payment', 'weird')).toBe('paymentPayNow')
   })
 
   it('过期/取消订单走重新发起支付，而不是再选件数下新单', () => {

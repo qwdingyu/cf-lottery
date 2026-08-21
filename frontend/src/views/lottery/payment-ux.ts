@@ -123,10 +123,12 @@ export function flashSalePurchaseCtaI18nKey(
   if (phase === 'add_more') return 'paymentBuyMore'
   if (phase === 'exhausted') return 'paymentViewOrder'
   const kind = paymentStatusKind(latestOrderStatus)
+  // 已锁名额但尚无订单（摘要返回 null / 状态未知）：第一次支付，说「立即支付」；
+  // 已有 pending 订单才说「继续支付」，避免语义上"继续一个还不存在的支付"。
   if (kind === 'pending') return 'paymentContinuePaymentOnly'
   if (kind === 'retryable') return 'paymentReopenOrder'
   if (kind === 'fulfillment_failed' || kind === 'late_paid') return 'paymentViewOrder'
-  return 'paymentContinuePaymentOnly'
+  return 'paymentPayNow'
 }
 
 export function paymentStatusKind(status: string | null | undefined): PaymentStatusKind {
