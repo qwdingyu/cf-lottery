@@ -1946,6 +1946,9 @@ export default {
     copied: "Coupon code copied",
     copyFailed: "Copy failed",
     loginHint: "Please log in to view your rewards",
+    back: "Back",
+    close: "Close",
+    goToLottery: "Go to activities",
   },
 
   // ── Prizes (AdminPrizesView) — page already uses $t; namespace was missing ──

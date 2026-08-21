@@ -1802,6 +1802,9 @@ export default {
     copied: "优惠券码已复制",
     copyFailed: "复制失败",
     loginHint: "请先登录后查看我的奖励",
+    back: "返回",
+    close: "关闭",
+    goToLottery: "去参与活动",
   },
 
   // ── 品牌设置（BrandSettings）──

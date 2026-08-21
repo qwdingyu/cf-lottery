@@ -1,6 +1,19 @@
 <template>
-  <div class="my-rewards-view">
+  <div class="my-rewards-page">
+    <!-- 页面头部：返回按钮 + 标题，让页面看起来像独立页面而非模态框 -->
+    <header class="mr-page-header">
+      <button type="button" class="mr-back-btn" @click="goBack" :aria-label="$t('myRewards.back')">
+        <span class="mr-back-arrow">←</span>
+        <span class="mr-back-text">{{ $t('myRewards.back') }}</span>
+      </button>
+    </header>
+
     <div class="my-rewards-card">
+      <!-- 关闭按钮（卡片右上角，迎合"模态框"视觉习惯） -->
+      <button type="button" class="mr-close-btn" @click="goBack" :aria-label="$t('myRewards.close')">
+        ✕
+      </button>
+
       <!-- 加载中 -->
       <div v-if="loading" class="mr-state">
         <div class="mr-spinner"></div>
@@ -11,12 +24,23 @@
       <div v-else-if="error" class="mr-state">
         <div class="mr-error-icon">!</div>
         <p class="mr-state-text mr-error">{{ error }}</p>
-        <p class="mr-hint">{{ $t('myRewards.loginHint') }}</p>
+        <!-- 登录提示改为可点击按钮，引导用户去参与活动 -->
+        <button
+          v-if="!token"
+          type="button"
+          class="btn btn-primary mr-login-btn"
+          @click="goToLottery"
+        >{{ $t('myRewards.goToLottery') }}</button>
       </div>
 
       <!-- 空状态 -->
       <div v-else-if="rewards.length === 0" class="mr-state">
         <p class="mr-state-text">{{ $t('myRewards.empty') }}</p>
+        <button
+          type="button"
+          class="btn btn-primary mr-login-btn"
+          @click="goToLottery"
+        >{{ $t('myRewards.goToLottery') }}</button>
       </div>
 
       <!-- 奖励列表 -->
@@ -77,15 +101,18 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const router = useRouter()
 
 const API_BASE = '/api'
 const LOTTERY_REGISTERED_TOKEN_KEY = 'lottery_registered_token'
 
+const token = ref(sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || '')
 const loading = ref(true)
 const error = ref('')
 const rewards = ref<Array<{
@@ -107,9 +134,22 @@ interface MyRewardItem {
   coupons: string[]
 }
 
+/** 返回上一页；若无历史记录则回退到活动列表页 */
+function goBack() {
+  if (window.history.length > 1) {
+    router.back()
+  } else {
+    void router.push('/lottery')
+  }
+}
+
+/** 跳转到活动列表页，让用户参与活动后返回 */
+function goToLottery() {
+  void router.push('/lottery')
+}
+
 onMounted(async () => {
-  const token = sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || ''
-  if (!token) {
+  if (!token.value) {
     loading.value = false
     error.value = t('myRewards.needLogin')
     return
@@ -117,7 +157,7 @@ onMounted(async () => {
 
   try {
     const res = await fetch(`${API_BASE}/public/my-rewards`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token.value}` },
     })
     const data = await res.json().catch(() => null)
 
@@ -144,8 +184,8 @@ function copyCoupon(code: string, _idx: number, _ci: number): void {
 }
 
 async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: number): Promise<void> {
-  const token = sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || ''
-  if (!token) {
+  const tk = sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || ''
+  if (!tk) {
     error.value = t('myRewards.needLogin')
     return
   }
@@ -155,7 +195,7 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${tk}`,
       },
       body: JSON.stringify({ code, email: '', otp: '' }),
     })
@@ -179,24 +219,96 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
 </script>
 
 <style scoped>
-.my-rewards-view {
+.my-rewards-page {
   min-height: 100dvh;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px 16px;
+  flex-direction: column;
   background: var(--tg-bg);
 }
 
+/* ── 页面头部 ── */
+.mr-page-header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--tg-bg);
+}
+
+.mr-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--tg-accent, #4a90d9);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.mr-back-btn:hover {
+  background: var(--tg-hover, rgba(0,0,0,0.05));
+}
+
+.mr-back-arrow {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.mr-back-text {
+  font-size: 14px;
+}
+
+/* ── 卡片容器 ── */
 .my-rewards-card {
+  position: relative;
   max-width: 560px;
   width: 100%;
+  margin: 0 auto;
+  flex: 1;
   background: var(--tg-section-bg);
   border-radius: 12px;
   padding: 24px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 
+/* ── 关闭按钮（卡片右上角） ── */
+.mr-close-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  display: none;  /* 桌面版默认隐藏，移动端/小屏显示 */
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: var(--tg-hover, rgba(0,0,0,0.05));
+  color: var(--tg-hint, #999);
+  font-size: 16px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mr-close-btn:hover {
+  background: var(--tg-danger, #e74c3c);
+  color: white;
+}
+
+/* 小屏设备显示关闭按钮 */
+@media (max-width: 480px) {
+  .mr-close-btn {
+    display: flex;
+  }
+}
+
+/* ── 状态区域 ── */
 .mr-state {
   text-align: center;
   padding: 48px 16px;
@@ -227,10 +339,8 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   justify-content: center;
 }
 
-.mr-hint {
-  font-size: 13px;
-  color: var(--tg-hint, #999);
-  margin-top: 8px;
+.mr-login-btn {
+  margin-top: 16px;
 }
 
 .mr-spinner {
@@ -247,6 +357,7 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   to { transform: rotate(360deg); }
 }
 
+/* ── 奖励列表 ── */
 .mr-header {
   display: flex;
   align-items: baseline;
