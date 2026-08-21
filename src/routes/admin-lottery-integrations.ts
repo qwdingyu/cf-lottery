@@ -270,19 +270,19 @@ adminLotteryRoute.post("/coupons/redeem", async (c) => {
 // 租户品牌配置（白标）
 // ═════════════════════════════════════════════════════════
 
-/** 获取品牌配置 */
+/** 获取品牌配置（含商户名称） */
 adminLotteryRoute.get("/brand", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
-  const [tenant] = await db.select({ brandConfig: tenants.brandConfig, storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+  const [tenant] = await db.select({ name: tenants.name, brandConfig: tenants.brandConfig, storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
   if (!tenant) return fail(c, "租户不存在", 404);
   const config = tryParseJson(tenant.brandConfig);
   // 店铺功能开关：L3 平台运营者配置，控制主页右上角「我的商铺」按钮与 /admin/brand 的「打开」按钮
   const shopFeatureEnabled = await isShopFeatureEnabled(db);
-  return ok(c, { config, storeSlug: tenant.storeSlug || "", shopFeatureEnabled });
+  return ok(c, { config, storeSlug: tenant.storeSlug || "", name: tenant.name, shopFeatureEnabled });
 });
 
-/** 更新品牌配置 */
+/** 更新品牌配置（含商户名称） */
 adminLotteryRoute.put("/brand", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
@@ -293,7 +293,16 @@ adminLotteryRoute.put("/brand", async (c) => {
     companyName: body.companyName || "",
     domain: body.domain || "",
   };
-  await db.update(tenants).set({ brandConfig: JSON.stringify(config), updatedAt: new Date().toISOString() }).where(eq(tenants.id, tenantId));
+
+  // 商户名称（tenant.name）：saas 注册时填写的名称，在此可修改
+  const name = String(body.name || "").trim().slice(0, 100);
+  const updateData: Record<string, any> = {
+    brandConfig: JSON.stringify(config),
+    updatedAt: new Date().toISOString(),
+  };
+  if (name) updateData.name = name;
+
+  await db.update(tenants).set(updateData).where(eq(tenants.id, tenantId));
 
   // store_slug 允许 L2 自定义(为空时保留原值或自动生成)
   const storeSlug = String(body.storeSlug || "").trim().slice(0, 30);
@@ -303,7 +312,7 @@ adminLotteryRoute.put("/brand", async (c) => {
     await db.update(tenants).set({ storeSlug }).where(eq(tenants.id, tenantId));
   }
 
-  return ok(c, { config, storeSlug: storeSlug || "" });
+  return ok(c, { config, storeSlug: storeSlug || "", name: name || "" });
 });
 
 // ═════════════════════════════════════════════════════════

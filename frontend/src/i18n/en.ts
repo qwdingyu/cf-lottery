@@ -1804,6 +1804,8 @@ export default {
   // ── Brand Settings (BrandSettings) ────────────────────
   brand: {
     title: "Brand Settings",
+    merchantName: "Merchant Name",
+    merchantNameHint: "The merchant name entered during SaaS registration, displayed on the store homepage",
     shopLink: "Store link",
     copy: "Copy",
     open: "Open",

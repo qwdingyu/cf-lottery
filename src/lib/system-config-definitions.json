@@ -287,16 +287,25 @@
     "group": "平台运营",
     "order": 20,
     "difficulty": "basic",
-    "enum": ["lottery","signup_chain","claim","survey","vote","checkin","approval","reservation"],
+    "enum": [
+      "lottery",
+      "signup_chain",
+      "claim",
+      "survey",
+      "vote",
+      "checkin",
+      "approval",
+      "reservation"
+    ],
     "enumLabels": {
-      "lottery":"抽奖",
-      "signup_chain":"接龙/报名",
-      "claim":"资料领取/限时抢购/兑付",
-      "survey":"问卷调研",
-      "vote":"投票评选",
-      "checkin":"签到打卡",
-      "approval":"审核申请",
-      "reservation":"预约确认"
+      "lottery": "抽奖",
+      "signup_chain": "接龙/报名",
+      "claim": "资料领取/限时抢购/兑付",
+      "survey": "问卷调研",
+      "vote": "投票评选",
+      "checkin": "签到打卡",
+      "approval": "审核申请",
+      "reservation": "预约确认"
     }
   },
   {
@@ -310,8 +319,20 @@
     "group": "平台运营",
     "order": 21,
     "difficulty": "basic",
-    "enum": ["open","registered","roster","password","invite_code"],
-    "enumLabels": {"open":"公开参与","registered":"需注册登录","roster":"限定名单","password":"访问密码","invite_code":"邀请码"}
+    "enum": [
+      "open",
+      "registered",
+      "roster",
+      "password",
+      "invite_code"
+    ],
+    "enumLabels": {
+      "open": "公开参与",
+      "registered": "需注册登录",
+      "roster": "限定名单",
+      "password": "访问密码",
+      "invite_code": "邀请码"
+    }
   },
   {
     "key": "enable_registration",
@@ -697,5 +718,18 @@
     "group": "平台运营",
     "order": 36,
     "difficulty": "basic"
+  },
+  {
+    "key": "custom_shop_link",
+    "label": "自定义链接",
+    "description": "平台级自定义店铺链接。设置后更新租户的 store_slug，旧链接立即失效。留空保存默认值（自动生成的 shop_xxx）。只能包含字母数字和短横线。",
+    "effect": "设置后租户的店铺链接立即变更，/shops/{新链接} 可访问，旧链接返回 404。",
+    "scope": "admin",
+    "type": "string",
+    "defaultValue": "",
+    "maxLength": 30,
+    "group": "平台运营",
+    "order": 37,
+    "difficulty": "advanced"
   }
 ]

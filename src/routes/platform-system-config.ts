@@ -31,7 +31,7 @@ import {
   deleteSystemConfig,
 } from "../services/admin/system-config";
 import { writePlatformAudit } from "../services/admin/platform-audit";
-import { systemConfigVersions } from "../db/schema";
+import { systemConfigVersions, tenants } from "../db/schema";
 
 export const platformSystemConfigRoute = new Hono<AppEnv>();
 
@@ -61,6 +61,12 @@ platformSystemConfigRoute.put("/", async (c) => {
 
     const db = getDb(c);
     const sensitive = isSensitiveSystemConfigKey(body.key);
+    // 自定义链接：在事务外捕获旧值，用于事务后更新租户 store_slug
+    const oldCustomLink = body.key === "custom_shop_link"
+      ? (await getSystemConfigStoredValue(db, body.key))
+        ?? getSystemConfigDefinition(body.key)?.defaultValue
+        ?? ""
+      : undefined;
     await withDbTransaction(db, async (tx) => {
       const beforeValue = (await getSystemConfigStoredValue(tx, body.key))
         ?? getSystemConfigDefinition(body.key)?.defaultValue
@@ -84,6 +90,24 @@ platformSystemConfigRoute.put("/", async (c) => {
         metadata: { key: body.key, sensitive, configured: Boolean(normalized.value) },
       });
     });
+
+    // 自定义链接：平台级设置，非空时更新租户的 store_slug，旧链接立即失效
+    if (body.key === "custom_shop_link" && normalized.value && normalized.ok) {
+      const beforeValue = oldCustomLink!;
+      // 按旧值（beforeValue）查找租户；首次设置时查第一个租户
+      let tenantId: string | undefined;
+      if (beforeValue) {
+        const [tenant] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.storeSlug, beforeValue)).limit(1);
+        tenantId = tenant?.id;
+      }
+      if (!tenantId) {
+        const [firstTenant] = await db.select({ id: tenants.id }).from(tenants).orderBy(tenants.createdAt).limit(1);
+        tenantId = firstTenant?.id;
+      }
+      if (tenantId) {
+        await db.update(tenants).set({ storeSlug: normalized.value, updatedAt: new Date().toISOString() }).where(eq(tenants.id, tenantId));
+      }
+    }
 
     return ok(c, {
       key: body.key,

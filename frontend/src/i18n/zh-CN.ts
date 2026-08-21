@@ -1819,6 +1819,8 @@ export default {
   // ── 品牌设置（BrandSettings）──
   brand: {
     title: "品牌设置",
+    merchantName: "商户名称",
+    merchantNameHint: "SaaS 注册时填写的商户名称，将显示在店铺首页",
     shopLink: "店铺链接",
     copy: "复制",
     open: "打开",

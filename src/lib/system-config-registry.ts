@@ -158,6 +158,17 @@ export function normalizeSystemConfigValue(key: string, value: string): { ok: tr
         .join(","),
     };
   }
+  // 自定义链接：只能包含字母数字和短横线，留空保存默认值
+  if (key === "custom_shop_link") {
+    if (trimmed && !/^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$/.test(trimmed) && trimmed.length > 1) {
+      // 单个字符允许（如 "a"），短横线不能在首尾
+      if (trimmed.length === 1 && /^[a-zA-Z0-9]$/.test(trimmed)) {
+        return { ok: true, value: trimmed.toLowerCase() };
+      }
+      return { ok: false, message: `${definition.label} 只能包含字母数字和短横线，且短横线不能在首尾` };
+    }
+    return { ok: true, value: trimmed.toLowerCase() };
+  }
   return { ok: true, value: trimmed };
 }
 
