@@ -685,8 +685,11 @@ async function validatePromotion(
   // 避免 enabled 幻值（"true"/1）绕过阻断、或 threshold 无效时误报「不支持」。
   const pityRaw = promotionConfig?.pity as Record<string, unknown> | undefined;
   const pity = normalizePityConfig(pityRaw);
-  // 配置了开启意图但阈值无效被归一化禁用 → warning 告知，防止运营困惑「开了保底为什么不生效」
-  if (pityRaw?.enabled === true && !pity.enabled) {
+  // 配置了开启意图但阈值无效被归一化禁用 → warning 告知，防止运营困惑「开了保底为什么不生效」。
+  // enabled 判定与运行时 normalizePityConfig 三态对齐（=== true / 1 / "true"），
+  // 避免存量脏数据 enabled:"true" 时 warning 静默丢失（docs/255 前后端一致性核查）。
+  const pityEnabledIntent = pityRaw?.enabled === true || pityRaw?.enabled === 1 || pityRaw?.enabled === "true";
+  if (pityEnabledIntent && !pity.enabled) {
     add(result.warnings, "promotion", "promotion.pity.disabled_by_invalid_threshold", "保底机制已开启但阈值无效（需正整数 ≥1），保底不会生效");
   }
   if (pity.enabled && !isInstantResultMode(draw.resultMode)) {
@@ -698,8 +701,11 @@ async function validatePromotion(
   // 模式不调用该函数，配置后不生效且无任何提示。
   const dailyFreeRaw = promotionConfig?.dailyFreeSpins as Record<string, unknown> | undefined;
   const dailyFree = normalizeDailyFreeSpinConfig(dailyFreeRaw);
-  // 配置了开启意图但次数无效被归一化禁用 → warning 告知
-  if (dailyFreeRaw?.enabled === true && !dailyFree.enabled) {
+  // 配置了开启意图但次数无效被归一化禁用 → warning 告知。
+  // enabled 判定与运行时 normalizeDailyFreeSpinConfig 三态对齐（=== true / 1 / "true"），
+  // 避免存量脏数据 enabled:"true" 时 warning 静默丢失（docs/255 前后端一致性核查）。
+  const dailyFreeEnabledIntent = dailyFreeRaw?.enabled === true || dailyFreeRaw?.enabled === 1 || dailyFreeRaw?.enabled === "true";
+  if (dailyFreeEnabledIntent && !dailyFree.enabled) {
     add(result.warnings, "promotion", "promotion.dailyFree.disabled_by_invalid_count", "每日免费抽奖已开启但次数无效（需 ≥1），每日免费不会生效");
   }
   if (dailyFree.enabled && !isInstantResultMode(draw.resultMode)) {

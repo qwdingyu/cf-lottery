@@ -1126,6 +1126,22 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     const r8 = await buildPublishCheckForDraw(db, TENANT, dailyInvalidCount as any);
     expect(r8.errors.some((item) => item.code === "promotion.dailyFree.delayed_not_supported")).toBe(false);
     expect(r8.warnings.some((item) => item.code === "promotion.dailyFree.disabled_by_invalid_count")).toBe(true);
+
+    // 脏数据 enabled:"true"（字符串）+ 无效阈值：意图判定须与运行时三态一致，
+    // warning 不得因幻值被静默吞掉（docs/255 前后端一致性核查修复）
+    const pityTruthyInvalid = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, pity: { enabled: "true", threshold: 0 } }),
+    });
+    await addManualTier(pityTruthyInvalid.id);
+    const r7b = await buildPublishCheckForDraw(db, TENANT, pityTruthyInvalid as any);
+    expect(r7b.warnings.some((item) => item.code === "promotion.pity.disabled_by_invalid_threshold")).toBe(true);
+
+    const dailyTruthyInvalid = makeDraw({
+      promotionConfig: JSON.stringify({ version: 1, dailyFreeSpins: { enabled: "true", count: 0 } }),
+    });
+    await addManualTier(dailyTruthyInvalid.id);
+    const r8b = await buildPublishCheckForDraw(db, TENANT, dailyTruthyInvalid as any);
+    expect(r8b.warnings.some((item) => item.code === "promotion.dailyFree.disabled_by_invalid_count")).toBe(true);
   });
 
   it("instant + 排行榜奖励：warning 提示手动发放（发布确认框可见）；manual 模式不误报", async () => {
