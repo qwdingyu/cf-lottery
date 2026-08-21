@@ -14,13 +14,6 @@
         <small class="hint">{{ $t('brand.merchantNameHint') }}</small>
         <small v-if="nameError" class="error">{{ nameError }}</small>
       </div>
-      <div class="form-row">
-        <label>{{ $t('brand.companyName') }}</label>
-        <div class="input-group">
-          <input v-model="editingCompanyName" maxlength="100" :placeholder="$t('brand.companyName')" class="form-input" />
-        </div>
-        <small class="hint">{{ $t('brand.companyNameHint') }}</small>
-      </div>
     </div>
 
     <!-- ── 店铺链接 ── -->
@@ -69,6 +62,13 @@
           <input v-model="editingPrimaryColor" maxlength="7" placeholder="#4F46E5" class="form-input" />
         </div>
         <small class="hint">{{ $t('brand.primaryColorHint') }}</small>
+      </div>
+      <div class="form-row">
+        <label>{{ $t('brand.companyName') }}</label>
+        <div class="input-group">
+          <input v-model="editingCompanyName" maxlength="100" :placeholder="$t('brand.companyName')" class="form-input" />
+        </div>
+        <small class="hint">{{ $t('brand.companyNameHint') }}</small>
       </div>
       <div class="form-row">
         <label>{{ $t('brand.domain') }}</label>
@@ -130,10 +130,21 @@ function buildPayload() {
   }
 }
 
+/** 校验自定义链接格式，无效时设置 slugError 并返回 false */
+function validateSlug(): boolean {
+  const v = editingSlug.value.trim()
+  if (v && !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(v) && v.length > 1) {
+    slugError.value = t('brand.slugInvalid')
+    return false
+  }
+  return true
+}
+
 async function saveName() {
   const v = editingName.value.trim()
   if (!v) { nameError.value = t('brand.saveFailed'); return }
   nameError.value = ''
+  if (!validateSlug()) return
   savingName.value = true
   try {
     const r = await adminRequest<{ name?: string }>('/api/admin/brand', {
@@ -172,9 +183,8 @@ async function load() {
 }
 
 async function saveSlug() {
-  const v = editingSlug.value.trim()
-  if (v && !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(v)) { slugError.value = t('brand.slugInvalid'); return }
   slugError.value = ''
+  if (!validateSlug()) return
   savingSlug.value = true
   try {
     const r = await adminRequest<{ storeSlug?: string }>('/api/admin/brand', {
@@ -191,6 +201,7 @@ async function saveSlug() {
 async function saveBrandConfig() {
   configError.value = ''
   configSuccess.value = ''
+  if (!validateSlug()) { configError.value = t('brand.slugInvalid'); return }
   savingConfig.value = true
   try {
     const r = await adminRequest<{ config?: Record<string, string> }>('/api/admin/brand', {
@@ -216,13 +227,13 @@ onMounted(load)
 .card { margin-bottom: 16px; }
 .form-section { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .form-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-.section-title { font-size: 14px; font-weight: 600; margin: 0 0 12px; color: var(--text); }
+.section-title { font-size: 14px; font-weight: 600; margin: 0 0 12px; color: var(--text, #e0e0e0); }
 .form-row { margin-bottom: 12px; }
 .form-row:last-child { margin-bottom: 0; }
 .input-group { display: flex; gap: 8px; align-items: center; }
 .form-input { flex:1; padding:6px 10px; border:1px solid var(--border); border-radius:4px; }
 .hint { font-size: 12px; color: var(--muted); }
 .error { font-size: 12px; color: var(--danger); }
-.success { font-size: 12px; color: var(--success); }
+.success { font-size: 12px; color: var(--success, #0a7); }
 .config-error { margin-left: 12px; }
 </style>
