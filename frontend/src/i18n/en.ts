@@ -132,7 +132,7 @@ export default {
     menuQQAssistant: "QQ Assistant",
     menuPlatformTarget: "Platform Assistant",
     menuPaymentConfig: "Payment Config",
-    menuBrand: "Brand",
+    menuBrand: "Store",
     menuPaymentOrders: "Payment Orders",
     menuQuotaRedeem: "Redeem Quota",
     menuLogs: "Logs",
@@ -154,10 +154,23 @@ export default {
     menuMembers: "Members",
     menuConfig: "Config",
     menuRedemptionCodes: "Redemption Codes",
+    menuL2Menus: "L2 Menu Permissions",
     menuAuditLogs: "Audit Logs",
     menuWebhookDeliveries: "Deliveries",
     menuEmailDeliveries: "Email Deliveries",
     menuDataCleanup: "Data cleanup",
+  },
+
+  // ── L2 Menu Permissions (PlatformL2MenusView) ──
+  platformL2Menus: {
+    title: "L2 Tenant Backend Menu Permissions",
+    desc: "Check menus to disable globally for all L2 tenants (checked = hidden from tenant admins and rejected by the backend).",
+    effect: "Applies globally to all L2 tenants (no per-tenant distinction). Disabled menus are hidden in the L2 UI and direct API access is rejected (403). Infrastructure menus (dashboard/login) cannot be disabled.",
+    refresh: "Refresh",
+    retry: "Retry",
+    save: "Save",
+    saving: "Saving…",
+    saved: "Saved, L2 menu permissions updated",
   },
 
   // ── Dashboard ──────────────────────────────
@@ -1803,9 +1816,11 @@ export default {
 
   // ── Brand Settings (BrandSettings) ────────────────────
   brand: {
-    title: "Brand Settings",
+    title: "Store Settings",
+    merchantInfo: "Merchant Info",
     merchantName: "Merchant Name",
     merchantNameHint: "The merchant name entered during SaaS registration, displayed on the store homepage",
+    shopLinkGroup: "Store Link",
     shopLink: "Store link",
     copy: "Copy",
     open: "Open",
@@ -1815,6 +1830,17 @@ export default {
     random: "Random",
     save: "Save",
     slugHint: "Leave empty to save defaults; only letters, numbers and hyphens; the old link stops working immediately after change",
+    brandConfig: "Brand Config",
+    logo: "Store Logo",
+    logoHint: "Image URL (e.g. https://example.com/logo.png), displayed on the store homepage",
+    companyName: "Company Name",
+    companyNameHint: "Full company/brand name displayed on the store homepage",
+    primaryColor: "Theme Color",
+    primaryColorHint: "Hex color value like #4F46E5 (stored field, does not affect current styles)",
+    domain: "Custom Domain",
+    domainHint: "Enter the bound custom domain to replace the default store link",
+    saveConfig: "Save Brand Config",
+    saveSuccess: "Saved",
     copied: "Copied",
     notConfigured: "(Not configured, auto-generated after tenant creation)",
     slugInvalid: "Only lowercase letters, numbers and hyphens are allowed",

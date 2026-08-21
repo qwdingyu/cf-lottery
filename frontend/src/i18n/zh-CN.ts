@@ -128,7 +128,7 @@ export default {
     menuDashboard: "运营台",
     menuLottery: "活动管理",
     menuPrizes: "奖品管理",
-    menuBrand: "品牌设置",
+    menuBrand: "店铺设置",
     menuMembers: "团队成员",
     menuBlacklist: "黑名单",
     menuIntegrations: "集成设置",
@@ -156,10 +156,23 @@ export default {
     menuMembers: "成员管理",
     menuConfig: "系统配置",
     menuRedemptionCodes: "兑换码",
+    menuL2Menus: "L2 菜单权限",
     menuAuditLogs: "审计日志",
     menuWebhookDeliveries: "投递任务",
     menuEmailDeliveries: "邮件投递",
     menuDataCleanup: "数据清理",
+  },
+
+  // ── L2 菜单权限（PlatformL2MenusView） ─────────
+  platformL2Menus: {
+    title: "L2 租户后台菜单权限",
+    desc: "勾选需要禁用的菜单，对所有 L2 租户全局生效（勾选 = 该菜单对租户管理员隐藏且后端拒绝访问）。",
+    effect: "生效范围：所有 L2 租户统一生效，不做按租户区分。禁用后 L2 侧菜单隐藏，且直接访问对应 API 也会被拒绝（403）。运营台/登录等基础设施菜单不可禁用。",
+    refresh: "刷新",
+    retry: "重试",
+    save: "保存",
+    saving: "保存中…",
+    saved: "已保存，L2 菜单权限已更新",
   },
 
   // ── 运营台（AdminDashboardView） ──────────────
@@ -1818,9 +1831,11 @@ export default {
 
   // ── 品牌设置（BrandSettings）──
   brand: {
-    title: "品牌设置",
+    title: "店铺设置",
+    merchantInfo: "商户信息",
     merchantName: "商户名称",
     merchantNameHint: "SaaS 注册时填写的商户名称，将显示在店铺首页",
+    shopLinkGroup: "店铺链接",
     shopLink: "店铺链接",
     copy: "复制",
     open: "打开",
@@ -1830,6 +1845,17 @@ export default {
     random: "随机",
     save: "保存",
     slugHint: "留空保存默认值；只能包含字母数字和短横线；修改后旧链接立即失效",
+    brandConfig: "品牌配置",
+    logo: "店铺 Logo",
+    logoHint: "图片 URL（如 https://example.com/logo.png），将显示在店铺首页",
+    companyName: "公司名称",
+    companyNameHint: "显示在店铺首页的公司/品牌全称",
+    primaryColor: "主题色",
+    primaryColorHint: "十六进制颜色值如 #4F46E5（暂存字段，不影响当前样式）",
+    domain: "自定义域名",
+    domainHint: "绑定独立域名后在此填写，将替换默认店铺链接",
+    saveConfig: "保存品牌配置",
+    saveSuccess: "已保存",
     copied: "已复制",
     notConfigured: "（未配置，创建租户后自动生成）",
     slugInvalid: "只能包含小写字母、数字和短横线",

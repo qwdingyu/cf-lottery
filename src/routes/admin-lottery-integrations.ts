@@ -282,20 +282,26 @@ adminLotteryRoute.get("/brand", async (c) => {
   return ok(c, { config, storeSlug: tenant.storeSlug || "", name: tenant.name, shopFeatureEnabled });
 });
 
-/** 更新品牌配置（含商户名称） */
+/** 更新品牌配置（含商户名称、品牌字段合并） */
 adminLotteryRoute.put("/brand", async (c) => {
   const db = getDb(c);
   const tenantId = c.get("tenantId") as string;
+  const [tenant] = await db.select({ name: tenants.name, brandConfig: tenants.brandConfig, storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+  if (!tenant) return fail(c, "租户不存在", 404);
+
   const body = await c.req.json<any>();
+  const existingConfig = tryParseJson(tenant.brandConfig) || {};
+
+  // 合并品牌配置：仅更新 body 中明确提供的字段，未提供的保留原值
   const config = {
-    logo: body.logo || "",
-    primaryColor: body.primaryColor || "",
-    companyName: body.companyName || "",
-    domain: body.domain || "",
+    logo: body.logo !== undefined ? body.logo : existingConfig.logo || "",
+    primaryColor: body.primaryColor !== undefined ? body.primaryColor : existingConfig.primaryColor || "",
+    companyName: body.companyName !== undefined ? body.companyName : existingConfig.companyName || "",
+    domain: body.domain !== undefined ? body.domain : existingConfig.domain || "",
   };
 
   // 商户名称（tenant.name）：saas 注册时填写的名称，在此可修改
-  const name = String(body.name || "").trim().slice(0, 100);
+  const name = body.name !== undefined ? String(body.name).trim().slice(0, 100) : "";
   const updateData: Record<string, any> = {
     brandConfig: JSON.stringify(config),
     updatedAt: new Date().toISOString(),
@@ -305,8 +311,8 @@ adminLotteryRoute.put("/brand", async (c) => {
   await db.update(tenants).set(updateData).where(eq(tenants.id, tenantId));
 
   // store_slug 允许 L2 自定义(为空时保留原值或自动生成)
-  const storeSlug = String(body.storeSlug || "").trim().slice(0, 30);
-  if (storeSlug && storeSlug !== (await db.select({ slug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1))[0]?.slug) {
+  const storeSlug = body.storeSlug !== undefined ? String(body.storeSlug).trim().slice(0, 30) : tenant.storeSlug || "";
+  if (storeSlug && storeSlug !== tenant.storeSlug) {
     const [dup] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.storeSlug, storeSlug)).limit(1);
     if (dup && dup.id !== tenantId) return fail(c, "店铺链接已被占用", 400);
     await db.update(tenants).set({ storeSlug }).where(eq(tenants.id, tenantId));

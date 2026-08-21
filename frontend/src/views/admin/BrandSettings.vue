@@ -1,38 +1,87 @@
 <template>
   <div class="card card-flat brand-settings">
     <h3>{{ $t('brand.title') }}</h3>
-    <div class="form-row">
-      <label>{{ $t('brand.merchantName') }}</label>
-      <div class="input-group">
-        <input v-model="editingName" maxlength="100" :placeholder="$t('brand.merchantName')" class="form-input" />
-        <button class="btn btn-sm btn-primary" :disabled="savingName" @click="saveName">{{ $t('brand.save') }}</button>
+
+    <!-- ── 商户信息 ── -->
+    <div class="form-section">
+      <h4 class="section-title">{{ $t('brand.merchantInfo') }}</h4>
+      <div class="form-row">
+        <label>{{ $t('brand.merchantName') }}</label>
+        <div class="input-group">
+          <input v-model="editingName" maxlength="100" :placeholder="$t('brand.merchantName')" class="form-input" />
+          <button class="btn btn-sm btn-primary" :disabled="savingName" @click="saveName">{{ $t('brand.save') }}</button>
+        </div>
+        <small class="hint">{{ $t('brand.merchantNameHint') }}</small>
+        <small v-if="nameError" class="error">{{ nameError }}</small>
       </div>
-      <small class="hint">{{ $t('brand.merchantNameHint') }}</small>
+      <div class="form-row">
+        <label>{{ $t('brand.companyName') }}</label>
+        <div class="input-group">
+          <input v-model="editingCompanyName" maxlength="100" :placeholder="$t('brand.companyName')" class="form-input" />
+        </div>
+        <small class="hint">{{ $t('brand.companyNameHint') }}</small>
+      </div>
     </div>
-    <div class="form-row">
-      <label>{{ $t('brand.shopLink') }}</label>
-      <div class="input-group">
-        <input :value="shopUrl" readonly class="form-input" @focus="($event.target as HTMLInputElement).select()" />
-        <button class="btn btn-sm" @click="copyShopUrl" :disabled="!!copyFeedback">{{ copyFeedback || $t('brand.copy') }}</button>
-        <a
-          v-if="shopFeatureEnabled && shopUrl && !shopUrl.includes($t('brand.notConfigured'))"
-          :href="shopUrl"
-          target="_blank"
-          rel="noopener"
-          class="btn btn-sm btn-primary"
-        >{{ $t('brand.open') }}</a>
+
+    <!-- ── 店铺链接 ── -->
+    <div class="form-section">
+      <h4 class="section-title">{{ $t('brand.shopLinkGroup') }}</h4>
+      <div class="form-row">
+        <label>{{ $t('brand.shopLink') }}</label>
+        <div class="input-group">
+          <input :value="shopUrl" readonly class="form-input" @focus="($event.target as HTMLInputElement).select()" />
+          <button class="btn btn-sm" @click="copyShopUrl" :disabled="!!copyFeedback">{{ copyFeedback || $t('brand.copy') }}</button>
+          <a
+            v-if="shopFeatureEnabled && shopUrl && !shopUrl.includes($t('brand.notConfigured'))"
+            :href="shopUrl"
+            target="_blank"
+            rel="noopener"
+            class="btn btn-sm btn-primary"
+          >{{ $t('brand.open') }}</a>
+        </div>
+        <small class="hint">{{ $t('brand.shopLinkHint') }}</small>
       </div>
-      <small class="hint">{{ $t('brand.shopLinkHint') }}</small>
+      <div class="form-row">
+        <label>{{ $t('brand.customLink') }}</label>
+        <div class="input-group">
+          <input v-model="editingSlug" maxlength="30" :placeholder="$t('brand.slugPlaceholder')" class="form-input" />
+          <button class="btn btn-sm" @click="generateSlug">{{ $t('brand.random') }}</button>
+          <button class="btn btn-sm btn-primary" :disabled="savingSlug" @click="saveSlug">{{ $t('brand.save') }}</button>
+        </div>
+        <small v-if="slugError" class="error">{{ slugError }}</small>
+        <small v-else class="hint">{{ $t('brand.slugHint') }}</small>
+      </div>
     </div>
-    <div class="form-row">
-      <label>{{ $t('brand.customLink') }}</label>
-      <div class="input-group">
-        <input v-model="editingSlug" maxlength="30" :placeholder="$t('brand.slugPlaceholder')" class="form-input" />
-        <button class="btn btn-sm" @click="generateSlug">{{ $t('brand.random') }}</button>
-        <button class="btn btn-sm btn-primary" :disabled="savingSlug" @click="saveSlug">{{ $t('brand.save') }}</button>
+
+    <!-- ── 品牌配置 ── -->
+    <div class="form-section">
+      <h4 class="section-title">{{ $t('brand.brandConfig') }}</h4>
+      <div class="form-row">
+        <label>{{ $t('brand.logo') }}</label>
+        <div class="input-group">
+          <input v-model="editingLogo" maxlength="500" :placeholder="$t('brand.logo')" class="form-input" />
+        </div>
+        <small class="hint">{{ $t('brand.logoHint') }}</small>
       </div>
-      <small v-if="slugError" class="error">{{ slugError }}</small>
-      <small v-else class="hint">{{ $t('brand.slugHint') }}</small>
+      <div class="form-row">
+        <label>{{ $t('brand.primaryColor') }}</label>
+        <div class="input-group">
+          <input v-model="editingPrimaryColor" maxlength="7" placeholder="#4F46E5" class="form-input" />
+        </div>
+        <small class="hint">{{ $t('brand.primaryColorHint') }}</small>
+      </div>
+      <div class="form-row">
+        <label>{{ $t('brand.domain') }}</label>
+        <div class="input-group">
+          <input v-model="editingDomain" maxlength="200" :placeholder="$t('brand.domain')" class="form-input" />
+        </div>
+        <small class="hint">{{ $t('brand.domainHint') }}</small>
+      </div>
+      <div class="form-row">
+        <button class="btn btn-primary" :disabled="savingConfig" @click="saveBrandConfig">{{ $t('brand.saveConfig') }}</button>
+        <small v-if="configError" class="error config-error">{{ configError }}</small>
+        <small v-if="configSuccess" class="success">{{ configSuccess }}</small>
+      </div>
     </div>
   </div>
 </template>
@@ -47,10 +96,18 @@ const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
 const shopUrl = ref('')
 const shopFeatureEnabled = ref(true)
 const editingName = ref('')
+const editingCompanyName = ref('')
+const editingLogo = ref('')
+const editingPrimaryColor = ref('')
+const editingDomain = ref('')
 const editingSlug = ref('')
 const savingName = ref(false)
 const savingSlug = ref(false)
+const savingConfig = ref(false)
 const slugError = ref('')
+const nameError = ref('')
+const configError = ref('')
+const configSuccess = ref('')
 const copyFeedback = ref('')
 
 function generateSlug() {
@@ -61,18 +118,31 @@ function generateSlug() {
   slugError.value = ''
 }
 
+/** 构建完整请求体，包含所有字段（后端合并，前端全量发送避免清空） */
+function buildPayload() {
+  return {
+    name: editingName.value,
+    storeSlug: editingSlug.value,
+    logo: editingLogo.value,
+    primaryColor: editingPrimaryColor.value,
+    companyName: editingCompanyName.value,
+    domain: editingDomain.value,
+  }
+}
+
 async function saveName() {
   const v = editingName.value.trim()
-  if (!v) return
+  if (!v) { nameError.value = t('brand.saveFailed'); return }
+  nameError.value = ''
   savingName.value = true
   try {
     const r = await adminRequest<{ name?: string }>('/api/admin/brand', {
       method: 'PUT',
-      body: JSON.stringify({ name: v, storeSlug: editingSlug.value, logo: '', primaryColor: '', companyName: '', domain: '' }),
+      body: JSON.stringify(buildPayload()),
     })
     editingName.value = r.name || ''
   } catch (e: any) {
-    // silent
+    nameError.value = e.message || t('brand.saveFailed')
   } finally { savingName.value = false }
 }
 
@@ -88,22 +158,28 @@ async function copyShopUrl() {
 }
 
 async function load() {
-  const data = await adminRequest<{ storeSlug?: string; name?: string; config?: any; shopFeatureEnabled?: boolean }>('/api/admin/brand')
+  const data = await adminRequest<{ storeSlug?: string; name?: string; config?: Record<string, string>; shopFeatureEnabled?: boolean }>('/api/admin/brand')
   const slug = data.storeSlug || ''
   shopUrl.value = slug ? `${baseUrl}/shop/${slug}` : t('brand.notConfigured')
   shopFeatureEnabled.value = data.shopFeatureEnabled !== false
   editingName.value = data.name || ''
   editingSlug.value = slug
+  const cfg = data.config || {}
+  editingLogo.value = cfg.logo || ''
+  editingPrimaryColor.value = cfg.primaryColor || ''
+  editingCompanyName.value = cfg.companyName || ''
+  editingDomain.value = cfg.domain || ''
 }
 
 async function saveSlug() {
   const v = editingSlug.value.trim()
   if (v && !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(v)) { slugError.value = t('brand.slugInvalid'); return }
-  savingSlug.value = true; slugError.value = ''
+  slugError.value = ''
+  savingSlug.value = true
   try {
     const r = await adminRequest<{ storeSlug?: string }>('/api/admin/brand', {
       method: 'PUT',
-      body: JSON.stringify({ storeSlug: v, name: editingName.value, logo: '', primaryColor: '', companyName: '', domain: '' }),
+      body: JSON.stringify(buildPayload()),
     })
     editingSlug.value = r.storeSlug || ''
     shopUrl.value = r.storeSlug ? `${baseUrl}/shop/${r.storeSlug}` : ''
@@ -112,14 +188,41 @@ async function saveSlug() {
   } finally { savingSlug.value = false }
 }
 
+async function saveBrandConfig() {
+  configError.value = ''
+  configSuccess.value = ''
+  savingConfig.value = true
+  try {
+    const r = await adminRequest<{ config?: Record<string, string> }>('/api/admin/brand', {
+      method: 'PUT',
+      body: JSON.stringify(buildPayload()),
+    })
+    const cfg = r.config || {}
+    editingLogo.value = cfg.logo || ''
+    editingPrimaryColor.value = cfg.primaryColor || ''
+    editingCompanyName.value = cfg.companyName || ''
+    editingDomain.value = cfg.domain || ''
+    configSuccess.value = t('brand.saveSuccess')
+    setTimeout(() => { configSuccess.value = '' }, 3000)
+  } catch (e: any) {
+    configError.value = e.message || t('brand.saveFailed')
+  } finally { savingConfig.value = false }
+}
+
 onMounted(load)
 </script>
 
 <style scoped>
 .card { margin-bottom: 16px; }
+.form-section { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.form-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.section-title { font-size: 14px; font-weight: 600; margin: 0 0 12px; color: var(--text); }
 .form-row { margin-bottom: 12px; }
+.form-row:last-child { margin-bottom: 0; }
 .input-group { display: flex; gap: 8px; align-items: center; }
 .form-input { flex:1; padding:6px 10px; border:1px solid var(--border); border-radius:4px; }
 .hint { font-size: 12px; color: var(--muted); }
 .error { font-size: 12px; color: var(--danger); }
+.success { font-size: 12px; color: var(--success); }
+.config-error { margin-left: 12px; }
 </style>
