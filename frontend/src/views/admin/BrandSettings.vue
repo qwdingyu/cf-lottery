@@ -232,8 +232,8 @@ onMounted(load)
 .form-row:last-child { margin-bottom: 0; }
 .input-group { display: flex; gap: 8px; align-items: center; }
 .form-input { flex:1; padding:6px 10px; border:1px solid var(--border); border-radius:4px; }
-.hint { font-size: 12px; color: var(--muted); }
-.error { font-size: 12px; color: var(--danger); }
+.hint { font-size: 12px; color: var(--muted, #9aa4b2); }
+.error { font-size: 12px; color: var(--danger, #e11d48); }
 .success { font-size: 12px; color: var(--success, #0a7); }
 .config-error { margin-left: 12px; }
 </style>
