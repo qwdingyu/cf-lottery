@@ -235,6 +235,7 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   top: 0;
   z-index: 10;
   background: var(--tg-bg);
+  border-bottom: 1px solid var(--tg-border, #eee);
 }
 
 .mr-back-btn {
@@ -242,17 +243,22 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   align-items: center;
   gap: 4px;
   padding: 6px 12px;
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
-  color: var(--tg-accent, #4a90d9);
+  color: var(--tg-text, #333);
   font-size: 14px;
   cursor: pointer;
   border-radius: 6px;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .mr-back-btn:hover {
   background: var(--tg-hover, rgba(0,0,0,0.05));
+  border-color: var(--tg-border, #eee);
+}
+
+.mr-back-btn:active {
+  background: var(--tg-hover, rgba(0,0,0,0.08));
 }
 
 .mr-back-arrow {
@@ -269,8 +275,8 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   position: relative;
   max-width: 560px;
   width: 100%;
-  margin: 0 auto;
-  flex: 1;
+  margin: 24px auto;
+  flex: 0 1 auto;  /* 不拉伸撑满，内容多高卡片多高 */
   background: var(--tg-section-bg);
   border-radius: 12px;
   padding: 24px;
@@ -284,28 +290,28 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   right: 12px;
   width: 32px;
   height: 32px;
-  display: none;  /* 桌面版默认隐藏，移动端/小屏显示 */
+  display: flex;  /* 始终显示：卡片设计在任何屏幕上都像模态框 */
   align-items: center;
   justify-content: center;
-  border: none;
-  background: var(--tg-hover, rgba(0,0,0,0.05));
+  border: 1px solid var(--tg-border, #eee);
+  background: var(--tg-section-bg);
   color: var(--tg-hint, #999);
-  font-size: 16px;
+  font-size: 14px;
   border-radius: 50%;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  opacity: 0.7;
 }
 
 .mr-close-btn:hover {
   background: var(--tg-danger, #e74c3c);
   color: white;
+  border-color: var(--tg-danger, #e74c3c);
+  opacity: 1;
 }
 
-/* 小屏设备显示关闭按钮 */
-@media (max-width: 480px) {
-  .mr-close-btn {
-    display: flex;
-  }
+.mr-close-btn:active {
+  opacity: 0.8;
 }
 
 /* ── 状态区域 ── */
@@ -452,6 +458,13 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   cursor: pointer;
   flex: 1;
   word-break: break-all;
+  transition: background 0.15s, box-shadow 0.15s;
+  user-select: all;  /* 点击即全选，方便复制 */
+}
+
+.mr-coupon-code:hover {
+  background: var(--tg-hover, rgba(0,0,0,0.06));
+  box-shadow: 0 0 0 1px var(--tg-accent, #4a90d9);
 }
 
 .mr-redeem-btn {
