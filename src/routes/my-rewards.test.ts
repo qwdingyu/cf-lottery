@@ -255,6 +255,11 @@ describe("推广 → 奖励 → my-rewards 正向闭环（registered 分享者�
     const [sharerEntry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
     // 初始 1 次 + bonus_spin 2 次 = 3 次
     expect(Number(sharerEntry?.spinsLeft ?? 0)).toBe(3);
+    // spinsTotalGranted 同样记录奖励发放（引擎路径只写 granted+left，不写 viralEarned）
+    expect(Number(sharerEntry?.spinsTotalGranted ?? 0)).toBe(3);
+    // 引擎路径（referralRewardDefs）不写 spinsViralEarned（与 viral.extraSpins 路径不同），
+    // 断言保持 0 以固化这一设计差异，防止未来误改引擎写入逻辑。
+    expect(Number(sharerEntry?.spinsViralEarned ?? 0)).toBe(0);
 
     const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.code, "REF-INVITE-1"));
     expect(coupon?.status).toBe("issued");
@@ -331,6 +336,7 @@ describe("结构性边界：open（email 身份）推广者的奖励不出现在
       headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.93" },
       body: JSON.stringify({ entryId: sharerEntryId }),
     }, TEST_ENV);
+    expect(shareRes.status).toBe(200);
     const refCode = String((await shareRes.json() as { shareUrl: string }).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
 
     // ③ 被邀请人带 ref 参与 → 归因成功、优惠券发放到分享者邮箱
