@@ -936,6 +936,24 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     }
 
     if (hasLifecycleFacts) {
+      // LIVE_SAFE_FIELDS 白名单：进行中活动（已有参与/支付/中奖记录）可编辑的安全字段。
+      // 判断标准：改动只影响「未来加入者」或「展示层」，绝不改写已参与用户的
+      // 资格、名额、价格、支付或结果语义。新增字段必须逐个评估（docs/257 死磕）：
+      //
+      // accessPassword（2026-08 补充）：只影响密码模式的新加入者，已参与用户不受影响。
+      //   运营设置错误密码导致新用户无法加入，需要能修正，不能因此复制整个活动。
+      //   更新处（line 1152-1160）已有三态语义：null 清空 / 非空重哈希 / 空串保持。
+      //
+      // drawAt（2026-08 补充）：开奖时间的修改受 line 1065-1079 运行时校验约束：
+      //   drawAt 必须晚于 endAt，而进行中活动的 endAt 只能延长（line 979-985），
+      //   因此 drawAt 修改后必然仍指向未来，不会触发"立即开奖"事故。
+      //   运营把开奖时间配错（如 1 小时而非 1 天）可以修正，不用复制活动。
+      //
+      // 明确不加的字段（会改写已参与用户语义，改动需走「复制活动」）：
+      //   activityKind/participationMode/experienceType 维度切换、
+      //   drawTrigger/resultMode 结果语义、winnerCount/maxSpinsPerEntry 配额、
+      //   promotionConfig 中的秒杀价格/库存/支付（flashSale 部分）、publicSlug 链接、
+      //   visible 可见性（已由 line 934-936 单独拦截，须走 pause/cancel 状态机）。
       const LIVE_SAFE_FIELDS = new Set([
         "title",
         "description",
@@ -949,6 +967,8 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
         // 通过 mergeJsonTopLevel 做顶层键级合并，已有数据不受影响。
         // 运营发错选项图片地址后可以修正，不需要为了改一张图复制整个活动。
         "activityConfig",
+        "accessPassword",
+        "drawAt",
       ]);
       const unsafeFields = definedKeys.filter((key) => !LIVE_SAFE_FIELDS.has(key));
       if (unsafeFields.length > 0) {
