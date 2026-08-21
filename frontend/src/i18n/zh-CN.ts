@@ -764,8 +764,8 @@ export default {
     adminConfirmBatchDelete:
       "确认永久删除选中的 {count} 个活动？其中已开奖 {drawnCount} 个。\n\n会删除抽奖活动、候选池和中奖记录；已开奖活动生成的 lottery 订单和卡密交付记录会保留。此操作不可恢复。",
     adminConfirmBatchDeleteForce:
-      "确认永久删除选中的 {count} 个活动？其中 {liveCount} 个进行中。\n\n勾选「包含进行中活动」可一并删除 open/drawing 活动（调试/测试清场，仅供测试环境使用）；有支付订单的活动仍会被保护拒绝。此操作不可恢复。",
-    adminBatchDeleteForceOption: "包含进行中活动（调试/测试清场，仅供测试环境使用）",
+      "确认永久删除选中的 {count} 个活动？其中 {liveCount} 个进行中。\n\n勾选「测试清场」可一并删除 open/drawing 活动，以及仅残留已过期（expired）支付订单的测试活动（调试/测试清场，仅供测试环境使用）；有已支付/退款等资金痕迹订单的活动仍会被保护拒绝。此操作不可恢复。",
+    adminBatchDeleteForceOption: "测试清场：包含进行中活动或仅残留过期支付订单的活动（仅供测试环境使用）",
     adminBatchDeleteConfirmCheckbox: "我确认删除选中的 {count} 个活动，此操作不可恢复",
     adminBatchDeleteRequireCheckbox: "请先勾选「我确认删除…」复选框后再执行删除",
     adminConfirmBatchHide:

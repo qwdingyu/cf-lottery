@@ -39,6 +39,8 @@ export type LotteryDraw = {
   drawnAt: string | null
   failureReason: string
   activityConfig?: ActivityConfigForm
+  /** 导流/增长配置 JSON 字符串（列表接口返回完整行；isPaymentDraw 等需解析判断支付类活动） */
+  promotionConfig?: string
   createdAt: string
   updatedAt: string
 }

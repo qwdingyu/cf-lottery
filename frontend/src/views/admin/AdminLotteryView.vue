@@ -3567,6 +3567,25 @@ function canDeleteDraw(draw: LotteryDraw): boolean {
   return canDeleteDrawByStatus(draw.status)
 }
 
+/**
+ * 判断活动是否为「支付类活动」（秒杀直付，promotionConfig.flashSale.paymentRequired）。
+ * 与后端 isFlashSaleDirect / parseFlashSaleConfig 的判定同源（三态），
+ * 用于批量删除时提示运营：此类活动可能残留 expired 支付订单，需勾选 force 测试清场
+ * （docs/255 测试清场；前端无法精确感知订单存在，用支付配置近似触发 force 选项）。
+ */
+function isPaymentDraw(draw: LotteryDraw): boolean {
+  const pc = draw.promotionConfig
+  if (!pc) return false
+  try {
+    const parsed = typeof pc === 'string' ? JSON.parse(pc) : pc
+    const flashSale = (parsed as Record<string, unknown>)?.flashSale as Record<string, unknown> | undefined
+    const pr = flashSale?.paymentRequired ?? flashSale?.payment_required
+    return pr === true || pr === 1 || pr === 'true'
+  } catch {
+    return false
+  }
+}
+
 /** 筛选变更回第 1 页，避免页码卡在空页 */
 function reloadFromFirstPage() {
   resetCursorMap()  // 筛选条件变化，清空游标缓存从头开始
@@ -4437,14 +4456,18 @@ async function batchDeleteDraws() {
   if (selectedDraws.length === 0) return
   const drawnCount = selectedDraws.filter((draw) => draw.status === 'drawn').length
 
-  // 调试/测试清场（docs/241）：选中含 open/drawing 时提供「包含进行中活动」force 选项。
-  // 默认不勾选（安全删除）；勾选后后端放行 open/drawing，但 cascadeDeleteDraw 的
-  // paymentOrders fail-closed 保护仍生效（有支付订单永远拒绝，防资金事故）。
+  // 调试/测试清场（docs/241）：以下两类场景提供 force 复选框，默认不勾选（安全删除）：
+  // ① 选中含 open/drawing（进行中）；② 选中含支付类活动（秒杀直付，可能残留 expired 订单）。
+  // 勾选后 force=true → 后端放行 open/drawing，并对「所有订单均为 expired」的测试残留
+  // 先清理订单链再删除；有任一非 expired 订单（paid/refunded 等资金痕迹）仍 fail-closed 拒绝。
   const hasLive = selectedDraws.some((draw) => draw.status === 'open' || draw.status === 'drawing')
+  const hasPaymentActivity = selectedDraws.some((draw) => isPaymentDraw(draw))
+  const needForceOption = hasLive || hasPaymentActivity
   let force = false
-  if (hasLive) {
+  if (needForceOption) {
+    const liveCount = selectedDraws.filter((d) => d.status === 'open' || d.status === 'drawing').length
     const decision = await askConfirmWithOptions(
-      t('lottery.adminConfirmBatchDeleteForce', { count: selectedDraws.length, liveCount: selectedDraws.filter((d) => d.status === 'open' || d.status === 'drawing').length }),
+      t('lottery.adminConfirmBatchDeleteForce', { count: selectedDraws.length, liveCount }),
       { options: [{ key: 'force', label: t('lottery.adminBatchDeleteForceOption') }] },
     )
     if (!decision.confirmed) return

@@ -804,8 +804,8 @@ export default {
     adminConfirmBatchDelete:
       "Permanently delete {count} selected draws? {drawnCount} are completed.\n\nThis deletes draws, entries, and winner records. Generated lottery orders and issued card delivery records are retained. This cannot be undone.",
     adminConfirmBatchDeleteForce:
-      "Permanently delete {count} selected draws? {liveCount} are in progress.\n\nCheck \"Include in-progress draws\" to also delete open/drawing draws (debug/test cleanup, test environments only); draws with payment orders are still protected. This cannot be undone.",
-    adminBatchDeleteForceOption: "Include in-progress draws (debug/test cleanup, test environments only)",
+      "Permanently delete {count} selected draws? {liveCount} are in progress.\n\nCheck \"Test cleanup\" to also delete open/drawing draws and test draws with only expired payment orders (debug/test cleanup, test environments only); draws with paid/refunded orders remain protected. This cannot be undone.",
+    adminBatchDeleteForceOption: "Test cleanup: include in-progress draws or draws with only expired payment orders (test environments only)",
     adminBatchDeleteConfirmCheckbox: "I confirm deleting {count} selected draws, this action is irreversible",
     adminBatchDeleteRequireCheckbox: "Please check the \"I confirm deleting…\" checkbox before deleting",
     adminConfirmBatchHide:
