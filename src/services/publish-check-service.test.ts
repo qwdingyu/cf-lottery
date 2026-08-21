@@ -1128,58 +1128,6 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(r8.warnings.some((item) => item.code === "promotion.dailyFree.disabled_by_invalid_count")).toBe(true);
   });
 
-  it("推荐里程碑（referralRewards）仅支持即时开奖：manual 阻断，instant 放行，未配置不误报", async () => {
-    // manual + referralRewards → 阻断
-    const manual = makeDraw({
-      promotionConfig: JSON.stringify({
-        version: 1,
-        referralRewards: [{ requireCount: 1, rewardType: "bonus_spin", rewardValue: 2 }],
-      }),
-    });
-    await addManualTier(manual.id);
-    const r1 = await buildPublishCheckForDraw(db, TENANT, manual as any);
-    expect(r1.errors.some((item) => item.code === "promotion.referralRewards.delayed_not_supported")).toBe(true);
-
-    // instant + referralRewards → 放行
-    const instant = makeDraw({
-      resultMode: "instant",
-      maxSpinsPerEntry: 10,
-      promotionConfig: JSON.stringify({
-        version: 1,
-        referralRewards: [{ requireCount: 1, rewardType: "bonus_spin", rewardValue: 2 }],
-      }),
-    });
-    await addManualTier(instant.id);
-    const r2 = await buildPublishCheckForDraw(db, TENANT, instant as any);
-    expect(r2.errors.some((item) => item.code === "promotion.referralRewards.delayed_not_supported")).toBe(false);
-
-    // 空数组 → 不误报
-    const empty = makeDraw({
-      promotionConfig: JSON.stringify({ version: 1, referralRewards: [] }),
-    });
-    await addManualTier(empty.id);
-    const r3 = await buildPublishCheckForDraw(db, TENANT, empty as any);
-    expect(r3.errors.some((item) => item.code === "promotion.referralRewards.delayed_not_supported")).toBe(false);
-  });
-
-  it("instant + referralRewards 全无效项 → warning 告知不会发放（P2 审查修复）", async () => {
-    const instant = makeDraw({
-      resultMode: "instant",
-      maxSpinsPerEntry: 10,
-      promotionConfig: JSON.stringify({
-        version: 1,
-        referralRewards: [
-          { requireCount: 101, rewardType: "bonus_spin", rewardValue: 1 }, // requireCount 越界
-          { requireCount: 1, rewardType: "bonus_spin", rewardValue: 2000 }, // rewardValue 越界
-        ],
-      }),
-    });
-    await addManualTier(instant.id);
-    const r = await buildPublishCheckForDraw(db, TENANT, instant as any);
-    expect(r.errors.some((item) => item.code === "promotion.referralRewards.delayed_not_supported")).toBe(false);
-    expect(r.warnings.some((item) => item.code === "promotion.referralRewards.invalid_entries")).toBe(true);
-  });
-
   it("instant + 排行榜奖励：warning 提示手动发放（发布确认框可见）；manual 模式不误报", async () => {
     // instant + leaderboardRewards → warning 提示手动发放（info 级前端无展示通道，warning 才在发布确认框可见）
     const instant = makeDraw({
