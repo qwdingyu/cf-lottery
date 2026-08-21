@@ -1564,6 +1564,51 @@ describe("活动编辑 PATCH 语义", () => {
     expect(draw!.status).toBe("open"); // 编辑不改变活动状态
   });
 
+  it("docs/257：零参与的进行中（open）活动允许配置奖项（修正奖品图片/etc）", async () => {
+    const drawId = await seedDraftDraw();
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+    // 直接构造 open 状态（奖项必须存在才能 publish；此处隔离 tiers 路由规则）
+    await db.update(lotteryDraws).set({ status: "open" }).where(eq(lotteryDraws.id, drawId));
+
+    // 造一个奖品，作为奖项引用目标
+    const prizeId = crypto.randomUUID();
+    await db.insert(prizes).values({
+      id: prizeId,
+      tenantId: TENANT_A,
+      name: "测试奖品",
+      description: "",
+      imageUrl: "",
+      valueText: "",
+      prizeType: "manual_fulfillment",
+      totalCount: 1,
+      usedCount: 0,
+      active: 1,
+    });
+
+    // 零参与事实：open 状态允许保存奖项（前端 editLocked=false 路径，后端放行）
+    const okRes = await app.request(`/api/admin/draws/${drawId}/tiers`, {
+      method: "POST", headers,
+      body: JSON.stringify({ tiers: [{ prizeId, tierName: "一等奖", winnerCount: 1 }] }),
+    }, TEST_ENV);
+    expect(okRes.status).toBe(200);
+
+    // 产生参与事实后：奖项锁定，拒绝保存
+    await db.insert(lotteryEntries).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A,
+      drawId,
+      identityType: "email",
+      identityValue: "tier-lock@example.com",
+    });
+    const lockedRes = await app.request(`/api/admin/draws/${drawId}/tiers`, {
+      method: "POST", headers,
+      body: JSON.stringify({ tiers: [{ prizeId, tierName: "一等奖", winnerCount: 1 }] }),
+    }, TEST_ENV);
+    expect(lockedRes.status).toBe(400);
+    expect((await lockedRes.json() as { error: string }).error).toContain("已有参与记录");
+  });
+
   it("docs/223：已有参与事实的进行中活动拒改破坏性字段", async () => {
     const drawId = await seedDraftDraw();
     const app = createTestApp();

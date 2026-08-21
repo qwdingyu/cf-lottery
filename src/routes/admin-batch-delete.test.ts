@@ -21,6 +21,9 @@ import {
   prizeCodes,
   auditLogs,
   systemConfig,
+  paymentOrders,
+  paymentOrderAttempts,
+  paymentOrderItems,
 } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
@@ -292,6 +295,165 @@ describe("POST /api/admin/draws/batch-delete", () => {
 
     const left = await db.select().from(lotterySpins).where(eq(lotterySpins.drawId, "spin-draw"));
     expect(left).toHaveLength(0); // spins 随活动级联删除，不留孤儿
+  });
+
+  it("测试清场：仅含 expired 订单的活动 force=true 可删，订单链清理、活动删除（docs/255 测试清场）", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader()) };
+    const now = new Date().toISOString();
+
+    await db.insert(lotteryDraws).values({
+      id: "exp-clean",
+      tenantId: TENANT_ID,
+      publicSlug: "exp-clean",
+      title: "秒杀测试残留",
+      status: "drawn",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: now,
+      endAt: now,
+      winnerCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(paymentOrders).values({
+      id: "order-exp-1",
+      tenantId: TENANT_ID,
+      drawId: "exp-clean",
+      entryId: "entry-exp-1",
+      status: "expired",
+      amountCents: 990,
+      currency: "cny",
+      provider: "easypay",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: "attempt-exp-1",
+      tenantId: TENANT_ID,
+      drawId: "exp-clean",
+      paymentOrderId: "order-exp-1",
+      attemptNo: 1,
+      status: "expired",
+      provider: "easypay",
+      amountCents: 990,
+      currency: "cny",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(paymentOrderItems).values({
+      id: "item-exp-1",
+      tenantId: TENANT_ID,
+      drawId: "exp-clean",
+      paymentOrderId: "order-exp-1",
+      lineNo: 1,
+      status: "expired",
+      title: "秒杀",
+      quantity: 1,
+      amountCents: 990,
+      currency: "cny",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // ① force=false：仍 fail-closed，不删
+    const resNoForce = await app.request(
+      "/api/admin/draws/batch-delete",
+      { method: "POST", headers, body: JSON.stringify({ ids: ["exp-clean"] }) },
+      TEST_ENV,
+    );
+    const bodyNoForce = (await resNoForce.json()) as { deleted: number; failed: number; failedItems: Array<{ id: string; reason: string }> };
+    expect(resNoForce.status).toBe(200);
+    expect(bodyNoForce.deleted).toBe(0);
+    expect(bodyNoForce.failed).toBe(1);
+    expect(bodyNoForce.failedItems[0]?.reason).toContain("存在支付订单");
+
+    // ② force=true：全部 expired → 清场成功，订单链 + 活动一并删除
+    const resForce = await app.request(
+      "/api/admin/draws/batch-delete",
+      { method: "POST", headers, body: JSON.stringify({ ids: ["exp-clean"], force: true }) },
+      TEST_ENV,
+    );
+    const bodyForce = (await resForce.json()) as { deleted: number; failed: number };
+    expect(resForce.status).toBe(200);
+    expect(bodyForce.deleted).toBe(1);
+    expect(bodyForce.failed).toBe(0);
+
+    const leftDraw = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, "exp-clean"));
+    const leftOrders = await db.select().from(paymentOrders).where(eq(paymentOrders.drawId, "exp-clean"));
+    const leftAttempts = await db.select().from(paymentOrderAttempts).where(eq(paymentOrderAttempts.drawId, "exp-clean"));
+    const leftItems = await db.select().from(paymentOrderItems).where(eq(paymentOrderItems.drawId, "exp-clean"));
+    expect(leftDraw).toHaveLength(0);
+    expect(leftOrders).toHaveLength(0);
+    expect(leftAttempts).toHaveLength(0);
+    expect(leftItems).toHaveLength(0);
+  });
+
+  it("测试清场 fail-closed：存在非 expired 订单时 force=true 仍拒绝（有资金痕迹绝不删）", async () => {
+    await seedOwner();
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader()) };
+    const now = new Date().toISOString();
+
+    await db.insert(lotteryDraws).values({
+      id: "paid-keep",
+      tenantId: TENANT_ID,
+      publicSlug: "paid-keep",
+      title: "有已支付订单的活动",
+      status: "drawn",
+      activityKind: "lottery",
+      participationMode: "open",
+      startAt: now,
+      endAt: now,
+      winnerCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(paymentOrders).values([
+      {
+        id: "order-paid-1",
+        tenantId: TENANT_ID,
+        drawId: "paid-keep",
+        entryId: "entry-paid-1",
+        status: "paid",
+        amountCents: 990,
+        currency: "cny",
+        provider: "easypay",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: "order-exp-2",
+        tenantId: TENANT_ID,
+        drawId: "paid-keep",
+        entryId: "entry-paid-2",
+        status: "expired",
+        amountCents: 990,
+        currency: "cny",
+        provider: "easypay",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    // 混合 paid + expired：即使 force=true 也必须拒绝（paymentOrders 承载资金历史）
+    const res = await app.request(
+      "/api/admin/draws/batch-delete",
+      { method: "POST", headers, body: JSON.stringify({ ids: ["paid-keep"], force: true }) },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { deleted: number; failed: number; failedItems: Array<{ id: string; reason: string }> };
+    expect(body.deleted).toBe(0);
+    expect(body.failed).toBe(1);
+    expect(body.failedItems[0]?.reason).toContain("存在支付订单");
+
+    // 订单与活动全部保留
+    const leftDraw = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, "paid-keep"));
+    const leftOrders = await db.select().from(paymentOrders).where(eq(paymentOrders.drawId, "paid-keep"));
+    expect(leftDraw).toHaveLength(1);
+    expect(leftOrders).toHaveLength(2);
   });
 });
 

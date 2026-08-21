@@ -22,6 +22,7 @@ import {
   lotteryInviteCodes,
   lotteryWinners,
   lotteryEntries,
+  paymentOrders,
   activityOutcomes,
   activitySubmissions,
   couponCodes,
@@ -418,8 +419,12 @@ route.delete("/draws/:id", async (c) => {
 /**
  * 批量删除活动（docs/082 P2）。
  * - 同单条：open/drawing 计入 failed，不 force
- * - force=true（调试/测试用）：允许删除 open/drawing 活动，但 cascadeDeleteDraw 的
- *   paymentOrders fail-closed 保护仍生效（有支付订单永远拒绝，防资金事故）
+ * - force=true（调试/测试清场）：
+ *   ① 放行 open/drawing 活动（与既有语义一致）；
+ *   ② cascadeDeleteDraw 传 cleanupExpiredOrders=true：活动"所有订单均为 expired"
+ *      （超时未支付的测试残留）时，先清理订单链再级联删除；
+ *   ③ 只要存在任一非 expired 订单（paid / refunded / pending 等有资金痕迹的），
+ *      cascadeDeleteDraw 仍抛 DrawDeletionBlockedError fail-closed，绝不破坏支付数据。
  * - 顺序逐条级联（每条独立事务），避免长事务锁死
  * - 一条审计汇总：draw.batch_delete
  */
@@ -459,7 +464,10 @@ route.post("/draws/batch-delete", async (c) => {
     }
     try {
       await withDbTransaction(db, async (tx) => {
-        await cascadeDeleteDraw(tx, tenantId, drawId);
+        // 测试清场（docs/257 死磕）：force=true 时放行"所有订单均为 expired"的活动，
+        // cleanupExpiredOrders 让 cascadeDeleteDraw 清理订单链后继续级联；有资金痕迹
+        // （paid/refunded/pending 等）仍 fail-closed，绝不破坏支付数据。
+        await cascadeDeleteDraw(tx, tenantId, drawId, { cleanupExpiredOrders: force });
       });
       deleted.push(drawId);
     } catch (err) {
@@ -521,7 +529,30 @@ route.post("/draws/:id/tiers", async (c) => {
   if (draw.activityKind !== "lottery" && !isFlashSaleDirect) {
     return fail(c, "只有抽奖活动或直付秒杀需要配置奖项", 400);
   }
-  if (draw.status !== DRAW_STATUS.DRAFT) return fail(c, "只有草稿状态的活动可以配置奖项", 400);
+  if (draw.status === DRAW_STATUS.DRAWN || draw.status === DRAW_STATUS.CANCELLED) {
+    return fail(c, "已开奖或已取消的活动不可配置奖项", 400);
+  }
+  if (![DRAW_STATUS.DRAFT, DRAW_STATUS.OPEN, DRAW_STATUS.PAUSED].includes(draw.status as any)) {
+    return fail(c, "当前状态的活动不可配置奖项", 400);
+  }
+  // 奖项语义分层（docs/257 死磕，与 PATCH LIVE_SAFE_FIELDS 策略一致）：
+  // draft 无条件可编辑；open/paused 仅在「零业务事实」时可修正奖项配置（运营发错奖品图片/名称可改），
+  // 一旦产生参与/支付/中奖任何一项事实，奖项即锁定——中途改奖档、名额、权重会改写已参与用户的
+  // 中奖预期与权益，必须走「复制活动」重建。
+  const isLive = draw.status === DRAW_STATUS.OPEN || draw.status === DRAW_STATUS.PAUSED;
+  if (isLive) {
+    const [entryFact, orderFact, winnerFact] = await Promise.all([
+      db.select({ id: lotteryEntries.id }).from(lotteryEntries)
+        .where(and(eq(lotteryEntries.tenantId, tenantId), eq(lotteryEntries.drawId, drawId))).limit(1),
+      db.select({ id: paymentOrders.id }).from(paymentOrders)
+        .where(and(eq(paymentOrders.tenantId, tenantId), eq(paymentOrders.drawId, drawId))).limit(1),
+      db.select({ id: lotteryWinners.id }).from(lotteryWinners)
+        .where(and(eq(lotteryWinners.tenantId, tenantId), eq(lotteryWinners.drawId, drawId))).limit(1),
+    ]);
+    if (entryFact.length > 0 || orderFact.length > 0 || winnerFact.length > 0) {
+      return fail(c, "已有参与记录，进行中的活动不可修改奖项配置", 400);
+    }
+  }
   if (!Array.isArray(body.tiers) || body.tiers.length === 0) return fail(c, "请至少配置一个奖项", 400);
   if (body.tiers.length > 10) return fail(c, "单个活动最多配置 10 个奖项", 400);
 

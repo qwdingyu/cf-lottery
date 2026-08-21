@@ -25,8 +25,11 @@ import {
   emailAccessCodes,
   lotteryDraws,
   paymentOrders,
+  paymentOrderAttempts,
+  paymentOrderItems,
 } from "../db/schema";
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { PAYMENT_ORDER_STATUS } from "../services/payment/payment-status";
 import { DELETABLE_DRAW_STATUSES } from "../services/lottery-service";
 // P2 审查项：默认体验/结果模式已收敛到 lib/activity-utils.ts（旧实现本地重复一份），
 // 此处仅做转发，保持 admin-lottery.ts 既有导入路径不变。
@@ -138,23 +141,43 @@ export function parseBatchDeleteIds(body: unknown): { ids: string[]; force?: boo
  * 活动级联删除子表 + 主表（单事务内调用）。
  * 与 DELETE /draws/:id 同源，供单删与 batch-delete 复用，避免两套级联漂移。
  * 调用方须先校验 status 非 open/drawing、且活动属于本租户。
+ *
+ * cleanupExpiredOrders（测试清场，仅 batch-delete force=true 启用）：
+ * 当活动存在支付订单时，默认 fail-closed 拒绝（payment_orders 承载支付回调、
+ * 退款/补发和客服排障历史，不能随活动删除而丢失）。
+ * 但测试阶段的秒杀活动会残留大量 expired（超时未支付）订单，导致活动无法清理。
+ * 测试清场只放行"所有订单均为 expired"的活动：先清理订单链
+ * （payment_order_items → payment_order_attempts → payment_orders），再继续级联。
+ * 只要有任一订单不是 expired（paid / refunded / paid_late_needs_refund /
+ * paid_fulfillment_failed / pending / cancelled 等），仍抛 DrawDeletionBlockedError
+ * fail-closed，绝不破坏有资金痕迹的订单。
  */
 export async function cascadeDeleteDraw(
   tx: DbWriteScope,
   tenantId: string,
   drawId: string,
+  options?: { cleanupExpiredOrders?: boolean },
 ): Promise<void> {
-  const [{ total }] = await tx
-    .select({ total: count() })
+  const orders = await tx
+    .select({ status: paymentOrders.status })
     .from(paymentOrders)
     .where(and(
       eq(paymentOrders.tenantId, tenantId),
       eq(paymentOrders.drawId, drawId),
     ));
-  if (Number(total || 0) > 0) {
-    // payment_orders 没有随活动删除而级联清理：它承载支付平台回调、退款/补发和客服排障所需的历史。
-    // 这里 fail closed，避免删除 entry 后留下无法完成回调的孤儿订单。
-    throw new DrawDeletionBlockedError();
+  if (orders.length > 0) {
+    const allExpired = orders.every((o) => o.status === PAYMENT_ORDER_STATUS.EXPIRED);
+    const canCleanup = options?.cleanupExpiredOrders === true && allExpired;
+    if (!canCleanup) {
+      // payment_orders 没有随活动删除而级联清理：它承载支付平台回调、退款/补发和客服排障所需的历史。
+      // 这里 fail closed，避免删除 entry 后留下无法完成回调的孤儿订单。
+      throw new DrawDeletionBlockedError();
+    }
+    // 测试清场：所有订单均为 expired（无资金痕迹），清理订单链后继续级联。
+    // 必须先删子表再删主表：payment_order_items / payment_order_attempts 持有 payment_order_id 外键。
+    await tx.delete(paymentOrderItems).where(and(eq(paymentOrderItems.tenantId, tenantId), eq(paymentOrderItems.drawId, drawId)));
+    await tx.delete(paymentOrderAttempts).where(and(eq(paymentOrderAttempts.tenantId, tenantId), eq(paymentOrderAttempts.drawId, drawId)));
+    await tx.delete(paymentOrders).where(and(eq(paymentOrders.tenantId, tenantId), eq(paymentOrders.drawId, drawId)));
   }
 
   await tx.delete(lotteryPrizeTiers).where(and(eq(lotteryPrizeTiers.drawId, drawId), eq(lotteryPrizeTiers.tenantId, tenantId)));
