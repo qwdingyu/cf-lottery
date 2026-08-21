@@ -10,6 +10,19 @@ import { sql } from "drizzle-orm";
 import { adminAuditLogs } from "@usethink/cf-core/db/schema";
 export { adminAuditLogs };
 
+// docs/255 G-1：系统配置表从 cf-core 导入（字段兼容：key/value/updatedAt）。
+// 本地旧定义 updatedAt 默认 datetime('now')，cf-core 版默认 ""；
+// 写入侧（system-config-registry）总是显式传 updatedAt，运行时行为一致。
+import { systemConfig } from "@usethink/cf-core/db/schema";
+export { systemConfig };
+
+// docs/255 G-1：限流窗口表从 cf-core 导入。
+// checkDbRateLimit 委托 @usethink/cf-core/rate-limit 的 coreCheckDbRateLimit，
+// 它原子 upsert rate_limit_windows 表（action/ipHash/windowStart/requestCount）。
+// 本地 rateLimitLog（限流审计日志）是另一张表，用途不同，保留本地定义。
+import { rateLimitWindows } from "@usethink/cf-core/db/schema";
+export { rateLimitWindows };
+
 // ── SaaS 多租户 ──
 export const tenants = sqliteTable("tenants", {
   id: text("id").primaryKey(),
@@ -631,13 +644,8 @@ export const emailAccessCodes = sqliteTable("email_access_codes", {
   activeEmailDrawUnique: uniqueIndex("idx_email_code_active").on(t.email, t.drawId).where(sql`used = 0`),
 }));
 
-// ── 系统配置（key-value 存储，供管理后台动态配置） ──
-export const systemConfig = sqliteTable("system_config", {
-  key: text("key").primaryKey(),
-  value: text("value").notNull().default(""),
-  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
-});
-
+// ── 系统配置版本记录 ──
+// 注：systemConfig 表定义已改为 cf-core 导入（见文件头部 G-1 注释），本地不再重复定义。
 /**
  * 系统配置版本记录。
  *
