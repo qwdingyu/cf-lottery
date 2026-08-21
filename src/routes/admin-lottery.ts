@@ -945,6 +945,10 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
         "showWinnerCount",
         "showWinnerList",
         "productLink",
+        // docs/257 死磕：activityConfig（投票选项图片、问卷字段描述等）的修改
+        // 通过 mergeJsonTopLevel 做顶层键级合并，已有数据不受影响。
+        // 运营发错选项图片地址后可以修正，不需要为了改一张图复制整个活动。
+        "activityConfig",
       ]);
       const unsafeFields = definedKeys.filter((key) => !LIVE_SAFE_FIELDS.has(key));
       if (unsafeFields.length > 0) {

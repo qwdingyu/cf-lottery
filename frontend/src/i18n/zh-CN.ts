@@ -590,6 +590,7 @@ export default {
     joinTime: "参与时间",
     winnerCount: "中奖人数",
     myRecords: "我的参与记录",
+    myRewards: "我的奖励",
     noMyRecords: "暂无参与记录，选择下方活动即可加入。",
     refreshRecords: "刷新",
     noDraws: "暂无进行中的抽奖活动",

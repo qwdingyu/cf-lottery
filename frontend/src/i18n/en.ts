@@ -632,6 +632,7 @@ export default {
     joinTime: "Entry Period",
     winnerCount: "Winners",
     myRecords: "My Entries",
+    myRewards: "My Rewards",
     noMyRecords: "No entries yet. Pick a draw below to join.",
     refreshRecords: "Refresh",
     noDraws: "No active lotteries",
