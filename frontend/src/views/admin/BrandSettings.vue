@@ -77,9 +77,9 @@
         </div>
         <small class="hint">{{ $t('brand.domainHint') }}</small>
       </div>
-      <div class="form-row">
+      <div class="form-row input-group">
         <button class="btn btn-primary" :disabled="savingConfig" @click="saveBrandConfig">{{ $t('brand.saveConfig') }}</button>
-        <small v-if="configError" class="error config-error">{{ configError }}</small>
+        <small v-if="configError" class="error">{{ configError }}</small>
         <small v-if="configSuccess" class="success">{{ configSuccess }}</small>
       </div>
     </div>
@@ -121,7 +121,7 @@ function generateSlug() {
 /** 构建完整请求体，包含所有字段（后端合并，前端全量发送避免清空） */
 function buildPayload() {
   return {
-    name: editingName.value,
+    name: editingName.value.trim() || undefined,
     storeSlug: editingSlug.value,
     logo: editingLogo.value,
     primaryColor: editingPrimaryColor.value,
@@ -187,10 +187,11 @@ async function saveSlug() {
   if (!validateSlug()) return
   savingSlug.value = true
   try {
-    const r = await adminRequest<{ storeSlug?: string }>('/api/admin/brand', {
+    const r = await adminRequest<{ storeSlug?: string; name?: string }>('/api/admin/brand', {
       method: 'PUT',
       body: JSON.stringify(buildPayload()),
     })
+    editingName.value = r.name || ''
     editingSlug.value = r.storeSlug || ''
     shopUrl.value = r.storeSlug ? `${baseUrl}/shop/${r.storeSlug}` : ''
   } catch (e: any) {
@@ -204,10 +205,11 @@ async function saveBrandConfig() {
   if (!validateSlug()) { configError.value = t('brand.slugInvalid'); return }
   savingConfig.value = true
   try {
-    const r = await adminRequest<{ config?: Record<string, string> }>('/api/admin/brand', {
+    const r = await adminRequest<{ config?: Record<string, string>; name?: string }>('/api/admin/brand', {
       method: 'PUT',
       body: JSON.stringify(buildPayload()),
     })
+    editingName.value = r.name || ''
     const cfg = r.config || {}
     editingLogo.value = cfg.logo || ''
     editingPrimaryColor.value = cfg.primaryColor || ''
@@ -235,5 +237,4 @@ onMounted(load)
 .hint { font-size: 12px; color: var(--muted, #9aa4b2); }
 .error { font-size: 12px; color: var(--danger, #e11d48); }
 .success { font-size: 12px; color: var(--success, #0a7); }
-.config-error { margin-left: 12px; }
 </style>

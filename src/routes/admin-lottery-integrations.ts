@@ -293,15 +293,16 @@ adminLotteryRoute.put("/brand", async (c) => {
   const existingConfig = tryParseJson(tenant.brandConfig) || {};
 
   // 合并品牌配置：仅更新 body 中明确提供的字段，未提供的保留原值
+  // 注意：null 也视为「未提供」，避免 API 直接调用传递 null 污染存储
   const config = {
-    logo: body.logo !== undefined ? body.logo : existingConfig.logo || "",
-    primaryColor: body.primaryColor !== undefined ? body.primaryColor : existingConfig.primaryColor || "",
-    companyName: body.companyName !== undefined ? body.companyName : existingConfig.companyName || "",
-    domain: body.domain !== undefined ? body.domain : existingConfig.domain || "",
+    logo: body.logo !== undefined && body.logo !== null ? String(body.logo) : existingConfig.logo || "",
+    primaryColor: body.primaryColor !== undefined && body.primaryColor !== null ? String(body.primaryColor) : existingConfig.primaryColor || "",
+    companyName: body.companyName !== undefined && body.companyName !== null ? String(body.companyName) : existingConfig.companyName || "",
+    domain: body.domain !== undefined && body.domain !== null ? String(body.domain) : existingConfig.domain || "",
   };
 
   // 商户名称（tenant.name）：saas 注册时填写的名称，在此可修改
-  const name = body.name !== undefined ? String(body.name).trim().slice(0, 100) : "";
+  const name = body.name !== undefined && body.name !== null ? String(body.name).trim().slice(0, 100) : "";
   const updateData: Record<string, any> = {
     brandConfig: JSON.stringify(config),
     updatedAt: new Date().toISOString(),
@@ -311,7 +312,7 @@ adminLotteryRoute.put("/brand", async (c) => {
   await db.update(tenants).set(updateData).where(eq(tenants.id, tenantId));
 
   // store_slug 允许 L2 自定义(为空时保留原值或自动生成)
-  const storeSlug = body.storeSlug !== undefined ? String(body.storeSlug).trim().slice(0, 30) : tenant.storeSlug || "";
+  const storeSlug = body.storeSlug !== undefined && body.storeSlug !== null ? String(body.storeSlug).trim().slice(0, 30) : tenant.storeSlug || "";
   if (storeSlug && storeSlug !== tenant.storeSlug) {
     const [dup] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.storeSlug, storeSlug)).limit(1);
     if (dup && dup.id !== tenantId) return fail(c, "店铺链接已被占用", 400);
