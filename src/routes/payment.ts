@@ -11,6 +11,7 @@
  * 回调处理模式：GET query / POST form → provider.verifyCallback → 发卡。
  */
 import { Hono } from "hono";
+import { logError } from "../lib/logger";
 import { eq, and, desc, inArray, sql } from "drizzle-orm";
 import type { CreatePaymentResult } from "@usethink/cf-pay/catalog";
 import { getClientIp, getEnv } from "../lib/platform";
@@ -843,7 +844,7 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
         limit: 1,
       });
     })().catch((err) => {
-      console.error(`[payment] 中奖邮件发送失败 for order ${fulfilledOrder.id}:`, err);
+      logError("payment", `中奖邮件发送失败 for order ${fulfilledOrder.id}`, err);
     });
   }
 

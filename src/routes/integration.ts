@@ -5,6 +5,7 @@
  * 外部成交、核销、注册等只能通过这里回传，不能由公开页点击或 UTM 推断。
  */
 import { Hono, type Context } from "hono";
+import { logError } from "../lib/logger";
 import type { AppEnv } from "../bindings";
 import { fail, getDb, ok } from "../lib/http";
 import { checkDbRateLimit } from "../lib/rate-limit";
@@ -283,7 +284,7 @@ integrationRoute.post("/events", async (c) => {
           + (payload.groupId ? `，群号 ${String(payload.groupId)}` : ""),
       },
     }).catch((err) => {
-      console.error(`[integration] enqueuePlatformEvent penalty.requested failed:`, err);
+      logError("integration", "enqueuePlatformEvent penalty.requested failed", err);
     });
 
     return ok(c, {

@@ -9,6 +9,7 @@
  */
 import { eq, inArray, desc } from "drizzle-orm";
 import type { DbType, DbWriteScope } from "../../db/client";
+import { logWarn } from "../../lib/logger";
 import { systemConfig, systemConfigVersions } from "../../db/schema";
 import {
   decryptSecretConfigValueObserved,
@@ -23,15 +24,12 @@ import {
 } from "../../lib/system-config-registry";
 
 function logSecretDecryptFailure(configKey: string, event: SecretDecryptObserveEvent): void {
-  console.warn(
-    JSON.stringify({
-      level: "warn",
-      event: "secret_config_decrypt_failed",
-      configKey,
-      reason: event.reason,
-      encrypted: event.encrypted,
-    }),
-  );
+  logWarn("system-config", "secret_config_decrypt_failed", JSON.stringify({
+    event: "secret_config_decrypt_failed",
+    configKey,
+    reason: event.reason,
+    encrypted: event.encrypted,
+  }));
 }
 
 type SystemConfigChangeType = "update" | "delete" | "rollback";

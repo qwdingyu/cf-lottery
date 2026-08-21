@@ -11,6 +11,7 @@
  * 鉴权：requireAuth + requireTenantMember（仅 owner/admin 可写）
  */
 import { Hono } from "hono";
+import { logError } from "../lib/logger";
 import { and, count, desc, eq } from "drizzle-orm";
 import { getDb, ok, fail, safeJsonBody } from "../lib/http";
 import { getEnv } from "../lib/platform";
@@ -342,7 +343,7 @@ adminPaymentConfigRoute.put("/payment-config", async (c) => {
       }),
     });
   } catch (err) {
-    console.error("[admin] payment config audit failed:", err);
+    logError("admin-payment-config", "payment config audit failed", err);
   }
 
   return ok(c, { ok: true });

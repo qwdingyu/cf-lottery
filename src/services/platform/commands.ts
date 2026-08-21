@@ -12,6 +12,7 @@
  * 涉及卡密的回复必须默认群内脱敏，不能把完整码发到公开群聊里。
  */
 import type { DbType } from "../../db/client";
+import { logError } from "../../lib/logger";
 import { isInstantResultMode } from "../../lib/activity-utils";
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
@@ -211,7 +212,7 @@ export async function executeBuiltinPlatformCommand(
       return await handler(db, input);
     } catch (err) {
       // 所有命令的意外异常统一兜底，防止 500 导致用户收不到任何回复（Silence）
-      console.error(`[platform] executeBuiltinPlatformCommand ${input.command} failed:`, err);
+      logError("platform-commands", `executeBuiltinPlatformCommand ${input.command} failed`, err);
       return {
         handled: true,
         reply: "系统繁忙，请稍后再试。",
@@ -957,7 +958,7 @@ async function buildCardCodeAccessUrl(
     return `${origin}/access/card-codes?token=${encodeURIComponent(token)}`;
   } catch (err) {
     // 令牌生成失败不阻断卡密私聊主流程（降级为纯私聊）
-    console.error(`[platform] 生成卡密访问链接失败: ${String(err)}`);
+    logError("platform-commands", "生成卡密访问链接失败", String(err));
     return undefined;
   }
 }
@@ -1110,7 +1111,7 @@ async function executeBindCommand(
         }],
       };
     } catch (err) {
-      console.error(`[platform] 生成绑定码失败: ${String(err)}`);
+      logError("platform-commands", "生成绑定码失败", String(err));
       return { handled: true, reply: "生成绑定码失败，请稍后再试。" };
     }
   }
@@ -1149,7 +1150,7 @@ async function executeBindCommand(
       reply: "你的 QQ 和 Telegram 账号已关联到同一个账户，无需重复绑定。",
     };
   } catch (err) {
-    console.error(`[platform] 消费绑定码失败: ${String(err)}`);
+    logError("platform-commands", "消费绑定码失败", String(err));
     return { handled: true, reply: "绑定失败，请稍后再试。" };
   }
 }

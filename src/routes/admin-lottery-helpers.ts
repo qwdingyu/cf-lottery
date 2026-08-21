@@ -6,6 +6,7 @@
  */
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../bindings";
+import { logError } from "../lib/logger";
 import { getDb, fail, clampInteger } from "../lib/http";
 import type { DbType, DbWriteScope } from "../db/client";
 import {
@@ -98,7 +99,7 @@ export async function recordTenantAudit(
     });
   } catch (err) {
     // 审计失败不影响主业务（审计是尽力而为的留痕，不阻塞操作）
-    console.error("[admin] audit write failed:", err);
+    logError("admin-lottery-helpers", "audit write failed", err);
   }
 }
 

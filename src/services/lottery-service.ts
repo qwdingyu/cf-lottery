@@ -20,6 +20,7 @@
  * - 锁码防重：条件 UPDATE WHERE status = 'available'
  */
 import type { DbType } from "../db/client";
+import { logError } from "../lib/logger";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { enqueueEmailDelivery, dispatchEmailDeliveries } from "./email-delivery";
 import type { EmailEnv } from "./email-service";
@@ -224,7 +225,7 @@ export async function processDueDraws(
           eq(lotteryDraws.status, "open"),
         ));
     } catch (err) {
-      console.error(`[cron] 到期关闭失败 draw=${draw.id}`, err);
+      logError("lottery-service", `到期关闭失败 draw=${draw.id}`, err);
     }
   }
 
@@ -256,7 +257,7 @@ export async function processDueDraws(
   for (const draw of staleDrawings) {
     try {
       await healDrawingState(db, draw.id, draw.tenantId);
-    } catch (err) { console.error(`[heal] 状态自愈失败 draw=${draw.id}`, err); }
+    } catch (err) { logError("lottery-service", `状态自愈失败 draw=${draw.id}`, err); }
   }
 
   for (const draw of due) {

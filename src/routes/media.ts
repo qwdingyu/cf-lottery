@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../bindings";
+import { logWarn } from "../lib/logger";
 import { auditLogs } from "../db/schema";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { fail, getDb, ok } from "../lib/http";
@@ -149,7 +150,7 @@ mediaRoute.get("/media/images/:filename", async (c) => {
   const response = new Response(object.body, { headers });
   if (edgeCache) {
     waitUntil(c, edgeCache.put(cacheKey, response.clone()).catch((error) => {
-      console.warn("[media-cache-put]", error instanceof Error ? error.message : String(error));
+      logWarn("media", "media-cache-put", error instanceof Error ? error.message : String(error));
     }));
   }
   return response;

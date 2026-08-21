@@ -16,6 +16,7 @@
  *   "有人被邀请了"是事实，只是池子暂时满了，个人配额的消耗是合理的。
  */
 import type { DbType } from "../../db/client";
+import { logError } from "../../lib/logger";
 import { and, eq } from "drizzle-orm";
 import { lotteryDraws, lotteryEntries } from "../../db/schema";
 import { checkDbRateLimit } from "../../lib/rate-limit";
@@ -151,7 +152,7 @@ export async function triggerRewardEarned(
       },
     });
   } catch (err) {
-    console.error(`[lottery] enqueuePlatformEvent reward.earned failed for ${drawId}:`, err);
+    logError("reward", `enqueuePlatformEvent reward.earned failed for ${drawId}`, err);
   }
 
   return { triggered: true, reason: "reward_sent", sharerEntryId, deliveryIds: webhookResult.deliveryIds };

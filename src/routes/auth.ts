@@ -9,6 +9,7 @@
  * - 登录/注册接口包含基本限流（通过 IP hash 识别）
  */
 import { Hono } from "hono";
+import { logError, logWarn } from "../lib/logger";
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, isValidEmail } from "../lib/http";
@@ -156,12 +157,12 @@ authRoute.post("/register", async (c) => {
     try {
       await sendAccessCode(emailEnv, email, "注册验证", code);
     } catch (err) {
-      console.warn("[auth] register sendAccessCode failed:", (err as Error).message);
+      logWarn("auth", "register sendAccessCode failed", (err as Error).message);
     }
 
     return c.json({ ok: true, message: "验证码已发送到邮箱", expiresInSeconds: 600 });
   } catch (err) {
-    console.error("[auth] register failed:", err instanceof Error ? err.message : String(err));
+    logError("auth", "register failed", err instanceof Error ? err.message : String(err));
     return c.json({ ok: false, message: "注册失败，请稍后再试" }, 500);
   }
 });
@@ -316,7 +317,7 @@ authRoute.post("/login", async (c) => {
     try {
       await sendAccessCode(emailEnv, user.email, "注册验证", code);
     } catch (err) {
-      console.warn("[auth] login sendAccessCode failed:", (err as Error).message);
+      logWarn("auth", "login sendAccessCode failed", (err as Error).message);
     }
     return c.json({ ok: false, message: "邮箱未验证，验证码已重新发送", email: user.email, needVerify: true });
   }
@@ -360,7 +361,7 @@ authRoute.post("/login", async (c) => {
     })),
   });
   } catch (err) {
-    console.error("[auth] login error:", (err as Error).message);
+    logError("auth", "login error", (err as Error).message);
     return c.json({ ok: false, message: "登录失败，请稍后重试" }, 400);
   }
 });
@@ -607,7 +608,7 @@ authRoute.post("/cf-auth/exchange", async (c) => {
       needsTenant: result.needsTenant,
     });
   } catch (err) {
-    console.error("[cf-auth/exchange]", err instanceof Error ? err.message : err);
+    logError("auth", "cf-auth/exchange", err instanceof Error ? err.message : err);
     return c.json({ ok: false, message: "cf-auth 认证失败" }, 401);
   }
 });

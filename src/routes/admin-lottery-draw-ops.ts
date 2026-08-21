@@ -6,6 +6,7 @@
  * 通过 setupDrawOpsRoutes 挂载，中间件已在主路由 use("*") 覆盖。
  */
 import { Hono } from "hono";
+import { logError } from "../lib/logger";
 import { isInstantResultMode, isFlashSaleExperience } from "../lib/activity-utils";
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
@@ -462,7 +463,7 @@ route.post("/draws/batch-delete", async (c) => {
       });
       deleted.push(drawId);
     } catch (err) {
-      console.error("[admin] draw batch-delete item failed:", drawId, err);
+      logError("admin-lottery-draw-ops", `batch-delete item failed for ${drawId}`, err);
       failed.push({
         id: drawId,
         reason: err instanceof DrawDeletionBlockedError ? err.message : "删除失败",

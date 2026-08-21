@@ -5,6 +5,7 @@
  */
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { logError, logInfo } from "./lib/logger";
 import type { AppEnv, Bindings } from "./bindings";
 import { createClient, type Client } from "@libsql/client";
 import { createDb, type DbType } from "./db/client";
@@ -118,7 +119,7 @@ export async function runScheduledMaintenance(
     try {
       overdueExpired += await expireOverdueOrders(db, row.tenantId);
     } catch (err) {
-      console.error(`[cron] expireOverdueOrders tenant=${row.tenantId} failed:`, err);
+      logError("index", `expireOverdueOrders tenant=${row.tenantId} failed`, err);
     }
   }
   // 卡密过期维护（任务 4a，P1）：available/issued 且 expiresAt 已过的限时卡密统一标记 expired，
@@ -249,7 +250,7 @@ app.use("*", async (c, next) => {
 // ── 全局错误处理 ──
 app.onError((err, c) => {
   // 生产环境只记录 error.message，避免 err.stack 中的内部路径/凭证泄露到 Worker 日志
-  console.error(`[error] ${err.message}`);
+  logError("index", err.message);
   return c.json({ ok: false, message: "服务器内部错误" }, 500);
 });
 
@@ -268,7 +269,7 @@ app.use("*", async (c, next) => {
   // 只记录管理后台和平台接口的慢请求（>500ms），公开热路径不记录避免日志爆炸
   const path = c.req.path;
   if (duration > 500 && (path.startsWith("/api/admin") || path.startsWith("/api/platform"))) {
-    console.log(`[slow] ${c.req.method} ${path} ${duration}ms`);
+    logInfo("index", `[slow] ${c.req.method} ${path} ${duration}ms`);
   }
 });
 
@@ -326,7 +327,7 @@ app.use("*", async (c, next) => {
       c.set("db", undefined);
     }
   } catch (err) {
-    console.error("[db] 数据库初始化失败:", err);
+    logError("index", "数据库初始化失败", err);
     c.set("dbInitError", String((err as Error).message || "数据库连接失败"));
   }
   await next();
@@ -394,7 +395,7 @@ app.get("/api/cron/draw", async (c) => {
       errors: result.errors.length > 0 ? result.errors.slice(0, 5) : undefined,
     });
   } catch (err) {
-    console.error("[cron] draw failed:", err);
+    logError("index", "cron draw failed", err);
     return c.json({ ok: false, message: "定时任务执行失败" }, 500);
   }
 });
@@ -422,7 +423,7 @@ app.post("/api/cron/maintenance", async (c) => {
     });
     return c.json({ ok: true, ...result });
   } catch (err) {
-    console.error("[cron] maintenance failed:", err);
+    logError("index", "cron maintenance failed", err);
     return c.json({ ok: false, message: "定时维护任务执行失败" }, 500);
   }
 });
@@ -501,7 +502,7 @@ const worker: ExportedHandler<Bindings> = {
       try {
         const db = createDbFromEnv(env);
         if (!db) {
-          console.error("[cron] 数据库未配置，跳过 maintenance");
+          logError("index", "cron 数据库未配置，跳过 maintenance");
           return;
         }
         const result = await runScheduledMaintenance(db, {
@@ -512,9 +513,9 @@ const worker: ExportedHandler<Bindings> = {
           cfAuthClientId: env.CF_AUTH_CLIENT_ID || "",
           cfAuthClientSecret: env.CF_AUTH_CLIENT_SECRET || "",
         });
-        console.log("[cron] maintenance complete", JSON.stringify(result));
+        logInfo("index", `cron maintenance complete ${JSON.stringify(result)}`);
       } catch (err) {
-        console.error("[cron] maintenance failed:", err);
+        logError("index", "cron maintenance failed", err);
       }
     })());
   },

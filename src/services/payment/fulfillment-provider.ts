@@ -16,6 +16,7 @@
  * 3. cf-pay 编排层统一管理 attempt/order/entry 状态机，provider 只关心卡密
  */
 import type { FulfillmentProvider, FulfillmentResult, FulfillmentRetryResult } from "@usethink/cf-pay/fulfillment";
+import { logWarn } from "../../lib/logger";
 import type { DbType } from "../../db/client";
 import {
   confirmPrizeCodes,
@@ -63,7 +64,7 @@ export const lotteryFulfillmentProvider: FulfillmentProvider<LotteryContext> = {
     if (ids === null) return; // 无卡密奖品，无需预占
     if (ids.length === 0) {
       // 预占不足：记录日志但不下发异常，回调时由兜底逻辑处理
-      console.warn(`[Fulfillment] 预占卡密不足: order=${ctx.orderId}, quantity=${ctx.quantity}, acquired=0`);
+      logWarn("fulfillment-provider", "预占卡密不足", `order=${ctx.orderId}, quantity=${ctx.quantity}, acquired=0`);
     }
   },
 

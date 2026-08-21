@@ -6,8 +6,9 @@
  * 奖品、运营数据、租户运维、集成域由 setup* 子模块挂载。
  */
 import { Hono } from "hono";
+import { logError } from "../lib/logger";
 import { isInstantResultMode } from "../lib/activity-utils";
-import { validateReferralRewardDefs } from "../lib/promotion-config-schema";
+import { validatePromotionConfig } from "../lib/promotion-config-schema";
 import type { AppEnv } from "../bindings";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
@@ -702,10 +703,10 @@ adminLotteryRoute.post("/draws", async (c) => {
       if (err) return fail(c, err, 400);
     }
 
-    // docs/255 G-5：创建时校验 referralRewardDefs 结构（提前发现配置错误，而非发布时）
-    const referralDefIssues = validateReferralRewardDefs(body.promotionConfig);
-    if (referralDefIssues) {
-      return fail(c, `referralRewardDefs 配置无效：${referralDefIssues.join("；")}`, 400);
+    // docs/255 G-5：创建时校验 promotionConfig 结构（referralRewardDefs + viral + flashSale + dailyFree + pity）
+    const promoIssues = validatePromotionConfig(body.promotionConfig);
+    if (promoIssues) {
+      return fail(c, `promotionConfig 配置无效：${promoIssues.join("；")}`, 400);
     }
 
     const activityKind = parseEnum(body.activityKind, ACTIVITY_KINDS, "活动类型", "lottery");
@@ -878,12 +879,12 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
 
   if (!draw) return fail(c, "活动不存在", 404);
 
-  // docs/255 G-5：编辑时校验 referralRewardDefs 结构（针对 merge 后的完整配置，非仅请求体）
+  // docs/255 G-5：编辑时校验 promotionConfig 结构（针对 merge 后的完整配置，非仅请求体）
   if (body.promotionConfig !== undefined) {
     const merged = mergeJsonTopLevel(draw.promotionConfig, body.promotionConfig);
-    const referralDefIssues = validateReferralRewardDefs(JSON.parse(merged));
-    if (referralDefIssues) {
-      return fail(c, `referralRewardDefs 配置无效：${referralDefIssues.join("；")}`, 400);
+    const promoIssues = validatePromotionConfig(JSON.parse(merged));
+    if (promoIssues) {
+      return fail(c, `promotionConfig 配置无效：${promoIssues.join("；")}`, 400);
     }
   }
 
@@ -1229,7 +1230,7 @@ adminLotteryRoute.post("/draws/:id/publish", async (c) => {
           shareUrl: publishedDraw.publicSlug ? `/lottery/${encodeURIComponent(publishedDraw.publicSlug)}` : "",
         },
       }).catch((err) => {
-        console.error(`[admin] enqueuePlatformEvent draw.published failed for ${drawId}:`, err);
+        logError("admin-lottery", `enqueuePlatformEvent draw.published failed for ${drawId}`, err);
       });
     }
     return ok(c, { status: DRAW_STATUS.OPEN });

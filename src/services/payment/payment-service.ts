@@ -10,6 +10,7 @@
  * 复用 @usethink/cf-pay/catalog + /config-store（Provider 抽象经 cf-pay 上收，业务项目不直连 cf-core）。
  */
 import { isAmbiguousEasyPayProviderError, PAYMENT_PROVIDER_CATALOG_SERVICE } from "@usethink/cf-pay/catalog";
+import { logError } from "../../lib/logger";
 import { isFlashSaleExperience } from "../../lib/activity-utils";
 import type { CallbackResult, PaymentProvider, CreatePaymentResult } from "@usethink/cf-pay/catalog";
 import { eq, and, desc, sql, inArray, isNull, max, ne, notInArray } from "drizzle-orm";
@@ -2165,7 +2166,7 @@ async function findCodePrize(db: DbType, tenantId: string, drawId: string) {
   const resolved = await resolveCodePrizeForDraw(db, tenantId, drawId);
   if (resolved.kind === "ambiguous") {
     // 多个卡密奖品命中：fail-closed 返回 null 且必须留日志，否则运营看不到发卡失败的真因（docs/202 §5.3-22）。
-    console.error(`[payment] 活动 ${drawId} 存在 ${resolved.count} 个卡密奖品，无法确定发卡目标（fail-closed）`);
+    logError("payment-service", `活动 ${drawId} 存在 ${resolved.count} 个卡密奖品，无法确定发卡目标（fail-closed）`);
   }
   return resolved.kind === "unique" ? { prizeId: resolved.prizeId } : null;
 }

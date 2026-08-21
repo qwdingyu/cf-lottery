@@ -15,6 +15,7 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
+import { logError } from "./logger";
 
 /**
  * 本地媒体根目录（相对进程 cwd；systemd WorkingDirectory=/root/cf-lottery）。
@@ -55,7 +56,7 @@ export async function saveLocalMedia(key: string, bytes: Uint8Array): Promise<bo
     await writeFile(filePath, bytes);
     return true;
   } catch (err) {
-    console.error(`[local-media] 保存失败 ${key}:`, err instanceof Error ? err.message : String(err));
+    logError("local-media", `保存失败 ${key}`, err instanceof Error ? err.message : String(err));
     return false;
   }
 }

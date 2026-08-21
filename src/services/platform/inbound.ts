@@ -8,6 +8,7 @@
  * 4. 进入 PlatformCommandService。
  */
 import type { DbType } from "../../db/client";
+import { logError } from "../../lib/logger";
 import { executeBuiltinPlatformCommand, recognizeBuiltinCommand } from "./commands";
 import { getActivePlatformTarget } from "./targets";
 import type { InboundPlatformEvent, PlatformCommandResult, PlatformTargetBinding } from "./types";
@@ -68,7 +69,7 @@ export async function handleInboundPlatformEvent(
     userId = result.userId;
   } catch (err) {
     // 降级：记录错误但不阻断命令执行；userId 留空，命令走 identityType/identityValue
-    console.error(`[platform] provisionPlatformUser 失败: ${String(err)}`);
+    logError("platform-inbound", "provisionPlatformUser 失败", String(err));
   }
 
   return executeBuiltinPlatformCommand(db, {

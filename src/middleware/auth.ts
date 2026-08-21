@@ -8,6 +8,7 @@
  * 自 v0.5.0 起：verifyJwt/signJwt 委托 @usethink/cf-core/auth/jwt（统一实现）。
  */
 import type { Context, Next } from "hono";
+import { logError } from "../lib/logger";
 import type { AppEnv } from "../bindings";
 import { getDb } from "../lib/http";
 import { getEnv } from "../lib/platform";
@@ -52,7 +53,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
       }
     } catch (err) {
       // getDb 未注入时（极端）不放行管理写：与「无库」一致
-      console.error("[auth] requireAuth user status check failed:", err);
+      logError("auth", "requireAuth user status check failed", err);
       return c.json({ ok: false, message: "权限验证失败" }, 500);
     }
     c.set("userId", payload.sub as string);
@@ -108,7 +109,7 @@ export function requireTenantMember(allowedRoles: string[] = ["owner", "admin", 
       }
       c.set("tenantRole", member.role);
     } catch (err) {
-      console.error("[auth] requireTenantMember error:", err);
+      logError("auth", "requireTenantMember error", err);
       return c.json({ ok: false, message: "权限验证失败" }, 500);
     }
 
@@ -148,7 +149,7 @@ export function requirePlatformMember(allowedRoles: string[] = ["platform_owner"
       }
       c.set("platformRole", member.role);
     } catch (err) {
-      console.error("[auth] requirePlatformMember error:", err);
+      logError("auth", "requirePlatformMember error", err);
       return c.json({ ok: false, message: "权限验证失败" }, 500);
     }
 

@@ -10,6 +10,7 @@
  * - reason 严格限定枚举值，不允许自定义 reason 字符串
  */
 import type { DbType } from "../../db/client";
+import { logError } from "../../lib/logger";
 import { spinsLog } from "../../db/schema";
 
 /** spins 变动原因枚举 */
@@ -54,6 +55,6 @@ export async function recordSpinLog(
     });
   } catch (err) {
     // 日志写入失败不应影响主流程（签到/抽奖等已成功），仅打印错误供排查。
-    console.error("[spins_log] 写入失败:", err);
+    logError("spins-log", "写入失败", err);
   }
 }

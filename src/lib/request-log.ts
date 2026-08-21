@@ -8,6 +8,7 @@
  */
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
+import { logError } from "./logger";
 import { getDb } from "./http";
 import { getClientIp } from "./platform";
 import { requestLogs, consumeOnceTokens } from "../db/schema";
@@ -50,7 +51,7 @@ export async function writeRequestLog(
     });
   } catch (err) {
     // 请求日志写入失败不应影响主流程（fire-and-forget 语义）
-    console.error("[request-log] write failed:", action, err);
+    logError("request-log", `write failed action=${action}`, err);
   }
 }
 

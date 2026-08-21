@@ -13,6 +13,7 @@
  */
 import type { Context } from "hono";
 import type { AppEnv } from "../bindings";
+import { logError } from "./logger";
 
 // ── IP 获取 ──
 // 基座用 @usethink/cf-core/platform 的安全版 getClientIp（Node 环境默认不信任
@@ -46,7 +47,7 @@ export function waitUntil(c: Context<AppEnv>, task: Promise<unknown>): void {
     ctx.waitUntil(task);
     return;
   }
-  void task.catch((err) => console.error("[waitUntil] async task failed:", err));
+  void task.catch((err) => logError("platform", "waitUntil async task failed", err));
 }
 
 /**

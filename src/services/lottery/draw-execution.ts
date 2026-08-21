@@ -29,7 +29,7 @@ import { enqueuePlatformEvent } from "../platform/delivery";
 import { buildLotteryWinnerTemplateData, type EmailEnv } from "../email-service";
 import { enqueueEmailDelivery, dispatchEmailDeliveries } from "../email-delivery";
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
-import { logError } from "../../lib/logger";
+import { logError, logInfo } from "../../lib/logger";
 import { runBounded } from "../../lib/concurrency";
 import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
 import { grantLeaderboardRewards } from "./leaderboard-rewards";
@@ -409,7 +409,7 @@ export async function performDraw(
     try {
       const loserRewardResult = await grantLoserRewards(db, tenantId, drawId);
       if (loserRewardResult.granted > 0) {
-        console.log(`[lottery] loser rewards granted: ${loserRewardResult.granted} for draw ${drawId}`);
+        logInfo("draw-execution", `loser rewards granted: ${loserRewardResult.granted} for draw ${drawId}`);
         // 发券成功后发送安慰邮件（异步，不阻塞开奖主流程）
         if (emailEnv && (emailEnv.resendApiKey || emailEnv.email || (emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret))) {
           void sendLoserConsolationEmails(db, emailEnv, tenantId, drawId, draw.title).catch((err) => {
@@ -427,7 +427,7 @@ export async function performDraw(
     try {
       const leaderboardResult = await grantLeaderboardRewards(db, draw);
       if (leaderboardResult.granted > 0) {
-        console.log(`[lottery] leaderboard rewards granted: ${leaderboardResult.granted} for draw ${drawId}`);
+        logInfo("draw-execution", `leaderboard rewards granted: ${leaderboardResult.granted} for draw ${drawId}`);
       }
     } catch (err) {
       logError("draw-execution", `grantLeaderboardRewards draw=${drawId}`, err);

@@ -21,6 +21,7 @@ import { createClient } from "@libsql/client";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { app } from "./index";
+import { logError, logInfo } from "./lib/logger";
 import { applyPendingMigrations, ensureDataDir } from "./db/apply-migrations";
 import { buildCsp, createCspNonce, injectCspNonce } from "./lib/csp";
 
@@ -38,12 +39,12 @@ if (DB_URL) {
   try {
     const applied = await applyPendingMigrations(migrateClient);
     if (applied > 0) {
-      console.log(`[migrate] 启动迁移: 应用 ${applied} 个迁移文件`);
+      logInfo("server", `启动迁移: 应用 ${applied} 个迁移文件`);
     } else {
-      console.log(`[migrate] 数据库 schema 已是最新（${DB_URL.startsWith("file:") ? "本地 SQLite" : "Turso"}）`);
+      logInfo("server", `数据库 schema 已是最新（${DB_URL.startsWith("file:") ? "本地 SQLite" : "Turso"}）`);
     }
   } catch (err) {
-    console.error("[migrate] 启动迁移失败，阻止启动:", err);
+    logError("server", "启动迁移失败，阻止启动", err);
     process.exit(1);
   } finally {
     await migrateClient.close();
@@ -115,29 +116,29 @@ app.use("/*", async (c, next) => {
   }
 });
 
-console.log(`[server] cf-lottery on http://localhost:${PORT}`);
-console.log(`[server] platform: ${process.env.PLATFORM || "local"}`);
+logInfo("server", `cf-lottery on http://localhost:${PORT}`);
+logInfo("server", `platform: ${process.env.PLATFORM || "local"}`);
 
 // PM2 / systemd 优雅关闭：SIGINT 时停止接收新连接，等待现有请求完成（最多 20 秒）
 const httpServer = serve({ fetch: app.fetch, port: PORT });
 
 process.on("SIGTERM", () => {
-  console.log("[server] SIGTERM — graceful shutdown");
-  httpServer.close(() => { console.log("[server] closed"); process.exit(0); });
+  logInfo("server", "SIGTERM — graceful shutdown");
+  httpServer.close(() => { logInfo("server", "closed"); process.exit(0); });
   setTimeout(() => process.exit(1), 20000);  // 20s 超时强制退出
 });
 
 process.on("SIGINT", () => {
-  console.log("[server] SIGINT — graceful shutdown");
+  logInfo("server", "SIGINT — graceful shutdown");
   httpServer.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 20000);
 });
 
 // 未捕获异常兜底：记录日志后退出（PM2/systemd 自动重启）
 process.on("uncaughtException", (err) => {
-  console.error("[server] uncaughtException:", err);
+  logError("server", "uncaughtException", err);
   process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
-  console.error("[server] unhandledRejection:", reason);
+  logError("server", "unhandledRejection", reason);
 });

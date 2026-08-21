@@ -6,6 +6,7 @@
  * 裂变与接龙列表见 public-lottery-share.ts。
  */
 import { Hono } from "hono";
+import { logError } from "../lib/logger";
 import { isInstantResultMode, sanitizePublicPromotionConfig } from "../lib/activity-utils";
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
@@ -1586,7 +1587,7 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
         remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || undefined,
       };
       void notifyInstantSpinWinner(db, draw.tenantId, draw.id, result.spinId, emailEnv).catch((err) => {
-        console.error(`[public] notifyInstantSpinWinner failed for ${result.spinId}:`, err);
+        logError("public-lottery", `notifyInstantSpinWinner failed for ${result.spinId}`, err);
       });
 
       void enqueuePlatformEvent(db, {
@@ -1603,7 +1604,7 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
           claimHint: result.prizeCode ? "请在活动结果页查看卡密" : "",
         },
       }).catch((err) => {
-        console.error(`[public] enqueuePlatformEvent outcome.assigned failed for ${result.spinId}:`, err);
+        logError("public-lottery", `enqueuePlatformEvent outcome.assigned failed for ${result.spinId}`, err);
       });
     }
 
@@ -1612,7 +1613,7 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
     if (err instanceof SpinBusinessError) {
       return fail(c, err.message, err.httpStatus);
     }
-    console.error("[public] spin failed:", err);
+    logError("public-lottery", "spin failed", err);
     return fail(c, err instanceof Error ? err.message : "抽奖失败", 400);
   }
 });
@@ -2028,7 +2029,7 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
       metadata: { couponCode: code, couponLabel: ownedCoupon.label || "", redeemedBy: email },
     });
   } catch (err) {
-    console.error(`[lottery] recordActivityEvent coupon_redeemed failed:`, err);
+    logError("public-lottery", "recordActivityEvent coupon_redeemed failed", err);
   }
 
   return ok(c, { redeemed: true, label: ownedCoupon.label || "" });
