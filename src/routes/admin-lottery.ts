@@ -42,6 +42,7 @@ import { setupDrawOpsRoutes } from "./admin-lottery-draw-ops";
 import { setupPlatformRoutes } from "./admin-lottery-platform";
 import {
   requireTenantRouteCapability,
+  requireL2MenuEnabled,
   recordTenantAudit,
   escapeLike,
   csvEscape,
@@ -56,6 +57,7 @@ import {
   defaultExperienceForActivity,
   mergeJsonTopLevel,
 } from "./admin-lottery-helpers";
+import { readDisabledL2Menus } from "../lib/l2-menu-keys";
 
 export const adminLotteryRoute = new Hono<AppEnv>();
 
@@ -156,7 +158,8 @@ function applyDrawListFilters(
 }
 
 // 所有租户后台路由都必须同时满足：已登录 + 仍是当前租户成员 + 命中轻量能力门禁。
-adminLotteryRoute.use("*", requireAuth, requireTenantMember(), requireTenantRouteCapability);
+// requireL2MenuEnabled 在能力门禁之前：L3 禁用的菜单路径直接 403（docs/255）。
+adminLotteryRoute.use("*", requireAuth, requireTenantMember(), requireL2MenuEnabled, requireTenantRouteCapability);
 
 // 子模块路由在中间件之后注册，确保所有端点都覆盖认证与权限校验
 setupPrizeRoutes(adminLotteryRoute);
@@ -397,6 +400,9 @@ adminLotteryRoute.get("/me", async (c) => {
     tenant: tenant || { id: tenantId, name: "", plan: "free" },
     quota: await getTenantUsage(db, tenantId),
     platformRole: platformMember?.status === "active" ? platformMember.role : null,
+    // L3 全局禁用的 L2 菜单（docs/255）：前端菜单过滤 + 后端中间件强制 403 双保险。
+    // 与 requireTenantRouteCapability 共用 lib/l2-menu-keys 同一读取函数，保证两侧一致。
+    menuDisabled: await readDisabledL2Menus(db),
     tenants: memberships.map((m) => ({
       id: m.tenantId,
       name: m.tenantName,

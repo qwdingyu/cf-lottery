@@ -17,6 +17,7 @@ import { readLatestTenantUsageSnapshotTotals } from "../services/admin/usage-sna
 import { dispatchWebhookDelivery, DRAW_STATUS } from "../services/lottery-service";
 import { dispatchEmailDeliveries } from "../services/email-delivery";
 import { dispatchPlatformDelivery } from "../services/platform/delivery";
+import { L2_MENU_CATALOG, isL2MenuKey, DISABLED_L2_MENUS_KEY, readDisabledL2Menus } from "../lib/l2-menu-keys";
 
 export const platformRoute = new Hono<AppEnv>();
 
@@ -991,4 +992,56 @@ platformRoute.post("/data/cleanup", requirePlatformMember(["platform_owner"]), a
   });
 
   return ok(c, { results });
+});
+
+// ═════════════════════════════════════════════════════════
+// L2 菜单权限控制（L3 平台运营者 → 全局生效，docs/255）
+// ═════════════════════════════════════════════════════════
+// 存储：system_config.disabled_l2_menus（JSON 数组，默认 [] = 全部启用）。
+// 对所有 L2 租户统一生效（不做按租户区分，保持简单）。
+// 菜单 key 白名单来自 lib/l2-menu-keys.ts 代码常量（docs/026 §5.4：不做数据库权限矩阵）。
+// 读取权限：owner/operator/support 均可；写入权限：仅 owner（破坏性/全局性配置）。
+// readDisabledL2Menus / parseDisabledL2Menus 定义在 lib/l2-menu-keys.ts（与 L2 中间件共用）。
+
+/** 菜单目录 + 当前禁用列表 */
+platformRoute.get("/l2-menus", async (c) => {
+  const db = getDb(c);
+  const disabledMenus = await readDisabledL2Menus(db);
+  return ok(c, { menuCatalog: L2_MENU_CATALOG, disabledMenus });
+});
+
+/** 保存禁用菜单列表（仅 owner；白名单校验非法 key 拒绝） */
+platformRoute.patch("/l2-menus", requirePlatformMember(["platform_owner"]), async (c) => {
+  const db = getDb(c);
+  const actorUserId = c.get("userId") as string;
+  const actorRole = c.get("platformRole") as string;
+  const body = await c.req.json<{ disabledMenus?: unknown }>().catch(() => ({ disabledMenus: undefined }));
+  if (!Array.isArray(body.disabledMenus)) {
+    return fail(c, "disabledMenus 必须是菜单 key 数组", 400);
+  }
+  const unique = [...new Set(body.disabledMenus)];
+  const invalid = unique.filter((key) => typeof key !== "string" || !isL2MenuKey(key));
+  if (invalid.length > 0) {
+    return fail(c, `包含不支持的菜单 key：${invalid.join(", ")}`, 400);
+  }
+  const now = new Date().toISOString();
+  await withDbTransaction(db, async (tx) => {
+    await tx
+      .insert(systemConfig)
+      .values({ key: DISABLED_L2_MENUS_KEY, value: JSON.stringify(unique), updatedAt: now })
+      .onConflictDoUpdate({
+        target: systemConfig.key,
+        set: { value: JSON.stringify(unique), updatedAt: now },
+      });
+    // 全局菜单权限变更必须留审计（L3 权限矩阵 owner 可写）
+    await writePlatformAudit(tx, {
+      actorUserId,
+      actorRole,
+      action: "platform.l2.menus.update",
+      targetType: "system_config",
+      targetId: DISABLED_L2_MENUS_KEY,
+      metadata: { disabledMenus: unique },
+    });
+  });
+  return ok(c, { disabledMenus: unique });
 });

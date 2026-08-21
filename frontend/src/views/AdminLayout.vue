@@ -92,6 +92,7 @@ import {
   readPlatformRole,
 } from '@/composables/useAdminAuth'
 import { isActivePlatformRole } from '@/composables/platform-access'
+import { adminRequest } from '@/composables/useAdminRequest'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 
 const route = useRoute()
@@ -163,6 +164,14 @@ onMounted(() => {
     }
     const role = await ensurePlatformRole(token)
     isPlatformMember.value = isActivePlatformRole(role ?? readPlatformRole())
+    // 拉取 L3 全局禁用的 L2 菜单（docs/255）：/me 返回 menuDisabled，
+    // 失败静默（菜单过滤是 UX 层，后端中间件才是安全边界）
+    try {
+      const me = await adminRequest<{ menuDisabled?: string[] }>('/api/admin/me')
+      menuDisabled.value = me.menuDisabled || []
+    } catch {
+      // 忽略：保持全部菜单可见，后端 403 仍兜底
+    }
   })()
 })
 
@@ -175,7 +184,11 @@ function toggleSidebar() {
 }
 
 // ── 菜单数据（租户后台 L2 专属，平台后台功能迁移到 /platform/*） ──
-const menuItems = computed(() => [
+// L3 平台运营者全局禁用的菜单（docs/255）：menuItems 按 disabledMenus 过滤。
+// 仅作用于 L2 租户后台 12 项；「平台运营」L3 入口是独立 RouterLink（isPlatformMember 控制），
+// 不受此过滤影响——L3 权限判断逻辑保持原样。
+const menuDisabled = ref<string[]>([])
+const allMenuItems = computed(() => [
   { name: 'AdminDashboard', to: '/admin', label: t('adminLayout.menuDashboard'), icon: '📊' },
   { name: 'AdminLottery', to: '/admin/draws', label: t('adminLayout.menuLottery'), icon: '🎰' },
   { name: 'AdminPrizes', to: '/admin/prizes', label: t('adminLayout.menuPrizes'), icon: '🎁' },
@@ -189,6 +202,10 @@ const menuItems = computed(() => [
   { name: 'AdminBlacklist', to: '/admin/blacklist', label: t('adminLayout.menuBlacklist'), icon: '🚫' },
   { name: 'AdminLogs', to: '/admin/logs', label: t('adminLayout.menuLogs'), icon: '📝' },
 ])
+const menuItems = computed(() => {
+  const disabled = new Set(menuDisabled.value)
+  return allMenuItems.value.filter((item) => !disabled.has(item.name))
+})
 
 const currentName = computed(() => {
   const name = route.name as string | undefined

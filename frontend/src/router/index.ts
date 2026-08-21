@@ -201,6 +201,11 @@ const router = createRouter({
           component: () => import('@/views/admin/AdminRedemptionCodesView.vue'),
         },
         {
+          path: 'l2-menus',
+          name: 'PlatformL2Menus',
+          component: () => import('@/views/platform/PlatformL2MenusView.vue'),
+        },
+        {
           path: 'audit-logs',
           name: 'PlatformAuditLogs',
           component: () => import('@/views/platform/PlatformAuditLogsView.vue'),

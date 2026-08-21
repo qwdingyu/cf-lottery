@@ -85,6 +85,8 @@ export default defineConfig({
       "frontend/src/i18n/landing-nav.test.ts",
       // docs/257：直付购买阶段 CTA 文案闭环（zh/en 键齐全性 + 诚实性）
       "frontend/src/i18n/payment-phase-copy.test.ts",
+      // docs/255：L2 菜单目录前后端镜像一致性（防命名漂移导致 L3 配置失配）
+      "frontend/src/views/admin/lottery/menu-keys.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

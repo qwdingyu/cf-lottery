@@ -15,6 +15,7 @@ import { platformSystemConfigRoute } from "./platform-system-config";
 import { platformRedemptionCodesRoute } from "./platform-redemption-codes";
 import { platformRoute } from "./platform";
 import { adminLotteryRoute } from "./admin-lottery";
+import { adminPaymentConfigRoute } from "./admin-payment-config";
 import { signJwt, verifyJwt } from "../middleware/auth";
 import { lotteryDraws, lotteryEntries, lotteryWinners, activityEvents, webhookDeliveries, adminAuditLogs, emailDeliveries, platformMembers, redemptionCodes, systemConfig, systemConfigVersions, tenantUsageSnapshots, tenantMembers, tenants, users } from "../db/schema";
 import { desc, eq } from "drizzle-orm";
@@ -51,6 +52,7 @@ function createTestApp() {
     await next();
   });
   app.route("/api/admin", adminLotteryRoute);
+  app.route("/api/admin", adminPaymentConfigRoute);
   app.route("/api/system-config", systemConfigRoute);
   app.route("/api/platform/system-config", platformSystemConfigRoute);
   app.route("/api/platform/redemption-codes", platformRedemptionCodesRoute);
@@ -922,5 +924,130 @@ describe("L3→L2 模拟登录路径（impersonate）", () => {
     expect(logs.length).toBe(1);
     expect(logs[0]!.actorUserId).toBe(PLATFORM_ID);
     expect(logs[0]!.tenantId).toBe(TENANT_ID);
+  });
+});
+
+// ═════════════════════════════════════════════════════════
+// L2 菜单权限（L3 全局控制，docs/255）
+// ═════════════════════════════════════════════════════════
+describe("L2 菜单权限（L3 全局禁用）", () => {
+  it("非平台成员访问 /api/platform/l2-menus 被拒（403）", async () => {
+    await seedUsers();
+    const app = createTestApp();
+
+    const res = await app.request("/api/platform/l2-menus", {
+      headers: await authHeader(OWNER_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(403);
+  });
+
+  it("平台 owner 可读取菜单目录与当前禁用列表", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    const res = await app.request("/api/platform/l2-menus", {
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { menuCatalog: Array<{ key: string; label: string }>; disabledMenus: string[] };
+    expect(body.menuCatalog.length).toBeGreaterThanOrEqual(12);
+    expect(Array.isArray(body.disabledMenus)).toBe(true);
+    // 目录 key 白名单校验：全部在预期集合内（防命名漂移）
+    const known = new Set(["AdminDashboard", "AdminLottery", "AdminPrizes", "AdminBrand", "AdminPaymentConfig", "AdminPaymentOrders", "AdminQuotaRedeem", "AdminIntegrations", "AdminPlatformTarget", "AdminMembers", "AdminBlacklist", "AdminLogs"]);
+    for (const item of body.menuCatalog) expect(known.has(item.key)).toBe(true);
+  });
+
+  it("平台 owner 保存禁用菜单（白名单校验 + 审计）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    const res = await app.request("/api/platform/l2-menus", {
+      method: "PATCH",
+      headers: await authHeader(PLATFORM_ID),
+      body: JSON.stringify({ disabledMenus: ["AdminPaymentConfig", "AdminIntegrations"] }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { disabledMenus: string[] };
+    expect(body.disabledMenus).toEqual(["AdminPaymentConfig", "AdminIntegrations"]);
+
+    // 审计留痕
+    const logs = await db
+      .select()
+      .from(adminAuditLogs)
+      .where(eq(adminAuditLogs.action, "platform.l2.menus.update"));
+    expect(logs.length).toBe(1);
+    expect(logs[0]!.actorUserId).toBe(PLATFORM_ID);
+
+    // 读回确认
+    const readRes = await app.request("/api/platform/l2-menus", {
+      headers: await authHeader(PLATFORM_ID),
+    }, TEST_ENV);
+    const readBody = (await readRes.json()) as { disabledMenus: string[] };
+    expect(readBody.disabledMenus).toEqual(["AdminPaymentConfig", "AdminIntegrations"]);
+  });
+
+  it("非法菜单 key 保存被拒绝（400）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    const res = await app.request("/api/platform/l2-menus", {
+      method: "PATCH",
+      headers: await authHeader(PLATFORM_ID),
+      body: JSON.stringify({ disabledMenus: ["AdminFakeMenu"] }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+  });
+
+  it("禁用菜单后，L2 访问对应 API 被强制 403（后端安全边界）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    // 先禁用 AdminPaymentConfig
+    await app.request("/api/platform/l2-menus", {
+      method: "PATCH",
+      headers: await authHeader(PLATFORM_ID),
+      body: JSON.stringify({ disabledMenus: ["AdminPaymentConfig"] }),
+    }, TEST_ENV);
+
+    // L2 owner 访问被禁用菜单的 API → 403（即使 GET 也拦截）
+    const res = await app.request("/api/admin/payment-config", {
+      headers: await authHeader(OWNER_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(403);
+
+    // 未禁用的菜单 API 正常（/draws 不在禁用列表）
+    const drawsRes = await app.request("/api/admin/draws", {
+      headers: await authHeader(OWNER_ID),
+    }, TEST_ENV);
+    expect(drawsRes.status).not.toBe(403);
+
+    // 基础设施路径不受影响（/me 无菜单映射）
+    const meRes = await app.request("/api/admin/me", {
+      headers: await authHeader(OWNER_ID),
+    }, TEST_ENV);
+    expect(meRes.status).toBe(200);
+  });
+
+  it("L2 /me 返回 menuDisabled（前端过滤数据源）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    await app.request("/api/platform/l2-menus", {
+      method: "PATCH",
+      headers: await authHeader(PLATFORM_ID),
+      body: JSON.stringify({ disabledMenus: ["AdminLogs"] }),
+    }, TEST_ENV);
+
+    const res = await app.request("/api/admin/me", {
+      headers: await authHeader(OWNER_ID),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { menuDisabled?: string[] };
+    expect(body.menuDisabled).toEqual(["AdminLogs"]);
   });
 });

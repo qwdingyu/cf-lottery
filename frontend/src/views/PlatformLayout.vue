@@ -76,6 +76,7 @@ const menuItems = computed(() => [
   { name: 'PlatformMembers', to: '/platform/members', label: t('platformLayout.menuMembers'), icon: '👥' },
   { name: 'PlatformConfig', to: '/platform/config', label: t('platformLayout.menuConfig'), icon: '⚙️' },
   { name: 'PlatformRedemptionCodes', to: '/platform/redemption-codes', label: t('platformLayout.menuRedemptionCodes'), icon: '🎵' },
+  { name: 'PlatformL2Menus', to: '/platform/l2-menus', label: t('platformLayout.menuL2Menus'), icon: '🗂️' },
   { name: 'PlatformAuditLogs', to: '/platform/audit-logs', label: t('platformLayout.menuAuditLogs'), icon: '📝' },
   { name: 'PlatformWebhookDeliveries', to: '/platform/webhook-deliveries', label: t('platformLayout.menuWebhookDeliveries'), icon: '📨' },
   { name: 'PlatformEmailDeliveries', to: '/platform/email-deliveries', label: t('platformLayout.menuEmailDeliveries'), icon: '✉️' },

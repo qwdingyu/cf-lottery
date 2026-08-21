@@ -31,6 +31,7 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import { PAYMENT_ORDER_STATUS } from "../services/payment/payment-status";
 import { DELETABLE_DRAW_STATUSES } from "../services/lottery-service";
+import { resolveL2MenuKeyByPath, readDisabledL2Menus } from "../lib/l2-menu-keys";
 // P2 审查项：默认体验/结果模式已收敛到 lib/activity-utils.ts（旧实现本地重复一份），
 // 此处仅做转发，保持 admin-lottery.ts 既有导入路径不变。
 import {
@@ -50,6 +51,27 @@ export class DrawDeletionBlockedError extends Error {
 }
 
 export const TENANT_MEMBER_ROLES = new Set(["owner", "admin", "viewer"]);
+
+/**
+ * L3 平台运营者全局禁用的 L2 菜单强制（docs/255）。
+ * 独立中间件：同时挂载到 adminLotteryRoute 与 adminPaymentConfigRoute 等
+ * 所有挂载在 /api/admin 前缀的独立路由上（菜单隐藏不是安全边界，后端必须 403）。
+ * 命中禁用菜单的路径一律拒绝，不区分 GET/写；无映射的基础设施路径
+ * （/me、/dashboard、/stats 等）不受影响，避免 L2 登录后死锁。
+ */
+export async function requireL2MenuEnabled(c: Context<AppEnv>, next: Next) {
+  const path = new URL(c.req.url).pathname;
+  const menuKey = resolveL2MenuKeyByPath(path);
+  if (!menuKey) {
+    await next();
+    return;
+  }
+  const disabled = await readDisabledL2Menus(getDb(c));
+  if (disabled.includes(menuKey)) {
+    return fail(c, "该菜单已被平台运营者禁用，无法访问", 403);
+  }
+  await next();
+}
 
 export async function requireTenantRouteCapability(c: Context<AppEnv>, next: Next) {
   const role = c.get("tenantRole");

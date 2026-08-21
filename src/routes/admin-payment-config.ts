@@ -16,6 +16,7 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { getDb, ok, fail, safeJsonBody } from "../lib/http";
 import { getEnv } from "../lib/platform";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
+import { requireL2MenuEnabled } from "./admin-lottery-helpers";
 import {
   auditLogs,
   lotteryDraws,
@@ -39,7 +40,9 @@ import type { AppEnv } from "../bindings";
 import { sql } from "drizzle-orm";
 
 export const adminPaymentConfigRoute = new Hono<AppEnv>();
-adminPaymentConfigRoute.use("*", requireAuth, requireTenantMember());
+// requireL2MenuEnabled：L3 禁用「支付配置」菜单时，本路由直接 403（docs/255，
+// 该路由独立挂载于 /api/admin，不走 adminLotteryRoute 的能力门禁链）。
+adminPaymentConfigRoute.use("*", requireAuth, requireTenantMember(), requireL2MenuEnabled);
 
 /** 脱敏字段占位符：前端不回显密文，后端用占位符保留原值。 */
 const SENSITIVE_CONFIG_PLACEHOLDER = "••••••••";
