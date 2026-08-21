@@ -55,6 +55,9 @@
         >{{ $t('lottery.adminListCount', { shown: filteredDraws.length, total: draws.length }) }}</span>
       </div>
       <div class="toolbar-actions">
+        <button class="btn btn-ghost btn-sm" type="button" :disabled="loading || batchOperating" @click="openDeleteByIds">
+          {{ $t('lottery.adminDeleteByIds') }}
+        </button>
         <button class="btn btn-primary btn-sm" type="button" :disabled="loading || creating" @click="openTemplatePicker">
           {{ $t('lottery.adminDrawCreate') }}
         </button>
@@ -2051,6 +2054,30 @@
         <div class="qr-actions">
           <button class="btn btn-primary btn-sm" @click="handleDownloadQr">{{ $t('lottery.adminDownloadQr') }}</button>
           <button class="btn btn-ghost btn-sm" @click="handleCopyQrLink">{{ $t('lottery.adminCopyQrLink') }}</button>
+        </div>
+      </div>
+    </AdminModal>
+
+    <!-- 按 ID 批量删除弹窗（方便粘贴测试数据 ID 一键清场，docs/257） -->
+    <AdminModal v-model="showDeleteByIdsModal" :title="$t('lottery.adminDeleteByIdsTitle')" max-width="480px" hide-actions>
+      <div class="modal-form">
+        <textarea
+          v-model="deleteByIdsText"
+          class="delete-by-ids-input"
+          rows="6"
+          :placeholder="$t('lottery.adminDeleteByIdsPlaceholder')"
+          :aria-label="$t('lottery.adminDeleteByIdsTitle')"
+          spellcheck="false"
+        ></textarea>
+        <p class="delete-by-ids-hint">{{ $t('lottery.adminDeleteByIdsHint') }}</p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost btn-sm" type="button" @click="showDeleteByIdsModal = false">{{ $t('lottery.adminCancel') }}</button>
+          <button
+            class="btn btn-danger btn-sm"
+            type="button"
+            :disabled="!deleteByIdsParsed.length || deletingByIds"
+            @click="handleDeleteByIds"
+          >{{ deletingByIds ? $t('lottery.loadingText') : $t('lottery.adminDeleteByIdsConfirm') }}</button>
         </div>
       </div>
     </AdminModal>
@@ -4335,6 +4362,65 @@ async function handleDelete(id: string) {
 }
 
 /**
+ * 按 ID 批量删除（粘贴测试数据 ID 一键清场，docs/257）。
+ * 与 selectedIds 批量删除共用 batch-delete 接口与审计；ID 列表来自粘贴框，
+ * 不依赖列表选中态，方便批量清理跨页/跨筛选条件的测试数据。
+ */
+const showDeleteByIdsModal = ref(false)
+const deleteByIdsText = ref('')
+const deletingByIds = ref(false)
+
+/** 从粘贴文本中提取 UUID：兼容逗号 / 换行 / 空格分隔，忽略非 UUID 噪音 */
+const deleteByIdsParsed = computed(() => {
+  const raw = deleteByIdsText.value.trim()
+  if (!raw) return []
+  const uuidRe = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
+  return Array.from(new Set(raw.match(uuidRe) ?? []))
+})
+
+function openDeleteByIds() {
+  deleteByIdsText.value = ''
+  showDeleteByIdsModal.value = true
+}
+
+async function handleDeleteByIds() {
+  const ids = deleteByIdsParsed.value
+  if (ids.length === 0 || deletingByIds.value) return
+  // 先关粘贴弹窗，再走统一的确认流程（复选框确认，与批量删除一致）
+  showDeleteByIdsModal.value = false
+  const decision = await askConfirmWithOptions(
+    t('lottery.adminConfirmBatchDelete', { count: ids.length, drawnCount: 0 }),
+    {
+      options: [
+        {
+          key: 'confirmDelete',
+          label: t('lottery.adminBatchDeleteConfirmCheckbox', { count: ids.length }),
+          defaultChecked: false,
+        },
+      ],
+    },
+  )
+  if (!decision.confirmed) return
+
+  deletingByIds.value = true
+  try {
+    const data = await batchDeleteLotteryDraws(ids, false)
+    if (data.deleted === 0 && data.failed === 0) {
+      showToast(t('lottery.adminBatchNothingDone'), 'info')
+    } else if (data.failed > 0) {
+      showToast(t('lottery.adminBatchDeleteResult', { success: data.deleted, failed: data.failed }), 'error')
+    } else {
+      showToast(t('lottery.adminBatchDeleteSuccess', { count: data.deleted }), 'success')
+    }
+  } catch {
+    showToast(t('lottery.adminBatchDeleteFailed'), 'error')
+  } finally {
+    deletingByIds.value = false
+    await loadData()
+  }
+}
+
+/**
  * 批量删除：优先 POST /draws/batch-delete（单次请求 + 一条审计）；
  * 失败时降级为顺序单条 DELETE，保持测试清场可用。
  */
@@ -5032,4 +5118,31 @@ onBeforeUnmount(() => {
 <style>
 @import '@/assets/admin.css';
 @import './lottery/admin-lottery-page.css';
+
+/* 按 ID 批量删除弹窗（docs/257）：粘贴框等宽字体，便于核对 UUID */
+.delete-by-ids-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+  border-radius: var(--r-md, 8px);
+  background: var(--tg-secondary-bg, #151b28);
+  color: var(--tg-text, #f0f2f5);
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.delete-by-ids-input:focus {
+  outline: 2px solid rgba(239, 68, 68, 0.45);
+  outline-offset: 1px;
+}
+
+.delete-by-ids-hint {
+  font-size: 12px;
+  color: var(--tg-hint, #9aa4b2);
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
 </style>

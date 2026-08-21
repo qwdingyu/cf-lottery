@@ -138,7 +138,17 @@ function applyDrawListFilters(
   } else if (input.status && DRAW_STATUS_FILTERS.has(input.status)) {
     conditions.push(eq(lotteryDraws.status, input.status));
   }
-  if (input.query) conditions.push(sql`${lotteryDraws.title} LIKE ${"%" + escapeLike(input.query) + "%"}`);
+  if (input.query) {
+    const escaped = escapeLike(input.query.trim());
+    if (escaped) {
+      // 搜索支持：标题、publicSlug、ID 前缀匹配（placeholder 承诺"搜索名称 / 奖品 / ID"）
+      conditions.push(sql`(
+        ${lotteryDraws.title} LIKE ${"%" + escaped + "%"}
+        OR ${lotteryDraws.publicSlug} LIKE ${"%" + escaped + "%" }
+        OR ${lotteryDraws.id} LIKE ${escaped + "%"}
+      )`);
+    }
+  }
   if (input.activityKind) conditions.push(eq(lotteryDraws.activityKind, input.activityKind));
   if (input.createdFrom) conditions.push(sql`${lotteryDraws.createdAt} >= ${input.createdFrom}`);
   if (input.createdTo) conditions.push(sql`${lotteryDraws.createdAt} <= ${input.createdTo}`);
