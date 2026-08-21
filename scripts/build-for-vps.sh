@@ -99,6 +99,13 @@ info "前端构建完成 → public/"
 #   --external            不打包原生/动态加载模块
 #   --outfile             输出单文件
 info "步骤 3/4：esbuild 编译打包..."
+# --banner:js 注入 createRequire：incentive-engine v4 的 CJS 模块在模块级/函数内
+# 使用 require('crypto') 等（joi/sequelize 为 optional peer，lazy + try-catch 降级）。
+# esbuild --format=esm 打包时无法静态转换这些 require，会注入动态 require 辅助函数，
+# 纯 ESM 下启动即抛 "Dynamic require of X is not supported"。
+# 注入 createRequire(import.meta.url) 恢复 CJS 兼容 require 环境，与引擎设计意图一致：
+# crypto 为 Node 内置可直接 resolve；joi/sequelize 缺失时抛 MODULE_NOT_FOUND 被引擎内
+# try-catch 捕获，优雅降级（cf-lottery 不使用这两个可选能力，见 docs/255 部署回归修复）。
 npx esbuild src/server.ts \
   --bundle \
   --platform=node \
@@ -107,6 +114,7 @@ npx esbuild src/server.ts \
   --minify \
   --external:@libsql/client \
   --external:dotenv \
+  --banner:js="import{createRequire as __createRequire}from'module';var require=__createRequire(import.meta.url);" \
   --outfile=dist/server.js
 
 RAW_SIZE=$(stat -f%z dist/server.js 2>/dev/null || stat -c%s dist/server.js 2>/dev/null || echo 0)
