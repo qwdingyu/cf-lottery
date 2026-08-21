@@ -4358,7 +4358,7 @@ async function batchDeleteDraws() {
     if (!decision.confirmed) return
     force = decision.options.force === true
   } else {
-    // 非进行中（draft/drawn/cancelled/paused）：复选框 + 键入确认短语双重防护
+    // 非进行中（draft/drawn/cancelled/paused）：复选框确认，防误删
     const decision = await askConfirmWithOptions(
       t('lottery.adminConfirmBatchDelete', { count: selectedDraws.length, drawnCount }),
       {
@@ -4369,7 +4369,6 @@ async function batchDeleteDraws() {
             defaultChecked: false,
           },
         ],
-        requirePhrase: t('lottery.adminBatchDeleteConfirmPhrase'),
       },
     )
     if (!decision.confirmed) return

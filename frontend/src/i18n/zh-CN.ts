@@ -766,7 +766,6 @@ export default {
     adminConfirmBatchDeleteForce:
       "确认永久删除选中的 {count} 个活动？其中 {liveCount} 个进行中。\n\n勾选「包含进行中活动」可一并删除 open/drawing 活动（调试/测试清场，仅供测试环境使用）；有支付订单的活动仍会被保护拒绝。此操作不可恢复。",
     adminBatchDeleteForceOption: "包含进行中活动（调试/测试清场，仅供测试环境使用）",
-    adminBatchDeleteConfirmPhrase: "确认删除",
     adminBatchDeleteConfirmCheckbox: "我确认删除选中的 {count} 个活动，此操作不可恢复",
     adminConfirmBatchHide:
       "确认将选中的 {count} 个已开奖活动对用户隐藏？\n\n中奖记录与管理端数据保留，仅公开页不可见；可随时再「展示」。",
