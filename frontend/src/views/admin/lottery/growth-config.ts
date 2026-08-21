@@ -373,7 +373,9 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
 
   const productUrl = String(productSrc?.url || '').trim()
   const enableProductLink = Boolean(productUrl)
-  const enableViral = Boolean(viral?.enabled)
+  // 与后端 isViralEnabled 严格判定对齐（docs/255 §18.4）：
+  // 存量脏数据 enabled: "true"（字符串）统一按"未启用"回填显示，避免运营看到开关开着但实际不生效
+  const enableViral = viral?.enabled === true
   const enableAfterWinCta = Boolean(String(afterWin?.url || '').trim())
   const enableAfterLossCta = Boolean(String(afterLoss?.url || '').trim())
   const hasExperience = prizePanelMode !== 'auto' || ritualPhrases.length > 0

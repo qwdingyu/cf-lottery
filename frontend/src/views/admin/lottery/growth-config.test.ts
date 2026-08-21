@@ -80,6 +80,28 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
     expect(g.viralLeaderboardEnabled).toBe(true) // 表单缺省，与 emptyForm 一致
   })
 
+  it('存量脏数据 viral.enabled="true"（字符串）回填为关闭，与后端 isViralEnabled 严格判定对齐（docs/255 §18.4）', () => {
+    // 后端 isViralEnabled 要求严格 === true；字符串 "true" 一律按未启用。
+    // 此前前端 Boolean("true") → true，运营看到开关开着但实际不生效（前后端分叉）。
+    const g = growthFieldsFromDraw({
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: 'true', extraEntriesPerInvite: 2, maxExtraEntries: 8 },
+      }),
+    })
+    expect(g.enableViral).toBe(false)
+    // 数字 1 同样按未启用（与后端一致）
+    const g2 = growthFieldsFromDraw({
+      promotionConfig: { viral: { enabled: 1, extraEntriesPerInvite: 1, maxExtraEntries: 5 } },
+    })
+    expect(g2.enableViral).toBe(false)
+    // 严格 true 仍为开启
+    const g3 = growthFieldsFromDraw({
+      promotionConfig: { viral: { enabled: true, extraEntriesPerInvite: 1, maxExtraEntries: 5 } },
+    })
+    expect(g3.enableViral).toBe(true)
+  })
+
   it('buildPromotionConfigPayload：创建无增长 → undefined；编辑无增长 → 关闭包（含壳策略回退 auto）', () => {
     expect(buildPromotionConfigPayload({}, { isEditing: false })).toBeUndefined()
     expect(buildPromotionConfigPayload({}, { isEditing: true })).toEqual({
