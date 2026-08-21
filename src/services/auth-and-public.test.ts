@@ -2439,6 +2439,211 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/255 端到端：survey（问卷）活动 + bonus_coupon 邀请奖励。
+   * 验证 no_result 结果模式下 bonus_coupon 出口（非 lottery 类型，spins 不适用）。
+   */
+  it("端到端：survey 活动 A 分享 → B 参与 → A 获 bonus_coupon", async () => {
+    const app = createPublicTestApp();
+    const emailA = "survey-a@test.com";
+    const emailB = "survey-b@test.com";
+    const drawId = crypto.randomUUID();
+    const slug = "survey-chain-draw";
+    await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: slug,
+        title: "survey 端到端", status: "open", participationMode: "open",
+        activityKind: "survey", experienceType: "form", resultMode: "no_result",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+        winnerCount: 1,
+        activityConfig: JSON.stringify({
+          version: 1, kind: "survey",
+          fields: [{ id: "q1", label: "满意度", type: "text", required: true, maxLength: 200, options: [] }],
+        }),
+        promotionConfig: JSON.stringify({
+          version: 1,
+          referralRewardDefs: [
+            {
+              rewardId: "invite_1_coupon", type: "FIXED", target: "SOURCE", fixedAmount: "1",
+              conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "1" }],
+              metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" },
+            },
+          ],
+        }),
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "SURVEY-COUPON-1", label: "invite", status: "available",
+    });
+
+    const joinA = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.88" },
+      body: JSON.stringify({ email: emailA, submission: { fields: { q1: "满意" } } }),
+    }, TEST_ENV);
+    expect(joinA.status).toBe(200);
+    const entryAId = (await joinA.json() as any).entryId;
+    const shareRes = await app.request(`/public/draws/${slug}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.88" },
+      body: JSON.stringify({ entryId: entryAId }),
+    }, TEST_ENV);
+    const refCode = String((await shareRes.json() as any).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
+
+    const joinB = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.89" },
+      body: JSON.stringify({ email: emailB, refCode, submission: { fields: { q1: "满意" } } }),
+    }, TEST_ENV);
+    expect(joinB.status).toBe(200);
+
+    // A 获得 bonus_coupon（survey 类型下 spins 不适用，只发券）
+    const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.code, "SURVEY-COUPON-1"));
+    expect(coupon?.status).toBe("issued");
+    expect(coupon?.recipientEmail).toBe(emailA);
+  });
+
+  /**
+   * docs/255 端到端：vote（投票）活动 + bonus_coupon 邀请奖励。
+   * 验证 vote_tally 结果模式下 bonus_coupon 出口。
+   */
+  it("端到端：vote 活动 A 分享 → B 参与 → A 获 bonus_coupon", async () => {
+    const app = createPublicTestApp();
+    const emailA = "vote-a@test.com";
+    const emailB = "vote-b@test.com";
+    const drawId = crypto.randomUUID();
+    const slug = "vote-chain-draw";
+    await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: slug,
+        title: "vote 端到端", status: "open", participationMode: "open",
+        activityKind: "vote", experienceType: "ballot", resultMode: "vote_tally",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+        winnerCount: 1,
+        activityConfig: JSON.stringify({
+          version: 1, kind: "vote", selection: "single",
+          options: [
+            { id: "opt1", label: "选项一", description: "", imageUrl: "" },
+            { id: "opt2", label: "选项二", description: "", imageUrl: "" },
+          ],
+        }),
+        promotionConfig: JSON.stringify({
+          version: 1,
+          referralRewardDefs: [
+            {
+              rewardId: "invite_1_coupon", type: "FIXED", target: "SOURCE", fixedAmount: "1",
+              conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "1" }],
+              metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" },
+            },
+          ],
+        }),
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "VOTE-COUPON-1", label: "invite", status: "available",
+    });
+
+    const joinA = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.90" },
+      body: JSON.stringify({ email: emailA, submission: { optionId: "opt1" } }),
+    }, TEST_ENV);
+    expect(joinA.status).toBe(200);
+    const entryAId = (await joinA.json() as any).entryId;
+    const shareRes = await app.request(`/public/draws/${slug}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.90" },
+      body: JSON.stringify({ entryId: entryAId }),
+    }, TEST_ENV);
+    const refCode = String((await shareRes.json() as any).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
+
+    const joinB = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.91" },
+      body: JSON.stringify({ email: emailB, refCode, submission: { optionId: "opt2" } }),
+    }, TEST_ENV);
+    expect(joinB.status).toBe(200);
+
+    // A 获得 bonus_coupon（vote 类型下 spins 不适用，只发券）
+    const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.code, "VOTE-COUPON-1"));
+    expect(coupon?.status).toBe("issued");
+    expect(coupon?.recipientEmail).toBe(emailA);
+  });
+
+  /**
+   * docs/255 端到端：checkin（签到）活动 + bonus_coupon 邀请奖励。
+   * 验证 no_result 结果模式下 bonus_coupon 出口。
+   */
+  it("端到端：checkin 活动 A 分享 → B 参与 → A 获 bonus_coupon", async () => {
+    const app = createPublicTestApp();
+    const emailA = "checkin-a@test.com";
+    const emailB = "checkin-b@test.com";
+    const drawId = crypto.randomUUID();
+    const slug = "checkin-chain-draw";
+    await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: slug,
+        title: "checkin 端到端", status: "open", participationMode: "open",
+        activityKind: "checkin", experienceType: "submit", resultMode: "no_result",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+        winnerCount: 1,
+        promotionConfig: JSON.stringify({
+          version: 1,
+          referralRewardDefs: [
+            {
+              rewardId: "invite_1_coupon", type: "FIXED", target: "SOURCE", fixedAmount: "1",
+              conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "1" }],
+              metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" },
+            },
+          ],
+        }),
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "CHECKIN-COUPON-1", label: "invite", status: "available",
+    });
+
+    const joinA = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.92" },
+      body: JSON.stringify({ email: emailA }),
+    }, TEST_ENV);
+    expect(joinA.status).toBe(200);
+    const entryAId = (await joinA.json() as any).entryId;
+    const shareRes = await app.request(`/public/draws/${slug}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.92" },
+      body: JSON.stringify({ entryId: entryAId }),
+    }, TEST_ENV);
+    const refCode = String((await shareRes.json() as any).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
+
+    const joinB = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.93" },
+      body: JSON.stringify({ email: emailB, refCode }),
+    }, TEST_ENV);
+    expect(joinB.status).toBe(200);
+
+    // A 获得 bonus_coupon（checkin 类型下 spins 不适用，只发券）
+    // 注意：checkin 活动的 identity_value 会附加 :YYYY-MM-DD 后缀（每日签到），
+    // 因此 recipientEmail 是 "checkin-a@test.com:2026-08-21" 而非纯邮箱。
+    const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.code, "CHECKIN-COUPON-1"));
+    expect(coupon?.status).toBe("issued");
+    expect(String(coupon?.recipientEmail || "")).toContain("checkin-a@test.com");
+  });
+
+  /**
    * docs/099：share 的 entryId 必须属于本活动。
    */
   it("share：entry 不属于本活动则 404；属于则发码成功", async () => {
