@@ -1772,6 +1772,7 @@
       :message="confirmMessage"
       :options="confirmOptionDefs"
       :option-values="confirmOptionValues"
+      :require-phrase="confirmRequirePhrase"
       @confirm="onConfirm"
       @update:option="setConfirmOption"
     />
@@ -2259,6 +2260,7 @@ const {
   confirmMessage,
   confirmOptionDefs,
   confirmOptionValues,
+  confirmRequirePhrase,
   askConfirm,
   askConfirmWithOptions,
   onConfirm,
@@ -4355,8 +4357,22 @@ async function batchDeleteDraws() {
     )
     if (!decision.confirmed) return
     force = decision.options.force === true
-  } else if (!(await askConfirm(t('lottery.adminConfirmBatchDelete', { count: selectedDraws.length, drawnCount })))) {
-    return
+  } else {
+    // 非进行中（draft/drawn/cancelled/paused）：复选框 + 键入确认短语双重防护
+    const decision = await askConfirmWithOptions(
+      t('lottery.adminConfirmBatchDelete', { count: selectedDraws.length, drawnCount }),
+      {
+        options: [
+          {
+            key: 'confirmDelete',
+            label: t('lottery.adminBatchDeleteConfirmCheckbox', { count: selectedDraws.length }),
+            defaultChecked: false,
+          },
+        ],
+        requirePhrase: t('lottery.adminBatchDeleteConfirmPhrase'),
+      },
+    )
+    if (!decision.confirmed) return
   }
 
   const targetIds = selectedDraws.map((d) => d.id)
