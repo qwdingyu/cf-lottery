@@ -19,6 +19,7 @@ import { withDbTransaction } from "../../db/client";
 import { eq, and, sql } from "drizzle-orm";
 import { shareRecords, lotteryEntries, lotteryDraws } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
+import { isViralLeaderboardEnabled, type ViralWeightConfig } from "./viral-weight";
 
 /** 排行榜奖励配置项（viral.leaderboardRewards 数组元素） */
 export type LeaderboardRewardConfig = {
@@ -103,14 +104,15 @@ export async function grantLeaderboardRewards(
     pc = JSON.parse(draw.promotionConfig || "{}") as Record<string, unknown>;
   } catch { /* 非法 JSON 视为未配置 */ }
 
-  const viral = pc?.viral as Record<string, unknown> | undefined;
-  // 契约（docs/114 + viral-weight.isViralLeaderboardEnabled + publish-check）：enabled 必须为真；
-  // leaderboardEnabled 仅在显式 false 时关闭；缺省视为开启。
-  if (!viral || viral.enabled !== true || viral.leaderboardEnabled === false) {
+  const viral = pc?.viral as (ViralWeightConfig & Record<string, unknown>) | undefined;
+  // 契约（docs/114 + publish-check）：enabled 必须严格为真；leaderboardEnabled 仅在显式 false
+  // 时关闭，缺省视为开启。判定必须走 viral-weight 单一入口（docs/255 P2-4）——此处曾手写
+  // 同一条件，与公共实现分叉后「排行榜页可见、奖励却不发」这类偏差无法被类型系统发现。
+  if (!isViralLeaderboardEnabled(viral)) {
     return result;
   }
 
-  const rawRewards = viral.leaderboardRewards;
+  const rawRewards = viral?.leaderboardRewards;
   if (!rawRewards || !Array.isArray(rawRewards) || rawRewards.length === 0) {
     return result;
   }

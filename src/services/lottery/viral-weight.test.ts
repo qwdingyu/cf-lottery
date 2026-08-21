@@ -1,3 +1,6 @@
+/// <reference types="node" />
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   aggregateViralInviteCounts,
@@ -237,5 +240,72 @@ describe("isViralEnabled 严格判定（P2 审查修复）", () => {
     // 幻值：手工 JSON 写字符串/数字（前端表单写入 boolean，脏数据按未启用处理）
     expect(isViralEnabled({ enabled: "true" })).toBe(false);
     expect(isViralEnabled({ enabled: 1 })).toBe(false);
+  });
+});
+
+/**
+ * docs/255 §8 P2-4 守卫：`viral.enabled` 的判定必须只有一份实现。
+ *
+ * 该项在 docs/255 §12 里被标记为已完成，但实际只收敛了 publish-check 一处，
+ * draw-execution / my-viral-stats 仍是 truthy、platform/commands 另有一份本地副本，
+ * 结果同一份 `promotionConfig`（`enabled: "true"`）在开奖、统计、排行榜之间行为不一致。
+ * 单测无法覆盖「未来新增的第 N 处调用点」，因此用源码扫描把规则钉住。
+ */
+describe("viral.enabled 单一入口守卫（源码扫描）", () => {
+  const SRC_DIR = join(process.cwd(), "src");
+  const OWNER_FILE = join("src", "services", "lottery", "viral-weight.ts");
+
+  function listSourceFiles(dir: string, out: string[] = []): string[] {
+    for (const name of readdirSync(dir)) {
+      const fullPath = join(dir, name);
+      if (statSync(fullPath).isDirectory()) {
+        listSourceFiles(fullPath, out);
+        continue;
+      }
+      if (!name.endsWith(".ts") || name.endsWith(".d.ts") || name.includes(".test.")) continue;
+      out.push(fullPath);
+    }
+    return out;
+  }
+
+  /** 去掉行注释/块注释与字符串，避免文档说明里的 `viral.enabled` 被误判 */
+  function stripCommentsAndStrings(content: string): string {
+    return content
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/\/\/[^\n]*/g, " ")
+      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+      .replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+  }
+
+  it("除 viral-weight.ts 外，不得出现 viral.enabled 的 truthy 判定", () => {
+    // 允许 `=== true` / `!== true`（与公共实现同义的显式比较）；
+    // 其余形态（`if (viral?.enabled)`、`Boolean(viral.enabled)`、`!viral?.enabled`）一律违规。
+    const truthyUse = /viral\??\.enabled(?!\s*(?:===|!==)\s*true)/;
+    const violations: string[] = [];
+
+    for (const file of listSourceFiles(SRC_DIR)) {
+      const rel = relative(process.cwd(), file);
+      if (rel === OWNER_FILE) continue;
+      const code = stripCommentsAndStrings(readFileSync(file, "utf-8"));
+      for (const line of code.split("\n")) {
+        if (truthyUse.test(line)) violations.push(`${rel}: ${line.trim()}`);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("除 viral-weight.ts 外，不得重复定义 isViralEnabled / isViralLeaderboardEnabled", () => {
+    const redefinition = /(?:function|const)\s+(?:isViralEnabled|isViralLeaderboardEnabled)\b/;
+    const violations: string[] = [];
+
+    for (const file of listSourceFiles(SRC_DIR)) {
+      const rel = relative(process.cwd(), file);
+      if (rel === OWNER_FILE) continue;
+      const code = stripCommentsAndStrings(readFileSync(file, "utf-8"));
+      if (redefinition.test(code)) violations.push(rel);
+    }
+
+    expect(violations).toEqual([]);
   });
 });
