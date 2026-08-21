@@ -26,6 +26,8 @@
         </select>
         <template v-if="sessionEmail || registeredUsername">
           <span class="lottery-user">{{ registeredUsername || sessionEmail }}</span>
+          <!-- 我的奖励（docs/253 缺口 A）：registered 用户跨活动查看奖励 -->
+          <RouterLink v-if="registeredUsername" to="/my-rewards" class="lottery-my-rewards-link">{{ $t('lottery.myRewards') }}</RouterLink>
           <button class="lottery-logout" @click="handleLogout">{{ $t('lottery.logout') }}</button>
         </template>
         <button v-else class="lottery-login-btn" @click="openLogin()">{{ $t('lottery.loginToViewRecords') }}</button>

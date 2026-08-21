@@ -111,6 +111,7 @@ export default {
     createSuccess: "工作空间已就绪，选个模板开始吧",
     skip: "稍后再说",
     logout: "退出登录",
+    myRewards: "我的奖励",
     myShop: "我的商铺",
     loggedOut: "已退出登录",
     createFailed: "创建失败",
@@ -1777,6 +1778,27 @@ export default {
     drawnAt: "中奖时间",
     securityHint: "本页面仅可查看一次，请妥善保管卡密，勿泄露给他人。",
     saveHint: "请复制并保存卡密，关闭本页后将无法再次查看。",
+  },
+
+  // ── 我的奖励（MyRewardsView，docs/253 缺口 A）──
+  myRewards: {
+    title: "我的奖励",
+    loading: "正在加载奖励…",
+    needLogin: "请先参与活动并登录后查看我的奖励",
+    loadFailed: "奖励加载失败，请稍后重试",
+    empty: "暂无任何奖励。参与活动并邀请好友可获得抽奖次数和优惠券",
+    total: "共 {count} 个活动",
+    viewDraw: "查看活动",
+    spins: "剩余抽奖次数",
+    coupons: "优惠券",
+    noReward: "暂无奖励",
+    redeem: "核销",
+    redeeming: "核销中…",
+    redeemSuccess: "优惠券已核销",
+    redeemFailed: "核销失败",
+    copied: "优惠券码已复制",
+    copyFailed: "复制失败",
+    loginHint: "请先登录后查看我的奖励",
   },
 
   // ── 品牌设置（BrandSettings）──

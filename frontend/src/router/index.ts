@@ -69,6 +69,12 @@ const router = createRouter({
       component: () => import('@/views/AccessCardCodesView.vue'),
     },
     {
+      // 我的奖励（docs/253 缺口 A）：跨活动聚合已获得的 spins + coupons
+      path: '/my-rewards',
+      name: 'MyRewards',
+      component: () => import('@/views/MyRewardsView.vue'),
+    },
+    {
       path: '/shop/:storeSlug',
       name: 'Shop',
       component: () => import('@/views/ShopView.vue'),

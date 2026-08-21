@@ -83,6 +83,12 @@
   cursor:pointer; height:26px; padding:0 10px; border-radius:6px; line-height:1; display:flex; align-items:center;
 }
 .lottery-logout:hover { color:#fff; border-color:rgba(255,255,255,0.3); }
+/* 我的奖励入口（docs/253 缺口 A）：registered 用户跨活动查看奖励 */
+.lottery-my-rewards-link {
+  font-size:12px; color:rgba(255,255,255,0.7); text-decoration:none; border:1px solid rgba(255,255,255,0.15);
+  height:26px; padding:0 10px; border-radius:6px; display:inline-flex; align-items:center;
+}
+.lottery-my-rewards-link:hover { color:#fff; border-color:rgba(255,255,255,0.35); }
 /* C 端焦点环统一走品牌金（--brand），不引用后台 --admin-accent */
 .lottery-logout:focus-visible,
 .lottery-login-btn:focus-visible,

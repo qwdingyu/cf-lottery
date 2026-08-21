@@ -120,6 +120,7 @@ export default {
     title: "Admin",
     admin: "Admin",
     logout: "Logout",
+    myRewards: "My Rewards",
     loggedOut: "Logged out",
     toggleSidebar: "Toggle sidebar",
     menuDashboard: "Dashboard",
@@ -1922,6 +1923,27 @@ export default {
     drawnAt: "Awarded At",
     securityHint: "This page can be viewed only once. Please keep your card codes safe and do not share them.",
     saveHint: "Please copy and save your card codes. You will not be able to view them again after closing this page.",
+  },
+
+  // ── My Rewards (MyRewardsView, docs/253 gap A) ──
+  myRewards: {
+    title: "My Rewards",
+    loading: "Loading rewards…",
+    needLogin: "Please join an activity and log in to view your rewards",
+    loadFailed: "Failed to load rewards. Please try again later",
+    empty: "No rewards yet. Join activities and invite friends to earn spins and coupons",
+    total: "{count} activities",
+    viewDraw: "View activity",
+    spins: "Spins left",
+    coupons: "Coupons",
+    noReward: "No reward",
+    redeem: "Redeem",
+    redeeming: "Redeeming…",
+    redeemSuccess: "Coupon redeemed",
+    redeemFailed: "Redeem failed",
+    copied: "Coupon code copied",
+    copyFailed: "Copy failed",
+    loginHint: "Please log in to view your rewards",
   },
 
   // ── Prizes (AdminPrizesView) — page already uses $t; namespace was missing ──

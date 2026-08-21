@@ -2033,3 +2033,98 @@ publicLotteryRoute.post("/coupons/redeem", async (c) => {
 
   return ok(c, { redeemed: true, label: ownedCoupon.label || "" });
 });
+
+// ═════════════════════════════════════════════════════════
+// 我的奖励（docs/253 缺口 A）：跨活动聚合该用户的 spins + coupons
+// ═════════════════════════════════════════════════════════
+
+/**
+ * 跨活动聚合当前用户的奖励（spins + coupon）。
+ *
+ * 身份识别：
+ * - registered 用户：JWT（Authorization Bearer）→ users.id → lotteryEntries
+ * - open 用户：无 JWT 时返回 401（open 身份不跨活动聚合，避免撞库风险）
+ *
+ * 注意：user_id 身份不绑定单租户，需跨租户查询 lotteryEntries，
+ * 然后逐个查活动标题和 coupons。
+ */
+publicLotteryRoute.get("/my-rewards", async (c) => {
+  const db = getDb(c);
+  const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (!bearerToken) {
+    return fail(c, "请先登录后查看我的奖励", 401);
+  }
+  const jwtSecret = getEnv(c, "JWT_SECRET");
+  if (!jwtSecret) return fail(c, "服务器配置错误", 500);
+
+  let userId = "";
+  try {
+    const payload = await verifyJwt(bearerToken, jwtSecret);
+    userId = String(payload?.sub || "");
+  } catch {
+    return fail(c, "登录状态无效", 401);
+  }
+  if (!userId) return fail(c, "登录状态无效", 401);
+
+  // 查询该用户参与的所有活动（user_id 身份，跨租户）
+  const entries = await db
+    .select({
+      drawId: lotteryEntries.drawId,
+      tenantId: lotteryEntries.tenantId,
+      spinsLeft: lotteryEntries.spinsLeft,
+    })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.identityType, "user_id"),
+      eq(lotteryEntries.identityValue, userId),
+    ));
+
+  if (entries.length === 0) return ok(c, { rewards: [] });
+
+  // 逐活动查标题和 coupons
+  const rewards = await Promise.all(entries.map(async (entry) => {
+    const [draw] = await db
+      .select({ title: lotteryDraws.title, publicSlug: lotteryDraws.publicSlug })
+      .from(lotteryDraws)
+      .where(and(
+        eq(lotteryDraws.id, entry.drawId),
+        eq(lotteryDraws.tenantId, entry.tenantId),
+      ))
+      .limit(1);
+    if (!draw) return null;
+
+    // 查询该 entry 下的 issued 优惠券（按 recipientEmail）
+    const [user] = await db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const userEmail = user?.email || "";
+    let coupons: string[] = [];
+    if (userEmail) {
+      const couponRows = await db
+        .select({ code: couponCodes.code })
+        .from(couponCodes)
+        .where(and(
+          eq(couponCodes.tenantId, entry.tenantId),
+          eq(couponCodes.drawId, entry.drawId),
+          eq(couponCodes.recipientEmail, userEmail),
+          eq(couponCodes.status, "issued"),
+        ))
+        .orderBy(couponCodes.createdAt);
+      coupons = couponRows.map((r) => r.code);
+    }
+
+    return {
+      drawId: entry.drawId,
+      tenantId: entry.tenantId,
+      slug: draw.publicSlug,
+      title: draw.title,
+      spinsLeft: Math.max(0, Math.floor(Number(entry.spinsLeft || 0))),
+      coupons,
+    };
+  }));
+
+  const validRewards = rewards.filter((r): r is NonNullable<typeof r> => r !== null);
+  return ok(c, { rewards: validRewards });
+});
