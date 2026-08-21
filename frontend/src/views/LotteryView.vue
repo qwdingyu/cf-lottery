@@ -411,7 +411,7 @@
                   type="button"
                   class="lottery-result-btn lottery-result-btn--primary"
                   :disabled="paymentLoading"
-                  @click="handleDirectPaymentAction(draw)"
+                  @click="handleFlashSalePrimaryAction(draw)"
                 >{{ paymentLoading ? $t('lottery.loadingText') : flashSalePurchaseCtaText(draw) }}</button>
                 <button
                   type="button"
@@ -1551,6 +1551,11 @@ function handleAlreadyJoined(
   closeLogin()
   showToast(t('lottery.alreadyJoinedHint'), 'success')
   if (draw && isDirectPaymentDraw(draw)) {
+    // 已支付完成且限购用尽：转查结果/卡密，不再尝试下单（docs/257 死磕闭环）
+    if (flashSalePurchasePhase(draw) === 'exhausted') {
+      openMyResult(draw)
+      return
+    }
     if (opts?.entryId) {
       const email = String(sessionEmail.value || '').trim().toLowerCase()
       if (email) {
@@ -2121,6 +2126,11 @@ function handleGamePlay(draw: LotteryDraw) {
     return
   }
   if (isDrawJoined(draw) && isDirectPaymentDraw(draw)) {
+    // 已支付完成且限购用尽：不能再下单，转去查结果/卡密（docs/257 死磕闭环）
+    if (flashSalePurchasePhase(draw) === 'exhausted') {
+      openMyResult(draw)
+      return
+    }
     void handleDirectPaymentAction(draw)
     return
   }
@@ -2205,6 +2215,21 @@ function flashSalePurchaseCtaText(draw: LotteryDraw): string {
     flashSalePurchasePhase(draw),
     state?.latestOrderStatus ?? localOrder,
   ))
+}
+
+/**
+ * 已锁名额状态条主按钮行为（docs/257 死磕闭环）：
+ * - resume_payment / add_more：走支付（继续支付 / 追加购买 / 重新发起）
+ * - exhausted（已支付完成、限购用尽）：不能再下单，主按钮改为查结果——
+ *   my-result 对直付活动会恢复订单并展示卡密，避免「查看订单」点下去只报
+ *   「已达到购买上限」错误、用户永远看不到自己买到的卡密。
+ */
+function handleFlashSalePrimaryAction(draw: LotteryDraw) {
+  if (flashSalePurchasePhase(draw) === 'exhausted') {
+    openMyResult(draw)
+    return
+  }
+  void handleDirectPaymentAction(draw)
 }
 
 /** 待支付提示：告诉用户「名额锁定 ≠ 购买成功」，支付才是唯一的完成条件 */
@@ -4431,6 +4456,11 @@ async function handleJoin(drawId: string) {
   if (myJoinedById.value[drawId] || myJoinedById.value[draw.publicSlug || '']) {
     showToast(t('lottery.alreadyJoinedHint'), 'success')
     if (isDirectPaymentDraw(draw)) {
+      // 已支付完成且限购用尽：转查结果/卡密，不再尝试下单（docs/257 死磕闭环）
+      if (flashSalePurchasePhase(draw) === 'exhausted') {
+        openMyResult(draw)
+        return
+      }
       resumePaymentFromDraw(draw)
       return
     }

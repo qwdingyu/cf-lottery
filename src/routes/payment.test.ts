@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { vi } from "vitest";
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import type { AppEnv } from "../bindings";
@@ -23,8 +24,48 @@ import {
   paymentCallbackRoute,
   paymentPublicRoute,
 } from "./payment";
-import { issuePaymentOrderAccessToken } from "../services/payment/payment-service";
+import { issuePaymentOrderAccessToken, createPaymentOrder } from "../services/payment/payment-service";
+import { encryptPaymentConfigValue } from "@usethink/cf-pay/config-store";
 import { hashCode } from "./public-lottery-helpers";
+
+/**
+ * 追加购买（add_more）回归测试的依赖隔离（docs/257 死磕闭环）：
+ * - 只 mock 掉「支付网络调用」边界（provider 创建与订单创建），让路由层真实跑通
+ *   loadTenantConfig → 计价 → 下单，从而验证「已有 paid 订单后追加购买的件数/金额
+ *   是否按本次前端件数计算」。
+ * - createTenantProvider 同时被 resumingPending 分支使用，本 mock 返回 fake provider
+ *   不会影响其它早退（400/409）测试。
+ */
+vi.mock("../services/payment/payment-service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/payment/payment-service")>();
+  const fakeProvider = {
+    name: "easypay",
+    createPayment: async () => ({
+      redirectUrl: "https://pay.example.test/mock",
+      qrCode: "qr-mock",
+    }),
+  } as never;
+  return {
+    ...actual,
+    createTenantProvider: vi.fn(() => fakeProvider),
+    createPaymentOrder: vi.fn(async (_db: unknown, input: { quantity?: number; amountCents?: number; tenantId: string; drawId: string; entryId: string; unitPriceCents?: number; currency: string; provider: string }) => ({
+      order: {
+        id: "order-added-mock",
+        tenantId: input.tenantId,
+        drawId: input.drawId,
+        entryId: input.entryId,
+        quantity: input.quantity ?? 1,
+        unitPriceCents: input.unitPriceCents ?? 0,
+        amountCents: input.amountCents ?? 0,
+        currency: input.currency,
+        provider: input.provider,
+        status: "pending",
+      },
+      payResult: { redirectUrl: "https://pay.example.test/mock", qrCode: "qr-mock" },
+      accessToken: "access-token-mock",
+    })),
+  };
+});
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
@@ -398,6 +439,68 @@ describe("payment route", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ message: "单笔最多可购买 2 件" });
     expect(await db.select().from(paymentOrders)).toHaveLength(0);
+  });
+
+  it("已有 paid 订单后追加购买按本次件数重新计价，不复用旧订单数量", async () => {
+    await seedOrder();
+    // 已支付订单是 1 件 ¥99.00（seedOrder 固定）；活动支持批发阶梯（2 件起 ¥89/件）
+    await db.update(lotteryDraws).set({
+      promotionConfig: JSON.stringify({
+        flashSale: {
+          enabled: true,
+          paymentRequired: true,
+          stockLimit: 10,
+          maxPerUser: 5,
+          priceCents: 9900,
+          currency: "cny",
+          pricingTiers: [{ minQuantity: 2, unitPriceCents: 8900, label: "批发价" }],
+        },
+      }),
+    }).where(eq(lotteryDraws.id, DRAW_ID));
+    await db.insert(tenantConfigs).values({
+      tenantId: TENANT_ID,
+      enabled: 1,
+      providers: JSON.stringify({
+        easypay: {
+          enabled: true,
+          easypay_pid: "pid",
+          easypay_key: await encryptPaymentConfigValue("key", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+          easypay_api_base: "https://zpayz.cn",
+        },
+      }),
+    });
+
+    const app = createTestApp();
+    const res = await app.request("/api/public/draws/payment-route/payment-orders", {
+      method: "POST",
+      body: JSON.stringify({ entryId: ENTRY_ID, email: EMAIL, quantity: 3 }),
+      headers: { "Content-Type": "application/json" },
+    }, {
+      TURSO_URL: "",
+      ASSETS: { fetch: async () => new Response("", { status: 404 }) } as unknown as Fetcher,
+      JWT_SECRET: "test",
+      CREDENTIALS_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    });
+
+    // 追加 3 件 → 命中批发阶梯：单价 ¥89.00 × 3 = ¥267.00，而不是复用旧订单的 1 件 ¥99.00
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      ok: boolean;
+      quantity: number;
+      amountCents: number;
+      unitPriceCents: number;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.quantity).toBe(3);
+    expect(body.unitPriceCents).toBe(8900);
+    expect(body.amountCents).toBe(26700);
+
+    // 路由层必须把「本次追加件数」传给 createPaymentOrder，而不是 existing.quantity（旧 1 件）
+    const createMock = createPaymentOrder as unknown as ReturnType<typeof vi.fn>;
+    const routedInput = createMock.mock.calls[createMock.mock.calls.length - 1]?.[1] as
+      { quantity?: number; amountCents?: number };
+    expect(routedInput.quantity).toBe(3);
+    expect(routedInput.amountCents).toBe(26700);
   });
 
   it("活动已开奖时不能恢复 pending 支付，避免结束后继续收款", async () => {
