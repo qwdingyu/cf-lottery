@@ -97,7 +97,8 @@ async function seedCheckinDraw(status = "open") {
   });
 }
 
-async function seedViralDraw(viralEnabled = true, leaderboardEnabled: boolean | undefined = undefined) {
+// viralEnabled 用 unknown：需覆盖 enabled 写成字符串 "true" 的脏配置（docs/255 P2-4）
+async function seedViralDraw(viralEnabled: unknown = true, leaderboardEnabled: boolean | undefined = undefined) {
   const now = new Date();
   await db.insert(lotteryDraws).values({
     id: "draw-qq-1",
@@ -485,6 +486,36 @@ describe("POST /api/platform/qq/message", () => {
       .from(lotteryEntries)
       .where(and(eq(lotteryEntries.tenantId, TENANT_ID), eq(lotteryEntries.drawId, "draw-qq-1")));
     expect(entries).toHaveLength(0);
+
+    const shares = await db
+      .select()
+      .from(shareRecords)
+      .where(and(eq(shareRecords.tenantId, TENANT_ID), eq(shareRecords.drawId, "draw-qq-1")));
+    expect(shares).toHaveLength(0);
+  });
+
+  /**
+   * docs/255 §8 P2-4 回归锁：群助手 /分享 与开奖、my-viral-stats、发布预检共用
+   * viral-weight.isViralEnabled（严格 === true）。此处曾是本地重复定义的第 4 份实现，
+   * 收敛为单一入口后本用例保证语义不回退：字符串 "true" 仍按未开启处理。
+   */
+  it("/分享 在 viral.enabled 为字符串 \"true\" 时仍按未开启处理", async () => {
+    await seedTarget();
+    await seedViralDraw("true");
+    const app = createTestApp();
+    const res = await app.request("/api/platform/qq/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CF-Lottery-Platform-Token": INBOUND_SECRET,
+      },
+      body: JSON.stringify(qqMessage({ message: "/分享" })),
+    }, TEST_ENV);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { handled?: boolean; reply?: string };
+    expect(body.handled).toBe(true);
+    expect(body.reply).toContain("未开启裂变分享");
 
     const shares = await db
       .select()

@@ -23,6 +23,7 @@ import {
   aggregateViralInviteCounts,
   buildPublicSharePath,
   buildViralLeaderboardRanking,
+  isViralEnabled,
   isViralLeaderboardEnabled,
   type ViralWeightConfig,
 } from "../lottery/viral-weight";
@@ -239,14 +240,6 @@ function parseJsonObject(raw: string): Record<string, unknown> {
   }
 }
 
-function isViralEnabled(promotionConfig: string): boolean {
-  const config = parseJsonObject(promotionConfig);
-  const viral = config.viral && typeof config.viral === "object"
-    ? config.viral as Record<string, unknown>
-    : null;
-  return viral?.enabled === true;
-}
-
 function parseViralConfig(promotionConfig: string): ViralWeightConfig | null {
   const config = parseJsonObject(promotionConfig);
   const viral = config.viral && typeof config.viral === "object"
@@ -342,7 +335,7 @@ async function executeShareCommand(
     ))
     .limit(1);
   if (!draw) return { handled: true, reply: "绑定活动不存在，请管理员重新绑定群助手。" };
-  if (!isViralEnabled(draw.promotionConfig)) {
+  if (!isViralEnabled(parseViralConfig(draw.promotionConfig))) {
     return { handled: true, reply: "当前活动未开启裂变分享，请管理员先在活动推广配置中开启。" };
   }
 
