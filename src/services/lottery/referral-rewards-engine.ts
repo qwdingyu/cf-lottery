@@ -20,6 +20,7 @@ import type { DbType } from "../../db/client";
 import { and, eq } from "drizzle-orm";
 import { shareRecords } from "../../db/schema";
 import { grantBonusSpin, grantBonusCoupon } from "./reward-exits";
+import { logError } from "../../lib/logger";
 
 /**
  * 外部导入 @usethink/incentive-engine
@@ -510,10 +511,7 @@ export async function processReferralRewardsEngine(
       rewardDefs,
     });
   } catch (err) {
-    console.error(
-      `[lottery] distributeByDefs failed for ${draw.id} (rewardIds=${rewardDefs.map((d) => d.rewardId).join(",")}):`,
-      err,
-    );
+    logError("referral-rewards-engine", `distributeByDefs draw=${draw.id} rewardIds=${rewardDefs.map((d) => d.rewardId).join(",")}`, err);
     return;
   }
   if (records.length === 0) return;
@@ -621,7 +619,7 @@ export async function processReferralRewardsEngine(
           break;
       }
     } catch (err) {
-      console.error(`[lottery] referral reward exit ${exit} failed for ${draw.id} reward ${rewardId}:`, err);
+      logError("referral-rewards-engine", `exit=${exit} draw=${draw.id} reward=${rewardId}`, err);
       continue;
     }
 

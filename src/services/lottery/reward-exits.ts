@@ -16,6 +16,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { lotteryEntries, couponCodes, users } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
 import { recordActivityEvent } from "./integration";
+import { logError } from "../../lib/logger";
 
 /**
  * 发放 bonus_spin（额外抽奖次数）给分享者。
@@ -108,7 +109,7 @@ export async function grantBonusSpin(
     });
   } catch (err) {
     // 审计失败不影响发券结果（与 recordSpinLog 的容错一致）
-    console.error(`[lottery] recordActivityEvent bonus_spin failed for ${drawId}:`, err);
+    logError("reward-exits", `recordActivityEvent bonus_spin draw=${drawId}`, err);
   }
 
   return true;
@@ -248,7 +249,7 @@ export async function grantBonusCoupon(
       });
     } catch (err) {
       // 审计失败不影响发券结果（与 recordSpinLog 的容错一致）
-      console.error(`[lottery] recordActivityEvent bonus_coupon failed for ${drawId}:`, err);
+      logError("reward-exits", `recordActivityEvent bonus_coupon draw=${drawId}`, err);
     }
   }
 

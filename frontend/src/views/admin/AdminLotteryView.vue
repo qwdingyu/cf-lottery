@@ -1121,10 +1121,58 @@
                       <textarea v-model="form.referralRewardsText" rows="3" :placeholder="$t('lottery.adminReferralRewardsPlaceholder')"></textarea>
                       <small>{{ $t('lottery.adminReferralRewardsHint') }}</small>
                     </label>
-                    <!-- docs/250/254 引擎推荐奖励：支持 bonus_spin / bonus_coupon 双出口 -->
+                    <!-- docs/250/254 引擎推荐奖励：支持 bonus_spin / bonus_coupon 双出口（行编辑器，docs/255 ③） -->
                     <label class="field-span-2">
                       <span>{{ $t('lottery.adminReferralRewardDefs') }}</span>
-                      <textarea v-model="form.referralRewardDefsText" rows="3" :placeholder="$t('lottery.adminReferralRewardDefsPlaceholder')"></textarea>
+                      <div class="referral-def-rows">
+                        <div
+                          v-for="(row, ri) in referralRewardDefsRows"
+                          :key="ri"
+                          class="referral-def-row"
+                        >
+                          <input
+                            v-model.number="row.requireCount"
+                            type="number" min="1" max="100"
+                            class="input input-sm referral-def-count"
+                            :placeholder="$t('lottery.adminReferralRewardDefsCount')"
+                            @change="onReferralRewardDefRowChange"
+                          />
+                          <select
+                            v-model="row.rewardExit"
+                            class="input input-sm referral-def-exit"
+                            @change="onReferralRewardDefRowChange"
+                          >
+                            <option value="bonus_spin">{{ $t('lottery.adminReferralRewardDefsSpin') }}</option>
+                            <option value="bonus_coupon">{{ $t('lottery.adminReferralRewardDefsCoupon') }}</option>
+                          </select>
+                          <input
+                            v-model.number="row.rewardValue"
+                            type="number" min="1" max="1000"
+                            class="input input-sm referral-def-value"
+                            :placeholder="$t('lottery.adminReferralRewardDefsValue')"
+                            @change="onReferralRewardDefRowChange"
+                          />
+                          <input
+                            v-if="row.rewardExit === 'bonus_coupon'"
+                            v-model="row.couponLabel"
+                            type="text"
+                            class="input input-sm referral-def-label"
+                            :placeholder="$t('lottery.adminReferralRewardDefsLabel')"
+                            @change="onReferralRewardDefRowChange"
+                          />
+                          <button
+                            type="button"
+                            class="btn btn-ghost btn-sm referral-def-remove"
+                            :aria-label="$t('lottery.adminReferralRewardDefsRemove')"
+                            @click="removeReferralRewardDefRow(ri)"
+                          >✕</button>
+                        </div>
+                        <button
+                          type="button"
+                          class="btn btn-ghost btn-sm"
+                          @click="addReferralRewardDefRow"
+                        >+ {{ $t('lottery.adminReferralRewardDefsAdd') }}</button>
+                      </div>
                       <small>{{ $t('lottery.adminReferralRewardDefsHint') }}</small>
                     </label>
                   </div>
@@ -2132,6 +2180,9 @@ import {
   growthFieldsFromDraw,
   inferFlashSaleSalesMode,
   sanitizeRitualPhrasesForSave,
+  parseReferralRewardDefsText,
+  formatReferralRewardDefRows,
+  type ReferralRewardDefEntry,
 } from './lottery/growth-config'
 import {
   MAX_TIER_WEIGHT,
@@ -2643,6 +2694,37 @@ const form = ref(emptyForm())
 const isEditing = ref(false)
 /** docs/223：进行中/暂停活动编辑时锁定破坏性字段（类型/参与模式/体验/结果模式/容量/开始时间） */
 const editLocked = ref(false)
+
+/**
+ * 引擎推荐奖励行编辑器（docs/255 ③）：把裸文本 textarea 升级为可视化行编辑器。
+ * 每行 = 邀请数 + 奖励类型 + 数量（+ 可选券 label），运营通过"添加/删除行"操作，
+ * 提交时仍转成 referralRewardDefsText 文本格式（与后端契约不变）。
+ * 双向绑定：改行 → 同步 text；打开编辑 → 从 text 解析回行。
+ */
+const referralRewardDefsRows = ref<ReferralRewardDefEntry[]>([])
+/** 从当前 text 解析行（打开编辑/复制时调用） */
+function syncReferralRewardDefsRowsFromText() {
+  referralRewardDefsRows.value = parseReferralRewardDefsText(form.value.referralRewardDefsText)
+}
+/** 行变更 → 同步回 text（提交时 buildPromotionConfigPayload 读取 text） */
+function syncReferralRewardDefsTextFromRows() {
+  form.value.referralRewardDefsText = formatReferralRewardDefRows(referralRewardDefsRows.value)
+}
+/** 添加一行（默认邀请 1 人 + bonus_spin + 1 次） */
+function addReferralRewardDefRow() {
+  referralRewardDefsRows.value.push({ requireCount: 1, rewardExit: 'bonus_spin', rewardValue: 1 })
+  syncReferralRewardDefsTextFromRows()
+}
+/** 删除一行 */
+function removeReferralRewardDefRow(index: number) {
+  referralRewardDefsRows.value.splice(index, 1)
+  syncReferralRewardDefsTextFromRows()
+}
+/** 行内字段变更 → 同步回 text */
+function onReferralRewardDefRowChange() {
+  syncReferralRewardDefsTextFromRows()
+}
+
 const flashSalePriceYuan = computed({
   get: () => {
     const v = form.value.flashSalePriceCents
@@ -3769,6 +3851,8 @@ async function handleDuplicate(draw: LotteryDraw) {
   isEditing.value = false
   // 复制不是编辑：不显示「留空保持原密码」提示
   editingHasAccessPassword.value = false
+  // 引擎推荐奖励行编辑器：从回填的 text 解析行（docs/255 ③）
+  syncReferralRewardDefsRowsFromText()
   showAdvancedGrowth.value = growth.hasGrowthConfig
   activeTemplateId.value = ''
   activeTemplateName.value = ''
@@ -4548,6 +4632,8 @@ async function handleEdit(draw: LotteryDraw) {
     flashSalePricingTiers: growth.flashSalePricingTiers || [],
   }
   isEditing.value = true
+  // 引擎推荐奖励行编辑器：从回填的 text 解析行（docs/255 ③）
+  syncReferralRewardDefsRowsFromText()
   // docs/225 P0：按 ids 回填已绑定奖品（即使停用/不在当前页也要显示名称）
   loadBoundPrizes(tiers.map(t => t.prizeId))
   // 回填未中奖自动发券开关状态

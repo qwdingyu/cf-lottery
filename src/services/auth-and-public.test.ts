@@ -2218,6 +2218,227 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/255 端到端：claim（资料领取）活动 + bonus_coupon 邀请奖励。
+   * 验证非 lottery 类型下 bonus_coupon 出口的完整链路（A 分享 → B 参与 → A 获券 → A 查券 → A 核销）。
+   */
+  it("端到端：claim 活动 A 分享 → B 参与 → A 获 bonus_coupon → A 查券 → A 核销", async () => {
+    const app = createPublicTestApp();
+    const emailA = "claim-a@test.com";
+    const emailB = "claim-b@test.com";
+    const drawId = crypto.randomUUID();
+    const slug = "claim-chain-draw";
+    await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+    // claim 活动（非 lottery，bonus_coupon 出口）
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: slug,
+        title: "claim 端到端", status: "open", participationMode: "open",
+        activityKind: "claim", experienceType: "reveal", resultMode: "instant",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+        winnerCount: 1,
+        promotionConfig: JSON.stringify({
+          version: 1,
+          referralRewardDefs: [
+            {
+              rewardId: "invite_1_coupon", type: "FIXED", target: "SOURCE", fixedAmount: "1",
+              conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "1" }],
+              metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" },
+            },
+          ],
+        }),
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "CLAIM-COUPON-1", label: "invite", status: "available",
+    });
+
+    // A 参与 → 生成分享码
+    const joinA = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.82" },
+      body: JSON.stringify({ email: emailA }),
+    }, TEST_ENV);
+    expect(joinA.status).toBe(200);
+    const entryAId = (await joinA.json() as any).entryId;
+    const shareRes = await app.request(`/public/draws/${slug}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.82" },
+      body: JSON.stringify({ entryId: entryAId }),
+    }, TEST_ENV);
+    const refCode = String((await shareRes.json() as any).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
+
+    // B 通过 ref 参与 → 触发归因 + 引擎（claim 类型 bonus_coupon）
+    const joinB = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.83" },
+      body: JSON.stringify({ email: emailB, refCode }),
+    }, TEST_ENV);
+    expect(joinB.status).toBe(200);
+
+    // A 获得 bonus_coupon（claim 类型下 spins 不适用，只发券）
+    const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.code, "CLAIM-COUPON-1"));
+    expect(coupon?.status).toBe("issued");
+    expect(coupon?.recipientEmail).toBe(emailA);
+
+    // A 查 my-result 看到 coupons（claim 类型也能查到邀请券）
+    const tokenA = await signJwt({ sub: crypto.randomUUID(), tenantId: TENANT, email: emailA }, TEST_ENV.JWT_SECRET, 3600);
+    const myResult = await app.request(`/public/draws/${slug}/my-result`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenA}`, "CF-Connecting-IP": "10.0.0.82" },
+      body: JSON.stringify({ email: emailA, code: "" }),
+    }, TEST_ENV);
+    const myResultBody = await myResult.json() as any;
+    expect(Array.isArray(myResultBody.coupons)).toBe(true);
+    expect(myResultBody.coupons).toContain("CLAIM-COUPON-1");
+
+    // A 自助核销（email + OTP）
+    const plainOtp = "654322";
+    await db.insert(emailAccessCodes).values({
+      id: crypto.randomUUID(), email: emailA, drawId,
+      codeHash: await hashCode(plainOtp), expiresAt: futureTimeISO(10), used: 0,
+    });
+    const redeemRes = await app.request("/public/coupons/redeem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.82" },
+      body: JSON.stringify({ code: "CLAIM-COUPON-1", email: emailA, otp: plainOtp }),
+    }, TEST_ENV);
+    expect(redeemRes.status).toBe(200);
+    expect((await redeemRes.json() as any).redeemed).toBe(true);
+  });
+
+  /**
+   * docs/255 端到端：signup_chain（报名接龙）活动 + bonus_coupon 邀请奖励。
+   * 验证 ordered_assignment 结果模式下 bonus_coupon 出口的完整链路。
+   */
+  it("端到端：signup_chain 活动 A 分享 → B 参与 → A 获 bonus_coupon", async () => {
+    const app = createPublicTestApp();
+    const emailA = "signup-a@test.com";
+    const emailB = "signup-b@test.com";
+    const drawId = crypto.randomUUID();
+    const slug = "signup-chain-draw";
+    await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: slug,
+        title: "signup 端到端", status: "open", participationMode: "open",
+        activityKind: "signup_chain", experienceType: "submit", resultMode: "ordered_assignment",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+        winnerCount: 1,
+        promotionConfig: JSON.stringify({
+          version: 1,
+          referralRewardDefs: [
+            {
+              rewardId: "invite_1_coupon", type: "FIXED", target: "SOURCE", fixedAmount: "1",
+              conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "1" }],
+              metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" },
+            },
+          ],
+        }),
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "SIGNUP-COUPON-1", label: "invite", status: "available",
+    });
+
+    const joinA = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.84" },
+      body: JSON.stringify({ email: emailA }),
+    }, TEST_ENV);
+    expect(joinA.status).toBe(200);
+    const entryAId = (await joinA.json() as any).entryId;
+    const shareRes = await app.request(`/public/draws/${slug}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.84" },
+      body: JSON.stringify({ entryId: entryAId }),
+    }, TEST_ENV);
+    const refCode = String((await shareRes.json() as any).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
+
+    const joinB = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.85" },
+      body: JSON.stringify({ email: emailB, refCode }),
+    }, TEST_ENV);
+    expect(joinB.status).toBe(200);
+
+    // A 获得 bonus_coupon
+    const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.code, "SIGNUP-COUPON-1"));
+    expect(coupon?.status).toBe("issued");
+    expect(coupon?.recipientEmail).toBe(emailA);
+  });
+
+  /**
+   * docs/255 端到端：flash_sale（秒杀）活动 + bonus_coupon 邀请奖励。
+   * 验证直付秒杀下 bonus_coupon 出口（非 lottery 类型，spins 不适用）。
+   */
+  it("端到端：flash_sale 活动 A 分享 → B 参与 → A 获 bonus_coupon", async () => {
+    const app = createPublicTestApp();
+    const emailA = "flash-a@test.com";
+    const emailB = "flash-b@test.com";
+    const drawId = crypto.randomUUID();
+    const slug = "flash-chain-draw";
+    await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+    await db.insert(lotteryDraws).values([
+      {
+        id: drawId, tenantId: TENANT, publicSlug: slug,
+        title: "flash 端到端", status: "open", participationMode: "open",
+        activityKind: "claim", experienceType: "flash_sale", resultMode: "instant",
+        startAt: futureTimeISO(-60), endAt: futureTimeISO(60),
+        winnerCount: 1,
+        promotionConfig: JSON.stringify({
+          version: 1,
+          flashSale: { enabled: true, paymentRequired: true, stockLimit: 5, priceCents: 9900, currency: "cny" },
+          referralRewardDefs: [
+            {
+              rewardId: "invite_1_coupon", type: "FIXED", target: "SOURCE", fixedAmount: "1",
+              conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "1" }],
+              metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" },
+            },
+          ],
+        }),
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "FLASH-COUPON-1", label: "invite", status: "available",
+    });
+
+    const joinA = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.86" },
+      body: JSON.stringify({ email: emailA }),
+    }, TEST_ENV);
+    expect(joinA.status).toBe(200);
+    const entryAId = (await joinA.json() as any).entryId;
+    const shareRes = await app.request(`/public/draws/${slug}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.86" },
+      body: JSON.stringify({ entryId: entryAId }),
+    }, TEST_ENV);
+    const refCode = String((await shareRes.json() as any).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
+
+    const joinB = await app.request(`/public/draws/${slug}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.87" },
+      body: JSON.stringify({ email: emailB, refCode }),
+    }, TEST_ENV);
+    expect(joinB.status).toBe(200);
+
+    // A 获得 bonus_coupon（flash_sale 直付下 spins 不适用，只发券）
+    const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.code, "FLASH-COUPON-1"));
+    expect(coupon?.status).toBe("issued");
+    expect(coupon?.recipientEmail).toBe(emailA);
+  });
+
+  /**
    * docs/099：share 的 entryId 必须属于本活动。
    */
   it("share：entry 不属于本活动则 404；属于则发码成功", async () => {

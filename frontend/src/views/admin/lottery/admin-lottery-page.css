@@ -1099,3 +1099,37 @@
 .toggle-with-param .loser-coupon-param input {
   min-width: 160px;
 }
+
+/* ── 引擎推荐奖励行编辑器（docs/255 ③） ── */
+.referral-def-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.referral-def-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.referral-def-count {
+  width: 70px;
+  flex: 0 0 auto;
+}
+.referral-def-exit {
+  width: 110px;
+  flex: 0 0 auto;
+}
+.referral-def-value {
+  width: 70px;
+  flex: 0 0 auto;
+}
+.referral-def-label {
+  flex: 1 1 auto;
+  min-width: 100px;
+}
+.referral-def-remove {
+  flex: 0 0 auto;
+  padding: 0 6px;
+}

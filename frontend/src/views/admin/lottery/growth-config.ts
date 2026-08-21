@@ -281,6 +281,13 @@ export function formatReferralRewardDefsText(defs: Array<Record<string, unknown>
     .join('\n')
 }
 
+/** 行编辑器专用：从 ReferralRewardDefEntry[] 生成本文（与 parseReferralRewardDefsText 互逆） */
+export function formatReferralRewardDefRows(rows: ReferralRewardDefEntry[]): string {
+  return rows
+    .map((r) => r.couponLabel ? `${r.requireCount}:${r.rewardExit}:${r.rewardValue}:${r.couponLabel}` : `${r.requireCount}:${r.rewardExit}:${r.rewardValue}`)
+    .join('\n')
+}
+
 /** 解析活动上的 JSON 对象字段（字符串或对象）；空 / "{}" / 非法 → null */
 export function parseJsonObjectField(raw: unknown): Record<string, unknown> | null {
   if (raw == null || raw === '' || raw === '{}') return null

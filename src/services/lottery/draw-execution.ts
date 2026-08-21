@@ -29,6 +29,7 @@ import { enqueuePlatformEvent } from "../platform/delivery";
 import { buildLotteryWinnerTemplateData, type EmailEnv } from "../email-service";
 import { enqueueEmailDelivery, dispatchEmailDeliveries } from "../email-delivery";
 import { parseFlashSaleConfig } from "../../lib/flash-sale-config";
+import { logError } from "../../lib/logger";
 import { runBounded } from "../../lib/concurrency";
 import { PAYMENT_ENTRY_STATUS } from "../payment/payment-status";
 import { grantLeaderboardRewards } from "./leaderboard-rewards";
@@ -366,7 +367,7 @@ export async function performDraw(
         .limit(1);
       if (notifyCfg?.value !== "false") {
         void enqueueWinnerNotificationDeliveries(db, tenantId, drawId).catch((err) => {
-          console.error(`[lottery] sendWinnerNotifications failed for ${drawId}:`, err);
+          logError("draw-execution", `sendWinnerNotifications draw=${drawId}`, err);
         });
       }
     }
@@ -378,7 +379,7 @@ export async function performDraw(
     });
     for (const deliveryId of webhookEvent.deliveryIds) {
       void dispatchWebhookDelivery(db, tenantId, deliveryId).catch((err) => {
-        console.error(`[lottery] dispatchWebhookDelivery failed for ${deliveryId}:`, err);
+        logError("draw-execution", `dispatchWebhookDelivery delivery=${deliveryId}`, err);
       });
     }
 
@@ -392,13 +393,13 @@ export async function performDraw(
         winnerSummary: `共 ${entryIndex} 人获奖，${candidateCount} 人参与`,
       },
     }).catch((err) => {
-      console.error(`[lottery] enqueuePlatformEvent draw.completed failed for ${drawId}:`, err);
+      logError("draw-execution", `enqueuePlatformEvent draw.completed draw=${drawId}`, err);
     });
 
     // 出站平台消息（QQ/Telegram 群）：逐个中奖结果通知。
     // 这里只写投递队列；如果社群通知失败，不能反向影响已经提交的开奖结果。
     await enqueueOutcomeAssignedPlatformEvents(db, tenantId, drawId, draw.title).catch((err) => {
-      console.error(`[lottery] enqueuePlatformEvent outcome.assigned failed for ${drawId}:`, err);
+      logError("draw-execution", `enqueuePlatformEvent outcome.assigned draw=${drawId}`, err);
     });
 
     // 活动后承接：未中奖自动发券（需在活动配置中启用 loserReward.enabled）
@@ -410,12 +411,12 @@ export async function performDraw(
         // 发券成功后发送安慰邮件（异步，不阻塞开奖主流程）
         if (emailEnv && (emailEnv.resendApiKey || emailEnv.email || (emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret))) {
           void sendLoserConsolationEmails(db, emailEnv, tenantId, drawId, draw.title).catch((err) => {
-            console.error(`[lottery] sendLoserConsolationEmails failed for ${drawId}:`, err);
+            logError("draw-execution", `sendLoserConsolationEmails draw=${drawId}`, err);
           });
         }
       }
     } catch (err) {
-      console.error(`[lottery] grantLoserRewards failed for ${drawId}:`, err);
+      logError("draw-execution", `grantLoserRewards draw=${drawId}`, err);
     }
 
     // 排行榜奖励（docs/218 模式三）：delayed/scheduled/manual 开奖在收尾后自动发放。
@@ -427,7 +428,7 @@ export async function performDraw(
         console.log(`[lottery] leaderboard rewards granted: ${leaderboardResult.granted} for draw ${drawId}`);
       }
     } catch (err) {
-      console.error(`[lottery] grantLeaderboardRewards failed for ${drawId}:`, err);
+      logError("draw-execution", `grantLeaderboardRewards draw=${drawId}`, err);
     }
 
     return { drawId, winnerCount: entryIndex, candidateCount };
@@ -513,7 +514,7 @@ async function enqueueOutcomeAssignedPlatformEvents(
 
   for (const result of results) {
     if (!result.ok) {
-      console.error("[lottery] enqueue outcome.assigned delivery failed:", result.error);
+      logError("draw-execution", "enqueue outcome.assigned delivery", result.error);
     }
   }
 }
@@ -872,7 +873,7 @@ export async function grantLoserRewards(
           },
         });
       } catch (err) {
-        console.error(`[lottery] recordActivityEvent loser_reward failed for ${drawId}:`, err);
+        logError("draw-execution", `recordActivityEvent loser_reward draw=${drawId}`, err);
       }
     }
   }

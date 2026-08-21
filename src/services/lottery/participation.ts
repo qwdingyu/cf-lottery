@@ -31,6 +31,7 @@ import { computeViralSpinGrant, initialSpinsForJoin, normalizeReferralRewards, e
 import { isViralEnabled, readViralPerInvite } from "./viral-weight";
 import { processReferralRewardsEngine } from "./referral-rewards-engine";
 import { recordSpinLog } from "./spins-log";
+import { logError } from "../../lib/logger";
 import {
   parseFlashSaleConfig,
   resolveEffectiveStockLimit,
@@ -754,7 +755,7 @@ async function maybeTriggerReward(
     try {
       await grantViralSpinsToSharer(tx, draw, attribution.sharerEntryId, attribution.shareRecordId);
     } catch (err) {
-      console.error(`[lottery] grantViralSpinsToSharer failed for ${draw.id}:`, err);
+      logError("participation", `grantViralSpinsToSharer draw=${draw.id}`, err);
     }
   }
 
@@ -763,7 +764,7 @@ async function maybeTriggerReward(
     try {
       await processReferralMilestoneRewards(tx, draw, attribution.shareRecordId);
     } catch (err) {
-      console.error(`[lottery] processReferralMilestoneRewards failed for ${draw.id}:`, err);
+      logError("participation", `processReferralMilestoneRewards draw=${draw.id}`, err);
     }
   }
 
@@ -774,7 +775,7 @@ async function maybeTriggerReward(
     try {
       await processReferralRewardsEngine(tx, draw, attribution.shareRecordId);
     } catch (err) {
-      console.error(`[lottery] processReferralRewardsEngine failed for ${draw.id}:`, err);
+      logError("participation", `processReferralRewardsEngine draw=${draw.id}`, err);
     }
   }
 
@@ -790,12 +791,12 @@ async function maybeTriggerReward(
     );
     for (const deliveryId of result.deliveryIds) {
       void dispatchWebhookDelivery(tx, draw.tenantId, deliveryId).catch((err) => {
-        console.error(`[lottery] reward webhook dispatch failed for ${deliveryId}:`, err);
+        logError("participation", `reward webhook dispatch delivery=${deliveryId}`, err);
       });
     }
   } catch (err) {
     // 奖励触发失败不影响参与成功（与 grantLoserRewards 的容错一致）
-    console.error(`[lottery] triggerRewardEarned failed for ${draw.id}:`, err);
+    logError("participation", `triggerRewardEarned draw=${draw.id}`, err);
   }
 }
 
