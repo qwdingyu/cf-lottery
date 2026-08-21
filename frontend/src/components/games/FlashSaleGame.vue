@@ -38,7 +38,10 @@
         : $t('lottery.flashUrgencyLowStock', { n: remaining }) }}
     </p>
 
+    <!-- 主 CTA：直付活动在「已锁名额待支付/限购用尽」阶段由父组件置 hideCta，
+         购买入口收敛到底部支付按钮，避免出现第二个看似可再抢一次的入口（docs/257） -->
     <button
+      v-if="!hideCta"
       type="button"
       class="btn btn-primary btn-lg flash-btn"
       :class="{ loading, joined: disabled && !loading, soldout: isSoldOut, urgent: isCriticallyLow && phase === 'running' && !disabled }"
@@ -114,6 +117,8 @@ const sessionLabel = computed(() => String(props.flashSale?.sessionLabel || '').
 const showCountdown = computed(() => props.flashSale?.showCountdown !== false)
 const showProgress = computed(() => props.flashSale?.showProgress !== false)
 const showStock = computed(() => props.flashSale?.showStock !== false)
+/** 父组件（LotteryView）按直付购买阶段决定是否收起「抢」按钮 */
+const hideCta = computed(() => props.flashSale?.hideCta === true)
 const progressPercent = computed(() => {
   const n = Number(props.flashSale?.progressPercent)
   if (!Number.isFinite(n) || n < 0) return 0

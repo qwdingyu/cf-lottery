@@ -697,6 +697,12 @@ export default {
     paymentSlotLocked: "名额已锁定",
     paymentContinue: "继续支付/查看卡密",
     paymentManagePurchase: "继续支付或追加购买",
+    // 已锁名额后的主 CTA 按购买阶段分流，避免"待支付"时暗示还能再抢一件
+    paymentContinuePaymentOnly: "继续支付",
+    paymentReopenOrder: "重新发起支付",
+    paymentBuyMore: "追加购买",
+    paymentViewOrder: "查看订单",
+    paymentPendingOrderNotice: "订单待支付，完成支付后才算购买成功；本活动名额已为你锁定。",
     paymentPurchaseLimitReached: "已达到本活动购买上限",
     paymentOrderNo: "订单号",
     paymentStatusLabel: "订单状态",

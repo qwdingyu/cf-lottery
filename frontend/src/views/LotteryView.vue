@@ -307,7 +307,7 @@
                 v-if="flashSalePurchaseAvailability(draw)"
                 class="lottery-flash-purchase-availability"
               >{{ $t('lottery.flashPurchaseAvailability', flashSalePurchaseAvailability(draw)!) }}</p>
-              <div v-if="flashSalePurchaseSummary(draw)" class="lottery-flash-pricing" aria-live="polite">
+              <div v-if="shouldShowFlashSalePricing(draw)" class="lottery-flash-pricing" aria-live="polite">
                 <div class="lottery-flash-pricing-total">
                   <span>{{ $t('lottery.flashPurchaseTotalPrice') }}</span>
                   <strong>{{ flashSalePurchaseSummary(draw)?.totalPriceText }}</strong>
@@ -402,13 +402,17 @@
             </template>
             <template v-else-if="isDrawJoined(draw) && isDirectPaymentDraw(draw)">
               <span class="lottery-join-hint">✅ {{ $t('lottery.paymentSlotLocked') }} · {{ joinedTimeText(draw) }}</span>
+              <!-- 待支付时明确「锁定名额 ≠ 购买成功」，否则用户会以为已经买到（docs/257） -->
+              <p v-if="showFlashSalePendingNotice(draw)" class="lottery-flash-pending-notice" role="status">
+                {{ $t('lottery.paymentPendingOrderNotice') }}
+              </p>
               <div class="lottery-status-actions">
                 <button
                   type="button"
                   class="lottery-result-btn lottery-result-btn--primary"
                   :disabled="paymentLoading"
                   @click="handleDirectPaymentAction(draw)"
-                >{{ paymentLoading ? $t('lottery.loadingText') : $t('lottery.paymentManagePurchase') }}</button>
+                >{{ paymentLoading ? $t('lottery.loadingText') : flashSalePurchaseCtaText(draw) }}</button>
                 <button
                   type="button"
                   class="lottery-result-btn"
@@ -1206,15 +1210,21 @@ import {
   publicStatusBannerTone,
 } from '@/composables/lottery-public-ux'
 import {
+  allowsFlashSaleQuantityPicker,
   asHttpPaymentUrl,
   buildPaymentSessionSnapshot,
   canRetryPaymentOrder,
   composePaymentCode,
+  type FlashSalePurchasePhase,
+  flashSalePurchaseCtaI18nKey,
   formatPaymentAmount,
+  hidesFlashSaleGrabCta,
   isDirectPaymentDraw,
   parsePaymentSessionSnapshot,
   type PaymentSessionState,
   paymentStatusI18nKey,
+  paymentStatusKind,
+  resolveFlashSalePurchasePhase,
   shouldPollPaymentStatus,
 } from './lottery/payment-ux'
 import {
@@ -2091,23 +2101,10 @@ function isInstantLottery(draw: { activityKind?: string; resultMode?: string } |
 /** 游戏区禁用：instant 已参与仍可 spin（有次数时） */
 function gameDisabled(draw: LotteryDraw): boolean {
   if (!isDrawJoinable(draw)) return true
-  // 直付批发的同一 entry 可在累计限购内追加新订单；单件直付仍保持已参与即禁用。
+  // 直付批发的同一 entry 可在累计限购内追加新订单（add_more）；
+  // 其余阶段（待支付/需人工处理/限购用尽）一律禁用，购买入口交给底部支付按钮。
   if (isDirectPaymentDraw(draw) && isDrawJoined(draw)) {
-    const purchaseState = flashSalePurchaseState(draw)
-    if (
-      purchaseState &&
-      (
-        purchaseState.remainingQuantity <= 0 ||
-        purchaseState.latestOrderStatus === 'pending' ||
-        purchaseState.latestOrderStatus === 'expired' ||
-        purchaseState.latestOrderStatus === 'cancelled' ||
-        purchaseState.latestOrderStatus === 'paid_fulfillment_failed' ||
-        purchaseState.latestOrderStatus === 'paid_late_needs_refund'
-      )
-    ) {
-      return true
-    }
-    return Number(draw.flashSale?.maxPerUser || 1) <= 1
+    return flashSalePurchasePhase(draw) !== 'add_more'
   }
   return isPublicGameDisabled({
     status: draw.status,
@@ -2139,12 +2136,16 @@ function flashSaleMerchCard(draw: LotteryDraw) {
 }
 
 function flashSaleDisplayForGame(draw: LotteryDraw) {
+  // 「抢」按钮是否收起由直付购买阶段决定：待支付/限购用尽时只保留倒计时与进度，
+  // 主 CTA 让位给底部支付按钮，避免出现两个含义冲突的购买入口（docs/257）。
+  const hideCta = hidesFlashSaleGrabCta(flashSalePurchasePhase(draw))
   if (!draw.flashSale) return null
-  if (!flashSaleMerchCard(draw)) return draw.flashSale
+  if (!flashSaleMerchCard(draw)) return { ...draw.flashSale, hideCta }
   return {
     ...draw.flashSale,
     // 商品卡已展示库存；操作区保留倒计时、进度与主 CTA，避免重复“剩余 N 份”。
     showStock: false,
+    hideCta,
   }
 }
 
@@ -2172,22 +2173,71 @@ function flashSalePurchaseLimit(draw: LotteryDraw): number {
   return Math.min(configuredMax, Math.max(0, summary.remainingQuantity))
 }
 
+/**
+ * 当前直付购买阶段（docs/257）。
+ *
+ * latestOrderStatus 的取值优先级：
+ * 1. 服务端摘要（payment-orders/summary）——权威值
+ * 2. 本地支付会话快照——刷新后摘要还没回来时的过渡值，避免这一帧闪出「抢」按钮
+ * 摘要与快照都没有时传 null，状态机会保守判为 resume_payment（只给支付入口）。
+ */
+function flashSalePurchasePhase(draw: LotteryDraw): FlashSalePurchasePhase {
+  const state = flashSalePurchaseState(draw)
+  const localOrder = paymentState.value && paymentState.value.drawId === draw.id
+    ? paymentState.value.status
+    : null
+  return resolveFlashSalePurchasePhase({
+    isDirectPayment: isDirectPaymentDraw(draw),
+    joined: isDrawJoined(draw),
+    latestOrderStatus: state?.latestOrderStatus ?? localOrder,
+    remainingQuantity: state?.remainingQuantity,
+    maxPerUser: state?.maxPerUser ?? draw.flashSale?.maxPerUser,
+  })
+}
+
+/** 已锁名额状态条主 CTA 文案：pending 明确写「继续支付」，不暗示还能再抢 */
+function flashSalePurchaseCtaText(draw: LotteryDraw): string {
+  const state = flashSalePurchaseState(draw)
+  const localOrder = paymentState.value && paymentState.value.drawId === draw.id
+    ? paymentState.value.status
+    : null
+  return t('lottery.' + flashSalePurchaseCtaI18nKey(
+    flashSalePurchasePhase(draw),
+    state?.latestOrderStatus ?? localOrder,
+  ))
+}
+
+/** 待支付提示：告诉用户「名额锁定 ≠ 购买成功」，支付才是唯一的完成条件 */
+function showFlashSalePendingNotice(draw: LotteryDraw): boolean {
+  if (flashSalePurchasePhase(draw) !== 'resume_payment') return false
+  const state = flashSalePurchaseState(draw)
+  const localOrder = paymentState.value && paymentState.value.drawId === draw.id
+    ? paymentState.value.status
+    : null
+  return paymentStatusKind(state?.latestOrderStatus ?? localOrder) === 'pending'
+}
+
 function flashSalePurchaseAvailability(draw: LotteryDraw): { purchased: number; remaining: number } | null {
   const summary = flashSalePurchaseState(draw)
   if (!summary) return null
+  // 「已购 N / 还可买 M」只在真正能追加或已达上限时才有意义。
+  // 待支付阶段展示「还可购买 5 件」会与被收起的件数选择器自相矛盾。
+  const phase = flashSalePurchasePhase(draw)
+  if (phase === 'resume_payment') return null
   return { purchased: summary.purchasedQuantity, remaining: summary.remainingQuantity }
 }
 
 function shouldShowFlashSaleQuantityControl(draw: LotteryDraw): boolean {
-  const purchaseState = flashSalePurchaseState(draw)
-  const mustResumeExistingOrder =
-    purchaseState?.latestOrderStatus === 'pending' ||
-    purchaseState?.latestOrderStatus === 'expired' ||
-    purchaseState?.latestOrderStatus === 'cancelled'
   return isDirectPaymentDraw(draw)
     && isDrawJoinable(draw)
-    && !mustResumeExistingOrder
+    && allowsFlashSaleQuantityPicker(flashSalePurchasePhase(draw))
     && flashSalePurchaseLimit(draw) > 1
+}
+
+/** 总价/单价/档位预览：与件数选择器同生共死，只有能下新单时才展示 */
+function shouldShowFlashSalePricing(draw: LotteryDraw): boolean {
+  if (!flashSalePurchaseSummary(draw)) return false
+  return allowsFlashSaleQuantityPicker(flashSalePurchasePhase(draw))
 }
 
 // ── 查询我的结果（中奖卡密/安慰奖券） ──
@@ -2652,6 +2702,28 @@ async function loadFlashSalePurchaseState(
     }
   }
   return state
+}
+
+/**
+ * 首屏/刷新后补齐直付购买阶段（docs/257）。
+ *
+ * 摘要缺失时状态机保守判为 resume_payment（只放支付入口）。批发活动必须拿到
+ * 服务端累计限购才能重新放出「追加购买」的件数选择器，否则会永久少一个入口。
+ */
+async function hydrateFlashSalePurchaseState() {
+  const email = String(sessionEmail.value || '').trim().toLowerCase()
+  if (!email) return
+  for (const draw of draws.value) {
+    if (!isDirectPaymentDraw(draw) || !isDrawJoined(draw)) continue
+    if (flashSalePurchaseState(draw)) continue
+    const entryId = buildPaymentEntryId(draw)
+    if (!entryId) continue
+    try {
+      await loadFlashSalePurchaseState(draw, entryId, email)
+    } catch {
+      // 摘要失败不影响主路径：阶段保持「只给支付入口」的保守结论
+    }
+  }
 }
 
 async function handleDirectPaymentAction(draw: LotteryDraw) {
@@ -4672,6 +4744,8 @@ onMounted(async () => {
   await resumeCfAuthJoinAfterCallback()
   // 直付订单只保存非敏感快照；刷新后重新查状态并继续 pending 轮询，不在浏览器保存卡密明文。
   await restorePaymentSession()
+  // 已锁名额的直付活动：补齐服务端累计限购，决定是否放出「追加购买」入口（docs/257）
+  await hydrateFlashSalePurchaseState()
 })
 
 onUnmounted(() => {

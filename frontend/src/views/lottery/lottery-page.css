@@ -562,6 +562,18 @@
   font-size: 12px;
   line-height: 1.45;
 }
+/* 待支付提示（docs/257）：名额锁定 ≠ 购买成功，必须显式告知支付才是完成条件 */
+.lottery-flash-pending-notice {
+  margin: 0;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(244, 63, 94, .38);
+  border-radius: 10px;
+  background: rgba(244, 63, 94, .12);
+  color: #fecdd3;
+  font-size: 12px;
+  line-height: 1.5;
+}
 .lottery-flash-quantity {
   display: grid;
   grid-template-columns: minmax(56px, auto) auto;

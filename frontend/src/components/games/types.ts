@@ -52,6 +52,12 @@ export interface FlashSaleDisplay {
   showProgress?: boolean
   showStock?: boolean
   ctaLabel?: string
+  /**
+   * 隐藏秒杀壳主 CTA（docs/257）。
+   * 直付活动在「已锁名额待支付」等阶段，购买入口只能是底部的支付按钮；
+   * 此时保留一颗灰掉的「抢」按钮会让用户以为还需要再抢一次，属于误导。
+   */
+  hideCta?: boolean
   paymentRequired?: boolean
   priceCents?: number | null
   currency?: string

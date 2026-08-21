@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
+  allowsFlashSaleQuantityPicker,
   asHttpPaymentUrl,
   canRetryPaymentOrder,
   buildPaymentSessionSnapshot,
   composePaymentCode,
+  flashSalePurchaseCtaI18nKey,
   formatPaymentAmount,
+  hidesFlashSaleGrabCta,
   isDirectPaymentDraw,
   parsePaymentSessionSnapshot,
   paymentStatusI18nKey,
   paymentStatusKind,
+  resolveFlashSalePurchasePhase,
   shouldPollPaymentStatus,
 } from './payment-ux'
 
@@ -181,5 +185,84 @@ describe('payment-ux', () => {
     }), 2000)
     expect(restored?.quantity).toBe(1)
     expect(restored?.unitPriceCents).toBe(0)
+  })
+})
+
+/**
+ * 直付购买阶段状态机（docs/257）。
+ *
+ * 回归的真实缺陷：已锁定名额但订单待支付时，公开页仍然渲染件数加减、总价预览和
+ * 可点的「抢」按钮，用户以为要再抢一次；后端此时只允许续付同一笔订单。
+ */
+describe('resolveFlashSalePurchasePhase', () => {
+  const base = { isDirectPayment: true, joined: true, maxPerUser: 5, remainingQuantity: 5 }
+
+  it('非直付活动或未参与时保持 browse（正常挑件数、看总价、点抢）', () => {
+    expect(resolveFlashSalePurchasePhase({ ...base, isDirectPayment: false })).toBe('browse')
+    expect(resolveFlashSalePurchasePhase({ ...base, joined: false })).toBe('browse')
+    expect(resolveFlashSalePurchasePhase({ ...base, joined: false, latestOrderStatus: 'pending' })).toBe('browse')
+  })
+
+  it('已锁名额且订单待支付 → resume_payment，只允许支付相关操作', () => {
+    const phase = resolveFlashSalePurchasePhase({ ...base, latestOrderStatus: 'pending' })
+    expect(phase).toBe('resume_payment')
+    expect(allowsFlashSaleQuantityPicker(phase)).toBe(false)
+    expect(hidesFlashSaleGrabCta(phase)).toBe(true)
+    expect(flashSalePurchaseCtaI18nKey(phase, 'pending')).toBe('paymentContinuePaymentOnly')
+  })
+
+  it('订单摘要还没拉到（状态未知）时保守判为 resume_payment，绝不放出第二个下单入口', () => {
+    expect(resolveFlashSalePurchasePhase({ ...base, latestOrderStatus: null })).toBe('resume_payment')
+    expect(resolveFlashSalePurchasePhase({ ...base, latestOrderStatus: undefined })).toBe('resume_payment')
+    expect(resolveFlashSalePurchasePhase({ ...base, latestOrderStatus: 'weird' })).toBe('resume_payment')
+  })
+
+  it('过期/取消订单走重新发起支付，而不是再选件数下新单', () => {
+    for (const status of ['expired', 'cancelled']) {
+      const phase = resolveFlashSalePurchasePhase({ ...base, latestOrderStatus: status })
+      expect(phase).toBe('resume_payment')
+      expect(flashSalePurchaseCtaI18nKey(phase, status)).toBe('paymentReopenOrder')
+    }
+  })
+
+  it('发卡失败/迟到支付需要人工处理，只给查看订单入口', () => {
+    for (const status of ['paid_fulfillment_failed', 'paid_late_needs_refund']) {
+      const phase = resolveFlashSalePurchasePhase({ ...base, latestOrderStatus: status })
+      expect(phase).toBe('resume_payment')
+      expect(flashSalePurchaseCtaI18nKey(phase, status)).toBe('paymentViewOrder')
+    }
+  })
+
+  it('已支付且批发限购仍有余量 → add_more，恢复件数选择与抢购按钮', () => {
+    const phase = resolveFlashSalePurchasePhase({
+      ...base,
+      latestOrderStatus: 'paid',
+      remainingQuantity: 3,
+    })
+    expect(phase).toBe('add_more')
+    expect(allowsFlashSaleQuantityPicker(phase)).toBe(true)
+    expect(hidesFlashSaleGrabCta(phase)).toBe(false)
+    expect(flashSalePurchaseCtaI18nKey(phase, 'paid')).toBe('paymentBuyMore')
+  })
+
+  it('单件直付（maxPerUser=1）支付完成后即 exhausted，不再给购买入口', () => {
+    const phase = resolveFlashSalePurchasePhase({
+      isDirectPayment: true,
+      joined: true,
+      latestOrderStatus: 'paid',
+      maxPerUser: 1,
+      remainingQuantity: 0,
+    })
+    expect(phase).toBe('exhausted')
+    expect(allowsFlashSaleQuantityPicker(phase)).toBe(false)
+    expect(hidesFlashSaleGrabCta(phase)).toBe(true)
+  })
+
+  it('累计限购用尽 → exhausted', () => {
+    expect(resolveFlashSalePurchasePhase({
+      ...base,
+      latestOrderStatus: 'paid',
+      remainingQuantity: 0,
+    })).toBe('exhausted')
   })
 })

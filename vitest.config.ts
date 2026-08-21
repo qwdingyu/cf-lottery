@@ -79,6 +79,12 @@ export default defineConfig({
       "frontend/src/components/games/canvas-utils.test.ts",
       // docs/162 P2-4：body 滚动锁定多弹窗计数器
       "frontend/src/composables/body-scroll-lock.test.ts",
+      // docs/162 P2-2：轮盘动效纯函数（此前漏登记，从未被执行）
+      "frontend/src/components/games/wheel-motion.test.ts",
+      // 落地页导航 i18n 纯函数（此前漏登记，从未被执行）
+      "frontend/src/i18n/landing-nav.test.ts",
+      // docs/257：直付购买阶段 CTA 文案闭环（zh/en 键齐全性 + 诚实性）
+      "frontend/src/i18n/payment-phase-copy.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

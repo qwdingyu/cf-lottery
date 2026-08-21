@@ -43,6 +43,92 @@ export function isDirectPaymentDraw(draw: Pick<LotteryDraw, 'flashSale'> | null 
   return draw?.flashSale?.paymentRequired === true
 }
 
+/**
+ * 直付秒杀的「购买阶段」状态机（docs/257）。
+ *
+ * 为什么需要它：
+ * 公开页原先用零散的布尔判断（是否已参与 / 是否有在途订单 / 限购是否用尽）分别控制
+ * 件数选择器、总价预览、秒杀壳「抢」按钮和底部 CTA。四处判断口径不一致，导致
+ * 「已锁定名额但未支付」时仍然展示件数加减 + 总价 + 可点的「抢」按钮——用户会以为
+ * 还要再抢一次，实际后端只允许续付同一笔订单，属于误导性入口。
+ *
+ * 现在统一收敛为四个互斥阶段，模板只读阶段结论：
+ * - browse        未锁名额：正常挑件数、看总价、点「抢」
+ * - resume_payment 已锁名额且存在在途/需人工处理的订单：只允许支付相关操作
+ * - add_more      已支付完成且累计限购还有余量：允许追加购买（批发场景）
+ * - exhausted     已达累计限购：不再提供购买入口
+ */
+export type FlashSalePurchasePhase = 'browse' | 'resume_payment' | 'add_more' | 'exhausted'
+
+export interface FlashSalePurchasePhaseInput {
+  /** flashSale.paymentRequired === true */
+  isDirectPayment: boolean
+  /** 当前身份是否已参与（已锁定名额） */
+  joined: boolean
+  /**
+   * 服务端最近一笔订单状态。
+   * null/undefined 表示「未知」——包含"尚未拉到摘要"和"确实没有订单"两种情况，
+   * 两者在已参与前提下都必须走 resume_payment：宁可少给一个购买入口，
+   * 也不能在有在途订单时放出第二个下单入口造成重复支付。
+   */
+  latestOrderStatus?: string | null
+  /** 服务端累计限购余量（maxPerUser - 已支付件数） */
+  remainingQuantity?: number | null
+  /** 活动配置的单用户累计限购 */
+  maxPerUser?: number | null
+}
+
+export function resolveFlashSalePurchasePhase(input: FlashSalePurchasePhaseInput): FlashSalePurchasePhase {
+  if (!input.isDirectPayment) return 'browse'
+  if (!input.joined) return 'browse'
+
+  const kind = paymentStatusKind(input.latestOrderStatus)
+  // pending：等待用户付款；retryable(expired/cancelled)：需要重开同一份名额的支付单；
+  // fulfillment_failed / late_paid：需要主办方人工处理。这些都不是"再买一件"的入口。
+  if (
+    kind === 'pending' ||
+    kind === 'retryable' ||
+    kind === 'fulfillment_failed' ||
+    kind === 'late_paid' ||
+    kind === 'unknown'
+  ) {
+    return 'resume_payment'
+  }
+
+  // paid / refunded：订单已终结，能否继续买完全由服务端累计限购余量决定。
+  const maxPerUser = Math.max(1, Math.floor(Number(input.maxPerUser || 1)))
+  const remaining = Math.max(0, Math.floor(Number(input.remainingQuantity ?? 0)))
+  if (maxPerUser > 1 && remaining > 0) return 'add_more'
+  return 'exhausted'
+}
+
+/** 阶段是否允许挑件数 / 预览总价（只有真正能下新单的阶段才展示） */
+export function allowsFlashSaleQuantityPicker(phase: FlashSalePurchasePhase): boolean {
+  return phase === 'browse' || phase === 'add_more'
+}
+
+/** 阶段是否应该隐藏秒杀壳的「抢」按钮（主 CTA 让位给底部支付按钮） */
+export function hidesFlashSaleGrabCta(phase: FlashSalePurchasePhase): boolean {
+  return phase === 'resume_payment' || phase === 'exhausted'
+}
+
+/**
+ * 已锁名额状态条的主 CTA 文案 key。
+ * pending 必须明确说「继续支付」，否则「继续支付或追加购买」会让用户以为还能加购。
+ */
+export function flashSalePurchaseCtaI18nKey(
+  phase: FlashSalePurchasePhase,
+  latestOrderStatus?: string | null,
+): string {
+  if (phase === 'add_more') return 'paymentBuyMore'
+  if (phase === 'exhausted') return 'paymentViewOrder'
+  const kind = paymentStatusKind(latestOrderStatus)
+  if (kind === 'pending') return 'paymentContinuePaymentOnly'
+  if (kind === 'retryable') return 'paymentReopenOrder'
+  if (kind === 'fulfillment_failed' || kind === 'late_paid') return 'paymentViewOrder'
+  return 'paymentContinuePaymentOnly'
+}
+
 export function paymentStatusKind(status: string | null | undefined): PaymentStatusKind {
   const normalized = String(status || '').trim().toLowerCase()
   if (normalized === 'pending') return 'pending'
