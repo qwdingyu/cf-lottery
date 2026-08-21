@@ -5,14 +5,11 @@ import { describe, expect, it } from "vitest";
 import {
   canConsumeSpin,
   computeViralSpinGrant,
-  evaluateReferralMilestones,
   initialSpinsForJoin,
   isInstantSpinQuotaConfigured,
   normalizeInstantSpinQuota,
-  normalizeReferralRewards,
   normalizePityConfig,
   normalizeDailyFreeSpinConfig,
-  parseGrantedMilestones,
   weightedPickTier,
 } from "./spin-quota";
 
@@ -144,113 +141,6 @@ describe("weightedPickTier", () => {
   });
 });
 
-describe("normalizeReferralRewards（P0 推荐奖励阶梯）", () => {
-  it("非数组/空数组 → []", () => {
-    expect(normalizeReferralRewards(undefined)).toEqual([]);
-    expect(normalizeReferralRewards(null)).toEqual([]);
-    expect(normalizeReferralRewards("not-array")).toEqual([]);
-    expect(normalizeReferralRewards({})).toEqual([]);
-    expect(normalizeReferralRewards([])).toEqual([]);
-  });
-
-  it("过滤非法项：requireCount/rewardValue < 1、未知 rewardType", () => {
-    expect(normalizeReferralRewards([
-      { requireCount: 0, rewardType: "bonus_spin", rewardValue: 3 },
-      { requireCount: 0.5, rewardType: "bonus_spin", rewardValue: 3 }, // floor=0 → 过滤
-      { requireCount: 2, rewardType: "bonus_spin", rewardValue: 0 },
-      { requireCount: 3, rewardType: "bonus_entry", rewardValue: 3 }, // 非 P0 类型剔除
-      "junk",
-      null,
-    ])).toEqual([]);
-  });
-
-  it("按 requireCount 升序 + 同门槛去重（首个生效）", () => {
-    const r = normalizeReferralRewards([
-      { requireCount: 5, rewardType: "bonus_spin", rewardValue: 10 },
-      { requireCount: 1, rewardType: "bonus_spin", rewardValue: 2 },
-      { requireCount: 3, rewardType: "bonus_spin", rewardValue: 5 },
-      { requireCount: 3, rewardType: "bonus_spin", rewardValue: 99 }, // 重复门槛被忽略
-    ]);
-    expect(r).toEqual([
-      { requireCount: 1, rewardType: "bonus_spin", rewardValue: 2 },
-      { requireCount: 3, rewardType: "bonus_spin", rewardValue: 5 },
-      { requireCount: 5, rewardType: "bonus_spin", rewardValue: 10 },
-    ]);
-  });
-
-  it("浮点 requireCount 向下取整且 ≥1 视为有效", () => {
-    const r = normalizeReferralRewards([
-      { requireCount: 2.9, rewardType: "bonus_spin", rewardValue: 1 },
-      { requireCount: -1, rewardType: "bonus_spin", rewardValue: 1 },
-    ]);
-    expect(r).toEqual([{ requireCount: 2, rewardType: "bonus_spin", rewardValue: 1 }]);
-  });
-});
-
-describe("parseGrantedMilestones", () => {
-  it("空/非法 JSON → []", () => {
-    expect(parseGrantedMilestones(null)).toEqual([]);
-    expect(parseGrantedMilestones(undefined)).toEqual([]);
-    expect(parseGrantedMilestones("")).toEqual([]);
-    expect(parseGrantedMilestones("{bad json")).toEqual([]);
-    expect(parseGrantedMilestones("{}")).toEqual([]);
-  });
-
-  it("合法数组 → 去重 + 升序 + 过滤非正数", () => {
-    expect(parseGrantedMilestones('[3,1,"5",0,3,-2]')).toEqual([1, 3, 5]);
-  });
-});
-
-describe("evaluateReferralMilestones（P0 发放判定）", () => {
-  const milestones = [
-    { requireCount: 1, rewardType: "bonus_spin" as const, rewardValue: 2 },
-    { requireCount: 3, rewardType: "bonus_spin" as const, rewardValue: 5 },
-    { requireCount: 5, rewardType: "bonus_spin" as const, rewardValue: 10 },
-  ];
-
-  it("joinedCount 未达任何门槛 → 无发放", () => {
-    const r = evaluateReferralMilestones({ joinedCount: 0, milestones, granted: [] });
-    expect(r.dueMilestones).toEqual([]);
-    expect(r.totalSpinBonus).toBe(0);
-    expect(r.nextGranted).toEqual([]);
-  });
-
-  it("跨过第 1 个门槛 → 只发该里程碑", () => {
-    const r = evaluateReferralMilestones({ joinedCount: 2, milestones, granted: [] });
-    expect(r.dueMilestones).toHaveLength(1);
-    expect(r.dueMilestones[0]?.requireCount).toBe(1);
-    expect(r.totalSpinBonus).toBe(2);
-    expect(r.nextGranted).toEqual([1]);
-  });
-
-  it("多个里程碑同时达标（如配置后置）→ 全量计算", () => {
-    const r = evaluateReferralMilestones({ joinedCount: 5, milestones, granted: [] });
-    expect(r.dueMilestones.map((m) => m.requireCount)).toEqual([1, 3, 5]);
-    expect(r.totalSpinBonus).toBe(17);
-    expect(r.nextGranted).toEqual([1, 3, 5]);
-  });
-
-  it("已发放过的里程碑不再重复发放", () => {
-    const r = evaluateReferralMilestones({ joinedCount: 3, milestones, granted: [1] });
-    expect(r.dueMilestones.map((m) => m.requireCount)).toEqual([3]);
-    expect(r.totalSpinBonus).toBe(5);
-    expect(r.nextGranted).toEqual([1, 3]);
-  });
-
-  it("已发放集合含配置外的门槛 → 保持原样", () => {
-    const r = evaluateReferralMilestones({ joinedCount: 5, milestones, granted: [99] });
-    expect(r.dueMilestones.map((m) => m.requireCount)).toEqual([1, 3, 5]);
-    expect(r.nextGranted).toEqual([1, 3, 5, 99]);
-  });
-
-  it("非法 granted 值被剔除", () => {
-    const r = evaluateReferralMilestones({ joinedCount: 3, milestones, granted: [0, -1, 1] });
-    expect(r.dueMilestones.map((m) => m.requireCount)).toEqual([3]);
-    expect(r.nextGranted).toEqual([1, 3]);
-  });
-});
-
-// P2 审查项：后端 normalize 上限校验（与前端表单一致，防 API 直写绕过）
 describe("normalize 上限校验（P2 审查修复）", () => {
   it("pity threshold 有效区间 2..100，越界视为未启用", () => {
     expect(normalizePityConfig({ enabled: true, threshold: 2 }).enabled).toBe(true);
@@ -264,15 +154,5 @@ describe("normalize 上限校验（P2 审查修复）", () => {
     expect(normalizeDailyFreeSpinConfig({ enabled: true, count: 10 }).enabled).toBe(true);
     expect(normalizeDailyFreeSpinConfig({ enabled: true, count: 0 })).toEqual({ enabled: false, count: 0 });
     expect(normalizeDailyFreeSpinConfig({ enabled: true, count: 11 })).toEqual({ enabled: false, count: 0 });
-  });
-
-  it("referralRewards requireCount>100 / rewardValue>1000 剔除", () => {
-    const r = normalizeReferralRewards([
-      { requireCount: 1, rewardType: "bonus_spin", rewardValue: 1000 },
-      { requireCount: 101, rewardType: "bonus_spin", rewardValue: 1 },
-      { requireCount: 5, rewardType: "bonus_spin", rewardValue: 1001 },
-      { requireCount: 3, rewardType: "bonus_spin", rewardValue: 2 },
-    ]);
-    expect(r.map((m) => m.requireCount)).toEqual([1, 3]);
   });
 });

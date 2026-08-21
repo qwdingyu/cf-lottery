@@ -7,8 +7,6 @@ import {
   sanitizeRitualPhrasesForSave,
   parseLeaderboardRewardsText,
   formatLeaderboardRewardsText,
-  parseReferralRewardsText,
-  formatReferralRewardsText,
   parseReferralRewardDefsText,
   formatReferralRewardDefsText,
 } from './growth-config'
@@ -489,81 +487,6 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
       )
       expect(payload).toMatchObject({ enabled: true, pity: { enabled: true, threshold: 4 } })
       expect(payload).not.toHaveProperty('viral')
-    })
-  })
-
-  describe('docs/217 推荐里程碑（referralRewards）', () => {
-    it('parseReferralRewardsText：正常解析、去重、非法行跳过、上下限', () => {
-      expect(parseReferralRewardsText('1:2\n3:5\n5:10')).toEqual([
-        { requireCount: 1, rewardType: 'bonus_spin', rewardValue: 2 },
-        { requireCount: 3, rewardType: 'bonus_spin', rewardValue: 5 },
-        { requireCount: 5, rewardType: 'bonus_spin', rewardValue: 10 },
-      ])
-      // 乱序 → 排序；重复门槛保留首个
-      expect(parseReferralRewardsText('3:5\n1:2\n3:9')).toEqual([
-        { requireCount: 1, rewardType: 'bonus_spin', rewardValue: 2 },
-        { requireCount: 3, rewardType: 'bonus_spin', rewardValue: 5 },
-      ])
-      // 非法：0 门槛 / 负数 / 非数字 / 超上限 → 跳过
-      expect(parseReferralRewardsText('0:2\n1:-1\nabc\n101:1\n1:2000')).toEqual([])
-      expect(parseReferralRewardsText(null)).toEqual([])
-      expect(formatReferralRewardsText(null)).toBe('')
-    })
-
-    it('growthFieldsFromDraw：回填 referallRewards（编辑防擦）', () => {
-      const g = growthFieldsFromDraw({
-        promotionConfig: JSON.stringify({
-          version: 1,
-          referralRewards: [
-            { requireCount: 1, rewardType: 'bonus_spin', rewardValue: 2 },
-            { requireCount: 3, rewardType: 'bonus_spin', rewardValue: 5 },
-          ],
-        }),
-      })
-      expect(g.referralRewardsText).toBe('1:2\n3:5')
-      expect(g.hasGrowthConfig).toBe(true)
-    })
-
-    it('编辑回填后再提交：referralRewards round-trip 不丢（只改标题场景）', () => {
-      const source = {
-        promotionConfig: JSON.stringify({
-          version: 1,
-          referralRewards: [
-            { requireCount: 1, rewardType: 'bonus_spin', rewardValue: 2 },
-            { requireCount: 3, rewardType: 'bonus_spin', rewardValue: 5 },
-          ],
-        }),
-      }
-      const form = growthFieldsFromDraw(source)
-      const payload = buildPromotionConfigPayload(
-        { resultMode: 'instant', referralRewardsText: form.referralRewardsText },
-        { isEditing: true },
-      )
-      expect((payload as any).referralRewards).toEqual([
-        { requireCount: 1, rewardType: 'bonus_spin', rewardValue: 2 },
-        { requireCount: 3, rewardType: 'bonus_spin', rewardValue: 5 },
-      ])
-    })
-
-    it('仅配置里程碑（未开裂变）也能独立提交；非 instant 不写入', () => {
-      const instant = buildPromotionConfigPayload(
-        { resultMode: 'instant', referralRewardsText: '1:2\n3:5' },
-        { isEditing: false },
-      )
-      expect(instant).toMatchObject({
-        enabled: true,
-        referralRewards: [
-          { requireCount: 1, rewardType: 'bonus_spin', rewardValue: 2 },
-          { requireCount: 3, rewardType: 'bonus_spin', rewardValue: 5 },
-        ],
-      })
-      expect(instant).not.toHaveProperty('viral')
-
-      const manual = buildPromotionConfigPayload(
-        { resultMode: 'manual', referralRewardsText: '1:2' },
-        { isEditing: false },
-      )
-      expect(manual).toBeUndefined() // 非 instant 里程碑不生效 → 无增长配置 → undefined
     })
   })
 

@@ -1115,13 +1115,8 @@
                       <textarea v-model="form.leaderboardRewardsText" rows="3" :placeholder="$t('lottery.adminLeaderboardRewardsPlaceholder')"></textarea>
                       <small>{{ $t('lottery.adminLeaderboardRewardsHint') }}</small>
                     </label>
-                    <!-- docs/217 推荐里程碑：邀请跨过门槛一次性加次（仅 instant） -->
-                    <label class="field-span-2">
-                      <span>{{ $t('lottery.adminReferralRewards') }}</span>
-                      <textarea v-model="form.referralRewardsText" rows="3" :placeholder="$t('lottery.adminReferralRewardsPlaceholder')"></textarea>
-                      <small>{{ $t('lottery.adminReferralRewardsHint') }}</small>
-                    </label>
-                    <!-- docs/250/254 引擎推荐奖励：支持 bonus_spin / bonus_coupon 双出口（行编辑器，docs/255 ③） -->
+                    <!-- docs/250/254 引擎推荐奖励：支持 bonus_spin / bonus_coupon 双出口（行编辑器，docs/255 ③），
+                         旧 referralRewards 里程碑 textarea 已收敛删除（docs/255 P1-2） -->
                     <label class="field-span-2">
                       <span>{{ $t('lottery.adminReferralRewardDefs') }}</span>
                       <div class="referral-def-rows">
@@ -2404,8 +2399,6 @@ const advancedConfigSummary = computed((): string[] => {
   if (growth.enableViral === true) chips.push(t('lottery.adminChipViral'))
   if (growth.enablePity === true && Number(growth.pityThreshold || 0) >= 2) chips.push(t('lottery.adminChipPity'))
   if (growth.enableDailyFreeSpins === true && Number(growth.dailyFreeSpinsCount || 0) >= 1) chips.push(t('lottery.adminChipDailyFree'))
-  if (String(growth.referralRewardsText || '').trim()) chips.push(t('lottery.adminChipReferral'))
-  // docs/250/254 引擎推荐奖励：折叠摘要展示芯片
   if (String(growth.referralRewardDefsText || '').trim()) chips.push(t('lottery.adminChipReferralDefs'))
   if (String(growth.leaderboardRewardsText || '').trim()) chips.push(t('lottery.adminChipLeaderboard'))
   if (growth.enableFlashSale === true) {
@@ -3818,8 +3811,6 @@ async function handleDuplicate(draw: LotteryDraw) {
     enableDailyFreeSpins: growth.enableDailyFreeSpins,
     dailyFreeSpinsCount: growth.dailyFreeSpinsCount,
     leaderboardRewardsText: growth.leaderboardRewardsText,
-    // docs/217 推荐里程碑：编辑回填防整包覆盖擦掉配置
-    referralRewardsText: growth.referralRewardsText,
     // docs/250/254 引擎推荐奖励：编辑回填防整包覆盖擦掉配置
     referralRewardDefsText: growth.referralRewardDefsText,
     enableAfterWinCta: growth.enableAfterWinCta,
@@ -4601,8 +4592,6 @@ async function handleEdit(draw: LotteryDraw) {
     enableDailyFreeSpins: growth.enableDailyFreeSpins,
     dailyFreeSpinsCount: growth.dailyFreeSpinsCount,
     leaderboardRewardsText: growth.leaderboardRewardsText,
-    // docs/217 推荐里程碑：编辑回填防整包覆盖擦掉配置
-    referralRewardsText: growth.referralRewardsText,
     // docs/250/254 引擎推荐奖励：编辑回填防整包覆盖擦掉配置
     referralRewardDefsText: growth.referralRewardDefsText,
     enableAfterWinCta: growth.enableAfterWinCta,

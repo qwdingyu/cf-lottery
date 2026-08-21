@@ -31,7 +31,7 @@ import {
 } from "./lottery/types";
 import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
 import { isViralEnabled, readViralPerInvite } from "./lottery/viral-weight";
-import { normalizeDailyFreeSpinConfig, normalizePityConfig, normalizeReferralRewards } from "./lottery/spin-quota";
+import { normalizeDailyFreeSpinConfig, normalizePityConfig } from "./lottery/spin-quota";
 import { normalizeReferralRewardDefs, collectReferralRewardDefIssues } from "./lottery/referral-rewards-engine";
 import { MAX_COUPON_PER_GRANT } from "./lottery/reward-exits";
 
@@ -706,34 +706,13 @@ async function validatePromotion(
     add(result.errors, "promotion", "promotion.dailyFree.delayed_not_supported", "每日免费抽奖仅支持即时开奖模式（result_mode=instant），当前模式不会触发每日免费逻辑");
   }
 
-  // 推荐里程碑校验：与保底/每日免费同理，仅支持即时开奖模式。
-  // processReferralMilestoneRewards 仅在 InstantSpin 体系（maxSpins>=1）中执行，
-  // delayed/manual 模式配置后静默不生效且无提示。
-  const referralRewards = promotionConfig?.referralRewards;
-  if (Array.isArray(referralRewards) && referralRewards.length > 0 && !isInstantResultMode(draw.resultMode)) {
-    add(result.errors, "promotion", "promotion.referralRewards.delayed_not_supported", "推荐里程碑奖励仅支持即时开奖模式（result_mode=instant），当前模式不会触发里程碑逻辑");
-  }
-  // P2 审查项：referralRewards 全为无效项（requireCount/rewardValue 越界或非 bonus_spin）时，
-  // 与 pity/dailyFree 的 disabled_by_invalid_* 同语义，warning 告知"配了但不会生效"（防遗忘闭环）。
-  // 用与运行时同一 normalizeReferralRewards 判定，杜绝"预检说有奖励、实际发放为零"偏差。
-  if (
-    isInstantResultMode(draw.resultMode) &&
-    Array.isArray(referralRewards) &&
-    referralRewards.length > 0 &&
-    normalizeReferralRewards(referralRewards).length === 0
-  ) {
-    add(result.warnings, "promotion", "promotion.referralRewards.invalid_entries", "推荐里程碑配置了条目但全部无效（requireCount 需 1–100、rewardValue 需 1–1000 且类型为 bonus_spin），奖励不会发放");
-  }
-
-  // engine-powered 推荐奖励（docs/250）：referralRewardDefs 与 referralRewards 互斥。
-  // 两者共用 shareRecords.rewardMilestonesGranted 做幂等标记，但存储格式不同
-  // （referralRewards 存 requireCount 数值数组，referralRewardDefs 存 rewardId 字符串数组），
-  // 同时配置会导致双方互读对方的标记而误解，必须拦截。
+  // engine-powered 推荐奖励（docs/250）：referralRewardDefs 是唯一推荐奖励配置入口。
+  // 旧路径 referralRewards（里程碑）已收敛删除（docs/255 P1-2），配置不再支持。
   const referralRewardDefs = promotionConfig?.referralRewardDefs;
-  const hasReferralRewards = Array.isArray(referralRewards) && referralRewards.length > 0;
   const hasReferralRewardDefs = Array.isArray(referralRewardDefs) && referralRewardDefs.length > 0;
-  if (hasReferralRewards && hasReferralRewardDefs) {
-    add(result.errors, "promotion", "promotion.referralRewards.conflict", "不能同时配置 referralRewards 和 referralRewardDefs，请只保留一种推荐奖励配置");
+  // referralRewardDefs 遗留旧字段时 warning（防遗忘：配置了但已不再生效）
+  if (Array.isArray(promotionConfig?.referralRewards) && (promotionConfig!.referralRewards as unknown[]).length > 0) {
+    add(result.warnings, "promotion", "promotion.referralRewards.deprecated", "referralRewards 已废弃（docs/255 P1-2 收敛），请改用 referralRewardDefs 配置引擎推荐奖励");
   }
   // 合法条目与非法原因各求值一次（docs/255 复审 B5）：
   // 三处校验（全部无效 warning、逐条 error、出口适配性）原先各自调用

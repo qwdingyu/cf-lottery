@@ -192,8 +192,6 @@ export type LotteryEditorForm = {
   dailyFreeSpinsCount: number
   /** docs/218 排行榜奖励明细（多行 "名次:spins次数"，如 "1:3\n2:1"） */
   leaderboardRewardsText: string
-  /** docs/217 推荐里程碑（多行 "邀请数:spins次数"，如 "1:2\n3:5"，仅 instant） */
-  referralRewardsText: string
   /** docs/250/254 引擎推荐奖励（多行 "邀请数:类型:数量[:券label]"） */
   referralRewardDefsText: string
   enableAfterWinCta: boolean
