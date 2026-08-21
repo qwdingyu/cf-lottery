@@ -50,7 +50,7 @@
 | 7 | **L1 看到 bonus_spin 奖励** | ✅ | 活动页 spinesLeft 可见 |
 | 8 | **L1 看到 bonus_coupon 奖励** | 🟡 | lottery 活动：consolationCoupon 可查；非 lottery：**看不到** |
 | 9 | L1 消费 bonus_spin | ✅ | performInstantSpin 抽奖 |
-| 10 | L1 核销 bonus_coupon | 🟡 | 仅 L2 管理端 API，L1 无自助核销（现有设计边界） |
+| 10 | L1 核销 bonus_coupon | ✅ | 公开核销 API `POST /public/coupons/redeem`（归属校验 + OTP/JWT + CAS），前端 myResultModal 核销按钮（docs/255 P2 已实现） |
 | 11 | L2 查看奖励发放 | 🟡 | getActivityEventSummary 有数据，前端漏斗未展示 reward_earned |
 | 12 | L3 跨租户监督 | ✅ | activityEvents 可查 |
 
@@ -88,10 +88,12 @@
 - `useDrawAnalytics` 的漏斗卡片未展示 `reward_earned`
 - **影响**：L2 运营者看不到邀请奖励发放统计
 
-**缺口 D：L1 无自助核销优惠券**
-- `POST /api/admin/coupons/redeem` 仅 L2 管理员可用
-- **这是现有优惠券系统的设计边界**（grantLoserRewards 的安慰券也有同样限制），非 referralRewardDefs 引入的新问题
-- 核销场景：用户拿着券码，联系运营/客服核销
+**缺口 D：L1 自助核销优惠券**（✅ 已实现，docs/255 P2 落地）
+- 公开核销 API `POST /public/coupons/redeem`（`public-lottery.ts:1892`）已实现
+- 安全设计：归属校验（recipientEmail 匹配）+ 身份验证（OTP 或 JWT）+ CAS 并发防护（status → redeemed）+ IP/邮箱双维度限流
+- 前端 `redeemCoupon`（`LotteryView.vue:3299`）在 myResultModal 券码旁提供核销按钮
+- 核销后写 `coupon_redeemed` 活动事件（审计）
+- 旧实现仅 L2 管理端 `/coupons/redeem` 可用；现 L1 可自助核销自己领取的券
 
 ---
 
@@ -106,31 +108,31 @@
 | 4 | bonus_coupon 审计（reward_earned） | ✅ |
 | 5 | 发布预检检查 | ✅ |
 
-### P1（需前端/接口配合，单独排期）
-| # | 缺口 | 建议 |
+### P1（已全部实现，docs/254/255 落地）
+| # | 缺口 | 现状 |
 |---|------|------|
-| A | 非 lottery 邀请券看不到 | 后端新增 `GET /api/public/my-rewards?entryId=` 返回该用户全部已发奖励（含 spins/coupon），前端展示 |
-| B | consolationCoupon 只取一条 | `my-result` 返回 `coupons: string[]`（数组）而非单条 |
-| C | L2 前端未展示 reward_earned | `useDrawAnalytics` 漏斗卡片新增"奖励发放"卡片（读 `events.totals.reward_earned`） |
+| A | 非 lottery 邀请券看不到 | ✅ 已实现：`my-result` 返回 `coupons: string[]`（所有活动类型都查），前端 myResultModal 展示 |
+| B | consolationCoupon 只取一条 | ✅ 已实现：`my-result` 返回 `coupons: string[]` 数组（含安慰券 + 邀请奖励券） |
+| C | L2 前端未展示 reward_earned | ✅ 已实现：`useDrawAnalytics` 漏斗卡片新增"奖励发放"卡片（读 `events.totals.reward_earned`） |
 
-### P2（可选）
-| # | 缺口 | 建议 |
+### P2（已实现，docs/255 落地）
+| # | 缺口 | 现状 |
 |---|------|------|
-| D | L1 无自助核销 | 新增公开核销 API `POST /api/public/coupons/redeem`（需安全设计：验证码/OAuth） |
+| D | L1 无自助核销 | ✅ 已实现：公开核销 API `POST /public/coupons/redeem`（归属校验 + OTP/JWT + CAS 防并发 + 限流），前端 myResultModal 核销按钮 |
 
 ---
 
 ## 五、结论
 
-**referralRewardDefs 的核心闭环（配置→参与→归因→计算→发放→审计）已形成：**
+**referralRewardDefs 的核心闭环（配置→参与→归因→计算→发放→展示→核销→审计）已全部形成：**
 
 - ✅ **bonus_spin 出口**：完整闭环（发放→spins→lottery 抽奖消费→spins_log 审计→L3 可查）
-- ✅ **bonus_coupon 出口**：发放/审计闭环完成（recipientEmail + reward_earned），**但 L1 展示有缺口**（非 lottery 活动券码看不到）
+- ✅ **bonus_coupon 出口**：完整闭环（发放→recipientEmail + reward_earned 审计→L1 展示 coupons 数组→L1 自助核销）
 - ✅ **L3 监督**：闭环（activityEvents reward_earned）
-- 🟡 **L2 可视化**：数据已就绪（getActivityEventSummary），前端漏斗未接 reward_earned
-- 🟡 **L1 自助核销**：现有设计边界，非新问题
+- ✅ **L2 可视化**：漏斗卡片已展示 reward_earned（docs/254 落地）
+- ✅ **L1 自助核销**：公开核销 API + 前端核销按钮（docs/255 P2 落地）
 
-**建议**：P1 的缺口 A（非 lottery 邀请券展示）是 `bonus_coupon` 出口形成完整 L1 闭环的关键，建议优先排期。缺口 C（L2 前端展示 reward_earned）成本极低（一个卡片），可一并做。缺口 D（L1 自助核销）涉及安全设计，建议评估后再定。
+**建议**：本报告所列 P1（A/B/C）与 P2（D）缺口均已实现（docs/254/255 落地），referralRewardDefs 全链路闭环完成。
 
 ---
 
@@ -161,8 +163,8 @@
 - **全量测试**：96 文件、1391 测试全部通过，无回归
 - **新增测试**：1 个（my-result coupons 数组：非 lottery 活动返回邀请奖励券）
 
-### 6.4 剩余待办（P2，需安全设计）
+### 6.4 剩余待办（P2，已实现，docs/255 落地）
 
-| # | 缺口 | 说明 |
+| # | 缺口 | 现状 |
 |---|------|------|
-| D | L1 无自助核销优惠券 | 新增公开核销 API `POST /api/public/coupons/redeem`（需安全设计：验证码/OAuth） |
+| D | L1 自助核销优惠券 | ✅ 已实现：公开核销 API `POST /public/coupons/redeem`（归属校验 + OTP/JWT + CAS 防并发 + 限流），前端 myResultModal 核销按钮 |
