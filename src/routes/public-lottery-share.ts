@@ -24,6 +24,7 @@ import {
   buildPublicSharePath,
   buildViralLeaderboardRanking,
   computeViralExtraEntries,
+  isViralEnabled,
   isViralLeaderboardEnabled,
   normalizeViralWeightNumbers,
   type ViralWeightConfig,
@@ -166,9 +167,11 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
     .limit(1);
   if (!draw) return fail(c, "活动不存在", 404);
 
-  const pc = tryParseJson(draw.promotionConfig) as any;
+  // 与 viral-leaderboard / 开奖 / 发布预检同一判定入口（docs/255 P2-4）：
+  // 严格 === true，字符串 "true" 等脏配置一律按未开启，避免各端状态自相矛盾。
+  const pc = tryParseJson(draw.promotionConfig) as { viral?: ViralWeightConfig } | undefined;
   const viral = pc?.viral;
-  if (!viral?.enabled) {
+  if (!isViralEnabled(viral)) {
     return fail(c, "该活动未开启裂变", 400);
   }
 

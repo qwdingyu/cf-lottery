@@ -2767,6 +2767,52 @@ describe("公开参与流程", () => {
     expect(body.inviteOpen).toBe(true);
   });
 
+  /**
+   * docs/255 §8 P2-4：my-viral-stats 必须与 viral-leaderboard / 开奖 / 发布预检
+   * 共用 isViralEnabled 严格判定。此前该端点用 truthy，`enabled: "true"`（字符串）
+   * 时统计接口正常返回、而排行榜返回 400，参与者看到自相矛盾的裂变状态。
+   */
+  it("my-viral-stats：viral.enabled 为字符串 \"true\" 时按未开启处理（400）", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "viral-stats-dirty",
+      title: "裂变统计脏配置",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: "true", extraEntriesPerInvite: 2, maxExtraEntries: 5 },
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "viral-dirty@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+
+    const res = await app.request(
+      `/public/draws/viral-stats-dirty/my-viral-stats?entryId=${encodeURIComponent(entryId)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.74" } },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(false);
+    expect(String(body.error)).toContain("未开启裂变");
+  });
+
   it("share：同一 entry 第二次发码复用，不重复 insert", async () => {
     const app = createPublicTestApp();
     const drawId = crypto.randomUUID();
