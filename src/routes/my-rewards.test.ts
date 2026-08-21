@@ -20,7 +20,6 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import type { AppEnv } from "../bindings";
-import type { DbType } from "../db/client";
 import {
   couponCodes,
   lotteryDraws,

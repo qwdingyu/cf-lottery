@@ -30,8 +30,8 @@ import {
   resumePendingPaymentOrder,
 } from "../services/payment/payment-service";
 import { lotteryFulfillmentProvider } from "../services/payment/fulfillment-provider";
+import { isRetryingPaymentOrder } from "../services/payment/payment-utils";
 import {
-  isRetryablePaymentOrderStatus,
   PAYMENT_ENTRY_STATUS,
   PAYMENT_ORDER_STATUS,
 } from "../services/payment/payment-status";
@@ -202,7 +202,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   ) {
     return fail(c, "活动已关闭，不能继续支付", 409);
   }
-  if (existing && isRetryablePaymentOrderStatus(existing.status) && draw.status !== DRAW_STATUS.OPEN) {
+  if (existing && isRetryingPaymentOrder(existing) && draw.status !== DRAW_STATUS.OPEN) {
     return fail(c, "活动已关闭，不能重新创建支付订单", 409);
   }
   if (existing?.status === PAYMENT_ORDER_STATUS.PENDING && entry.paymentStatus !== PAYMENT_ENTRY_STATUS.PENDING) {
@@ -242,7 +242,7 @@ paymentPublicRoute.post("/draws/:slug/payment-orders", async (c) => {
   // 已有 paid 订单后的「追加购买」走 createPaymentOrder 新建订单，必须按本次
   // 前端件数重新计价（calculated）；否则会把追加件数悄悄改回旧订单件数，
   // 例如已购 1 件再追加 2 件，订单金额却仍按 1 件计算（数量与实付不符的灾难）。
-  const retryingExisting = existing != null && isRetryablePaymentOrderStatus(existing.status);
+  const retryingExisting = isRetryingPaymentOrder(existing);
   const currency = existing?.currency || flashSale.currency || "cny";
   const quantity = retryingExisting && existing ? existing.quantity : calculated.quantity;
   const unitPriceCents = retryingExisting && existing ? existing.unitPriceCents : calculated.unitPriceCents;
