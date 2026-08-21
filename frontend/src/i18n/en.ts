@@ -807,6 +807,7 @@ export default {
       "Permanently delete {count} selected draws? {liveCount} are in progress.\n\nCheck \"Include in-progress draws\" to also delete open/drawing draws (debug/test cleanup, test environments only); draws with payment orders are still protected. This cannot be undone.",
     adminBatchDeleteForceOption: "Include in-progress draws (debug/test cleanup, test environments only)",
     adminBatchDeleteConfirmCheckbox: "I confirm deleting {count} selected draws, this action is irreversible",
+    adminBatchDeleteRequireCheckbox: "Please check the \"I confirm deleting…\" checkbox before deleting",
     adminConfirmBatchHide:
       "Hide {count} completed draw(s) from the public site?\n\nWinner records and admin data stay; public pages go dark. You can show them again anytime.",
     adminConfirmBatchPause:

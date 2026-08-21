@@ -4401,6 +4401,12 @@ async function handleDeleteByIds() {
     },
   )
   if (!decision.confirmed) return
+  // ConfirmDialog 确认按钮不受复选框禁用（phraseOk 仅管 requirePhrase），
+  // 调用方必须显式校验勾选态，否则"复选框防误删"形同虚设（docs/255 审查修复）
+  if (decision.options.confirmDelete !== true) {
+    showToast(t('lottery.adminBatchDeleteRequireCheckbox'), 'info')
+    return
+  }
 
   deletingByIds.value = true
   try {
@@ -4458,6 +4464,11 @@ async function batchDeleteDraws() {
       },
     )
     if (!decision.confirmed) return
+    // 同上：复选框防误删需调用方显式校验勾选态（ConfirmDialog 确认按钮不检查复选框）
+    if (decision.options.confirmDelete !== true) {
+      showToast(t('lottery.adminBatchDeleteRequireCheckbox'), 'info')
+      return
+    }
   }
 
   const targetIds = selectedDraws.map((d) => d.id)
