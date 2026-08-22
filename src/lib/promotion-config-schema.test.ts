@@ -128,4 +128,38 @@ describe("validatePromotionConfig", () => {
     });
     expect(issues).toBeNull();
   });
+
+  describe("rewardId 唯一性（docs/259 §9.5：重复会让某档位永不发放且无提示）", () => {
+    const def = (rewardId: string, amount: string, threshold: string) => ({
+      rewardId, type: "FIXED", target: "SOURCE", fixedAmount: amount,
+      conditions: [{ field: "totalJoinedCount", operator: "GTE", value: threshold }],
+      metadata: { rewardExit: "bonus_spin" },
+    });
+
+    it("重复 rewardId → 保存期报错（而非运行时静默剔除）", () => {
+      const issues = validatePromotionConfig({
+        version: 1,
+        referralRewardDefs: [def("invite_1", "2", "1"), def("invite_1", "3", "3")],
+      });
+      expect(issues).not.toBeNull();
+      expect(issues!.join("；")).toContain("rewardId 重复（invite_1）");
+      // 报错定位到第 2 条，运营能直接找到要改的行
+      expect(issues!.join("；")).toContain("referralRewardDefs.1.rewardId");
+    });
+
+    it("同样的重复经 validateReferralRewardDefs 子校验也被拦下", () => {
+      const issues = validateReferralRewardDefs({
+        referralRewardDefs: [def("m1", "2", "1"), def("m2", "2", "2"), def("m1", "2", "3")],
+      });
+      expect(issues).not.toBeNull();
+      expect(issues!.join("；")).toContain("rewardId 重复（m1）");
+    });
+
+    it("id 各不相同 → 通过（不影响正常配置）", () => {
+      expect(validatePromotionConfig({
+        version: 1,
+        referralRewardDefs: [def("invite_1", "2", "1"), def("invite_1_2", "3", "3"), def("legacy-a", "1", "5")],
+      })).toBeNull();
+    });
+  });
 });

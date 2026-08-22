@@ -2205,6 +2205,7 @@ import {
   sanitizeRitualPhrasesForSave,
   parseReferralRewardDefsText,
   formatReferralRewardDefRows,
+  sanitizeCouponLabel,
   type ReferralRewardDefEntry,
 } from './lottery/growth-config'
 import {
@@ -2742,8 +2743,20 @@ function removeReferralRewardDefRow(index: number) {
   referralRewardDefsRows.value.splice(index, 1)
   syncReferralRewardDefsTextFromRows()
 }
-/** 行内字段变更 → 同步回 text */
+/**
+ * 行内字段变更 → 同步回 text。
+ *
+ * docs/259 §9.5：券 label 里的 `#` 与文本格式的 rewardId 分隔符冲突，会把 label 截断、
+ * 并把 `#` 后的片段误当成发放幂等键。序列化层已会清除，这里同时把输入框里的值就地规范化，
+ * 让运营立刻看到"`#` 不被接受"，而不是界面显示 vip#a、实际保存 vipa。
+ */
 function onReferralRewardDefRowChange() {
+  for (const row of referralRewardDefsRows.value) {
+    if (row.couponLabel != null) {
+      const cleaned = sanitizeCouponLabel(row.couponLabel)
+      if (cleaned !== row.couponLabel) row.couponLabel = cleaned
+    }
+  }
   syncReferralRewardDefsTextFromRows()
 }
 

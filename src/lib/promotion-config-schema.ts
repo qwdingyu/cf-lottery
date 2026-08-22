@@ -60,8 +60,31 @@ const referralRewardDefSchema = z.object({
   }).optional(),
 });
 
-/** promotionConfig 的 referralRewardDefs 子结构 schema */
-export const referralRewardDefsSchema = z.array(referralRewardDefSchema);
+/**
+ * promotionConfig 的 referralRewardDefs 子结构 schema。
+ *
+ * rewardId 唯一性（docs/259 §9.5）：rewardId 同时是发放幂等键
+ * （写入 share_records.reward_milestones_granted，按字符串比对）。
+ * 若两条 def 共用同一 rewardId，运行时 normalizeReferralRewardDefs 只保留第一条、
+ * 静默剔除后一条 —— 运营看不到任何提示，该档位奖励永不发放。
+ * 因此把唯一性提升到**保存期**拦截：任何客户端（后台表单 / 直接调 API）都过不去。
+ * 与运行时白名单、发布预检构成三层防线，且这一层是唯一能在写库前阻止的。
+ */
+export const referralRewardDefsSchema = z
+  .array(referralRewardDefSchema)
+  .superRefine((defs, ctx) => {
+    const seen = new Set<string>();
+    defs.forEach((def, idx) => {
+      if (seen.has(def.rewardId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: [idx, "rewardId"],
+          message: `rewardId 重复（${def.rewardId}）：rewardId 是发放幂等键，重复会导致其中一条奖励永不发放`,
+        });
+      }
+      seen.add(def.rewardId);
+    });
+  });
 
 /**
  * 校验 promotionConfig 中的 referralRewardDefs。

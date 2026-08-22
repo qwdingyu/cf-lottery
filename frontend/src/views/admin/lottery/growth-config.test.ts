@@ -9,6 +9,7 @@ import {
   formatLeaderboardRewardsText,
   parseReferralRewardDefsText,
   formatReferralRewardDefsText,
+  formatReferralRewardDefRows,
 } from './growth-config'
 
 describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () => {
@@ -593,17 +594,102 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
         ],
       })
     })
-    it('rewardId 必须恒为 invite_${requireCount}（幂等键契约，加出口后缀会导致存量重复发奖）', () => {
+    it('新建行的 rewardId 恒为 invite_${requireCount}（幂等键契约，加出口后缀会导致存量重复发奖）', () => {
       // docs/255 P2-11 审查结论：rewardId 就是后端幂等键
-      // （share_records.rewardMilestonesGranted 按字符串比对），而编辑回填不读 rewardId，
+      // （share_records.rewardMilestonesGranted 按字符串比对），
       // 所以格式一旦变化，存量活动重新保存后已发过的档位会被再发一次。
-      // 本用例锁死格式：改动必须同时提供存量迁移，否则这里会红。
+      // 本用例锁死**新建行**的生成格式：改动必须同时提供存量迁移，否则这里会红。
+      // （存量行改由 `#rewardId` 后缀携带原 id，见下方 docs/259 §9.5 用例。）
       const payload = buildPromotionConfigPayload(
         { resultMode: 'instant', referralRewardDefsText: '2:bonus_spin:3\n5:bonus_coupon:1:invite' },
         { isEditing: false },
       )
       const ids = ((payload as any).referralRewardDefs as Array<{ rewardId: string }>).map((d) => d.rewardId)
       expect(ids).toEqual(['invite_2', 'invite_5'])
+    })
+
+    describe('rewardId 幂等键稳定性（docs/259 §9.5 资损防护）', () => {
+      /** 存量活动的 promotionConfig：阈值 5 的 bonus_spin 档位，rewardId=invite_5 已发放过 */
+      const drawWithGrantedDef = {
+        resultMode: 'instant',
+        promotionConfig: JSON.stringify({
+          version: 1,
+          referralRewardDefs: [
+            {
+              rewardId: 'invite_5', type: 'FIXED', target: 'SOURCE', fixedAmount: '2',
+              conditions: [{ field: 'totalJoinedCount', operator: 'GTE', value: '5' }],
+              metadata: { rewardExit: 'bonus_spin' },
+            },
+          ],
+        }),
+      }
+
+      it('回填必须携带 #rewardId 后缀（否则改阈值后 id 重算 → 已发奖用户被重复发放）', () => {
+        const form = growthFieldsFromDraw(drawWithGrantedDef)
+        expect(form.referralRewardDefsText).toBe('5:bonus_spin:2#invite_5')
+      })
+
+      it('运营把阈值 5 改成 6：rewardId 保持 invite_5，只有条件阈值变化（不重复发放）', () => {
+        const form = growthFieldsFromDraw(drawWithGrantedDef)
+        const rows = parseReferralRewardDefsText(form.referralRewardDefsText)
+        expect(rows).toEqual([
+          { requireCount: 5, rewardExit: 'bonus_spin', rewardValue: 2, couponLabel: undefined, rewardId: 'invite_5' },
+        ])
+        rows[0]!.requireCount = 6
+        const payload = buildPromotionConfigPayload(
+          { resultMode: 'instant', referralRewardDefsText: formatReferralRewardDefRows(rows) },
+          { isEditing: true },
+        )
+        expect((payload as any).referralRewardDefs).toEqual([
+          {
+            rewardId: 'invite_5', type: 'FIXED', target: 'SOURCE', fixedAmount: '2',
+            conditions: [{ field: 'totalJoinedCount', operator: 'GTE', value: '6' }],
+            metadata: { rewardExit: 'bonus_spin' },
+          },
+        ])
+      })
+
+      it('新建行的生成 id 与存量携带 id 撞键时自动退让（不再产生重复 rewardId）', () => {
+        // 存量行阈值已从 1 改成 3（id 仍是 invite_1），运营再新增"邀请 1 人"一行
+        const payload = buildPromotionConfigPayload(
+          { resultMode: 'instant', referralRewardDefsText: '3:bonus_spin:2#invite_1\n1:bonus_spin:1' },
+          { isEditing: true },
+        )
+        const defs = (payload as any).referralRewardDefs as Array<{ rewardId: string; conditions: Array<{ value: string }> }>
+        // parse 按 requireCount 升序 → 新建的 1 人档在前
+        expect(defs.map((d) => [d.conditions[0]!.value, d.rewardId])).toEqual([
+          ['1', 'invite_1_2'],
+          ['3', 'invite_1'],
+        ])
+        expect(new Set(defs.map((d) => d.rewardId)).size).toBe(defs.length)
+      })
+
+      it('券 label 中的 # 被清除，不会污染 rewardId 解析', () => {
+        // 修复前：'3:bonus_coupon:1:vip#a' → label='vip' + rewardId='a'（label 截断 + 伪造幂等键）
+        expect(parseReferralRewardDefsText('3:bonus_coupon:1:vip#a')).toEqual([
+          { requireCount: 3, rewardExit: 'bonus_coupon', rewardValue: 1, couponLabel: 'vip', rewardId: 'a' },
+        ])
+        // 但 UI 侧序列化会先清除 label 里的 #，因此这种文本不再由界面产出
+        expect(formatReferralRewardDefRows([
+          { requireCount: 3, rewardExit: 'bonus_coupon', rewardValue: 1, couponLabel: 'vip#a' },
+        ])).toBe('3:bonus_coupon:1:vipa')
+        // 提交时 couponLabel 也过清洗
+        const payload = buildPromotionConfigPayload(
+          { resultMode: 'instant', referralRewardDefsText: '3:bonus_coupon:1:vipa#invite_3' },
+          { isEditing: false },
+        )
+        expect((payload as any).referralRewardDefs[0].metadata).toEqual({
+          rewardExit: 'bonus_coupon', couponLabel: 'vipa',
+        })
+      })
+
+      it('存量 rewardId 与 requireCount 完全解耦：id 可以是任意历史串', () => {
+        const payload = buildPromotionConfigPayload(
+          { resultMode: 'instant', referralRewardDefsText: '4:bonus_spin:1#legacy-milestone-a' },
+          { isEditing: true },
+        )
+        expect((payload as any).referralRewardDefs[0].rewardId).toBe('legacy-milestone-a')
+      })
     })
   })
 })
