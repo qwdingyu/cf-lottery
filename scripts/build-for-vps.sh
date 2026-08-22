@@ -160,6 +160,9 @@ if [ "$DO_PACKAGE" = true ]; then
   # 注意：sed -i 行为在 macOS 与 Linux 上不同，用 -i.bak 兼容
   sed -i.bak "s|\"@usethink/cf-core\": \"file:../cf-core\"|\"@usethink/cf-core\": \"$CF_CORE_VER\"|g" "$VPS_PKG_DIR/package.json"
   sed -i.bak "s|\"@usethink/cf-admin-fe\": \"file:../cf-admin-fe\"|\"@usethink/cf-admin-fe\": \"$CF_ADMIN_FE_VER\"|g" "$VPS_PKG_DIR/package.json"
+
+  # 移除 workspaces 字段：VPS 部署包不包含 frontend 源码，workspace 会导致 npm ci 失败
+  sed -i.bak '/"workspaces"[[:space:]]*:/,/]/d' "$VPS_PKG_DIR/package.json"
   rm -f "$VPS_PKG_DIR/package.json.bak"
 
   # 注意：dist/、public/、configs/、migrations/ 从项目根目录取

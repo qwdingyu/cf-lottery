@@ -1443,7 +1443,7 @@ adminLotteryRoute.get("/draws/:id/rewards/failures", async (c) => {
       await decorateIdentityDisplay(db, list);
     }
 
-    // 清理内部字段，只返回前端需要的字段
+    // 保留 identityDisplay 供前端展示，同时清理内部字段
     const result = list.map(({ identityType: _, identityValue: __, ...rest }) => rest);
 
     return ok(c, { failures: result });

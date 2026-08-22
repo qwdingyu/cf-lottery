@@ -2672,7 +2672,7 @@ const participationModeOptions = computed(() => {
 })
 const showWinnersModal = ref(false)
 const showRewardFailuresModal = ref(false)
-const rewardFailures = ref<Array<{ id: string; entryId: string; refCode: string; createdAt: string; path: string; error: string; shareRecordId: string }>>([])
+const rewardFailures = ref<Array<{ id: string; entryId: string; refCode: string; createdAt: string; path: string; error: string; shareRecordId: string; identityDisplay?: string }>>([])
 const rewardFailuresLoading = ref(false)
 const rewardFailuresDrawId = ref('')
 /** P1-2：运营可指定补发某人的失败记录，而非全部重试 */

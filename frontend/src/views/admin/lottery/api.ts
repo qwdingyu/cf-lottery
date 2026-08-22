@@ -121,6 +121,7 @@ export const fetchRewardFailures = async (id: string) =>
     path: string
     error: string
     shareRecordId: string
+    identityDisplay?: string
   }> }>(`/api/admin/draws/${id}/rewards/failures`)
 
 /** 补发奖励（docs/259 P1-2）；all=true 时重试该活动所有 reward_failed；entryId 可指定补发某人 */
