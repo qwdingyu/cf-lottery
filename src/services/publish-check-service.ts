@@ -33,6 +33,7 @@ import { normalizeLeaderboardRewards } from "./lottery/leaderboard-rewards";
 import { isViralEnabled, readViralPerInvite } from "./lottery/viral-weight";
 import { normalizeDailyFreeSpinConfig, normalizePityConfig } from "./lottery/spin-quota";
 import { normalizeReferralRewardDefs, collectReferralRewardDefIssues } from "./lottery/referral-rewards-engine";
+import { extractMilestoneThreshold } from "./lottery/referral-milestones";
 import { MAX_COUPON_PER_GRANT } from "./lottery/reward-exits";
 
 export type PublishCheckSection =
@@ -799,15 +800,33 @@ async function validatePromotion(
 
   // 裂变配置校验（P2 审查项：统一严格 ===true 判定，enabled="true" 字符串不视为启用）
   if (isViralEnabled(viral) && viral) {
-    // 冲突检查（docs/254 审查发现）：viral.extraSpinsPerInvite（路径[1] grantViralSpinsToSharer）
-    // 与 referralRewardDefs（路径[4] processReferralRewardsEngine）都是"邀请加 spins"语义，
-    // 若同时配置，同一邀请会触发两次加次（各自 CAS 不超发，但语义重复、运营困惑）。
-    // 必须二选一：用 referralRewardDefs 时，viral 的 per-invite 加次应关闭。
+    // 两层叠加不再互斥（docs/259 D2 ①）：
+    // viral.extraSpinsPerInvite 是「基础激励层」（每邀请固定 +N，管即时反馈/排行榜/开奖权重），
+    // referralRewardDefs 是「里程碑加成层」（达阈值一次性加成 + 券码出口），两者互补而非重复。
+    // 旧规则把它们判为冲突并阻断发布，导致「想同时要即时反馈和阶梯奖励」的活动根本无法发布，
+    // 而绕开的唯一办法（关掉 viral）又会让 my-viral-stats/排行榜失效——治法比病更糟。
+    // 运行时安全由共同出口 grantBonusSpin 的 spinsTotalGranted CAS + maxSpinsPerEntry 硬顶保证。
+    //
+    // 叠加后真正的残余风险只有一个：基础层把每人次数硬顶吃满后，里程碑档位必然被裁剪为 0
+    // （静默少发）。只在这种可证明必然发生时才告警——不做「配了两层就提示一下」的恒亮噪音
+    // （docs/255 R-7：预检变成噪音就等于没有预检）。
     if (hasReferralRewardDefs) {
       // docs/255 P2-4：统一用 readViralPerInvite 读取（优先 extraSpins*，回退 extraEntries*）
-      const { perInvite } = readViralPerInvite(viral);
-      if (perInvite > 0) {
-        add(result.errors, "promotion", "viral.extra_entries.conflict_with_reward_defs", "裂变传播：已配置 referralRewardDefs 引擎奖励，不能再配置 viral 每邀请加次（extraSpinsPerInvite/extraEntriesPerInvite），请二选一");
+      const { perInvite, maxExtra } = readViralPerInvite(viral);
+      const maxSpinsPerEntry = Math.max(0, Math.floor(Number((draw as { maxSpinsPerEntry?: number }).maxSpinsPerEntry ?? 0)));
+      if (perInvite > 0 && maxSpinsPerEntry >= 1) {
+        for (const def of validReferralRewardDefs) {
+          const meta = (def.metadata || {}) as Record<string, unknown>;
+          if (String(meta.rewardExit || "bonus_spin") !== "bonus_spin") continue;
+          // 阈值从 conditions 反推（与引擎判定同一真相）；无法归约（OR/NOT/无条件）时不猜测
+          const threshold = extractMilestoneThreshold(def.conditions);
+          if (threshold == null) continue;
+          // 达标那一刻基础层已累计发放：join 初始 1 次 + min(perInvite × 阈值, 裂变子顶)
+          const baseGranted = 1 + Math.min(perInvite * threshold, maxExtra);
+          if (baseGranted >= maxSpinsPerEntry) {
+            add(result.warnings, "promotion", "promotion.referralRewardDefs.bonus_spin.clipped_by_viral", `推荐奖励 ${def.rewardId}（邀请 ${threshold} 人达标）使用 bonus_spin 出口，但达标时基础裂变加次已把每人抽奖次数用满（初始 1 + min(${perInvite}×${threshold}, ${maxExtra}) = ${baseGranted} ≥ 上限 ${maxSpinsPerEntry}），该档奖励会被总量上限裁剪为 0；请提高每人抽奖次数上限，或降低裂变每邀请加次/子上限`);
+          }
+        }
       }
     }
     // 邀请加次/加权数值仅对抽奖（lottery）有意义（instant 加 spins / delayed 开奖加权）；

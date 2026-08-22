@@ -1596,9 +1596,8 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
     expect(r.errors.some((item) => item.code === "activity_config.loser_reward.instant_not_supported")).toBe(false);
   });
 
-  it("viral.extraSpinsPerInvite 与 referralRewardDefs 同时配置 → 阻断（docs/254 审查发现）", async () => {
-    // viral 每邀请加次 + referralRewardDefs 同时配置 → 阻断（同一邀请触发两次加次，语义重复）
-    const conflict = makeDraw({
+  it("viral 每邀请加次 + referralRewardDefs 叠加 → 放行（docs/259 D2 ①：两层互补不再互斥）", async () => {
+    const stacked = makeDraw({
       activityKind: "lottery",
       resultMode: "instant",
       maxSpinsPerEntry: 10,
@@ -1610,25 +1609,67 @@ describe("发布预检 — 导流、Webhook、未闭环玩法", () => {
         ],
       }),
     });
-    await addManualTier(conflict.id);
-    const r1 = await buildPublishCheckForDraw(db, TENANT, conflict as any);
-    expect(r1.errors.some((item) => item.code === "viral.extra_entries.conflict_with_reward_defs")).toBe(true);
+    await addManualTier(stacked.id);
+    const r1 = await buildPublishCheckForDraw(db, TENANT, stacked as any);
+    // 旧规则已删除：叠加不再阻断发布
+    expect(r1.errors.some((item) => item.code === "viral.extra_entries.conflict_with_reward_defs")).toBe(false);
+    // 无 conditions（无阈值可归约）→ 不猜测、不告警
+    expect(r1.warnings.some((item) => item.code === "promotion.referralRewardDefs.bonus_spin.clipped_by_viral")).toBe(false);
+  });
 
-    // viral 无每邀请加次（extraSpinsPerInvite 未配置）+ referralRewardDefs → 放行
-    const noConflict = makeDraw({
+  it("叠加且里程碑必然被基础层挤到 0 → warning（docs/259 D2 ①）", async () => {
+    // 每人 3 次上限；基础层每邀请 +2、子顶 10；里程碑要邀请 5 人
+    // → 达标时基础层已发 1 + min(2×5, 10) = 10 ≥ 3，里程碑必然裁剪为 0
+    const clipped = makeDraw({
       activityKind: "lottery",
       resultMode: "instant",
-      maxSpinsPerEntry: 10,
+      maxSpinsPerEntry: 3,
       promotionConfig: JSON.stringify({
         version: 1,
-        viral: { enabled: true, leaderboardEnabled: true },
+        viral: { enabled: true, extraSpinsPerInvite: 2, maxExtraSpins: 10, leaderboardEnabled: true },
         referralRewardDefs: [
-          { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+          {
+            rewardId: "m5",
+            type: "FIXED",
+            target: "SOURCE",
+            fixedAmount: "2",
+            conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "5" }],
+            metadata: { rewardExit: "bonus_spin" },
+          },
         ],
       }),
     });
-    await addManualTier(noConflict.id);
-    const r2 = await buildPublishCheckForDraw(db, TENANT, noConflict as any);
-    expect(r2.errors.some((item) => item.code === "viral.extra_entries.conflict_with_reward_defs")).toBe(false);
+    await addManualTier(clipped.id);
+    const r = await buildPublishCheckForDraw(db, TENANT, clipped as any);
+    const warns = r.warnings.filter((item) => item.code === "promotion.referralRewardDefs.bonus_spin.clipped_by_viral");
+    expect(warns).toHaveLength(1);
+    expect(warns[0]!.message).toContain("m5");
+    expect(r.errors.some((item) => item.code === "viral.extra_entries.conflict_with_reward_defs")).toBe(false);
+  });
+
+  it("叠加但总量上限充足 → 不告警（不做恒亮噪音，docs/255 R-7）", async () => {
+    // 每人 30 次上限；达标时基础层最多用掉 1 + min(1×5, 10) = 6 < 30 → 里程碑发得出来
+    const roomy = makeDraw({
+      activityKind: "lottery",
+      resultMode: "instant",
+      maxSpinsPerEntry: 30,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        viral: { enabled: true, extraSpinsPerInvite: 1, maxExtraSpins: 10, leaderboardEnabled: true },
+        referralRewardDefs: [
+          {
+            rewardId: "m5",
+            type: "FIXED",
+            target: "SOURCE",
+            fixedAmount: "2",
+            conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "5" }],
+            metadata: { rewardExit: "bonus_spin" },
+          },
+        ],
+      }),
+    });
+    await addManualTier(roomy.id);
+    const r = await buildPublishCheckForDraw(db, TENANT, roomy as any);
+    expect(r.warnings.some((item) => item.code === "promotion.referralRewardDefs.bonus_spin.clipped_by_viral")).toBe(false);
   });
 });
