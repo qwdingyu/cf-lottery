@@ -172,12 +172,18 @@ export function formatLeaderboardRewardsText(rewards: Array<{ rank: number; rewa
 
 /**
  * 引擎推荐奖励条目（docs/250/254）：与后端 referralRewardDefs 对齐
+ *
+ * rewardId：幂等键。存量 defs 回填时携带原始 rewardId（文本 `#rewardId` 后缀），
+ * 提交时优先复用，避免运营改阈值后 rewardId 变化导致已发奖励被重复发放
+ * （docs/259 P2-3 资损隐患修复）。新建行为 undefined → 提交时按 invite_${requireCount} 生成。
  */
 export type ReferralRewardDefEntry = {
   requireCount: number
   rewardExit: 'bonus_spin' | 'bonus_coupon'
   rewardValue: number
   couponLabel?: string
+  /** 存量 rewardId（回填携带）；新建行为 undefined */
+  rewardId?: string
 }
 
 /**
@@ -201,8 +207,17 @@ export function parseReferralRewardDefsText(raw: string | null | undefined): Ref
   for (const line of String(raw || '').split(/[\n,;；]/)) {
     const s = line.trim()
     if (!s) continue
-    // 格式：邀请数:奖励类型:数量[:券label]
-    const parts = s.split(':')
+    // 格式：邀请数:奖励类型:数量[:券label][#rewardId]
+    // #rewardId 为 docs/259 P2-3 扩展：存量 defs 回填携带幂等键，改阈值不丢；
+    // 无 # 前缀的旧文本（含手写/历史）照常解析，rewardId 留空 → 提交时按 invite_N 生成。
+    const hashIdx = s.lastIndexOf('#')
+    let rewardId: string | undefined
+    let body = s
+    if (hashIdx > 0) {
+      rewardId = s.slice(hashIdx + 1).trim()
+      body = s.slice(0, hashIdx).trim()
+    }
+    const parts = body.split(':')
     if (parts.length < 3) continue
     const requireCount = Number(parts[0])
     const rewardExit = parts[1]?.trim() as 'bonus_spin' | 'bonus_coupon'
@@ -213,7 +228,7 @@ export function parseReferralRewardDefsText(raw: string | null | undefined): Ref
     if (seen.has(requireCount)) continue
     seen.add(requireCount)
     const couponLabel = parts.length >= 4 ? parts.slice(3).join(':').trim() : undefined
-    out.push({ requireCount, rewardExit, rewardValue, couponLabel })
+    out.push({ requireCount, rewardExit, rewardValue, couponLabel, rewardId: rewardId || undefined })
   }
   return out.sort((a, b) => a.requireCount - b.requireCount)
 }
@@ -230,10 +245,16 @@ export function formatReferralRewardDefsText(defs: Array<Record<string, unknown>
       const rewardExit = String(meta.rewardExit || 'bonus_spin')
       const rewardValue = Number(d?.fixedAmount ?? d?.amount ?? 0)
       const couponLabel = String(meta.couponLabel || '')
+      // docs/259 P2-3：回填必须携带原始 rewardId（# 后缀），否则编辑保存后重新生成
+      // 的 rewardId 与已发放标记失配 → 已发奖用户被重复发放（资损隐患）
+      const rewardId = d?.rewardId ? String(d.rewardId).trim() : ''
       if (!Number.isInteger(requireCount) || requireCount < 1) return ''
       if (rewardExit !== 'bonus_spin' && rewardExit !== 'bonus_coupon') return ''
       if (!Number.isInteger(rewardValue) || rewardValue < 1) return ''
-      return couponLabel ? `${requireCount}:${rewardExit}:${rewardValue}:${couponLabel}` : `${requireCount}:${rewardExit}:${rewardValue}`
+      const body = couponLabel
+        ? `${requireCount}:${rewardExit}:${rewardValue}:${couponLabel}`
+        : `${requireCount}:${rewardExit}:${rewardValue}`
+      return rewardId ? `${body}#${rewardId}` : body
     })
     .filter(Boolean)
     .join('\n')
@@ -242,7 +263,10 @@ export function formatReferralRewardDefsText(defs: Array<Record<string, unknown>
 /** 行编辑器专用：从 ReferralRewardDefEntry[] 生成本文（与 parseReferralRewardDefsText 互逆） */
 export function formatReferralRewardDefRows(rows: ReferralRewardDefEntry[]): string {
   return rows
-    .map((r) => r.couponLabel ? `${r.requireCount}:${r.rewardExit}:${r.rewardValue}:${r.couponLabel}` : `${r.requireCount}:${r.rewardExit}:${r.rewardValue}`)
+    .map((r) => {
+      const body = r.couponLabel ? `${r.requireCount}:${r.rewardExit}:${r.rewardValue}:${r.couponLabel}` : `${r.requireCount}:${r.rewardExit}:${r.rewardValue}`
+      return r.rewardId ? `${body}#${r.rewardId}` : body
+    })
     .join('\n')
 }
 
@@ -689,16 +713,13 @@ export function buildPromotionConfigPayload(form: {
     referralRewardDefsBlock = {
       referralRewardDefs: referralRewardDefs.map((r) => ({
         // ⚠️ rewardId 是幂等键，格式一旦变更会导致存量奖励重复发放，禁止随意修改。
-        // 后端把已发放的 rewardId 存入 share_records.rewardMilestonesGranted
-        // （referral-rewards-engine.ts:423 按字符串比对判断"是否已发"）；
-        // 而编辑回填 formatReferralRewardDefsText 是从 conditions[0].value 反推邀请数、
-        // 不读 rewardId，所以存量活动只要在后台再保存一次，rewardId 就会整体变形，
-        // 已发过 invite_3 的分享者会被再发一次（bonus_spin 在 maxSpinsPerEntry<=0 时无上限，
-        // bonus_coupon 直接从码池再扣一张真券）。
+        // docs/259 P2-3 修复：行条目携带存量 rewardId（回填 # 后缀），提交时优先复用，
+        // 运营改阈值（如 5→6）不改变 rewardId → 已发放标记继续匹配 → 不重复发放。
+        // 仅新建行（无 rewardId）按 invite_${requireCount} 生成。
         // 若将来要支持"同一邀请数配多种出口"，必须三件事一起做：放开下方 parse 的
         // requireCount 去重、改 rewardId 规则、并为存量 rewardMilestonesGranted 写迁移
         // （或让幂等判断兼容 invite_N 覆盖 invite_N_*）。见 docs/255 P2-11。
-        rewardId: `invite_${r.requireCount}`,
+        rewardId: r.rewardId?.trim() || `invite_${r.requireCount}`,
         type: 'FIXED',
         target: 'SOURCE',
         fixedAmount: String(r.rewardValue),

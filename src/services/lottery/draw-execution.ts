@@ -838,8 +838,19 @@ export async function grantLoserRewards(
     .limit(losers.length);
 
   let granted = 0;
-  for (let i = 0; i < losers.length && i < availableCoupons.length; i++) {
-    const loser = losers[i]!;
+  // docs/259 P1-1 修复：空收件人（user_id 身份但 users 行缺失/email 为空）不消耗券码。
+  // 此前空 recipientEmail 仍 CAS 置 issued：券从池子消失但用户永远不可见（my-result 等
+  // 全部按 recipientEmail 精确匹配），真券被静默烧掉。修复：跳过该 loser，券保留在码池，
+  // 下次开奖（或补发通道）仍可发放。
+  const deliverableLosers = losers.filter((loser) => {
+    const email = loser.identityType === "user_id"
+      ? (userEmailMap.get(loser.identityValue) || "")
+      : loser.identityValue;
+    return Boolean(email);
+  });
+  const deliverableCount = Math.min(deliverableLosers.length, availableCoupons.length);
+  for (let i = 0; i < deliverableCount; i++) {
+    const loser = deliverableLosers[i]!;
     const coupon = availableCoupons[i]!;
     // registered 身份（identityType=user_id）用 users.email 作为 recipientEmail，其余用 identityValue
     const recipientEmail = loser.identityType === "user_id"

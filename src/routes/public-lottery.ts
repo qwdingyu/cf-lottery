@@ -2082,50 +2082,65 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
 
   if (entries.length === 0) return ok(c, { rewards: [] });
 
-  // 逐活动查标题和 coupons
-  const rewards = await Promise.all(entries.map(async (entry) => {
-    const [draw] = await db
-      .select({ title: lotteryDraws.title, publicSlug: lotteryDraws.publicSlug })
-      .from(lotteryDraws)
-      .where(and(
-        eq(lotteryDraws.id, entry.drawId),
-        eq(lotteryDraws.tenantId, entry.tenantId),
-      ))
-      .limit(1);
-    if (!draw) return null;
+  // docs/259 P2-2 修复：批量 IN 查询替代 N+1 逐条查询
+  // 提取所有活动的 (drawId, tenantId) 对，合并到 batch 查询中
+  const drawIds = [...new Set(entries.map((e) => e.drawId))];
+  const tenantIds = [...new Set(entries.map((e) => e.tenantId))];
 
-    // 查询该 entry 下的 issued 优惠券（按 recipientEmail）
-    const [user] = await db
-      .select({ email: users.email })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    const userEmail = user?.email || "";
-    let coupons: string[] = [];
-    if (userEmail) {
-      const couponRows = await db
-        .select({ code: couponCodes.code })
+  // 批量查询活动标题（一次 IN 查询，替代 N 次逐条查询）
+  const drawRows = await db
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, title: lotteryDraws.title, publicSlug: lotteryDraws.publicSlug })
+    .from(lotteryDraws)
+    .where(and(
+      inArray(lotteryDraws.id, drawIds),
+      inArray(lotteryDraws.tenantId, tenantIds),
+    ));
+  const drawMap = new Map(drawRows.map((d) => [`${d.tenantId}:${d.id}`, d]));
+
+  // 查询用户邮箱（用于 coupon 匹配）
+  const [user] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const userEmail = user?.email || "";
+
+  // 批量查询所有已发放优惠券（一次 IN 查询，替代 N 次逐条查询）
+  const couponRows = userEmail
+    ? await db
+        .select({ code: couponCodes.code, tenantId: couponCodes.tenantId, drawId: couponCodes.drawId })
         .from(couponCodes)
         .where(and(
-          eq(couponCodes.tenantId, entry.tenantId),
-          eq(couponCodes.drawId, entry.drawId),
+          inArray(couponCodes.tenantId, tenantIds),
+          inArray(couponCodes.drawId, drawIds),
           eq(couponCodes.recipientEmail, userEmail),
           eq(couponCodes.status, "issued"),
         ))
-        .orderBy(couponCodes.createdAt);
-      coupons = couponRows.map((r) => r.code);
-    }
+        .orderBy(couponCodes.createdAt)
+    : [];
+  const couponMap = new Map<string, string[]>();
+  for (const c of couponRows) {
+    const key = `${c.tenantId}:${c.drawId}`;
+    if (!couponMap.has(key)) couponMap.set(key, []);
+    couponMap.get(key)!.push(c.code);
+  }
 
-    return {
-      drawId: entry.drawId,
-      tenantId: entry.tenantId,
-      slug: draw.publicSlug,
-      title: draw.title,
-      spinsLeft: Math.max(0, Math.floor(Number(entry.spinsLeft || 0))),
-      coupons,
-    };
-  }));
+  // 组装结果
+  const rewards = entries
+    .map((entry) => {
+      const key = `${entry.tenantId}:${entry.drawId}`;
+      const draw = drawMap.get(key);
+      if (!draw) return null;
+      return {
+        drawId: entry.drawId,
+        tenantId: entry.tenantId,
+        slug: draw.publicSlug,
+        title: draw.title,
+        spinsLeft: Math.max(0, Math.floor(Number(entry.spinsLeft || 0))),
+        coupons: couponMap.get(key) || [],
+      };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null);
 
-  const validRewards = rewards.filter((r): r is NonNullable<typeof r> => r !== null);
-  return ok(c, { rewards: validRewards });
+  return ok(c, { rewards });
 });

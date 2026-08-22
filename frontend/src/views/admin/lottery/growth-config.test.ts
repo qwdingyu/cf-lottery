@@ -546,7 +546,7 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
           ],
         }),
       })
-      expect(g.referralRewardDefsText).toBe('1:bonus_spin:2\n3:bonus_coupon:1:invite')
+      expect(g.referralRewardDefsText).toBe('1:bonus_spin:2#invite_1\n3:bonus_coupon:1:invite#invite_3')
       expect(g.hasGrowthConfig).toBe(true)
     })
 

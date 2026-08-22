@@ -16,7 +16,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { lotteryEntries, couponCodes, users } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
 import { recordActivityEvent } from "./integration";
-import { logError } from "../../lib/logger";
+import { logError, logWarn } from "../../lib/logger";
 
 /**
  * 发放 bonus_spin（额外抽奖次数）给分享者。
@@ -189,6 +189,18 @@ export async function grantBonusCoupon(
     } else {
       recipientEmail = sharer.identityValue || "";
     }
+  }
+
+  // docs/259 P1-1 修复：空收件人时【不消耗券码】。
+  // 此前空 recipientEmail 仍把券 CAS 置 issued：券从池子消失、幂等标记写入"已发放"、
+  // 但 my-result / my-rewards / redeem 全部按 recipientEmail 精确匹配 → 券永久不可见
+  // （用户拿不到、运营无法重发，真券被静默烧掉）。
+  // 修复：直接返回 0（不取码、不置 issued、不写幂等标记）→ 调用方视为"本次未发放"，
+  // 保持 rewardId:N 部分标记语义（发 0 张不写标记），补货/修复收件人后下次归因可续发。
+  if (!recipientEmail) {
+    logWarn("reward-exits", "bonus_coupon_skip_no_recipient",
+      JSON.stringify({ tenantId, drawId, sharerEntryId, rewardId, couponLabel: couponLabel || "" }));
+    return 0;
   }
 
   // 循环发券：每张独立 CAS（available → issued），并发下不会重复发同一张。
