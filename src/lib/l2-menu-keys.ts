@@ -39,15 +39,23 @@ export function isL2MenuKey(value: string): boolean {
  */
 const MENU_PATH_PREFIXES: Array<{ prefix: string; menuKey: string }> = [
   { prefix: "/draws", menuKey: "AdminLottery" },
+  // 活动模板列表（前端 AdminLotteryView 调用，docs/258 复核补漏映射）
+  { prefix: "/templates", menuKey: "AdminLottery" },
   { prefix: "/prizes", menuKey: "AdminPrizes" },
+  // 优惠券码池管理（i18n 引导「奖品管理 → 优惠券」导入，docs/258 复核补漏映射）
+  { prefix: "/coupons", menuKey: "AdminPrizes" },
   { prefix: "/brand", menuKey: "AdminBrand" },
   { prefix: "/payment-config", menuKey: "AdminPaymentConfig" },
   { prefix: "/payment-orders", menuKey: "AdminPaymentOrders" },
   { prefix: "/quota-redeem", menuKey: "AdminQuotaRedeem" },
   { prefix: "/redemption-codes", menuKey: "AdminQuotaRedeem" },
+  // 兑换记录（前端 AdminQuotaRedeemView 调用，docs/258 复核补漏映射）
+  { prefix: "/redemption-records", menuKey: "AdminQuotaRedeem" },
   { prefix: "/integrations", menuKey: "AdminIntegrations" },
   { prefix: "/webhooks", menuKey: "AdminIntegrations" },
   { prefix: "/api-keys", menuKey: "AdminIntegrations" },
+  // webhook 投递记录（docs/258 复核补漏映射）
+  { prefix: "/webhook-deliveries", menuKey: "AdminIntegrations" },
   { prefix: "/platform-targets", menuKey: "AdminPlatformTarget" },
   { prefix: "/members", menuKey: "AdminMembers" },
   { prefix: "/blacklist", menuKey: "AdminBlacklist" },

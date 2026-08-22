@@ -216,12 +216,14 @@ function statusClass(status: string): string {
 async function loadData() {
   try {
     // 并行加载统计数据 + 待办事项（dashboard 端点返回待开奖/通知失败数）
+    // /draws 降级：L3 禁用「活动管理」菜单后 /draws 返回 403，运营台应降级显示
+    // （stats/dashboard 仍可用），而不是整体加载失败（docs/258 复核修复）。
     const [statsData, drawsData, dashboardData] = await Promise.all([
       adminRequest<any>('/api/admin/stats'),
-      adminRequest<{ draws: any[] }>('/api/admin/draws'),
+      adminRequest<{ draws: any[] }>('/api/admin/draws').catch(() => null),
       adminRequest<any>('/api/admin/dashboard').catch(() => null),
     ])
-    const draws = drawsData.draws || []
+    const draws = drawsData?.draws || []
     recentDraws.value = draws.slice(0, 10)
     stats.value = {
       open: statsData.openDraws ?? draws.filter((d: any) => d.status === 'open').length,

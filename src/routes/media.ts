@@ -3,6 +3,7 @@ import type { AppEnv } from "../bindings";
 import { logWarn } from "../lib/logger";
 import { auditLogs } from "../db/schema";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
+import { requireL2MenuEnabled } from "./admin-lottery-helpers";
 import { fail, getDb, ok } from "../lib/http";
 import { waitUntil } from "../lib/platform";
 import {
@@ -27,7 +28,10 @@ function getMediaBucket(c: { env: AppEnv["Bindings"] }): R2Bucket | undefined {
 }
 
 // 租户侧媒体上传属于后台写操作：viewer 可以看活动，但不能上传或改奖品图。
-adminMediaRoute.use("*", requireAuth, requireTenantMember(), async (c, next) => {
+// requireL2MenuEnabled（防御性，docs/258 复核）：media 是活动图/奖品图/品牌图共用的
+// 跨菜单基础设施，当前 MENU_PATH_PREFIXES 无 /media 映射（无法归一到单一菜单），
+// 中间件在此不拦截；若未来新增「媒体管理」菜单或细化映射，无需再改本路由。
+adminMediaRoute.use("*", requireAuth, requireTenantMember(), requireL2MenuEnabled, async (c, next) => {
   const role = c.get("tenantRole");
   if (role !== "owner" && role !== "admin") return fail(c, "权限不足", 403);
   await next();

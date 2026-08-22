@@ -1032,6 +1032,33 @@ describe("L2 菜单权限（L3 全局禁用）", () => {
     expect(meRes.status).toBe(200);
   });
 
+  it("漏映射路径补齐后：禁用 AdminLottery/AdminQuotaRedeem 时 templates/redemption-records 也 403（docs/258 复核）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    const app = createTestApp();
+
+    // 禁用 AdminLottery + AdminQuotaRedeem + AdminIntegrations + AdminPrizes
+    await app.request("/api/platform/l2-menus", {
+      method: "PATCH",
+      headers: await authHeader(PLATFORM_ID),
+      body: JSON.stringify({
+        disabledMenus: ["AdminLottery", "AdminQuotaRedeem", "AdminIntegrations", "AdminPrizes"],
+      }),
+    }, TEST_ENV);
+
+    // 复核补映射的 4 个路径：一律 403（此前漏映射可绕过）
+    const paths = [
+      "/api/admin/templates", // → AdminLottery
+      "/api/admin/redemption-records", // → AdminQuotaRedeem
+      "/api/admin/coupons", // → AdminPrizes
+      "/api/admin/webhook-deliveries", // → AdminIntegrations
+    ];
+    for (const p of paths) {
+      const res = await app.request(p, { headers: await authHeader(OWNER_ID) }, TEST_ENV);
+      expect(res.status, `${p} 应被禁用菜单拦截为 403`).toBe(403);
+    }
+  });
+
   it("L2 /me 返回 menuDisabled（前端过滤数据源）", async () => {
     await seedUsers();
     await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
