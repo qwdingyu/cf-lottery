@@ -132,11 +132,13 @@ function buildPayload() {
 
 /** 校验自定义链接格式，无效时设置 slugError 并返回 false */
 function validateSlug(): boolean {
-  const v = editingSlug.value.trim()
+  const v = editingSlug.value.trim().toLowerCase()
   if (v && !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(v) && v.length > 1) {
     slugError.value = t('brand.slugInvalid')
     return false
   }
+  // 自动转小写，与后端 normalization 一致
+  editingSlug.value = v
   return true
 }
 
