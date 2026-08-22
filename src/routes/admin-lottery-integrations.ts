@@ -10,7 +10,7 @@ import { withDbTransaction } from "../db/client";
 import { isShopFeatureEnabled } from "../lib/system-config-registry";
 import {
   apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords,
-  tenants, auditLogs,
+  tenants,
 } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
