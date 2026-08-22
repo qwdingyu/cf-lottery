@@ -83,10 +83,67 @@ export function initialSpinsForJoin(maxSpinsPerEntry: number, initialSpinsOnJoin
   };
 }
 
+export type BonusSpinGrant = {
+  actual: number;
+  nextGranted: number;
+  nextViralEarned: number;
+  nextLeftDelta: number;
+};
+
+/**
+ * 「邀请加次」的唯一裁剪公式（docs/259 D2 §4.4 收敛）。
+ *
+ * 两层激励共用本函数，保证同一语义只有一份数学实现：
+ * - 基础激励层：viral.extraSpinsPerInvite（每邀请固定 +N），传 maxViralExtraSpins = viral.maxExtraSpins
+ * - 里程碑加成层：referralRewardDefs 的 bonus_spin 出口（达阈值一次性加成）
+ *
+ * actual = min(amount, roomTotal, roomViral)
+ * - roomTotal：活动硬顶剩余 = maxSpinsPerEntry - spinsTotalGranted；
+ *   maxSpinsPerEntry < 1 视为「不设硬顶」（不裁剪），与 grantBonusSpin 的历史语义一致
+ * - roomViral：裂变子顶剩余 = maxViralExtraSpins - spinsViralEarned；
+ *   maxViralExtraSpins 为 undefined 表示「本次发放不计入裂变子配额」（不裁剪、也不累加 spinsViralEarned），
+ *   而 0 表示「子顶为 0」（裁剪到 0）。两者语义不同，禁止用 `|| 0` 合并。
+ */
+export function computeBonusSpinGrant(input: {
+  amount: number;
+  maxSpinsPerEntry: number;
+  maxViralExtraSpins?: number;
+  spinsTotalGranted: number;
+  spinsViralEarned: number;
+}): BonusSpinGrant {
+  const amount = floorNonNeg(input.amount, 0);
+  const max = floorNonNeg(input.maxSpinsPerEntry, 0);
+  const granted = floorNonNeg(input.spinsTotalGranted, 0);
+  const viral = floorNonNeg(input.spinsViralEarned, 0);
+  const countsViral = input.maxViralExtraSpins != null;
+
+  if (amount <= 0) {
+    return { actual: 0, nextGranted: granted, nextViralEarned: viral, nextLeftDelta: 0 };
+  }
+
+  const roomTotal = max >= 1 ? Math.max(0, max - granted) : amount;
+  const roomViral = countsViral
+    ? Math.max(0, floorNonNeg(input.maxViralExtraSpins, 0) - viral)
+    : amount;
+  const actual = Math.min(amount, roomTotal, roomViral);
+
+  return {
+    actual,
+    nextGranted: granted + actual,
+    // 不计入子配额时保持原值：引擎里程碑层在 viral 未开启（无子顶可言）时不污染该列
+    nextViralEarned: countsViral ? viral + actual : viral,
+    nextLeftDelta: actual,
+  };
+}
+
 /**
  * 有效邀请成功后，邀请人可增加的 spin 次数（可为 0：只涨榜不加次）。
  *
  * actual = min(extraSpinsPerInvite, maxSpins - granted, maxExtra - viralEarned)
+ *
+ * 与 computeBonusSpinGrant 的差异只在边界语义：本函数是「基础激励层」入口，
+ * maxSpinsPerEntry < 1 表示活动未配置 instant 次数体系 → 不发放（actual=0），
+ * 而非 computeBonusSpinGrant 的「不设硬顶」。因此在这里先判掉再委托。
  */
 export function computeViralSpinGrant(input: {
   maxSpinsPerEntry: number;
@@ -94,10 +151,9 @@ export function computeViralSpinGrant(input: {
   maxExtraSpins: number;
   spinsTotalGranted: number;
   spinsViralEarned: number;
-}): { actual: number; nextGranted: number; nextViralEarned: number; nextLeftDelta: number } {
+}): BonusSpinGrant {
   const max = floorNonNeg(input.maxSpinsPerEntry, 0);
   const k = floorNonNeg(input.extraSpinsPerInvite, 0);
-  const maxExtra = floorNonNeg(input.maxExtraSpins, 0);
   const granted = floorNonNeg(input.spinsTotalGranted, 0);
   const viral = floorNonNeg(input.spinsViralEarned, 0);
 
@@ -105,16 +161,13 @@ export function computeViralSpinGrant(input: {
     return { actual: 0, nextGranted: granted, nextViralEarned: viral, nextLeftDelta: 0 };
   }
 
-  const roomTotal = Math.max(0, max - granted);
-  const roomViral = Math.max(0, maxExtra - viral);
-  const actual = Math.min(k, roomTotal, roomViral);
-
-  return {
-    actual,
-    nextGranted: granted + actual,
-    nextViralEarned: viral + actual,
-    nextLeftDelta: actual,
-  };
+  return computeBonusSpinGrant({
+    amount: k,
+    maxSpinsPerEntry: max,
+    maxViralExtraSpins: floorNonNeg(input.maxExtraSpins, 0),
+    spinsTotalGranted: granted,
+    spinsViralEarned: viral,
+  });
 }
 
 /** spin 前：是否还有剩余次数（行内 left 优先；也可传 used 校验） */
