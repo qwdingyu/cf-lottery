@@ -319,7 +319,7 @@ adminLotteryRoute.put("/brand", async (c) => {
     await db.update(tenants).set({ storeSlug }).where(eq(tenants.id, tenantId));
   }
 
-  return ok(c, { config, storeSlug: storeSlug || "", name: name || "" });
+  return ok(c, { config, storeSlug: storeSlug || "", name: name || tenant.name });
 });
 
 // ═════════════════════════════════════════════════════════
