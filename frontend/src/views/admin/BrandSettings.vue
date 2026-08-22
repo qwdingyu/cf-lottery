@@ -2,6 +2,11 @@
   <div class="card card-flat brand-settings">
     <h3>{{ $t('brand.title') }}</h3>
 
+    <!-- 加载失败提示 -->
+    <div v-if="loadError" class="load-error">
+      <small class="error">{{ loadError }}</small>
+    </div>
+
     <!-- ── 商户信息 ── -->
     <div class="form-section">
       <h4 class="section-title">{{ $t('brand.merchantInfo') }}</h4>
@@ -127,6 +132,11 @@ const configError = ref('')
 const configSuccess = ref('')
 const copyFeedback = ref('')
 
+// ── 页面加载状态 ──
+// loaded 为 false 时禁用保存按钮，防止 API 失败后空表单覆盖后端数据
+const loaded = ref(false)
+const loadError = ref('')
+
 /** 生成随机 8 位小写字母数字组合作为自定义链接建议值 */
 function generateSlug() {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -179,6 +189,7 @@ function validateSlug(): boolean {
 
 /** 保存商户名称 */
 async function saveName() {
+  if (!loaded.value) { nameError.value = t('brand.saveFailed'); return }
   const v = editingName.value.trim()
   if (!v) { nameError.value = t('brand.merchantNameRequired'); return }
   nameError.value = ''
@@ -212,25 +223,37 @@ async function copyShopUrl() {
 
 /**
  * 加载页面数据
- * 注意：API 失败时无错误处理（onMounted 调用，无法捕获），
- * 这沿用原始代码风格，保持与项目其他页面一致。
+ *
+ * 注意：API 失败时设置 loadError 而非直接抛出，避免以下灾难性场景：
+ * ① onMounted 内无 try-catch，Vue 静默吞掉异常 → 组件挂载但所有 editing* 为空字符串
+ * ② 用户误以为数据为空，输入后点击保存 → buildPayload 发送全量空值
+ * ③ 后端合并逻辑认为「空字符串是明确提供的值」→ 覆盖数据库中原有 logo/companyName 等字段
+ * ④ 用户刷新后发现数据丢失
+ *
+ * 设置 loaded 标志位，三个保存函数均需检查 loaded 后才允许写入。
  */
 async function load() {
-  const data = await adminRequest<{ storeSlug?: string; name?: string; config?: Record<string, string>; shopFeatureEnabled?: boolean }>('/api/admin/brand')
-  const slug = data.storeSlug || ''
-  shopUrl.value = slug ? `${baseUrl}/shop/${slug}` : t('brand.notConfigured')
-  shopFeatureEnabled.value = data.shopFeatureEnabled !== false
-  editingName.value = data.name || ''
-  editingSlug.value = slug
-  const cfg = data.config || {}
-  editingLogo.value = cfg.logo || ''
-  editingPrimaryColor.value = cfg.primaryColor || ''
-  editingCompanyName.value = cfg.companyName || ''
-  editingDomain.value = cfg.domain || ''
+  try {
+    const data = await adminRequest<{ storeSlug?: string; name?: string; config?: Record<string, string>; shopFeatureEnabled?: boolean }>('/api/admin/brand')
+    const slug = data.storeSlug || ''
+    shopUrl.value = slug ? `${baseUrl}/shop/${slug}` : t('brand.notConfigured')
+    shopFeatureEnabled.value = data.shopFeatureEnabled !== false
+    editingName.value = data.name || ''
+    editingSlug.value = slug
+    const cfg = data.config || {}
+    editingLogo.value = cfg.logo || ''
+    editingPrimaryColor.value = cfg.primaryColor || ''
+    editingCompanyName.value = cfg.companyName || ''
+    editingDomain.value = cfg.domain || ''
+    loaded.value = true
+  } catch (e: any) {
+    loadError.value = e.message || t('brand.saveFailed')
+  }
 }
 
 /** 保存自定义链接 */
 async function saveSlug() {
+  if (!loaded.value) { slugError.value = t('brand.saveFailed'); return }
   slugError.value = ''
   if (!validateSlug()) return
   savingSlug.value = true
@@ -250,6 +273,7 @@ async function saveSlug() {
 
 /** 保存品牌配置（logo/primaryColor/companyName/domain） */
 async function saveBrandConfig() {
+  if (!loaded.value) { configError.value = t('brand.saveFailed'); return }
   configError.value = ''
   configSuccess.value = ''
   // 品牌配置不涉及 slug，但 buildPayload 全量发送，slug 格式必须合法
@@ -290,4 +314,5 @@ onMounted(load)
 .hint { font-size: 12px; color: var(--muted, #9aa4b2); }
 .error { font-size: 12px; color: var(--danger, #e11d48); }
 .success { font-size: 12px; color: var(--success, #0a7); }
+.load-error { margin-bottom: 12px; }
 </style>

@@ -1398,3 +1398,57 @@ describe("/api/admin/brand 店铺功能开关（shopFeatureEnabled）", () => {
     expect(body.shopFeatureEnabled).toBe(false);
   });
 });
+
+// ═════════════════════════════════════════════════════════
+// PUT /brand 写路径（docs/258 部署前审查修复：事务原子性 + slug 校验）
+// ═════════════════════════════════════════════════════════
+describe("/api/admin/brand PUT 写路径", () => {
+  it("保存品牌配置 + 店铺链接（小写化）", async () => {
+    await db.update(tenants).set({ storeSlug: "shop_old_slug" }).where(eq(tenants.id, TENANT_ID));
+    const app = await createApp();
+    const res = await app.request("/api/admin/brand", {
+      method: "PUT",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "新商户名", storeSlug: "MY-SHOP-1", logo: "logo.png", primaryColor: "#ff0000" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { storeSlug?: string; name?: string; config?: Record<string, string> };
+    expect(body.storeSlug).toBe("my-shop-1"); // 大写自动转小写
+    expect(body.name).toBe("新商户名");
+    expect(body.config?.logo).toBe("logo.png");
+
+    const [tenant] = await db.select({ storeSlug: tenants.storeSlug, name: tenants.name }).from(tenants).where(eq(tenants.id, TENANT_ID));
+    expect(tenant?.storeSlug).toBe("my-shop-1");
+    expect(tenant?.name).toBe("新商户名");
+  });
+
+  it("slug 格式非法返回 400（短横线首尾/特殊字符）", async () => {
+    const app = await createApp();
+    const res = await app.request("/api/admin/brand", {
+      method: "PUT",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ storeSlug: "-bad-slug" }),
+    });
+    expect(res.status).toBe(400);
+    // 品牌配置不得部分保存（事务原子性：slug 校验失败在事务前，brandConfig 未落库）
+    const [tenant] = await db.select({ storeSlug: tenants.storeSlug, brandConfig: tenants.brandConfig }).from(tenants).where(eq(tenants.id, TENANT_ID));
+    expect(tenant?.storeSlug).not.toBe("-bad-slug");
+  });
+
+  it("slug 被其他租户占用返回 400，且品牌配置不落库（同事务）", async () => {
+    // 第二租户占用 slug
+    await db.insert(tenants).values({ id: "tenant-rival", name: "占用者", storeSlug: "taken-slug" });
+    await db.update(tenants).set({ storeSlug: "shop_mine" }).where(eq(tenants.id, TENANT_ID));
+    const app = await createApp();
+    const res = await app.request("/api/admin/brand", {
+      method: "PUT",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "不应保存", storeSlug: "taken-slug" }),
+    });
+    expect(res.status).toBe(400);
+    // 事务回滚：name 未改、slug 未改（brandConfig 与 name 同事务，不能部分成功）
+    const [tenant] = await db.select({ name: tenants.name, storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, TENANT_ID));
+    expect(tenant?.name).not.toBe("不应保存");
+    expect(tenant?.storeSlug).toBe("shop_mine");
+  });
+});

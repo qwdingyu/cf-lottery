@@ -1078,3 +1078,72 @@ describe("L2 菜单权限（L3 全局禁用）", () => {
     expect(body.menuDisabled).toEqual(["AdminLogs"]);
   });
 });
+
+// ═════════════════════════════════════════════════════════
+// custom_shop_link 租户联动（docs/258 部署前审查修复：事务内 + 多租户明确报错）
+// ═════════════════════════════════════════════════════════
+describe("custom_shop_link 租户联动", () => {
+  it("设置自定义链接更新持有旧链接租户的 store_slug（同事务）", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    await db.insert(tenants).values({ id: "tenant-link-a", name: "链接租户A", storeSlug: "shop_a" });
+    await db.insert(systemConfig).values({ key: "custom_shop_link", value: "shop_a", updatedAt: new Date().toISOString() }).onConflictDoNothing();
+    const app = createTestApp();
+
+    const res = await app.request("/api/platform/system-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ key: "custom_shop_link", value: "new-shop-a" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+
+    const [tenant] = await db.select({ storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, "tenant-link-a"));
+    expect(tenant?.storeSlug).toBe("new-shop-a");
+  });
+
+  it("首次设置且多租户时明确报错 400，不静默覆盖第一个租户", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    await db.insert(tenants).values([
+      { id: "tenant-multi-1", name: "多租户1", storeSlug: "shop_multi_1" },
+      { id: "tenant-multi-2", name: "多租户2", storeSlug: "shop_multi_2" },
+    ]);
+    const app = createTestApp();
+
+    const res = await app.request("/api/platform/system-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ key: "custom_shop_link", value: "multi-shop" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+
+    // 没有租户被静默覆盖
+    const [t1] = await db.select({ storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, "tenant-multi-1"));
+    const [t2] = await db.select({ storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, "tenant-multi-2"));
+    expect(t1?.storeSlug).toBe("shop_multi_1");
+    expect(t2?.storeSlug).toBe("shop_multi_2");
+  });
+
+  it("新 slug 被其他租户占用时返回 400，配置与版本全部回滚", async () => {
+    await seedUsers();
+    await db.insert(platformMembers).values({ userId: PLATFORM_ID, role: "platform_owner" });
+    await db.insert(tenants).values({ id: "tenant-link-b", name: "链接租户B", storeSlug: "shop_b" });
+    await db.insert(tenants).values({ id: "tenant-holder", name: "占用者", storeSlug: "wanted-slug" });
+    await db.insert(systemConfig).values({ key: "custom_shop_link", value: "shop_b", updatedAt: new Date().toISOString() }).onConflictDoNothing();
+    const app = createTestApp();
+
+    const res = await app.request("/api/platform/system-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader(PLATFORM_ID)) },
+      body: JSON.stringify({ key: "custom_shop_link", value: "wanted-slug" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+
+    // 配置未提交（事务回滚）：custom_shop_link 仍为旧值
+    const [cfg] = await db.select({ value: systemConfig.value }).from(systemConfig).where(eq(systemConfig.key, "custom_shop_link"));
+    expect(cfg?.value).toBe("shop_b");
+    // 占用者 slug 未被改
+    const [holder] = await db.select({ storeSlug: tenants.storeSlug }).from(tenants).where(eq(tenants.id, "tenant-holder"));
+    expect(holder?.storeSlug).toBe("wanted-slug");
+  });
+});
