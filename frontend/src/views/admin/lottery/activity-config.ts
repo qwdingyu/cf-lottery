@@ -83,14 +83,22 @@ export function normalizeActivityConfig(
         : (defaultActivityConfigForKind('vote', t) as Extract<ActivityConfigForm, { kind: 'vote' }>).options
     return { version: 1, kind: 'vote', selection: 'single', options }
   }
-  // lottery（及其余非 survey/vote 类型）分支：必须解析 raw 里的 loserReward 并与默认合并，
+  // lottery（及其余非 survey/vote 类型）分支：必须解析 raw 里的 loserReward / reward 并与默认合并，
   // 而不是直接返回默认。为什么：DB 里可能已启用「未中奖自动发券」（{enabled:true, couponLabel:'安慰奖'}），
   // 直接 return default 会把 enabled 重置为 false，导致「编辑任一字段保存后发券被静默关闭」（P0 回归）。
-  // 合并语义 { ...default, ...stored }：stored 缺省（含非法值）时回落默认 {enabled:false, couponLabel:''}。
+  // 合并语义 { ...default, ...stored }：stored 缺省（含非法值）时回落默认。
   const defaultLottery = defaultActivityConfigForKind(kind, t) as {
     version: 1
     kind: string
     loserReward: { enabled: boolean; couponLabel: string }
+    reward?: {
+      perInviteAmount: number
+      currency: string
+      quota?: {
+        perUserPerDay?: number
+        globalPerDay?: number
+      }
+    }
   }
   // 容错：loserReward 非对象（null / 字符串 / 数组 / 数字）一律视为缺省，避免脏数据炸表单
   const storedLoserReward = (raw as { loserReward?: unknown }).loserReward
@@ -101,9 +109,27 @@ export function normalizeActivityConfig(
           couponLabel: String((storedLoserReward as { couponLabel?: unknown }).couponLabel || ''),
         }
       : undefined
+
+  // P1-3：保留 reward 配置（perInviteAmount / currency / quota）
+  const storedReward = (raw as { reward?: unknown }).reward
+  const parsedReward =
+    storedReward && typeof storedReward === 'object' && !Array.isArray(storedReward)
+      ? {
+          perInviteAmount: Number((storedReward as { perInviteAmount?: unknown }).perInviteAmount || 0),
+          currency: String((storedReward as { currency?: unknown }).currency || 'USD'),
+          quota: (storedReward as { quota?: unknown }).quota && typeof (storedReward as { quota?: unknown }).quota === 'object'
+            ? {
+                perUserPerDay: Number(((storedReward as { quota?: { perUserPerDay?: unknown } }).quota?.perUserPerDay) || 0) || undefined,
+                globalPerDay: Number(((storedReward as { quota?: { globalPerDay?: unknown } }).quota?.globalPerDay) || 0) || undefined,
+              }
+            : undefined,
+        }
+      : undefined
+
   return {
     ...defaultLottery,
     ...(parsedLoserReward ? { loserReward: parsedLoserReward } : {}),
+    ...(parsedReward ? { reward: parsedReward } : {}),
   }
 }
 

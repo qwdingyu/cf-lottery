@@ -66,6 +66,15 @@ export type ActivityConfigForm =
       options?: Array<{ id: string; label: string; description?: string; imageUrl?: string }>
       /** 未中奖自动发券（安慰奖）：仅 lottery 活动生效，enabled 默认 false */
       loserReward?: { enabled: boolean; couponLabel: string }
+      /** 邀请奖励配置（docs/259 P1-3）：每邀请发放金额/货币/配额 */
+      reward?: {
+        perInviteAmount: number
+        currency: string
+        quota?: {
+          perUserPerDay?: number
+          globalPerDay?: number
+        }
+      }
     }
 
 export type LotteryWinner = {

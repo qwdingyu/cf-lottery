@@ -1234,6 +1234,39 @@
                   <p class="field-span-2 field-hint">{{ $t('lottery.adminLoserRewardHint') }} {{ $t('lottery.adminCouponLabelHint') }}</p>
                 </div>
               </section>
+
+              <!-- 邀请奖励配置（docs/259 P1-3）：每邀请金额 / 货币 / 配额 -->
+              <section
+                v-if="form.activityKind === 'lottery'"
+                class="form-section form-section--nested"
+                aria-labelledby="lottery-reward-config"
+              >
+                <header class="form-section-head">
+                  <h4 id="lottery-reward-config" class="form-section-title">{{ $t('lottery.adminRewardConfigSection') }}</h4>
+                  <p class="form-section-desc">{{ $t('lottery.adminRewardConfigDesc') }}</p>
+                </header>
+                <div class="form-grid two-cols">
+                  <label>
+                    <span>{{ $t('lottery.adminRewardPerInviteAmount') }}</span>
+                    <input v-model.number="rewardPerInviteAmount" type="number" min="0" max="10000" step="1" />
+                    <small>{{ $t('lottery.adminRewardPerInviteAmountSuffix') }}</small>
+                  </label>
+                  <label>
+                    <span>{{ $t('lottery.adminRewardCurrency') }}</span>
+                    <input v-model="rewardCurrency" maxlength="10" placeholder="USD" />
+                  </label>
+                  <label>
+                    <span>{{ $t('lottery.adminRewardPerUserPerDay') }}</span>
+                    <input v-model.number="rewardPerUserPerDay" type="number" min="0" max="1000" step="1" />
+                    <small>{{ $t('lottery.adminRewardQuotaSuffix') }}</small>
+                  </label>
+                  <label>
+                    <span>{{ $t('lottery.adminRewardGlobalPerDay') }}</span>
+                    <input v-model.number="rewardGlobalPerDay" type="number" min="0" max="10000" step="1" />
+                    <small>{{ $t('lottery.adminRewardQuotaSuffix') }}</small>
+                  </label>
+                </div>
+              </section>
             </div>
           </section>
 
@@ -2987,6 +3020,12 @@ const flashSaleDirectChecklistBlockers = computed(() => {
 const loserRewardEnabled = ref(false)
 const loserRewardCouponLabel = ref('')
 
+// ── 邀请奖励配置（docs/259 P1-3）：表单编辑用，保存时同步进 activityConfig.reward ──
+const rewardPerInviteAmount = ref(0)
+const rewardCurrency = ref('USD')
+const rewardPerUserPerDay = ref<number | undefined>(undefined)
+const rewardGlobalPerDay = ref<number | undefined>(undefined)
+
 // 编辑「已设访问密码」的活动时为 true：表单内提示「留空保持不变」。
 // 为什么：后端 detail 只返回 hasAccessPassword 布尔、不返回哈希（也不能返回），
 // 编辑时密码框为空容易让运营误以为密码丢了而重新设置；后端 PATCH 已改为空串跳过、null 清空，
@@ -3005,6 +3044,27 @@ function initLoserRewardFromConfig() {
   const lr = config?.loserReward
   loserRewardEnabled.value = Boolean(lr?.enabled)
   loserRewardCouponLabel.value = lr?.couponLabel || ''
+}
+
+/** 把 reward 配置同步进 form.activityConfig.reward */
+function syncRewardConfig() {
+  const config = form.value.activityConfig as any
+  config.reward = {
+    perInviteAmount: Number(rewardPerInviteAmount.value || 0),
+    currency: String(rewardCurrency.value || 'USD'),
+    ...(rewardPerUserPerDay.value != null ? { quota: { perUserPerDay: rewardPerUserPerDay.value } } : {}),
+    ...(rewardGlobalPerDay.value != null ? { quota: { globalPerDay: rewardGlobalPerDay.value } } : {}),
+  }
+}
+
+/** 从 form.activityConfig.reward 回填表单状态（编辑活动时调用） */
+function initRewardFromConfig() {
+  const config = form.value.activityConfig as any
+  const r = config?.reward
+  rewardPerInviteAmount.value = Number(r?.perInviteAmount || 0)
+  rewardCurrency.value = String(r?.currency || 'USD')
+  rewardPerUserPerDay.value = r?.quota?.perUserPerDay != null ? Number(r.quota.perUserPerDay) : undefined
+  rewardGlobalPerDay.value = r?.quota?.globalPerDay != null ? Number(r.quota.globalPerDay) : undefined
 }
 
 /** 加载奖品库 */
@@ -4775,6 +4835,8 @@ async function handleEdit(draw: LotteryDraw) {
   loadBoundPrizes(tiers.map(t => t.prizeId))
   // 回填未中奖自动发券开关状态
   initLoserRewardFromConfig()
+  // 回填邀请奖励配置（docs/259 P1-3）
+  initRewardFromConfig()
   // 编辑已设访问密码的 password 活动：表单内提示「留空保持不变」，
   // 避免运营看到空密码框以为密码丢了（后端只回 hasAccessPassword 布尔，不回哈希）
   editingHasAccessPassword.value =
@@ -5014,8 +5076,14 @@ async function handleCreate() {
         }
         if (form.value.activityKind === 'lottery') {
           syncLoserReward()
+          syncRewardConfig()
           const config = form.value.activityConfig as any
-          return { version: 1, kind: 'lottery', loserReward: config?.loserReward || { enabled: false, couponLabel: '' } }
+          return {
+            version: 1,
+            kind: 'lottery',
+            loserReward: config?.loserReward || { enabled: false, couponLabel: '' },
+            ...(config?.reward && Number(config.reward.perInviteAmount) > 0 ? { reward: config.reward } : {}),
+          }
         }
         // 其他活动类型（checkin/signup_chain/claim/approval/reservation/waitlist 等）：
         // 如果表单有 activityConfig.kind，透传以保留配置；否则留空
