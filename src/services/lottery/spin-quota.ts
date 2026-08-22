@@ -136,40 +136,6 @@ export function computeBonusSpinGrant(input: {
   };
 }
 
-/**
- * 有效邀请成功后，邀请人可增加的 spin 次数（可为 0：只涨榜不加次）。
- *
- * actual = min(extraSpinsPerInvite, maxSpins - granted, maxExtra - viralEarned)
- *
- * 与 computeBonusSpinGrant 的差异只在边界语义：本函数是「基础激励层」入口，
- * maxSpinsPerEntry < 1 表示活动未配置 instant 次数体系 → 不发放（actual=0），
- * 而非 computeBonusSpinGrant 的「不设硬顶」。因此在这里先判掉再委托。
- */
-export function computeViralSpinGrant(input: {
-  maxSpinsPerEntry: number;
-  extraSpinsPerInvite: number;
-  maxExtraSpins: number;
-  spinsTotalGranted: number;
-  spinsViralEarned: number;
-}): BonusSpinGrant {
-  const max = floorNonNeg(input.maxSpinsPerEntry, 0);
-  const k = floorNonNeg(input.extraSpinsPerInvite, 0);
-  const granted = floorNonNeg(input.spinsTotalGranted, 0);
-  const viral = floorNonNeg(input.spinsViralEarned, 0);
-
-  if (max < 1 || k <= 0) {
-    return { actual: 0, nextGranted: granted, nextViralEarned: viral, nextLeftDelta: 0 };
-  }
-
-  return computeBonusSpinGrant({
-    amount: k,
-    maxSpinsPerEntry: max,
-    maxViralExtraSpins: floorNonNeg(input.maxExtraSpins, 0),
-    spinsTotalGranted: granted,
-    spinsViralEarned: viral,
-  });
-}
-
 /** spin 前：是否还有剩余次数（行内 left 优先；也可传 used 校验） */
 export function canConsumeSpin(spinsLeft: number): boolean {
   return floorNonNeg(spinsLeft, 0) >= 1;

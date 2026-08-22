@@ -27,7 +27,8 @@ import {
 import { verifyAccessPassword } from "./utils";
 import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
 import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
-import { computeViralSpinGrant, initialSpinsForJoin } from "./spin-quota";
+import { initialSpinsForJoin } from "./spin-quota";
+import { grantBonusSpin } from "./reward-exits";
 import { isViralEnabled, readViralPerInvite } from "./viral-weight";
 import { processReferralRewardsEngine } from "./referral-rewards-engine";
 import { recordSpinLog } from "./spins-log";
@@ -745,8 +746,11 @@ async function maybeTriggerReward(
   // ── 奖励触发条件差异（docs/254 审查确认）──
   // 路径[1] grantViralSpinsToSharer：仅 resultMode === "instant" 触发（viral.extraSpinsPerInvite）
   // 路径[4] processReferralRewardsEngine：所有活动 + 有 shareRecordId（referralRewardDefs）
-  // 路径[1] 与路径[4] 的互斥由发布预检保证（viral.extraSpinsPerInvite 与 referralRewardDefs 二选一），
-  // 运行时不会同时触发两个加 spins 路径。
+  // 路径[1] 与路径[4] 是互补两层，不再互斥（docs/259 D2）：
+  // [1] 基础激励层（每邀请固定 +N，即时反馈/排行榜/延迟开奖权重）、
+  // [4] 里程碑加成层（达阈值一次性加成 + 券码出口）。
+  // 两者可同时触发，写入安全由共同出口 grantBonusSpin 的 spinsTotalGranted CAS 保证，
+  // 总量由 maxSpinsPerEntry 硬顶兜底；[1] 额外受 viral.maxExtraSpins 子顶约束。
   // 所有路径容错一致：try/catch 包裹，奖励失败不影响参与主流程（docs/116 容错原则）。
   // 注：旧路径[2] processReferralMilestoneRewards（referralRewards 里程碑）已收敛删除（docs/255 P1-2），
   // 统一由路径[4] referralRewardDefs 覆盖（bonus_spin 语义完全等价）。
@@ -830,64 +834,24 @@ async function grantViralSpinsToSharer(
   }
   if (extra <= 0 || maxExtra <= 0) return;
 
-  const [sharer] = await tx
-    .select({
-      id: lotteryEntries.id,
-      identityValue: lotteryEntries.identityValue,
-      spinsLeft: lotteryEntries.spinsLeft,
-      spinsTotalGranted: lotteryEntries.spinsTotalGranted,
-      spinsViralEarned: lotteryEntries.spinsViralEarned,
-    })
-    .from(lotteryEntries)
-    .where(and(
-      eq(lotteryEntries.id, sharerEntryId),
-      eq(lotteryEntries.tenantId, draw.tenantId),
-      eq(lotteryEntries.drawId, draw.id),
-    ))
-    .limit(1);
-  if (!sharer) return;
-
-  const grant = computeViralSpinGrant({
-    maxSpinsPerEntry: maxSpins,
-    extraSpinsPerInvite: extra,
-    maxExtraSpins: maxExtra,
-    spinsTotalGranted: Number(sharer.spinsTotalGranted || 0),
-    spinsViralEarned: Number(sharer.spinsViralEarned || 0),
-  });
-  if (grant.actual <= 0) return;
-
-  const updateResult = await tx
-    .update(lotteryEntries)
-    .set({
-      spinsTotalGranted: grant.nextGranted,
-      spinsViralEarned: grant.nextViralEarned,
-      spinsLeft: sql`${lotteryEntries.spinsLeft} + ${grant.nextLeftDelta}`,
-    })
-    .where(and(
-      eq(lotteryEntries.id, sharer.id),
-      eq(lotteryEntries.tenantId, draw.tenantId),
-      eq(lotteryEntries.drawId, draw.id),
-      // 乐观：granted 未在并发下被他人改到超过预期时再写（纵深）
-      eq(lotteryEntries.spinsTotalGranted, Number(sharer.spinsTotalGranted || 0)),
-    ));
-  if ((updateResult.rowsAffected ?? 0) === 0) {
-    // 并发邀请奖励已先一步修改该邀请人的 spinsTotalGranted。
-    // 此时不能继续写 spins_log，否则会产生"流水有奖励、余额未增加"的审计错账；
-    // 直接放弃本次附加奖励，参与主流程仍按 maybeTriggerReward 的容错语义继续提交。
-    return;
-  }
-
-  // 写入 spins 流水日志（docs/172 §5.5 P1）：记录裂变邀请奖励。
-  // refId 关联触发本次奖励的 shareRecord（P2 审查项：与里程碑/排行榜一致，审计可反查具体邀请事件）。
-  await recordSpinLog(tx, {
-    tenantId: draw.tenantId,
-    entryId: sharerEntryId,
-    userId: sharer.identityValue ?? "",
-    delta: grant.nextLeftDelta,
-    balanceAfter: Number(sharer.spinsLeft ?? 0) + grant.nextLeftDelta,
-    reason: "viral",
-    refId: shareRecordId ? `share:${shareRecordId}` : undefined,
-  });
+  // 出口收敛（docs/259 D2 ③）：与里程碑层共用 grantBonusSpin，
+  // 一处 read-then-CAS + 一处 spins_log + 一处 reward_earned 审计。
+  // maxViralExtra 传入 = 本次发放计入 spinsViralEarned 并受裂变子顶裁剪（基础层语义）。
+  await grantBonusSpin(
+    tx,
+    draw.tenantId,
+    draw.id,
+    sharerEntryId,
+    extra,
+    maxSpins,
+    `viral:${shareRecordId ?? "na"}`,
+    {
+      source: "viral",
+      maxViralExtra: maxExtra,
+      // refId 关联触发本次奖励的 shareRecord（审计可反查具体邀请事件）
+      refId: shareRecordId ? `share:${shareRecordId}` : undefined,
+    },
+  );
 }
 type EntryIdentityForSelfInviteCheck = {
   identityType: string | null;

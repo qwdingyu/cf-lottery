@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canConsumeSpin,
-  computeViralSpinGrant,
+  computeBonusSpinGrant,
   initialSpinsForJoin,
   isInstantSpinQuotaConfigured,
   normalizeInstantSpinQuota,
@@ -49,23 +49,23 @@ describe("initialSpinsForJoin", () => {
   });
 });
 
-describe("computeViralSpinGrant 双封顶", () => {
+describe("computeBonusSpinGrant 双封顶（邀请加次唯一裁剪公式）", () => {
   it("maxSpins=1 已满 → actual=0（只涨榜场景）", () => {
-    const r = computeViralSpinGrant({
+    const r = computeBonusSpinGrant({
+      amount: 1,
       maxSpinsPerEntry: 1,
-      extraSpinsPerInvite: 1,
-      maxExtraSpins: 10,
+      maxViralExtraSpins: 10,
       spinsTotalGranted: 1,
       spinsViralEarned: 0,
     });
     expect(r.actual).toBe(0);
   });
 
-  it("受 maxExtra 限制", () => {
-    const r = computeViralSpinGrant({
+  it("受 maxViralExtraSpins 子顶限制", () => {
+    const r = computeBonusSpinGrant({
+      amount: 2,
       maxSpinsPerEntry: 10,
-      extraSpinsPerInvite: 2,
-      maxExtraSpins: 2,
+      maxViralExtraSpins: 2,
       spinsTotalGranted: 1,
       spinsViralEarned: 1,
     });
@@ -75,10 +75,10 @@ describe("computeViralSpinGrant 双封顶", () => {
   });
 
   it("受 maxSpins 总顶", () => {
-    const r = computeViralSpinGrant({
+    const r = computeBonusSpinGrant({
+      amount: 5,
       maxSpinsPerEntry: 3,
-      extraSpinsPerInvite: 5,
-      maxExtraSpins: 10,
+      maxViralExtraSpins: 10,
       spinsTotalGranted: 2,
       spinsViralEarned: 0,
     });
@@ -86,16 +86,52 @@ describe("computeViralSpinGrant 双封顶", () => {
     expect(r.nextGranted).toBe(3);
   });
 
-  it("k=0 或未配置 max → 0", () => {
+  it("amount=0 → 0（只涨榜不加次）", () => {
     expect(
-      computeViralSpinGrant({
-        maxSpinsPerEntry: 0,
-        extraSpinsPerInvite: 1,
-        maxExtraSpins: 5,
+      computeBonusSpinGrant({
+        amount: 0,
+        maxSpinsPerEntry: 5,
+        maxViralExtraSpins: 5,
         spinsTotalGranted: 0,
         spinsViralEarned: 0,
       }).actual,
     ).toBe(0);
+  });
+
+  it("maxViralExtraSpins 省略 = 不计入裂变子配额、不受子顶裁剪（引擎里程碑层）", () => {
+    const r = computeBonusSpinGrant({
+      amount: 3,
+      maxSpinsPerEntry: 10,
+      spinsTotalGranted: 1,
+      spinsViralEarned: 4,
+    });
+    expect(r.actual).toBe(3);
+    expect(r.nextGranted).toBe(4);
+    // 关键：不污染 spinsViralEarned（保持引擎路径既有语义）
+    expect(r.nextViralEarned).toBe(4);
+  });
+
+  it("maxViralExtraSpins=0 与省略语义不同：子顶为 0 → 裁剪到 0", () => {
+    expect(
+      computeBonusSpinGrant({
+        amount: 3,
+        maxSpinsPerEntry: 10,
+        maxViralExtraSpins: 0,
+        spinsTotalGranted: 0,
+        spinsViralEarned: 0,
+      }).actual,
+    ).toBe(0);
+  });
+
+  it("maxSpinsPerEntry<1 = 不设硬顶（grantBonusSpin 历史语义）", () => {
+    const r = computeBonusSpinGrant({
+      amount: 4,
+      maxSpinsPerEntry: 0,
+      spinsTotalGranted: 100,
+      spinsViralEarned: 0,
+    });
+    expect(r.actual).toBe(4);
+    expect(r.nextGranted).toBe(104);
   });
 });
 
