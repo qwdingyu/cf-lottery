@@ -949,6 +949,127 @@ describe("活动事件", () => {
     expect(summary.attributedJoins).toBe(1);
   });
 
+  /**
+   * docs/259 D2 ③：基础激励层（viral 每邀请 +N）与里程碑加成层（referralRewardDefs 阶梯）
+   * 是互补两层，可同时生效。收敛后两层共用同一个出口 grantBonusSpin：
+   * - 一处 read-then-CAS（spinsTotalGranted 乐观锁）
+   * - 一处 spins_log（refId 区分 share: / engine:）
+   * - 一处 reward_earned 审计（metadata.source 区分 viral / engine）
+   * 且 spinsViralEarned 只统计基础层（里程碑层不占裂变子配额）。
+   */
+  it("裂变叠加：viral 每邀请加次 + referralRewardDefs 里程碑同时生效（docs/259 D2）", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "裂变两层叠加",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      participationMode: "open",
+      activityKind: "lottery",
+      experienceType: "wheel",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        viral: {
+          enabled: true,
+          extraSpinsPerInvite: 1,
+          maxExtraSpins: 5,
+          extraEntriesPerInvite: 1,
+          maxExtraEntries: 5,
+        },
+        referralRewardDefs: [
+          {
+            rewardId: "invite_2",
+            type: "FIXED",
+            target: "SOURCE",
+            fixedAmount: "2",
+            conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "2" }],
+            metadata: { rewardExit: "bonus_spin" },
+          },
+        ],
+      }),
+    });
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeId, TENANT, "叠加奖", "code", 5, 1],
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      prizeId,
+      tierName: "一等奖",
+      winnerCount: 1,
+      sortOrder: 1,
+      weight: 100,
+    });
+    for (let i = 0; i < 5; i++) {
+      await client.execute({
+        sql: "INSERT INTO prize_codes (id, tenant_id, prize_id, code, status) VALUES (?, ?, ?, ?, ?)",
+        args: [crypto.randomUUID(), TENANT, prizeId, `STACK-${i}`, "available"],
+      });
+    }
+    // ① 的直接回归：两层叠加不再被发布预检阻断
+    await publishDraw(db, TENANT, id, { credentialsEncryptionKey: PAYMENT_ENCRYPTION_KEY });
+
+    const sharer = await joinDraw(db, publicSlug, "stack-sharer@test.com");
+    const sharerEntryId = String(sharer.entryId || "");
+    expect(sharerEntryId).toBeTruthy();
+
+    await client.execute({
+      sql: `INSERT INTO share_records (id, tenant_id, draw_id, sharer_entry_id, share_code, clicked_count, joined_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ["share-stack", TENANT, id, sharerEntryId, "stack-ref", 0, 0],
+    });
+
+    // 第 1 次邀请：基础层 +1；里程碑未达标（需 2 人）
+    await joinDraw(db, publicSlug, "stack-i1@test.com", "email", { refCode: "stack-ref" });
+    const [after1] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(after1?.spinsTotalGranted).toBe(2);   // join 1 + 基础层 1
+    expect(after1?.spinsViralEarned).toBe(1);
+    expect(after1?.spinsLeft).toBe(2);
+
+    // 第 2 次邀请：基础层 +1，里程碑达标再 +2（FIXED fixedAmount=2）
+    await joinDraw(db, publicSlug, "stack-i2@test.com", "email", { refCode: "stack-ref" });
+    const [after2] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(after2?.spinsTotalGranted).toBe(5);   // 2 + 基础层 1 + 里程碑 2
+    expect(after2?.spinsLeft).toBe(5);
+    // 里程碑层不占裂变子配额：spinsViralEarned 只累计基础层的 2 次
+    expect(after2?.spinsViralEarned).toBe(2);
+
+    // 幂等：第 3 次邀请只有基础层加次，里程碑已整标记不再发
+    await joinDraw(db, publicSlug, "stack-i3@test.com", "email", { refCode: "stack-ref" });
+    const [after3] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(after3?.spinsTotalGranted).toBe(6);
+    expect(after3?.spinsViralEarned).toBe(3);
+    const markRows = await client.execute("SELECT reward_milestones_granted FROM share_records WHERE id = 'share-stack'");
+    expect(String(markRows.rows[0]?.reward_milestones_granted)).toContain("invite_2");
+
+    // 出口收敛后的流水：两层都写 reason=viral，用 refId 区分来源
+    const viralLogs = await db.select().from(spinsLog).where(and(
+      eq(spinsLog.entryId, sharerEntryId),
+      eq(spinsLog.reason, "viral"),
+    ));
+    expect(viralLogs.filter((l) => String(l.refId || "").startsWith("share:"))).toHaveLength(3);
+    expect(viralLogs.filter((l) => String(l.refId || "") === "engine:invite_2")).toHaveLength(1);
+
+    // 审计收敛（docs/254 §4.2）：两层出口都写 reward_earned，metadata.source 区分
+    const events = await db.select().from(activityEvents).where(and(
+      eq(activityEvents.drawId, id),
+      eq(activityEvents.eventType, "reward_earned"),
+    ));
+    const sources = events.map((e) => {
+      try {
+        return String((JSON.parse(String(e.metadataJson || "{}")) as { source?: string }).source || "");
+      } catch {
+        return "";
+      }
+    });
+    expect(sources.filter((x) => x === "viral")).toHaveLength(3);
+    expect(sources.filter((x) => x === "engine")).toHaveLength(1);
+  });
+
   it("instant 裂变：有效邀请给分享者 +spins（双封顶）；重复/自邀不加次", async () => {
     const now = new Date();
     const future = new Date(now.getTime() + 3600000);
