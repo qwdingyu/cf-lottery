@@ -231,7 +231,7 @@ src/lib/local-media.ts:17   import { dirname, join, normalize } from "node:path"
 |---|---|---|---|
 | **A. 深导入 + 锁版本**（止血） | 改 `.../src/engine/distribute/index.js`，**并同步把调用点从 `engine.Distribute.distributeByDefs` 改为 `engine.distributeByDefs`**（见 §0-5，漏改即静默全失败）；`^4.0.0` → 精确 `4.0.0` | 绕开 `version-select.js` 的 `require("crypto")`；产物 −144 KiB；可评估移除 docs/256 的 banner hack | 依赖非公开路径（`exports: null` + `files: ["src/"]` 使其**合法**但无稳定性承诺）；导入形状与包根不一致，易被手写 `.d.ts` 掩盖；**且仍不解决** CF 的 `local-media.ts` 问题与结构性错配 |
 | **B. 上游拆出零依赖纯计算入口**（正解） | 引擎发布 `@usethink/incentive-engine/pure` 子入口（或独立 `@usethink/incentive-core`）：纯 ESM+CJS 双格式、零 node 内建、只含 `evaluate` + `distribute` | **rbb 与 cf-lottery 同时受益**；组织级复用得以真正成立；契约变窄变稳，符合铁律 1 的精神 | 需要跨仓协调 + 一次引擎发版 |
-| **C. 内联替换**（退出） | cf-lottery 内实现 40–60 行阶梯求值器（条件树求值 + FIXED 金额），删除依赖 | 依赖归零；CF/VPS 双目标假设统一；`decimal.js` 一并移除 | 放弃组织级复用；未来若要 LEVEL/链式分配需重新引入 |
+| **C. 内联替换**（退出） | cf-lottery 内自实现求值器，删除依赖。**规模需按「运行时受理面」而非「表单下发面」估算**：`normalizeReferralRewardDefs` 放行 DIRECT/FIXED/CUSTOM 三种 type、`amountFrom` 2 值、条件树 4 种节点（COMPARE/AND/OR/NOT）× 6 算子 × 4 字段 × 深度 ≤5，因此约 **150 行 + 约 30 个用例**（早前「40–60 行」的估算只覆盖了表单实际下发的 FIXED+单条 GTE，偏低） | 依赖归零；CF/VPS 双目标假设统一；`decimal.js` 一并移除 | 放弃组织级复用；奖励语义与 rbb 永久分叉；未来要 LEVEL/链式分配需重新引入 |
 
 ### 5.5 结论
 
@@ -375,3 +375,64 @@ grep -n "engine.Distribute" src/services/lottery/referral-rewards-engine.ts
 sed -n '795,825p' src/services/publish-check-service.ts
 sed -n '655,665p' frontend/src/views/admin/lottery/growth-config.ts
 ```
+
+---
+
+## 九、执行方案（专业建议 · 决策稿）
+
+### 9.0 新增的四个决定性事实（本节结论的依据）
+
+| 事实 | 证据 | 对决策的影响 |
+|---|---|---|
+| **引擎是自有仓库，且已有 npm 发布流水线** | `/Users/dingyuwang/0-X/2-node/rbb_nodejs/incentive-engine`，`d0254b9 新增 npm publish workflow（tag 触发 + version check 保护）` | 「推动上游」不是跨组织协调，成本接近于零 → 路径 B 的最大障碍消失 |
+| **`crypto` 在整个引擎里只用了一次** | `src/utils/version-select.js:14` `require("crypto")`；`:31` `createHash("md5")` 给 routingKey 分桶。全仓 `grep` 确认这是**唯一**的 node 内建依赖 | 缺陷是 1 行模块级 require，不是架构问题 → 不值得为它放弃复用 |
+| **rbb 在用 md5 分桶** | `rbb/src/services/incentive-rule-set.service.js:19,191` 使用 `selectVersionByRoutingKey` | **不能改哈希算法**（会把 rbb 已有的 A/B 分桶全部重排）→ 只能改成惰性 require |
+| **rbb 有 0 处深导入** | `grep -rn "@usethink/incentive-engine/" rbb/src \| wc -l` → `0`；17 处全部走包根 | 给引擎加 `exports` 映射对 rbb **安全** → 路径 B 可以放心做 |
+
+### 9.1 结论：保留引擎，在上游修（路径 B）。今天不动生产代码。
+
+理由：真实缺陷是**一行模块级 require**，不是架构错配到无法挽救；上游在自己手里；而内联要写约 150 行 + 30 个用例，并让奖励语义与 rbb 永久分叉。深导入已被证伪（§0-5）。
+
+**今天正确的动作是「什么都不改」**：维持包根导入。VPS 有 docs/256 的 banner 兜底、CF 已暂停，没有任何时间压力去冒险。
+
+### 9.2 引擎侧改动（发 v4.1.0，向后兼容）
+
+| # | 改动 | 说明 |
+|---|---|---|
+| 1 | `src/utils/version-select.js`：把 `require("crypto")` 移进函数体（惰性） | md5 与分桶行为完全不变 → rbb 零影响。ESM 打包后 `sf("crypto")` 只在调用时触发，cf-lottery 从不调用 `selectVersion` → **模块级崩溃根除**，docs/256 的 `--banner:js` 兜底可退役 |
+| 2 | 新增 `src/pure.js` 子入口：只含领域无关纯原语，**保持与包根完全相同的嵌套形状** `{ Distribute: {...}, Evaluate: {...} }` | 「保持同形状」是本条最关键的约束：§0-5 的事故根因正是深导入把 `Distribute` 这一层拍平了。同形状 ⇒ 消费方调用点 `engine.Distribute.distributeByDefs` **一个字都不用改** |
+| 3 | 随包发布 `src/pure.d.ts` 官方类型 | 让 cf-lottery **删掉手写 `.d.ts`** —— 那是类型系统对导入形状失明的根因 |
+| 4 | 加 `exports` 映射：`"." / "./pure" / "./package.json"` | rbb 0 深导入 → 安全；副作用是**从此封死所有深导入路径**，正好杜绝 §0-5 复发 |
+| 5 | 引擎自带打包冒烟：用 esbuild 以 `--format=esm --platform=browser` 打 `./pure`，断言产物内 0 个动态 require | **护栏应该由引擎自己持有**，而不是让每个消费方各自防守 |
+
+### 9.3 cf-lottery 侧改动（v4.1.0 发布之后，一次做完）
+
+1. `src/services/lottery/referral-rewards-engine.ts` 改 `from "@usethink/incentive-engine/pure"` —— **仅此一行**，调用点不变。
+2. **删除 `src/types/incentive-engine.d.ts`**，改用随包类型。
+3. 更新 `incentive-engine-contract.test.ts`：允许 `/pure`、继续禁止 `/src/engine/`，保留运行时形状断言与行为断言。
+4. 保持精确版本锁定（`4.1.0`），升级必须是显式动作。
+5. 验证 `node dist/server.js` 冒烟通过后，再从 `scripts/build-for-vps.sh` 移除 `--banner:js`（**两步分开做**，不要和导入改动同批上线）。
+
+### 9.4 兜底：若上游三个月内发不出来
+
+再走路径 C（内联 ~150 行 + ~30 用例）。**不要走深导入**——已证伪，且 §0-5 的失败模式是静默的。
+
+### 9.5 与另外两个决策的排期关系
+
+**先修资损，再改架构。** `rewardId` 与阈值强耦合（§6 P2-3，建议升 P1）是**当前唯一会直接造成资损**的缺陷，且与引擎决策完全解耦：
+
+- 病灶：`growth-config.ts` 用 `rewardId: \`invite_${r.requireCount}\`` 生成 ID，而 ID 同时是幂等键（存 `shareRecords.rewardMilestonesGranted`）。运营把阈值 5 调成 6 → ID 变成 `invite_6` → 已领过 `invite_5` 的人**再领一次**。
+- 修法（一次性，不可回避）：`rewardId` 改为**创建时一次性生成、之后永不随可变字段派生**；配套一次**幂等的存量回填**——把现有配置显式写入与当前派生值完全相同的 ID（`invite_5` 仍是 `invite_5`），使已有幂等标记继续有效；表单模型携带既有 ID，编辑阈值不重算 ID；预检增加「缺 ID / ID 重复」报错（重复已有校验）。
+- 修完后语义变正确：调高阈值 = 已发放的人保留、不重发；调低阈值 = 新达标的人可领。
+
+裂变模型（D2）最小改动集：① 删除预检的 `viral.extra_entries.conflict_with_reward_defs`，改为「两层都用 `bonus_spin` 且缺总量上限」时告警；② `my-viral-stats` 同时返回基础进度与里程碑进度，并去掉「viral 关闭 + 有 defs」时的 400；③ **收敛两条 `bonus_spin` 写入路径**——`grantViralSpinsToSharer`（`participation.ts:800`）与 `grantBonusSpin`（`reward-exits.ts`）各自对同两列 `spinsLeft` / `spinsTotalGranted` 做 read-then-CAS，属同语义双实现，应统一到 `grantBonusSpin`。
+
+### 9.6 推荐顺序
+
+| 阶段 | 动作 | 前置 |
+|---|---|---|
+| 立即 | 维持包根导入不动；`rewardId` 稳定化 + 存量回填（资损） | 无 |
+| 并行 | 引擎发 v4.1.0（§9.2 五条） | 无（自有仓库） |
+| v4.1.0 后 | cf-lottery 切 `/pure` + 删手写 `.d.ts`（§9.3） | v4.1.0 已发布 |
+| 之后 | D2 裂变叠加模型 + 统一进度面 + 收敛 spins 写入 | 资损修复已上线 |
+| 之后 | D1 决定 CF 归档或恢复（恢复必须含 `local-media.ts` 处理 + `nodejs_compat`） | 与引擎解耦，可随时决策 |
