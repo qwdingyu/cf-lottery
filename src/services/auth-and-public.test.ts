@@ -2768,6 +2768,130 @@ describe("公开参与流程", () => {
   });
 
   /**
+   * docs/259 D2 ②：基础层（viral）与里程碑层（referralRewardDefs）是互补两层。
+   * 修复前只看 viral 开关，「只配里程碑」的活动能正常发奖却查不到进度（400），
+   * 排行榜与进度面同时空白 —— 可达性矩阵里最隐蔽的一格。
+   */
+  it("my-viral-stats：viral 关闭但有 referralRewardDefs → 200 并返回里程碑进度", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "viral-stats-milestone",
+      title: "只配里程碑",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          {
+            rewardId: "invite_2",
+            type: "FIXED",
+            target: "SOURCE",
+            fixedAmount: "2",
+            conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "2" }],
+            metadata: { rewardExit: "bonus_spin" },
+          },
+          {
+            rewardId: "invite_5",
+            type: "FIXED",
+            target: "SOURCE",
+            fixedAmount: "1",
+            conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "5" }],
+            metadata: { rewardExit: "bonus_coupon", couponLabel: "double11" },
+          },
+        ],
+      }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "milestone-only@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+    await db.insert(shareRecords).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId: entryId,
+      shareCode: "msref0001",
+      joinedCount: 3,
+      clickedCount: 4,
+      rewardMilestonesGranted: JSON.stringify(["invite_2"]),
+    });
+
+    const res = await app.request(
+      `/public/draws/viral-stats-milestone/my-viral-stats?entryId=${encodeURIComponent(entryId)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.74" } },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.viralEnabled).toBe(false);
+    // 基础层未开启 → 数值归零，不能用默认 1/10 冒充配置
+    expect(body.extraEntriesPerInvite).toBe(0);
+    expect(body.maxExtraEntries).toBe(0);
+    expect(body.extraEntriesEarned).toBe(0);
+    expect(body.drawWeight).toBe(1);
+    // 里程碑层进度：邀请 3 人 → invite_2 已达标且已发放，invite_5 为下一档
+    expect(body.invitedCount).toBe(3);
+    expect(body.milestones.map((m: any) => m.rewardId)).toEqual(["invite_2", "invite_5"]);
+    expect(body.milestones[0]!.granted).toBe(true);
+    expect(body.milestones[0]!.requireCount).toBe(2);
+    expect(body.milestones[1]!.rewardExit).toBe("bonus_coupon");
+    expect(body.milestones[1]!.couponLabel).toBe("double11");
+    expect(body.nextMilestone.rewardId).toBe("invite_5");
+    expect(body.milestonesUnlocked).toBe(1);
+    expect(body.milestonesGranted).toBe(1);
+    // shareUrl 仍按最新码返回
+    expect(body.shareUrl).toBe("/lottery/viral-stats-milestone?ref=msref0001");
+  });
+
+  it("my-viral-stats：viral 与 referralRewardDefs 都未配置 → 仍然 400", async () => {
+    const app = createPublicTestApp();
+    const drawId = crypto.randomUUID();
+    const entryId = crypto.randomUUID();
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: "viral-stats-none",
+      title: "两层都没配",
+      status: "open",
+      participationMode: "open",
+      startAt: futureTimeISO(-10),
+      endAt: futureTimeISO(60),
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({ version: 1 }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    await db.insert(lotteryEntries).values({
+      id: entryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "none@test.com",
+      joinedAt: new Date().toISOString(),
+    });
+    const res = await app.request(
+      `/public/draws/viral-stats-none/my-viral-stats?entryId=${encodeURIComponent(entryId)}`,
+      { headers: { "CF-Connecting-IP": "10.0.0.75" } },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  /**
    * docs/255 §8 P2-4：my-viral-stats 必须与 viral-leaderboard / 开奖 / 发布预检
    * 共用 isViralEnabled 严格判定。此前该端点用 truthy，`enabled: "true"`（字符串）
    * 时统计接口正常返回、而排行榜返回 400，参与者看到自相矛盾的裂变状态。
