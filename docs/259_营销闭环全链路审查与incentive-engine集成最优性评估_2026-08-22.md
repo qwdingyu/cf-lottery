@@ -436,3 +436,54 @@ sed -n '655,665p' frontend/src/views/admin/lottery/growth-config.ts
 | v4.1.0 后 | cf-lottery 切 `/pure` + 删手写 `.d.ts`（§9.3） | v4.1.0 已发布 |
 | 之后 | D2 裂变叠加模型 + 统一进度面 + 收敛 spins 写入 | 资损修复已上线 |
 | 之后 | D1 决定 CF 归档或恢复（恢复必须含 `local-media.ts` 处理 + `nodejs_compat`） | 与引擎解耦，可随时决策 |
+
+---
+
+## 十、执行进展（2026-08-22 记录）
+
+### 10.1 阶段一（资损）— ✅ 已完成并提交
+
+提交 `e8333e2b`。三处残孔（主修在此之前的 `8fb3aedd` 已完成 `#rewardId` 文本携带）：
+
+| 位置 | 改动 |
+|---|---|
+| `src/lib/promotion-config-schema.ts` | `referralRewardDefsSchema` 加 `superRefine` 唯一性校验 —— `rewardId` 重复直接在保存期拦住（新建 `admin-lottery.ts:723` 与 patch `:901` 都过这条，`:901` 校验的是 merge 后的配置，故所有客户端全覆盖） |
+| `frontend/.../growth-config.ts` | 新增 `sanitizeCouponLabel`（券名去 `#`，避免与 `#rewardId` 分隔符冲突）；新建行 ID 生成改为两遍扫描避让存量 ID（`invite_5` → `invite_5_2`） |
+| `frontend/.../AdminLotteryView.vue` | 行内 `couponLabel` 变更时就地归一，运营立刻看到 `#` 被拒，而不是显示 `vip#a` 却存 `vipa` |
+
+验证：后端 `tsc --noEmit` 0 + 1536 用例全绿；前端 `vue-tsc` 0 + 284 用例全绿。
+
+### 10.2 阶段二（引擎 v4.1.0）— ✅ 已完成并在引擎仓库本地提交，**尚未发布**
+
+引擎仓库 `/Users/dingyuwang/0-X/2-node/rbb_nodejs/incentive-engine` 提交 `6536973`。§9.2 五条全部落地：
+
+| # | 条目 | 状态 |
+|---|---|---|
+| 1 | `version-select.js` crypto 惰性化 | ✅ 分桶结果与 4.0.0 逐键一致（2000+ key 对比 + 测试钉死基线） |
+| 2 | `src/pure.js` 子入口，形状与包根完全一致 | ✅ 7 个键、同引用、同子键集合 |
+| 3 | 随包发布 `src/pure.d.ts`；另给 `index.d.ts` 补默认导出 | ✅ 负向用例证明 `engine.Utils` 在 `/pure` 上会被类型检查拦住 |
+| 4 | `exports` 映射 `"." / "./pure" / "./package.json"` | ✅ 深导入实测抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`；`rbb/scripts/verify-engine-version.js` 需要的 `/package.json` 已保留并实测可 resolve |
+| 5 | 引擎自带打包冒烟 `scripts/smoke-pure.js` | ✅ 已接入 `npm run smoke` 与 `prepublishOnly` |
+
+关键实测（消除了原先仅停留在推断的两处）：
+
+- `./pure` 以 `--format=esm --platform=browser` 打包**成功**，160.7kb，0 动态 require、0 内建导入。
+- 包根同条件**仍报** `Could not resolve "crypto"` —— 证明「惰性化解决不了 CF 场景」，`/pure` 不是可选优化而是必需。
+- 此前那条「产物里疑似残留 crypto / Dynamic require」的观察已查清：命中的是 `src/pure.js` 文档块里的示例文本，因该块带 `@license` 被 esbuild 当作 legal comment 保留。产物里 0 个真实 `require(` 调用、0 个 `__require` 辅助函数定义。冒烟脚本已用 `legalComments: "none"` 规避该假阳性，并内置正/负对照自检。
+- 反例验证：向 `src/engine/model/index.js` 注入 `require("crypto")`、以及把 `pure.js` 的 `Distribute` 层抹平，冒烟均如期失败并指名病灶。
+
+⚠️ **发布仍待用户执行**（对外不可逆动作，未代为操作）：
+
+```bash
+cd /Users/dingyuwang/0-X/2-node/rbb_nodejs/incentive-engine
+npm publish --access public          # prepublishOnly 会自动跑 verify-pack + smoke-pure
+# 或走 CI：git push && git tag v4.1.0 && git push origin v4.1.0
+```
+
+两点需用户决策：
+1. `exports` 封印深导入，按严格 semver 属 breaking。已确认组织内无深导入（唯一子路径用法 `require(".../package.json")` 已保留），故定为 4.1.0；若倾向保守可改发 5.0.0。
+2. `rbb/scripts/verify-engine-version.js` 的 `EXPECTED_ENGINE_VERSION` 仍锁 `3.4.10`，而 rbb 实际装的是 4.0.0 —— **本次改动之前即已漂移**，属既有问题，未在本次一并改（rbb 走 registry 安装，不受本地引擎改动影响）。
+
+### 10.3 阶段三（cf-lottery 切 `/pure`）— ⏸ 阻塞于发布
+
+风险已在临时探针中前置验证完毕：以 cf-lottery 的真实 tsconfig（`module: ESNext` / `moduleResolution: bundler` / `strict` / `esModuleInterop`、`skipLibCheck: false`）对本地 4.1.0 做类型检查，`import engine from "@usethink/incentive-engine/pure"` + `engine.Distribute.distributeByDefs(...)` 的真实调用形状通过；具名导入与 `import type` 亦通过。发布安装后按 §9.3 五步执行即可。
