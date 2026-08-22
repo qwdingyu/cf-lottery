@@ -145,28 +145,14 @@ fi
 if [ "$DO_PACKAGE" = true ]; then
   info "步骤 5/5：打包部署包..."
 
-  # 从本地 node_modules 读取共享包的已发布版本号
-  # VPS 上 npm ci 不支持 file: 协议（"file:../cf-core"），
-  # 需要在打包前替换为 registry 版本号。
-  CF_CORE_VER=$(node -e "console.log(require('@usethink/cf-core/package.json').version)" 2>/dev/null || echo "0.5.2")
-  CF_ADMIN_FE_VER=$(node -e "console.log(require('@usethink/cf-admin-fe/package.json').version)" 2>/dev/null || echo "0.2.8")
-
-  # 用临时目录存放修改后的 package.json（不污染本地文件）
+  # 所有依赖均为 npmjs 标准包，无需替换 file: 协议
+  # 使用临时目录清理 workspaces 字段后打包，避免 VPS 上 npm ci 失败
   VPS_PKG_DIR=$(mktemp -d)
   trap "rm -rf '$VPS_PKG_DIR'" EXIT
   cp package.json package-lock.json "$VPS_PKG_DIR/"
-
-  # 替换 file: 协议为已发布版本号，使 VPS 上 npm ci 可正常解析
-  # 注意：sed -i 行为在 macOS 与 Linux 上不同，用 -i.bak 兼容
-  sed -i.bak "s|\"@usethink/cf-core\": \"file:../cf-core\"|\"@usethink/cf-core\": \"$CF_CORE_VER\"|g" "$VPS_PKG_DIR/package.json"
-  sed -i.bak "s|\"@usethink/cf-admin-fe\": \"file:../cf-admin-fe\"|\"@usethink/cf-admin-fe\": \"$CF_ADMIN_FE_VER\"|g" "$VPS_PKG_DIR/package.json"
-
-  # 移除 workspaces 字段：VPS 部署包不包含 frontend 源码，workspace 会导致 npm ci 失败
   sed -i.bak '/"workspaces"[[:space:]]*:/,/]/d' "$VPS_PKG_DIR/package.json"
   rm -f "$VPS_PKG_DIR/package.json.bak"
 
-  # 注意：dist/、public/、configs/、migrations/ 从项目根目录取
-  # package.json + package-lock.json 从临时目录取（已替换 file: 协议）
   PACKAGE="cf-lottery-deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
   tar -czf "$PACKAGE" \
     dist/server.js \
