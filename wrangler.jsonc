@@ -8,6 +8,14 @@
   // 兼容性日期
   "compatibility_date": "2026-05-24",
 
+  // docs/259 P0-1：开启 nodejs_compat（CF 构建必需）
+  // - local-media.ts 静态导入 node:fs/promises / node:path，wrangler 无此 flag 仅告警、启动即抛；
+  // - incentive-engine 包根模块级 require("crypto")，无此 flag 时 esbuild 直接解析失败。
+  //   注意：不得用「深导入 src/engine/distribute」替代——该路径导出无 Distribute 嵌套层，
+  //   调用点 engine.Distribute.distributeByDefs 运行时 TypeError 且被 try/catch 吞掉，
+  //   全部邀请奖励静默失效（docs/259 第二版修订确认）。
+  "compatibility_flags": ["nodejs_compat"],
+
   // 自定义域名路由
   "routes": [
     { "pattern": "lucky.eforge.xyz", "custom_domain": true }
