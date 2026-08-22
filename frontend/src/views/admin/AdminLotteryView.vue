@@ -5089,7 +5089,18 @@ async function handleGrantLeaderboardRewards(id: string) {
   }
 }
 
-/** 打开奖励失败记录弹窗（docs/259 P1-2） */
+/**
+ * 打开奖励发放失败记录弹窗（docs/259 P1-2）。
+ *
+ * 数据来源：后端 GET /draws/:id/rewards/failures 查询 activity_events 中
+ * eventType='reward_failed' 的记录。每条记录包含：
+ * - entryId：触发奖励的分享者参与 ID（用于 entryId 过滤补发）
+ * - refCode：分享码（用于关联分享链路）
+ * - path：失败路径（grantViralSpinsToSharer / processReferralRewardsEngine / triggerRewardEarned）
+ * - error：错误信息（供运营判断是否需要人工介入）
+ *
+ * 重置逻辑：每次打开弹窗重置 entryId 过滤条件，避免上次过滤条件残留。
+ */
 async function openRewardFailuresModal(id: string) {
   rewardFailuresDrawId.value = id
   reissueEntryId.value = '' // 重置 entryId 过滤条件
@@ -5107,7 +5118,19 @@ async function openRewardFailuresModal(id: string) {
   }
 }
 
-/** 补发奖励（docs/259 P1-2）；all=true 批量重试该活动所有失败记录；entryId 可指定补发某人 */
+/**
+ * 补发奖励（docs/259 P1-2）。
+ *
+ * 两种调用模式：
+ * - all=false（默认）：仅重试最近一条失败记录，适用于"单个用户反馈未收到奖励"
+ * - all=true：批量重试该活动所有失败记录，适用于"活动结束后批量补发"
+ *
+ * entryId 过滤：若运营在弹窗中输入了 entryId，仅补发该用户的失败记录。
+ * 适用于客服场景："用户 A 投诉未收到邀请奖励"→ 输入 A 的 entryId → 精确补发。
+ *
+ * 安全保障：后端 triggerRewardEarned 内部有 perUserPerDay / globalPerDay 配额检查，
+ * 即使前端重复调用或后端重试，也不会超发。
+ */
 async function handleReissueReward(id: string, all = false) {
   if (!(await askConfirm(t('lottery.adminConfirmReissueReward')))) return
   operatingId.value = id

@@ -1348,7 +1348,17 @@ adminLotteryRoute.post("/draws/:id/draw", async (c) => {
 });
 
 /**
- * 查询奖励发放失败记录（docs/259 P1-2 补充：运营可查看全量失败）
+ * 查询奖励发放失败记录（docs/259 P1-2 补充：运营可查看全量失败）。
+ *
+ * 数据来源：activity_events 表中 eventType='reward_failed' 的记录。
+ * 失败事件由 maybeTriggerReward 的三条奖励路径（grantViralSpinsToSharer /
+ * processReferralRewardsEngine / triggerRewardEarned）的 catch 块写入，
+ * metadata 中包含 path（失败路径）、error（错误信息）、shareRecordId（关联分享记录）。
+ *
+ * 为什么用 activity_events 而非独立的 reward_failures 表：
+ * reward_failed 事件与其他活动事件（participation_completed / reward_earned 等）共享
+ * 同一审计链路，复用 activity_events 的租户隔离 + 时间索引，不引入额外表维护成本。
+ * 缺点是 metadataJson 需要 parse，但失败记录量级远小于正常事件，性能可接受。
  */
 adminLotteryRoute.get("/draws/:id/rewards/failures", async (c) => {
   const db = getDb(c);
@@ -1396,10 +1406,25 @@ adminLotteryRoute.get("/draws/:id/rewards/failures", async (c) => {
 });
 
 /**
- * 补发奖励（docs/259 P1-2：reward_failed 事件重试入口）
+ * 补发奖励（docs/259 P1-2：reward_failed 事件重试入口）。
  *
- * 查询该活动下最近一条 reward_failed 事件，重新执行 triggerRewardEarned。
- * 不检查幂等：triggerRewardEarned 内部已有配额 + 事件去重，重复调用不会重复发放。
+ * 设计决策：
+ * 1. 为什么重新调用 triggerRewardEarned 而非直接发券/发 spins？
+ *    triggerRewardEarned 内部有完整的配额检查（perUserPerDay / globalPerDay）+ 事件去重，
+ *    重试时会自动跳过已发放的记录，不会超发。直接发券/发 spins 则需要重新实现配额逻辑，
+ *    违反"奖励逻辑单一实现"原则。
+ *
+ * 2. 为什么不用事务包裹批量重试？
+ *    triggerRewardEarned 本身包含 DB 写入（reward_earned 事件 + 可能的 webhook 入队），
+ *    事务内嵌套事务在 SQLite 下会退化为 savepoint，增加锁持有时间。
+ *    逐条独立执行：部分成功部分失败时，审计日志如实记录每条结果，运营可针对性处理。
+ *    配额保护确保不会超发（即使两条重试都成功，perUserPerDay 只允许一次）。
+ *
+ * 3. all=true 语义：批量重试该活动所有失败记录（按 createdAt 正序），
+ *    默认只重试最近一条（防止运营误操作批量补发）。
+ *
+ * 4. entryId 过滤：运营可指定补发某个人的失败记录，而非全部重试。
+ *    适用于"某用户反馈未收到奖励"的客服场景。
  */
 adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
   const db = getDb(c);

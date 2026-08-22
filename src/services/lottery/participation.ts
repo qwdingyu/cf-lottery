@@ -296,6 +296,12 @@ export async function joinDraw(
             ));
           if ((occupy.rowsAffected ?? 0) === 0) {
             // 名额已被并发请求抢占：回滚本请求刚占用的活动级计数，避免虚拟占用泄漏。
+            // 回滚使用 MAX(0, count - 1) 而非精确 CAS，极端并发下 activeParticipantCount
+            // 可能轻微偏移（如两个请求同时 CAS 成功 → 两个 occupy 都命中 → 无需回滚；
+            // 或两个 CAS 成功但只有一个 occupy 命中 → 一个回滚正确）。
+            // 偏移量 ≤ 并发请求数，且仅影响"已抢光"判断的精确度（多/少 1-2 个名额），
+            // 不会导致超卖（INSERT 的 capacityClause 兜底）或资金损失。
+            // 后续可考虑 SQLite RETURNING + 事务内重试消除此窗口期，当前补偿机制可接受。
             await tx
               .update(lotteryDraws)
               .set({ activeParticipantCount: sql`MAX(0, ${lotteryDraws.activeParticipantCount} - 1)` })
