@@ -15,6 +15,7 @@ import type { DbType } from "../../db/client";
 import { and, eq, sql } from "drizzle-orm";
 import { lotteryEntries, couponCodes, users } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
+import { computeBonusSpinGrant } from "./spin-quota";
 import { recordActivityEvent } from "./integration";
 import { logError, logWarn } from "../../lib/logger";
 
@@ -30,9 +31,14 @@ import { logError, logWarn } from "../../lib/logger";
  * @param drawId 活动 ID
  * @param sharerEntryId 分享者 entryId
  * @param amount 发放次数（engine 已计算好的值）
- * @param maxSpins 活动级 maxSpinsPerEntry（总顶约束）
+ * @param maxSpins 活动级 maxSpinsPerEntry（总顶约束）；< 1 表示不设硬顶
  * @param rewardId 奖励 ID（用于 spins_log.refId 审计）
- * @param source 奖励来源（如 "engine" / "viral"），为 reward_earned 审计提供区分
+ * @param options 可选项（docs/259 D2 ③ 收敛后新增）：
+ *   - source 奖励来源（"engine" / "viral"），为 reward_earned 审计提供区分
+ *   - maxViralExtra 裂变子配额上限。**传入即表示本次发放计入 spinsViralEarned 并受该子顶裁剪**；
+ *     不传（undefined）表示不计入子配额、不裁剪——引擎里程碑层在 viral 未开启时走这条分支，
+ *     行为与收敛前完全一致（不写 spinsViralEarned）
+ *   - refId spins_log.refId；默认 `engine:${rewardId}`，基础裂变层传 `share:${shareRecordId}`
  */
 export async function grantBonusSpin(
   tx: DbType,
@@ -42,9 +48,11 @@ export async function grantBonusSpin(
   amount: number,
   maxSpins: number,
   rewardId: string,
-  source = "engine",
+  options: { source?: string; maxViralExtra?: number; refId?: string } = {},
 ): Promise<boolean> {
   if (amount <= 0) return false;
+  const source = options.source ?? "engine";
+  const countsViral = options.maxViralExtra != null;
   // 读取分享者当前 entry 状态
   const [sharer] = await tx
     .select({
@@ -52,6 +60,7 @@ export async function grantBonusSpin(
       identityValue: lotteryEntries.identityValue,
       spinsLeft: lotteryEntries.spinsLeft,
       spinsTotalGranted: lotteryEntries.spinsTotalGranted,
+      spinsViralEarned: lotteryEntries.spinsViralEarned,
     })
     .from(lotteryEntries)
     .where(and(
@@ -62,10 +71,16 @@ export async function grantBonusSpin(
     .limit(1);
   if (!sharer) return false;
 
-  // maxSpins 总顶裁剪（与 grantViralSpinsToSharer 一致）
+  // 总顶 + 裂变子顶裁剪：唯一实现在 computeBonusSpinGrant（docs/259 D2 ③）
   const granted = Math.max(0, Math.floor(Number(sharer.spinsTotalGranted || 0)));
-  const room = maxSpins >= 1 ? Math.max(0, maxSpins - granted) : amount;
-  const actual = Math.max(0, Math.min(amount, room));
+  const grant = computeBonusSpinGrant({
+    amount,
+    maxSpinsPerEntry: maxSpins,
+    maxViralExtraSpins: options.maxViralExtra,
+    spinsTotalGranted: granted,
+    spinsViralEarned: Number(sharer.spinsViralEarned || 0),
+  });
+  const actual = grant.actual;
   if (actual <= 0) return false;
 
   // CAS：spinsTotalGranted 未被并发修改时写入
@@ -74,6 +89,8 @@ export async function grantBonusSpin(
     .set({
       spinsTotalGranted: sql`${lotteryEntries.spinsTotalGranted} + ${actual}`,
       spinsLeft: sql`${lotteryEntries.spinsLeft} + ${actual}`,
+      // 只有计入裂变子配额的发放才动这一列，避免污染引擎里程碑层的既有语义
+      ...(countsViral ? { spinsViralEarned: sql`${lotteryEntries.spinsViralEarned} + ${actual}` } : {}),
     })
     .where(and(
       eq(lotteryEntries.id, sharer.id),
@@ -91,7 +108,7 @@ export async function grantBonusSpin(
     delta: actual,
     balanceAfter: Number(sharer.spinsLeft ?? 0) + actual,
     reason: "viral",
-    refId: `engine:${rewardId}`,
+    refId: options.refId ?? `engine:${rewardId}`,
   });
 
   // 审计日志（docs/254 §4.2）：bonus_spin 发放也写 activityEvents（reward_earned），
