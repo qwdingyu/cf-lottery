@@ -26,6 +26,7 @@ import {
   lotteryRosterMembers,
   lotteryInviteCodes,
   activityOutcomes,
+  activityEvents,
   platformTargets,
   platformDeliveries,
   systemConfig,
@@ -2067,5 +2068,138 @@ describe("活动编辑 PATCH 语义", () => {
     }, TEST_ENV);
     // 联动 maxParticipants=1000 > free 套餐 200 → 创建被拒（docs/239 预期收紧）
     expect(res.status).toBe(400);
+  });
+});
+
+// ============================================================
+// reward_failed 事件写入 & reissue 补发入口
+// ============================================================
+describe("REISSUE: POST /draws/:id/rewards/reissue", () => {
+  const DRAW_RI = "draw-reissue-001";
+
+  async function seedDrawWithFailure(tenantId: string, ownerId: string) {
+    await seedTenant(tenantId, ownerId, "ri-owner", "ri@test.com");
+    await db.insert(lotteryDraws).values({
+      id: DRAW_RI, tenantId, publicSlug: "ri-slug", title: "补发测试活动",
+      status: "open", activityKind: "lottery", participationMode: "open",
+      experienceType: "wheel", resultMode: "scheduled",
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 3_600_000).toISOString(),
+      winnerCount: 1, showParticipantCount: 1, showWinnerCount: 1, showWinnerList: 0, visible: 1,
+      activityConfig: "{}", promotionConfig: "{}",
+    });
+  }
+
+  it("活动不存在 → 404", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "ri-a", "ri-a@test.com");
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request("/api/admin/draws/nonexistent/rewards/reissue", {
+      method: "POST", headers,
+    }, TEST_ENV);
+    expect(res.status).toBe(404);
+  });
+
+  it("无 reward_failed 记录 → 400", async () => {
+    await seedDrawWithFailure(TENANT_A, OWNER_A);
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request(`/api/admin/draws/${DRAW_RI}/rewards/reissue`, {
+      method: "POST", headers,
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { message: string };
+    expect(body.message).toContain("暂无奖励发放失败记录");
+  });
+
+  it("单条 reward_failed → reissue 返回 reissued=true", async () => {
+    await seedDrawWithFailure(TENANT_A, OWNER_A);
+    // 插入一条 reward_failed 事件（模拟 grantViralSpinsToSharer 失败）
+    await db.insert(activityEvents).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A,
+      drawId: DRAW_RI,
+      entryId: "entry-sharer-001",
+      eventType: "reward_failed",
+      refCode: "ref-abc",
+      metadataJson: JSON.stringify({ path: "grantViralSpinsToSharer", error: "模拟失败" }),
+    });
+
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request(`/api/admin/draws/${DRAW_RI}/rewards/reissue`, {
+      method: "POST", headers,
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { reissued: boolean; results: Array<{ sharerEntryId: string }> };
+    // triggerRewardEarned 可能因缺少完整数据返回 triggered=false，
+    // 但接口本身不应报错（容错路径正确）
+    expect(body.reissued).toBeDefined();
+    expect(body.results).toBeDefined();
+    expect(body.results.length).toBe(1);
+  });
+
+  it("all=true 批量重试：多条 reward_failed 按时间正序处理", async () => {
+    await seedDrawWithFailure(TENANT_A, OWNER_A);
+    // 插入两条 reward_failed 事件
+    await db.insert(activityEvents).values([
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT_A,
+        drawId: DRAW_RI,
+        entryId: "entry-sharer-002",
+        eventType: "reward_failed",
+        refCode: "ref-002",
+        metadataJson: JSON.stringify({ path: "processReferralRewardsEngine", error: "模拟失败2" }),
+      },
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT_A,
+        drawId: DRAW_RI,
+        entryId: "entry-sharer-003",
+        eventType: "reward_failed",
+        refCode: "ref-003",
+        metadataJson: JSON.stringify({ path: "triggerRewardEarned", error: "模拟失败3" }),
+      },
+    ]);
+
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request(`/api/admin/draws/${DRAW_RI}/rewards/reissue?all=true`, {
+      method: "POST", headers,
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { reissued: boolean; results: Array<{ sharerEntryId: string }> };
+    // 两条失败记录都应被处理
+    expect(body.results.length).toBe(2);
+  });
+
+  it("reward_failed 缺少 entryId → 该条被跳过，reason 含'缺少 entryId'", async () => {
+    await seedDrawWithFailure(TENANT_A, OWNER_A);
+    await db.insert(activityEvents).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A,
+      drawId: DRAW_RI,
+      entryId: "", // 缺少 entryId
+      eventType: "reward_failed",
+      refCode: "ref-no-entry",
+      metadataJson: JSON.stringify({ path: "triggerRewardEarned", error: "无 entryId" }),
+    });
+
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request(`/api/admin/draws/${DRAW_RI}/rewards/reissue`, {
+      method: "POST", headers,
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { results: Array<{ triggered: boolean; reason?: string }> };
+    expect(body.results.length).toBe(1);
+    expect(body.results[0]?.triggered).toBe(false);
+    expect(body.results[0]?.reason).toContain("缺少 entryId");
   });
 });

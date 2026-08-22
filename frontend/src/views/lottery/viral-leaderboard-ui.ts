@@ -4,12 +4,14 @@
  * 从 ViralLeaderboard.vue 抽出可单测逻辑，避免「只改模板、契约漂移」且不挂载 SFC。
  * 不发起网络请求；只描述：是否画榜、是否高亮我、是否展示我的底栏名次、如何解析榜错误。
  */
+import type { ReferralRewardDef } from './types'
 
 export type ViralUiConfig = {
   enabled?: boolean
   extraEntriesPerInvite?: number
   maxExtraEntries?: number
   leaderboardEnabled?: boolean
+  referralRewardDefs?: ReferralRewardDef[]
 } | null | undefined
 
 export type LeaderboardRow = {
@@ -27,6 +29,19 @@ export type MyRankInfo = {
 /** 裂变总开关：必须显式 enabled === true 才挂载整块 */
 export function isViralFeatureEnabled(viral: ViralUiConfig): boolean {
   return viral?.enabled === true
+}
+
+/**
+ * 是否应挂载裂变面板（ViralLeaderboard / GameResultModal 共享判定，docs/103/259 D2）：
+ * - viral.enabled === true 始终展示；
+ * - viral 关闭但配置了 referralRewardDefs 时，仍展示里程碑进度面。
+ *
+ * 调用方可按自身场景追加 entry/status 门禁（如 GameResultModal 的 entryId+终态）。
+ */
+export function shouldShowViralPanel(viral: ViralUiConfig): boolean {
+  if (viral?.enabled === true) return true
+  const defs = viral?.referralRewardDefs
+  return Array.isArray(defs) && defs.length > 0
 }
 
 /**

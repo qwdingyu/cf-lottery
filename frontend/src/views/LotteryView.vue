@@ -1074,7 +1074,7 @@
               <p class="result-share-hint">🎁 {{ $t('lottery.shareYourLuck') }}</p>
               <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 {{ $t('lottery.shareActivityBtn') }}</button>
             </div>
-            <div v-if="getResultCta(myResultDraw, 'after_win')" class="result-cta-card">
+            <div v-if="getResultCta(myResultDraw, 'after_win')" class="result-cta-card" v-effect="trackCtaImpression(myResultDraw, 'after_win')">
               <a
                 :href="getResultCta(myResultDraw, 'after_win')!.url"
                 target="_blank"
@@ -1143,6 +1143,7 @@
           <div
             v-if="myResultFamily === 'lottery' && myResultData.joined !== false && !myResultData.won && isMyResultDrawFinal && getResultCta(myResultDraw, 'after_loss')"
             class="result-cta-card"
+            v-effect="trackCtaImpression(myResultDraw, 'after_loss')"
           >
             <a
               :href="getResultCta(myResultDraw, 'after_loss')!.url"
@@ -1242,6 +1243,7 @@ import {
   publicStatusTagI18nKey,
   resultModeTagI18nKey,
 } from './lottery/public-helpers'
+import { shouldShowViralPanel as shouldShowViralPanelBase } from './lottery/viral-leaderboard-ui'
 import {
   buildPublicPrizeShellPayload,
   withInstantWheelMissSector,
@@ -2386,15 +2388,11 @@ function getDrawViral(draw: LotteryDraw | null | undefined) {
 }
 
 /**
- * 是否应挂载裂变面板（ViralLeaderboard / GameResultModal 共享判定）：
- * - viral.enabled === true 始终展示；
- * - viral 关闭但配置了 referralRewardDefs 时，仍展示里程碑进度面（docs/259 D2）。
+ * 是否应挂载裂变面板：委托 viral-leaderboard-ui.ts 共享判定。
+ * 入口调用方无 entryId 上下文，直接传 viral config 即可。
  */
 function shouldShowViralPanel(draw: LotteryDraw | null | undefined): boolean {
-  const viral = getDrawViral(draw)
-  if (viral?.enabled === true) return true
-  const defs = viral?.referralRewardDefs
-  return Array.isArray(defs) && defs.length > 0
+  return shouldShowViralPanelBase(getDrawViral(draw))
 }
 
 /**
@@ -3713,6 +3711,22 @@ function trackCtaClick(draw: LotteryDraw | null | undefined, mode: 'after_win' |
   })
   // 导流商品卡专用事件：与 cta_click 并行记录，用于区分"导流商品卡"点击与普通 CTA
   void recordActivityEvent(draw.id, 'click_traffic', {
+    mode,
+    url: cta.url,
+    title: cta.title || '',
+  })
+}
+
+/**
+ * 记录导流卡曝光事件（docs/246/260 P2-3）：CTA 卡片渲染时触发。
+ * 补齐"曝光→点击→转化"漏斗的首环节；fire-and-forget 不阻塞渲染。
+ * 仅在 CTA 存在时写入，避免无导流配置的活动产生无意义事件。
+ */
+function trackCtaImpression(draw: LotteryDraw | null | undefined, mode: 'after_win' | 'after_loss') {
+  if (!draw?.id) return
+  const cta = getResultCta(draw, mode)
+  if (!cta?.url) return
+  void recordActivityEvent(draw.id, 'cta_impression', {
     mode,
     url: cta.url,
     title: cta.title || '',

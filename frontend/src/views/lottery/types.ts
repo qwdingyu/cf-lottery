@@ -79,7 +79,7 @@ export type LotteryDraw = {
       maxExtraEntries?: number
       leaderboardEnabled?: boolean
       // docs/259 D2：里程碑层奖励定义，viral 关闭时仍可配置
-      referralRewardDefs?: unknown[]
+      referralRewardDefs?: ReferralRewardDef[]
     }
     /** 体验壳：仪式短语 / 面板模式（docs/128） */
     experience?: {
@@ -165,3 +165,27 @@ export type ActivityEventType =
   /** 导流商品卡点击（docs/246/249） */
   | 'click_traffic'
   | 'share_click'
+  /** 导流 CTA 卡片曝光（docs/246/260 P2-3）：补齐"曝光→点击→转化"漏斗首环节 */
+  | 'cta_impression'
+
+/**
+ * 裂变邀请奖励定义（与后端 referralRewardDefSchema 对齐，docs/259）。
+ *
+ * conditions 为递归条件节点（COMPARE / AND / OR / NOT），前端仅透传不解析，故用 unknown[]。
+ * metadata.rewardExit 决定出口：bonus_spin 加抽奖次数，bonus_coupon 发优惠券。
+ */
+export interface ReferralRewardDef {
+  rewardId: string
+  type: 'FIXED' | 'CUSTOM' | 'DIRECT'
+  target: 'SOURCE'
+  fixedAmount?: string
+  amount?: string
+  amountFrom?: string
+  rate?: string
+  conditions?: unknown[]
+  metadata?: {
+    rewardExit?: 'bonus_spin' | 'bonus_coupon'
+    couponLabel?: string
+    exitLabel?: string
+  }
+}

@@ -143,6 +143,8 @@ import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import { shouldShowInviteShareCta } from '@/views/lottery/public-helpers'
+import { shouldShowViralPanel } from '@/views/lottery/viral-leaderboard-ui'
+import type { ReferralRewardDef } from '@/views/lottery/types'
 import {
   joinSuccessModalHintI18nKey,
   shouldShowJoinResultQueryCta,
@@ -159,7 +161,7 @@ const props = defineProps<{
   outcomeLabel?: string | null
   /** 活动 status：drawn/cancelled 时不展示邀请分享（docs/103） */
   drawStatus?: string | null
-  viralConfig?: { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean; referralRewardDefs?: unknown[] } | null
+  viralConfig?: { enabled?: boolean; extraEntriesPerInvite?: number; maxExtraEntries?: number; leaderboardEnabled?: boolean; referralRewardDefs?: ReferralRewardDef[] } | null
 }>()
 
 const emit = defineEmits<{ close: []; 'query-result': [] }>()
@@ -226,12 +228,9 @@ const viralHeadlineKey = computed(() =>
 /** 已开奖/取消：不拉分享、不展示邀请（docs/103） */
 const inviteShareAllowed = computed(() => shouldShowInviteShareCta(props.drawStatus))
 const viralEnabled = computed(() => {
+  // 邀请分享 CTA 需终态门禁 + entryId 存在（弹窗场景必有参与）
   if (!inviteShareAllowed.value || !props.entryId) return false
-  const cfg = props.viralConfig
-  if (cfg?.enabled === true) return true
-  // docs/259 D2：viral 关闭但配置了 referralRewardDefs 时，仍允许展示里程碑进度
-  if (cfg?.referralRewardDefs && cfg.referralRewardDefs.length > 0) return true
-  return false
+  return shouldShowViralPanel(props.viralConfig)
 })
 const maxExtraEntries = computed(() => {
   const n = Number(props.viralConfig?.maxExtraEntries)
