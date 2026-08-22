@@ -38,8 +38,13 @@ export function useDrawAnalytics(opts: {
       { key: 'share_click', label: t('lottery.adminFunnelShares'), value: events?.shareClicks ?? 0 },
       { key: 'attributed_join', label: t('lottery.adminFunnelJoins'), value: events?.attributedJoins ?? 0 },
       { key: 'external_conversion_reported', label: t('lottery.adminFunnelConversions'), value: events?.externalConversionsReported ?? 0 },
-      // 邀请奖励发放（docs/253 缺口 C）：reward_earned 事件计数（bonus_spin/bonus_coupon 发放）
+      // 邀请奖励发放（docs/253 缺口 C / docs/259 P2-1）：reward_earned 事件计数，拆分为总览 + source 明细
       { key: 'reward_earned', label: t('lottery.adminFunnelRewards'), value: events?.totals.reward_earned ?? 0 },
+      ...(events?.rewardEarnedBySource ? Object.entries(events.rewardEarnedBySource).map(([source, count]) => ({
+        key: `reward_earned:${source}`,
+        label: `${t('lottery.adminFunnelRewards')} (${source})`,
+        value: count,
+      })) : []),
     ]
   })
 

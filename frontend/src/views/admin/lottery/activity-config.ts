@@ -83,10 +83,15 @@ export function normalizeActivityConfig(
         : (defaultActivityConfigForKind('vote', t) as Extract<ActivityConfigForm, { kind: 'vote' }>).options
     return { version: 1, kind: 'vote', selection: 'single', options }
   }
-  // lottery（及其余非 survey/vote 类型）分支：必须解析 raw 里的 loserReward / reward 并与默认合并，
+  // lottery（及其余非 survey/vote 类型）分支：必须解析 raw 里的 loserReward / reward / quota 并与默认合并，
   // 而不是直接返回默认。为什么：DB 里可能已启用「未中奖自动发券」（{enabled:true, couponLabel:'安慰奖'}），
   // 直接 return default 会把 enabled 重置为 false，导致「编辑任一字段保存后发券被静默关闭」（P0 回归）。
   // 合并语义 { ...default, ...stored }：stored 缺省（含非法值）时回落默认。
+  //
+  // ⚠️ 数据结构约定（对齐后端 triggerRewardEarned 读取路径）：
+  // - activityConfig.reward：perInviteAmount / currency（reward.ts:73）
+  // - activityConfig.quota：perUserPerDay / globalPerDay（reward.ts:84-85）
+  // quota 必须在 activityConfig 顶层，而非 reward.quota 嵌套。
   const defaultLottery = defaultActivityConfigForKind(kind, t) as {
     version: 1
     kind: string
@@ -94,10 +99,10 @@ export function normalizeActivityConfig(
     reward?: {
       perInviteAmount: number
       currency: string
-      quota?: {
-        perUserPerDay?: number
-        globalPerDay?: number
-      }
+    }
+    quota?: {
+      perUserPerDay?: number
+      globalPerDay?: number
     }
   }
   // 容错：loserReward 非对象（null / 字符串 / 数组 / 数字）一律视为缺省，避免脏数据炸表单
@@ -110,34 +115,39 @@ export function normalizeActivityConfig(
         }
       : undefined
 
-  // P1-3：保留 reward 配置（perInviteAmount / currency / quota），并对非法值做容错
+  // P1-3：保留 reward 配置（perInviteAmount / currency），并对非法值做容错
+  // ⚠️ reward 对象只包含 per-invite 维度配置，quota 从顶层读取（见下方 parsedQuota）
   const storedReward = (raw as { reward?: unknown }).reward
   const parsedReward =
     storedReward && typeof storedReward === 'object' && !Array.isArray(storedReward)
       ? {
-          // perInviteAmount 必须是有限数字，否则回退 0（避免 NaN 进入后端）
+          // perInviteAmount 必须是有限非负整数，否则回退 0（避免 NaN 进入后端）
           perInviteAmount: (() => {
             const v = Number((storedReward as { perInviteAmount?: unknown }).perInviteAmount)
             return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0
           })(),
-          // currency 必须是字符串，否则回退 USD
+          // currency 必须是非空字符串，否则回退 USD
           currency: (() => {
             const v = (storedReward as { currency?: unknown }).currency
             return typeof v === 'string' && v.trim().length > 0 ? v.trim() : 'USD'
           })(),
-          quota: (storedReward as { quota?: unknown }).quota && typeof (storedReward as { quota?: unknown }).quota === 'object'
-            ? {
-                // 配额必须是有限非负整数，否则忽略该字段（不写入 payload）
-                perUserPerDay: (() => {
-                  const v = Number(((storedReward as { quota?: { perUserPerDay?: unknown } }).quota?.perUserPerDay) || 0)
-                  return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
-                })(),
-                globalPerDay: (() => {
-                  const v = Number(((storedReward as { quota?: { globalPerDay?: unknown } }).quota?.globalPerDay) || 0)
-                  return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
-                })(),
-              }
-            : undefined,
+        }
+      : undefined
+
+  // P1-3：配额配置从 activityConfig 顶层读取（对齐后端 triggerRewardEarned: config?.quota?.perUserPerDay）
+  const storedQuota = (raw as { quota?: unknown }).quota
+  const parsedQuota =
+    storedQuota && typeof storedQuota === 'object' && !Array.isArray(storedQuota)
+      ? {
+          // 配额必须是有限正整数，否则忽略该字段（不写入 payload）
+          perUserPerDay: (() => {
+            const v = Number((storedQuota as { perUserPerDay?: unknown }).perUserPerDay)
+            return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
+          })(),
+          globalPerDay: (() => {
+            const v = Number((storedQuota as { globalPerDay?: unknown }).globalPerDay)
+            return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
+          })(),
         }
       : undefined
 
@@ -145,6 +155,10 @@ export function normalizeActivityConfig(
     ...defaultLottery,
     ...(parsedLoserReward ? { loserReward: parsedLoserReward } : {}),
     ...(parsedReward ? { reward: parsedReward } : {}),
+    // quota 在顶层，与后端 triggerRewardEarned 的 config?.quota 读取路径对齐
+    ...(parsedQuota && (parsedQuota.perUserPerDay != null || parsedQuota.globalPerDay != null)
+      ? { quota: parsedQuota }
+      : {}),
   }
 }
 

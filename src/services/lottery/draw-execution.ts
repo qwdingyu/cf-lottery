@@ -871,13 +871,14 @@ export async function grantLoserRewards(
       ));
     if ((result.rowsAffected ?? 0) > 0) {
       granted++;
-      // 审计日志（docs/255 P2-3）：安慰券发放写 reward_earned，与 grantBonusCoupon 对齐
+      // 审计日志（docs/255 P2-3 / docs/259 P1-4）：安慰券发放写 reward_earned，补齐 source 便于后续按来源拆分统计
       try {
         await recordActivityEvent(db, {
           tenantId,
           drawId,
           entryId: loser.id,
           eventType: "reward_earned",
+          source: "loser_reward",
           metadata: {
             rewardExit: "bonus_coupon",
             reason: "loser_reward",

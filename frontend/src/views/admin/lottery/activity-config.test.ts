@@ -89,11 +89,24 @@ describe('activity-config normalize（lottery loserReward 保留，P0 回归）'
     }
   })
 
-  it('normalize 对 reward.quota 非法值容错：非对象返回 undefined，非法数字忽略该字段', () => {
-    const result = normalizeActivityConfig('lottery', { version: 1, kind: 'lottery', reward: { quota: 'bad' } }, t)
-    expect(result).toMatchObject({ reward: { perInviteAmount: 0, currency: 'USD', quota: undefined } })
+  it('normalize 对 quota 顶层非法值容错：非对象返回 undefined，非法数字忽略该字段', () => {
+    // quota 在 activityConfig 顶层（对齐后端 triggerRewardEarned: config?.quota），非 reward 内部
+    const result = normalizeActivityConfig('lottery', { version: 1, kind: 'lottery', quota: 'bad' }, t)
+    expect(result).not.toHaveProperty('quota')
 
-    const result2 = normalizeActivityConfig('lottery', { version: 1, kind: 'lottery', reward: { quota: { perUserPerDay: 'x' } } }, t)
-    expect(result2).toMatchObject({ reward: { perInviteAmount: 0, currency: 'USD', quota: { perUserPerDay: undefined, globalPerDay: undefined } } })
+    const result2 = normalizeActivityConfig('lottery', { version: 1, kind: 'lottery', quota: { perUserPerDay: 'x', globalPerDay: -1 } }, t)
+    expect(result2).not.toHaveProperty('quota')
+  })
+
+  it('normalize 正确从顶层解析 quota：perUserPerDay/globalPerDay 合并到返回结构', () => {
+    const result = normalizeActivityConfig('lottery', {
+      version: 1, kind: 'lottery',
+      reward: { perInviteAmount: 10, currency: 'CNY' },
+      quota: { perUserPerDay: 5, globalPerDay: 100 },
+    }, t)
+    expect(result).toMatchObject({
+      reward: { perInviteAmount: 10, currency: 'CNY' },
+      quota: { perUserPerDay: 5, globalPerDay: 100 },
+    })
   })
 })

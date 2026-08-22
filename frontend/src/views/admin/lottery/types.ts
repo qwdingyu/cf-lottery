@@ -66,14 +66,18 @@ export type ActivityConfigForm =
       options?: Array<{ id: string; label: string; description?: string; imageUrl?: string }>
       /** 未中奖自动发券（安慰奖）：仅 lottery 活动生效，enabled 默认 false */
       loserReward?: { enabled: boolean; couponLabel: string }
-      /** 邀请奖励配置（docs/259 P1-3）：每邀请发放金额/货币/配额 */
+      /** 邀请奖励 per-invite 维度配置（docs/259 P1-3）：每邀请发放金额/货币 */
       reward?: {
         perInviteAmount: number
         currency: string
-        quota?: {
-          perUserPerDay?: number
-          globalPerDay?: number
-        }
+      }
+      /**
+       * 奖励配额（活动级全局配置），在 activityConfig 顶层（非 reward 内部）。
+       * ⚠️ 与后端 triggerRewardEarned 的 config?.quota 读取路径对齐（reward.ts:84-85）。
+       */
+      quota?: {
+        perUserPerDay?: number
+        globalPerDay?: number
       }
     }
 
@@ -110,6 +114,8 @@ export type LotteryWinner = {
 
 export type ActivityEventSummary = {
   totals: Record<string, number>
+  /** docs/259 P2-1：reward_earned 按 source 拆分，便于看板区分 viral / engine / trigger / loser_reward 等来源 */
+  rewardEarnedBySource: Record<string, number>
   pageViews: number
   participationCompleted: number
   ctaClicks: number

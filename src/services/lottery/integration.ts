@@ -66,8 +66,26 @@ export async function getActivityEventSummary(db: DbType, tenantId: string, draw
     totals[row.eventType] = Number(row.total || 0);
   }
 
+  // docs/259 P2-1：reward_earned 按 source 拆分，便于漏斗看板区分 viral / engine / trigger / loser_reward 等来源
+  const rewardEarnedBySourceRows = await db
+    .select({ source: activityEvents.source, total: count() })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.eventType, "reward_earned"),
+    ))
+    .groupBy(activityEvents.source);
+
+  const rewardEarnedBySource: Record<string, number> = {};
+  for (const row of rewardEarnedBySourceRows) {
+    const key = row.source || "unknown";
+    rewardEarnedBySource[key] = Number(row.total || 0);
+  }
+
   return {
     totals,
+    rewardEarnedBySource,
     pageViews: totals.page_view || 0,
     participationCompleted: totals.participation_completed || 0,
     ctaClicks: totals.cta_click || 0,

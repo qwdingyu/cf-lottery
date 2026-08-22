@@ -1429,6 +1429,7 @@ export default {
     adminReferralRewardDefsSpin: "Spins",
     adminReferralRewardDefsCoupon: "Coupon",
     adminReferralRewardDefsValue: "Value",
+    adminReferralRewardDefsValueWarning: "Value must be >= 1 to take effect",
     adminReferralRewardDefsLabel: "Label (optional)",
     adminReferralRewardDefsRemove: "Remove row",
     adminReferralRewardDefsAdd: "Add reward",

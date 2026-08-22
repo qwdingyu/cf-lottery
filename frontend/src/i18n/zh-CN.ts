@@ -1403,6 +1403,7 @@ export default {
     adminReferralRewardDefsSpin: "抽奖次数",
     adminReferralRewardDefsCoupon: "优惠券",
     adminReferralRewardDefsValue: "数量",
+    adminReferralRewardDefsValueWarning: "数量为 0 时该行不会生效，请确认是否需要配置",
     adminReferralRewardDefsLabel: "券label（可选）",
     adminReferralRewardDefsRemove: "删除此行",
     adminReferralRewardDefsAdd: "添加奖励",

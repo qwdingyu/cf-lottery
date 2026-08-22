@@ -1150,6 +1150,7 @@
                             :placeholder="$t('lottery.adminReferralRewardDefsValue')"
                             @change="onReferralRewardDefRowChange"
                           />
+                          <small v-if="Number(row.rewardValue || 0) < 1" class="field-hint field-hint--warn">{{ $t('lottery.adminReferralRewardDefsValueWarning') }}</small>
                           <input
                             v-if="row.rewardExit === 'bonus_coupon'"
                             v-model="row.couponLabel"
@@ -5216,7 +5217,11 @@ async function handleCreate() {
             version: 1,
             kind: 'lottery',
             loserReward: config?.loserReward || { enabled: false, couponLabel: '' },
-            ...(config?.reward && Number(config.reward.perInviteAmount) > 0 ? { reward: config.reward } : {}),
+            // reward 存在即写入，不以 perInviteAmount > 0 为门槛——amount=0 由后端 triggerRewardEarned
+            // 的 `perInviteAmount <= 0 → no_reward_config` 分支处理，前端不应提前丢弃配置。
+            ...(config?.reward ? { reward: config.reward } : {}),
+            // quota 在 activityConfig 顶层，与后端 triggerRewardEarned 的 config?.quota 读取路径对齐
+            ...(config?.quota ? { quota: config.quota } : {}),
           }
         }
         // 其他活动类型（checkin/signup_chain/claim/approval/reservation/waitlist 等）：
