@@ -29,7 +29,8 @@ import { logError } from "../../lib/logger";
  * 外部导入 @usethink/incentive-engine
  * 注意：该包是 CommonJS 模块，ESM 下只能使用 default import
  */
-import engine, { type RewardDef } from "@usethink/incentive-engine";
+import engine from "@usethink/incentive-engine/pure";
+import type { RewardDefLike } from "@usethink/incentive-engine/pure";
 
 /**
  * incentive-engine rewardDef 的 metadata 扩展字段（由 cf-lottery 定义）
@@ -233,10 +234,10 @@ function validateReferralRewardDef(item: unknown, seenRewardIds: Set<string>): s
   return null;
 }
 
-export function normalizeReferralRewardDefs(raw: unknown): RewardDef[] {
+export function normalizeReferralRewardDefs(raw: unknown): RewardDefLike[] {
   if (!Array.isArray(raw)) return [];
   const seenRewardIds = new Set<string>();
-  return raw.filter((item) => validateReferralRewardDef(item, seenRewardIds) === null) as RewardDef[];
+  return raw.filter((item) => validateReferralRewardDef(item, seenRewardIds) === null) as RewardDefLike[];
 }
 
 /**
@@ -422,7 +423,7 @@ export async function processReferralRewardsEngine(
 ): Promise<void> {
   // 1. 解析 referralRewardDefs 配置
   if (!shareRecordId) return;
-  let rewardDefs: RewardDef[] = [];
+  let rewardDefs: RewardDefLike[] = [];
   try {
     const pc = JSON.parse(draw.promotionConfig || "{}") as Record<string, unknown>;
     const raw = pc.referralRewardDefs;
@@ -492,7 +493,7 @@ export async function processReferralRewardsEngine(
   const isLotteryKind = String(draw.activityKind || "") === "lottery";
 
   // 建立 rewardId → rewardDef 的映射，用于读取 metadata（engine 的 snapshot 不透传 metadata）
-  const defByRewardId = new Map<string, RewardDef>();
+  const defByRewardId = new Map<string, RewardDefLike>();
   for (const def of rewardDefs) {
     const rid = String(def.rewardId || "");
     if (rid) defByRewardId.set(rid, def);

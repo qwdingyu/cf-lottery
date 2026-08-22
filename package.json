@@ -41,7 +41,7 @@
     "@libsql/client": "^0.14.0",
     "@usethink/cf-core": "^0.6.0",
     "@usethink/cf-pay": "^0.2.3",
-    "@usethink/incentive-engine": "4.0.0",
+    "@usethink/incentive-engine": "4.1.0",
     "better-auth": "^1.6.25",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.2",

@@ -17,16 +17,16 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import engine from "@usethink/incentive-engine";
+import engine from "@usethink/incentive-engine/pure";
 
 describe("incentive-engine 导入契约", () => {
-  it("包根导出必须提供 Distribute.distributeByDefs（调用点依赖的形状）", () => {
+  it("pure 子入口必须提供 Distribute.distributeByDefs（调用点依赖的形状）", () => {
     expect(engine).toBeTruthy();
     expect(typeof engine.Distribute).toBe("object");
     expect(typeof engine.Distribute.distributeByDefs).toBe("function");
   });
 
-  it("调用点必须从包根导入，不得深导入 src/engine/**（深导入无 Distribute 层）", () => {
+  it("调用点必须从 /pure 导入，不得深导入 src/engine/**（深导入无 Distribute 层）", () => {
     const src = readFileSync(
       join(process.cwd(), "src/services/lottery/referral-rewards-engine.ts"),
       "utf8",
@@ -35,7 +35,7 @@ describe("incentive-engine 导入契约", () => {
       .split("\n")
       .find((line) => /^import\s+engine\b/.test(line.trim()));
     expect(importLine, "未找到 engine 的 import 语句").toBeDefined();
-    expect(importLine).toContain('from "@usethink/incentive-engine"');
+    expect(importLine).toContain('from "@usethink/incentive-engine/pure"');
     expect(importLine).not.toContain("/src/engine/");
   });
 
@@ -69,12 +69,12 @@ describe("incentive-engine 导入契约", () => {
     });
 
     // 只有已达标的阈值会产出记录；未达标的 invite_5 不得出现
-    expect(records.map((r) => r.rewardId)).toEqual(["invite_3"]);
+    expect(records.map((r: { rewardId: string }) => r.rewardId)).toEqual(["invite_3"]);
     expect(Number(records[0].amount)).toBe(2);
   });
 
   it("依赖版本必须精确锁定（引擎的演进由主消费方 rbb 驱动，^ 会引入未知风险）", () => {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
-    expect(pkg.dependencies["@usethink/incentive-engine"]).toBe("4.0.0");
+    expect(pkg.dependencies["@usethink/incentive-engine"]).toBe("4.1.0");
   });
 });
