@@ -1087,6 +1087,7 @@ export default {
     adminReissueRewardSuccess: "奖励已补发",
     adminReissueRewardFailed: "补发失败：{reason}",
     adminRewardFailuresHint: "以下为奖励发放失败记录，点击「补发奖励」可重试最近一条失败；批量重试请使用「全部补发」。",
+    adminEntryIdFilterPlaceholder: "留空=全部补发，填入 entryId 只补发该用户",
     // 新增字段
     statusPaused: "已暂停",
     expectedCount: "预计参与",

@@ -123,11 +123,14 @@ export const fetchRewardFailures = async (id: string) =>
     shareRecordId: string
   }> }>(`/api/admin/draws/${id}/rewards/failures`)
 
-/** 补发奖励（docs/259 P1-2）；all=true 时重试该活动所有 reward_failed */
-export const reissueReward = async (id: string, all = false) => {
-  const search = all ? '?all=true' : ''
+/** 补发奖励（docs/259 P1-2）；all=true 时重试该活动所有 reward_failed；entryId 可指定补发某人 */
+export const reissueReward = async (id: string, all = false, entryId?: string) => {
+  const params = new URLSearchParams()
+  if (all) params.set('all', 'true')
+  if (entryId) params.set('entryId', entryId)
+  const qs = params.toString()
   return adminRequest<{ reissued: boolean; reason: string; sharerEntryId: string }>(
-    `/api/admin/draws/${id}/rewards/reissue${search}`,
+    `/api/admin/draws/${id}/rewards/reissue${qs ? '?' + qs : ''}`,
     { method: 'POST' },
   )
 }

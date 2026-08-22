@@ -1816,6 +1816,17 @@
                 <strong>{{ $t('lottery.adminRewardFailuresHint') }}</strong>
               </div>
             </div>
+            <!-- P1-2：运营可按 entryId 过滤，指定补发某人的失败记录 -->
+            <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;color:var(--tg-hint)">
+              {{ $t('lottery.adminEntryId') }}：
+              <input
+                v-model="reissueEntryId"
+                type="text"
+                class="form-input"
+                style="max-width:260px"
+                :placeholder="$t('lottery.adminEntryIdFilterPlaceholder')"
+              />
+            </label>
           </div>
           <div class="toolbar-actions">
             <button
@@ -2669,6 +2680,8 @@ const showRewardFailuresModal = ref(false)
 const rewardFailures = ref<Array<{ id: string; entryId: string; refCode: string; createdAt: string; path: string; error: string; shareRecordId: string }>>([])
 const rewardFailuresLoading = ref(false)
 const rewardFailuresDrawId = ref('')
+/** P1-2：运营可指定补发某人的失败记录，而非全部重试 */
+const reissueEntryId = ref('')
 const {
   showQrModal,
   qrImageUrl,
@@ -5079,6 +5092,7 @@ async function handleGrantLeaderboardRewards(id: string) {
 /** 打开奖励失败记录弹窗（docs/259 P1-2） */
 async function openRewardFailuresModal(id: string) {
   rewardFailuresDrawId.value = id
+  reissueEntryId.value = '' // 重置 entryId 过滤条件
   rewardFailuresLoading.value = true
   rewardFailures.value = []
   showRewardFailuresModal.value = true
@@ -5093,12 +5107,12 @@ async function openRewardFailuresModal(id: string) {
   }
 }
 
-/** 补发奖励（docs/259 P1-2）；all=true 批量重试该活动所有失败记录 */
+/** 补发奖励（docs/259 P1-2）；all=true 批量重试该活动所有失败记录；entryId 可指定补发某人 */
 async function handleReissueReward(id: string, all = false) {
   if (!(await askConfirm(t('lottery.adminConfirmReissueReward')))) return
   operatingId.value = id
   try {
-    const result = await reissueReward(id, all)
+    const result = await reissueReward(id, all, reissueEntryId.value || undefined)
     if (result.reissued) {
       showToast(t('lottery.adminReissueRewardSuccess'), 'success')
       // 若弹窗开启，刷新失败列表

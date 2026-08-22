@@ -1114,6 +1114,7 @@ export default {
     adminReissueRewardSuccess: "Reward reissued",
     adminReissueRewardFailed: "Reissue failed: {reason}",
     adminRewardFailuresHint: "Below are reward failure records. Click \"Reissue reward\" to retry the latest failure; use \"Reissue all\" for batch retry.",
+    adminEntryIdFilterPlaceholder: "Leave empty = reissue all; enter entryId to reissue that user only",
     statusPaused: "Paused",
     expectedCount: "Expected",
     expectedCountHint: "Reference value for display only",

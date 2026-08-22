@@ -1411,16 +1411,22 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
     if (!draw) return fail(c, "活动不存在", 404);
 
     const all = c.req.query("all") === "true";
+    const entryIdFilter = c.req.query("entryId")?.trim() || "";
 
     // 查询该活动下所有 reward_failed 事件，按创建时间正序逐个重试，保证顺序。
+    // entryId 过滤：运营可指定补发某个人的失败记录，而非全部重试。
+    const conditions = [
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.eventType, "reward_failed"),
+    ];
+    if (entryIdFilter) {
+      conditions.push(eq(activityEvents.entryId, entryIdFilter));
+    }
     const failures = await db
       .select()
       .from(activityEvents)
-      .where(and(
-        eq(activityEvents.tenantId, tenantId),
-        eq(activityEvents.drawId, drawId),
-        eq(activityEvents.eventType, "reward_failed"),
-      ))
+      .where(and(...conditions))
       .orderBy(desc(activityEvents.createdAt));
 
     if (failures.length === 0) {

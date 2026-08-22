@@ -2202,4 +2202,43 @@ describe("REISSUE: POST /draws/:id/rewards/reissue", () => {
     expect(body.results[0]?.triggered).toBe(false);
     expect(body.results[0]?.reason).toContain("缺少 entryId");
   });
+
+  it("entryId 过滤：只重试指定用户的失败记录", async () => {
+    await seedDrawWithFailure(TENANT_A, OWNER_A);
+    // 插入两条不同 entryId 的失败记录
+    await db.insert(activityEvents).values([
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT_A,
+        drawId: DRAW_RI,
+        entryId: "entry-user-A",
+        eventType: "reward_failed",
+        refCode: "ref-a",
+        metadataJson: JSON.stringify({ path: "triggerRewardEarned", error: "A 失败" }),
+      },
+      {
+        id: crypto.randomUUID(),
+        tenantId: TENANT_A,
+        drawId: DRAW_RI,
+        entryId: "entry-user-B",
+        eventType: "reward_failed",
+        refCode: "ref-b",
+        metadataJson: JSON.stringify({ path: "triggerRewardEarned", error: "B 失败" }),
+      },
+    ]);
+
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    // 只补发 entry-user-A
+    const res = await app.request(
+      `/api/admin/draws/${DRAW_RI}/rewards/reissue?entryId=entry-user-A`,
+      { method: "POST", headers },
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { results: Array<{ sharerEntryId: string }> };
+    // 只处理 1 条（entry-user-A 的）
+    expect(body.results.length).toBe(1);
+  });
 });
