@@ -695,8 +695,8 @@ export function buildPromotionConfigPayload(form: {
     }
   }
 
-  const perInvite = form.viralExtraEntriesPerInvite || 1
-  const maxExtra = form.viralMaxExtraEntries || 10
+  const perInvite = hasViral ? (form.viralExtraEntriesPerInvite || 1) : 0
+  const maxExtra = hasViral ? (form.viralMaxExtraEntries || 10) : 0
   const isInstant = String(form.resultMode || '').trim() === 'instant'
 
   // docs/218 模式一/二：保底与每日免费仅 instant 生效

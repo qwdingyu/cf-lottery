@@ -70,6 +70,34 @@
             </p>
           </div>
 
+          <!-- docs/259 D2：里程碑层进度（viral 关闭但配了 referralRewardDefs 时仍可见） -->
+          <div v-if="hasMilestones" class="my-viral-milestones">
+            <div class="my-viral-milestones-summary">
+              <span class="my-viral-milestones-unlocked">
+                {{ $t('lottery.viralMilestonesUnlocked', { unlocked: effectiveStats.milestonesUnlocked, total: effectiveStats.milestones?.length || 0 }) }}
+              </span>
+              <span v-if="effectiveStats.nextMilestone" class="my-viral-milestones-next">
+                {{ $t('lottery.viralMilestonesNext', { n: effectiveStats.nextMilestone.requireCount }) }}
+              </span>
+            </div>
+            <div class="my-viral-milestones-list">
+              <div
+                v-for="(ms, idx) in effectiveStats.milestones"
+                :key="idx"
+                class="my-viral-milestone-row"
+                :class="{ 'my-viral-milestone-row--granted': ms.granted }"
+              >
+                <span class="my-viral-milestone-count">{{ ms.requireCount }}{{ $t('lottery.viralMilestonesPeople') }}</span>
+                <span class="my-viral-milestone-reward">
+                  {{ ms.rewardValue }}
+                  <span v-if="ms.rewardExit === 'bonus_spin'">{{ $t('lottery.viralMilestonesSpins') }}</span>
+                  <span v-else>{{ $t('lottery.viralMilestonesCoupon') }}</span>
+                </span>
+                <span v-if="ms.granted" class="my-viral-milestone-badge">{{ $t('lottery.viralMilestonesGranted') }}</span>
+              </div>
+            </div>
+          </div>
+
           <div v-if="inviteOpen" class="my-viral-share">
             <code class="my-viral-link" :title="displayShareUrl || undefined">
               {{ displayShareUrl || $t('lottery.viralGenerateHint') }}
@@ -242,6 +270,11 @@ interface MyViralStats {
   drawWeight: number
   inviteOpen?: boolean
   drawStatus?: string
+  // docs/259 D2：里程碑层进度（viral 关闭但配了 referralRewardDefs 时仍可见）
+  milestones?: Array<{ requireCount: number; rewardExit: string; rewardValue: number; granted?: boolean }>
+  nextMilestone?: { requireCount: number; rewardExit: string; rewardValue: number } | null
+  milestonesUnlocked?: number
+  milestonesGranted?: number
 }
 
 const leaderboard = ref<LeaderboardEntry[]>([])
@@ -293,6 +326,12 @@ const displayMaxExtra = computed(() => {
  * 仅排行榜关 + 完全路人且无 entry：仍展示激励条，避免整块消失。
  */
 const showMyInviteBlock = computed(() => viralOn.value)
+
+/** 是否展示里程碑层进度（有 milestones 数组且非空） */
+const hasMilestones = computed(() => {
+  const ms = effectiveStats.value?.milestones
+  return Array.isArray(ms) && ms.length > 0
+})
 
 const joinedWithoutEntry = computed(
   () => props.isJoined === true && !props.entryId,
@@ -445,6 +484,11 @@ async function fetchData() {
             drawWeight: stats.drawWeight ?? 1 + earned,
             inviteOpen: stats.inviteOpen,
             drawStatus: stats.drawStatus,
+            // docs/259 D2：里程碑层进度（viral 关闭但配了 referralRewardDefs 时仍可见）
+            milestones: stats.milestones || [],
+            nextMilestone: stats.nextMilestone || null,
+            milestonesUnlocked: stats.milestonesUnlocked ?? 0,
+            milestonesGranted: stats.milestonesGranted ?? 0,
           }
           statsError.value = ''
         } else {

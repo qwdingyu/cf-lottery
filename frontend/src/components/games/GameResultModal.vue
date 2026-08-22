@@ -56,6 +56,34 @@
             </div>
             <p class="viral-progress-caption">{{ $t('lottery.viralExtraProgress', { earned: extraEntriesEarned, max: maxExtraEntries }) }}</p>
 
+            <!-- docs/259 D2：里程碑层进度（viral 关闭但配了 referralRewardDefs 时仍可见） -->
+            <div v-if="hasMilestones" class="viral-milestones">
+              <div class="viral-milestones-summary">
+                <span class="viral-milestones-unlocked">
+                  {{ $t('lottery.viralMilestonesUnlocked', { unlocked: shareData?.milestonesUnlocked, total: shareData?.milestones?.length || 0 }) }}
+                </span>
+                <span v-if="shareData?.nextMilestone" class="viral-milestones-next">
+                  {{ $t('lottery.viralMilestonesNext', { n: shareData.nextMilestone.requireCount }) }}
+                </span>
+              </div>
+              <div class="viral-milestones-list">
+                <div
+                  v-for="(ms, idx) in shareData?.milestones"
+                  :key="idx"
+                  class="viral-milestone-row"
+                  :class="{ 'viral-milestone-row--granted': ms.granted }"
+                >
+                  <span class="viral-milestone-count">{{ ms.requireCount }}{{ $t('lottery.viralMilestonesPeople') }}</span>
+                  <span class="viral-milestone-reward">
+                    {{ ms.rewardValue }}
+                    <span v-if="ms.rewardExit === 'bonus_spin'">{{ $t('lottery.viralMilestonesSpins') }}</span>
+                    <span v-else>{{ $t('lottery.viralMilestonesCoupon') }}</span>
+                  </span>
+                  <span v-if="ms.granted" class="viral-milestone-badge">{{ $t('lottery.viralMilestonesGranted') }}</span>
+                </div>
+              </div>
+            </div>
+
             <div class="viral-link-row">
               <code class="viral-link-text">{{ displayShareUrl }}</code>
               <button type="button" class="btn btn-sm btn-primary" @click="copyAttributedLink">
@@ -148,6 +176,11 @@ const shareData = ref<{
   joinedCount?: number
   /** 与开奖公式一致的已赚额外次数（来自 my-viral-stats） */
   extraEntriesEarned?: number
+  // docs/259 D2：里程碑层进度（viral 关闭但配了 referralRewardDefs 时仍可见）
+  milestones?: Array<{ requireCount: number; rewardExit: string; rewardValue: number; granted?: boolean }>
+  nextMilestone?: { requireCount: number; rewardExit: string; rewardValue: number } | null
+  milestonesUnlocked?: number
+  milestonesGranted?: number
 } | null>(null)
 const shareLoading = ref(false)
 const shareError = ref('')
@@ -224,6 +257,10 @@ const extraProgressPercent = computed(() => {
   const max = maxExtraEntries.value
   return max > 0 ? Math.min(100, Math.round((extraEntriesEarned.value / max) * 100)) : 0
 })
+const hasMilestones = computed(() => {
+  const ms = shareData.value?.milestones
+  return Array.isArray(ms) && ms.length > 0
+})
 const shareLoaded = computed(() => shareData.value !== null)
 const shareUrl = computed(() => shareData.value?.shareUrl ?? '')
 const displayShareUrl = computed(() => {
@@ -253,6 +290,11 @@ async function loadShareLink() {
           clickedCount: stats.clickedCount,
           joinedCount: stats.invitedCount,
           extraEntriesEarned: stats.extraEntriesEarned,
+          // docs/259 D2：里程碑层进度（viral 关闭但配了 referralRewardDefs 时仍可见）
+          milestones: stats.milestones || [],
+          nextMilestone: stats.nextMilestone || null,
+          milestonesUnlocked: stats.milestonesUnlocked ?? 0,
+          milestonesGranted: stats.milestonesGranted ?? 0,
         }
         return
       }
@@ -390,6 +432,57 @@ watch(() => props.show, async (newVal) => {
   background: var(--tg-secondary-bg, rgba(255,255,255,.05));
   padding: 4px 8px;
   border-radius: 4px;
+}
+
+/* docs/259 D2：里程碑层进度（viral 关闭但配了 referralRewardDefs 时仍可见） */
+.viral-milestones {
+  margin: 10px 0 0;
+  padding: 12px;
+  background: var(--tg-secondary-bg, rgba(255,255,255,.03));
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.06);
+}
+.viral-milestones-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--tg-hint);
+}
+.viral-milestones-next {
+  font-weight: 600;
+  color: var(--tg-text);
+}
+.viral-milestones-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.viral-milestone-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.02);
+}
+.viral-milestone-row--granted {
+  background: rgba(74,222,128,.08);
+}
+.viral-milestone-count {
+  font-weight: 700;
+  min-width: 56px;
+}
+.viral-milestone-reward {
+  flex: 1;
+  color: var(--tg-hint);
+}
+.viral-milestone-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #4ade80;
 }
 
 @keyframes modalIn { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: scale(1); } }
