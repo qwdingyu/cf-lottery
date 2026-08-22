@@ -110,17 +110,32 @@ export function normalizeActivityConfig(
         }
       : undefined
 
-  // P1-3：保留 reward 配置（perInviteAmount / currency / quota）
+  // P1-3：保留 reward 配置（perInviteAmount / currency / quota），并对非法值做容错
   const storedReward = (raw as { reward?: unknown }).reward
   const parsedReward =
     storedReward && typeof storedReward === 'object' && !Array.isArray(storedReward)
       ? {
-          perInviteAmount: Number((storedReward as { perInviteAmount?: unknown }).perInviteAmount || 0),
-          currency: String((storedReward as { currency?: unknown }).currency || 'USD'),
+          // perInviteAmount 必须是有限数字，否则回退 0（避免 NaN 进入后端）
+          perInviteAmount: (() => {
+            const v = Number((storedReward as { perInviteAmount?: unknown }).perInviteAmount)
+            return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0
+          })(),
+          // currency 必须是字符串，否则回退 USD
+          currency: (() => {
+            const v = (storedReward as { currency?: unknown }).currency
+            return typeof v === 'string' && v.trim().length > 0 ? v.trim() : 'USD'
+          })(),
           quota: (storedReward as { quota?: unknown }).quota && typeof (storedReward as { quota?: unknown }).quota === 'object'
             ? {
-                perUserPerDay: Number(((storedReward as { quota?: { perUserPerDay?: unknown } }).quota?.perUserPerDay) || 0) || undefined,
-                globalPerDay: Number(((storedReward as { quota?: { globalPerDay?: unknown } }).quota?.globalPerDay) || 0) || undefined,
+                // 配额必须是有限非负整数，否则忽略该字段（不写入 payload）
+                perUserPerDay: (() => {
+                  const v = Number(((storedReward as { quota?: { perUserPerDay?: unknown } }).quota?.perUserPerDay) || 0)
+                  return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
+                })(),
+                globalPerDay: (() => {
+                  const v = Number(((storedReward as { quota?: { globalPerDay?: unknown } }).quota?.globalPerDay) || 0)
+                  return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
+                })(),
               }
             : undefined,
         }

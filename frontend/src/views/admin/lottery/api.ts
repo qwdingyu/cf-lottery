@@ -110,3 +110,24 @@ export const grantLeaderboardRewards = async (id: string) =>
     `/api/admin/draws/${id}/leaderboard-rewards`,
     { method: 'POST' },
   )
+
+/** 查询奖励发放失败记录（docs/259 P1-2） */
+export const fetchRewardFailures = async (id: string) =>
+  adminRequest<{ failures: Array<{
+    id: string
+    entryId: string
+    refCode: string
+    createdAt: string
+    path: string
+    error: string
+    shareRecordId: string
+  }> }>(`/api/admin/draws/${id}/rewards/failures`)
+
+/** 补发奖励（docs/259 P1-2）；all=true 时重试该活动所有 reward_failed */
+export const reissueReward = async (id: string, all = false) => {
+  const search = all ? '?all=true' : ''
+  return adminRequest<{ reissued: boolean; reason: string; sharerEntryId: string }>(
+    `/api/admin/draws/${id}/rewards/reissue${search}`,
+    { method: 'POST' },
+  )
+}

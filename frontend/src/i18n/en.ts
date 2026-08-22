@@ -1099,6 +1099,14 @@ export default {
     adminGrantLeaderboard: "Grant leaderboard rewards",
     adminGrantLeaderboardSuccess: "Leaderboard rewards granted: {granted} granted, {skipped} skipped (already granted/no eligible)",
     adminGrantLeaderboardNone: "Leaderboard rewards not configured or no one eligible",
+    // Reward failures (docs/259 P1-2)
+    adminRewardFailures: "Reward failure records",
+    adminReissueReward: "Reissue reward",
+    adminReissueRewardAll: "Reissue all",
+    adminConfirmReissueReward: "Confirm reissue reward?",
+    adminReissueRewardSuccess: "Reward reissued",
+    adminReissueRewardFailed: "Reissue failed: {reason}",
+    adminRewardFailuresHint: "Below are reward failure records. Click \"Reissue reward\" to retry the latest failure; use \"Reissue all\" for batch retry.",
     statusPaused: "Paused",
     expectedCount: "Expected",
     expectedCountHint: "Reference value for display only",
@@ -1987,6 +1995,8 @@ export default {
     back: "Back",
     close: "Close",
     goToLottery: "Go to activities",
+    rewardStatusAvailable: "Rewards available",
+    rewardStatusEmpty: "No rewards",
   },
 
   // ── Prizes (AdminPrizesView) — page already uses $t; namespace was missing ──

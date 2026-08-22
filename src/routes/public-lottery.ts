@@ -2131,13 +2131,17 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
       const key = `${entry.tenantId}:${entry.drawId}`;
       const draw = drawMap.get(key);
       if (!draw) return null;
+      const spinsLeft = Math.max(0, Math.floor(Number(entry.spinsLeft || 0)))
+      const coupons = couponMap.get(key) || []
+      const rewardStatus = (spinsLeft > 0 || coupons.length > 0) ? 'available' : 'empty'
       return {
         drawId: entry.drawId,
         tenantId: entry.tenantId,
         slug: draw.publicSlug,
         title: draw.title,
-        spinsLeft: Math.max(0, Math.floor(Number(entry.spinsLeft || 0))),
-        coupons: couponMap.get(key) || [],
+        spinsLeft,
+        coupons,
+        rewardStatus,
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);

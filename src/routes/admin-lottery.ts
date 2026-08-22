@@ -1348,6 +1348,54 @@ adminLotteryRoute.post("/draws/:id/draw", async (c) => {
 });
 
 /**
+ * 查询奖励发放失败记录（docs/259 P1-2 补充：运营可查看全量失败）
+ */
+adminLotteryRoute.get("/draws/:id/rewards/failures", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  try {
+    const draw = await getDraw(db, drawId, tenantId);
+    if (!draw) return fail(c, "活动不存在", 404);
+
+    const rows = await db
+      .select({
+        id: activityEvents.id,
+        entryId: activityEvents.entryId,
+        refCode: activityEvents.refCode,
+        createdAt: activityEvents.createdAt,
+        metadataJson: activityEvents.metadataJson,
+      })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, tenantId),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_failed"),
+      ))
+      .orderBy(desc(activityEvents.createdAt));
+
+    const list = rows.map((r) => {
+      let meta: Record<string, unknown> = {}
+      try { meta = JSON.parse(r.metadataJson || "{}") } catch { /* ignore */ }
+      return {
+        id: r.id,
+        entryId: r.entryId,
+        refCode: r.refCode,
+        createdAt: r.createdAt,
+        path: meta.path || "",
+        error: meta.error || "",
+        shareRecordId: meta.shareRecordId || "",
+      }
+    })
+
+    return ok(c, { failures: list });
+  } catch (err) {
+    return fail(c, err instanceof Error ? err.message : "查询失败", 400);
+  }
+});
+
+/**
  * 补发奖励（docs/259 P1-2：reward_failed 事件重试入口）
  *
  * 查询该活动下最近一条 reward_failed 事件，重新执行 triggerRewardEarned。
@@ -1362,8 +1410,10 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
     const draw = await getDraw(db, drawId, tenantId);
     if (!draw) return fail(c, "活动不存在", 404);
 
-    // 查询最近一条 reward_failed 事件，取 sharerEntryId + refCode 重试
-    const [lastFailure] = await db
+    const all = c.req.query("all") === "true";
+
+    // 查询该活动下所有 reward_failed 事件，按创建时间正序逐个重试，保证顺序。
+    const failures = await db
       .select()
       .from(activityEvents)
       .where(and(
@@ -1371,41 +1421,51 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
         eq(activityEvents.drawId, drawId),
         eq(activityEvents.eventType, "reward_failed"),
       ))
-      .orderBy(desc(activityEvents.createdAt))
-      .limit(1);
+      .orderBy(desc(activityEvents.createdAt));
 
-    if (!lastFailure) {
+    if (failures.length === 0) {
       return fail(c, "该活动暂无奖励发放失败记录", 400);
     }
 
-    const sharerEntryId = lastFailure.entryId || "";
-    const refCode = lastFailure.refCode || "";
-    if (!sharerEntryId) {
-      return fail(c, "失败事件缺少 entryId，无法补发", 400);
+    // 仅重试最近一条（默认行为）
+    const targets = all ? failures.reverse() : failures.slice(0, 1);
+
+    // 逐条重试，内部 triggerRewardEarned 已具备配额 + 幂等保护，不会重复发放。
+    const results = [];
+    for (const f of targets) {
+      const sharerEntryId = f.entryId || "";
+      const refCode = f.refCode || "";
+      if (!sharerEntryId) {
+        results.push({ sharerEntryId: "", refCode, triggered: false, reason: "失败事件缺少 entryId" })
+        continue
+      }
+      const sharerIdentity = await getSharerIdentityValue(db, tenantId, drawId, sharerEntryId);
+      const result = await triggerRewardEarned(
+        db,
+        tenantId,
+        drawId,
+        sharerEntryId,
+        sharerIdentity,
+        refCode,
+      );
+      results.push({ ...result, refCode })
     }
 
-    // 重新获取邀请人身份并触发奖励（内部有配额 + 幂等保护）
-    const sharerIdentity = await getSharerIdentityValue(db, tenantId, drawId, sharerEntryId);
-    const result = await triggerRewardEarned(
-      db,
-      tenantId,
-      drawId,
-      sharerEntryId,
-      sharerIdentity,
-      refCode,
-    );
+    const anyTriggered = results.some(r => r.triggered)
+    const summary = results.filter(r => r.triggered).map(r => r.sharerEntryId)
 
     await recordTenantAudit(c, "draw.reward.reissue", "lottery_draw", drawId, {
-      sharerEntryId,
-      refCode,
-      triggered: result.triggered,
-      reason: result.reason,
+      all,
+      count: results.length,
+      triggered: anyTriggered,
+      results: summary,
     });
 
     return ok(c, {
-      reissued: result.triggered,
-      reason: result.reason,
-      sharerEntryId,
+      reissued: anyTriggered,
+      reason: all ? `批量重试完成：${results.length} 条，成功 ${summary.length}` : results[0]?.reason || "",
+      sharerEntryId: results[0]?.sharerEntryId || "",
+      results,
     });
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "补发失败", 400);

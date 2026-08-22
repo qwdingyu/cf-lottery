@@ -62,4 +62,38 @@ describe('activity-config normalize（lottery loserReward 保留，P0 回归）'
     // 若 normalize 丢失 loserReward，保存构造会回落默认 false，这里必须锁住 enabled:true 不丢
     expect(savePayload.loserReward).toEqual({ enabled: true, couponLabel: '安慰奖' })
   })
+
+  it('normalize 对非法 reward（null/字符串/数组/数字/布尔）容错返回默认（不含 reward 字段）', () => {
+    const badValues: unknown[] = [null, 'oops', ['x'], 42, true]
+    for (const bad of badValues) {
+      const result = normalizeActivityConfig('lottery', { version: 1, kind: 'lottery', reward: bad }, t)
+      expect(result).not.toHaveProperty('reward')
+    }
+  })
+
+  it('normalize 对 reward 非法数值做容错：perInviteAmount 非有限数字回退 0，currency 非字符串回退 USD', () => {
+    const cases: Array<{ input: any; expected: any }> = [
+      { input: { perInviteAmount: 'abc' }, expected: { perInviteAmount: 0, currency: 'USD' } },
+      { input: { perInviteAmount: NaN }, expected: { perInviteAmount: 0, currency: 'USD' } },
+      { input: { perInviteAmount: Infinity }, expected: { perInviteAmount: 0, currency: 'USD' } },
+      { input: { perInviteAmount: -5 }, expected: { perInviteAmount: 0, currency: 'USD' } },
+      { input: { perInviteAmount: 3.7 }, expected: { perInviteAmount: 3, currency: 'USD' } },
+      { input: { currency: 123 }, expected: { perInviteAmount: 0, currency: 'USD' } },
+      { input: { currency: '' }, expected: { perInviteAmount: 0, currency: 'USD' } },
+      { input: { currency: '  ' }, expected: { perInviteAmount: 0, currency: 'USD' } },
+      { input: { currency: 'CNY' }, expected: { perInviteAmount: 0, currency: 'CNY' } },
+    ]
+    for (const c of cases) {
+      const result = normalizeActivityConfig('lottery', { version: 1, kind: 'lottery', reward: c.input }, t)
+      expect(result).toMatchObject({ reward: c.expected })
+    }
+  })
+
+  it('normalize 对 reward.quota 非法值容错：非对象返回 undefined，非法数字忽略该字段', () => {
+    const result = normalizeActivityConfig('lottery', { version: 1, kind: 'lottery', reward: { quota: 'bad' } }, t)
+    expect(result).toMatchObject({ reward: { perInviteAmount: 0, currency: 'USD', quota: undefined } })
+
+    const result2 = normalizeActivityConfig('lottery', { version: 1, kind: 'lottery', reward: { quota: { perUserPerDay: 'x' } } }, t)
+    expect(result2).toMatchObject({ reward: { perInviteAmount: 0, currency: 'USD', quota: { perUserPerDay: undefined, globalPerDay: undefined } } })
+  })
 })

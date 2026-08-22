@@ -1250,6 +1250,7 @@
                     <span>{{ $t('lottery.adminRewardPerInviteAmount') }}</span>
                     <input v-model.number="rewardPerInviteAmount" type="number" min="0" max="10000" step="1" />
                     <small>{{ $t('lottery.adminRewardPerInviteAmountSuffix') }}</small>
+                    <small v-if="Number(rewardPerInviteAmount || 0) === 0" class="field-hint field-hint--warn">{{ $t('lottery.adminRewardPerInviteAmountWarning') }}</small>
                   </label>
                   <label>
                     <span>{{ $t('lottery.adminRewardCurrency') }}</span>
@@ -1803,6 +1804,61 @@
       </div>
     </AdminModal>
 
+    <!-- 奖励发放失败记录（docs/259 P1-2） -->
+    <AdminModal v-model="showRewardFailuresModal" :title="$t('lottery.adminRewardFailures')" max-width="720px">
+      <div v-if="rewardFailuresLoading" class="empty-text">{{ $t('lottery.adminLoading') }}</div>
+      <div v-else>
+        <div class="toolbar" style="margin-bottom: 12px">
+          <div class="filters">
+            <div class="notice-card" role="status">
+              <div class="notice-card-body">
+                <strong>{{ $t('lottery.adminRewardFailuresHint') }}</strong>
+              </div>
+            </div>
+          </div>
+          <div class="toolbar-actions">
+            <button
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="operatingId === rewardFailuresDrawId || rewardFailures.length === 0"
+              @click="handleReissueReward(rewardFailuresDrawId, false)"
+            >{{ operatingId === rewardFailuresDrawId ? $t('lottery.loadingText') : $t('lottery.adminReissueReward') }}</button>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              :disabled="operatingId === rewardFailuresDrawId || rewardFailures.length === 0"
+              @click="handleReissueReward(rewardFailuresDrawId, true)"
+            >{{ operatingId === rewardFailuresDrawId ? $t('lottery.loadingText') : $t('lottery.adminReissueRewardAll') }}</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>{{ $t('lottery.adminCreatedAt') }}</th>
+                <th>{{ $t('lottery.adminRefCode') }}</th>
+                <th>{{ $t('lottery.adminEntryId') }}</th>
+                <th>{{ $t('lottery.adminPath') }}</th>
+                <th>{{ $t('lottery.adminError') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in rewardFailures" :key="item.id">
+                <td>{{ formatDate(item.createdAt) }}</td>
+                <td>{{ item.refCode || '-' }}</td>
+                <td>{{ item.entryId }}</td>
+                <td>{{ item.path || '-' }}</td>
+                <td class="mono-text" style="max-width: 320px; word-break: break-all">{{ item.error || '-' }}</td>
+              </tr>
+              <tr v-if="rewardFailures.length === 0">
+                <td colspan="5" class="empty-text">{{ $t('lottery.adminNoData') }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </AdminModal>
+
     <ConfirmDialog
       v-model="confirmVisible"
       :message="confirmMessage"
@@ -1918,6 +1974,21 @@
             :disabled="operatingId === expandedActionDraw.id"
             @click="runMoreAction(d => handleGrantLeaderboardRewards(d.id))"
           >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminGrantLeaderboard') }}</button>
+          <!-- 奖励发放失败记录（docs/259 P1-2） -->
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            @click="runMoreAction(d => openRewardFailuresModal(d.id))"
+          >{{ $t('lottery.adminRewardFailures') }}</button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            @click="runMoreAction(d => handleReissueReward(d.id))"
+          >{{ $t('lottery.adminReissueReward') }}</button>
         </div>
         <div class="table-actions-group table-actions-group--danger" role="group">
           <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupDanger') }}</span>
@@ -2220,6 +2291,8 @@ import {
   resumeLotteryDraw,
   retryAdminLotteryEmail,
   grantLeaderboardRewards,
+  reissueReward,
+  fetchRewardFailures,
   updateLotteryDraw,
 } from './lottery/api'
 import {
@@ -2591,6 +2664,10 @@ const participationModeOptions = computed(() => {
   return modes.filter(m => participationModeLabels[m]).map(m => ({ value: m, label: participationModeLabels[m] }))
 })
 const showWinnersModal = ref(false)
+const showRewardFailuresModal = ref(false)
+const rewardFailures = ref<Array<{ id: string; entryId: string; refCode: string; createdAt: string; path: string; error: string; shareRecordId: string }>>([])
+const rewardFailuresLoading = ref(false)
+const rewardFailuresDrawId = ref('')
 const {
   showQrModal,
   qrImageUrl,
@@ -3046,25 +3123,43 @@ function initLoserRewardFromConfig() {
   loserRewardCouponLabel.value = lr?.couponLabel || ''
 }
 
-/** 把 reward 配置同步进 form.activityConfig.reward */
+/**
+ * 把 reward 配置同步进 form.activityConfig。
+ *
+ * 数据结构约定（对齐后端 triggerRewardEarned 的读取路径）：
+ * - activityConfig.reward：每邀请金额/货币（reward.ts:73 config?.reward）
+ * - activityConfig.quota：个人/全局每日上限（reward.ts:84-85 config?.quota）
+ *
+ * ⚠️ 为什么 quota 必须在顶层而非 reward 内部：
+ * 后端 triggerRewardEarned 从 config?.quota?.perUserPerDay 读取配额，
+ * 若 quota 嵌套在 reward.quota 下则永远读到 undefined，配额限制完全失效。
+ */
 function syncRewardConfig() {
   const config = form.value.activityConfig as any
+  // perInviteAmount 写入 reward 对象（per-invite 维度配置）
   config.reward = {
     perInviteAmount: Number(rewardPerInviteAmount.value || 0),
     currency: String(rewardCurrency.value || 'USD'),
-    ...(rewardPerUserPerDay.value != null ? { quota: { perUserPerDay: rewardPerUserPerDay.value } } : {}),
-    ...(rewardGlobalPerDay.value != null ? { quota: { globalPerDay: rewardGlobalPerDay.value } } : {}),
   }
+  // quota 写入 activityConfig 顶层（活动级全局配额），与后端 triggerRewardEarned 读取路径对齐
+  const quota: Record<string, number> = {}
+  if (rewardPerUserPerDay.value != null) quota.perUserPerDay = rewardPerUserPerDay.value
+  if (rewardGlobalPerDay.value != null) quota.globalPerDay = rewardGlobalPerDay.value
+  config.quota = Object.keys(quota).length > 0 ? quota : undefined
 }
 
-/** 从 form.activityConfig.reward 回填表单状态（编辑活动时调用） */
+/**
+ * 从 form.activityConfig 回填表单状态（编辑活动时调用）。
+ * 读取路径与 syncRewardConfig 写入路径对齐：reward 在 activityConfig.reward，quota 在 activityConfig.quota。
+ */
 function initRewardFromConfig() {
   const config = form.value.activityConfig as any
   const r = config?.reward
   rewardPerInviteAmount.value = Number(r?.perInviteAmount || 0)
   rewardCurrency.value = String(r?.currency || 'USD')
-  rewardPerUserPerDay.value = r?.quota?.perUserPerDay != null ? Number(r.quota.perUserPerDay) : undefined
-  rewardGlobalPerDay.value = r?.quota?.globalPerDay != null ? Number(r.quota.globalPerDay) : undefined
+  // quota 从 activityConfig 顶层读取（对齐后端 triggerRewardEarned 读取路径）
+  rewardPerUserPerDay.value = config?.quota?.perUserPerDay != null ? Number(config.quota.perUserPerDay) : undefined
+  rewardGlobalPerDay.value = config?.quota?.globalPerDay != null ? Number(config.quota.globalPerDay) : undefined
 }
 
 /** 加载奖品库 */
@@ -4973,6 +5068,45 @@ async function handleGrantLeaderboardRewards(id: string) {
       showToast(t('lottery.adminGrantLeaderboardNone'), 'info')
     }
     await loadData()
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
+  } finally {
+    operatingId.value = ''
+  }
+}
+
+/** 打开奖励失败记录弹窗（docs/259 P1-2） */
+async function openRewardFailuresModal(id: string) {
+  rewardFailuresDrawId.value = id
+  rewardFailuresLoading.value = true
+  rewardFailures.value = []
+  showRewardFailuresModal.value = true
+  try {
+    const data = await fetchRewardFailures(id)
+    rewardFailures.value = data.failures || []
+  } catch (e) {
+    showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
+    showRewardFailuresModal.value = false
+  } finally {
+    rewardFailuresLoading.value = false
+  }
+}
+
+/** 补发奖励（docs/259 P1-2）；all=true 批量重试该活动所有失败记录 */
+async function handleReissueReward(id: string, all = false) {
+  if (!(await askConfirm(t('lottery.adminConfirmReissueReward')))) return
+  operatingId.value = id
+  try {
+    const result = await reissueReward(id, all)
+    if (result.reissued) {
+      showToast(t('lottery.adminReissueRewardSuccess'), 'success')
+      // 若弹窗开启，刷新失败列表
+      if (showRewardFailuresModal.value && rewardFailuresDrawId.value === id) {
+        await openRewardFailuresModal(id)
+      }
+    } else {
+      showToast(t('lottery.adminReissueRewardFailed', { reason: result.reason || '-' }), 'error')
+    }
   } catch (e) {
     showToast(toErrorMessage(e, t('lottery.adminFailed')), 'error')
   } finally {

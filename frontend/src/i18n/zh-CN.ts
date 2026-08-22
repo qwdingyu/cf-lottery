@@ -1072,6 +1072,14 @@ export default {
     adminGrantLeaderboard: "发放排行榜奖励",
     adminGrantLeaderboardSuccess: "排行榜奖励已发放：{granted} 名已发放，{skipped} 名跳过（已发放/无资格）",
     adminGrantLeaderboardNone: "排行榜奖励未配置或无人达标",
+    // 奖励发放失败记录（docs/259 P1-2）
+    adminRewardFailures: "奖励发放失败记录",
+    adminReissueReward: "补发奖励",
+    adminReissueRewardAll: "全部补发",
+    adminConfirmReissueReward: "确认补发奖励？",
+    adminReissueRewardSuccess: "奖励已补发",
+    adminReissueRewardFailed: "补发失败：{reason}",
+    adminRewardFailuresHint: "以下为奖励发放失败记录，点击「补发奖励」可重试最近一条失败；批量重试请使用「全部补发」。",
     // 新增字段
     statusPaused: "已暂停",
     expectedCount: "预计参与",
@@ -1473,6 +1481,7 @@ export default {
     adminRewardConfigDesc: "每邀请一位有效参与，向邀请人发放奖励",
     adminRewardPerInviteAmount: "每邀请奖励金额",
     adminRewardPerInviteAmountSuffix: "每人每次邀请的奖励数量",
+    adminRewardPerInviteAmountWarning: "金额为 0 时不会触发奖励发放，请确认是否需要配置",
     adminRewardCurrency: "货币",
     adminRewardPerUserPerDay: "单人每日上限",
     adminRewardGlobalPerDay: "活动每日上限",
@@ -1835,6 +1844,8 @@ export default {
     back: "返回",
     close: "关闭",
     goToLottery: "去参与活动",
+    rewardStatusAvailable: "有可用奖励",
+    rewardStatusEmpty: "暂无奖励",
   },
 
   // ── 品牌设置（BrandSettings）──

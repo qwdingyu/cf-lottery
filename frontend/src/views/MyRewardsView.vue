@@ -54,6 +54,10 @@
           <div v-for="(item, idx) in rewards" :key="idx" class="mr-item">
             <div class="mr-item-header">
               <span class="mr-item-title">{{ item.title }}</span>
+              <span
+                class="mr-item-status"
+                :class="item.rewardStatus === 'available' ? 'mr-item-status--available' : 'mr-item-status--empty'"
+              >{{ item.rewardStatus === 'available' ? $t('myRewards.rewardStatusAvailable') : $t('myRewards.rewardStatusEmpty') }}</span>
               <a
                 class="mr-item-link"
                 :href="`/lottery/${item.slug}`"
@@ -122,6 +126,7 @@ const rewards = ref<Array<{
   title: string
   spinsLeft: number
   coupons: string[]
+  rewardStatus: 'available' | 'empty'
 }>>([])
 const redeemingKey = ref('')
 
@@ -132,6 +137,7 @@ interface MyRewardItem {
   title: string
   spinsLeft: number
   coupons: string[]
+  rewardStatus: 'available' | 'empty'
 }
 
 /** 返回上一页；若无历史记录则回退到活动列表页 */
