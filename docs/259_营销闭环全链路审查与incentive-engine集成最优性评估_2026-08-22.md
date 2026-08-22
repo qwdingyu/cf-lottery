@@ -301,9 +301,15 @@ const issuedCoupons = couponMatchKey ? await db.select(...)... : [];
 
 ### 关于 `package-lock.json`（更正第一版）
 
-**不要删除。** `scripts/build-for-vps.sh:164` 复制、`:178` 打进部署包，VPS 靠 `npm ci --omit=dev` 安装运行时依赖（docs/256 已验证）。真实待办不是删文件，而是消解「文档与实现互相打脸」：
-- 事实：`pnpm-workspace.yaml` 包含 `templates/*`（cf-lottery 是 workspace 成员），但其本地 `node_modules` 由 npm 安装（存在 `node_modules/.package-lock.json`，无 `node_modules/.pnpm`）。
-- 建议：修订铁律 3 为「**开发期依赖管理用 pnpm；VPS 部署包用 npm lockfile，属显式例外**」，并在 CLAUDE.md 提交前检查清单第 4 项加上该例外说明。同时明确 cf-lottery 本地开发用哪个包管理器，避免两套 node_modules 语义混用。
+**不要删除，而且它并不违反强制规则。** 三条实测事实：
+
+1. **它是部署载荷**：`scripts/build-for-vps.sh:164` 复制、`:178` 打进部署包，VPS 靠 `npm ci --omit=dev` 安装运行时依赖（docs/256 已验证）。删除会打断唯一的生产部署路径。
+2. **架构校验脚本本来就不检查它**：`scripts/validate-architecture.mjs:283-296` 的 `checkSubprojectPackageManager` 只扫描仓库根 + `dtc` + `eshop`，**从不扫描 `templates/*`**。也就是说**工具层已经承认了这条例外**，只有 CLAUDE.md 的散文和提交前检查清单第 4 项没写。
+3. **上下文**：`pnpm-workspace.yaml` 包含 `templates/*`（cf-lottery 是 workspace 成员），但其本地 `node_modules` 由 npm 安装（存在 `node_modules/.package-lock.json`，无 `node_modules/.pnpm`）。根 `package.json` 的 `preinstall` 阻断只在仓库根生效，不影响 `templates/*` 内的 npm 操作。
+
+因此真实待办只有一条**文档修订**：把铁律 3 写成「开发期依赖管理用 pnpm；`templates/*` 的 VPS 部署包用 npm lockfile，属显式例外（已在 validate-architecture.mjs 中体现）」，并同步提交前检查清单第 4 项。
+
+**另有一处真实违规，但不在本次范围内**：`node scripts/validate-architecture.mjs` 当前 13 通过 / 1 失败，失败项是 `dtc/package-lock.json 存在（npm 违规！）` —— 属 `dtc` 项目的既有问题，与 cf-lottery 无关，建议单独处理。
 
 ---
 
