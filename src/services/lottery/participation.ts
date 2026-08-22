@@ -760,6 +760,19 @@ async function maybeTriggerReward(
     try {
       await grantViralSpinsToSharer(tx, draw, attribution.sharerEntryId, attribution.shareRecordId);
     } catch (err) {
+      // P1-2：奖励发放失败必须落库，供管理端补发入口查询
+      await recordActivityEvent(tx, {
+        tenantId: draw.tenantId,
+        drawId: draw.id,
+        entryId: attribution.sharerEntryId,
+        eventType: "reward_failed",
+        refCode: attribution.refCode || "",
+        metadata: {
+          path: "grantViralSpinsToSharer",
+          error: err instanceof Error ? err.message : String(err),
+          shareRecordId: attribution.shareRecordId,
+        },
+      }).catch(() => { /* 记录失败事件本身不抛，避免影响主流程 */ });
       logError("participation", `grantViralSpinsToSharer draw=${draw.id}`, err);
     }
   }
@@ -770,6 +783,19 @@ async function maybeTriggerReward(
     try {
       await processReferralRewardsEngine(tx, draw, attribution.shareRecordId);
     } catch (err) {
+      // P1-2：奖励发放失败必须落库，供管理端补发入口查询
+      await recordActivityEvent(tx, {
+        tenantId: draw.tenantId,
+        drawId: draw.id,
+        entryId: attribution.sharerEntryId,
+        eventType: "reward_failed",
+        refCode: attribution.refCode || "",
+        metadata: {
+          path: "processReferralRewardsEngine",
+          error: err instanceof Error ? err.message : String(err),
+          shareRecordId: attribution.shareRecordId,
+        },
+      }).catch(() => { /* 记录失败事件本身不抛，避免影响主流程 */ });
       logError("participation", `processReferralRewardsEngine draw=${draw.id}`, err);
     }
   }
@@ -791,6 +817,19 @@ async function maybeTriggerReward(
     }
   } catch (err) {
     // 奖励触发失败不影响参与成功（与 grantLoserRewards 的容错一致）
+    // P1-2：奖励发放失败必须落库，供管理端补发入口查询
+    await recordActivityEvent(tx, {
+      tenantId: draw.tenantId,
+      drawId: draw.id,
+      entryId: attribution.sharerEntryId,
+      eventType: "reward_failed",
+      refCode: attribution.refCode || "",
+      metadata: {
+        path: "triggerRewardEarned",
+        error: err instanceof Error ? err.message : String(err),
+        shareRecordId: attribution.shareRecordId,
+      },
+    }).catch(() => { /* 记录失败事件本身不抛，避免影响主流程 */ });
     logError("participation", `triggerRewardEarned draw=${draw.id}`, err);
   }
 }

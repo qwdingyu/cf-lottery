@@ -13,7 +13,7 @@ import type { AppEnv } from "../bindings";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
 import { getEnv } from "../lib/platform";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, paymentOrders, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, paymentOrders, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig, activityEvents } from "../db/schema";
 import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import {
   createDraw,
@@ -29,6 +29,8 @@ import {
   DRAW_STATUS,
   DRAW_STATUS_VALUES,
   ACTIVE_DRAW_STATUSES,
+  triggerRewardEarned,
+  getSharerIdentityValue,
 } from "../services/lottery-service";
 import { ACTIVITY_TEMPLATES } from "../lib/activity-templates";
 import { parseFlashSaleConfig } from "../lib/flash-sale-config";
@@ -1342,5 +1344,70 @@ adminLotteryRoute.post("/draws/:id/draw", async (c) => {
     return ok(c, result);
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "开奖失败", 400);
+  }
+});
+
+/**
+ * 补发奖励（docs/259 P1-2：reward_failed 事件重试入口）
+ *
+ * 查询该活动下最近一条 reward_failed 事件，重新执行 triggerRewardEarned。
+ * 不检查幂等：triggerRewardEarned 内部已有配额 + 事件去重，重复调用不会重复发放。
+ */
+adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  try {
+    const draw = await getDraw(db, drawId, tenantId);
+    if (!draw) return fail(c, "活动不存在", 404);
+
+    // 查询最近一条 reward_failed 事件，取 sharerEntryId + refCode 重试
+    const [lastFailure] = await db
+      .select()
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, tenantId),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_failed"),
+      ))
+      .orderBy(desc(activityEvents.createdAt))
+      .limit(1);
+
+    if (!lastFailure) {
+      return fail(c, "该活动暂无奖励发放失败记录", 400);
+    }
+
+    const sharerEntryId = lastFailure.entryId || "";
+    const refCode = lastFailure.refCode || "";
+    if (!sharerEntryId) {
+      return fail(c, "失败事件缺少 entryId，无法补发", 400);
+    }
+
+    // 重新获取邀请人身份并触发奖励（内部有配额 + 幂等保护）
+    const sharerIdentity = await getSharerIdentityValue(db, tenantId, drawId, sharerEntryId);
+    const result = await triggerRewardEarned(
+      db,
+      tenantId,
+      drawId,
+      sharerEntryId,
+      sharerIdentity,
+      refCode,
+    );
+
+    await recordTenantAudit(c, "draw.reward.reissue", "lottery_draw", drawId, {
+      sharerEntryId,
+      refCode,
+      triggered: result.triggered,
+      reason: result.reason,
+    });
+
+    return ok(c, {
+      reissued: result.triggered,
+      reason: result.reason,
+      sharerEntryId,
+    });
+  } catch (err) {
+    return fail(c, err instanceof Error ? err.message : "补发失败", 400);
   }
 });
