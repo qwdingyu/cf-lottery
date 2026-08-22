@@ -1835,6 +1835,7 @@ export default {
     merchantInfo: "商户信息",
     merchantName: "商户名称",
     merchantNameHint: "SaaS 注册时填写的商户名称，将显示在店铺首页",
+    merchantNameRequired: "商户名称不能为空",
     shopLinkGroup: "店铺链接",
     shopLink: "店铺链接",
     copy: "复制",

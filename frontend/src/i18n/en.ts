@@ -1820,6 +1820,7 @@ export default {
     merchantInfo: "Merchant Info",
     merchantName: "Merchant Name",
     merchantNameHint: "The merchant name entered during SaaS registration, displayed on the store homepage",
+    merchantNameRequired: "Merchant name cannot be empty",
     shopLinkGroup: "Store Link",
     shopLink: "Store link",
     copy: "Copy",

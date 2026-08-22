@@ -144,7 +144,7 @@ function validateSlug(): boolean {
 
 async function saveName() {
   const v = editingName.value.trim()
-  if (!v) { nameError.value = t('brand.saveFailed'); return }
+  if (!v) { nameError.value = t('brand.merchantNameRequired'); return }
   nameError.value = ''
   if (!validateSlug()) return
   savingName.value = true
@@ -204,7 +204,7 @@ async function saveSlug() {
 async function saveBrandConfig() {
   configError.value = ''
   configSuccess.value = ''
-  if (!validateSlug()) { configError.value = t('brand.slugInvalid'); return }
+  if (!validateSlug()) return
   savingConfig.value = true
   try {
     const r = await adminRequest<{ config?: Record<string, string>; name?: string }>('/api/admin/brand', {
