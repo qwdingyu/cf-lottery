@@ -1074,7 +1074,7 @@
               <p class="result-share-hint">🎁 {{ $t('lottery.shareYourLuck') }}</p>
               <button class="btn btn-primary btn-sm" @click="shareMyWin">📤 {{ $t('lottery.shareActivityBtn') }}</button>
             </div>
-            <div v-if="getResultCta(myResultDraw, 'after_win')" class="result-cta-card" v-effect="trackCtaImpression(myResultDraw, 'after_win')">
+            <div v-if="getResultCta(myResultDraw, 'after_win')" class="result-cta-card">
               <a
                 :href="getResultCta(myResultDraw, 'after_win')!.url"
                 target="_blank"
@@ -1143,7 +1143,6 @@
           <div
             v-if="myResultFamily === 'lottery' && myResultData.joined !== false && !myResultData.won && isMyResultDrawFinal && getResultCta(myResultDraw, 'after_loss')"
             class="result-cta-card"
-            v-effect="trackCtaImpression(myResultDraw, 'after_loss')"
           >
             <a
               :href="getResultCta(myResultDraw, 'after_loss')!.url"
@@ -3456,6 +3455,44 @@ let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 const trackedPageViews = new Set<string>()
+
+// CTA 曝光去重（同一 draw + mode 仅记录一次）
+const trackedCtaImpressions = new Set<string>()
+
+watch(
+  [myResultDraw, myResultData],
+  () => {
+    const draw = myResultDraw.value
+    if (!draw) return
+
+    // after_win CTA：中奖结果页展示时记录曝光
+    const afterWinCta = getResultCta(draw, 'after_win')
+    if (afterWinCta) {
+      const key = `${draw.id}:after_win`
+      if (!trackedCtaImpressions.has(key)) {
+        trackCtaImpression(draw, 'after_win')
+        trackedCtaImpressions.add(key)
+      }
+    }
+
+    // after_loss CTA：未中奖 + 活动终态时记录曝光
+    const afterLossCta = getResultCta(draw, 'after_loss')
+    if (afterLossCta) {
+      const showAfterLoss = myResultFamily.value === 'lottery'
+        && myResultData.value?.joined !== false
+        && !myResultData.value?.won
+        && isMyResultDrawFinal.value
+      if (showAfterLoss) {
+        const key = `${draw.id}:after_loss`
+        if (!trackedCtaImpressions.has(key)) {
+          trackCtaImpression(draw, 'after_loss')
+          trackedCtaImpressions.add(key)
+        }
+      }
+    }
+  },
+  { immediate: true },
+)
 
 /** 公开详情承载实时参与人数/开奖状态；请求侧也禁缓存，避免移动端返回旧数据。 */
 const PUBLIC_DRAW_FETCH_INIT = buildPublicDrawRequestInit()
