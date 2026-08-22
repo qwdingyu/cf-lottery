@@ -32,6 +32,7 @@ import { logError, logWarn } from "../../lib/logger";
  * @param amount 发放次数（engine 已计算好的值）
  * @param maxSpins 活动级 maxSpinsPerEntry（总顶约束）
  * @param rewardId 奖励 ID（用于 spins_log.refId 审计）
+ * @param source 奖励来源（如 "engine" / "viral"），为 reward_earned 审计提供区分
  */
 export async function grantBonusSpin(
   tx: DbType,
@@ -41,6 +42,7 @@ export async function grantBonusSpin(
   amount: number,
   maxSpins: number,
   rewardId: string,
+  source = "engine",
 ): Promise<boolean> {
   if (amount <= 0) return false;
   // 读取分享者当前 entry 状态
@@ -105,6 +107,7 @@ export async function grantBonusSpin(
         rewardExit: "bonus_spin",
         rewardId,
         amount: actual,
+        source,
       },
     });
   } catch (err) {
@@ -145,6 +148,7 @@ export const MAX_COUPON_PER_GRANT = 10;
  * @param couponLabel 优惠券 label（为空时取任意 available 码）
  * @param rewardId 奖励 ID（用于审计）
  * @param amount 本次期望发放张数（会被 MAX_COUPON_PER_GRANT 裁剪）
+ * @param source 奖励来源（如 "engine" / "viral" / "trigger"），为 reward_earned 审计提供区分
  * @returns 实际发出的张数（0 表示一张都没发出）
  */
 export async function grantBonusCoupon(
@@ -155,6 +159,7 @@ export async function grantBonusCoupon(
   couponLabel: string | undefined,
   rewardId: string,
   amount = 1,
+  source = "engine",
 ): Promise<number> {
   // 数量语义（docs/255 P2-2）：amount 为本次期望发放张数，循环发 min(amount, 上限) 张。
   // 修复前恒发 1 张（UI 允许 3:bonus_coupon:5 但实际只发 1 张，运营看到的和实际发的永久不一致）。
@@ -257,6 +262,7 @@ export async function grantBonusCoupon(
           couponLabel: couponLabel || "",
           couponCode: available.code,
           recipientEmail,
+          source,
         },
       });
     } catch (err) {

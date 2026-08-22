@@ -119,6 +119,7 @@ export async function triggerRewardEarned(
       currency: rewardConfig.currency || "USD",
       sharerEntryId,
       inviterIdentityValue,
+      source: "trigger",
     },
   });
 
