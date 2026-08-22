@@ -183,6 +183,12 @@ src/lib/local-media.ts:17   import { dirname, join, normalize } from "node:path"
 - **收敛两条 spins 路径**：`bonus_spin` 出口最终只保留一处 CAS 写入，避免同一语义两套实现。
 - 预检规则相应改为：**不再报 conflict**；只在「两层都配了 `bonus_spin` 且总量上限缺失」时告警。
 
+**落地时对本节草案的两处修正（以代码为准，2026-08-22）：**
+
+1. **里程碑层只受 `maxSpinsPerEntry` 约束，不受 `viral.maxExtraSpins` 约束。** 草案曾设想里程碑层也传裂变子顶。实际不传：子顶属于基础层的语义，若里程碑层也受它约束，会出现「配置合法但奖励被静默裁剪」，只能再加告警去圆场；且不传使 `spinsViralEarned` 的既有断言（`my-rewards.test.ts:262`）无条件保持成立，改动天然零回归。因此 `spinsViralEarned` 的口径明确为**只统计基础层**。
+2. **告警码定为 `promotion.referralRewardDefs.bonus_spin.clipped_by_viral`**（warning，非 error）：当「基础层每邀请 +N」在里程碑阈值处已把 `maxSpinsPerEntry` 吃满时提示该档会被裁剪为 0。判定用共享的 `extractMilestoneThreshold`，阈值不可归约（OR/NOT）时不猜测、不告警——避免预检变噪音（docs/255 R-7）。
+3. **基础层现在也写 `reward_earned` 审计事件**（`metadata.source = "viral"`）：这是出口收敛的副产物，与 docs/254 §4.2「奖励出口统一审计」一致，也补齐了 §6 P1-4 对 `source` 字段的要求。
+
 只放宽 `conflict_with_reward_defs` 这一条规则是典型的打补丁——放宽之后，运营依然拿不到阶梯进度反馈，第 3 行能力仍然断链。
 
 ---
@@ -487,3 +493,33 @@ npm publish --access public          # prepublishOnly 会自动跑 verify-pack +
 ### 10.3 阶段三（cf-lottery 切 `/pure`）— ⏸ 阻塞于发布
 
 风险已在临时探针中前置验证完毕：以 cf-lottery 的真实 tsconfig（`module: ESNext` / `moduleResolution: bundler` / `strict` / `esModuleInterop`、`skipLibCheck: false`）对本地 4.1.0 做类型检查，`import engine from "@usethink/incentive-engine/pure"` + `engine.Distribute.distributeByDefs(...)` 的真实调用形状通过；具名导入与 `import type` 亦通过。发布安装后按 §9.3 五步执行即可。
+
+### 10.4 阶段四（D2 裂变叠加模型）— ✅ 已完成并提交
+
+按 §9.5 的最小改动集执行，实施顺序为 ③ → ② → ①（先有共享的阈值提取器，预检告警才能复用它），每个文件一提交，共 9 个提交。
+
+| 项 | 改动 | 文件 |
+|---|---|---|
+| ③ | 抽出唯一裁剪公式 `computeBonusSpinGrant`（双封顶：总量顶 + 可选裂变子顶），删除同语义的 `computeViralSpinGrant` | `src/services/lottery/spin-quota.ts` |
+| ③ | `grantBonusSpin` 第 8 参改为 options 对象（`source` / `maxViralExtra` / `refId`），并读写 `spinsViralEarned` | `src/services/lottery/reward-exits.ts` |
+| ③ | `grantViralSpinsToSharer` 收敛为 `grantBonusSpin` 的薄封装——两条 `bonus_spin` 写入路径合并为**一处 CAS、一处 spins_log、一处审计** | `src/services/lottery/participation.ts` |
+| ② | 新增零引擎依赖纯计算模块：幂等标记解析（唯一实现）、`extractMilestoneThreshold`、`buildMilestoneProgress` | `src/services/lottery/referral-milestones.ts`（新） |
+| ② | `my-viral-stats` 同时返回基础进度与里程碑进度（`viralEnabled` / `milestones` / `nextMilestone` / `milestonesUnlocked` / `milestonesGranted`），并去掉「viral 关闭 + 有 defs」时的 400 | `src/routes/public-lottery-share.ts` |
+| ① | 删除 `viral.extra_entries.conflict_with_reward_defs` 阻断，改为裁剪告警 | `src/services/publish-check-service.ts` |
+
+发放侧与展示侧共用同一份幂等标记解析，杜绝「进度条说已达标、实际未发放」的漂移。
+
+**验证**：`npx tsc --noEmit` 干净；后端全量 vitest 全绿（107 文件 / 1558 测试，基线 106 / 1536）。新增测试：`spin-quota` 双封顶 7 例、`referral-milestones` 16 例（新文件）、`publish-check-service` 裁剪告警 3 例（替换原互斥断言 2 例）、`auth-and-public` 里程碑进度 2 例、`lottery-service` 两层叠加端到端 1 例。
+
+端到端叠加轨迹（`lottery-service.test.ts`，`maxSpinsPerEntry: 10`、基础层每邀请 +1 子顶 5、里程碑 `invite_2` 阈值 2 加成 +2）：
+
+| 事件 | spinsTotalGranted | spinsViralEarned | spinsLeft |
+|---|---|---|---|
+| 参与 | 1 | 0 | 1 |
+| 第 1 次邀请（仅基础层） | 2 | 1 | 2 |
+| 第 2 次邀请（基础层 +1、里程碑 +2） | 5 | 2 | 5 |
+| 第 3 次邀请（里程碑已幂等，仅基础层） | 6 | 3 | 6 |
+
+同时断言 `spins_log` 三条 `refId: share:*` + 一条 `refId: engine:invite_2`，以及 `reward_earned` 三条 `source: viral` + 一条 `source: engine`；`publishDraw` 在两层同时配置下成功（① 的直接回归证明）。
+
+**⚠️ 尚未闭环的一环（前端，独立交付物）**：`ViralLeaderboard.vue:374` 与 `GameResultModal.vue:195-197` 仍在 `viral.enabled === true` 时才渲染，新增的 `milestones` / `nextMilestone` 目前对用户不可见；`frontend/src/views/admin/lottery/growth-config.ts:698-699` 仍无条件下发 `perInvite = form.viralExtraEntriesPerInvite || 1`（旧发布死锁的成因）。后端已就绪，前端阶梯 UI 需单独排期。
