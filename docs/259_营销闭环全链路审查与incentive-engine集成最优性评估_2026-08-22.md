@@ -509,7 +509,7 @@ npm publish --access public          # prepublishOnly 会自动跑 verify-pack +
 
 发放侧与展示侧共用同一份幂等标记解析，杜绝「进度条说已达标、实际未发放」的漂移。
 
-**验证**：`npx tsc --noEmit` 干净；后端全量 vitest 全绿（107 文件 / 1558 测试，基线 106 / 1536）。新增测试：`spin-quota` 双封顶 7 例、`referral-milestones` 16 例（新文件）、`publish-check-service` 裁剪告警 3 例（替换原互斥断言 2 例）、`auth-and-public` 里程碑进度 2 例、`lottery-service` 两层叠加端到端 1 例。
+**验证**：`npx tsc --noEmit` 干净；后端全量 vitest 全绿（**107 文件 / 1560 测试**，基线 106 / 1536，净 +24）。新增测试：`spin-quota` 双封顶 7 例、`referral-milestones` 16 例（新文件）、`publish-check-service` 裁剪告警 3 例（替换原互斥断言 2 例）、`auth-and-public` 里程碑进度 2 例、`lottery-service` 两层叠加端到端 1 例。
 
 端到端叠加轨迹（`lottery-service.test.ts`，`maxSpinsPerEntry: 10`、基础层每邀请 +1 子顶 5、里程碑 `invite_2` 阈值 2 加成 +2）：
 
