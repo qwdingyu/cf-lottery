@@ -52,21 +52,17 @@ platformSystemConfigRoute.get("/", async (c) => {
 
 /** 更新系统配置（仅 platform_owner） */
 platformSystemConfigRoute.put("/", async (c) => {
+  let bodyKey: string | undefined;
   try {
     const body = await safeJsonBody<{ key: string; value: string }>(c);
     if (!body || !body.key) return fail(c, "请求参数无效", 400);
+    bodyKey = body.key;
 
     const normalized = normalizeSystemConfigValue(body.key, body.value);
     if (!normalized.ok) return fail(c, normalized.message, 400);
 
     const db = getDb(c);
     const sensitive = isSensitiveSystemConfigKey(body.key);
-    // 自定义链接：在事务外捕获旧值，用于事务后更新租户 store_slug
-    const oldCustomLink = body.key === "custom_shop_link"
-      ? (await getSystemConfigStoredValue(db, body.key))
-        ?? getSystemConfigDefinition(body.key)?.defaultValue
-        ?? ""
-      : undefined;
     await withDbTransaction(db, async (tx) => {
       const beforeValue = (await getSystemConfigStoredValue(tx, body.key))
         ?? getSystemConfigDefinition(body.key)?.defaultValue
@@ -89,25 +85,44 @@ platformSystemConfigRoute.put("/", async (c) => {
         targetId: body.key,
         metadata: { key: body.key, sensitive, configured: Boolean(normalized.value) },
       });
-    });
 
-    // 自定义链接：平台级设置，非空时更新租户的 store_slug，旧链接立即失效
-    if (body.key === "custom_shop_link" && normalized.value && normalized.ok) {
-      const beforeValue = oldCustomLink!;
-      // 按旧值（beforeValue）查找租户；首次设置时查第一个租户
-      let tenantId: string | undefined;
-      if (beforeValue) {
-        const [tenant] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.storeSlug, beforeValue)).limit(1);
-        tenantId = tenant?.id;
+      // 自定义链接：平台级设置，非空时更新目标租户的 store_slug，旧链接立即失效。
+      // 纳入同事务（docs/258 部署前审查修复）：
+      // ① slug 被其他租户占用 → 抛错回滚，配置与版本/审计一并撤销，杜绝"配置已提交但 500"的半成功；
+      // ② 首次设置（无旧值）时若存在多个租户 → 明确报错，不再静默覆盖「第一个租户」的 L2 自定义 slug。
+      if (body.key === "custom_shop_link" && normalized.value && normalized.ok) {
+        const newSlug = normalized.value;
+        // 按旧值定位目标租户；无旧值（首次设置）→ 单租户部署才允许自动绑定
+        let targetTenantId: string | undefined;
+        if (beforeValue) {
+          const [tenant] = await tx.select({ id: tenants.id }).from(tenants).where(eq(tenants.storeSlug, beforeValue)).limit(1);
+          targetTenantId = tenant?.id;
+        } else {
+          const all = await tx.select({ id: tenants.id }).from(tenants).limit(2);
+          if (all.length === 0) {
+            throw new Error("自定义链接设置失败：当前没有任何租户");
+          }
+          if (all.length > 1) {
+            throw new Error("自定义链接设置失败：存在多个租户，无法自动确定目标，请先在该租户的品牌设置中配置店铺链接");
+          }
+          targetTenantId = all[0]!.id;
+        }
+        if (!targetTenantId) {
+          throw new Error("自定义链接设置失败：未找到持有旧链接的租户，请先在该租户的品牌设置中配置店铺链接");
+        }
+        // 新 slug 已被其他租户占用 → 冲突回滚（避免唯一索引 500 与半成功）
+        const [occupied] = await tx.select({ id: tenants.id }).from(tenants)
+          .where(eq(tenants.storeSlug, newSlug)).limit(1);
+        if (occupied && occupied.id !== targetTenantId) {
+          throw new Error("自定义链接已被其他租户占用，请更换");
+        }
+        if (newSlug !== beforeValue) {
+          await tx.update(tenants)
+            .set({ storeSlug: newSlug, updatedAt: new Date().toISOString() })
+            .where(eq(tenants.id, targetTenantId));
+        }
       }
-      if (!tenantId) {
-        const [firstTenant] = await db.select({ id: tenants.id }).from(tenants).orderBy(tenants.createdAt).limit(1);
-        tenantId = firstTenant?.id;
-      }
-      if (tenantId) {
-        await db.update(tenants).set({ storeSlug: normalized.value, updatedAt: new Date().toISOString() }).where(eq(tenants.id, tenantId));
-      }
-    }
+    });
 
     return ok(c, {
       key: body.key,
@@ -115,8 +130,12 @@ platformSystemConfigRoute.put("/", async (c) => {
       ...(sensitive ? { configured: Boolean(normalized.value) } : {}),
     });
   } catch (err) {
+    // 自定义链接的租户联动错误是业务校验失败（slug 占用/多租户无法定目标），返回 400；
+    // 其余系统配置错误保持 500（基础设施/数据库故障）。
     const message = err instanceof Error ? err.message : "更新系统配置失败";
-    return fail(c, message, 500);
+    const isShopLinkConflict = bodyKey === "custom_shop_link"
+      && message.startsWith("自定义链接");
+    return fail(c, message, isShopLinkConflict ? 400 : 500);
   }
 });
 

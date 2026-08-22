@@ -10,7 +10,7 @@ import { withDbTransaction } from "../db/client";
 import { isShopFeatureEnabled } from "../lib/system-config-registry";
 import {
   apiKeys, webhookConfigs, couponCodes, shareRecords, redemptionCodes, redemptionRecords,
-  tenants,
+  tenants, auditLogs,
 } from "../db/schema";
 import { eq, and, desc, sql, count } from "drizzle-orm";
 import {
@@ -33,6 +33,9 @@ export function setupIntegrationRoutes(adminLotteryRoute: Hono<AppEnv>) {
 // ═════════════════════════════════════════════════════════
 // API 密钥管理
 // ═════════════════════════════════════════════════════════
+
+/** store_slug 唯一冲突（事务内抛出，事务外转为 400，docs/258 部署前审查修复） */
+class BrandSlugConflictError extends Error {}
 
 /**
  * 列表展示用：从明文或哈希派生短前缀，永不回传完整 key/hash（docs/070 LOW #13）。
@@ -303,23 +306,56 @@ adminLotteryRoute.put("/brand", async (c) => {
 
   // 商户名称（tenant.name）：saas 注册时填写的名称，在此可修改
   const name = body.name !== undefined && body.name !== null ? String(body.name).trim().slice(0, 100) : "";
-  const updateData: Record<string, any> = {
-    brandConfig: JSON.stringify(config),
-    updatedAt: new Date().toISOString(),
-  };
-  if (name) updateData.name = name;
 
-  await db.update(tenants).set(updateData).where(eq(tenants.id, tenantId));
-
-  // store_slug 允许 L2 自定义(为空时保留原值或自动生成)
-  const storeSlug = body.storeSlug !== undefined && body.storeSlug !== null ? String(body.storeSlug).trim().slice(0, 30) : tenant.storeSlug || "";
-  if (storeSlug && storeSlug !== tenant.storeSlug) {
-    const [dup] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.storeSlug, storeSlug)).limit(1);
-    if (dup && dup.id !== tenantId) return fail(c, "店铺链接已被占用", 400);
-    await db.update(tenants).set({ storeSlug }).where(eq(tenants.id, tenantId));
+  // store_slug 允许 L2 自定义（为空时保留原值或自动生成）
+  // 格式校验与 L3 custom_shop_link / normalize 规则一致（docs/258 部署前审查修复）：
+  // 仅字母数字与短横线、短横线不能在首尾、强制小写，避免公开链接 /shops/{slug} 畸形或大小写敏感。
+  const storeSlugRaw = body.storeSlug !== undefined && body.storeSlug !== null ? String(body.storeSlug).trim().slice(0, 30) : tenant.storeSlug || "";
+  let storeSlug = storeSlugRaw.toLowerCase();
+  if (storeSlug) {
+    const slugValid = storeSlug.length === 1
+      ? /^[a-z0-9]$/.test(storeSlug)
+      : /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(storeSlug);
+    if (!slugValid) {
+      return fail(c, "店铺链接只能包含字母数字和短横线，且短横线不能在首尾", 400);
+    }
   }
 
-  return ok(c, { config, storeSlug: storeSlug || "", name: name || tenant.name });
+  try {
+    await withDbTransaction(db, async (tx) => {
+      // 品牌配置与店铺链接同事务提交：避免"品牌已保存但 slug 冲突 500"的半成功状态
+      const updateData: Record<string, any> = {
+        brandConfig: JSON.stringify(config),
+        updatedAt: new Date().toISOString(),
+      };
+      if (name) updateData.name = name;
+
+      // store_slug 变更前先查重：唯一索引兜底，这里给友好 400（而非 500）
+      if (storeSlug && storeSlug !== tenant.storeSlug) {
+        const [dup] = await tx.select({ id: tenants.id }).from(tenants).where(eq(tenants.storeSlug, storeSlug)).limit(1);
+        if (dup && dup.id !== tenantId) {
+          throw new BrandSlugConflictError();
+        }
+        updateData.storeSlug = storeSlug;
+      }
+
+      await tx.update(tenants).set(updateData).where(eq(tenants.id, tenantId));
+    });
+  } catch (err) {
+    if (err instanceof BrandSlugConflictError) {
+      return fail(c, "店铺链接已被占用", 400);
+    }
+    throw err;
+  }
+
+  // 品牌配置更新成功后留审计（事务外，审计失败不影响主业务，与同文件 webhook/coupon 一致）
+  await recordTenantAudit(c, "tenant.brand.update", "tenant", tenantId, {
+    name: name || undefined,
+    storeSlug: storeSlug || undefined,
+    configKeys: Object.keys(config).filter((k) => config[k as keyof typeof config]),
+  });
+
+  return ok(c, { config, storeSlug: storeSlug || tenant.storeSlug, name: name || tenant.name });
 });
 
 // ═════════════════════════════════════════════════════════
