@@ -29,6 +29,11 @@ import {
   normalizeViralWeightNumbers,
   type ViralWeightConfig,
 } from "../services/lottery/viral-weight";
+// 里程碑进度（docs/259 D2 ②）：两层激励共用一个进度面。
+// buildMilestoneProgress 零引擎依赖；defs 合法性仍走发放侧同一入口 normalizeReferralRewardDefs，
+// 保证「前台展示的档位」与「运行时会发的档位」永远是同一集合。
+import { buildMilestoneProgress, parseGrantedRewardIds } from "../services/lottery/referral-milestones";
+import { normalizeReferralRewardDefs } from "../services/lottery/referral-rewards-engine";
 
 export function setupPublicShareRoutes(route: Hono<AppEnv>) {
 /** 接龙模式：公开参与列表（按参与时间排序） */
@@ -169,9 +174,14 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
 
   // 与 viral-leaderboard / 开奖 / 发布预检同一判定入口（docs/255 P2-4）：
   // 严格 === true，字符串 "true" 等脏配置一律按未开启，避免各端状态自相矛盾。
-  const pc = tryParseJson(draw.promotionConfig) as { viral?: ViralWeightConfig } | undefined;
+  const pc = tryParseJson(draw.promotionConfig) as
+    { viral?: ViralWeightConfig; referralRewardDefs?: unknown } | undefined;
   const viral = pc?.viral;
-  if (!isViralEnabled(viral)) {
+  const viralEnabled = isViralEnabled(viral);
+  // 两层激励互补（docs/259 D2）：基础层 viral、里程碑层 referralRewardDefs，任一开启即有进度可看。
+  // 修复前只看 viral 开关，导致「只配里程碑」的活动能发奖却查不到进度（前台 400，进度面空白）。
+  const rewardDefs = normalizeReferralRewardDefs(pc?.referralRewardDefs);
+  if (!viralEnabled && rewardDefs.length === 0) {
     return fail(c, "该活动未开启裂变", 400);
   }
 
@@ -202,14 +212,23 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
   // 聚合统计：额外次数与开奖 performDraw 同一公式（invited × perInvite 封顶）
   const totalClicked = myShares.reduce((s, r) => s + r.clickedCount, 0);
   const totalJoined = myShares.reduce((s, r) => s + r.joinedCount, 0);
-  const { extraEntriesPerInvite, maxExtraEntries } = normalizeViralWeightNumbers(viral);
-  const extraEntriesEarned = computeViralExtraEntries(
-    totalJoined,
-    extraEntriesPerInvite,
-    maxExtraEntries,
-  );
+  // 基础层数值：viral 未开启时归零，不能用 normalizeViralWeightNumbers 的默认值（1/10）冒充配置，
+  // 否则「只配里程碑」的活动会对外承诺一个并不存在的每邀请加次。
+  const { extraEntriesPerInvite, maxExtraEntries } = viralEnabled
+    ? normalizeViralWeightNumbers(viral)
+    : { extraEntriesPerInvite: 0, maxExtraEntries: 0 };
+  const extraEntriesEarned = viralEnabled
+    ? computeViralExtraEntries(totalJoined, extraEntriesPerInvite, maxExtraEntries)
+    : 0;
   // 开奖袋中总票数（含基础 1），便于前端展示「相当于 N 次机会」
   const drawWeight = 1 + extraEntriesEarned;
+
+  // 里程碑层进度：已发放标记散落在该分享者名下各条 share_record，合并后判定
+  const milestoneProgress = buildMilestoneProgress({
+    defs: rewardDefs,
+    totalJoined,
+    marks: myShares.flatMap((r) => parseGrantedRewardIds(r.rewardMilestonesGranted)),
+  });
 
   // 最新一条（已 orderBy desc）作为默认链接，与 POST /share 复用策略对齐
   const latestShare = myShares.length > 0 ? myShares[0] : null;
@@ -231,6 +250,12 @@ route.get("/draws/:slug/my-viral-stats", async (c) => {
     drawWeight,
     drawStatus,
     inviteOpen,
+    // ── 以下为 docs/259 D2 ② 新增（纯追加，既有字段语义不变）──
+    viralEnabled,
+    milestones: milestoneProgress.milestones,
+    nextMilestone: milestoneProgress.nextMilestone,
+    milestonesUnlocked: milestoneProgress.unlockedCount,
+    milestonesGranted: milestoneProgress.grantedCount,
   });
 });
 
