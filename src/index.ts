@@ -38,6 +38,7 @@ import {
 } from "./services/lottery-service";
 import { processPendingPlatformDeliveriesForAllTenants } from "./services/platform/delivery";
 import { expireExpiredPrizeCodes, expireOverdueOrders } from "./services/payment/payment-service";
+import { calibrateActiveParticipantCounts } from "./services/lottery/participation";
 import { dispatchEmailDeliveries } from "./services/email-delivery";
 import { cleanExpiredTokens } from "./services/platform/access-token";
 import { cleanExpiredBindings } from "./services/platform/binding";
@@ -146,8 +147,11 @@ export async function runScheduledMaintenance(
     resendApiKey: env.resendApiKey || "",
     emailFrom: env.emailFrom || "",
   });
+  // activeParticipantCount 计数器校准（docs/262 H1）：
+  // 5 条独立路径维护该计数器，崩溃后可能偏移。定时重新统计有效 entry 数并修正。
+  const calibratedDraws = await calibrateActiveParticipantCounts(db);
 
-  return { draws, webhooks, platformDeliveries, emailDeliveries, overdueOrders: { tenants: overdueTenantRows.length, expired: overdueExpired }, expiredPrizeCodes, cleanedRateLimitLogs, cleanedTokens, cleanedBindings, cleanedSpins, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders };
+  return { draws, webhooks, platformDeliveries, emailDeliveries, overdueOrders: { tenants: overdueTenantRows.length, expired: overdueExpired }, expiredPrizeCodes, cleanedRateLimitLogs, cleanedTokens, cleanedBindings, cleanedSpins, usageSnapshots: usageSnapshots.processed, cleanedRetention, drawReminders, calibratedDraws };
 }
 
 /**

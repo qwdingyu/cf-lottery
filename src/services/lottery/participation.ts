@@ -10,7 +10,7 @@ import type { DbType, DbWriteScope } from "../../db/client";
 import { isFlashSaleExperience } from "../../lib/activity-utils";
 import { withDbTransaction } from "../../db/client";
 import { todayStr } from "../../lib/date-utils";
-import { and, eq, inArray, notInArray, sql, asc, max } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql, asc, max, or, count } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
@@ -1103,4 +1103,63 @@ export async function getEntries(
     .limit(limit)
     .offset(offset)
     .orderBy(lotteryEntries.joinedAt);
+}
+
+/**
+ * 校准 activeParticipantCount 计数器（docs/262 H1 修复）。
+ *
+ * 背景：activeParticipantCount 由 5 条独立路径维护（joinDraw ±1、createPaymentOrder +N、
+ * expireOverdueOrders -N、cancelPaymentOrder -N），若进程在回滚前崩溃，
+ * 计数器可能永久偏移（偏低→超卖，偏高→拒绝正常参与）。
+ *
+ * 校准逻辑：对所有 open/paused 状态的活动，重新统计 entries 表中有效参与数，
+ * 与 activeParticipantCount 比较，不一致时修正。
+ *
+ * 为什么按单活动事务而非全库一把：
+ * - 避免长事务持有写锁阻塞正常请求
+ * - 单活动校准失败不阻塞其他活动
+ *
+ * @returns 校准的活动数量
+ */
+export async function calibrateActiveParticipantCounts(db: DbType): Promise<number> {
+  // 只校准 open/paused 状态的活动（drawing/drawn/cancelled 不再接受新参与，无需校准）
+  const draws = await db
+    .select({
+      id: lotteryDraws.id,
+      tenantId: lotteryDraws.tenantId,
+      currentCount: lotteryDraws.activeParticipantCount,
+    })
+    .from(lotteryDraws)
+    .where(or(
+      eq(lotteryDraws.status, "open"),
+      eq(lotteryDraws.status, "paused"),
+    ));
+
+  let calibrated = 0;
+  for (const draw of draws) {
+    try {
+      // 有效参与 = 非空/非过期的 entry（与 joinDraw 的 CAS 条件对齐）
+      const [row] = await db
+        .select({ cnt: count() })
+        .from(lotteryEntries)
+        .where(and(
+          eq(lotteryEntries.drawId, draw.id),
+          eq(lotteryEntries.tenantId, draw.tenantId),
+          sql`${lotteryEntries.paymentStatus} NOT IN ('', 'expired')`,
+        ));
+      const actualCount = row?.cnt ?? 0;
+      const diff = actualCount - (draw.currentCount ?? 0);
+      if (diff !== 0) {
+        await db
+          .update(lotteryDraws)
+          .set({ activeParticipantCount: actualCount })
+          .where(eq(lotteryDraws.id, draw.id));
+        calibrated++;
+      }
+    } catch (err) {
+      // 单活动校准失败不中断其他活动
+      logError("participation", `calibrateActiveParticipantCounts draw=${draw.id} failed`, err);
+    }
+  }
+  return calibrated;
 }

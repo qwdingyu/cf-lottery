@@ -45,6 +45,8 @@ export type TriggerRewardEarnedResult = {
  *   因为 entryId 是 UUID，无特殊字符，且同一 draw 内同一 identity 只有一个 entry
  * @param inviterIdentityValue 邀请人的身份值（用于 Webhook payload 与对账）
  * @param refCode 归因使用的分享码
+ * @param options.source 事件来源标记：'trigger'=正常归因路径，'reissue'=运营补发路径。
+ *   写入 reward_earned 事件的 metadata.source，便于审计日志区分补发与正常归因。
  */
 export async function triggerRewardEarned(
   tx: DbType,
@@ -53,6 +55,7 @@ export async function triggerRewardEarned(
   sharerEntryId: string,
   inviterIdentityValue: string,
   refCode: string,
+  options?: { source?: string },
 ): Promise<TriggerRewardEarnedResult> {
   const [draw] = await tx
     .select({ tenantId: lotteryDraws.tenantId, activityConfig: lotteryDraws.activityConfig })
@@ -119,7 +122,7 @@ export async function triggerRewardEarned(
       currency: rewardConfig.currency || "USD",
       sharerEntryId,
       inviterIdentityValue,
-      source: "trigger",
+      source: options?.source || "trigger",
     },
   });
 

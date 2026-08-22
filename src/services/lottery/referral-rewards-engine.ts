@@ -296,7 +296,9 @@ async function aggregateSharerData(
 
   const sharerEntryId = triggerShare.sharerEntryId;
 
-  // 读取该分享者全部 share_record
+  // 读取该分享者全部 share_record（加 LIMIT 防极端情况：裂变活跃活动中
+  // 单个分享者名下记录可能达数千条，无上限会导致查询慢和内存膨胀）。
+  const SHARE_RECORDS_HARD_LIMIT = 1000;
   const sharerRecords = await tx
     .select({
       id: shareRecords.id,
@@ -308,8 +310,17 @@ async function aggregateSharerData(
       eq(shareRecords.tenantId, tenantId),
       eq(shareRecords.drawId, drawId),
       eq(shareRecords.sharerEntryId, sharerEntryId),
-    ));
+    ))
+    .limit(SHARE_RECORDS_HARD_LIMIT);
   if (sharerRecords.length === 0) return null;
+
+  // 达到上限时打 warning 日志，方便排查是否有异常刷量
+  if (sharerRecords.length >= SHARE_RECORDS_HARD_LIMIT) {
+    console.warn(
+      `[aggregateSharerData] shareRecords 达到上限 ${SHARE_RECORDS_HARD_LIMIT}，` +
+      `可能存在异常刷量：tenant=${tenantId} draw=${drawId} sharer=${sharerEntryId}`
+    );
+  }
 
   const totalJoined = sharerRecords.reduce(
     (sum, r) => sum + Math.max(0, Math.floor(Number(r.joinedCount) || 0)),

@@ -822,7 +822,10 @@ export async function grantLoserRewards(
   const losers = entries.filter((e) => !winnerEntryIds.has(e.id));
   if (losers.length === 0) return { granted: 0, totalLosers: 0 };
 
-  // 从优惠券码池取 available 码（按 label 过滤，未指定时取任意）
+  // 从优惠券码池逐张发放（docs/262 H2 修复）：
+  // 改为循环内 SELECT 一张 + 立即 CAS，消除预读整批的 SELECT-UPDATE 窗口。
+  // 旧模式：先 SELECT 一批可用券，再逐张 CAS —— 并发时两个进程可能选中同一组券，
+  // CAS 失败的进程对应 loser 被跳过（即使其他券仍可用），导致券分配配对偏差。
   const couponConditions = [
     eq(couponCodes.tenantId, tenantId),
     eq(couponCodes.status, "available"),
@@ -830,12 +833,6 @@ export async function grantLoserRewards(
   if (loserReward.couponLabel) {
     couponConditions.push(eq(couponCodes.label, loserReward.couponLabel));
   }
-  const availableCoupons = await db
-    .select({ id: couponCodes.id, code: couponCodes.code })
-    .from(couponCodes)
-    .where(and(...couponConditions))
-    .orderBy(couponCodes.createdAt)
-    .limit(losers.length);
 
   let granted = 0;
   // docs/259 P1-1 修复：空收件人（user_id 身份但 users 行缺失/email 为空）不消耗券码。
@@ -848,14 +845,21 @@ export async function grantLoserRewards(
       : loser.identityValue;
     return Boolean(email);
   });
-  const deliverableCount = Math.min(deliverableLosers.length, availableCoupons.length);
-  for (let i = 0; i < deliverableCount; i++) {
-    const loser = deliverableLosers[i]!;
-    const coupon = availableCoupons[i]!;
-    // registered 身份（identityType=user_id）用 users.email 作为 recipientEmail，其余用 identityValue
+
+  for (const loser of deliverableLosers) {
+    // 每次循环 SELECT 一张可用券 + 立即 CAS（与 grantBonusCoupon 模式对齐）
+    const [coupon] = await db
+      .select({ id: couponCodes.id, code: couponCodes.code })
+      .from(couponCodes)
+      .where(and(...couponConditions))
+      .orderBy(couponCodes.createdAt)
+      .limit(1);
+    if (!coupon) break; // 码池耗尽，后续 loser 无法发放
+
     const recipientEmail = loser.identityType === "user_id"
       ? (userEmailMap.get(loser.identityValue) || "")
       : loser.identityValue;
+
     // CAS 原子发放：仅当仍为 available 时更新为 issued，并记录领取人
     const result = await db.update(couponCodes)
       .set({

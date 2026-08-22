@@ -1202,6 +1202,7 @@ import {
   resolveOpenJoinEmail,
 } from '@/composables/cf-auth-session'
 import { clearLotteryBrowserSessionOnly } from '@/composables/business-session'
+import { createCtaImpressionTracker } from '@/composables/cta-impression-tracker'
 import { readAdminToken } from '@/composables/useAdminAuth'
 import { isOtpComplete, normalizeOtpDigits } from '@/composables/otp-input'
 import {
@@ -3457,7 +3458,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 const trackedPageViews = new Set<string>()
 
 // CTA 曝光去重（同一 draw + mode 仅记录一次）
-const trackedCtaImpressions = new Set<string>()
+const ctaTracker = createCtaImpressionTracker()
 
 watch(
   [myResultDraw, myResultData],
@@ -3469,9 +3470,8 @@ watch(
     const afterWinCta = getResultCta(draw, 'after_win')
     if (afterWinCta) {
       const key = `${draw.id}:after_win`
-      if (!trackedCtaImpressions.has(key)) {
+      if (ctaTracker.track(key)) {
         trackCtaImpression(draw, 'after_win')
-        trackedCtaImpressions.add(key)
       }
     }
 
@@ -3484,9 +3484,8 @@ watch(
         && isMyResultDrawFinal.value
       if (showAfterLoss) {
         const key = `${draw.id}:after_loss`
-        if (!trackedCtaImpressions.has(key)) {
+        if (ctaTracker.track(key)) {
           trackCtaImpression(draw, 'after_loss')
-          trackedCtaImpressions.add(key)
         }
       }
     }

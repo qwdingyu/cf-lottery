@@ -809,6 +809,9 @@ export const shareRecords = sqliteTable("share_records", {
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   shareDrawIdx: index("idx_share_draw").on(t.tenantId, t.drawId, t.createdAt),
+  // 按分享者聚合查询优化（docs/262 M1）：aggregateSharerData 和 grantLeaderboardRewards
+  // 按 (tenantId, drawId, sharerEntryId) 三列查询，此索引避免线性扫描
+  shareTenantDrawSharerIdx: index("idx_share_tenant_draw_sharer").on(t.tenantId, t.drawId, t.sharerEntryId),
   shareCodeUnique: uniqueIndex("idx_share_code").on(t.shareCode),
 }));
 

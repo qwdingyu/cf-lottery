@@ -58,6 +58,7 @@ import {
   normalizeOptionalNonNegativeInteger,
   defaultExperienceForActivity,
   mergeJsonTopLevel,
+  decorateIdentityDisplay,
 } from "./admin-lottery-helpers";
 import { readDisabledL2Menus } from "../lib/l2-menu-keys";
 
@@ -536,6 +537,23 @@ adminLotteryRoute.get("/draws/export", async (c) => {
     return fail(c, `活动导出超过单次上限（${limit}），请缩小筛选条件或使用 offset 分批导出`, 400);
   }
 
+  // 枚举值 → 中文标签映射，让 CSV 导出对运营更友好
+  const STATUS_LABELS: Record<string, string> = {
+    draft: "草稿", open: "进行中", paused: "已暂停",
+    drawing: "开奖中", drawn: "已开奖", cancelled: "已取消",
+  };
+  const KIND_LABELS: Record<string, string> = {
+    lottery: "抽奖", signup_chain: "报名链", reservation: "预约",
+    vote: "投票", survey: "问卷", checkin: "签到", waitlist: "候补",
+    approval: "审批", claim: "领取",
+  };
+  const MODE_LABELS: Record<string, string> = {
+    open: "开放", roster: "名单", password: "密码", invite_code: "邀请码", registered: "注册用户",
+  };
+  const RESULT_LABELS: Record<string, string> = {
+    manual: "手动开奖", scheduled: "定时开奖", instant: "即时开奖",
+  };
+
   // 构建 CSV（UTF-8 BOM，确保 Excel 正确识别中文）
   const BOM = "\uFEFF";
   const csv = [
@@ -543,10 +561,10 @@ adminLotteryRoute.get("/draws/export", async (c) => {
     ...rows.map((r) => {
       return [
         csvEscape(r.title),
-        csvEscape(r.status),
-        csvEscape(r.activityKind || ""),
-        csvEscape(r.participationMode || ""),
-        csvEscape(r.resultMode || ""),
+        csvEscape(STATUS_LABELS[r.status] || r.status),
+        csvEscape(KIND_LABELS[r.activityKind || ""] || r.activityKind || ""),
+        csvEscape(MODE_LABELS[r.participationMode || ""] || r.participationMode || ""),
+        csvEscape(RESULT_LABELS[r.resultMode || ""] || r.resultMode || ""),
         csvEscape(r.startAt),
         csvEscape(r.endAt),
         csvEscape(r.createdAt),
@@ -1383,7 +1401,9 @@ adminLotteryRoute.get("/draws/:id/rewards/failures", async (c) => {
         eq(activityEvents.drawId, drawId),
         eq(activityEvents.eventType, "reward_failed"),
       ))
-      .orderBy(desc(activityEvents.createdAt));
+      .orderBy(desc(activityEvents.createdAt))
+      // 防极端情况：失败记录极多时列表接口可能慢，限制最多返回 200 条
+      .limit(200);
 
     const list = rows.map((r) => {
       let meta: Record<string, unknown> = {}
@@ -1396,10 +1416,37 @@ adminLotteryRoute.get("/draws/:id/rewards/failures", async (c) => {
         path: meta.path || "",
         error: meta.error || "",
         shareRecordId: meta.shareRecordId || "",
+        identityType: "",
+        identityValue: "",
       }
     })
 
-    return ok(c, { failures: list });
+    // 批量查询 entryId 对应的身份信息，供 decorateIdentityDisplay 解析为可读名称
+    const entryIds = [...new Set(list.map((r) => r.entryId).filter(Boolean))];
+    if (entryIds.length > 0) {
+      const entries = await db
+        .select({
+          id: lotteryEntries.id,
+          identityType: lotteryEntries.identityType,
+          identityValue: lotteryEntries.identityValue,
+        })
+        .from(lotteryEntries)
+        .where(inArray(lotteryEntries.id, entryIds));
+      const entryMap = new Map(entries.map((e) => [e.id, e]));
+      for (const r of list) {
+        const entry = entryMap.get(r.entryId);
+        if (entry) {
+          r.identityType = entry.identityType || "";
+          r.identityValue = entry.identityValue || "";
+        }
+      }
+      await decorateIdentityDisplay(db, list);
+    }
+
+    // 清理内部字段，只返回前端需要的字段
+    const result = list.map(({ identityType: _, identityValue: __, ...rest }) => rest);
+
+    return ok(c, { failures: result });
   } catch (err) {
     return fail(c, err instanceof Error ? err.message : "查询失败", 400);
   }
@@ -1478,6 +1525,7 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
         sharerEntryId,
         sharerIdentity,
         refCode,
+        { source: "reissue" },
       );
       results.push({ ...result, refCode })
     }

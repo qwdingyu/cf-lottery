@@ -1849,6 +1849,7 @@
               <tr>
                 <th>{{ $t('lottery.adminCreatedAt') }}</th>
                 <th>{{ $t('lottery.adminRefCode') }}</th>
+                <th>{{ $t('lottery.adminFailureUser') }}</th>
                 <th>{{ $t('lottery.adminEntryId') }}</th>
                 <th>{{ $t('lottery.adminPath') }}</th>
                 <th>{{ $t('lottery.adminError') }}</th>
@@ -1858,12 +1859,13 @@
               <tr v-for="item in rewardFailures" :key="item.id">
                 <td>{{ formatDate(item.createdAt) }}</td>
                 <td>{{ item.refCode || '-' }}</td>
-                <td>{{ item.entryId }}</td>
+                <td>{{ item.identityDisplay || item.entryId?.slice(0, 8) || '-' }}</td>
+                <td class="mono-text" style="font-size: 12px">{{ item.entryId }}</td>
                 <td>{{ item.path || '-' }}</td>
                 <td class="mono-text" style="max-width: 320px; word-break: break-all">{{ item.error || '-' }}</td>
               </tr>
               <tr v-if="rewardFailures.length === 0">
-                <td colspan="5" class="empty-text">{{ $t('lottery.adminNoData') }}</td>
+                <td colspan="6" class="empty-text">{{ $t('lottery.adminNoData') }}</td>
               </tr>
             </tbody>
           </table>
@@ -1986,7 +1988,7 @@
             :disabled="operatingId === expandedActionDraw.id"
             @click="runMoreAction(d => handleGrantLeaderboardRewards(d.id))"
           >{{ operatingId === expandedActionDraw.id ? $t('lottery.loadingText') : $t('lottery.adminGrantLeaderboard') }}</button>
-          <!-- 奖励发放失败记录（docs/259 P1-2） -->
+          <!-- 奖励发放失败记录（docs/259 P1-2）；modal 内含补发一条/全部补发按钮，无需单独入口 -->
           <button
             type="button"
             class="btn btn-ghost btn-xs table-actions-menu-item"
@@ -1994,13 +1996,6 @@
             :disabled="operatingId === expandedActionDraw.id"
             @click="runMoreAction(d => openRewardFailuresModal(d.id))"
           >{{ $t('lottery.adminRewardFailures') }}</button>
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs table-actions-menu-item"
-            role="menuitem"
-            :disabled="operatingId === expandedActionDraw.id"
-            @click="runMoreAction(d => handleReissueReward(d.id))"
-          >{{ $t('lottery.adminReissueReward') }}</button>
         </div>
         <div class="table-actions-group table-actions-group--danger" role="group">
           <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupDanger') }}</span>
