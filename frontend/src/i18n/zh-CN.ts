@@ -1006,6 +1006,13 @@ export default {
     viralNotOnBoard: "尚未上榜",
     viralCopyFailed: "复制失败，请长按链接手动复制",
     viralShareFailed: "分享未完成，可改用复制链接",
+    // docs/259 D2：里程碑层进度（viral 关闭但配了 referralRewardDefs 时仍可见）
+    viralMilestonesUnlocked: "已解锁 {unlocked} / {total} 个里程碑",
+    viralMilestonesNext: "下一里程碑：邀请 {n} 人",
+    viralMilestonesPeople: " 人",
+    viralMilestonesSpins: " 次抽奖",
+    viralMilestonesCoupon: " 张优惠券",
+    viralMilestonesGranted: "已发放",
     viralShareTitle: "邀请你一起参加",
     viralShareText: "我正在参加活动，点开链接一起参与，也能提高我的开奖权重！",
     emailCodeRequired: "请填写邮箱验证码",

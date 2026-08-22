@@ -1033,6 +1033,13 @@ export default {
     viralNotOnBoard: "Not ranked yet",
     viralCopyFailed: "Copy failed — long-press the link instead",
     viralShareFailed: "Share cancelled — try copy link",
+    // docs/259 D2：里程碑层进度（viral 关闭但配了 referralRewardDefs 时仍可见）
+    viralMilestonesUnlocked: "Unlocked {unlocked} / {total} milestones",
+    viralMilestonesNext: "Next milestone: invite {n} people",
+    viralMilestonesPeople: " people",
+    viralMilestonesSpins: " spins",
+    viralMilestonesCoupon: " coupons",
+    viralMilestonesGranted: "granted",
     viralShareTitle: "Join me",
     viralShareText: "I'm in this activity — open the link to join and boost my draw weight!",
     emailCodeRequired: "Please enter the email code",
