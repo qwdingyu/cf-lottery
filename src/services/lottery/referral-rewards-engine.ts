@@ -20,6 +20,9 @@ import type { DbType } from "../../db/client";
 import { and, eq } from "drizzle-orm";
 import { shareRecords } from "../../db/schema";
 import { grantBonusSpin, grantBonusCoupon } from "./reward-exits";
+// 幂等标记解析：唯一实现在 referral-milestones（零引擎依赖纯计算），
+// 发放侧与 my-viral-stats 展示侧共用，避免进度与实际发放漂移（docs/259 D2 ②）。
+import { parseGrantedRewardIds, splitGrantedMarks, buildGrantedMark } from "./referral-milestones";
 import { logError } from "../../lib/logger";
 
 /**
@@ -257,54 +260,6 @@ export function collectReferralRewardDefIssues(raw: unknown): Array<{ rewardId: 
     issues.push({ rewardId, reason });
   }
   return issues;
-}
-
-/**
- * 解析已发放的 rewardId 列表（JSON 数组，容错：非法回退空集）。
- * 与现有路径 [2] 的 parseGrantedMilestones 语义一致，但存储的是 rewardId 字符串而非 requireCount 数值。
- *
- * 标记有两种形态（docs/255 复审 A4）：
- * - 整标记 `rewardId`：该奖励已足额发完，之后不再发放
- * - 部分标记 `rewardId:N`：该奖励只发出了 N 份（码池不足），后续归因续发差额
- * 旧版本只写整标记，格式向后兼容。
- */
-function parseGrantedRewardIds(raw: string | null | undefined): string[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(String(raw));
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((id): id is string => typeof id === "string" && id.length > 0);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * 把幂等标记拆成"已发满"集合与"部分已发"计数表。
- *
- * `rewardId:N` 形式（N 为正整数）视为部分标记；其余一律视为整标记，
- * 因此 rewardId 自身含冒号时只会被当成整标记，不会误判成部分（保守方向：不重复发）。
- */
-function splitGrantedMarks(marks: string[]): { full: Set<string>; partial: Map<string, number> } {
-  const full = new Set<string>();
-  const partial = new Map<string, number>();
-  for (const mark of marks) {
-    const idx = mark.lastIndexOf(":");
-    const suffix = idx > 0 ? mark.slice(idx + 1) : "";
-    if (idx > 0 && /^\d+$/.test(suffix) && Number(suffix) > 0) {
-      const rewardId = mark.slice(0, idx);
-      // 同一 rewardId 出现多个部分标记时取最大值（保守方向：不重复发）
-      partial.set(rewardId, Math.max(partial.get(rewardId) ?? 0, Number(suffix)));
-    } else {
-      full.add(mark);
-    }
-  }
-  return { full, partial };
-}
-
-/** 生成本次要写入的标记 token：发满写整标记，未发满写 `rewardId:已发数` */
-function buildGrantedMark(rewardId: string, issuedTotal: number, target: number): string {
-  return issuedTotal >= target ? rewardId : `${rewardId}:${issuedTotal}`;
 }
 
 /**
