@@ -196,7 +196,6 @@ import { useToast } from '@usethink/cf-admin-fe/composables'
 import { shouldShowInviteShareCta } from '@/views/lottery/public-helpers'
 import {
   isMeVisibleInViralTop,
-  isViralFeatureEnabled,
   isViralLeaderboardMeRow,
   parseViralLeaderboardResponse,
   shouldShowViralLeaderboard,
@@ -217,6 +216,7 @@ const props = defineProps<{
     extraEntriesPerInvite?: number
     maxExtraEntries?: number
     leaderboardEnabled?: boolean
+    referralRewardDefs?: unknown[]
   } | null
 }>()
 
@@ -253,7 +253,13 @@ const shareError = ref('')
 const statsError = ref('')
 const lbError = ref('')
 
-const viralOn = computed(() => isViralFeatureEnabled(props.viralConfig))
+const viralOn = computed(() => {
+  const cfg = props.viralConfig
+  if (cfg?.enabled === true) return true
+  // docs/259 D2：viral 关闭但配置了 referralRewardDefs 时，仍需展示里程碑进度面
+  if (cfg?.referralRewardDefs && cfg.referralRewardDefs.length > 0) return true
+  return false
+})
 const drawSlug = computed(() => String(props.drawSlug || '').trim())
 
 /** 管理端「展示排行榜」：显式 false 才关；缺省 true（与 admin / API 一致） */

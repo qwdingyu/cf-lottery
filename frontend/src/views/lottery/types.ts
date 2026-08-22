@@ -78,6 +78,8 @@ export type LotteryDraw = {
       extraEntriesPerInvite?: number
       maxExtraEntries?: number
       leaderboardEnabled?: boolean
+      // docs/259 D2：里程碑层奖励定义，viral 关闭时仍可配置
+      referralRewardDefs?: unknown[]
     }
     /** 体验壳：仪式短语 / 面板模式（docs/128） */
     experience?: {

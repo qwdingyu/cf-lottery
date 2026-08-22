@@ -460,7 +460,7 @@
             entryId：参与快照 / myEntryList / hints；无 entry 时诚实提示。
           -->
           <ViralLeaderboard
-            v-if="getDrawViral(draw)?.enabled && (draw.publicSlug || draw.id)"
+            v-if="shouldShowViralPanel(draw) && (draw.publicSlug || draw.id)"
             :draw-slug="String(draw.publicSlug || draw.id)"
             :entry-id="resolveViralEntryId(draw)"
             :is-joined="isDrawJoined(draw)"
@@ -2383,6 +2383,18 @@ const lastJoinDrawSlug = computed(() => {
 function getDrawViral(draw: LotteryDraw | null | undefined) {
   if (!draw?.promotionConfig) return undefined
   return draw.promotionConfig.viral
+}
+
+/**
+ * 是否应挂载裂变面板（ViralLeaderboard / GameResultModal 共享判定）：
+ * - viral.enabled === true 始终展示；
+ * - viral 关闭但配置了 referralRewardDefs 时，仍展示里程碑进度面（docs/259 D2）。
+ */
+function shouldShowViralPanel(draw: LotteryDraw | null | undefined): boolean {
+  const viral = getDrawViral(draw)
+  if (viral?.enabled === true) return true
+  const defs = viral?.referralRewardDefs
+  return Array.isArray(defs) && defs.length > 0
 }
 
 /**
