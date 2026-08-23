@@ -1017,18 +1017,19 @@
                   <p class="form-section-desc">{{ $t('lottery.adminTrafficSectionDesc') }}</p>
                 </header>
                 <div class="form-grid two-cols">
-                  <!-- 开关 + 商品链接同排（2026-08 紧凑化）：不再「开关整行 + 链接另起一行」 -->
+                  <!-- 开关独占一行：checkbox 不再与 URL 输入框挤在一起 -->
                   <div class="field-span-2 toggle-with-param">
                     <label class="checkbox-label-inline">
                       <input v-model="form.enableProductLink" type="checkbox" />
                       <span>{{ $t('lottery.adminEnableProductLink') }}</span>
                     </label>
-                    <label v-if="form.enableProductLink" class="param-inline product-link-param">
+                  </div>
+                  <template v-if="form.enableProductLink">
+                    <!-- 商品链接独占全宽：URL 通常很长，需要足够输入空间 -->
+                    <label class="field-span-2">
                       <span>{{ $t('lottery.adminProductLink') }}</span>
                       <input v-model="form.productLink.url" type="url" placeholder="https://shop.example.com/product/123" />
                     </label>
-                  </div>
-                  <template v-if="form.enableProductLink">
                     <label>
                       <span>{{ $t('lottery.adminProductTitle') }}</span>
                       <input v-model="form.productLink.title" maxlength="100" :placeholder="$t('lottery.adminProductTitlePlaceholder')" />
