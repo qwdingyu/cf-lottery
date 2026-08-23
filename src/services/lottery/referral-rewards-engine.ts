@@ -17,7 +17,7 @@
  * - 幂等标记失败时跳过但不抛异常
  */
 import type { DbType } from "../../db/client";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { shareRecords } from "../../db/schema";
 import { grantBonusSpin, grantBonusCoupon } from "./reward-exits";
 // 幂等标记解析：唯一实现在 referral-milestones（零引擎依赖纯计算），
@@ -296,13 +296,30 @@ async function aggregateSharerData(
 
   const sharerEntryId = triggerShare.sharerEntryId;
 
-  // 读取该分享者全部 share_record（加 LIMIT 防极端情况：裂变活跃活动中
+  // P1 修复（2026-08-23 审查）：用独立 SQL SUM 获取精确邀请总数，
+  // 不受下方 LIMIT 影响。LIMIT 只保护 row-level 查询（grantedSet + recordIds），
+  // 避免单个分享者名下记录极多时内存膨胀，但不应截断总数聚合。
+  const [sumRow] = await tx
+    .select({ totalJoined: sql<number>`coalesce(sum(${shareRecords.joinedCount}), 0)` })
+    .from(shareRecords)
+    .where(and(
+      eq(shareRecords.tenantId, tenantId),
+      eq(shareRecords.drawId, drawId),
+      eq(shareRecords.sharerEntryId, sharerEntryId),
+    ));
+  const totalJoined = Math.max(0, Math.floor(Number(sumRow?.totalJoined ?? 0)));
+  if (totalJoined === 0) return null;
+
+  // 读取该分享者名下 share_record（LIMIT 防极端情况：裂变活跃活动中
   // 单个分享者名下记录可能达数千条，无上限会导致查询慢和内存膨胀）。
+  // 该查询仅用于：
+  //   - grantedSet：解析 rewardMilestonesGranted JSON 收集已发放的 rewardId（幂等防重）
+  //   - recordIds：CAS 标记目标列表
+  // totalJoined 已由上方 SQL SUM 精确计算，不受此 LIMIT 影响。
   const SHARE_RECORDS_HARD_LIMIT = 1000;
   const sharerRecords = await tx
     .select({
       id: shareRecords.id,
-      joinedCount: shareRecords.joinedCount,
       rewardMilestonesGranted: shareRecords.rewardMilestonesGranted,
     })
     .from(shareRecords)
@@ -312,7 +329,6 @@ async function aggregateSharerData(
       eq(shareRecords.sharerEntryId, sharerEntryId),
     ))
     .limit(SHARE_RECORDS_HARD_LIMIT);
-  if (sharerRecords.length === 0) return null;
 
   // 达到上限时打 warning 日志，方便排查是否有异常刷量
   if (sharerRecords.length >= SHARE_RECORDS_HARD_LIMIT) {
@@ -322,10 +338,6 @@ async function aggregateSharerData(
     );
   }
 
-  const totalJoined = sharerRecords.reduce(
-    (sum, r) => sum + Math.max(0, Math.floor(Number(r.joinedCount) || 0)),
-    0,
-  );
   const grantedSet = new Set<string>();
   for (const r of sharerRecords) {
     for (const id of parseGrantedRewardIds(r.rewardMilestonesGranted)) {

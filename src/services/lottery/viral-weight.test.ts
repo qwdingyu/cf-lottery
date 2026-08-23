@@ -6,6 +6,7 @@ import {
   aggregateViralInviteCounts,
   buildPublicSharePath,
   buildViralLeaderboardRanking,
+  compareViralLeaderboard,
   computeViralDrawWeight,
   computeViralExtraEntries,
   isViralEnabled,
@@ -307,5 +308,30 @@ describe("viral.enabled 单一入口守卫（源码扫描）", () => {
     }
 
     expect(violations).toEqual([]);
+  });
+});
+
+describe("compareViralLeaderboard tie-break 统一（P0 修复 2026-08-23）", () => {
+  it("邀请人数不同时，高邀请者排前面", () => {
+    expect(compareViralLeaderboard(5, 3)).toBeLessThan(0);
+    expect(compareViralLeaderboard(3, 5)).toBeGreaterThan(0);
+  });
+
+  it("同票时先到先得（firstSharedAt 升序）", () => {
+    // A 先分享（时间早），B 后分享 → A 排前面（返回负数表示 A 在 B 前）
+    expect(compareViralLeaderboard(3, 3, "2026-01-01T10:00:00Z", "2026-01-02T10:00:00Z")).toBeLessThan(0);
+    // 反过来
+    expect(compareViralLeaderboard(3, 3, "2026-01-02T10:00:00Z", "2026-01-01T10:00:00Z")).toBeGreaterThan(0);
+    // 同时分享 → tie-break 退回到 entryId 字典序
+    expect(compareViralLeaderboard(3, 3, "2026-01-01T10:00:00Z", "2026-01-01T10:00:00Z", "entry-b", "entry-a")).toBeGreaterThan(0);
+  });
+
+  it("firstSharedAt 缺省时退回 entryId 字典序兜底", () => {
+    expect(compareViralLeaderboard(3, 3, undefined, undefined, "entry-a", "entry-b")).toBeLessThan(0);
+    expect(compareViralLeaderboard(3, 3, "", "", "entry-z", "entry-a")).toBeGreaterThan(0);
+  });
+
+  it("完全相同时返回 0", () => {
+    expect(compareViralLeaderboard(5, 5, "2026-01-01T10:00:00Z", "2026-01-01T10:00:00Z", "x", "x")).toBe(0);
   });
 });

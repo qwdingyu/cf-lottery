@@ -19,7 +19,7 @@ import { withDbTransaction } from "../../db/client";
 import { eq, and, sql } from "drizzle-orm";
 import { shareRecords, lotteryEntries, lotteryDraws } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
-import { isViralLeaderboardEnabled, type ViralWeightConfig } from "./viral-weight";
+import { isViralLeaderboardEnabled, compareViralLeaderboard, type ViralWeightConfig } from "./viral-weight";
 
 /** 排行榜奖励配置项（viral.leaderboardRewards 数组元素） */
 export type LeaderboardRewardConfig = {
@@ -153,9 +153,15 @@ export async function grantLeaderboardRewards(
     bySharer.set(id, cur);
   }
 
-  // 3. 名次：邀请人数降序；同票按最早分享时间升序（先到先得，与公开榜语义一致）。
+  // 3. 名次：邀请人数降序；同票 tie-break 走 compareViralLeaderboard（P0 修复 2026-08-23）
+  // 与公开榜（viral-weight.ts buildViralLeaderboardRanking）使用同一比较函数，
+  // 确保「用户看到的排名」和「实际获得的奖励」一致：先到先得（firstSharedAt 升序）。
   const ranked = [...bySharer.entries()]
-    .sort((a, b) => b[1].invited - a[1].invited || String(a[1].firstSharedAt).localeCompare(String(b[1].firstSharedAt)))
+    .sort((a, b) => compareViralLeaderboard(
+      a[1].invited, b[1].invited,
+      a[1].firstSharedAt, b[1].firstSharedAt,
+      a[0], b[0],
+    ))
     .slice(0, topN);
 
   // 4. 逐名次发放（每个分享者只发一次；事务内对该分享者全部记录 CAS 标记防并发重复发放）

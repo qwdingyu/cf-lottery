@@ -202,6 +202,37 @@ export function aggregateViralInviteCounts(
 }
 
 /**
+ * 排行榜 tie-break 比较函数（P0 修复 2026-08-23）。
+ *
+ * 公开榜（viral-weight）和奖励发放（leaderboard-rewards）曾使用不同的 tie-break 规则，
+ * 导致「用户看到的排名」和「实际获得的奖励」不一致。统一到此处的单一真相：
+ *   1. 邀请人数降序（核心排名依据）
+ *   2. 同票按最早分享时间升序（先到先得，公平且可追溯）
+ *   3. firstSharedAt 缺省时退回到 entryId 字典序（防御性兜底，不影响正常数据）
+ *
+ * @param invitedA 邀请人数
+ * @param invitedB 邀请人数
+ * @param firstSharedAtA 最早分享时间（ISO 字符串），可选
+ * @param firstSharedAtB 最早分享时间（ISO 字符串），可选
+ * @param entryIdA 分享者 entry ID（兜底 tie-break）
+ * @param entryIdB 分享者 entry ID（兜底 tie-break）
+ */
+export function compareViralLeaderboard(
+  invitedA: number, invitedB: number,
+  firstSharedAtA?: string, firstSharedAtB?: string,
+  entryIdA?: string, entryIdB?: string,
+): number {
+  // 主排序：邀请人数降序
+  if (invitedA !== invitedB) return invitedB - invitedA;
+  // 同票 tie-break：最早分享时间升序（先到先得）
+  const tA = String(firstSharedAtA || "");
+  const tB = String(firstSharedAtB || "");
+  if (tA && tB && tA !== tB) return tA.localeCompare(tB);
+  // 兜底：firstSharedAt 缺省时用 entryId 字典序（防御性，不影响正常数据）
+  return String(entryIdA || "").localeCompare(String(entryIdB || ""));
+}
+
+/**
  * 排行榜：由「entryId → 邀请人数」得到 Top N + 我的真实名次。
  * 名次必须在全量（invited>0）上计算，禁止在 slice(0,20) 后再找导致「未进 Top20 恒为 21」。
  */
@@ -228,8 +259,9 @@ export function buildViralLeaderboardRanking(
     }
   }
 
-  // 邀请人数降序；同票按 entryId 稳定排序，避免刷新乱跳
-  pairs.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  // 邀请人数降序；同票 tie-break 走 compareViralLeaderboard（公开榜不含 firstSharedAt，退回 entryId 字典序）
+  // 奖励发放（leaderboard-rewards.ts）单独传入 firstSharedAt 使用同一比较函数，保证排名一致
+  pairs.sort((a, b) => compareViralLeaderboard(a[1], b[1], undefined, undefined, a[0], b[0]));
 
   const entries = pairs.slice(0, topN).map(([id, count], index) => ({
     rank: index + 1,
