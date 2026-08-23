@@ -3835,11 +3835,25 @@ function onResultModalQuery() {
   if (draw) openMyResult(draw)
 }
 
-/** 仅登录：cf-auth 回当前活动页（不带 pendingJoin 自动参与） */
+/**
+ * 仅登录：cf-auth 回当前活动页。
+ *
+ * 三重 ref 保障（docs/263 归因闭环）：
+ * 1. 有 ref 时保存 pendingJoin → 回调后自动参与 + 归因（本函数新增）
+ * 2. returnTo 含 ?ref=xxx → 回调后 URL 恢复（现有）
+ * 3. resume 时 refFromPending || routeParam('ref') fallback（现有）
+ *
+ * 无 ref 时（如用户主动从收藏夹打开）不保存 pendingJoin，
+ * 登录后用户手动点「参与」即可（ref 已不在 URL，符合预期）。
+ */
 async function handleCfAuthLoginOnly() {
   try {
+    const ref = routeParam('ref')
+    const drawId = pendingJoinDrawId.value || props.id || draws.value[0]?.id || ''
     await cfAuth.login({
       returnTo: route.fullPath || '/lottery',
+      // 活动页有 ref 时保存 pendingJoin → OAuth 回调后自动参与 + 归因
+      pendingJoin: (ref && drawId) ? { drawId, refCode: ref } : undefined,
     })
   } catch (e: any) {
     showToast(e?.message || t('lottery.joinFailed'), 'error')
