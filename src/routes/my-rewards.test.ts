@@ -520,3 +520,135 @@ describe("ref → bonus_spin → spin 执行 → my-rewards 更新 端到端闭�
     expect(mrBodyAfter.rewards[0]!.spinsLeft).toBe(3);
   });
 });
+
+describe("bonus_coupon 核销后 my-rewards 不显示已核销券", () => {
+  it("核销前券在 my-rewards 可见，核销后从 my-rewards 消失", async () => {
+    const sharerId = "redeem-sharer";
+    const sharerEmail = "redeem-sharer@test.com";
+    const inviteeId = "redeem-invitee";
+    const inviteeEmail = "redeem-invitee@test.com";
+    await db.insert(tenants).values({ id: TENANT, name: "my-rewards" });
+    await db.insert(users).values([
+      { id: sharerId, username: "redeem-sharer", email: sharerEmail, passwordHash: "x" },
+      { id: inviteeId, username: "redeem-invitee", email: inviteeEmail, passwordHash: "x" },
+    ]);
+
+    const drawId = await seedDraw({
+      publicSlug: "redeem-e2e-mr",
+      participationMode: "registered",
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "c1", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon", couponLabel: "redeem-test" } },
+        ],
+      }),
+    });
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: "REDEEM-COUPON-1", label: "redeem-test", status: "available",
+    });
+
+    const app = createApp();
+    const sharerToken = await signJwt({ sub: sharerId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+    const inviteeToken = await signJwt({ sub: inviteeId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+
+    // ① 分享者参与
+    const joinSharer = await app.request("/public/draws/redeem-e2e-mr/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${sharerToken}`, "CF-Connecting-IP": "10.0.0.111" },
+      body: JSON.stringify({ email: sharerEmail }),
+    }, TEST_ENV);
+    expect(joinSharer.status).toBe(200);
+    const sharerEntryId = (await joinSharer.json() as { entryId: string }).entryId;
+
+    // ② 生成分享链接
+    const shareRes = await app.request("/public/draws/redeem-e2e-mr/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.111" },
+      body: JSON.stringify({ entryId: sharerEntryId }),
+    }, TEST_ENV);
+    expect(shareRes.status).toBe(200);
+    const refCode = String((await shareRes.json() as { shareUrl: string }).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
+
+    // ③ 被邀请人带 ref 参与 → 分享者获 bonus_coupon
+    const joinInvitee = await app.request("/public/draws/redeem-e2e-mr/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${inviteeToken}`, "CF-Connecting-IP": "10.0.0.112" },
+      body: JSON.stringify({ email: inviteeEmail, refCode }),
+    }, TEST_ENV);
+    expect(joinInvitee.status).toBe(200);
+
+    // ④ 核销前：my-rewards 可见该券
+    const mrBefore = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${sharerToken}` },
+    }, TEST_ENV);
+    const bodyBefore = await mrBefore.json() as { rewards: Array<{ coupons: string[] }> };
+    expect(bodyBefore.rewards[0]!.coupons).toContain("REDEEM-COUPON-1");
+
+    // ⑤ 分享者核销该券（L1 自助核销：POST /public/coupons/redeem + JWT 免 OTP）
+    const redeemRes = await app.request("/public/coupons/redeem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${sharerToken}`, "CF-Connecting-IP": "10.0.0.111" },
+      body: JSON.stringify({ code: "REDEEM-COUPON-1", email: sharerEmail, otp: "" }),
+    }, TEST_ENV);
+    expect(redeemRes.status).toBe(200);
+    const redeemBody = await redeemRes.json() as { ok: boolean; redeemed: boolean };
+    expect(redeemBody.ok).toBe(true);
+    expect(redeemBody.redeemed).toBe(true);
+
+    // ⑥ 核销后：my-rewards 不再包含已核销的券（status 从 issued → redeemed，被 WHERE 过滤）
+    const mrAfter = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${sharerToken}` },
+    }, TEST_ENV);
+    const bodyAfter = await mrAfter.json() as { rewards: Array<{ coupons: string[] }> };
+    expect(bodyAfter.rewards[0]!.coupons).not.toContain("REDEEM-COUPON-1");
+  });
+});
+
+describe("my-rewards 跨活动聚合", () => {
+  it("同一用户参与 2 个活动，my-rewards 返回 2 条奖励记录", async () => {
+    const userId = "multi-activity-user";
+    const userEmail = "multi@test.com";
+    await db.insert(tenants).values({ id: TENANT, name: "my-rewards" });
+    await db.insert(users).values({ id: userId, username: "multi-user", email: userEmail, passwordHash: "x" });
+
+    // 两个独立活动（设 maxSpinsPerEntry 使 spinsLeft>0，验证初始额度在多活动中各自独立）
+    await seedDraw({ publicSlug: "multi-a", participationMode: "registered", maxSpinsPerEntry: 3 });
+    await seedDraw({ publicSlug: "multi-b", participationMode: "registered", maxSpinsPerEntry: 3 });
+
+    const app = createApp();
+    const token = await signJwt({ sub: userId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+
+    // ① 参与活动 A
+    const joinA = await app.request("/public/draws/multi-a/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "CF-Connecting-IP": "10.0.0.121" },
+      body: JSON.stringify({ email: userEmail }),
+    }, TEST_ENV);
+    expect(joinA.status).toBe(200);
+
+    // ② 参与活动 B
+    const joinB = await app.request("/public/draws/multi-b/access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "CF-Connecting-IP": "10.0.0.122" },
+      body: JSON.stringify({ email: userEmail }),
+    }, TEST_ENV);
+    expect(joinB.status).toBe(200);
+
+    // ③ my-rewards 返回 2 条（每个活动一条）
+    const mrRes = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${token}` },
+    }, TEST_ENV);
+    expect(mrRes.status).toBe(200);
+    const body = await mrRes.json() as {
+      rewards: Array<{ slug: string; spinsLeft: number; coupons: string[] }>;
+    };
+    expect(body.rewards).toHaveLength(2);
+    const slugs = body.rewards.map(r => r.slug).sort();
+    expect(slugs).toEqual(["multi-a", "multi-b"]);
+    // 每条 spinsLeft=1（初始参与次数）
+    for (const r of body.rewards) {
+      expect(r.spinsLeft).toBe(1);
+    }
+  });
+});
