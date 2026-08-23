@@ -97,9 +97,17 @@ export default {
 
   // ── Workspace onboarding ───────────────────────────────
   onboarding: {
+    welcomeTitle: "Welcome to Lucky Draw",
+    welcomeDesc: "Choose your purpose — we'll tailor the experience for you",
+    roleMerchant: "Merchant / Activity Organizer",
+    roleMerchantDesc: "Create a workspace, organize lotteries, manage prizes and participants",
+    roleParticipant: "Participant",
+    roleParticipantDesc: "Join activities, view rewards, browse shops",
+    l1Welcome: "Great — let's explore!",
+    backToChoose: "Back to selection",
     title: "Create workspace",
     descLine1: "Workspaces are where you manage activities, prizes, and team members.",
-    descLine2: "You can create multiple workspaces for different projects at any time.",
+    descLine2: "Use a team or project name — you can change it later.",
     workspaceName: "Workspace name",
     workspacePlaceholder: "e.g. My team, Marketing, Community ops",
     workspaceHint: "Editable anytime; use a team or project name",
@@ -123,6 +131,7 @@ export default {
     myRewards: "My Rewards",
     loggedOut: "Logged out",
     toggleSidebar: "Toggle sidebar",
+    tenantPending: "⏳ Your workspace is pending platform review. Full features will be available after approval.",
     menuDashboard: "Dashboard",
     menuLottery: "Lottery",
     menuPrizes: "Prizes",
@@ -264,6 +273,9 @@ export default {
     emailPlaceholder: "For verification codes and draw notifications",
     password: "Password",
     passwordPlaceholder: "At least 8 chars, with letters and digits",
+    confirmPassword: "Confirm password",
+    confirmPasswordPlaceholder: "Re-enter your password",
+    passwordMismatch: "Passwords do not match",
     submitting: "Submitting…",
     sendCode: "Send code",
     codeSentHint: "Verification code sent to",
@@ -2183,9 +2195,11 @@ export default {
   // ── Platform tenants (PlatformTenantsView) ──
   platformTenants: {
     allStatus: "All statuses",
+    statusPending: "Pending",
     statusActive: "Active",
     statusSuspended: "Suspended",
     statusDisabled: "Disabled",
+    statusPendingOption: "Pending (default for new signups)",
     allPlans: "All plans",
     planFree: "Free",
     planPro: "Pro",

@@ -99,12 +99,19 @@ export function requireTenantMember(allowedRoles: string[] = ["owner", "admin", 
         return c.json({ ok: false, message: "权限不足" }, 403);
       }
       // 租户暂停/禁用后，已持有 JWT 的成员立即不可写（docs/070 HIGH #3）
+      // P1：pending 状态的租户需 L3 审核后才能使用，owner 可登录但无法操作
       const [tenant] = await db
         .select({ status: tenants.status })
         .from(tenants)
         .where(eq(tenants.id, tenantId))
         .limit(1);
-      if (!tenant || tenant.status !== "active") {
+      if (!tenant) {
+        return c.json({ ok: false, message: "租户不存在" }, 403);
+      }
+      if (tenant.status === "pending") {
+        return c.json({ ok: false, message: "您的工作空间正在等待平台审核，审核通过后即可使用", tenantStatus: "pending" }, 403);
+      }
+      if (tenant.status !== "active") {
         return c.json({ ok: false, message: "租户已暂停或不可用" }, 403);
       }
       c.set("tenantRole", member.role);

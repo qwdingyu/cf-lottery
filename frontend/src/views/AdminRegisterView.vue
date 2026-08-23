@@ -18,6 +18,10 @@
           <span>{{ $t('adminRegister.password') }}</span>
           <input v-model="password" type="password" :placeholder="$t('adminRegister.passwordPlaceholder')" autocomplete="new-password" :disabled="loading" />
         </label>
+        <label class="field-label">
+          <span>{{ $t('adminRegister.confirmPassword') }}</span>
+          <input v-model="confirmPassword" type="password" :placeholder="$t('adminRegister.confirmPasswordPlaceholder')" autocomplete="new-password" :disabled="loading" />
+        </label>
         <p v-if="error" class="form-error">{{ error }}</p>
         <button type="submit" class="btn btn-primary btn-block" :disabled="loading">{{ loading ? $t('adminRegister.submitting') : $t('adminRegister.sendCode') }}</button>
       </form>
@@ -65,6 +69,7 @@ const { setToken, setPlatformRole } = useAdminAuth()
 const username = ref('')
 const email = ref('')
 const password = ref('')
+const confirmPassword = ref('')
 const code = ref('')
 const codeInputRef = ref<HTMLInputElement | null>(null)
 const loading = ref(false)
@@ -105,6 +110,7 @@ async function handleRegister() {
   if (!e.includes('@')) { error.value = t('adminRegister.invalidEmail'); return }
   if (p.length < 8) { error.value = t('adminRegister.passwordLengthError'); return }
   if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) { error.value = t('adminRegister.passwordComplexityError'); return }
+  if (p !== confirmPassword.value) { error.value = t('adminRegister.passwordMismatch'); return }
   loading.value = true
   try {
     const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p, email: e }) })

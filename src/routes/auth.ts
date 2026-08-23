@@ -409,8 +409,9 @@ authRoute.post("/switch-tenant", requireAuth, async (c) => {
 });
 
 /**
- * ★ 045 方案 C：显式创建租户（onboarding 引导后的主动创建）。
- * 每个用户允许创建多个租户（多品牌运营），不做一人一租户限制。
+ * ★ 045 方案 C + P0 限制：显式创建租户（onboarding 引导后的主动创建）。
+ * 每个用户最多创建 1 个租户，防止批量建租户薅配额。
+ * 如需多品牌运营，由 L3 平台运营者手动创建。
  */
 authRoute.post("/create-tenant", requireAuth, async (c) => {
   const db = getDb(c);
@@ -422,11 +423,23 @@ authRoute.post("/create-tenant", requireAuth, async (c) => {
     return c.json({ ok: false, message: "租户名称需要 2-30 个字符" }, 400);
   }
 
+  // P0：限制每用户最多 1 个租户，防止批量建租户薅配额
+  const [existingMember] = await db
+    .select({ tenantId: tenantMembers.tenantId })
+    .from(tenantMembers)
+    .where(eq(tenantMembers.userId, userId))
+    .limit(1);
+  if (existingMember) {
+    return c.json({ ok: false, message: "每个账号只能创建一个工作空间，如需多品牌运营请联系平台客服" }, 403);
+  }
+
   const tenantId = crypto.randomUUID();
   // 自动生成店铺 slug(8 位随机,唯一,避免用户填写困难)
   const storeSlug = `shop_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
+  // P1：新租户默认 pending 状态，需 L3 平台运营者审核后激活
+  // 审核期间 owner 可登录但无法创建活动，防止垃圾租户占用资源
   await withDbTransaction(db, async (tx) => {
-    await tx.insert(tenants).values({ id: tenantId, name, storeSlug });
+    await tx.insert(tenants).values({ id: tenantId, name, storeSlug, status: "pending" });
     await tx.insert(tenantMembers).values({ tenantId, userId, role: "owner" });
   });
 

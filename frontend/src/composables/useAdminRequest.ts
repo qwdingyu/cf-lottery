@@ -49,6 +49,13 @@ export async function adminRequest<T = any>(path: string, options?: RequestInit)
     throw new Error(data.message || '登录已过期，请重新登录')
   }
 
+  // P1：租户 pending 状态 — 403 + tenantStatus=pending，保留原始响应供调用方判断
+  if (res.status === 403 && data.tenantStatus === 'pending') {
+    const err = new Error(data.message || '您的工作空间正在等待平台审核')
+    ;(err as any).tenantStatus = 'pending'
+    throw err
+  }
+
   if (!res.ok || !data.ok) throw new Error(data.message || `请求失败: ${res.status}`)
   return data as T
 }

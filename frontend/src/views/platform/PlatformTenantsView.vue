@@ -11,6 +11,7 @@
         />
         <select v-model="filter.status" @change="searchData">
           <option value="">{{ $t('platformTenants.allStatus') }}</option>
+          <option value="pending">{{ $t('platformTenants.statusPending') }}</option>
           <option value="active">{{ $t('platformTenants.statusActive') }}</option>
           <option value="suspended">{{ $t('platformTenants.statusSuspended') }}</option>
           <option value="disabled">{{ $t('platformTenants.statusDisabled') }}</option>
@@ -191,6 +192,7 @@
             <label>
               <span>{{ $t('platformTenants.adjustStatus') }}</span>
               <select v-model="adjustForm.status" :disabled="adjusting">
+                <option value="pending">{{ $t('platformTenants.statusPendingOption') }}</option>
                 <option value="active">{{ $t('platformTenants.statusActive') }}</option>
                 <option value="suspended">{{ $t('platformTenants.statusSuspendOption') }}</option>
                 <option value="disabled">{{ $t('platformTenants.statusDisableOption') }}</option>
@@ -298,6 +300,7 @@ function planLabel(plan: string): string {
 }
 
 function statusLabel(status: string): string {
+  if (status === 'pending') return t('platformTenants.statusPending')
   if (status === 'active') return t('platformTenants.statusActive')
   if (status === 'suspended') return t('platformTenants.statusSuspended')
   if (status === 'disabled') return t('platformTenants.statusDisabled')
@@ -306,6 +309,7 @@ function statusLabel(status: string): string {
 
 function statusTagClass(status: string): string {
   if (status === 'active') return 'tag-success'
+  if (status === 'pending') return 'tag-warning'
   if (status === 'suspended') return 'tag-warning'
   return 'tag-danger'
 }

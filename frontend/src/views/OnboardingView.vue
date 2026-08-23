@@ -1,46 +1,74 @@
 <template>
   <div class="onboarding-page">
     <div class="onboarding-card">
-      <div class="onboarding-hero">
-        <div class="onboarding-icon">🎯</div>
-        <h1 class="onboarding-title">{{ $t('onboarding.title') }}</h1>
-        <p class="onboarding-desc">
-          {{ $t('onboarding.descLine1') }}<br />
-          {{ $t('onboarding.descLine2') }}
-        </p>
-      </div>
+      <!-- P3：L1/L2 入口选择 —— 注册后首先让用户明确身份 -->
+      <template v-if="!roleChosen">
+        <div class="onboarding-hero">
+          <div class="onboarding-icon">🎯</div>
+          <h1 class="onboarding-title">{{ $t('onboarding.welcomeTitle') }}</h1>
+          <p class="onboarding-desc">{{ $t('onboarding.welcomeDesc') }}</p>
+        </div>
 
-      <form class="onboarding-form" @submit.prevent="handleCreate">
-        <label class="field-label">
-          <span>{{ $t('onboarding.workspaceName') }}</span>
-          <input
-            v-model="tenantName"
-            type="text"
-            :placeholder="$t('onboarding.workspacePlaceholder')"
-            maxlength="30"
-            :disabled="creating"
-            autofocus
-          />
-          <small class="field-hint">{{ $t('onboarding.workspaceHint') }}</small>
-        </label>
+        <div class="role-choice">
+          <button type="button" class="role-card role-card--merchant" @click="chooseL2">
+            <span class="role-icon">🏪</span>
+            <span class="role-name">{{ $t('onboarding.roleMerchant') }}</span>
+            <span class="role-desc">{{ $t('onboarding.roleMerchantDesc') }}</span>
+          </button>
+          <button type="button" class="role-card role-card--participant" @click="chooseL1">
+            <span class="role-icon">🎟️</span>
+            <span class="role-name">{{ $t('onboarding.roleParticipant') }}</span>
+            <span class="role-desc">{{ $t('onboarding.roleParticipantDesc') }}</span>
+          </button>
+        </div>
 
-        <button
-          class="btn btn-primary onboarding-btn"
-          type="submit"
-          :disabled="creating || !tenantName.trim()"
-        >
-          {{ creating ? $t('onboarding.creating') : $t('onboarding.createButton') }}
-        </button>
-        <p class="onboarding-next-hint">{{ $t('onboarding.nextHint') }}</p>
+        <div class="onboarding-footer">
+          <button type="button" class="btn btn-ghost btn-sm" @click="handleLogout">{{ $t('onboarding.logout') }}</button>
+        </div>
+      </template>
 
-        <p v-if="error" class="onboarding-error" role="alert">{{ error }}</p>
-      </form>
+      <!-- L2：商户创建工作空间表单 -->
+      <template v-else>
+        <div class="onboarding-hero">
+          <div class="onboarding-icon">🏪</div>
+          <h1 class="onboarding-title">{{ $t('onboarding.title') }}</h1>
+          <p class="onboarding-desc">
+            {{ $t('onboarding.descLine1') }}<br />
+            {{ $t('onboarding.descLine2') }}
+          </p>
+        </div>
 
-      <div class="onboarding-footer">
-        <a href="#" class="btn btn-ghost btn-sm" @click.prevent="handleSkip">{{ $t('onboarding.skip') }}</a>
-        <!-- 已登录强制页：必须能退出换号，否则 skip 回首页后 token 仍在且首页旧版无退出入口 -->
-        <button type="button" class="btn btn-ghost btn-sm" @click="handleLogout">{{ $t('onboarding.logout') }}</button>
-      </div>
+        <form class="onboarding-form" @submit.prevent="handleCreate">
+          <label class="field-label">
+            <span>{{ $t('onboarding.workspaceName') }}</span>
+            <input
+              v-model="tenantName"
+              type="text"
+              :placeholder="$t('onboarding.workspacePlaceholder')"
+              maxlength="30"
+              :disabled="creating"
+              autofocus
+            />
+            <small class="field-hint">{{ $t('onboarding.workspaceHint') }}</small>
+          </label>
+
+          <button
+            class="btn btn-primary onboarding-btn"
+            type="submit"
+            :disabled="creating || !tenantName.trim()"
+          >
+            {{ creating ? $t('onboarding.creating') : $t('onboarding.createButton') }}
+          </button>
+          <p class="onboarding-next-hint">{{ $t('onboarding.nextHint') }}</p>
+
+          <p v-if="error" class="onboarding-error" role="alert">{{ error }}</p>
+        </form>
+
+        <div class="onboarding-footer">
+          <a href="#" class="btn btn-ghost btn-sm" @click.prevent="roleChosen = false">{{ $t('onboarding.backToChoose') }}</a>
+          <button type="button" class="btn btn-ghost btn-sm" @click="handleLogout">{{ $t('onboarding.logout') }}</button>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -57,9 +85,23 @@ const router = useRouter()
 const { t } = useI18n()
 const { token, setToken, clearToken } = useAdminAuth()
 const { showToast } = useToast()
+
+/** P3：L1/L2 入口选择状态 —— false 未选，true 已选商户路径 */
+const roleChosen = ref(false)
 const tenantName = ref('')
 const creating = ref(false)
 const error = ref('')
+
+/** L1（参与者）：跳过 onboarding，直接回到首页参与活动 */
+function chooseL1() {
+  showToast(t('onboarding.l1Welcome'), 'success')
+  router.replace('/')
+}
+
+/** L2（商户）：进入创建工作空间表单 */
+function chooseL2() {
+  roleChosen.value = true
+}
 
 async function handleCreate() {
   if (!tenantName.value.trim()) return
@@ -86,13 +128,6 @@ async function handleCreate() {
   } finally {
     creating.value = false
   }
-}
-
-function handleSkip() {
-  // 允许暂不创建租户离开（如 registered 参与者只参与活动、无需管理后台）。
-  // 后续访问 /admin 时路由守卫会再次引导 onboarding。
-  // 注意：skip 保留登录态；要换账号请用「退出登录」。
-  router.replace('/')
 }
 
 /** 退出登录：完整清业务会话，避免卡在「有 token 无租户」无法换号 */
@@ -144,6 +179,57 @@ function handleLogout() {
   color: rgba(255, 255, 255, 0.6);
   line-height: 1.6;
   margin: 0;
+}
+
+/* P3：L1/L2 入口选择卡片 */
+.role-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.role-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 16px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  text-align: center;
+}
+
+.role-card:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.role-card--merchant:hover {
+  border-color: var(--admin-accent, #f59e0b);
+}
+
+.role-card--participant:hover {
+  border-color: #10b981;
+}
+
+.role-icon {
+  font-size: 28px;
+}
+
+.role-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.role-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.4;
 }
 
 .onboarding-form {

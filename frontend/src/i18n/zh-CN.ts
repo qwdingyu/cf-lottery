@@ -99,9 +99,17 @@ export default {
 
   // ── 工作空间创建（Onboarding） ─────────────────────────
   onboarding: {
+    welcomeTitle: "欢迎加入 Lucky Draw",
+    welcomeDesc: "请选择您的使用目的，我们将为您定制体验",
+    roleMerchant: "商户 / 活动组织者",
+    roleMerchantDesc: "创建工作空间，组织抽奖活动，管理奖品和参与者",
+    roleParticipant: "普通参与者",
+    roleParticipantDesc: "参与活动，查看奖励，浏览商铺",
+    l1Welcome: "好的，开始探索活动吧！",
+    backToChoose: "返回选择",
     title: "创建工作空间",
     descLine1: "工作空间是您管理活动、奖品和团队成员的地方。",
-    descLine2: "您随时可以创建多个工作空间用于不同项目。",
+    descLine2: "建议使用团队或项目名称，后续可修改。",
     workspaceName: "工作空间名称",
     workspacePlaceholder: "例如：我的团队、市场部、社区运营",
     workspaceHint: "可随时修改，建议使用团队或项目名称",
@@ -125,6 +133,7 @@ export default {
     logout: "退出",
     loggedOut: "已退出登录",
     toggleSidebar: "切换侧边栏",
+    tenantPending: "⏳ 您的工作空间正在等待平台审核，审核通过后即可使用全部功能",
     menuDashboard: "运营台",
     menuLottery: "活动管理",
     menuPrizes: "奖品管理",
@@ -266,6 +275,9 @@ export default {
     emailPlaceholder: "用于接收验证码和开奖通知",
     password: "密码",
     passwordPlaceholder: "至少 8 位，包含字母和数字",
+    confirmPassword: "确认密码",
+    confirmPasswordPlaceholder: "再次输入密码",
+    passwordMismatch: "两次输入的密码不一致",
     submitting: "提交中…",
     sendCode: "发送验证码",
     codeSentHint: "验证码已发送到",
@@ -2168,9 +2180,11 @@ export default {
   // ── 平台租户（PlatformTenantsView） ──
   platformTenants: {
     allStatus: "全部状态",
+    statusPending: "待审核",
     statusActive: "正常",
     statusSuspended: "已暂停",
     statusDisabled: "已禁用",
+    statusPendingOption: "待审核（新注册默认）",
     allPlans: "全部套餐",
     planFree: "Free",
     planPro: "Pro",

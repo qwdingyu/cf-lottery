@@ -56,6 +56,10 @@
       </header>
 
       <main class="admin-content">
+        <!-- P1：租户 pending 审核横幅 —— 阻断操作但保留页面壳，让 owner 知道正在等待审核 -->
+        <div v-if="tenantPending" class="pending-banner" role="alert">
+          <span>{{ $t('adminLayout.tenantPending') }}</span>
+        </div>
         <!-- 非 L3 手输 /platform 被拒后带回：一次说明，不渲染平台空壳 -->
         <div v-if="notPlatformBanner" class="access-denied-banner" role="status">
           <span>{{ $t('adminLayout.notPlatformMember') }}</span>
@@ -104,6 +108,8 @@ const { showToast } = useToast()
 const isPlatformMember = ref(isActivePlatformRole(readPlatformRole()))
 // 模拟登录态（L3→L2 路径）：挂载时读取；模拟会话存在时显示横幅 + 返回平台按钮
 const impersonating = ref(isImpersonating())
+/** P1：租户 pending 审核状态 —— 首次请求检测到 tenantStatus=pending 时为 true */
+const tenantPending = ref(false)
 const notPlatformBanner = ref(false)
 
 function dismissNotPlatformBanner() {
@@ -169,8 +175,12 @@ onMounted(() => {
     try {
       const me = await adminRequest<{ menuDisabled?: string[] }>('/api/admin/me')
       menuDisabled.value = me.menuDisabled || []
-    } catch {
-      // 忽略：保持全部菜单可见，后端 403 仍兜底
+    } catch (err: any) {
+      // P1：检测租户 pending 审核状态，显示横幅提示
+      if (err?.tenantStatus === 'pending') {
+        tenantPending.value = true
+      }
+      // 其他错误忽略：保持全部菜单可见，后端 403 仍兜底
     }
   })()
 })
@@ -521,5 +531,17 @@ function handleLogout() {
   .admin-main {
     margin-left: 0;
   }
+}
+
+/* P1：租户 pending 审核横幅 —— 黄色警告条，阻断操作提示 */
+.pending-banner {
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+  font-size: 13px;
+  font-weight: 500;
 }
 </style>
