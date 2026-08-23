@@ -776,3 +776,155 @@ describe("open 模式端到端旅程：分享 → 加入 → 归因 → 奖励 �
     expect(body3.rewards[0]!.coupons).not.toContain("OPEN-INVITE-E2E");
   });
 });
+
+/**
+ * my-rewards 仪表盘数据（docs/265 增强）：
+ * 验证 /my-rewards 返回 summary 汇总 + invitedCount + milestones 里程碑进度。
+ */
+describe("my-rewards 仪表盘：summary + 邀请贡献", () => {
+  const T = "mr-dashboard";
+  const A_ID = "admin-dash";
+  const A_EMAIL = "admin-dash@test.com";
+  const U1_ID = "user-dash-1";
+  const U1_EMAIL = "u1-dash@test.com";
+  const U2_ID = "user-dash-2";
+  const U2_EMAIL = "u2-dash@test.com";
+
+  async function setupDashboardDraw() {
+    // 创建活动 + 配置 referralRewardDefs（邀请1人→+2次，邀请2人→+1券）
+    await db.insert(lotteryDraws).values({
+      id: A_ID,
+      tenantId: T,
+      title: "仪表盘测试活动",
+      publicSlug: "dashboard-test",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "registered",
+      experienceType: "wheel",
+      resultMode: "instant",
+      startAt: "2026-01-01T00:00:00",
+      endAt: "2027-12-31T23:59:59",
+      promotionConfig: JSON.stringify({
+        referralRewardDefs: [
+          { rewardId: "r1", type: "FIXED", fixedAmount: 2, conditions: [{ field: "totalJoinedCount", operator: "GTE", value: 1 }], metadata: { rewardExit: "bonus_spin" } },
+          { rewardId: "r2", type: "FIXED", fixedAmount: 1, conditions: [{ field: "totalJoinedCount", operator: "GTE", value: 2 }], metadata: { rewardExit: "bonus_coupon" } },
+        ],
+      }),
+    } as any);
+
+    // 分享者参与
+    await db.insert(users).values({ id: U1_ID, username: "dash-user1", email: U1_EMAIL, passwordHash: "", emailVerified: 1 });
+    await db.insert(lotteryEntries).values({
+      id: "entry-dash-1",
+      drawId: A_ID,
+      tenantId: T,
+      identityType: "user_id",
+      identityValue: U1_ID,
+      spinsLeft: 1,
+      spinsTotalGranted: 1,
+    });
+    // 创建分享记录
+    await db.insert(shareRecords).values({
+      id: "share-dash-1",
+      drawId: A_ID,
+      tenantId: T,
+      sharerEntryId: "entry-dash-1",
+      shareCode: "DASH-CODE-1",
+      joinedCount: 2,
+      rewardMilestonesGranted: JSON.stringify(["r1", "r2"]),
+    });
+    // 优惠券
+    await db.insert(couponCodes).values({
+      id: "cp-dash-1",
+      drawId: A_ID,
+      tenantId: T,
+      code: "DASH-COUPON-1",
+      status: "issued",
+      recipientEmail: U1_EMAIL,
+    });
+  }
+
+  it("返回 summary 汇总、invitedCount、milestones", async () => {
+    await clearTestData(client);
+    await db.insert(tenants).values({ id: T, name: "Dash Tenant", plan: "free", createdAt: new Date().toISOString() });
+    await setupDashboardDraw();
+    await db.insert(users).values({ id: U2_ID, username: "dash-user2", email: U2_EMAIL, passwordHash: "", emailVerified: 1 });
+
+    const app = createApp();
+    const token = await signJwt({ sub: U1_ID, tenantId: T }, TEST_ENV.JWT_SECRET, 3600);
+    const mrRes = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${token}` },
+    }, TEST_ENV);
+    expect(mrRes.status).toBe(200);
+    const body = await mrRes.json() as {
+      ok: boolean;
+      summary: { totalSpins: number; totalCoupons: number; totalInvited: number; activityCount: number };
+      rewards: Array<{
+        spinsLeft: number; coupons: string[]; invitedCount: number;
+        milestones: Array<{ rewardId: string; requireCount: number | null; rewardExit: string; amount: number | null; reached: boolean }>;
+      }>;
+    };
+    expect(body.ok).toBe(true);
+
+    // summary 汇总
+    expect(body.summary.activityCount).toBe(1);
+    expect(body.summary.totalSpins).toBe(1);
+    expect(body.summary.totalCoupons).toBe(1);
+    expect(body.summary.totalInvited).toBe(2);
+
+    // 活动级 invitedCount
+    expect(body.rewards[0]!.invitedCount).toBe(2);
+
+    // milestones：2 个里程碑都应达成（joinedCount=2 >= requireCount）
+    expect(body.rewards[0]!.milestones).toHaveLength(2);
+    const ms1 = body.rewards[0]!.milestones.find((m) => m.rewardId === "r1");
+    const ms2 = body.rewards[0]!.milestones.find((m) => m.rewardId === "r2");
+    expect(ms1?.reached).toBe(true);
+    expect(ms1?.rewardExit).toBe("bonus_spin");
+    expect(ms1?.amount).toBe(2);
+    expect(ms2?.reached).toBe(true);
+    expect(ms2?.rewardExit).toBe("bonus_coupon");
+    expect(ms2?.amount).toBe(1);
+  });
+
+  it("无分享记录时 invitedCount=0、milestones=[]", async () => {
+    await clearTestData(client);
+    await db.insert(tenants).values({ id: T, name: "Dash Tenant 2", plan: "free", createdAt: new Date().toISOString() });
+    await db.insert(users).values({ id: U2_ID, username: "no-share-user", email: U2_EMAIL, passwordHash: "", emailVerified: 1 });
+    // 参与但无分享记录
+    await db.insert(lotteryDraws).values({
+      id: A_ID,
+      tenantId: T,
+      title: "无分享活动",
+      publicSlug: "no-share",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "registered",
+      experienceType: "wheel",
+      resultMode: "instant",
+      startAt: "2026-01-01T00:00:00",
+      endAt: "2027-12-31T23:59:59",
+    } as any);
+    await db.insert(lotteryEntries).values({
+      id: "entry-noshare",
+      drawId: A_ID,
+      tenantId: T,
+      identityType: "user_id",
+      identityValue: U2_ID,
+      spinsLeft: 0,
+    });
+
+    const app = createApp();
+    const token = await signJwt({ sub: U2_ID, tenantId: T }, TEST_ENV.JWT_SECRET, 3600);
+    const mrRes = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${token}` },
+    }, TEST_ENV);
+    const body = await mrRes.json() as {
+      summary: { totalSpins: number; totalCoupons: number; totalInvited: number; activityCount: number };
+      rewards: Array<{ invitedCount: number; milestones: unknown[] }>;
+    };
+    expect(body.summary.totalInvited).toBe(0);
+    expect(body.rewards[0]!.invitedCount).toBe(0);
+    expect(body.rewards[0]!.milestones).toHaveLength(0);
+  });
+});

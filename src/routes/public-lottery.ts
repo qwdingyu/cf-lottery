@@ -2083,8 +2083,9 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
   // 为什么分两次查询而非 or()：
   // SQLite 对 OR 优化有限，可能退化为全表扫描（docs/264 P3）。
   // 分两次查询各走 idx_entries_identity 索引，结果在 JS 侧合并去重。
-  type EntryRow = { drawId: string; tenantId: string; spinsLeft: number | null };
+  type EntryRow = { id: string; drawId: string; tenantId: string; spinsLeft: number | null };
   const entryFields = {
+    id: lotteryEntries.id,
     drawId: lotteryEntries.drawId,
     tenantId: lotteryEntries.tenantId,
     spinsLeft: lotteryEntries.spinsLeft,
@@ -2150,7 +2151,7 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
 
   // ── 批量查询分享裂变数据（邀请贡献 + 里程碑进度） ──
   // share_records 按 (tenantId, drawId, sharerEntryId) 关联到当前用户的 entry
-  const entryIds = [...new Set(entries.map((e) => e.drawId))];
+  const entryIds = [...new Set(entries.map((e) => e.id))];
   const shareRows = entries.length > 0
     ? await db
         .select({
