@@ -43,7 +43,8 @@ import {
   PAYMENT_ENTRY_STATUS,
 } from "../payment/payment-status";
 import { DRAW_STATUS } from "./types";
-import { nextStreakAfterCheckin } from "../platform/checkin-reward";
+import { nextStreakAfterCheckin, computeCheckinReward, parseStoredCheckinPolicy } from "../platform/checkin-reward";
+import { platformTargets } from "../../db/schema";
 
 export interface JoinDrawResult {
   joined: boolean;
@@ -486,14 +487,95 @@ export async function joinDraw(
         const prevDate = prevEntry?.lastCheckinDate ?? prevEntry?.joinedAt?.slice(0, 10) ?? null;
         const newStreak = nextStreakAfterCheckin(prevDate, prevStreak, today);
 
-        // 更新刚插入的 entry，写入 streak 信息
-        await tx
-          .update(lotteryEntries)
-          .set({
-            lastCheckinDate: today,
-            checkinStreak: newStreak,
-          })
-          .where(eq(lotteryEntries.id, entryId));
+        // ── 公开端签到奖励：与 Bot /签到命令对齐 ──
+        // 加载 platform_targets 中的 dailyCheckinPolicy 配置，计算 spins 奖励。
+        // 确保无论用户从公开网页还是 Bot 签到，都能获得相同的连续签到奖励。
+        let checkinReward = 0;
+        let finalStreak = newStreak;
+        try {
+          const [target] = await tx
+            .select({ builtinCommandsJson: platformTargets.builtinCommandsJson })
+            .from(platformTargets)
+            .where(eq(platformTargets.activeDrawId, draw.id))
+            .limit(1);
+          if (target?.builtinCommandsJson) {
+            const parsed = JSON.parse(target.builtinCommandsJson);
+            const builtinCommands = parseStoredCheckinPolicy(parsed.dailyCheckinPolicy);
+            const streakConfig = builtinCommands?.rewardConfig;
+            const grantSpinCount = builtinCommands?.grantSpinCount;
+            const randomBonus = builtinCommands?.randomBonus;
+
+            // cycle 模式达到 cycleDays 后重置连续天数（与 commands.ts:555 对齐）
+            if (streakConfig?.mode === "cycle" && streakConfig.cycleDays && newStreak >= streakConfig.cycleDays) {
+              finalStreak = 1;
+            }
+
+            // 有奖励配置才计算（与 commands.ts:503 逻辑对齐）
+            if (streakConfig || (grantSpinCount && grantSpinCount > 0)) {
+              checkinReward = computeCheckinReward(
+                streakConfig,
+                grantSpinCount,
+                prevStreak, // 签到前的连续天数
+                newStreak,  // 签到后的连续天数
+                undefined,
+                randomBonus,
+              );
+            }
+          }
+        } catch {
+          // 配置加载失败不影响签到主流程（与 commands.ts 容错一致）
+        }
+
+        // 更新刚插入的 entry，写入 streak 信息 + spins 奖励
+        if (checkinReward > 0) {
+          await tx
+            .update(lotteryEntries)
+            .set({
+              lastCheckinDate: today,
+              checkinStreak: finalStreak,
+              spinsLeft: sql`${lotteryEntries.spinsLeft} + ${checkinReward}`,
+            })
+            .where(eq(lotteryEntries.id, entryId));
+
+          // 记录签到 spins 流水日志（docs/172 §5.5 P1）
+          const [fresh] = await tx
+            .select({ spinsLeft: lotteryEntries.spinsLeft })
+            .from(lotteryEntries)
+            .where(eq(lotteryEntries.id, entryId))
+            .limit(1);
+          await recordSpinLog(tx, {
+            tenantId: draw.tenantId,
+            entryId,
+            userId: normalizedValue,
+            delta: checkinReward,
+            balanceAfter: Math.max(0, Number(fresh?.spinsLeft ?? 0)),
+            reason: "checkin",
+          });
+        } else {
+          // 无奖励：仅更新 streak
+          await tx
+            .update(lotteryEntries)
+            .set({
+              lastCheckinDate: today,
+              checkinStreak: finalStreak,
+            })
+            .where(eq(lotteryEntries.id, entryId));
+        }
+
+        // 记录签到活动事件（与 commands.ts:610 对齐，用于数据分析）
+        await recordActivityEvent(tx, {
+          tenantId: draw.tenantId,
+          drawId: draw.id,
+          entryId,
+          eventType: "daily_checkin",
+          source: "public_web",
+          medium: "join_draw",
+          metadata: {
+            reward: checkinReward,
+            streakDays: finalStreak,
+            mode: "public_checkin",
+          },
+        });
       }
 
       if (inviteCodeId) {

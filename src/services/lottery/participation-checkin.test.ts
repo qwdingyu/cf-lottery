@@ -15,6 +15,8 @@ import {
   lotteryDraws,
   lotteryEntries,
   tenants,
+  platformTargets,
+  activityEvents,
 } from "../../db/schema";
 import { clearTestData, getTestDb } from "../../test-setup";
 import { joinDraw } from "./participation";
@@ -178,5 +180,115 @@ describe("nextStreakAfterCheckin 纯函数", () => {
     expect(nextStreakAfterCheckin("2026-08-22", 5, "2026-08-23")).toBe(6);
     expect(nextStreakAfterCheckin("2026-08-20", 5, "2026-08-23")).toBe(1);
     expect(nextStreakAfterCheckin("2026-08-23", 5, "2026-08-23")).toBe(1);
+  });
+});
+
+/** 播种 platformTargets 并配置 dailyCheckinPolicy（grantSpinCount=3） */
+async function seedPlatformTargetWithCheckinReward() {
+  await db.insert(platformTargets).values({
+    id: "target-checkin-reward",
+    tenantId: TENANT_ID,
+    platform: "qq",
+    targetId: "123456",
+    targetName: "签到奖励测试群",
+    activeDrawId: DRAW_ID,
+    activePublicSlug: "checkin-participation-slug",
+    builtinCommandsJson: JSON.stringify({
+      dailyCheckinPolicy: {
+        grantSpinCount: 3,
+      },
+    }),
+  });
+}
+
+describe("签到奖励（dailyCheckinPolicy）集成测试", () => {
+  it("有 grantSpinCount 配置时：首次签到发放 spins", async () => {
+    await seedCheckinActivity();
+    await seedPlatformTargetWithCheckinReward();
+
+    const result = await joinDraw(db, "checkin-participation-slug", EMAIL);
+    expect(result.joined).toBe(true);
+
+    // 验证 spinsLeft 已更新
+    const [entry] = await db
+      .select()
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, result.entryId!))
+      .limit(1);
+    expect(entry).toBeDefined();
+    expect(entry!.spinsLeft).toBe(3); // grantSpinCount=3
+    expect(entry!.checkinStreak).toBe(1);
+  });
+
+  it("无 platformTargets 配置时：不发放 spins", async () => {
+    await seedCheckinActivity();
+    // 不播种 platformTargets
+
+    const result = await joinDraw(db, "checkin-participation-slug", EMAIL);
+    expect(result.joined).toBe(true);
+
+    const [entry] = await db
+      .select()
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, result.entryId!))
+      .limit(1);
+    expect(entry).toBeDefined();
+    // 无配置 → spinsLeft 应为初始值（0）
+    expect(entry!.spinsLeft).toBe(0);
+  });
+
+  it("签到活动记录 daily_checkin 事件", async () => {
+    await seedCheckinActivity();
+    await seedPlatformTargetWithCheckinReward();
+
+    const result = await joinDraw(db, "checkin-participation-slug", EMAIL);
+    expect(result.joined).toBe(true);
+
+    // 验证 activityEvents 已记录
+    const events = await db
+      .select()
+      .from(activityEvents)
+      .where(eq(activityEvents.entryId, result.entryId!));
+    expect(events.length).toBe(1);
+    expect(events[0].eventType).toBe("daily_checkin");
+    expect(events[0].source).toBe("public_web");
+
+    const metadata = JSON.parse(events[0].metadataJson);
+    expect(metadata.reward).toBe(3);
+    expect(metadata.streakDays).toBe(1);
+  });
+
+  it("rewardConfig linear 模式：连续签到递增奖励", async () => {
+    await seedCheckinActivity();
+    // 配置 linear 模式：base=2, increment=1, cap=5
+    await db.insert(platformTargets).values({
+      id: "target-checkin-linear",
+      tenantId: TENANT_ID,
+      platform: "qq",
+      targetId: "123456",
+      targetName: "linear 签到测试群",
+      activeDrawId: DRAW_ID,
+      activePublicSlug: "checkin-participation-slug",
+      builtinCommandsJson: JSON.stringify({
+        dailyCheckinPolicy: {
+          rewardConfig: {
+            mode: "linear",
+            baseRange: { min: 2, max: 2 },
+            increment: 1,
+            cap: 5,
+          },
+        },
+      }),
+    });
+
+    // 首次签到：base=2, streak=0 → reward = 2 + (0)*1 = 2
+    const r1 = await joinDraw(db, "checkin-participation-slug", EMAIL);
+    expect(r1.joined).toBe(true);
+    const [entry1] = await db
+      .select()
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, r1.entryId!))
+      .limit(1);
+    expect(entry1!.spinsLeft).toBe(2);
   });
 });
