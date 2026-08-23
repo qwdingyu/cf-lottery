@@ -423,13 +423,14 @@ authRoute.post("/create-tenant", requireAuth, async (c) => {
     return c.json({ ok: false, message: "租户名称需要 2-30 个字符" }, 400);
   }
 
-  // P0：限制每用户最多 1 个租户，防止批量建租户薅配额
-  const [existingMember] = await db
+  // P0：限制每用户最多创建 1 个租户，防止批量建租户薅配额。
+  // 只检查 owner 角色：被邀请加入他人租户（admin/viewer）不应阻止创建自己的租户。
+  const [existingOwner] = await db
     .select({ tenantId: tenantMembers.tenantId })
     .from(tenantMembers)
-    .where(eq(tenantMembers.userId, userId))
+    .where(and(eq(tenantMembers.userId, userId), eq(tenantMembers.role, "owner")))
     .limit(1);
-  if (existingMember) {
+  if (existingOwner) {
     return c.json({ ok: false, message: "每个账号只能创建一个工作空间，如需多品牌运营请联系平台客服" }, 403);
   }
 
