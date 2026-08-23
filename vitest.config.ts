@@ -87,6 +87,8 @@ export default defineConfig({
       "frontend/src/i18n/payment-phase-copy.test.ts",
       // docs/255：L2 菜单目录前后端镜像一致性（防命名漂移导致 L3 配置失配）
       "frontend/src/views/admin/lottery/menu-keys.test.ts",
+      // docs/263：全站东八区时间展示的解析核心（无时区字符串补时区，跨浏览器一致）
+      "frontend/src/composables/useFormat.test.ts",
     ],
     // 允许 vitest 从兄弟仓库 cf-auth 加载 createTestApp（OAuth 闭环）
     server: {

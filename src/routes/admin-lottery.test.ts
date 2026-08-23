@@ -2242,3 +2242,91 @@ describe("REISSUE: POST /draws/:id/rewards/reissue", () => {
     expect(body.results.length).toBe(1);
   });
 });
+
+// ============================================================
+// GET /draws/:id/rewards/failures — identityDisplay 身份可读性（docs/263）
+// ============================================================
+describe("FAILURES: GET /draws/:id/rewards/failures 身份可读性", () => {
+  const DRAW_RF = "draw-failures-001";
+
+  async function seedDrawForFailures() {
+    await seedTenant(TENANT_A, OWNER_A, "rf-a", "rf-a@test.com");
+    await db.insert(lotteryDraws).values({
+      id: DRAW_RF, tenantId: TENANT_A, publicSlug: "rf-slug", title: "失败列表测试活动",
+      status: "open", activityKind: "lottery", participationMode: "open",
+      experienceType: "wheel", resultMode: "scheduled",
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 3_600_000).toISOString(),
+      winnerCount: 1, showParticipantCount: 1, showWinnerCount: 1, showWinnerList: 0, visible: 1,
+      activityConfig: "{}", promotionConfig: "{}",
+    });
+  }
+
+  it("email 身份（open 模式）：identityDisplay 返回邮箱，内部字段被清理", async () => {
+    await seedDrawForFailures();
+    const email = "open-sharer@test.com";
+    const entryId = "entry-open-001";
+    // email 身份参与记录（open 模式）
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT_A, drawId: DRAW_RF,
+      identityType: "email", identityValue: email,
+    });
+    // reward_failed 事件（模拟 grantViralSpinsToSharer 失败）
+    await db.insert(activityEvents).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A, drawId: DRAW_RF, entryId,
+      eventType: "reward_failed",
+      refCode: "ref-open",
+      metadataJson: JSON.stringify({ path: "grantViralSpinsToSharer", error: "模拟失败" }),
+    });
+
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request(`/api/admin/draws/${DRAW_RF}/rewards/failures`, { headers }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      failures: Array<{ identityDisplay?: string; identityType?: string; identityValue?: string; entryId: string }>
+    };
+    expect(body.failures).toHaveLength(1);
+    expect(body.failures[0]!.entryId).toBe(entryId);
+    // email 身份解析为邮箱本身（修复前 identityDisplay 缺失，前端只能显示 entryId 前 8 位）
+    expect(body.failures[0]!.identityDisplay).toBe(email);
+    // 内部字段已清理，不泄露给前端
+    expect(body.failures[0]!.identityType).toBeUndefined();
+    expect(body.failures[0]!.identityValue).toBeUndefined();
+  });
+
+  it("user_id 身份（registered）：identityDisplay 解析为 用户名（邮箱）", async () => {
+    await seedDrawForFailures();
+    const entryId = "entry-user-002";
+    await db.insert(lotteryEntries).values({
+      id: entryId, tenantId: TENANT_A, drawId: DRAW_RF,
+      identityType: "user_id", identityValue: OWNER_A,
+    });
+    await db.insert(activityEvents).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A, drawId: DRAW_RF, entryId,
+      eventType: "reward_failed",
+      refCode: "ref-user",
+      metadataJson: JSON.stringify({ path: "grantViralSpinsToSharer", error: "模拟失败" }),
+    });
+
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request(`/api/admin/draws/${DRAW_RF}/rewards/failures`, { headers }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { failures: Array<{ identityDisplay?: string }> };
+    expect(body.failures[0]!.identityDisplay).toBe("rf-a（rf-a@test.com）");
+  });
+
+  it("活动不存在 → 404", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "rf-a", "rf-a@test.com");
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request("/api/admin/draws/nonexistent/rewards/failures", { headers }, TEST_ENV);
+    expect(res.status).toBe(404);
+  });
+});

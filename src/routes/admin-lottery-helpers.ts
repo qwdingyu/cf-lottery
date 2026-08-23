@@ -234,21 +234,33 @@ export function parseAdminPagination(c: Context<AppEnv>, fallbackLimit = 50, max
 
 /**
  * 参与者身份展示解析（L2 管理员视角闭环）。
+ *
+ * - user_id 身份（registered）：批量查 users 表，解析为「用户名（邮箱）」可读名称；
+ * - email 身份（open 模式）：邮箱本身即可读，直接作为 identityDisplay。
+ *   reward_failures 等接口返回前会删除 identityType/identityValue 内部字段，
+ *   因此 email 身份也必须落到 identityDisplay，否则运营者看不到失败记录对应的人。
+ *   不能因 userIds 为空（全部为 email 身份）就提前 return，否则 email 分支永不执行。
  */
 export async function decorateIdentityDisplay(
   db: DbType,
   rows: Array<{ identityType?: string | null; identityValue: string }>,
 ): Promise<void> {
   const userIds = [...new Set(rows.filter(r => r.identityType === "user_id" && r.identityValue).map(r => r.identityValue))];
-  if (userIds.length === 0) return;
-  const userRows = await db
-    .select({ id: users.id, username: users.username, email: users.email })
-    .from(users)
-    .where(inArray(users.id, userIds));
-  const nameMap = new Map(userRows.map(u => [u.id, `${u.username}（${u.email}）`] as const));
+  const nameMap = new Map<string, string>();
+  if (userIds.length > 0) {
+    const userRows = await db
+      .select({ id: users.id, username: users.username, email: users.email })
+      .from(users)
+      .where(inArray(users.id, userIds));
+    for (const u of userRows) {
+      nameMap.set(u.id, `${u.username}（${u.email}）`);
+    }
+  }
   for (const r of rows) {
     if (r.identityType === "user_id") {
       (r as any).identityDisplay = nameMap.get(r.identityValue) || `用户 ${r.identityValue.slice(0, 8)}`;
+    } else if (r.identityType === "email" && r.identityValue) {
+      (r as any).identityDisplay = r.identityValue;
     }
   }
 }
