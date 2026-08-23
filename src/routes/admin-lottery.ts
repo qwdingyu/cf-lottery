@@ -144,7 +144,8 @@ function applyDrawListFilters(
     conditions.push(eq(lotteryDraws.status, input.status));
   }
   if (input.query) {
-    const escaped = escapeLike(input.query.trim());
+    // 防御性截断：超长搜索字符串无意义且可能影响 SQL 性能（二次审查 2026-08-23）
+    const escaped = escapeLike(input.query.trim().slice(0, 100));
     if (escaped) {
       // 搜索支持：标题、publicSlug、ID 前缀匹配（placeholder 承诺"搜索名称 / 奖品 / ID"）
       conditions.push(sql`(
