@@ -17,6 +17,7 @@ import {
   tenants,
   platformTargets,
   activityEvents,
+  spinsLog,
 } from "../../db/schema";
 import { clearTestData, getTestDb } from "../../test-setup";
 import { joinDraw } from "./participation";
@@ -218,6 +219,16 @@ describe("签到奖励（dailyCheckinPolicy）集成测试", () => {
     expect(entry).toBeDefined();
     expect(entry!.spinsLeft).toBe(3); // grantSpinCount=3
     expect(entry!.checkinStreak).toBe(1);
+
+    // 验证 spinsLog 表已写入流水记录
+    const logs = await db
+      .select()
+      .from(spinsLog)
+      .where(eq(spinsLog.entryId, result.entryId!));
+    expect(logs.length).toBe(1);
+    expect(logs[0].delta).toBe(3);
+    expect(logs[0].reason).toBe("checkin");
+    expect(logs[0].balanceAfter).toBe(3);
   });
 
   it("无 platformTargets 配置时：不发放 spins", async () => {
