@@ -136,17 +136,17 @@ onMounted(loadData)
 <style scoped>
 .l2-menu-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px;
-  margin: 14px 0;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
 }
 .l2-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 8px 10px;
   border: 1px solid var(--border-color, #d9d9d9);
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   transition: border-color 0.15s;
 }
@@ -156,11 +156,17 @@ onMounted(loadData)
 }
 .l2-menu-item-label {
   font-weight: 500;
+  font-size: 12px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .l2-menu-item-key {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted, #888);
+  white-space: nowrap;
 }
 .config-actions {
   display: flex;
