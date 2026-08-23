@@ -652,3 +652,127 @@ describe("my-rewards 跨活动聚合", () => {
     }
   });
 });
+
+describe("open 模式端到端旅程：分享 → 加入 → 归因 → 奖励 → 使用 → 核销", () => {
+  it("open email 分享者：被邀请人加入后获 bonus_spin + bonus_coupon，spin 使用 + 券核销后 my-rewards 正确更新", async () => {
+    // ── 准备 ──
+    const sharerEmail = "open-e2e-sharer@test.com";
+    const sharerUserId = "open-e2e-sharer-uid";
+    const inviteeEmail = "open-e2e-invitee@test.com";
+    await db.insert(tenants).values({ id: TENANT, name: "my-rewards" });
+    await db.insert(users).values({
+      id: sharerUserId, username: "open-e2e-sharer", email: sharerEmail, passwordHash: "x",
+    });
+
+    // instant + open 活动：bonus_spin(+2) + bonus_coupon(1 张)
+    const drawId = await seedDraw({
+      publicSlug: "open-e2e-journey",
+      participationMode: "open",
+      experienceType: "wheel",
+      resultMode: "instant",
+      maxSpinsPerEntry: 5,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+          { rewardId: "c1", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon", couponLabel: "open-invite" } },
+        ],
+      }),
+    });
+    // 码池：1 个 spin 奖品 + 1 个邀请券
+    await db.insert(couponCodes).values([
+      { id: crypto.randomUUID(), tenantId: TENANT, drawId, code: "OPEN-SPIN-PRIZE", label: "spin奖", status: "available" },
+      { id: crypto.randomUUID(), tenantId: TENANT, drawId, code: "OPEN-INVITE-E2E", label: "open-invite", status: "available" },
+    ]);
+
+    // 关闭 OTP，使 open 模式 /join 可免验证码直接参与
+    await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+
+    const app = createApp();
+    const sharerToken = await signJwt({ sub: sharerUserId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+
+    // ── 旅程 ──
+
+    // ① 分享者 open 参与（email 身份）
+    const joinSharer = await app.request("/public/draws/open-e2e-journey/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.201" },
+      body: JSON.stringify({ email: sharerEmail }),
+    }, TEST_ENV);
+    expect(joinSharer.status).toBe(200);
+    const sharerEntryId = (await joinSharer.json() as { entryId: string }).entryId;
+
+    // ② 分享者生成分享链接
+    const shareRes = await app.request("/public/draws/open-e2e-journey/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.201" },
+      body: JSON.stringify({ entryId: sharerEntryId }),
+    }, TEST_ENV);
+    expect(shareRes.status).toBe(200);
+    const refCode = String((await shareRes.json() as { shareUrl: string }).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
+    expect(refCode).toBeTruthy();
+
+    // ③ 被邀请人带 ref 参与 → 归因 → bonus_spin(+2) + bonus_coupon 发放
+    const joinInvitee = await app.request("/public/draws/open-e2e-journey/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.202" },
+      body: JSON.stringify({ email: inviteeEmail, refCode }),
+    }, TEST_ENV);
+    expect(joinInvitee.status).toBe(200);
+
+    // ④ 验证归因：joined_count=1，券 issued 给分享者
+    const [share] = await db.select().from(shareRecords).where(eq(shareRecords.shareCode, refCode));
+    expect(share?.joinedCount).toBe(1);
+    const [coupon] = await db.select().from(couponCodes).where(eq(couponCodes.code, "OPEN-INVITE-E2E"));
+    expect(coupon?.status).toBe("issued");
+    expect(coupon?.recipientEmail).toBe(sharerEmail);
+
+    // ⑤ my-rewards 可见：spinsLeft=1(初始) + 2(bonus_spin) = 3，券可见
+    const mr1 = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${sharerToken}` },
+    }, TEST_ENV);
+    expect(mr1.status).toBe(200);
+    const body1 = await mr1.json() as { rewards: Array<{ spinsLeft: number; coupons: string[] }> };
+    expect(body1.rewards).toHaveLength(1);
+    expect(body1.rewards[0]!.spinsLeft).toBe(3);
+    expect(body1.rewards[0]!.coupons).toContain("OPEN-INVITE-E2E");
+
+    // ⑥ 分享者使用 1 次 bonus spin（open 模式 entry 是 email 身份）
+    const spinResult = await performInstantSpin(db, {
+      slug: "open-e2e-journey",
+      identityType: "email",
+      identityValue: sharerEmail,
+      idempotencyKey: `open-e2e-spin-${Date.now()}`,
+    });
+    expect(spinResult.spinsUsed).toBe(1);
+    expect(spinResult.spinsLeft).toBe(2); // 3 - 1 = 2
+
+    // ⑦ my-rewards spinsLeft 更新为 2
+    const mr2 = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${sharerToken}` },
+    }, TEST_ENV);
+    const body2 = await mr2.json() as { rewards: Array<{ spinsLeft: number; coupons: string[] }> };
+    expect(body2.rewards[0]!.spinsLeft).toBe(2);
+    expect(body2.rewards[0]!.coupons).toContain("OPEN-INVITE-E2E"); // 券仍在
+
+    // ⑧ 分享者核销优惠券
+    const redeemRes = await app.request("/public/coupons/redeem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${sharerToken}`, "CF-Connecting-IP": "10.0.0.201" },
+      body: JSON.stringify({ code: "OPEN-INVITE-E2E", email: sharerEmail, otp: "" }),
+    }, TEST_ENV);
+    expect(redeemRes.status).toBe(200);
+    const redeemBody = await redeemRes.json() as { ok: boolean; redeemed: boolean };
+    expect(redeemBody.ok).toBe(true);
+    expect(redeemBody.redeemed).toBe(true);
+
+    // ⑨ my-rewards：券消失（status → redeemed），spinsLeft 仍为 2
+    const mr3 = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${sharerToken}` },
+    }, TEST_ENV);
+    const body3 = await mr3.json() as { rewards: Array<{ spinsLeft: number; coupons: string[] }> };
+    expect(body3.rewards[0]!.spinsLeft).toBe(2);
+    expect(body3.rewards[0]!.coupons).not.toContain("OPEN-INVITE-E2E");
+  });
+});
