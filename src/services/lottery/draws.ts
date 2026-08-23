@@ -227,8 +227,12 @@ export async function createDraw(
     (activityKind === "lottery" && data.drawAt ? "scheduled" : "manual");
   const winnerCount = normalizeWinnerCount(activityKind, data.winnerCount);
 
-  // 创建阶段就拒绝无法发布的活动，避免运营者生成“看似保存成功、后续必然失败”的草稿。
+  // 创建阶段就拒绝无法发布的活动，避免运营者生成"看似保存成功、后续必然失败"的草稿。
+  // 防御性校验：title/description 长度上限防止异常大 payload 消耗存储（二次审查 2026-08-23）
   if (!title) throw new Error("活动标题不能为空");
+  if (title.length > 200) throw new Error("活动标题不能超过 200 个字符");
+  const desc = String(data.description || "");
+  if (desc.length > 5000) throw new Error("活动描述不能超过 5000 个字符");
 
   // 校验参与时间合法性
   const start = new Date(data.startAt);

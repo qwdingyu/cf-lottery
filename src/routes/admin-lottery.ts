@@ -775,6 +775,14 @@ adminLotteryRoute.post("/draws", async (c) => {
         : "manual";
     const drawTrigger = parseEnum(body.drawTrigger, DRAW_TRIGGERS, "开奖触发方式", triggerFallback);
 
+    // 防御性校验：title/description 长度上限防止异常大 payload 消耗存储（二次审查 2026-08-23）
+    if (String(body.title || "").length > 200) {
+      return fail(c, "活动标题不能超过 200 个字符", 400);
+    }
+    if (String(body.description || "").length > 5000) {
+      return fail(c, "活动描述不能超过 5000 个字符", 400);
+    }
+
     // 运营者可通过系统配置控制活动创建的默认参数（闭环：L3 配置 → L2 生效）
     const configuredDefaultWinnerCount = parseInt(config["draw_default_winner_count"], 10);
     // 运营配置是外部可变输入；钳制到接口允许范围，避免错误配置让所有活动创建都失败。
@@ -1183,6 +1191,14 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
     if (maxParticipantsUpdate > quota.limits.maxParticipantsPerActivity) {
       return fail(c, `当前套餐单活动最多允许 ${quota.limits.maxParticipantsPerActivity} 人参与，请降低名额或升级套餐`, 403);
     }
+  }
+
+  // 防御性校验：title/description 长度上限防止异常大 payload 消耗存储（二次审查 2026-08-23）
+  if (body.title !== undefined && String(body.title).length > 200) {
+    return fail(c, "活动标题不能超过 200 个字符", 400);
+  }
+  if (body.description !== undefined && String(body.description).length > 5000) {
+    return fail(c, "活动描述不能超过 5000 个字符", 400);
   }
 
   await db

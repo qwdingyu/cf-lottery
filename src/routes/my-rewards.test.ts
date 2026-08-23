@@ -784,7 +784,6 @@ describe("open 模式端到端旅程：分享 → 加入 → 归因 → 奖励 �
 describe("my-rewards 仪表盘：summary + 邀请贡献", () => {
   const T = "mr-dashboard";
   const A_ID = "admin-dash";
-  const A_EMAIL = "admin-dash@test.com";
   const U1_ID = "user-dash-1";
   const U1_EMAIL = "u1-dash@test.com";
   const U2_ID = "user-dash-2";
