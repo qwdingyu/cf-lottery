@@ -2251,3 +2251,145 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
 
   return ok(c, { rewards, summary });
 });
+
+// ═════════════════════════════════════════════════════════
+// 签到状态查询（公开端，供签到日历组件使用）
+// ═════════════════════════════════════════════════════════
+
+/**
+ * 查询签到活动的连续签到状态和本月签到记录。
+ *
+ * 返回数据供前端签到日历组件渲染：
+ * - signedDates: 本月已签到日期列表（YYYY-MM-DD）
+ * - currentStreak: 当前连续签到天数
+ * - maxStreak: 历史最长连续签到天数
+ * - monthlyCount: 本月签到天数
+ * - signedToday: 今日是否已签到
+ *
+ * 身份识别：支持 JWT（Bearer token）或 query.email 参数。
+ * 非签到活动返回 400。
+ */
+publicLotteryRoute.get("/draws/:slug/checkin-status", async (c) => {
+  const db = getDb(c);
+  const slug = c.req.param("slug");
+  const month = String(c.req.query("month") || "").trim(); // YYYY-MM，空=当前月
+
+  // ── 查找活动 ──
+  const [draw] = await db
+    .select({
+      id: lotteryDraws.id,
+      tenantId: lotteryDraws.tenantId,
+      activityKind: lotteryDraws.activityKind,
+      status: lotteryDraws.status,
+    })
+    .from(lotteryDraws)
+    .where(eq(lotteryDraws.publicSlug, slug))
+    .limit(1);
+  if (!draw) return fail(c, "活动不存在", 404);
+  if (draw.activityKind !== "checkin") return fail(c, "此活动不是签到类型", 400);
+
+  // ── 身份识别：JWT 或 query.email ──
+  let email = String(c.req.query("email") || "").trim().toLowerCase();
+  const bearerToken = (c.req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (bearerToken) {
+    const jwtSecret = getEnv(c, "JWT_SECRET");
+    if (jwtSecret) {
+      try {
+        const payload = await verifyJwt(bearerToken, jwtSecret);
+        const tokenEmail = String(payload?.email || "").trim().toLowerCase();
+        if (tokenEmail && isValidEmail(tokenEmail)) {
+          email = tokenEmail;
+        }
+      } catch { /* token 无效，继续走 query.email */ }
+    }
+  }
+  if (!email || !isValidEmail(email)) {
+    return fail(c, "请提供有效的邮箱或登录", 401);
+  }
+
+  // ── 查询目标月份 ──
+  const now = new Date();
+  let targetMonth = month;
+  if (!targetMonth || !/^\d{4}-\d{2}$/.test(targetMonth)) {
+    targetMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  }
+  const [yearStr, monthStr] = targetMonth.split("-");
+  const year = parseInt(yearStr, 10);
+  const mon = parseInt(monthStr, 10);
+  if (!Number.isFinite(year) || !Number.isFinite(mon) || mon < 1 || mon > 12) {
+    return fail(c, "月份格式无效", 400);
+  }
+  const monthStart = `${targetMonth}-01`;
+  const nextMonth = mon === 12 ? `${year + 1}-01-01` : `${year}-${String(mon + 1).padStart(2, "0")}-01`;
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  // ── 查询该用户在本活动的所有签到记录（目标月） ──
+  // identity_value 格式为 "email:YYYY-MM-DD"，用 LIKE 前缀匹配
+  const entries = await db
+    .select({
+      identityValue: lotteryEntries.identityValue,
+      joinedAt: lotteryEntries.joinedAt,
+      checkinStreak: lotteryEntries.checkinStreak,
+    })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.tenantId, draw.tenantId),
+      eq(lotteryEntries.drawId, draw.id),
+      eq(lotteryEntries.identityType, "email"),
+      sql`${lotteryEntries.identityValue} LIKE ${email + ":%"}`,
+      sql`${lotteryEntries.joinedAt} >= ${monthStart}`,
+      sql`${lotteryEntries.joinedAt} < ${nextMonth}`,
+    ))
+    .orderBy(asc(lotteryEntries.joinedAt));
+
+  // ── 提取签到日期（去重，同一天可能有多个 entry） ──
+  const signedDateSet = new Set<string>();
+  for (const e of entries) {
+    const datePart = String(e.joinedAt || "").slice(0, 10);
+    if (datePart && datePart >= monthStart && datePart < nextMonth) {
+      signedDateSet.add(datePart);
+    }
+  }
+  const signedDates = [...signedDateSet].sort();
+
+  // ── 今日是否已签到 ──
+  const signedToday = signedDateSet.has(today);
+
+  // ── 当前连续签到天数：取最新 entry 的 checkinStreak ──
+  // 公开端 joinDraw 已在 entry 上维护 checkinStreak，直接取最新值
+  const latestEntry = entries.length > 0 ? entries[entries.length - 1] : null;
+  const currentStreak = latestEntry?.checkinStreak ?? 0;
+
+  // ── 本月签到天数 ──
+  const monthlyCount = signedDateSet.size;
+
+  // ── 历史最长连续签到天数（简化：取所有 entry 中 checkinStreak 的最大值） ──
+  // checkinStreak 是原子维护的递增值，其历史最大值即为最长连续天数
+  let maxStreak = 0;
+  for (const e of entries) {
+    const s = e.checkinStreak ?? 0;
+    if (s > maxStreak) maxStreak = s;
+  }
+  // 如果本月外还有更长的 streak，需要查询历史最大值（只在跨月时查询）
+  if (signedDates.length > 0 && maxStreak < monthlyCount) {
+    const [agg] = await db
+      .select({ maxStreak: sql<number>`COALESCE(MAX(${lotteryEntries.checkinStreak}), 0)` })
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.tenantId, draw.tenantId),
+        eq(lotteryEntries.drawId, draw.id),
+        eq(lotteryEntries.identityType, "email"),
+        sql`${lotteryEntries.identityValue} LIKE ${email + ":%"}`,
+      ));
+    if (agg?.maxStreak) maxStreak = agg.maxStreak;
+  }
+
+  return ok(c, {
+    signedDates,
+    currentStreak,
+    maxStreak,
+    monthlyCount,
+    signedToday,
+    month: targetMonth,
+  });
+});

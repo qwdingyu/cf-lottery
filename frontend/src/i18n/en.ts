@@ -995,6 +995,19 @@ export default {
     gameSubmitJoin: "Enter Now",
     /** Submit/Form/Reveal when already joined (disabled, not loading) */
     gameSubmitJoined: "You're in",
+    // ── Checkin Calendar (CheckinCalendar) ──
+    checkinCurrentStreak: "Streak",
+    checkinMonthlyCount: "This month",
+    checkinMaxStreak: "Best streak",
+    checkinSignedToday: "Signed today ✓",
+    checkinNotSignedToday: "Not signed today",
+    calWeekSun: "Sun",
+    calWeekMon: "Mon",
+    calWeekTue: "Tue",
+    calWeekWed: "Wed",
+    calWeekThu: "Thu",
+    calWeekFri: "Fri",
+    calWeekSat: "Sat",
     /** Extra draw weight — not another join (docs/108 / 115) */
     viralInviteHint: "+{n} draw tickets per successful invite (capped)",
     viralSocialHint: "Invite friends and let the leaderboard show your influence",

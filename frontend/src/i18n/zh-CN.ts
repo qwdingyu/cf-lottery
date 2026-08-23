@@ -968,6 +968,19 @@ export default {
     gameSubmitJoin: "立即参与",
     /** Submit/Form/Reveal 已参与（disabled 且非 loading） */
     gameSubmitJoined: "已成功参与",
+    // ── 签到日历（CheckinCalendar） ──
+    checkinCurrentStreak: "连续签到",
+    checkinMonthlyCount: "本月签到",
+    checkinMaxStreak: "最长连续",
+    checkinSignedToday: "今日已签到 ✓",
+    checkinNotSignedToday: "今日还未签到",
+    calWeekSun: "日",
+    calWeekMon: "一",
+    calWeekTue: "二",
+    calWeekWed: "三",
+    calWeekThu: "四",
+    calWeekFri: "五",
+    calWeekSat: "六",
     // 裂变：额外的是开奖加权票，不是「再参与一次」（docs/108 / 115）
     viralInviteHint: "每成功邀请 1 人，开奖时额外 +{n} 票（有上限）",
     viralSocialHint: "邀请好友参与，排行榜见证你的号召力",

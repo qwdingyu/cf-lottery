@@ -10,7 +10,7 @@ import type { DbType, DbWriteScope } from "../../db/client";
 import { isFlashSaleExperience } from "../../lib/activity-utils";
 import { withDbTransaction } from "../../db/client";
 import { todayStr } from "../../lib/date-utils";
-import { and, eq, inArray, notInArray, sql, asc, max, or, count } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql, asc, desc, max, or, count, ne } from "drizzle-orm";
 import {
   lotteryDraws,
   lotteryEntries,
@@ -43,6 +43,7 @@ import {
   PAYMENT_ENTRY_STATUS,
 } from "../payment/payment-status";
 import { DRAW_STATUS } from "./types";
+import { nextStreakAfterCheckin } from "../platform/checkin-reward";
 
 export interface JoinDrawResult {
   joined: boolean;
@@ -453,6 +454,46 @@ export async function joinDraw(
           balanceAfter: spinInit.spinsLeft,
           reason: "join",
         });
+      }
+
+      // ── 签到活动：计算并维护连续签到天数 ──
+      // 公开端每次签到创建新 entry（identity_value 含日期后缀），需从历史 entry 推算 streak，
+      // 与平台命令（/签到）的原子 UPDATE 模式对齐——确保无论用户从哪端签到，streak 数据一致。
+      // lastCheckinDate + checkinStreak 写在 entry 上，供 checkin-status API 和前端日历直接读取。
+      if (draw.activityKind === "checkin") {
+        const today = todayStr();
+        // 查找该用户在本活动的上一次签到记录（不含本次刚插入的）
+        // identity_value 格式为 "email:YYYY-MM-DD"，用 LIKE 前缀匹配同一用户的所有签到
+        const [prevEntry] = await tx
+          .select({
+            lastCheckinDate: lotteryEntries.lastCheckinDate,
+            checkinStreak: lotteryEntries.checkinStreak,
+            joinedAt: lotteryEntries.joinedAt,
+          })
+          .from(lotteryEntries)
+          .where(and(
+            eq(lotteryEntries.tenantId, draw.tenantId),
+            eq(lotteryEntries.drawId, draw.id),
+            eq(lotteryEntries.identityType, identityType),
+            sql`${lotteryEntries.identityValue} LIKE ${normalizedValue + ":%"}`,
+            ne(lotteryEntries.id, entryId), // 排除刚插入的
+          ))
+          .orderBy(desc(lotteryEntries.joinedAt))
+          .limit(1);
+
+        // 复用平台命令的 streak 计算函数（checkin-reward.ts）
+        const prevStreak = prevEntry?.checkinStreak ?? 0;
+        const prevDate = prevEntry?.lastCheckinDate ?? prevEntry?.joinedAt?.slice(0, 10) ?? null;
+        const newStreak = nextStreakAfterCheckin(prevDate, prevStreak, today);
+
+        // 更新刚插入的 entry，写入 streak 信息
+        await tx
+          .update(lotteryEntries)
+          .set({
+            lastCheckinDate: today,
+            checkinStreak: newStreak,
+          })
+          .where(eq(lotteryEntries.id, entryId));
       }
 
       if (inviteCodeId) {

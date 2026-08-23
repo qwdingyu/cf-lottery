@@ -343,6 +343,14 @@
               @animation-complete="handleGameAnimationComplete(draw)"
             />
           </div>
+          <!-- 签到日历：仅签到活动展示，位于游戏区下方、参与栏上方 -->
+          <CheckinCalendar
+            v-if="draw.activityKind === 'checkin'"
+            :ref="(el: any) => { checkinCalendarRef = el }"
+            :slug="draw.publicSlug || draw.id"
+            :email="sessionEmail || undefined"
+            class="lottery-checkin-calendar"
+          />
           <!--
             055a P1：有游戏壳时，游戏区即主 CTA（@play → handleJoin），底部不再放第二颗「参与」避免双入口。
             无游戏组件（list/queue 等）时仍用底部按钮。已参与/非 open 仍用底部状态条。
@@ -1182,6 +1190,7 @@ import { formatDateCST } from '@/composables/useFormat'
 import { getGameComponent, hasRegisteredGameExperience } from '@/components/games/GameRegistry'
 import GameResultModal from '@/components/games/GameResultModal.vue'
 import ViralLeaderboard from '@/components/ViralLeaderboard.vue'
+import CheckinCalendar from '@/components/CheckinCalendar.vue'
 import { useCfAuthLogin } from '@/composables/useCfAuthLogin'
 import {
   lockBodyScroll,
@@ -1615,6 +1624,10 @@ function completeJoinSuccess(
   })
   if (!wasJoined) bumpParticipantCount(joinedDrawId)
   refreshDrawDetailFor(joinedDrawId)
+  // 签到活动：签到成功后刷新日历组件数据（streak + 签到日期列表）
+  if (data.activityKind === 'checkin' || draws.value.find((d) => d.id === joinedDrawId)?.activityKind === 'checkin') {
+    checkinCalendarRef.value?.refresh?.()
+  }
   if (data.outcome) {
     myOutcomeById.value = { ...myOutcomeById.value, [joinedDrawId]: data.outcome }
   }
@@ -2037,6 +2050,8 @@ const myWonById = ref<Record<string, any>>({})
 const myOutcomeById = ref<Record<string, ActivityOutcome>>({})
 const myEntryList = ref<MyEntry[]>([])
 const submissionDrafts = ref<Record<string, { optionId: string; fields: Record<string, any> }>>({})
+/** 签到日历组件引用（签到成功后刷新日历数据） */
+const checkinCalendarRef = ref<any>(null)
 
 /** 中奖优先，再按参与时间新→旧 */
 const sortedMyEntries = computed(() => {
