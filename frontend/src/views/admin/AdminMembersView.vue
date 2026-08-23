@@ -69,7 +69,7 @@
             </td>
             <td>{{ m.username }}</td>
             <td><span class="tag" :class="m.role === 'owner' ? 'tag-info' : 'tag-muted'">{{ m.role }}</span></td>
-            <td>{{ formatDate(m.createdAt) }}</td>
+            <td>{{ formatDateCST(m.createdAt) }}</td>
             <td class="col-actions">
               <button
                 v-if="canRemoveMember(m.role)"
@@ -117,7 +117,7 @@ import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
-import { formatDate } from '@/composables/useFormat'
+import { formatDateCST } from '@/composables/useFormat'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
 import { adminRequest } from '@/composables/useAdminRequest'

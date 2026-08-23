@@ -36,7 +36,7 @@
           <span class="stat-label">{{ $t('adminQuota.newParticipant') }}</span>
         </div>
         <div class="stat-card">
-          <span class="stat-value quota-expiry">{{ formatDate(result.expiresAt) }}</span>
+          <span class="stat-value quota-expiry">{{ formatDateCST(result.expiresAt) }}</span>
           <span class="stat-label">{{ $t('adminQuota.expiresAt') }}</span>
         </div>
       </div>
@@ -71,8 +71,8 @@
               <td><code class="code-text">{{ r.code }}</code></td>
               <td>{{ r.activityQuotaGranted }}</td>
               <td>{{ r.participantQuotaGranted }}</td>
-              <td>{{ formatDate(r.expiresAt) }}</td>
-              <td>{{ formatDate(r.redeemedAt) }}</td>
+              <td>{{ formatDateCST(r.expiresAt) }}</td>
+              <td>{{ formatDateCST(r.redeemedAt) }}</td>
             </tr>
             <tr v-if="records.length === 0">
               <td colspan="5" class="empty-text">{{ $t('adminQuota.empty') }}</td>
@@ -89,7 +89,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
-import { formatDate } from '@/composables/useFormat'
+import { formatDateCST } from '@/composables/useFormat'
 import { adminRequest } from '@/composables/useAdminRequest'
 
 type RedeemResult = {

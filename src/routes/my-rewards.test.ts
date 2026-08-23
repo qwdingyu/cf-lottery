@@ -8,13 +8,13 @@
  * 但 **GET /api/public/my-rewards 路由本身零测试**：「邀请人推广后在 my-rewards 里
  * 能看到什么」从未被断言。本文件补齐三层：
  *
- * 1. 路由基本行为：无/无效 JWT → 401；有效 JWT 但无 user_id 参与记录 → 空数组。
+ * 1. 路由基本行为：无/无效 JWT → 401；有效 JWT 但无参与记录 → 空数组。
  * 2. 正向闭环：registered（user_id）分享者推广 → 被邀请人带 ref 参与 →
  *    joinedCount+1 → bonus_spin + bonus_coupon 发放 → 分享者 my-rewards
  *    能查到 spinsLeft 与优惠券（证明整条「推广 → 奖励 → 展示」链路真实闭环）。
- * 3. 结构性边界：open（email 身份）推广者的奖励**不会**出现在 my-rewards——
- *    my-rewards 只查 identityType='user_id' 的参与记录（docs/257 §5.2 原因A）。
- *    固化这一预期，防止未来查询逻辑被改动时悄悄破坏或意外改变语义。
+ * 3. 跨身份查询：open（email 身份）参与者的奖励在 cf-auth 用户登录后也能看到——
+ *    my-rewards 同时查 user_id 和 email 两种身份（修复：open 模式用户查不到自己记录）。
+ *    但纯 email 参与者（无 cf-auth 用户记录）仍返回空（无法关联 JWT 身份）。
  */
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Hono } from "hono";
@@ -291,11 +291,20 @@ describe("推广 → 奖励 → my-rewards 正向闭环（registered 分享者�
   });
 });
 
-describe("结构性边界：open（email 身份）推广者的奖励不出现在 my-rewards", () => {
-  it("email 身份参与并推广成功后，my-rewards 仍返回空（docs/257 §5.2 原因A）", async () => {
+describe("open（email 身份）+ cf-auth 用户：my-rewards 跨身份查询", () => {
+  it("open 模式 email 身份参与 + cf-auth 用户查 my-rewards → 可见（修复：email 身份也匹配）", async () => {
     const sharerEmail = "open-sharer@test.com";
+    const sharerUserId = "cf-auth-sharer-user-id";
     const inviteeEmail = "open-invitee@test.com";
     await db.insert(tenants).values({ id: TENANT, name: "my-rewards" });
+
+    // 分享者同时有 cf-auth 用户记录（模拟真实场景：用户先通过 cf-auth 注册，再参与 open 活动）
+    await db.insert(users).values({
+      id: sharerUserId,
+      username: "open-sharer",
+      email: sharerEmail,
+      passwordHash: "x",
+    });
 
     // open 模式活动 + bonus_coupon 推荐奖励
     const drawId = await seedDraw({
@@ -353,8 +362,44 @@ describe("结构性边界：open（email 身份）推广者的奖励不出现在
     expect(coupon?.status).toBe("issued");
     expect(coupon?.recipientEmail).toBe(sharerEmail);
 
-    // ④ 分享者（任意 user_id JWT）查 my-rewards：email 身份 entry 查不到 → 空数组
-    const token = await signJwt({ sub: "some-registered-user", tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+    // ④ 分享者用 cf-auth JWT（user_id 身份）查 my-rewards：
+    //    entry 是 email 身份，但 users.email 匹配 → my-rewards 同时查 email 身份 → 可见
+    const token = await signJwt({ sub: sharerUserId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+    const mrRes = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${token}` },
+    }, TEST_ENV);
+    expect(mrRes.status).toBe(200);
+    const body = await mrRes.json() as {
+      ok: boolean;
+      rewards: Array<{ slug: string; title: string; spinsLeft: number; coupons: string[] }>;
+    };
+    expect(body.rewards).toHaveLength(1);
+    expect(body.rewards[0]!.slug).toBe("open-referral-mr");
+    expect(body.rewards[0]!.coupons).toContain("OPEN-INVITE-1");
+  });
+
+  it("无 cf-auth 用户记录时（纯 email 参与者）：my-rewards 仍返回空", async () => {
+    const sharerEmail = "no-user-record@test.com";
+    await db.insert(tenants).values({ id: TENANT, name: "my-rewards" });
+    // 注意：不创建 users 记录
+
+    await seedDraw({
+      publicSlug: "open-no-user-mr",
+      participationMode: "open",
+    });
+
+    const app = createApp();
+    await db.insert(systemConfig).values({ key: "enable_email_verification", value: "false" })
+      .onConflictDoUpdate({ target: systemConfig.key, set: { value: "false" } });
+    // email 身份参与
+    await app.request("/public/draws/open-no-user-mr/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.95" },
+      body: JSON.stringify({ email: sharerEmail }),
+    }, TEST_ENV);
+
+    // 用任意 JWT 查 my-rewards：无 users 记录 → userEmail 为空 → email 查询不触发 → 空
+    const token = await signJwt({ sub: "random-user-id", tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
     const mrRes = await app.request("/public/my-rewards", {
       headers: { Authorization: `Bearer ${token}` },
     }, TEST_ENV);

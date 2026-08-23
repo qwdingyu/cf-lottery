@@ -114,7 +114,7 @@
                 @click="setSelected(logKey(item), ($event.target as HTMLInputElement).checked, $event.shiftKey)"
               />
             </td>
-            <td>{{ formatDate(item.createdAt) }}</td>
+            <td>{{ formatDateCST(item.createdAt) }}</td>
             <td>{{ item.action }}</td>
             <td>{{ item.targetType }}</td>
             <td>{{ item.targetId }}</td>
@@ -153,7 +153,7 @@
           <div class="detail-row"><span class="detail-label">{{ $t('adminLogs.labelAction') }}</span><span class="detail-value">{{ currentLog.action }}</span></div>
           <div class="detail-row"><span class="detail-label">{{ $t('adminLogs.labelTargetType') }}</span><span class="detail-value">{{ currentLog.targetType }}</span></div>
           <div class="detail-row"><span class="detail-label">{{ $t('adminLogs.labelTargetId') }}</span><span class="detail-value">{{ currentLog.targetId }}</span></div>
-          <div class="detail-row"><span class="detail-label">{{ $t('adminLogs.labelTime') }}</span><span class="detail-value">{{ formatDate(currentLog.createdAt) }}</span></div>
+          <div class="detail-row"><span class="detail-label">{{ $t('adminLogs.labelTime') }}</span><span class="detail-value">{{ formatDateCST(currentLog.createdAt) }}</span></div>
           <div class="detail-row"><span class="detail-label">{{ $t('adminLogs.labelIpFingerprint') }}</span><span class="detail-value">{{ currentLog.ipHash || '-' }}</span></div>
         </div>
         <div class="detail-section" v-if="currentLog.metadata && Object.keys(currentLog.metadata).length > 0">
@@ -176,7 +176,7 @@ import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { copyWithToast } from '@usethink/cf-admin-fe/composables'
-import { formatDate } from '@/composables/useFormat'
+import { formatDateCST } from '@/composables/useFormat'
 import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'

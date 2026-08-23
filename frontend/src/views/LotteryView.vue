@@ -1178,6 +1178,7 @@ import QRCode from 'qrcode'
 import { switchLanguage } from '@/i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import { writeClipboardText } from '@usethink/cf-admin-fe/composables'
+import { formatDateCST } from '@/composables/useFormat'
 import { getGameComponent, hasRegisteredGameExperience } from '@/components/games/GameRegistry'
 import GameResultModal from '@/components/games/GameResultModal.vue'
 import ViralLeaderboard from '@/components/ViralLeaderboard.vue'
@@ -1947,10 +1948,10 @@ function joinDisabledText(draw: LotteryDraw): string {
     const countdown = notStartedCountdownText(draw)
     return countdown
       ? t('lottery.statusHintNotStartedCountdown', { countdown })
-      : t('lottery.statusHintNotStarted', { time: formatTime(draw.startAt || draw.startTime || '') })
+      : t('lottery.statusHintNotStarted', { time: formatDateCST(draw.startAt || draw.startTime || '') })
   }
   if (reason === 'ended') {
-    return t('lottery.statusHintEndedByTime', { time: formatTime(draw.endAt || draw.endTime || '') })
+    return t('lottery.statusHintEndedByTime', { time: formatDateCST(draw.endAt || draw.endTime || '') })
   }
   if (String(draw.joinDisabledMessage || '').trim()) return String(draw.joinDisabledMessage).trim()
   // 兜底只返回状态短文案，避免异常 joinDisabledReason 与 status=open 组合时
@@ -2028,7 +2029,7 @@ function nonOpenSecondaryCta(draw: LotteryDraw) {
 /** 参与时间 */
 const joinedTimeText = (draw: any): string => {
   const e = sortedMyEntries.value.find((r: any) => r.drawId === draw.id)
-  return e?.joinedAt ? formatTime(e.joinedAt) : ''
+  return e?.joinedAt ? formatDateCST(e.joinedAt) : ''
 }
 
 const myJoinedById = ref<Record<string, true>>({})
@@ -3679,17 +3680,6 @@ function showPrizeShellRitualHint(draw: LotteryDraw): boolean {
     .trim()
     .toLowerCase()
   return exp === 'wheel' || exp === 'slot' || exp === 'grid'
-}
-
-function formatTime(iso: string): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  try {
-    return d.toLocaleString(locale.value || undefined)
-  } catch {
-    return d.toLocaleString()
-  }
 }
 
 function clearSession() {

@@ -254,8 +254,8 @@
             <td>
               <!-- 活动时间单列（2026-08 打磨）：时间窗主行 + 开奖时间小字（即时出奖不显示空行） -->
               <div class="time-stack">
-                <span>{{ formatDate(draw.startAt) }} → {{ formatDate(draw.endAt) }}</span>
-                <small v-if="draw.drawAt">{{ $t('lottery.adminDrawAtPrefix') }} {{ formatDate(draw.drawAt) }}</small>
+                <span>{{ formatDateCST(draw.startAt) }} → {{ formatDateCST(draw.endAt) }}</span>
+                <small v-if="draw.drawAt">{{ $t('lottery.adminDrawAtPrefix') }} {{ formatDateCST(draw.drawAt) }}</small>
                 <small v-else-if="draw.resultMode === 'instant'">{{ $t('lottery.adminListInstantOutcome') }}</small>
               </div>
             </td>
@@ -1857,7 +1857,7 @@
             </thead>
             <tbody>
               <tr v-for="item in rewardFailures" :key="item.id">
-                <td>{{ formatDate(item.createdAt) }}</td>
+                <td>{{ formatDateCST(item.createdAt) }}</td>
                 <td>{{ item.refCode || '-' }}</td>
                 <td>{{ item.identityDisplay || item.entryId?.slice(0, 8) || '-' }}</td>
                 <td class="mono-text" style="font-size: 12px">{{ item.entryId }}</td>
@@ -2144,7 +2144,7 @@
                     <td>{{ item.externalEventId }}</td>
                     <td>{{ conversionIdentity(item) }}</td>
                     <td>{{ conversionAmount(item) }}</td>
-                    <td>{{ formatDate(item.occurredAt) }}</td>
+                    <td>{{ formatDateCST(item.occurredAt) }}</td>
                   </tr>
                   <tr v-if="analyticsConversions.length === 0">
                     <td colspan="6" class="empty-text">{{ $t('lottery.adminNoConversionRecords') }}</td>
@@ -2255,7 +2255,7 @@ import { useAdminAuth } from '@/composables/useAdminAuth'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
-import { formatDate, dateTimeLocalToIso, toDateTimeLocalValue, toErrorMessage, resolveBatchToastType } from '@/composables/useFormat'
+import { formatDateCST, dateTimeLocalToIso, toDateTimeLocalValue, toErrorMessage, resolveBatchToastType } from '@/composables/useFormat'
 import { copyWithToast, writeClipboardText } from '@usethink/cf-admin-fe/composables'
 import {
   canEnableDrawNow,

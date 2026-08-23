@@ -94,7 +94,7 @@
                 {{ m.status === 'active' ? $t('platformMembers.statusActive') : $t('platformMembers.statusDisabled') }}
               </span>
             </td>
-            <td>{{ formatTime(m.createdAt) }}</td>
+            <td>{{ formatDateCST(m.createdAt) }}</td>
             <td class="col-actions">
               <button
                 v-if="m.userId !== myUserId"
@@ -176,6 +176,7 @@ import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 import { readAdminToken } from '@/composables/useAdminAuth'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { canOperatePlatformMember } from '@/views/admin/lottery/ops-utils'
+import { formatDateCST } from '@/composables/useFormat'
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -219,12 +220,6 @@ const disableableCount = computed(() =>
 const enableableCount = computed(() =>
   members.value.filter((m) => selectedIds.value.includes(m.userId) && m.status !== 'active').length,
 )
-
-function formatTime(iso: string): string {
-  if (!iso) return '-'
-  try { return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' }) }
-  catch { return iso }
-}
 
 async function copyText(text: string) {
   if (!text) return

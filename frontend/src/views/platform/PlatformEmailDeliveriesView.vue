@@ -86,7 +86,7 @@
                 @click="setSelected(d.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
               />
             </td>
-            <td class="time-cell">{{ formatTime(d.createdAt) }}</td>
+            <td class="time-cell">{{ formatDateCST(d.createdAt) }}</td>
             <td><code class="code-id" :title="d.tenantId" @click="copyText(d.tenantId)">{{ shortId(d.tenantId) }}</code></td>
             <td class="recipient-cell" :title="d.recipientEmail">{{ d.recipientEmail }}</td>
             <td><span class="tag tag-info">{{ templateLabel(d.template) }}</span></td>
@@ -144,6 +144,7 @@ import {
   useToast,
 } from '@usethink/cf-admin-fe/composables'
 import { adminRequest } from '@/composables/useAdminRequest'
+import { formatDateCST } from '@/composables/useFormat'
 
 type EmailDelivery = {
   id: string
@@ -198,11 +199,6 @@ function canRetryEmailDelivery(status: string): boolean {
   return status === 'pending' || status === 'failed' || status === 'processing'
 }
 
-function formatTime(iso: string): string {
-  if (!iso) return '-'
-  try { return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
-  catch { return iso }
-}
 
 function shortId(id: string): string {
   return id ? `${id.slice(0, 8)}...` : '-'

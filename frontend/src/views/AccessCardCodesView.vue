@@ -45,7 +45,7 @@
               </button>
             </div>
             <div v-if="item.drawnAt" class="acc-item-time">
-              {{ $t('accessCardCodes.drawnAt') }}: {{ formatTime(item.drawnAt) }}
+              {{ $t('accessCardCodes.drawnAt') }}: {{ formatDateCST(item.drawnAt) }}
             </div>
           </div>
         </div>
@@ -58,6 +58,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { formatDateCST } from '@/composables/useFormat'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -98,14 +99,6 @@ onMounted(async () => {
   }
 })
 
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    return d.toLocaleString()
-  } catch {
-    return iso
-  }
-}
 
 function copyCode(code: string | null, idx: number): void {
   if (!code) return

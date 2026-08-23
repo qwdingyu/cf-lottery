@@ -17,6 +17,23 @@ export function formatDate(iso?: string | null): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
+/** 统一：ISO 时间按东八区（Asia/Shanghai）展示，避免浏览器时区差异 */
+export function formatDateCST(iso?: string | null, locale: string | undefined = 'zh-CN'): string {
+  if (!iso) return '-'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString(locale || 'zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+}
+
 /** ISO → datetime-local 输入值 */
 export function toDateTimeLocalValue(value?: string | null): string {
   if (!value) return ''

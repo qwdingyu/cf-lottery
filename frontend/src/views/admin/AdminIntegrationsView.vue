@@ -76,7 +76,7 @@
               <span class="tag" :class="w.active ? 'tag-success' : 'tag-muted'">{{ w.active ? $t('adminIntegrations.enabled') : $t('adminIntegrations.disabled') }}</span>
               <small v-if="w.lastError" class="tag-danger" :title="w.lastError" style="display:block;font-size:10px">{{ $t('adminIntegrations.lastFailed') }}</small>
             </td>
-            <td>{{ w.lastSentAt ? formatTime(w.lastSentAt) : '-' }}</td>
+            <td>{{ w.lastSentAt ? formatDateCST(w.lastSentAt) : '-' }}</td>
             <td class="col-actions">
               <button class="btn btn-ghost btn-xs" type="button" :disabled="batchOperating" @click="removeWebhook(w.id)">{{ $t('adminIntegrations.delete') }}</button>
             </td>
@@ -124,7 +124,7 @@
             <td>{{ k.name }}</td>
             <td><code class="code-text">{{ k.prefix }}</code></td>
             <td><span class="tag" :class="k.active ? 'tag-success' : 'tag-muted'">{{ k.active ? $t('adminIntegrations.enabled') : $t('adminIntegrations.disabled') }}</span></td>
-            <td>{{ formatTime(k.createdAt) }}</td>
+            <td>{{ formatDateCST(k.createdAt) }}</td>
             <td class="col-actions">
               <button class="btn btn-danger btn-xs" type="button" :disabled="batchOperating" @click="removeApiKey(k.id)">{{ $t('adminIntegrations.delete') }}</button>
             </td>
@@ -192,6 +192,7 @@ import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
 import { adminRequest } from '@/composables/useAdminRequest'
+import { formatDateCST } from '@/composables/useFormat'
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -266,12 +267,6 @@ function parseEvents(raw: any): string[] {
 
 function truncate(text: string, len: number): string {
   return text.length > len ? text.slice(0, len) + '…' : text
-}
-
-function formatTime(iso: string): string {
-  if (!iso) return '-'
-  try { return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
-  catch { return iso }
 }
 
 async function copyText(text: string) {

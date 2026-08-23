@@ -37,7 +37,7 @@
         </tbody>
         <tbody v-else>
           <tr v-for="log in logs" :key="log.id">
-            <td class="time-cell">{{ formatTime(log.createdAt) }}</td>
+            <td class="time-cell">{{ formatDateCST(log.createdAt) }}</td>
             <td><code class="code-id" :title="log.tenantId" @click="copyText(log.tenantId)">{{ log.tenantId?.slice(0, 8) }}…</code></td>
             <td><code class="code-id" :title="log.actorUserId" @click="copyText(log.actorUserId)">{{ log.actorUserId?.slice(0, 8) }}…</code></td>
             <td><span class="tag tag-info">{{ log.action }}</span></td>
@@ -73,6 +73,7 @@ import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vu
 import { adminRequest } from '@/composables/useAdminRequest'
 import { copyWithToast, useTablePagination } from '@usethink/cf-admin-fe/composables'
 import { buildAdminOffsetParams } from '@usethink/cf-admin-fe/utils'
+import { formatDateCST } from '@/composables/useFormat'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -80,12 +81,6 @@ const loadError = ref('')
 const logs = ref<any[]>([])
 const filter = ref({ tenantId: '', action: '' })
 const pagination = useTablePagination({ initialLimit: 50 })
-
-function formatTime(iso: string): string {
-  if (!iso) return '-'
-  try { return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
-  catch { return iso }
-}
 
 async function copyText(text: string) {
   if (!text) return

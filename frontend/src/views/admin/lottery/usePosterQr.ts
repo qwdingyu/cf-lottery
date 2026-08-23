@@ -8,10 +8,11 @@ import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toPng } from 'html-to-image'
 import QRCode from 'qrcode'
-import { formatDate } from '@/composables/useFormat'
+import { formatDateCST } from '@/composables/useFormat'
 import { copyWithToast, useToast } from '@usethink/cf-admin-fe/composables'
 import type { LotteryDraw } from './types'
 
+/** 缓存上限常量 */
 const POSTER_CACHE_LIMIT = 30
 
 export function usePosterQr() {
@@ -28,13 +29,11 @@ export function usePosterQr() {
   const posterQrImageUrl = ref('')
   const posterDrawData = ref<LotteryDraw | null>(null)
 
-  /** drawId → 公开链接（列表加载时可预填） */
-  const qrUrlMap = new Map<string, { url: string; qrImageUrl: string }>()
   const qrDataUrlCache = new Map<string, string>()
   const posterCache = new Map<string, string>()
 
-  const posterPlatformName = computed(() => t('lottery.adminPosterBrand'))
-  const posterKindLabel = computed(() => {
+  const _posterPlatformName = computed(() => t('lottery.adminPosterBrand'))
+  const _posterKindLabel = computed(() => {
     const map: Record<string, string> = {
       lottery: t('lottery.adminKindLottery'),
       signup_chain: t('lottery.adminKindSignupChain'),
@@ -47,7 +46,7 @@ export function usePosterQr() {
     }
     return map[(posterDrawData.value as any)?.activityKind || 'lottery'] || t('lottery.adminActivity')
   })
-  const posterPrizeList = computed(() => {
+  const _posterPrizeList = computed(() => {
     const tiers = (posterDrawData.value as any)?.tiers
     if (Array.isArray(tiers)) {
       return tiers.map((row: any) => row.prizeName || row.tierName).filter(Boolean)
@@ -57,7 +56,7 @@ export function usePosterQr() {
   const posterTimeText = computed(() => {
     const start = (posterDrawData.value as any)?.startAt || (posterDrawData.value as any)?.startTime
     const end = (posterDrawData.value as any)?.endAt || (posterDrawData.value as any)?.endTime
-    if (start && end) return `${formatDate(start)} ~ ${formatDate(end)}`
+    if (start && end) return `${formatDateCST(start)} ~ ${formatDateCST(end)}`
     return ''
   })
 
@@ -78,92 +77,116 @@ export function usePosterQr() {
   }
 
   function ensurePublicUrl(draw: LotteryDraw): string {
-    const existing = qrUrlMap.get(draw.id)
-    if (existing?.url) return existing.url
-    const url = `${window.location.origin}/lottery/${draw.publicSlug}`
-    qrUrlMap.set(draw.id, { url, qrImageUrl: '' })
-    return url
+    // 优先用公开 slug；无 slug 时回退到 id（兼容旧数据）
+    const slug = draw.publicSlug || draw.id
+    const base = typeof window !== 'undefined' ? window.location.origin : ''
+    return `${base}/#/d/${encodeURIComponent(slug)}`
   }
 
-  /** 列表加载时预填公开链接，打开弹窗少一次拼接 */
-  function prefetchPublicUrl(draw: LotteryDraw) {
-    if (!draw.publicSlug) return
-    if (!qrUrlMap.has(draw.id)) {
-      qrUrlMap.set(draw.id, {
-        url: `${typeof window !== 'undefined' ? window.location.origin : ''}/lottery/${draw.publicSlug}`,
-        qrImageUrl: '',
-      })
-    }
-  }
-
-  async function handleShowQrCode(draw: LotteryDraw) {
-    const url = ensurePublicUrl(draw)
-    qrDrawUrl.value = url
-    qrImageUrl.value = await generateQrDataUrl(url)
+  // ---------- 二维码 ----------
+  async function openQrModal(draw: LotteryDraw) {
+    const publicUrl = ensurePublicUrl(draw)
+    const dataUrl = await generateQrDataUrl(publicUrl)
+    qrImageUrl.value = dataUrl
+    qrDrawUrl.value = publicUrl
     showQrModal.value = true
   }
 
-  function handleDownloadQr() {
-    const a = document.createElement('a')
-    a.href = qrImageUrl.value
-    a.download = 'qrcode.png'
-    a.click()
-  }
-
-  function handleCopyQrLink() {
-    void copyWithToast(qrDrawUrl.value, {
-      successMessage: t('lottery.adminQrLinkCopied'),
-      errorMessage: t('lottery.adminLinkCopyFailed'),
+  async function handleCopyQrLink(drawOrEvent?: any) {
+    // 若传入的是 LotteryDraw，用 ensurePublicUrl；否则用已存的 qrDrawUrl（弹窗内直接复制）
+    const publicUrl = drawOrEvent && 'id' in drawOrEvent
+      ? ensurePublicUrl(drawOrEvent)
+      : qrDrawUrl.value
+    if (!publicUrl) return
+    await copyWithToast(publicUrl, {
+      successMessage: t('lottery.adminCopyLinkSuccess'),
+      errorMessage: t('lottery.adminCopyLinkFailed'),
     })
   }
 
-  async function generatePosterFromDom() {
-    const node = posterDomRef.value
-    if (!node) { showToast('海报模板未渲染', 'error'); return }
-    try {
-      posterDataUrl.value = await toPng(node, { pixelRatio: 2, cacheBust: true })
-      if (!posterDataUrl.value) showToast('海报生成失败：空结果', 'error')
-    } catch (err) {
-      console.warn('[poster] html-to-image failed:', err)
-      posterDataUrl.value = ''
-      showToast('海报生成失败，请查看控制台日志', 'error')
-    }
-  }
-
-  async function handleShowPoster(draw: LotteryDraw) {
-    posterDrawData.value = draw
-    const url = ensurePublicUrl(draw)
-    qrDrawUrl.value = url
-    posterQrImageUrl.value = await generateQrDataUrl(url)
-    showPosterModal.value = true
-    const cached = posterCache.get(draw.id)
-    if (cached) {
-      posterDataUrl.value = cached
-      return
-    }
+  // ---------- 海报 ----------
+  async function openPosterModal(draw: LotteryDraw) {
     posterGenerating.value = true
-    await nextTick()
-    await generatePosterFromDom()
-    if (posterDataUrl.value) {
-      if (posterCache.size >= POSTER_CACHE_LIMIT) {
-        const oldestKey = posterCache.keys().next().value
-        if (oldestKey !== undefined) posterCache.delete(oldestKey)
-      }
-      posterCache.set(draw.id, posterDataUrl.value)
-    }
-    posterGenerating.value = false
-  }
+    showPosterModal.value = true
+    posterDrawData.value = draw
 
-  async function handleDownloadPoster() {
-    if (!posterDataUrl.value) {
-      showToast(t('lottery.adminPosterNotReady'), 'error')
+    // 等 DOM 挂载后截图
+    await nextTick()
+    if (!posterDomRef.value) {
+      posterGenerating.value = false
       return
     }
-    const a = document.createElement('a')
-    a.href = posterDataUrl.value
-    a.download = 'poster.png'
-    a.click()
-    showToast(t('lottery.adminPosterDownloaded'), 'success')
+
+    try {
+      // 内存缓存（30 张）
+      const cacheKey = draw.id
+      const cached = posterCache.get(cacheKey)
+      if (cached) {
+        posterDataUrl.value = cached
+        posterQrImageUrl.value = await generateQrDataUrl(ensurePublicUrl(draw))
+        posterGenerating.value = false
+        return
+      }
+
+      // 先确保 QR 就绪
+      const publicUrl = ensurePublicUrl(draw)
+      const qrDataUrl = await generateQrDataUrl(publicUrl)
+      posterQrImageUrl.value = qrDataUrl
+
+      // 截图
+      const dataUrl = await toPng(posterDomRef.value, {
+        cacheBust: true,
+        pixelRatio: 2,
+      })
+
+      posterCache.set(cacheKey, dataUrl)
+      // 缓存上限：超出时清理最早的条目，防止内存无限增长
+      if (posterCache.size > POSTER_CACHE_LIMIT) {
+        const firstKey = posterCache.keys().next().value
+        if (firstKey !== undefined) posterCache.delete(firstKey)
+      }
+      posterDataUrl.value = dataUrl
+    } catch (err: unknown) {
+      showToast((err instanceof Error ? err.message : null) || t('lottery.adminPosterGenerateFailed'), 'error')
+      console.error('[poster] generate failed:', err)
+    } finally {
+      posterGenerating.value = false
+    }
+  }
+
+  async function downloadPoster(draw: LotteryDraw) {
+    if (!posterDataUrl.value) return
+    try {
+      const link = document.createElement('a')
+      link.download = `${draw.publicSlug || draw.id}-poster.png`
+      link.href = posterDataUrl.value
+      link.click()
+      showToast(t('lottery.adminPosterDownloaded'), 'success')
+    } catch {
+      showToast(t('lottery.adminPosterDownloadFailed'), 'error')
+    }
+  }
+
+  function prefetchPublicUrl(draw: LotteryDraw): string {
+    return ensurePublicUrl(draw)
+  }
+
+  function handleShowQrCode(draw: LotteryDraw) {
+    return openQrModal(draw)
+  }
+
+  /** 复制二维码链接（弹窗内直接复制当前 qrDrawUrl） */
+  function handleDownloadQr() {
+    return handleCopyQrLink()
+  }
+
+  function handleShowPoster(draw: LotteryDraw) {
+    return openPosterModal(draw)
+  }
+
+  /** 下载海报（弹窗内直接使用 posterDrawData） */
+  function handleDownloadPoster() {
+    return downloadPoster(posterDrawData.value!)
   }
 
   return {
@@ -176,16 +199,18 @@ export function usePosterQr() {
     posterDataUrl,
     posterQrImageUrl,
     posterDrawData,
-    posterPlatformName,
-    posterKindLabel,
-    posterPrizeList,
+    posterPlatformName: _posterPlatformName,
+    posterKindLabel: _posterKindLabel,
+    posterPrizeList: _posterPrizeList,
     posterTimeText,
-    qrUrlMap,
     prefetchPublicUrl,
     handleShowQrCode,
     handleDownloadQr,
     handleCopyQrLink,
     handleShowPoster,
     handleDownloadPoster,
+    openQrModal,
+    openPosterModal,
+    downloadPoster,
   }
 }

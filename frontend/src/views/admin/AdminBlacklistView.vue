@@ -69,7 +69,7 @@
             </td>
             <td>{{ item.identityValue }}</td>
             <td>{{ item.note || '-' }}</td>
-            <td>{{ formatDate(item.createdAt) }}</td>
+            <td>{{ formatDateCST(item.createdAt) }}</td>
             <td class="col-actions">
               <button class="btn btn-ghost btn-xs" type="button" :disabled="operatingId === item.id || batchOperating" @click="handleRemove(item.id)">
                 {{ operatingId === item.id ? $t('adminBlacklist.deleting') : $t('adminBlacklist.delete') }}
@@ -115,7 +115,7 @@ import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
-import { formatDate } from '@/composables/useFormat'
+import { formatDateCST } from '@/composables/useFormat'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import ConfirmDialog from '@usethink/cf-admin-fe/components/ConfirmDialog.vue'
 import { adminRequest } from '@/composables/useAdminRequest'

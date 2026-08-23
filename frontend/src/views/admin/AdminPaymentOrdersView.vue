@@ -85,8 +85,8 @@
               <div v-if="order.prizeCodeStatus" class="cell-sub">{{ order.prizeCodeStatus }}</div>
             </td>
             <td>
-              <div class="cell-main">{{ formatDate(order.createdAt) }}</div>
-              <div v-if="order.paidAt" class="cell-sub">{{ $t('adminPaymentOrders.paidAtPrefix') }} {{ formatDate(order.paidAt) }}</div>
+              <div class="cell-main">{{ formatDateCST(order.createdAt) }}</div>
+              <div v-if="order.paidAt" class="cell-sub">{{ $t('adminPaymentOrders.paidAtPrefix') }} {{ formatDateCST(order.paidAt) }}</div>
             </td>
             <td>
               <div class="row-actions">
@@ -131,7 +131,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast, useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { adminRequest } from '@/composables/useAdminRequest'
-import { formatDate } from '@/composables/useFormat'
+import { formatDateCST } from '@/composables/useFormat'
 import type { AdminPaymentOrder, AdminPaymentOrdersResult } from '@/types/admin'
 
 const { t } = useI18n()

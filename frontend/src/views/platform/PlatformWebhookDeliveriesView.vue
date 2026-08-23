@@ -77,7 +77,7 @@
                 @click="setSelected(d.id, ($event.target as HTMLInputElement).checked, ($event as MouseEvent).shiftKey)"
               />
             </td>
-            <td class="time-cell">{{ formatTime(d.createdAt) }}</td>
+            <td class="time-cell">{{ formatDateCST(d.createdAt) }}</td>
             <td><code class="code-id" :title="d.tenantId" @click="copyText(d.tenantId)">{{ d.tenantId?.slice(0, 8) }}…</code></td>
             <td><span class="tag tag-info">{{ d.eventType }}</span></td>
             <td>
@@ -133,6 +133,7 @@ import { buildAdminOffsetParams } from '@usethink/cf-admin-fe/utils'
 import { adminRequest } from '@/composables/useAdminRequest'
 import { useToast } from '@usethink/cf-admin-fe/composables'
 import { canRetryWebhookDelivery } from '@/views/admin/lottery/ops-utils'
+import { formatDateCST } from '@/composables/useFormat'
 
 type WebhookDelivery = {
   id: string
@@ -175,12 +176,6 @@ const {
 } = useTableSelection(deliveriesRef, (row) => row.id, {
   isSelectable: (row) => canRetryWebhookDelivery(String(row.status || '')),
 })
-
-function formatTime(iso: string): string {
-  if (!iso) return '-'
-  try { return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
-  catch { return iso }
-}
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {

@@ -97,11 +97,11 @@
             <td><code class="code-text">{{ code.code }}</code></td>
             <td>{{ code.activityQuota }}</td>
             <td>{{ code.participantQuota }}</td>
-            <td>{{ formatDate(code.expiresAt) }}</td>
+            <td>{{ formatDateCST(code.expiresAt) }}</td>
             <td><span class="tag" :class="statusClass(code.status)">{{ statusLabel(code.status) }}</span></td>
             <td>{{ code.usedCount }}/{{ code.maxUses }}</td>
             <td>{{ code.note || '-' }}</td>
-            <td>{{ formatDate(code.createdAt) }}</td>
+            <td>{{ formatDateCST(code.createdAt) }}</td>
             <td class="col-actions">
               <button
                 v-if="canDisableRedemptionCode(String(code.status || ''))"
@@ -192,7 +192,7 @@ import { useToast } from '@usethink/cf-admin-fe/composables'
 import { useConfirmDialog } from '@usethink/cf-admin-fe/composables'
 import { useTableSelection } from '@usethink/cf-admin-fe/composables'
 import { useAdminBatchOperation } from '@usethink/cf-admin-fe/composables'
-import { formatDate } from '@/composables/useFormat'
+import { formatDateCST } from '@/composables/useFormat'
 import { copyWithToast } from '@usethink/cf-admin-fe/composables'
 import AdminModal from '@usethink/cf-admin-fe/components/AdminModal.vue'
 import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vue'

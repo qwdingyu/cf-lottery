@@ -71,7 +71,7 @@
             </td>
             <td class="col-num">{{ usageMap[row.id]?.activities ?? '—' }}</td>
             <td class="col-num">{{ usageMap[row.id]?.participants ?? '—' }}</td>
-            <td class="time-cell">{{ formatTime(row.createdAt) }}</td>
+            <td class="time-cell">{{ formatDateCST(row.createdAt) }}</td>
             <td class="col-actions">
               <div class="table-actions">
                 <button class="btn btn-ghost btn-xs" type="button" @click="showDetail(row)">
@@ -152,7 +152,7 @@
           </div>
           <div class="detail-row">
             <span class="detail-label">{{ $t('platformTenants.labelCreatedAt') }}</span>
-            <span class="detail-value">{{ formatTime(detailTenant.createdAt) }}</span>
+            <span class="detail-value">{{ formatDateCST(detailTenant.createdAt) }}</span>
           </div>
         </section>
 
@@ -266,8 +266,9 @@ import AdminPagination from '@usethink/cf-admin-fe/components/AdminPagination.vu
 import { adminRequest } from '@/composables/useAdminRequest'
 import { copyWithToast, useTablePagination, useToast } from '@usethink/cf-admin-fe/composables'
 import { buildAdminOffsetParams } from '@usethink/cf-admin-fe/utils'
+import { formatDateCST } from '@/composables/useFormat'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { showToast } = useToast()
 
 const loading = ref(false)
@@ -285,20 +286,6 @@ const detailModalTitle = computed(() => {
   return t('platformTenants.detailTitle')
 })
 
-function formatTime(iso: string): string {
-  if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleString(locale.value === 'en' ? 'en-US' : 'zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return iso
-  }
-}
 
 function planLabel(plan: string): string {
   const map: Record<string, string> = {
