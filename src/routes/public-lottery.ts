@@ -12,7 +12,7 @@ import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins, tenants, users } from "../db/schema";
-import { eq, and, count, asc, ne, desc, gt, inArray, sql } from "drizzle-orm";
+import { eq, and, or, count, asc, ne, desc, gt, inArray, sql } from "drizzle-orm";
 import {
   getActivityOutcome,
   joinDraw,
@@ -2067,7 +2067,17 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
   }
   if (!userId) return fail(c, "登录状态无效", 401);
 
-  // 查询该用户参与的所有活动（user_id 身份，跨租户）
+  // 先查用户邮箱（open 模式用 email 身份参与，my-rewards 需同时匹配）
+  const [userInfo] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const userEmail = (userInfo?.email || "").trim().toLowerCase();
+
+  // 查询该用户参与的所有活动（跨租户）：
+  // - registered 模式：identity_type = 'user_id', identity_value = userId
+  // - open 模式：identity_type = 'email', identity_value = 用户邮箱
   const entries = await db
     .select({
       drawId: lotteryEntries.drawId,
@@ -2075,9 +2085,17 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
       spinsLeft: lotteryEntries.spinsLeft,
     })
     .from(lotteryEntries)
-    .where(and(
-      eq(lotteryEntries.identityType, "user_id"),
-      eq(lotteryEntries.identityValue, userId),
+    .where(or(
+      and(
+        eq(lotteryEntries.identityType, "user_id"),
+        eq(lotteryEntries.identityValue, userId),
+      ),
+      ...(userEmail
+        ? [and(
+            eq(lotteryEntries.identityType, "email"),
+            eq(lotteryEntries.identityValue, userEmail),
+          )]
+        : []),
     ));
 
   if (entries.length === 0) return ok(c, { rewards: [] });
@@ -2097,15 +2115,8 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
     ));
   const drawMap = new Map(drawRows.map((d) => [`${d.tenantId}:${d.id}`, d]));
 
-  // 查询用户邮箱（用于 coupon 匹配）
-  const [user] = await db
-    .select({ email: users.email })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  const userEmail = user?.email || "";
-
   // 批量查询所有已发放优惠券（一次 IN 查询，替代 N 次逐条查询）
+  // userEmail 已在上方查出（用于 email 身份匹配），此处直接使用
   const couponRows = userEmail
     ? await db
         .select({ code: couponCodes.code, tenantId: couponCodes.tenantId, drawId: couponCodes.drawId })
