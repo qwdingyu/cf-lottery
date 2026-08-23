@@ -19,6 +19,7 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
+import { performInstantSpin } from "../services/lottery/spin-execution";
 import type { AppEnv } from "../bindings";
 import {
   couponCodes,
@@ -406,5 +407,116 @@ describe("open（email 身份）+ cf-auth 用户：my-rewards 跨身份查询", 
     expect(mrRes.status).toBe(200);
     const body = await mrRes.json() as { rewards: unknown[] };
     expect(body.rewards).toEqual([]);
+  });
+});
+
+describe("ref → bonus_spin → spin 执行 → my-rewards 更新 端到端闭环", () => {
+  it("被邀请人参与后分享者获得 bonus_spin，使用后 my-rewards spinsLeft 正确递减", async () => {
+    const sharerId = "sharer-spin-user";
+    const sharerEmail = "sharer-spin@test.com";
+    const inviteeId = "invitee-spin-user";
+    const inviteeEmail = "invitee-spin@test.com";
+    await db.insert(tenants).values({ id: TENANT, name: "my-rewards" });
+    await db.insert(users).values([
+      { id: sharerId, username: "sharer-spin", email: sharerEmail, passwordHash: "x" },
+      { id: inviteeId, username: "invitee-spin", email: inviteeEmail, passwordHash: "x" },
+    ]);
+
+    // instant + registered 活动，配 bonus_spin（+3 次）+ 1 个码池奖品
+    const drawId = await seedDraw({
+      publicSlug: "spin-e2e-mr",
+      experienceType: "wheel",
+      resultMode: "instant",
+      maxSpinsPerEntry: 5,
+      promotionConfig: JSON.stringify({
+        version: 1,
+        referralRewardDefs: [
+          { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "3", metadata: { rewardExit: "bonus_spin" } },
+        ],
+      }),
+    });
+    // 奖品码池（1 个 available 码，spin 中奖时占码）
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      code: "SPIN-PRIZE-1",
+      label: "大奖",
+      status: "available",
+    });
+
+    const app = createApp();
+    const sharerToken = await signJwt({ sub: sharerId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+    const inviteeToken = await signJwt({ sub: inviteeId, tenantId: TENANT }, TEST_ENV.JWT_SECRET, 3600);
+
+    // ① 分享者参与 → 初始 spinsLeft=1（maxSpinsPerEntry=5, 但初始只给 1 次）
+    const joinSharer = await app.request("/public/draws/spin-e2e-mr/access-code", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sharerToken}`,
+        "CF-Connecting-IP": "10.0.0.101",
+      },
+      body: JSON.stringify({ email: sharerEmail }),
+    }, TEST_ENV);
+    expect(joinSharer.status).toBe(200);
+    const sharerEntryId = (await joinSharer.json() as { entryId: string }).entryId;
+
+    // ② 分享者生成分享链接
+    const shareRes = await app.request("/public/draws/spin-e2e-mr/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "10.0.0.101" },
+      body: JSON.stringify({ entryId: sharerEntryId }),
+    }, TEST_ENV);
+    expect(shareRes.status).toBe(200);
+    const refCode = String((await shareRes.json() as { shareUrl: string }).shareUrl || "").match(/ref=([^&]+)/)?.[1]!;
+    expect(refCode).toBeTruthy();
+
+    // ③ 被邀请人带 ref 参与 → 归因触发 bonus_spin +3
+    const joinInvitee = await app.request("/public/draws/spin-e2e-mr/access-code", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${inviteeToken}`,
+        "CF-Connecting-IP": "10.0.0.102",
+      },
+      body: JSON.stringify({ email: inviteeEmail, refCode }),
+    }, TEST_ENV);
+    expect(joinInvitee.status).toBe(200);
+
+    // ④ 验证分享者 spinsLeft：初始 1 + bonus_spin 3 = 4
+    const [entryAfterRef] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(Number(entryAfterRef?.spinsLeft ?? 0)).toBe(4);
+
+    // ⑤ my-rewards 可见 spinsLeft=4
+    const mrBefore = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${sharerToken}` },
+    }, TEST_ENV);
+    const mrBodyBefore = await mrBefore.json() as {
+      rewards: Array<{ slug: string; spinsLeft: number; coupons: string[] }>;
+    };
+    expect(mrBodyBefore.rewards).toHaveLength(1);
+    expect(mrBodyBefore.rewards[0]!.slug).toBe("spin-e2e-mr");
+    expect(mrBodyBefore.rewards[0]!.spinsLeft).toBe(4);
+
+    // ⑥ 分享者使用 1 次 bonus spin（performInstantSpin）
+    const spinResult = await performInstantSpin(db, {
+      slug: "spin-e2e-mr",
+      identityType: "user_id",
+      identityValue: sharerId,
+      idempotencyKey: `spin-e2e-${Date.now()}`,
+    });
+    expect(spinResult.spinsUsed).toBe(1);
+    expect(spinResult.spinsLeft).toBe(3); // 4 - 1 = 3
+
+    // ⑦ my-rewards 更新：spinsLeft 从 4 递减到 3
+    const mrAfter = await app.request("/public/my-rewards", {
+      headers: { Authorization: `Bearer ${sharerToken}` },
+    }, TEST_ENV);
+    const mrBodyAfter = await mrAfter.json() as {
+      rewards: Array<{ slug: string; spinsLeft: number; coupons: string[] }>;
+    };
+    expect(mrBodyAfter.rewards).toHaveLength(1);
+    expect(mrBodyAfter.rewards[0]!.spinsLeft).toBe(3);
   });
 });
