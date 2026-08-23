@@ -241,7 +241,7 @@ onMounted(() => {
 .admin-content {
   flex: 1;
   padding: var(--admin-content-pad, 16px);
-  overflow: hidden;
+  overflow-y: auto;
   min-width: 0;
 }
 
