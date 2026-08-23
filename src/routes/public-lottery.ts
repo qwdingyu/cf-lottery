@@ -11,7 +11,7 @@ import { isInstantResultMode, sanitizePublicPromotionConfig } from "../lib/activ
 import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
-import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins, tenants, users } from "../db/schema";
+import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins, tenants, users, shareRecords } from "../db/schema";
 import { eq, and, count, asc, ne, desc, gt, inArray, sql } from "drizzle-orm";
 import {
   getActivityOutcome,
@@ -27,6 +27,7 @@ import {
 import { enqueuePlatformEvent } from "../services/platform/delivery";
 import { verifyJwt } from "../middleware/auth";
 import { sendAccessCode } from "../services/email-service";
+import { buildMilestoneProgress, type MilestoneDefLike, type MilestoneProgress } from "../services/lottery/referral-milestones";
 import { parseActivityConfig, parseActivityOperationalConfig, validateSubmissionPayload } from "../lib/activity-config";
 import {
   checkPublicRateLimit,
@@ -2118,7 +2119,7 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
 
   // 批量查询活动标题（一次 IN 查询，替代 N 次逐条查询）
   const drawRows = await db
-    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, title: lotteryDraws.title, publicSlug: lotteryDraws.publicSlug })
+    .select({ id: lotteryDraws.id, tenantId: lotteryDraws.tenantId, title: lotteryDraws.title, publicSlug: lotteryDraws.publicSlug, promotionConfig: lotteryDraws.promotionConfig })
     .from(lotteryDraws)
     .where(and(
       inArray(lotteryDraws.id, drawIds),
@@ -2147,7 +2148,70 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
     couponMap.get(key)!.push(c.code);
   }
 
-  // 组装结果
+  // ── 批量查询分享裂变数据（邀请贡献 + 里程碑进度） ──
+  // share_records 按 (tenantId, drawId, sharerEntryId) 关联到当前用户的 entry
+  const entryIds = [...new Set(entries.map((e) => e.drawId))];
+  const shareRows = entries.length > 0
+    ? await db
+        .select({
+          drawId: shareRecords.drawId,
+          tenantId: shareRecords.tenantId,
+          joinedCount: shareRecords.joinedCount,
+          rewardMilestonesGranted: shareRecords.rewardMilestonesGranted,
+        })
+        .from(shareRecords)
+        .where(and(
+          inArray(shareRecords.tenantId, tenantIds),
+          inArray(shareRecords.drawId, drawIds),
+          inArray(shareRecords.sharerEntryId, entryIds),
+        ))
+    : [];
+  // 按 drawId 聚合（同一活动可能有多条 shareRecord，如多次分享）
+  const shareMap = new Map<string, { joinedCount: number; grantedMarks: string[] }>();
+  for (const sr of shareRows) {
+    const key = `${sr.tenantId}:${sr.drawId}`;
+    const existing = shareMap.get(key);
+    const joined = Number(sr.joinedCount || 0);
+    const marks = (() => {
+      try { return JSON.parse(sr.rewardMilestonesGranted || "[]") as string[]; }
+      catch { return [] as string[]; }
+    })();
+    if (existing) {
+      existing.joinedCount += joined;
+      existing.grantedMarks.push(...marks);
+    } else {
+      shareMap.set(key, { joinedCount: joined, grantedMarks: marks });
+    }
+  }
+
+  // ── 批量解析活动的 referralRewardDefs（里程碑奖励定义） ──
+  // promotionConfig JSON 中的 referralRewardDefs 字段定义了邀请里程碑奖励
+  const referralDefsMap = new Map<string, MilestoneDefLike[]>();
+  for (const [, draw] of drawMap) {
+    try {
+      const promo = JSON.parse(draw.promotionConfig || "{}");
+      const defs = Array.isArray(promo.referralRewardDefs) ? promo.referralRewardDefs : [];
+      if (defs.length > 0) {
+        referralDefsMap.set(`${draw.tenantId}:${draw.id}`, defs);
+      }
+    } catch { /* promotionConfig 非法 JSON，跳过 */ }
+  }
+
+  // ── 计算每个活动的里程碑进度 ──
+  const milestoneMap = new Map<string, MilestoneProgress>();
+  for (const [key, share] of shareMap) {
+    const defs = referralDefsMap.get(key);
+    if (defs && defs.length > 0) {
+      milestoneMap.set(key, buildMilestoneProgress({
+        defs,
+        totalJoined: share.joinedCount,
+        marks: share.grantedMarks,
+      }));
+    }
+  }
+
+  // ── 组装结果（含邀请贡献明细） ──
+  // rewards 按活动分组，展示用户在每个活动中的奖励状态和邀请贡献
   const rewards = entries
     .map((entry) => {
       const key = `${entry.tenantId}:${entry.drawId}`;
@@ -2156,6 +2220,8 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
       const spinsLeft = Math.max(0, Math.floor(Number(entry.spinsLeft || 0)))
       const coupons = couponMap.get(key) || []
       const rewardStatus = (spinsLeft > 0 || coupons.length > 0) ? 'available' : 'empty'
+      const share = shareMap.get(key);
+      const milestone = milestoneMap.get(key);
       return {
         drawId: entry.drawId,
         tenantId: entry.tenantId,
@@ -2164,9 +2230,23 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
         spinsLeft,
         coupons,
         rewardStatus,
+        // ── 邀请贡献数据（仪表盘展示用） ──
+        invitedCount: share?.joinedCount || 0,
+        milestones: milestone?.milestones || [],
+        nextMilestone: milestone?.nextMilestone || null,
+        unlockedMilestoneCount: milestone?.unlockedCount || 0,
+        grantedMilestoneCount: milestone?.grantedCount || 0,
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
-  return ok(c, { rewards });
+  // ── 汇总统计（仪表盘顶部大数字） ──
+  const summary = {
+    totalSpins: rewards.reduce((sum, r) => sum + r.spinsLeft, 0),
+    totalCoupons: rewards.reduce((sum, r) => sum + r.coupons.length, 0),
+    totalInvited: rewards.reduce((sum, r) => sum + r.invitedCount, 0),
+    activityCount: rewards.length,
+  };
+
+  return ok(c, { rewards, summary });
 });

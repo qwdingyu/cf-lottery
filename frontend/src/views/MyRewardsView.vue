@@ -1,6 +1,6 @@
 <template>
   <div class="my-rewards-page">
-    <!-- 页面头部：返回按钮 + 标题，让页面看起来像独立页面而非模态框 -->
+    <!-- 页面头部：返回按钮 -->
     <header class="mr-page-header">
       <button type="button" class="mr-back-btn" @click="goBack" :aria-label="$t('myRewards.back')">
         <span class="mr-back-arrow">←</span>
@@ -9,7 +9,7 @@
     </header>
 
     <div class="my-rewards-card">
-      <!-- 关闭按钮（卡片右上角，迎合"模态框"视觉习惯） -->
+      <!-- 关闭按钮 -->
       <button type="button" class="mr-close-btn" @click="goBack" :aria-label="$t('myRewards.close')">
         ✕
       </button>
@@ -24,7 +24,6 @@
       <div v-else-if="error" class="mr-state">
         <div class="mr-error-icon">!</div>
         <p class="mr-state-text mr-error">{{ error }}</p>
-        <!-- 登录提示改为可点击按钮，引导用户去参与活动 -->
         <button
           v-if="!token"
           type="button"
@@ -43,58 +42,117 @@
         >{{ $t('myRewards.goToLottery') }}</button>
       </div>
 
-      <!-- 奖励列表 -->
+      <!-- 仪表盘内容 -->
       <template v-else>
-        <div class="mr-header">
-          <h1 class="mr-title">{{ $t('myRewards.title') }}</h1>
-          <p class="mr-total">{{ $t('myRewards.total', { count: rewards.length }) }}</p>
+        <!-- 标题 -->
+        <h1 class="mr-title">{{ $t('myRewards.title') }}</h1>
+
+        <!-- ═══ 总览大数字（仪表盘核心） ═══ -->
+        <div class="mr-summary">
+          <div class="mr-summary-item">
+            <span class="mr-summary-value">{{ summary.totalSpins }}</span>
+            <span class="mr-summary-label">{{ $t('myRewards.summarySpins') }}</span>
+          </div>
+          <div class="mr-summary-item">
+            <span class="mr-summary-value">{{ summary.totalCoupons }}</span>
+            <span class="mr-summary-label">{{ $t('myRewards.summaryCoupons') }}</span>
+          </div>
+          <div class="mr-summary-item">
+            <span class="mr-summary-value">{{ summary.totalInvited }}</span>
+            <span class="mr-summary-label">{{ $t('myRewards.summaryInvited') }}</span>
+          </div>
+          <div class="mr-summary-item">
+            <span class="mr-summary-value">{{ summary.activityCount }}</span>
+            <span class="mr-summary-label">{{ $t('myRewards.summaryActivities') }}</span>
+          </div>
         </div>
 
+        <!-- ═══ 按活动分组的奖励明细 ═══ -->
         <div class="mr-list">
           <div v-for="(item, idx) in rewards" :key="idx" class="mr-item">
+            <!-- 活动标题行 -->
             <div class="mr-item-header">
               <span class="mr-item-title">{{ item.title }}</span>
-              <span
-                class="mr-item-status"
-                :class="item.rewardStatus === 'available' ? 'mr-item-status--available' : 'mr-item-status--empty'"
-              >{{ item.rewardStatus === 'available' ? $t('myRewards.rewardStatusAvailable') : $t('myRewards.rewardStatusEmpty') }}</span>
-              <a
-                class="mr-item-link"
-                :href="`/lottery/${item.slug}`"
-              >{{ $t('myRewards.viewDraw') }}</a>
+              <a class="mr-item-link" :href="`/lottery/${item.slug}`">{{ $t('myRewards.viewDraw') }}</a>
             </div>
 
-            <!-- spins 奖励 -->
-            <div v-if="item.spinsLeft > 0" class="mr-item-row">
-              <span class="mr-item-label">{{ $t('myRewards.spins') }}</span>
-              <span class="mr-item-value">{{ item.spinsLeft }}</span>
+            <!-- 邀请贡献摘要 -->
+            <div class="mr-invite-row">
+              <span v-if="item.invitedCount > 0" class="mr-invite-count">
+                {{ $t('myRewards.invited', { count: item.invitedCount }) }}
+              </span>
+              <span v-else class="mr-invite-empty">{{ $t('myRewards.noInvited') }}</span>
             </div>
 
-            <!-- coupons 奖励 -->
-            <div v-if="item.coupons.length > 0" class="mr-item-row">
-              <span class="mr-item-label">{{ $t('myRewards.coupons') }}</span>
-              <div class="mr-coupons">
-                <div
-                  v-for="(cp, ci) in item.coupons"
-                  :key="ci"
-                  class="mr-coupon"
-                >
-                  <code class="mr-coupon-code" @click="copyCoupon(cp, idx, ci)">{{ cp }}</code>
-                  <button
-                    type="button"
-                    class="btn btn-ghost btn-sm mr-redeem-btn"
-                    :disabled="redeemingKey === `${idx}-${ci}`"
-                    @click="redeemCoupon(item, cp, idx, ci)"
-                  >
-                    {{ redeemingKey === `${idx}-${ci}` ? $t('myRewards.redeeming') : $t('myRewards.redeem') }}
-                  </button>
-                </div>
+            <!-- ═══ 里程碑进度（邀请奖励明细） ═══ -->
+            <div v-if="item.milestones.length > 0" class="mr-milestones">
+              <div class="mr-milestones-title">{{ $t('myRewards.milestoneProgress') }}</div>
+              <div
+                v-for="(ms, mi) in item.milestones"
+                :key="mi"
+                class="mr-milestone"
+                :class="{ 'mr-milestone--reached': ms.reached }"
+              >
+                <span class="mr-milestone-icon">{{ ms.reached ? '✅' : '⏳' }}</span>
+                <span class="mr-milestone-desc">
+                  <template v-if="ms.requireCount != null">
+                    {{ $t('myRewards.invited', { count: ms.requireCount }) }}
+                  </template>
+                  <template v-else>—</template>
+                </span>
+                <span class="mr-milestone-reward">
+                  <template v-if="ms.rewardExit === 'bonus_spin'">
+                    {{ $t('myRewards.spinsFromInvite', { count: ms.amount || '?' }) }}
+                  </template>
+                  <template v-else-if="ms.rewardExit === 'bonus_coupon'">
+                    {{ $t('myRewards.couponsFromInvite', { count: ms.amount || '?' }) }}
+                  </template>
+                  <template v-else>{{ ms.rewardExit }}</template>
+                </span>
+                <span v-if="ms.reached" class="mr-milestone-badge">{{ $t('myRewards.milestoneReached') }}</span>
+                <span v-else-if="ms.requireCount != null && item.invitedCount < ms.requireCount" class="mr-milestone-hint">
+                  {{ $t('myRewards.milestonePending', { count: ms.requireCount - item.invitedCount }) }}
+                </span>
+              </div>
+              <!-- 下一档提示 -->
+              <div v-if="item.nextMilestone && item.nextMilestone.requireCount" class="mr-next-hint">
+                {{ $t('myRewards.nextMilestoneHint', { count: item.nextMilestone.requireCount - item.invitedCount }) }}
               </div>
             </div>
+            <div v-else-if="item.invitedCount > 0" class="mr-no-referral">
+              {{ $t('myRewards.noReferralConfig') }}
+            </div>
 
-            <!-- 无奖励 -->
-            <div v-if="item.spinsLeft <= 0 && item.coupons.length === 0" class="mr-item-row">
-              <span class="mr-item-label mr-item-muted">{{ $t('myRewards.noReward') }}</span>
+            <!-- ═══ 实际奖励（spins + coupons） ═══ -->
+            <div class="mr-rewards-section">
+              <!-- spins 奖励 -->
+              <div v-if="item.spinsLeft > 0" class="mr-reward-row">
+                <span class="mr-reward-label">{{ $t('myRewards.spins') }}</span>
+                <span class="mr-reward-value">{{ item.spinsLeft }}</span>
+              </div>
+
+              <!-- coupons 奖励 -->
+              <div v-if="item.coupons.length > 0" class="mr-reward-row mr-reward-row--coupons">
+                <span class="mr-reward-label">{{ $t('myRewards.coupons') }}</span>
+                <div class="mr-coupons">
+                  <div v-for="(cp, ci) in item.coupons" :key="ci" class="mr-coupon">
+                    <code class="mr-coupon-code" @click="copyCoupon(cp, idx, ci)">{{ cp }}</code>
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm mr-redeem-btn"
+                      :disabled="redeemingKey === `${idx}-${ci}`"
+                      @click="redeemCoupon(item, cp, idx, ci)"
+                    >
+                      {{ redeemingKey === `${idx}-${ci}` ? $t('myRewards.redeeming') : $t('myRewards.redeem') }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 无奖励 -->
+              <div v-if="item.spinsLeft <= 0 && item.coupons.length === 0" class="mr-reward-row">
+                <span class="mr-reward-label mr-item-muted">{{ $t('myRewards.noReward') }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -104,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@usethink/cf-admin-fe/composables'
@@ -119,28 +177,46 @@ const LOTTERY_REGISTERED_TOKEN_KEY = 'lottery_registered_token'
 const token = ref(sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || '')
 const loading = ref(true)
 const error = ref('')
-const rewards = ref<Array<{
-  drawId: string
-  tenantId: string
-  slug: string
-  title: string
-  spinsLeft: number
-  coupons: string[]
-  rewardStatus: 'available' | 'empty'
-}>>([])
-const redeemingKey = ref('')
 
-interface MyRewardItem {
-  drawId: string
-  tenantId: string
-  slug: string
-  title: string
-  spinsLeft: number
-  coupons: string[]
-  rewardStatus: 'available' | 'empty'
+/** 里程碑项（与后端 MilestoneProgressItem 对齐） */
+interface MilestoneItem {
+  rewardId: string
+  requireCount: number | null
+  rewardExit: string       // bonus_spin / bonus_coupon
+  amount: number | null
+  reached: boolean
+  granted: boolean
+  grantedCount: number
 }
 
-/** 返回上一页；若无历史记录则回退到活动列表页 */
+/** 奖励项（与后端 /my-rewards 返回结构对齐） */
+interface RewardItem {
+  drawId: string
+  tenantId: string
+  slug: string
+  title: string
+  spinsLeft: number
+  coupons: string[]
+  rewardStatus: 'available' | 'empty'
+  invitedCount: number
+  milestones: MilestoneItem[]
+  nextMilestone: MilestoneItem | null
+  unlockedMilestoneCount: number
+  grantedMilestoneCount: number
+}
+
+/** 仪表盘汇总统计 */
+interface Summary {
+  totalSpins: number
+  totalCoupons: number
+  totalInvited: number
+  activityCount: number
+}
+
+const rewards = ref<RewardItem[]>([])
+const summary = reactive<Summary>({ totalSpins: 0, totalCoupons: 0, totalInvited: 0, activityCount: 0 })
+const redeemingKey = ref('')
+
 function goBack() {
   if (window.history.length > 1) {
     router.back()
@@ -149,7 +225,6 @@ function goBack() {
   }
 }
 
-/** 跳转到活动列表页，让用户参与活动后返回 */
 function goToLottery() {
   void router.push('/lottery')
 }
@@ -173,6 +248,13 @@ onMounted(async () => {
     }
 
     rewards.value = data.rewards || []
+    // 合并汇总数据（后端已计算）
+    if (data.summary) {
+      summary.totalSpins = data.summary.totalSpins || 0
+      summary.totalCoupons = data.summary.totalCoupons || 0
+      summary.totalInvited = data.summary.totalInvited || 0
+      summary.activityCount = data.summary.activityCount || 0
+    }
   } catch {
     error.value = t('myRewards.loadFailed')
   } finally {
@@ -189,7 +271,7 @@ function copyCoupon(code: string, _idx: number, _ci: number): void {
   }
 }
 
-async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: number): Promise<void> {
+async function redeemCoupon(_item: RewardItem, code: string, idx: number, ci: number): Promise<void> {
   const tk = sessionStorage.getItem(LOTTERY_REGISTERED_TOKEN_KEY) || ''
   if (!tk) {
     error.value = t('myRewards.needLogin')
@@ -208,10 +290,11 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
     const data = await res.json().catch(() => null)
     if (res.ok && data?.redeemed) {
       showToast(t('myRewards.redeemSuccess'), 'success')
-      // 从列表移除已核销的券
       const target = rewards.value[idx]
       if (target) {
         target.coupons = target.coupons.filter((c) => c !== code)
+        // 更新汇总
+        summary.totalCoupons = Math.max(0, summary.totalCoupons - 1)
       }
     } else {
       showToast(data?.message || t('myRewards.redeemFailed'), 'error')
@@ -258,23 +341,9 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   transition: background 0.15s, border-color 0.15s;
 }
 
-.mr-back-btn:hover {
-  background: var(--tg-hover, rgba(0,0,0,0.05));
-  border-color: var(--tg-border, #eee);
-}
-
-.mr-back-btn:active {
-  background: var(--tg-hover, rgba(0,0,0,0.08));
-}
-
-.mr-back-arrow {
-  font-size: 18px;
-  line-height: 1;
-}
-
-.mr-back-text {
-  font-size: 14px;
-}
+.mr-back-btn:hover { background: var(--tg-hover, rgba(0,0,0,0.05)); border-color: var(--tg-border, #eee); }
+.mr-back-btn:active { background: var(--tg-hover, rgba(0,0,0,0.08)); }
+.mr-back-arrow { font-size: 18px; line-height: 1; }
 
 /* ── 卡片容器 ── */
 .my-rewards-card {
@@ -282,21 +351,21 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   max-width: 560px;
   width: 100%;
   margin: 24px auto;
-  flex: 0 1 auto;  /* 不拉伸撑满，内容多高卡片多高 */
+  flex: 0 1 auto;
   background: var(--tg-section-bg);
   border-radius: 12px;
   padding: 24px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 
-/* ── 关闭按钮（卡片右上角） ── */
+/* ── 关闭按钮 ── */
 .mr-close-btn {
   position: absolute;
   top: 12px;
   right: 12px;
   width: 32px;
   height: 32px;
-  display: flex;  /* 始终显示：卡片设计在任何屏幕上都像模态框 */
+  display: flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--tg-border, #eee);
@@ -305,156 +374,166 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   font-size: 14px;
   border-radius: 50%;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background 0.15s, color 0.15s;
   opacity: 0.7;
 }
-
-.mr-close-btn:hover {
-  background: var(--tg-danger, #e74c3c);
-  color: white;
-  border-color: var(--tg-danger, #e74c3c);
-  opacity: 1;
-}
-
-.mr-close-btn:active {
-  opacity: 0.8;
-}
+.mr-close-btn:hover { background: var(--tg-danger, #e74c3c); color: white; border-color: var(--tg-danger, #e74c3c); opacity: 1; }
 
 /* ── 状态区域 ── */
-.mr-state {
+.mr-state { text-align: center; padding: 48px 16px; }
+.mr-state-text { font-size: 15px; color: var(--tg-text); margin: 16px 0 0; line-height: 1.6; }
+.mr-state-text.mr-error { color: var(--tg-danger, #e74c3c); font-weight: 500; }
+.mr-error-icon { width: 48px; height: 48px; border-radius: 50%; background: var(--tg-danger, #e74c3c); color: white; font-size: 24px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.mr-login-btn { margin-top: 16px; }
+.mr-spinner { width: 28px; height: 28px; border: 3px solid var(--tg-hint, #ccc); border-top-color: var(--tg-accent, #4a90d9); border-radius: 50%; margin: 0 auto; animation: mr-spin 0.8s linear infinite; }
+@keyframes mr-spin { to { transform: rotate(360deg); } }
+
+/* ── 标题 ── */
+.mr-title { font-size: 20px; font-weight: 700; color: var(--tg-text); margin: 0 0 16px; }
+
+/* ═══ 总览大数字（仪表盘核心） ═══ */
+.mr-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--tg-section-bg, #f8f9fa);
+  border-radius: 10px;
+  border: 1px solid var(--tg-border, #eee);
+}
+
+.mr-summary-item {
   text-align: center;
-  padding: 48px 16px;
-}
-
-.mr-state-text {
-  font-size: 15px;
-  color: var(--tg-text);
-  margin: 16px 0 0;
-  line-height: 1.6;
-}
-
-.mr-state-text.mr-error {
-  color: var(--tg-danger, #e74c3c);
-  font-weight: 500;
-}
-
-.mr-error-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--tg-danger, #e74c3c);
-  color: white;
-  font-size: 24px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.mr-login-btn {
-  margin-top: 16px;
-}
-
-.mr-spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--tg-hint, #ccc);
-  border-top-color: var(--tg-accent, #4a90d9);
-  border-radius: 50%;
-  margin: 0 auto;
-  animation: mr-spin 0.8s linear infinite;
-}
-
-@keyframes mr-spin {
-  to { transform: rotate(360deg); }
-}
-
-/* ── 奖励列表 ── */
-.mr-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.mr-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--tg-text);
-  margin: 0;
-}
-
-.mr-total {
-  font-size: 13px;
-  color: var(--tg-hint, #999);
-}
-
-.mr-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 4px;
 }
+
+.mr-summary-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--tg-accent, #4a90d9);
+  line-height: 1.2;
+}
+
+.mr-summary-label {
+  font-size: 11px;
+  color: var(--tg-hint, #999);
+  white-space: nowrap;
+}
+
+/* ═══ 活动列表 ═══ */
+.mr-list { display: flex; flex-direction: column; gap: 12px; }
 
 .mr-item {
   border: 1px solid var(--tg-border, #eee);
   border-radius: 8px;
-  padding: 12px;
+  padding: 14px;
 }
 
 .mr-item-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
-.mr-item-title {
-  font-size: 15px;
+.mr-item-title { font-size: 15px; font-weight: 600; color: var(--tg-text); }
+.mr-item-link { font-size: 13px; color: var(--tg-accent, #4a90d9); text-decoration: none; }
+
+/* ── 邀请摘要行 ── */
+.mr-invite-row { margin-bottom: 8px; }
+.mr-invite-count { font-size: 13px; color: var(--tg-text); font-weight: 500; }
+.mr-invite-empty { font-size: 13px; color: var(--tg-hint, #bbb); }
+
+/* ═══ 里程碑进度 ═══ */
+.mr-milestones {
+  margin: 8px 0;
+  padding: 10px;
+  background: var(--tg-section-bg, #f8f9fa);
+  border-radius: 6px;
+  border: 1px solid var(--tg-border, #eee);
+}
+
+.mr-milestones-title {
+  font-size: 12px;
   font-weight: 600;
-  color: var(--tg-text);
-}
-
-.mr-item-link {
-  font-size: 13px;
-  color: var(--tg-accent, #4a90d9);
-  text-decoration: none;
-}
-
-.mr-item-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.mr-item-label {
-  font-size: 13px;
   color: var(--tg-hint, #999);
-  min-width: 60px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-.mr-item-value {
-  font-size: 15px;
-  font-weight: 600;
+.mr-milestone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 13px;
   color: var(--tg-text);
 }
 
-.mr-item-muted {
-  color: var(--tg-hint, #bbb);
+.mr-milestone--reached { color: var(--tg-success, #27ae60); }
+
+.mr-milestone-icon { font-size: 14px; flex-shrink: 0; }
+
+.mr-milestone-desc { flex: 1; }
+
+.mr-milestone-reward {
+  font-weight: 600;
+  color: var(--tg-accent, #4a90d9);
+  white-space: nowrap;
 }
 
-.mr-coupons {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: 1;
+.mr-milestone-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--tg-success, #27ae60);
+  color: white;
+  white-space: nowrap;
 }
 
-.mr-coupon {
+.mr-milestone-hint {
+  font-size: 11px;
+  color: var(--tg-hint, #999);
+  white-space: nowrap;
+}
+
+.mr-next-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--tg-accent, #4a90d9);
+  font-style: italic;
+}
+
+.mr-no-referral {
+  margin: 8px 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--tg-hint, #999);
+  background: var(--tg-section-bg, #f8f9fa);
+  border-radius: 6px;
+  border: 1px dashed var(--tg-border, #ddd);
+}
+
+/* ═══ 实际奖励 ═══ */
+.mr-rewards-section { margin-top: 8px; }
+
+.mr-reward-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 4px 0;
 }
+
+.mr-reward-label { font-size: 13px; color: var(--tg-hint, #999); min-width: 60px; }
+.mr-reward-value { font-size: 15px; font-weight: 600; color: var(--tg-text); }
+.mr-item-muted { color: var(--tg-hint, #bbb); }
+
+.mr-coupons { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.mr-coupon { display: flex; align-items: center; gap: 8px; }
 
 .mr-coupon-code {
   font-size: 13px;
@@ -465,15 +544,8 @@ async function redeemCoupon(_item: MyRewardItem, code: string, idx: number, ci: 
   flex: 1;
   word-break: break-all;
   transition: background 0.15s, box-shadow 0.15s;
-  user-select: all;  /* 点击即全选，方便复制 */
+  user-select: all;
 }
-
-.mr-coupon-code:hover {
-  background: var(--tg-hover, rgba(0,0,0,0.06));
-  box-shadow: 0 0 0 1px var(--tg-accent, #4a90d9);
-}
-
-.mr-redeem-btn {
-  flex: 0 0 auto;
-}
+.mr-coupon-code:hover { background: var(--tg-hover, rgba(0,0,0,0.06)); box-shadow: 0 0 0 1px var(--tg-accent, #4a90d9); }
+.mr-redeem-btn { flex: 0 0 auto; }
 </style>
