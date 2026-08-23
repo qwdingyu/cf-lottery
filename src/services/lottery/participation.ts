@@ -370,9 +370,15 @@ export async function joinDraw(
           : sql`1 = 0`; // 秒杀无名额：拒绝写入
       if (isDirectPaymentFlashSale && effectiveMax > 0) {
         // 秒杀容量控制：CAS 原子递增 + 条件守卫（activeParticipantCount < effectiveMax）。
-        // 为什么不用 SELECT COUNT(*)：COUNT 在高并发下有 TOCTOU 竞态——
-        // 两个事务同时 COUNT 得到相同值，都通过检查，导致超卖。
-        // CAS 更新只有一条能成功（rowsAffected=1），其余被 WHERE 条件拒绝。
+        //
+        // 设计权衡（docs/264 审查确认）：
+        // CAS 与 INSERT 是两个独立写操作，SQLite BEGIN DEFERRED 下理论上可偏移 ±1-2。
+        // 但闪购路径 INSERT 用 capacityClause=1=1（不走 COUNT），原因是：
+        // - activeCapacityCountClause 不过滤 paymentStatus，会把过期 entry 也算入，
+        //   导致过期释放后新参与者被误拒（docs/134 场景）
+        // - 过期 entry 不应阻塞新参与者，CAS 是闪购唯一的容量守卫
+        // - 偏移上限 = 并发请求数（通常 1-2），不影响资金安全，仅影响"已抢光"显示精度
+        // - 非闪购路径用 INSERT COUNT(*) 兜底，无此问题
         const reserved = await tx
           .update(lotteryDraws)
           .set({
@@ -1159,7 +1165,9 @@ export async function calibrateActiveParticipantCounts(db: DbType): Promise<numb
         ));
       const entryCount = row?.cnt ?? 0;
       const diff = entryCount - (draw.currentCount ?? 0);
-      if (diff !== 0) {
+      // 只在 diff > 0 时告警（entryCount > currentCount，计数器偏低，有超卖风险）
+      // diff < 0 是正常情况（quantity>1 时 currentCount > entryCount）或计数器偏高（保守，不超卖，风险低）
+      if (diff > 0) {
         // 只读告警：记录偏差但不自动修正，避免 COUNT(entries) 与名额语义不一致导致超卖
         logWarn("participation",
           `activeParticipantCount 偏差告警: draw=${draw.id} title="${draw.title}" ` +

@@ -12,7 +12,7 @@ import type { AppEnv } from "../bindings";
 import { getClientIp, getEnv } from "../lib/platform";
 import { getDb, ok, fail, isValidEmail } from "../lib/http";
 import { lotteryDraws, lotteryEntries, lotteryWinners, emailAccessCodes, lotteryRosterMembers, lotteryPrizeTiers, prizes, systemConfig, prizeCodes, couponCodes, lotterySpins, tenants, users } from "../db/schema";
-import { eq, and, or, count, asc, ne, desc, gt, inArray, sql } from "drizzle-orm";
+import { eq, and, count, asc, ne, desc, gt, inArray, sql } from "drizzle-orm";
 import {
   getActivityOutcome,
   joinDraw,
@@ -2078,25 +2078,36 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
   // 查询该用户参与的所有活动（跨租户）：
   // - registered 模式：identity_type = 'user_id', identity_value = userId
   // - open 模式：identity_type = 'email', identity_value = 用户邮箱
-  const entries = await db
-    .select({
-      drawId: lotteryEntries.drawId,
-      tenantId: lotteryEntries.tenantId,
-      spinsLeft: lotteryEntries.spinsLeft,
-    })
-    .from(lotteryEntries)
-    .where(or(
-      and(
-        eq(lotteryEntries.identityType, "user_id"),
-        eq(lotteryEntries.identityValue, userId),
-      ),
-      ...(userEmail
-        ? [and(
-            eq(lotteryEntries.identityType, "email"),
-            eq(lotteryEntries.identityValue, userEmail),
-          )]
-        : []),
-    ));
+  //
+  // 为什么分两次查询而非 or()：
+  // SQLite 对 OR 优化有限，可能退化为全表扫描（docs/264 P3）。
+  // 分两次查询各走 idx_entries_identity 索引，结果在 JS 侧合并去重。
+  type EntryRow = { drawId: string; tenantId: string; spinsLeft: number | null };
+  const entryFields = {
+    drawId: lotteryEntries.drawId,
+    tenantId: lotteryEntries.tenantId,
+    spinsLeft: lotteryEntries.spinsLeft,
+  } as const;
+  const [userEntries, emailEntries] = await Promise.all([
+    db.select(entryFields).from(lotteryEntries).where(and(
+      eq(lotteryEntries.identityType, "user_id"),
+      eq(lotteryEntries.identityValue, userId),
+    )) as Promise<EntryRow[]>,
+    userEmail
+      ? db.select(entryFields).from(lotteryEntries).where(and(
+          eq(lotteryEntries.identityType, "email"),
+          eq(lotteryEntries.identityValue, userEmail),
+        )) as Promise<EntryRow[]>
+      : Promise.resolve([] as EntryRow[]),
+  ]);
+  // 按 drawId 去重（同一活动可能同时有 user_id 和 email 两条 entry，取第一条）
+  const seen = new Set<string>();
+  const entries = [...userEntries, ...emailEntries].filter((e) => {
+    const key = `${e.tenantId}:${e.drawId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   if (entries.length === 0) return ok(c, { rewards: [] });
 
