@@ -32,7 +32,7 @@ import { grantBonusSpin } from "./reward-exits";
 import { isViralEnabled, readViralPerInvite } from "./viral-weight";
 import { processReferralRewardsEngine } from "./referral-rewards-engine";
 import { recordSpinLog } from "./spins-log";
-import { logError } from "../../lib/logger";
+import { logError, logWarn } from "../../lib/logger";
 import {
   parseFlashSaleConfig,
   resolveEffectiveStockLimit,
@@ -369,6 +369,10 @@ export async function joinDraw(
           ? activeCapacityCountClause
           : sql`1 = 0`; // 秒杀无名额：拒绝写入
       if (isDirectPaymentFlashSale && effectiveMax > 0) {
+        // 秒杀容量控制：CAS 原子递增 + 条件守卫（activeParticipantCount < effectiveMax）。
+        // 为什么不用 SELECT COUNT(*)：COUNT 在高并发下有 TOCTOU 竞态——
+        // 两个事务同时 COUNT 得到相同值，都通过检查，导致超卖。
+        // CAS 更新只有一条能成功（rowsAffected=1），其余被 WHERE 条件拒绝。
         const reserved = await tx
           .update(lotteryDraws)
           .set({
@@ -1026,6 +1030,10 @@ async function recordAttributedJoin(
     }
   }
 
+  // 原子递增 joinedCount：SQL 层面 SET joined_count = joined_count + 1，
+  // SQLite 写锁序列化并发事务，不会丢失更新。
+  // 注意：同一 refCode 多次归因会多次 +1（如签到跨日重复参与），
+  // 但奖励引擎的 CAS 幂等标记（rewardMilestonesGranted）防止重复发放。
   await db
     .update(shareRecords)
     .set({ joinedCount: sql`${shareRecords.joinedCount} + 1` })
@@ -1106,27 +1114,27 @@ export async function getEntries(
 }
 
 /**
- * 校准 activeParticipantCount 计数器（docs/262 H1 修复）。
+ * 校准 activeParticipantCount 计数器 — 只读告警模式（docs/262 H1 修复）。
  *
  * 背景：activeParticipantCount 由 5 条独立路径维护（joinDraw ±1、createPaymentOrder +N、
  * expireOverdueOrders -N、cancelPaymentOrder -N），若进程在回滚前崩溃，
  * 计数器可能永久偏移（偏低→超卖，偏高→拒绝正常参与）。
  *
- * 校准逻辑：对所有 open/paused 状态的活动，重新统计 entries 表中有效参与数，
- * 与 activeParticipantCount 比较，不一致时修正。
+ * 为什么改为只读告警：
+ * - 旧逻辑用 COUNT(entries) 校准，但 activeParticipantCount 语义是"占用名额数"
+ *   （一个 entry 可占多份名额，如 quantity=3），COUNT 与语义不一致
+ * - 自动改数可能把多占的名额压低，导致后续 CAS 放行更多销售 → 超卖
+ * - 改为 diff≠0 时打日志 + 记录审计事件，人工介入，风险最低
  *
- * 为什么按单活动事务而非全库一把：
- * - 避免长事务持有写锁阻塞正常请求
- * - 单活动校准失败不阻塞其他活动
- *
- * @returns 校准的活动数量
+ * @returns 检测到偏差的活动数量（仅告警，不自动修正）
  */
 export async function calibrateActiveParticipantCounts(db: DbType): Promise<number> {
-  // 只校准 open/paused 状态的活动（drawing/drawn/cancelled 不再接受新参与，无需校准）
+  // 只检测 open/paused 状态的活动（drawing/drawn/cancelled 不再接受新参与，无需检测）
   const draws = await db
     .select({
       id: lotteryDraws.id,
       tenantId: lotteryDraws.tenantId,
+      title: lotteryDraws.title,
       currentCount: lotteryDraws.activeParticipantCount,
     })
     .from(lotteryDraws)
@@ -1135,10 +1143,12 @@ export async function calibrateActiveParticipantCounts(db: DbType): Promise<numb
       eq(lotteryDraws.status, "paused"),
     ));
 
-  let calibrated = 0;
+  let alerted = 0;
   for (const draw of draws) {
     try {
       // 有效参与 = 非空/非过期的 entry（与 joinDraw 的 CAS 条件对齐）
+      // 注意：这是 entry 行数，不是名额数。一个 entry 可能占多份名额（quantity>1），
+      // 所以这里只用于告警，不用于自动修正。
       const [row] = await db
         .select({ cnt: count() })
         .from(lotteryEntries)
@@ -1147,19 +1157,20 @@ export async function calibrateActiveParticipantCounts(db: DbType): Promise<numb
           eq(lotteryEntries.tenantId, draw.tenantId),
           sql`${lotteryEntries.paymentStatus} NOT IN ('', 'expired')`,
         ));
-      const actualCount = row?.cnt ?? 0;
-      const diff = actualCount - (draw.currentCount ?? 0);
+      const entryCount = row?.cnt ?? 0;
+      const diff = entryCount - (draw.currentCount ?? 0);
       if (diff !== 0) {
-        await db
-          .update(lotteryDraws)
-          .set({ activeParticipantCount: actualCount })
-          .where(eq(lotteryDraws.id, draw.id));
-        calibrated++;
+        // 只读告警：记录偏差但不自动修正，避免 COUNT(entries) 与名额语义不一致导致超卖
+        logWarn("participation",
+          `activeParticipantCount 偏差告警: draw=${draw.id} title="${draw.title}" ` +
+          `currentCount=${draw.currentCount} entryCount=${entryCount} diff=${diff}`
+        );
+        alerted++;
       }
     } catch (err) {
-      // 单活动校准失败不中断其他活动
+      // 单活动检测失败不中断其他活动
       logError("participation", `calibrateActiveParticipantCounts draw=${draw.id} failed`, err);
     }
   }
-  return calibrated;
+  return alerted;
 }

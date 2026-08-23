@@ -750,8 +750,8 @@ describe("L2 视角：registered 参与者身份可读", () => {
     expect(regWinner.identityValue).toBe(regWinner.identityValue);
 
     const openWinner = data.winners.find((w: any) => w.identityType === "email");
-    // email 身份不注入 identityDisplay，前端兜底显示 identityValue
-    expect(openWinner.identityDisplay).toBeUndefined();
+    // email 身份直接用邮箱作为 identityDisplay（修复：open 模式失败记录可读身份）
+    expect(openWinner.identityDisplay).toBe("open@test.com");
     expect(openWinner.identityValue).toBe("open@test.com");
   });
 

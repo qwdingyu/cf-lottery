@@ -78,9 +78,10 @@ export function usePosterQr() {
 
   function ensurePublicUrl(draw: LotteryDraw): string {
     // 优先用公开 slug；无 slug 时回退到 id（兼容旧数据）
+    // 路由模式为 createWebHistory，路径必须是 /lottery/:slug，不能用 /#/d/（hash 片段不参与路由匹配）
     const slug = draw.publicSlug || draw.id
     const base = typeof window !== 'undefined' ? window.location.origin : ''
-    return `${base}/#/d/${encodeURIComponent(slug)}`
+    return `${base}/lottery/${encodeURIComponent(slug)}`
   }
 
   // ---------- 二维码 ----------
