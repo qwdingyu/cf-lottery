@@ -357,6 +357,35 @@ adminLotteryRoute.get("/dashboard", async (c) => {
 });
 
 // ═════════════════════════════════════════════════════════
+// 数据看板增强（docs/267 P1）：参与趋势 + 转化漏斗
+// ═════════════════════════════════════════════════════════
+
+/** 参与趋势：按日/周/月聚合新增参与人数，用于趋势图表 */
+adminLotteryRoute.get("/dashboard/trend", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const { getParticipationTrend } = await import("../services/lottery/dashboard-stats");
+  const granularity = (c.req.query("granularity") || "day") as "day" | "week" | "month";
+  const days = parseInt(c.req.query("days") || "30", 10) || 30;
+  const drawId = c.req.query("drawId") || undefined;
+
+  const trend = await getParticipationTrend(db, tenantId, { granularity, days, drawId });
+  return ok(c, { trend });
+});
+
+/** 转化漏斗：访问→参与→中奖→领奖各阶段人数与转化率 */
+adminLotteryRoute.get("/dashboard/funnel", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const { getConversionFunnel } = await import("../services/lottery/dashboard-stats");
+  const days = parseInt(c.req.query("days") || "30", 10) || 30;
+  const drawId = c.req.query("drawId") || undefined;
+
+  const funnel = await getConversionFunnel(db, tenantId, { days, drawId });
+  return ok(c, { funnel });
+});
+
+// ═════════════════════════════════════════════════════════
 // 当前用户
 // ═════════════════════════════════════════════════════════
 
