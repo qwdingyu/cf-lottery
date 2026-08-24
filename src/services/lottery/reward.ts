@@ -299,14 +299,17 @@ export async function settleRewardByPercent(
   if (!sharerEntryId) return { settled: false, reason: "sharer_entry_id_not_found" };
 
   // 2. 查找 sharer 的 reward_pending 事件，读取 perInvitePercent
+  // 用 refCode 精确匹配：同一邀请人可能被多人邀请（多条 reward_pending），
+  // refCode 与 attributed_join 的 refCode 一致（都来自同一次归因），确保匹配正确的 pending 记录
   const [pendingEvent] = await db
-    .select({ metadataJson: activityEvents.metadataJson, refCode: activityEvents.refCode })
+    .select({ metadataJson: activityEvents.metadataJson })
     .from(activityEvents)
     .where(and(
       eq(activityEvents.tenantId, tenantId),
       eq(activityEvents.drawId, drawId),
       eq(activityEvents.entryId, sharerEntryId),
       eq(activityEvents.eventType, "reward_pending"),
+      eq(activityEvents.refCode, refCode),
     ))
     .limit(1);
   if (!pendingEvent) return { settled: false, reason: "reward_pending_not_found" };

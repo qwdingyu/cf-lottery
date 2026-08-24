@@ -171,6 +171,17 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
   const cutoff = sql`datetime('now', '-' || ${timeoutMinutes} || ' minutes')`;
   return withDbTransaction(db, async (tx) => {
     // 订单和 entry 必须在同一事务中软释放，否则回调或并发参与可能看到半完成状态。
+    //
+    // 过期条件（docs/271 优化）：
+    //   a) 超时：createdAt + timeoutMinutes < now（现有逻辑）
+    //   b) 活动已结束：endAt < now（新增——活动结束后不应再接受付款）
+    // 两者任一满足即过期，确保"活动结束"不会留下可付款的窗口期。
+    const activityEndedClause = sql`EXISTS (
+      SELECT 1 FROM lottery_draws
+      WHERE lottery_draws.id = ${paymentOrders.drawId}
+        AND lottery_draws.tenant_id = ${tenantId}
+        AND datetime(lottery_draws.end_at) < datetime('now')
+    )`;
     const overdue = await tx
       .select({
         id: paymentOrders.id,
@@ -183,7 +194,10 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       .where(and(
         eq(paymentOrders.tenantId, tenantId),
         eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
-        sql`datetime(${paymentOrders.createdAt}) < ${cutoff}`,
+        sql`(
+          datetime(${paymentOrders.createdAt}) < ${cutoff}
+          OR ${activityEndedClause}
+        )`,
       ));
 
     const staleReservations = await tx
@@ -192,7 +206,15 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       .where(and(
         eq(lotteryEntries.tenantId, tenantId),
         eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.RESERVED),
-        sql`datetime(${lotteryEntries.joinedAt}) < ${cutoff}`,
+        sql`(
+          datetime(${lotteryEntries.joinedAt}) < ${cutoff}
+          OR EXISTS (
+            SELECT 1 FROM lottery_draws
+            WHERE lottery_draws.id = ${lotteryEntries.drawId}
+              AND lottery_draws.tenant_id = ${tenantId}
+              AND datetime(lottery_draws.end_at) < datetime('now')
+          )
+        )`,
         sql`NOT EXISTS (
           SELECT 1 FROM payment_orders
           WHERE payment_orders.entry_id = ${lotteryEntries.id}
@@ -207,7 +229,10 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
       .where(and(
         eq(paymentOrders.tenantId, tenantId),
         eq(paymentOrders.status, PAYMENT_ORDER_STATUS.PENDING),
-        sql`datetime(${paymentOrders.createdAt}) < ${cutoff}`,
+        sql`(
+          datetime(${paymentOrders.createdAt}) < ${cutoff}
+          OR ${activityEndedClause}
+        )`,
       ));
 
     if (overdue.length > 0) {

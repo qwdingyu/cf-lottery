@@ -34,6 +34,7 @@ import {
   grantLeaderboardRewards,
   cancelSignupChainEntry,
 } from "../services/lottery-service";
+import { settleRewardByPercent, cancelRewardPending } from "../services/lottery/reward";
 import {
   lotteryPrizeTiers,
   shareRecords,
@@ -2545,6 +2546,323 @@ describe("triggerRewardEarned", () => {
     const third = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc3");
     expect(third.triggered).toBe(false);
     expect(third.reason).toBe("quota_exceeded");
+  });
+});
+
+// ── settleRewardByPercent：付款确认后结算 percent 模式奖励（docs/271） ──
+describe("settleRewardByPercent", () => {
+  // 创建带 percent 奖励配置的活动，并预置 attributed_join + reward_pending 事件
+  async function setupPercentReward() {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const config = JSON.stringify({
+      version: 1,
+      reward: { mode: "percent", perInvitePercent: 10, currency: "CNY" },
+    });
+    const { id: drawId } = await createDraw(db, TENANT, {
+      title: "percent结算测试",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      participationMode: "open",
+      winnerCount: 1,
+      activityConfig: config,
+    });
+
+    // 邀请人（sharer）entry
+    const sharerEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: sharerEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "sharer@test.com",
+      ipHash: "ip-s", joinedAt: now.toISOString(),
+    });
+
+    // 被邀请人（joiner）entry
+    const joinerEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: joinerEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "joiner@test.com",
+      ipHash: "ip-j", joinedAt: now.toISOString(),
+    });
+
+    const refCode = "INV-CODE-001";
+
+    // 归因事件：joiner 通过 sharer 的邀请码参与
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: joinerEntryId,
+      eventType: "attributed_join", refCode,
+      metadata: { sharerEntryId, inviterIdentityValue: "sharer@test.com", source: "trigger" },
+    });
+
+    // triggerRewardEarned 记录的 reward_pending 事件（percent 模式）
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: sharerEntryId,
+      eventType: "reward_pending", refCode,
+      metadata: {
+        mode: "percent", perInvitePercent: 10, currency: "CNY",
+        sharerEntryId, inviterIdentityValue: "sharer@test.com",
+        source: "trigger", status: "pending",
+      },
+    });
+
+    return { drawId, sharerEntryId, joinerEntryId, refCode };
+  }
+
+  it("happy path：付款确认后计算 10% 奖励，写入 reward_earned settled 事件", async () => {
+    const { drawId, joinerEntryId } = await setupPercentReward();
+    // 成交金额 1000 分（=10 元），10% = 100 分
+    const result = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 1000, "CNY");
+    expect(result.settled).toBe(true);
+
+    // 验证 reward_earned 事件已记录，status=settled
+    const [event] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(event).toBeDefined();
+    const meta = JSON.parse(event.metadataJson || "{}");
+    expect(meta.mode).toBe("percent");
+    expect(meta.status).toBe("settled");
+    expect(meta.amountCents).toBe(100);   // 1000 × 10% = 100
+    expect(meta.percent).toBe(10);
+  });
+
+  it("向下取整：1050 × 10% = 105（Math.floor 防止超付）", async () => {
+    const { drawId, joinerEntryId } = await setupPercentReward();
+    // 成交金额 1050 分，10% = 105 分（整除场景）
+    const result = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 1050, "CNY");
+    expect(result.settled).toBe(true);
+    const [event] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    const meta = JSON.parse(event.metadataJson || "{}");
+    expect(meta.amountCents).toBe(105);
+  });
+
+  it("金额过小（0 分 × 10% = 0）→ 返回 amount_too_small", async () => {
+    const { drawId, joinerEntryId } = await setupPercentReward();
+    const result = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 0, "CNY");
+    expect(result.settled).toBe(false);
+    expect(result.reason).toBe("amount_too_small");
+  });
+
+  it("无 attributed_join 事件 → 返回 attributed_join_not_found", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const config = JSON.stringify({
+      version: 1,
+      reward: { mode: "percent", perInvitePercent: 10 },
+    });
+    const { id: drawId } = await createDraw(db, TENANT, {
+      title: "no-join-test", startAt: now.toISOString(), endAt: future.toISOString(),
+      participationMode: "open", winnerCount: 1, activityConfig: config,
+    });
+    const fakeEntryId = crypto.randomUUID();
+    const result = await settleRewardByPercent(db, TENANT, drawId, fakeEntryId, 1000, "CNY");
+    expect(result.settled).toBe(false);
+    expect(result.reason).toBe("attributed_join_not_found");
+  });
+
+  it("refCode 精确匹配：同一 sharer 的多条 reward_pending 中只结算对应的一条", async () => {
+    const { drawId, sharerEntryId, joinerEntryId } = await setupPercentReward();
+
+    // 模拟第二个人也通过 sharer 邀请参与（不同 refCode）
+    const joiner2Id = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: joiner2Id, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "joiner2@test.com",
+      ipHash: "ip-j2", joinedAt: new Date().toISOString(),
+    });
+    const refCode2 = "INV-CODE-002";
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: joiner2Id,
+      eventType: "attributed_join", refCode: refCode2,
+      metadata: { sharerEntryId, inviterIdentityValue: "sharer@test.com", source: "trigger" },
+    });
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: sharerEntryId,
+      eventType: "reward_pending", refCode: refCode2,
+      metadata: {
+        mode: "percent", perInvitePercent: 10, currency: "CNY",
+        sharerEntryId, inviterIdentityValue: "sharer@test.com",
+        source: "trigger", status: "pending",
+      },
+    });
+
+    // 先结算第二条（joiner2Id → refCode2 → 500 × 10% = 50）
+    const r2 = await settleRewardByPercent(db, TENANT, drawId, joiner2Id, 500, "CNY");
+    expect(r2.settled).toBe(true);
+
+    // 再结算第一条（joinerEntryId → refCode=INV-CODE-001 → 800 × 10% = 80）
+    const r1 = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 800, "CNY");
+    expect(r1.settled).toBe(true);
+
+    // 验证有 2 条 reward_earned settled，金额各自正确
+    const settledEvents = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(settledEvents.length).toBe(2);
+    const amounts = settledEvents.map(e => JSON.parse(e.metadataJson || "{}").amountCents).sort();
+    expect(amounts).toEqual([50, 80]);
+  });
+});
+
+// ── cancelRewardPending：支付取消/退款/超时后清理 pending 事件（docs/271） ──
+describe("cancelRewardPending", () => {
+  async function setupPendingReward() {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const config = JSON.stringify({
+      version: 1,
+      reward: { mode: "percent", perInvitePercent: 10, currency: "CNY" },
+    });
+    const { id: drawId } = await createDraw(db, TENANT, {
+      title: "cancel-pending-test",
+      startAt: now.toISOString(), endAt: future.toISOString(),
+      participationMode: "open", winnerCount: 1, activityConfig: config,
+    });
+
+    const sharerEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: sharerEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "sharer@test.com",
+      ipHash: "ip-s", joinedAt: now.toISOString(),
+    });
+
+    const joinerEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: joinerEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "joiner@test.com",
+      ipHash: "ip-j", joinedAt: now.toISOString(),
+    });
+
+    const refCode = "INV-CANCEL-001";
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: joinerEntryId,
+      eventType: "attributed_join", refCode,
+      metadata: { sharerEntryId, inviterIdentityValue: "sharer@test.com", source: "trigger" },
+    });
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: sharerEntryId,
+      eventType: "reward_pending", refCode,
+      metadata: {
+        mode: "percent", perInvitePercent: 10, currency: "CNY",
+        sharerEntryId, inviterIdentityValue: "sharer@test.com",
+        source: "trigger", status: "pending",
+      },
+    });
+
+    return { drawId, sharerEntryId, joinerEntryId };
+  }
+
+  it("happy path：支付取消后写入 reward_failed 事件", async () => {
+    const { drawId, joinerEntryId } = await setupPendingReward();
+    const result = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_cancelled");
+    expect(result.cancelled).toBe(true);
+
+    // 验证 reward_failed 事件已记录
+    const [event] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_failed"),
+      ));
+    expect(event).toBeDefined();
+    const meta = JSON.parse(event.metadataJson || "{}");
+    expect(meta.reason).toBe("payment_cancelled");
+    expect(meta.status).toBe("cancelled");
+    expect(meta.joinerEntryId).toBe(joinerEntryId);
+  });
+
+  it("超时释放时记录 payment_expired 原因", async () => {
+    const { drawId, joinerEntryId } = await setupPendingReward();
+    const result = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_expired");
+    expect(result.cancelled).toBe(true);
+
+    const [event] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_failed"),
+      ));
+    const meta = JSON.parse(event.metadataJson || "{}");
+    expect(meta.reason).toBe("payment_expired");
+  });
+
+  it("无 attributed_join 事件 → 返回 cancelled: false（幂等）", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const config = JSON.stringify({ version: 1, reward: { mode: "percent", perInvitePercent: 10 } });
+    const { id: drawId } = await createDraw(db, TENANT, {
+      title: "cancel-no-join", startAt: now.toISOString(), endAt: future.toISOString(),
+      participationMode: "open", winnerCount: 1, activityConfig: config,
+    });
+    const fakeEntryId = crypto.randomUUID();
+    const result = await cancelRewardPending(db, TENANT, drawId, fakeEntryId, "payment_cancelled");
+    expect(result.cancelled).toBe(false);
+  });
+
+  it("reward_pending 不存在时仍返回 cancelled: true（幂等，reward_failed 已记录）", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 3600000);
+    const { id: drawId } = await createDraw(db, TENANT, {
+      title: "cancel-no-pending", startAt: now.toISOString(), endAt: future.toISOString(),
+      participationMode: "open", winnerCount: 1, activityConfig: "{}",
+    });
+
+    const sharerEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: sharerEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "sharer@test.com",
+      ipHash: "ip-s", joinedAt: now.toISOString(),
+    });
+    const joinerEntryId = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: joinerEntryId, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "joiner@test.com",
+      ipHash: "ip-j", joinedAt: now.toISOString(),
+    });
+
+    // 只有 attributed_join，没有 reward_pending
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: joinerEntryId,
+      eventType: "attributed_join", refCode: "INV-NOPEND",
+      metadata: { sharerEntryId, inviterIdentityValue: "sharer@test.com", source: "trigger" },
+    });
+
+    // cancelRewardPending 仍然返回 true（attributed_join 存在即可）
+    const result = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_refunded");
+    expect(result.cancelled).toBe(true);
+
+    // reward_failed 事件已记录（即使没有对应的 reward_pending）
+    const [event] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_failed"),
+      ));
+    expect(event).toBeDefined();
+    const meta = JSON.parse(event.metadataJson || "{}");
+    expect(meta.reason).toBe("payment_refunded");
   });
 });
 

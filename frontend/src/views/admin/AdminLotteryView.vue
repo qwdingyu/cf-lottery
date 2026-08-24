@@ -3220,7 +3220,8 @@ function syncRewardConfig() {
   const mode = rewardMode.value
   const val = Number(rewardPerInviteValue.value || 0)
   // 按 mode 写入对应字段，未选中的字段不写入（避免脏数据）
-  const reward: Record<string, unknown> = { mode }
+  // currency 固定为 USD（系统默认币种），类型定义要求必填
+  const reward: Record<string, unknown> = { mode, currency: 'USD' }
   if (mode === 'percent') {
     reward.perInvitePercent = Math.min(100, Math.max(0, val))
   } else {
