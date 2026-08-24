@@ -2199,8 +2199,10 @@ describe("支付并发安全性", () => {
     it("活动已过期（endAt < now）时拒绝创建订单", async () => {
       const { orderInput, drawId } = await seedOrderTestData();
       await db.update(lotteryDraws).set({ endAt: new Date(Date.now() - 60_000).toISOString() }).where(eq(lotteryDraws.id, drawId));
+      // expireOverdueOrders 在 createPaymentOrder 入口处调用（优化后：活动已结束则立即过期订单），
+      // entry 被释放为 expired → 返回 '参与预约已失效'（而非旧路径的 '活动已结束'）
       await expect(createPaymentOrder(db, { ...orderInput, quantity: 1 }, providerMock))
-        .rejects.toThrow("活动已结束");
+        .rejects.toThrow("参与预约已失效");
     });
 
     it("库存不足时拒绝创建订单", async () => {

@@ -586,7 +586,9 @@ describe("payment route", () => {
     });
 
     expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ message: "活动已关闭，不能继续支付" });
+    // expireOverdueOrders 在路由入口处调用（优化后：活动已结束则立即过期订单），
+    // 订单被标记为 expired → 用户无法重试 → 返回 '活动已关闭，不能重新创建支付订单'
+    expect(await res.json()).toMatchObject({ message: "活动已关闭，不能重新创建支付订单" });
   });
 
   it("区块链支付暂不进入当前目录，USDT 直付发卡订单被拒绝创建", async () => {
