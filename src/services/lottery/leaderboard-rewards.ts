@@ -19,7 +19,9 @@ import { withDbTransaction } from "../../db/client";
 import { eq, and, sql } from "drizzle-orm";
 import { shareRecords, lotteryEntries, lotteryDraws } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
+import { recordActivityEvent } from "./integration";
 import { grantBonusCoupon } from "./reward-exits";
+import { logError } from "../../lib/logger";
 import { isViralLeaderboardEnabled, compareViralLeaderboard, type ViralWeightConfig } from "./viral-weight";
 
 /** 排行榜奖励配置项（viral.leaderboardRewards 数组元素） */
@@ -395,6 +397,27 @@ export async function grantLeaderboardRewards(
           reason: "viral",
           refId: capped ? `leaderboard:${rank}:capped` : `leaderboard:${rank}`,
         });
+        // 审计日志（docs/259 P1-4）：bonus_spin 发放也写 reward_earned 事件，
+        // 与 grantBonusSpin（reward-exits.ts:99-109）对齐，保证 L2 漏斗卡片不遗漏
+        // 排行榜奖励的 bonus_spin 计数（之前只写 spins_log，导致漏斗只统计 bonus_coupon、
+        // 漏掉排行榜 bonus_spin，审计不一致）。
+        try {
+          await recordActivityEvent(tx, {
+            tenantId: draw.tenantId,
+            drawId: draw.id,
+            entryId: entry.id,
+            eventType: "reward_earned",
+            metadata: {
+              rewardExit: "bonus_spin",
+              rewardId: `leaderboard:${rank}`,
+              amount: actual,
+              source: "viral",
+            },
+          });
+        } catch (err) {
+          // 审计失败不影响发放结果（与 grantBonusSpin 的容错一致）
+          logError("leaderboard-rewards", `recordActivityEvent bonus_spin draw=${draw.id}`, err);
+        }
       }
 
       // actual=0 时用户已达 maxSpins 上限，标记保持（防止重试），状态记为 skipped
