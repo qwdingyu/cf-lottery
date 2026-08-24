@@ -2187,7 +2187,9 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
       existing.grantedMarks.push(...marks);
       // 排行榜奖励取最新一次发放时间
       if (lbAt > existing.leaderboardRewardedAt) existing.leaderboardRewardedAt = lbAt;
-      existing.leaderboardRewardedCount += lbCount;
+      // 排行榜奖励已发张数取最大值而非累加（grantLeaderboardRewards 对同一 entry 的
+      // 所有 shareRecord 设置相同的 leaderboardRewardedCount，累加会重复统计）
+      existing.leaderboardRewardedCount = Math.max(existing.leaderboardRewardedCount, lbCount);
     } else {
       shareMap.set(key, { joinedCount: joined, grantedMarks: marks, leaderboardRewardedAt: lbAt, leaderboardRewardedCount: lbCount });
     }
