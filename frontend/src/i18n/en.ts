@@ -151,6 +151,8 @@ export default {
     impersonateBanner: "🔍 Impersonating: actions run as the tenant owner",
     returnToPlatform: "Back to platform",
     impersonateExitToast: "Left impersonation, back to platform",
+    notPlatformMember: "You are not a platform member and cannot access the platform admin",
+    dismiss: "Dismiss",
   },
 
   // ── Platform Layout ────────────────────

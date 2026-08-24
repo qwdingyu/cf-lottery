@@ -386,6 +386,19 @@ authRoute.post("/switch-tenant", requireAuth, async (c) => {
     .limit(1);
   if (!membership) return c.json({ ok: false, message: "您不是该租户的成员" }, 403);
 
+  // 防御纵深：检查目标租户状态，避免签发指向 pending/suspended/disabled 租户的不可用 JWT
+  const [targetTenant] = await db
+    .select({ status: tenants.status })
+    .from(tenants)
+    .where(eq(tenants.id, targetTenantId))
+    .limit(1);
+  if (!targetTenant || targetTenant.status === "pending") {
+    return c.json({ ok: false, message: "该工作空间正在等待审核，暂不可切换" }, 403);
+  }
+  if (targetTenant.status !== "active") {
+    return c.json({ ok: false, message: "该工作空间已暂停或不可用" }, 403);
+  }
+
   // 签发新 JWT（切换后的租户上下文；保留 email 供公开参与免 OTP）
   const [switchUser] = await db
     .select({ email: users.email })

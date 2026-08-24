@@ -153,6 +153,8 @@ export default {
     impersonateBanner: "🔍 模拟中：以租户身份查看，操作将以该租户 owner 身份执行",
     returnToPlatform: "返回平台",
     impersonateExitToast: "已退出模拟登录，返回平台",
+    notPlatformMember: "您不是平台运营成员，无权访问平台后台",
+    dismiss: "关闭",
   },
 
   // ── 平台运营后台布局（PlatformLayout） ─────────

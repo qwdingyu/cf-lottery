@@ -274,6 +274,125 @@ describe("用户注册数据完整性", () => {
     expect(data.needsTenant).toBe(false);
   });
 
+  // ── P0 限制：只检查 owner 角色 ──
+
+  it("P0 限制：被邀请为 admin/viewer 的用户仍可创建自己的租户", async () => {
+    const app = createAuthTestApp();
+    const IP = "10.0.80.1";
+    // 1. 注册用户A并验证
+    await app.request("/auth/register", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": IP },
+      body: JSON.stringify({ username: "p0admin", password: "Test12345", email: "p0a@test.com" }),
+    }, TEST_ENV);
+    await db.update(users).set({ emailVerified: 1 }).where(eq(users.username, "p0admin"));
+    const [userA] = await db.select().from(users).where(eq(users.username, "p0admin")).limit(1);
+
+    // 2. 创建租户X，将用户A添加为 admin（非 owner）
+    const tidX = crypto.randomUUID();
+    await db.insert(tenants).values({ id: tidX, name: "租户X" });
+    await db.insert(tenantMembers).values({ tenantId: tidX, userId: userA!.id, role: "admin" });
+
+    // 3. 用户A登录（必须带 CF-Connecting-IP 避免默认 IP 限流冲突）
+    const loginRes = await app.request("/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": IP },
+      body: JSON.stringify({ username: "p0admin", password: "Test12345" }),
+    }, TEST_ENV);
+    const loginData = await loginRes.json() as any;
+    expect(loginData.ok).toBe(true);
+
+    // 4. 用户A应能创建自己的租户（admin 角色不计入 P0 限制）
+    const createRes = await app.request("/auth/create-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + loginData.token, "CF-Connecting-IP": IP },
+      body: JSON.stringify({ name: "我的租户" }),
+    }, TEST_ENV);
+    const createData = await createRes.json() as any;
+    expect(createData.ok).toBe(true);
+    expect(createData.name).toBe("我的租户");
+
+    // 5. 用户A再次创建应被拒绝（已有 owner 租户）
+    const createRes2 = await app.request("/auth/create-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + createData.token, "CF-Connecting-IP": IP },
+      body: JSON.stringify({ name: "第二个租户" }),
+    }, TEST_ENV);
+    expect(createRes2.status).toBe(403);
+  });
+
+  // ── P1：pending 状态拦截 ──
+
+  it("pending 租户的 owner 调用管理 API 返回 403 + tenantStatus=pending", async () => {
+    const app = createAuthTestApp();
+    const IP = "10.0.80.2";
+    // 1. 注册+验证+创建租户（默认 pending）
+    await app.request("/auth/register", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": IP },
+      body: JSON.stringify({ username: "pendingowner", password: "Test12345", email: "po@test.com" }),
+    }, TEST_ENV);
+    await db.update(users).set({ emailVerified: 1 }).where(eq(users.username, "pendingowner"));
+    const loginRes = await app.request("/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": IP },
+      body: JSON.stringify({ username: "pendingowner", password: "Test12345" }),
+    }, TEST_ENV);
+    const loginData = await loginRes.json() as any;
+    const createRes = await app.request("/auth/create-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + loginData.token, "CF-Connecting-IP": IP },
+      body: JSON.stringify({ name: "待审核租户" }),
+    }, TEST_ENV);
+    const createData = await createRes.json() as any;
+    expect(createData.ok).toBe(true);
+
+    // 2. pending 租户调用 switch-tenant 应被拦截返回403
+    const switchRes = await app.request("/auth/switch-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + createData.token, "CF-Connecting-IP": IP },
+      body: JSON.stringify({ tenantId: createData.tenantId }),
+    }, TEST_ENV);
+    expect(switchRes.status).toBe(403);
+    const switchData = await switchRes.json() as any;
+    expect(switchData.ok).toBe(false);
+    expect(switchData.message).toContain("等待审核");
+  });
+
+  it("active 租户切换到 pending 租户被拒绝", async () => {
+    const app = createAuthTestApp();
+    const IP = "10.0.80.3";
+    // 1. 注册用户并验证
+    await app.request("/auth/register", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": IP },
+      body: JSON.stringify({ username: "switcher", password: "Test12345", email: "sw@test.com" }),
+    }, TEST_ENV);
+    await db.update(users).set({ emailVerified: 1 }).where(eq(users.username, "switcher"));
+    const [user] = await db.select().from(users).where(eq(users.username, "switcher")).limit(1);
+
+    // 2. 创建 active 租户A 和 pending 租户B
+    const tidA = crypto.randomUUID();
+    const tidB = crypto.randomUUID();
+    await db.insert(tenants).values({ id: tidA, name: "租户A", status: "active" });
+    await db.insert(tenants).values({ id: tidB, name: "租户B", status: "pending" });
+    await db.insert(tenantMembers).values({ tenantId: tidA, userId: user!.id, role: "owner" });
+    await db.insert(tenantMembers).values({ tenantId: tidB, userId: user!.id, role: "owner" });
+
+    // 3. 登录（默认进入租户A）
+    const loginRes = await app.request("/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": IP },
+      body: JSON.stringify({ username: "switcher", password: "Test12345" }),
+    }, TEST_ENV);
+    const loginData = await loginRes.json() as any;
+
+    // 4. 切换到 pending 租户B 应被拒绝
+    const switchRes = await app.request("/auth/switch-tenant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + loginData.token, "CF-Connecting-IP": IP },
+      body: JSON.stringify({ tenantId: tidB }),
+    }, TEST_ENV);
+    expect(switchRes.status).toBe(403);
+    const switchData = await switchRes.json() as any;
+    expect(switchData.ok).toBe(false);
+    expect(switchData.message).toContain("等待审核");
+  });
+
   // ── 方案 C 完 ──
 
   it("公开注册关闭时拒绝新用户且不写数据库限流日志", async () => {

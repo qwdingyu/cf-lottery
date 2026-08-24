@@ -390,6 +390,8 @@ export async function dispatchWebhookDelivery(
   const signature = await signWebhookPayload(config?.signingSecret || "", timestamp, delivery.payloadJson);
 
   try {
+    // P1 修复：webhook fetch 添加 15 秒超时保护，防止目标 URL 无响应导致全局投递队列阻塞
+    // 参考：telegram-adapter.ts 已使用 AbortSignal.timeout(8000) 同模式
     const response = await fetcher(delivery.url, {
       method: "POST",
       headers: {
@@ -401,6 +403,7 @@ export async function dispatchWebhookDelivery(
         "X-CF-Lottery-Signature": signature,
       },
       body: delivery.payloadJson,
+      signal: AbortSignal.timeout(15_000),
     });
     const responseText = truncateForEvent(await response.text().catch(() => ""), 1000);
     const sent = response.status >= 200 && response.status < 300;
