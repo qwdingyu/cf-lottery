@@ -257,6 +257,10 @@ async function loadData() {
       // 后台概览是低频查询，可以显示租户累计参与人数；真正的额度强约束仍等待快照/计数器。
       participantUsage: statsData.usage?.participants ?? statsData.totalParticipants ?? 0,
       participantLimit: statsData.limits?.maxTotalParticipants ?? null,
+      // G-2: 裂变统计（由下方 dashboardData.viralStats 覆写）
+      viralSharers: 0,
+      viralClicks: 0,
+      viralInvites: 0,
     }
     // 待办事项（dashboard 端点提供）
     todos.value = {
