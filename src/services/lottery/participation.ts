@@ -633,7 +633,7 @@ export async function joinDraw(
           ipHash: options?.ipHash,
           userAgent: options?.userAgent,
         });
-        await maybeTriggerReward(tx, draw, attribution);
+        await maybeTriggerReward(tx, db, draw, attribution);
         return { joined: true, entryId, activityKind: draw.activityKind, attribution, submissionId };
       }
 
@@ -680,7 +680,7 @@ export async function joinDraw(
         userAgent: options?.userAgent,
       });
 
-      await maybeTriggerReward(tx, draw, attribution);
+      await maybeTriggerReward(tx, db, draw, attribution);
 
       return {
         joined: true,
@@ -865,18 +865,18 @@ export async function cancelSignupChainEntry(
  * - 仅当活动 activityConfig 中配置了 reward.perInviteAmount 时才触发；
  *   未配置或配额超限时静默跳过，不影响任何现有活动。这是设计原则：
  *   reward 是附加行为，不是参与的必要条件。如果 reward 触发失败，参与仍应成功。
- * - Webhook 投递与 performDraw 一致：在事务内 fire-and-forget + 容错。
- *   为什么 dispatchWebhookDelivery 可以在事务内异步执行？
- *   SQLite 同连接事务内，enqueueWebhookEvent 写入的 delivery 记录在 SELECT 时可见，
- *   所以 dispatchWebhookDelivery 能读到刚入队的记录。HTTP 调用的 fire-and-forget 不会
- *   阻塞事务提交——void + catch 意味着即使 HTTP 失败，事务正常提交，参与记录不丢失。
  * - 与 joinDraw 同事务执行：归因、配额消耗、奖励意图入队三者原子。
+ * - Webhook 投递（dispatchWebhookDelivery）使用主连接 db 而非事务 tx：
+ *   该函数内含 await fetch（网络 I/O），若在事务内会阻塞事务提交；
+ *   且它内含 await db.update() 更新投递状态，事务提交后 tx 已不可用。
+ *   因此用主连接 db 执行 fire-and-forget（与 draw-execution.ts:383 一致）。
  *   如果 triggerRewardEarned 抛异常（catch 捕获），事务仍会提交参与记录：
  *   奖励是附加行为，参与主流程不应因奖励失败而回滚。
  *   此设计与 grantLoserRewards 的容错原则一致——"开奖成功，未中奖发券失败"不回滚开奖结果。
  */
 async function maybeTriggerReward(
   tx: DbType,
+  db: DbType,
   draw: { id: string; tenantId: string; activityKind?: string | null; resultMode?: string | null; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
   attribution: { attributed: boolean; sharerEntryId?: string; refCode?: string; shareRecordId?: string },
 ) {
@@ -959,7 +959,11 @@ async function maybeTriggerReward(
       attribution.refCode || "",
     );
     for (const deliveryId of result.deliveryIds) {
-      void dispatchWebhookDelivery(tx, draw.tenantId, deliveryId).catch((err) => {
+      // 使用主连接 db 而非事务 tx 调用 dispatchWebhookDelivery：
+      // 该函数会做 await fetch（网络 I/O），若在事务内会被阻塞；
+      // 且它内含 await db.update() 更新投递状态，事务提交后 tx 已不可用。
+      // 因此用主连接 db 执行 fire-and-forget（与 draw-execution.ts:383 一致）。
+      void dispatchWebhookDelivery(db, draw.tenantId, deliveryId).catch((err) => {
         logError("participation", `reward webhook dispatch delivery=${deliveryId}`, err);
       });
     }

@@ -17,6 +17,7 @@ import {
   shareRecords,
   couponCodes,
   spinsLog,
+  systemConfig,
 } from "../../db/schema";
 import {
   processReferralRewardsEngine,
@@ -964,5 +965,165 @@ describe("processReferralRewardsEngine", () => {
     }, recordA);
     const issued2 = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
     expect(issued2).toHaveLength(1); // 仍然是 1 张
+  });
+});
+
+// ── L3 平台级邀请裂变开关（viral_growth_enabled）──
+// 文档：docs/264限时抢购邀请奖励支持
+// 当 L3 开关关闭时，引擎应跳过所有奖励发放（bonus_spin 和 bonus_coupon）；
+// 已发放的奖励不受影响（只拦截新的发放）。
+describe("L3 viral_growth_enabled 开关", () => {
+  let db: DbType;
+  let client: Client;
+
+  beforeEach(async () => {
+    ({ db, client } = await getTestDb());
+    await clearTestData(client);
+  });
+
+  afterEach(async () => {
+    await clearTestData(client);
+  });
+
+  async function setViralGrowthEnabled(value: string) {
+    await db.insert(systemConfig).values({
+      key: "viral_growth_enabled",
+      value,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  it("viral_growth_enabled=false → 跳过 bonus_spin 发放", async () => {
+    await setViralGrowthEnabled("false");
+    const promotionConfig = JSON.stringify({
+      viral: { enabled: true },
+      referralRewardDefs: [
+        { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    const { entryId, shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+
+    // spins 不增加（L3 开关关闭，引擎跳过）
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(0);
+    // 不写 spins_log
+    const logs = await db.select().from(spinsLog).where(eq(spinsLog.entryId, entryId));
+    expect(logs.length).toBe(0);
+  });
+
+  it("viral_growth_enabled=false → 跳过 bonus_coupon 发放", async () => {
+    await setViralGrowthEnabled("false");
+    const promotionConfig = JSON.stringify({
+      viral: { enabled: true },
+      referralRewardDefs: [
+        { rewardId: "c1", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    await seedCoupon(db, drawId, "invite");
+    const { shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+
+    // 优惠券未发放（L3 开关关闭，引擎跳过）
+    const coupons = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(coupons.length).toBe(0);
+  });
+
+  it("viral_growth_enabled=true → 正常发放（开关开启）", async () => {
+    await setViralGrowthEnabled("true");
+    const promotionConfig = JSON.stringify({
+      viral: { enabled: true },
+      referralRewardDefs: [
+        { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    const { entryId, shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+
+    // spins 正常增加（L3 开关开启）
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(2);
+  });
+
+  it("未配置 viral_growth_enabled → 默认启用（向后兼容）", async () => {
+    // 不插入 system_config 记录，使用默认值 "true"
+    const promotionConfig = JSON.stringify({
+      viral: { enabled: true },
+      referralRewardDefs: [
+        { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    const { entryId, shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+
+    // spins 正常增加（默认启用）
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(2);
+  });
+
+  it("viral_growth_enabled=false → claim 活动的 bonus_coupon 也跳过", async () => {
+    await setViralGrowthEnabled("false");
+    const promotionConfig = JSON.stringify({
+      viral: { enabled: true },
+      referralRewardDefs: [
+        { rewardId: "c1", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+      ],
+    });
+    // claim 活动 + bonus_coupon（claim 可用的奖励类型）
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10, activityKind: "claim" });
+    await seedCoupon(db, drawId, "invite");
+    const { shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "claim", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+
+    // 优惠券未发放（L3 开关关闭）
+    const coupons = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(coupons.length).toBe(0);
+  });
+
+  it("L3 开关切换：先关闭再开启 → 恢复发放", async () => {
+    const promotionConfig = JSON.stringify({
+      viral: { enabled: true },
+      referralRewardDefs: [
+        { rewardId: "m1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    const { entryId, shareRecordId } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    // 第一次：关闭 → 不发放
+    await setViralGrowthEnabled("false");
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+    const [entry1] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entry1?.spinsLeft ?? 0)).toBe(0);
+
+    // 第二次：开启 → 正常发放
+    await db.update(systemConfig).set({ value: "true", updatedAt: new Date().toISOString() })
+      .where(eq(systemConfig.key, "viral_growth_enabled"));
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, shareRecordId);
+    const [entry2] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entry2?.spinsLeft ?? 0)).toBe(2);
   });
 });
