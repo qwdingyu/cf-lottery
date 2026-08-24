@@ -19,13 +19,17 @@ import { withDbTransaction } from "../../db/client";
 import { eq, and, sql } from "drizzle-orm";
 import { shareRecords, lotteryEntries, lotteryDraws } from "../../db/schema";
 import { recordSpinLog } from "./spins-log";
+import { grantBonusCoupon } from "./reward-exits";
 import { isViralLeaderboardEnabled, compareViralLeaderboard, type ViralWeightConfig } from "./viral-weight";
 
 /** 排行榜奖励配置项（viral.leaderboardRewards 数组元素） */
 export type LeaderboardRewardConfig = {
   rank: number;
-  rewardType: "bonus_spin";
+  rewardType: "bonus_spin" | "bonus_coupon";
+  /** bonus_spin 时为发放次数；bonus_coupon 时为发放张数 */
   rewardValue: number;
+  /** bonus_coupon 时可选的优惠券标签（匹配 coupon_codes.label），为空则发任意可用券 */
+  couponLabel?: string;
 };
 
 /**
@@ -36,9 +40,13 @@ export type LeaderboardRewardConfig = {
 export const MAX_LEADERBOARD_RANK = 100;
 
 /**
- * 归一化排行榜奖励配置，过滤无效项（rank<1 或 >MAX_LEADERBOARD_RANK / 非 bonus_spin /
+ * 归一化排行榜奖励配置，过滤无效项（rank<1 或 >MAX_LEADERBOARD_RANK / 非法 rewardType /
  * rewardValue<1 全部剔除）。grantLeaderboardRewards 与 publish-check 共用同一函数，
  * 避免「发布预检说有奖励、实际发放为零」的校验与执行偏差。空输入或全无效 → 返回空数组。
+ *
+ * 支持两种奖励类型：
+ * - bonus_spin：发放抽奖次数（与旧行为兼容）
+ * - bonus_coupon：发放优惠券（可选 couponLabel 指定券标签）
  */
 export function normalizeLeaderboardRewards(raw: unknown): LeaderboardRewardConfig[] {
   if (!Array.isArray(raw)) return [];
@@ -48,10 +56,16 @@ export function normalizeLeaderboardRewards(raw: unknown): LeaderboardRewardConf
     const r = item as Record<string, unknown>;
     const rank = Math.floor(Number(r.rank) || 0);
     const rewardValue = Math.floor(Number(r.rewardValue) || 0);
+    const rewardType = r.rewardType === "bonus_coupon" ? "bonus_coupon" : "bonus_spin";
     // 上限与前端表单一致（growth-config.ts）：rank 1..100、rewardValue 1..1000。
     // 与 publish-check 共用，防止 API 直写超大 rewardValue 推爆 granted（P2 审查项）。
-    if (rank >= 1 && rank <= MAX_LEADERBOARD_RANK && r.rewardType === "bonus_spin" && rewardValue >= 1 && rewardValue <= 1000) {
-      rewards.push({ rank, rewardType: "bonus_spin", rewardValue });
+    if (rank >= 1 && rank <= MAX_LEADERBOARD_RANK && rewardValue >= 1 && rewardValue <= 1000) {
+      const entry: LeaderboardRewardConfig = { rank, rewardType, rewardValue };
+      // bonus_coupon 可选标签：匹配 coupon_codes.label 精确发券
+      if (rewardType === "bonus_coupon" && typeof r.couponLabel === "string" && r.couponLabel.trim()) {
+        entry.couponLabel = r.couponLabel.trim();
+      }
+      rewards.push(entry);
     }
   }
   return rewards;
@@ -61,11 +75,17 @@ export function normalizeLeaderboardRewards(raw: unknown): LeaderboardRewardConf
 export type GrantLeaderboardResult = {
   granted: number;
   skipped: number;
-  details: Array<{ rank: number; entryId: string; rewardValue: number; status: "granted" | "skipped" }>;
+  details: Array<{
+    rank: number;
+    entryId: string;
+    rewardType: "bonus_spin" | "bonus_coupon";
+    rewardValue: number;
+    status: "granted" | "skipped";
+  }>;
 };
 
 /** 单个分享者的事务内判定结果（事务外据此累加报告，见 R-9 注释） */
-type GrantVerdict = { status: "granted" | "skipped"; rewardValue: number };
+type GrantVerdict = { status: "granted" | "skipped"; rewardType: "bonus_spin" | "bonus_coupon"; rewardValue: number };
 
 /**
  * 分享者聚合信息：邀请总人数 + 最早分享时间（同票先到先得）+ 名下全部 share_record id（幂等标记目标）。
@@ -174,7 +194,7 @@ export async function grantLeaderboardRewards(
     const rewardCfg = rewards.find((r) => r.rank === rank);
     if (!rewardCfg) {
       result.skipped++;
-      result.details.push({ rank, entryId: sharerEntryId, rewardValue: 0, status: "skipped" });
+      result.details.push({ rank, entryId: sharerEntryId, rewardType: "bonus_spin", rewardValue: 0, status: "skipped" });
       continue;
     }
 
@@ -196,11 +216,11 @@ export async function grantLeaderboardRewards(
           eq(shareRecords.sharerEntryId, sharerEntryId),
         ));
       if (records.length === 0) {
-        return { status: "skipped", rewardValue: rewardCfg.rewardValue };
+        return { status: "skipped", rewardType: rewardCfg.rewardType, rewardValue: rewardCfg.rewardValue };
       }
       // 任一记录已标记 → 该分享者已发放过，跳过（幂等）
       if (records.some((r) => String(r.leaderboardRewardedAt || "") !== "")) {
-        return { status: "skipped", rewardValue: rewardCfg.rewardValue };
+        return { status: "skipped", rewardType: rewardCfg.rewardType, rewardValue: rewardCfg.rewardValue };
       }
 
       // CAS：全部记录 leaderboardRewardedAt 仍为空才标记；rowsAffected 必须等于记录数
@@ -215,7 +235,7 @@ export async function grantLeaderboardRewards(
         ));
       if ((marked.rowsAffected ?? 0) !== records.length) {
         // 并发下部分记录已被其他请求标记 → 放弃本次（防重复发放）
-        return { status: "skipped", rewardValue: rewardCfg.rewardValue };
+        return { status: "skipped", rewardType: rewardCfg.rewardType, rewardValue: rewardCfg.rewardValue };
       }
 
       // 读取分享者 entry（含当前 granted，用于 maxSpins 裁剪与审计）
@@ -235,9 +255,44 @@ export async function grantLeaderboardRewards(
         .limit(1);
       if (!entry) {
         // entry 不存在（已删除）→ 不发放，但记录已标记；状态 skipped 提示运营
-        return { status: "skipped", rewardValue: rewardCfg.rewardValue };
+        return { status: "skipped", rewardType: rewardCfg.rewardType, rewardValue: rewardCfg.rewardValue };
       }
 
+      // ——— 按 rewardType 分发到不同出口 ———
+      if (rewardCfg.rewardType === "bonus_coupon") {
+        // 优惠券发放：通过 grantBonusCoupon 从码池 CAS 取券，与 referral-rewards-engine 同出口。
+        // 幂等键 leaderboard:rank:{rank} 保证同一排名不会重复发券。
+        const issuedCount = await grantBonusCoupon(
+          tx,
+          draw.tenantId,
+          draw.id,
+          entry.id,
+          rewardCfg.couponLabel,
+          `leaderboard:${rank}`,
+          rewardCfg.rewardValue,
+          "viral",
+        );
+        // 记录流水日志（delta=发券张数，reason=viral，refId 含 :coupon 后缀区分）
+        if (issuedCount > 0) {
+          const [snap] = await tx
+            .select({ spinsLeft: lotteryEntries.spinsLeft })
+            .from(lotteryEntries)
+            .where(eq(lotteryEntries.id, entry.id))
+            .limit(1);
+          await recordSpinLog(tx, {
+            tenantId: draw.tenantId,
+            entryId: entry.id,
+            userId: entry.identityValue || entry.id,
+            delta: issuedCount,
+            balanceAfter: Math.max(0, Number(snap?.spinsLeft ?? 0)),
+            reason: "viral",
+            refId: `leaderboard:${rank}:coupon`,
+          });
+        }
+        return { status: issuedCount > 0 ? "granted" : "skipped", rewardType: "bonus_coupon", rewardValue: issuedCount };
+      }
+
+      // bonus_spin 路径（与旧行为完全兼容）
       // maxSpins 总顶裁剪（P0 防 API 直写超大 rewardValue 把 granted 推爆）：
       // granted ≤ maxSpinsPerEntry 不变量；超出部分按实际可发额度发放，refId 留 capped 审计。
       const granted = Math.max(0, Math.floor(Number(entry.spinsTotalGranted || 0)));
@@ -277,12 +332,18 @@ export async function grantLeaderboardRewards(
         });
       }
 
-      return { status: "granted", rewardValue: actual };
+      return { status: "granted", rewardType: "bonus_spin", rewardValue: actual };
     });
 
     if (verdict.status === "granted") result.granted++;
     else result.skipped++;
-    result.details.push({ rank, entryId: sharerEntryId, rewardValue: verdict.rewardValue, status: verdict.status });
+    result.details.push({
+      rank,
+      entryId: sharerEntryId,
+      rewardType: verdict.rewardType,
+      rewardValue: verdict.rewardValue,
+      status: verdict.status,
+    });
   }
 
   return result;

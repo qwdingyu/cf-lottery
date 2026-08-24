@@ -43,6 +43,7 @@ import {
   prizeCodes,
   spinsLog,
   shareRecords,
+  couponCodes,
   systemConfig,
 } from "../../db/schema";
 import { performInstantSpin, cleanExpiredSpins } from "./spin-execution";
@@ -1617,16 +1618,19 @@ describe("normalizeLeaderboardRewards（publish-check 与发放共用同一归�
 
   it("空数组或全无效项 → 空数组", () => {
     expect(normalizeLeaderboardRewards([])).toEqual([]);
-    // rank<1 / 非 bonus_spin / rewardValue<1 / 非对象元素 全部剔除
+    // rank<1 / rewardValue<1 / 非对象元素 全部剔除
+    // 注意：非法 rewardType（如 "points"）现在回退为 bonus_spin，不再被剔除
     expect(normalizeLeaderboardRewards([
       { rank: 0, rewardType: "bonus_spin", rewardValue: 3 },
-      { rank: 1, rewardType: "points", rewardValue: 3 },
+      { rank: 1, rewardType: "points", rewardValue: 3 }, // 回退为 bonus_spin，有效
       { rank: 1, rewardType: "bonus_spin", rewardValue: 0 },
       { rank: -1, rewardType: "bonus_spin", rewardValue: 3 },
       "garbage",
       null,
       7,
-    ])).toEqual([]);
+    ])).toEqual([
+      { rank: 1, rewardType: "bonus_spin", rewardValue: 3 },
+    ]);
   });
 
   it("混合有效/无效项 → 仅保留有效项，数值字符串归一化为 number", () => {
@@ -2362,5 +2366,317 @@ describe("grantLeaderboardRewards", () => {
       .where(eq(lotteryEntries.id, s1.entryId))
       .limit(1);
     expect(Number(entry?.spinsTotalGranted ?? 0)).toBe(5);
+  });
+});
+
+describe("normalizeLeaderboardRewards bonus_coupon 支持", () => {
+  it("bonus_coupon 类型被正确归一化", () => {
+    const result = normalizeLeaderboardRewards([
+      { rank: 1, rewardType: "bonus_coupon", rewardValue: 5 },
+      { rank: 2, rewardType: "bonus_spin", rewardValue: 3 },
+    ]);
+    expect(result).toEqual([
+      { rank: 1, rewardType: "bonus_coupon", rewardValue: 5 },
+      { rank: 2, rewardType: "bonus_spin", rewardValue: 3 },
+    ]);
+  });
+
+  it("bonus_coupon 带 couponLabel 被保留", () => {
+    const result = normalizeLeaderboardRewards([
+      { rank: 1, rewardType: "bonus_coupon", rewardValue: 2, couponLabel: "vip" },
+    ]);
+    expect(result).toEqual([
+      { rank: 1, rewardType: "bonus_coupon", rewardValue: 2, couponLabel: "vip" },
+    ]);
+  });
+
+  it("bonus_coupon 空 couponLabel 不保留该字段", () => {
+    const result = normalizeLeaderboardRewards([
+      { rank: 1, rewardType: "bonus_coupon", rewardValue: 2, couponLabel: "" },
+    ]);
+    expect(result).toEqual([
+      { rank: 1, rewardType: "bonus_coupon", rewardValue: 2 },
+    ]);
+    expect(result[0]!).not.toHaveProperty("couponLabel");
+  });
+
+  it("非法 rewardType 回退为 bonus_spin", () => {
+    const result = normalizeLeaderboardRewards([
+      { rank: 1, rewardType: "points", rewardValue: 5 },
+    ]);
+    expect(result).toEqual([
+      { rank: 1, rewardType: "bonus_spin", rewardValue: 5 },
+    ]);
+  });
+});
+
+describe("grantLeaderboardRewards bonus_coupon 发放", () => {
+  let db: DbType;
+  let client: Client;
+
+  beforeEach(async () => {
+    const t = await getTestDb();
+    db = t.db;
+    client = t.client;
+    await clearTestData(client);
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO tenants (id, name, plan, status) VALUES (?, 'T', 'free', 'active')`,
+      args: [TENANT],
+    });
+  });
+
+  afterEach(async () => {
+    await clearTestData(client);
+  });
+
+  /** 辅助：创建活动 + 分享者 + 分享记录 + 优惠券码池 */
+  async function setupCouponScenario(opts?: { couponLabel?: string }) {
+    const drawId = `draw-lb-coupon-${Date.now()}`;
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: `slug-lb-coupon-${Date.now()}`,
+      title: "排行榜优惠券测试",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "wheel",
+      resultMode: "manual",
+      maxSpinsPerEntry: 10,
+      startAt: new Date(Date.now() - 86_400_000).toISOString(),
+      endAt: new Date(Date.now() + 86_400_000).toISOString(),
+      promotionConfig: JSON.stringify({
+        viral: {
+          enabled: true,
+          extraEntriesPerInvite: 1,
+          maxExtraEntries: 10,
+          leaderboardEnabled: true,
+          leaderboardRewards: [{
+            rank: 1,
+            rewardType: "bonus_coupon",
+            rewardValue: 2,
+            ...(opts?.couponLabel ? { couponLabel: opts.couponLabel } : {}),
+          }],
+        },
+      }),
+    });
+
+    // 分享者 entry
+    const sharerEntryId = `entry-sharer-coupon-${Date.now()}`;
+    await db.insert(lotteryEntries).values({
+      id: sharerEntryId,
+      tenantId: TENANT,
+      drawId,
+      identityType: "email",
+      identityValue: "sharer@example.com",
+      spinsLeft: 0,
+      spinsTotalGranted: 0,
+      joinedAt: new Date().toISOString(),
+    });
+
+    // 分享记录（邀请了 3 人）
+    await db.insert(shareRecords).values({
+      id: `sr-coupon-${Date.now()}`,
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId,
+      shareCode: `SC-${Date.now()}`,
+      joinedCount: 3,
+      createdAt: new Date().toISOString(),
+    });
+
+    // 优惠券码池
+    const label = opts?.couponLabel || "general";
+    for (let i = 0; i < 5; i++) {
+      await db.insert(couponCodes).values({
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId,
+        code: `CP-LB-${Date.now()}-${i}`,
+        label,
+        status: "available",
+      });
+    }
+
+    return { drawId, sharerEntryId };
+  }
+
+  it("bonus_coupon 按名次发放优惠券，spinsLeft 不变", async () => {
+    const { drawId, sharerEntryId } = await setupCouponScenario();
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+
+    const result = await grantLeaderboardRewards(db, draw!);
+
+    expect(result.granted).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.details).toHaveLength(1);
+    expect(result.details[0]!.rewardType).toBe("bonus_coupon");
+    expect(result.details[0]!.rewardValue).toBe(2); // 实发 2 张
+    expect(result.details[0]!.status).toBe("granted");
+
+    // spinsLeft 不变（优惠券不增加抽奖次数）
+    const [entry] = await db
+      .select({ spinsLeft: lotteryEntries.spinsLeft, spinsTotalGranted: lotteryEntries.spinsTotalGranted })
+      .from(lotteryEntries)
+      .where(eq(lotteryEntries.id, sharerEntryId))
+      .limit(1);
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(0);
+    expect(Number(entry?.spinsTotalGranted ?? 0)).toBe(0);
+
+    // 码池中 available 减少 2 张
+    const [available] = await db
+      .select({ cnt: count() })
+      .from(couponCodes)
+      .where(and(
+        eq(couponCodes.tenantId, TENANT),
+        eq(couponCodes.drawId, drawId),
+        eq(couponCodes.status, "available"),
+      ));
+    expect(Number(available?.cnt ?? 0)).toBe(3); // 5 - 2 = 3
+  });
+
+  it("bonus_coupon 码池不足时部分发放", async () => {
+    const { drawId } = await setupCouponScenario();
+    // 删掉 4 张券，只留 1 张
+    await db.delete(couponCodes).where(and(
+      eq(couponCodes.tenantId, TENANT),
+      eq(couponCodes.drawId, drawId),
+    ));
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      code: `CP-ONLY-${Date.now()}`,
+      label: "general",
+      status: "available",
+    });
+
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    const result = await grantLeaderboardRewards(db, draw!);
+
+    // 配置要发 2 张，但只有 1 张 available → 实发 1 张
+    expect(result.granted).toBe(1);
+    expect(result.details[0]!.rewardValue).toBe(1);
+
+    // 码池耗尽
+    const [available] = await db
+      .select({ cnt: count() })
+      .from(couponCodes)
+      .where(and(
+        eq(couponCodes.tenantId, TENANT),
+        eq(couponCodes.drawId, drawId),
+        eq(couponCodes.status, "available"),
+      ));
+    expect(Number(available?.cnt ?? 0)).toBe(0);
+  });
+
+  it("bonus_coupon 幂等：第二次调用不重复发券", async () => {
+    const { drawId } = await setupCouponScenario();
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+
+    const r1 = await grantLeaderboardRewards(db, draw!);
+    expect(r1.granted).toBe(1);
+
+    const r2 = await grantLeaderboardRewards(db, draw!);
+    expect(r2.granted).toBe(0);
+    expect(r2.skipped).toBe(1);
+    expect(r2.details[0]!.status).toBe("skipped");
+
+    // 码池仍只消耗 2 张
+    const [available] = await db
+      .select({ cnt: count() })
+      .from(couponCodes)
+      .where(and(
+        eq(couponCodes.tenantId, TENANT),
+        eq(couponCodes.drawId, drawId),
+        eq(couponCodes.status, "available"),
+      ));
+    expect(Number(available?.cnt ?? 0)).toBe(3);
+  });
+
+  it("bonus_spin 和 bonus_coupon 混合配置：各按类型发放", async () => {
+    const drawId = `draw-mixed-${Date.now()}`;
+    await db.insert(lotteryDraws).values({
+      id: drawId,
+      tenantId: TENANT,
+      publicSlug: `slug-mixed-${Date.now()}`,
+      title: "混合奖励测试",
+      status: "open",
+      activityKind: "lottery",
+      participationMode: "open",
+      experienceType: "wheel",
+      resultMode: "manual",
+      maxSpinsPerEntry: 10,
+      startAt: new Date(Date.now() - 86_400_000).toISOString(),
+      endAt: new Date(Date.now() + 86_400_000).toISOString(),
+      promotionConfig: JSON.stringify({
+        viral: {
+          enabled: true,
+          extraEntriesPerInvite: 1,
+          maxExtraEntries: 10,
+          leaderboardEnabled: true,
+          leaderboardRewards: [
+            { rank: 1, rewardType: "bonus_coupon", rewardValue: 1 },
+            { rank: 2, rewardType: "bonus_spin", rewardValue: 3 },
+          ],
+        },
+      }),
+    });
+
+    // 两个分享者：A 邀请 5 人（第1），B 邀请 2 人（第2）
+    const entryA = `entry-mix-a-${Date.now()}`;
+    const entryB = `entry-mix-b-${Date.now()}`;
+    await db.insert(lotteryEntries).values([
+      {
+        id: entryA, tenantId: TENANT, drawId, identityType: "email",
+        identityValue: "a@ex.com", spinsLeft: 0, spinsTotalGranted: 0,
+        joinedAt: new Date().toISOString(),
+      },
+      {
+        id: entryB, tenantId: TENANT, drawId, identityType: "email",
+        identityValue: "b@ex.com", spinsLeft: 0, spinsTotalGranted: 0,
+        joinedAt: new Date().toISOString(),
+      },
+    ]);
+    await db.insert(shareRecords).values([
+      {
+        id: `sr-a-${Date.now()}`, tenantId: TENANT, drawId, sharerEntryId: entryA,
+        shareCode: `SC-A-${Date.now()}`, joinedCount: 5, createdAt: new Date().toISOString(),
+      },
+      {
+        id: `sr-b-${Date.now()}`, tenantId: TENANT, drawId, sharerEntryId: entryB,
+        shareCode: `SC-B-${Date.now()}`, joinedCount: 2, createdAt: new Date().toISOString(),
+      },
+    ]);
+
+    // 优惠券码池（1 张 available）
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(), tenantId: TENANT, drawId,
+      code: `CP-MIX-${Date.now()}`, label: "general", status: "available",
+    });
+
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+    const result = await grantLeaderboardRewards(db, draw!);
+
+    expect(result.granted).toBe(2);
+    expect(result.details).toHaveLength(2);
+
+    // 第1名：bonus_coupon 发 1 张
+    const d1 = result.details.find((d) => d.rank === 1);
+    expect(d1?.rewardType).toBe("bonus_coupon");
+    expect(d1?.rewardValue).toBe(1);
+    expect(d1?.status).toBe("granted");
+
+    // 第2名：bonus_spin 发 3 次
+    const d2 = result.details.find((d) => d.rank === 2);
+    expect(d2?.rewardType).toBe("bonus_spin");
+    expect(d2?.rewardValue).toBe(3);
+    expect(d2?.status).toBe("granted");
+
+    // A 的 spinsLeft 不变（拿的是券），B 的 spinsLeft = 3（拿的是次数）
+    const [eA] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryA)).limit(1);
+    const [eB] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryB)).limit(1);
+    expect(Number(eA?.spinsLeft ?? 0)).toBe(0);
+    expect(Number(eB?.spinsLeft ?? 0)).toBe(3);
   });
 });

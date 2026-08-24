@@ -134,12 +134,19 @@ export function normalizePrizePanelMode(raw: unknown): string {
 /** 排行榜奖励项（与后端 LeaderboardRewardConfig 对齐） */
 export type LeaderboardRewardEntry = {
   rank: number
-  rewardType: 'bonus_spin'
+  rewardType: 'bonus_spin' | 'bonus_coupon'
   rewardValue: number
+  /** bonus_coupon 时可选的优惠券标签（匹配 coupon_codes.label） */
+  couponLabel?: string
 }
 
 /**
- * 解析排行榜奖励明细文本（多行 "名次:spins次数"，如 "1:3\n2:1"）。
+ * 解析排行榜奖励明细文本（多行格式）。
+ *
+ * 支持两种格式（向后兼容）：
+ * - "名次:次数" → bonus_spin（如 "1:3\n2:1"）
+ * - "名次:coupon:张数" → bonus_coupon（如 "1:coupon:5\n2:coupon:3"）
+ *
  * 非法行跳过；名次/次数必须为正整数，名次上限 100。
  * 空输入 → []。
  */
@@ -149,24 +156,35 @@ export function parseLeaderboardRewardsText(raw: string | null | undefined): Lea
   for (const line of String(raw || '').split(/[\n,;；]/)) {
     const s = line.trim()
     if (!s) continue
-    const m = s.match(/^(\d+)\s*[:：]\s*(\d+)$/)
-    if (!m) continue
-    const rank = Number(m[1])
-    const rewardValue = Number(m[2])
-    if (rank < 1 || rank > 100 || rewardValue < 1 || rewardValue > 1000) continue
-    if (seen.has(rank)) continue
-    seen.add(rank)
-    out.push({ rank, rewardType: 'bonus_spin', rewardValue })
+    // 格式1: "1:3" → bonus_spin
+    // 格式2: "1:coupon:5" → bonus_coupon
+    const mSpin = s.match(/^(\d+)\s*[:：]\s*(\d+)$/)
+    const mCoupon = s.match(/^(\d+)\s*[:：]\s*coupon\s*[:：]\s*(\d+)$/)
+    if (mCoupon) {
+      const rank = Number(mCoupon[1])
+      const rewardValue = Number(mCoupon[2])
+      if (rank < 1 || rank > 100 || rewardValue < 1 || rewardValue > 1000) continue
+      if (seen.has(rank)) continue
+      seen.add(rank)
+      out.push({ rank, rewardType: 'bonus_coupon', rewardValue })
+    } else if (mSpin) {
+      const rank = Number(mSpin[1])
+      const rewardValue = Number(mSpin[2])
+      if (rank < 1 || rank > 100 || rewardValue < 1 || rewardValue > 1000) continue
+      if (seen.has(rank)) continue
+      seen.add(rank)
+      out.push({ rank, rewardType: 'bonus_spin', rewardValue })
+    }
   }
   return out.sort((a, b) => a.rank - b.rank)
 }
 
 /** 排行榜奖励明细 → 多行文本（与 parseLeaderboardRewardsText 互逆） */
-export function formatLeaderboardRewardsText(rewards: Array<{ rank: number; rewardValue: number }> | null | undefined): string {
+export function formatLeaderboardRewardsText(rewards: LeaderboardRewardEntry[] | null | undefined): string {
   if (!Array.isArray(rewards) || rewards.length === 0) return ''
   return [...rewards]
     .sort((a, b) => a.rank - b.rank)
-    .map((r) => `${r.rank}:${r.rewardValue}`)
+    .map((r) => r.rewardType === 'bonus_coupon' ? `${r.rank}:coupon:${r.rewardValue}` : `${r.rank}:${r.rewardValue}`)
     .join('\n')
 }
 

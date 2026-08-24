@@ -417,6 +417,22 @@ describe('growth-config 编辑回填与提交（docs/114 防擦裂变）', () =>
       expect(formatLeaderboardRewardsText(null)).toBe('')
     })
 
+    it('parseLeaderboardRewardsText：bonus_coupon 格式解析', () => {
+      expect(parseLeaderboardRewardsText('1:coupon:5\n2:3\n3:coupon:1')).toEqual([
+        { rank: 1, rewardType: 'bonus_coupon', rewardValue: 5 },
+        { rank: 2, rewardType: 'bonus_spin', rewardValue: 3 },
+        { rank: 3, rewardType: 'bonus_coupon', rewardValue: 1 },
+      ])
+    })
+
+    it('formatLeaderboardRewardsText：bonus_coupon 混合格式化', () => {
+      const items = [
+        { rank: 1, rewardType: 'bonus_coupon' as const, rewardValue: 5 },
+        { rank: 2, rewardType: 'bonus_spin' as const, rewardValue: 3 },
+      ]
+      expect(formatLeaderboardRewardsText(items)).toBe('1:coupon:5\n2:3')
+    })
+
     it('growthFieldsFromDraw：回填保底 / 每日免费 / 排行榜奖励（编辑防擦）', () => {
       const g = growthFieldsFromDraw({
         promotionConfig: JSON.stringify({
