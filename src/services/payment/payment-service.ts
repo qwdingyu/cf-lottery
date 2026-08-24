@@ -320,9 +320,13 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
 
       // 4b) 取消对应 reward_pending 事件（docs/271）：已释放的 entry 不再有付款确认机会，
       //     因此 sharer 的 pending 奖励应标记为 cancelled。仅对 toRelease 的 entry 执行。
+      //     用 overdue 订单的 drawId 而非空字符串——cancelRewardPending 需要 drawId
+      //     查询 attributed_join 事件以获取 sharerEntryId，空 drawId 会导致查询永远不匹配。
+      const entryDrawMap = new Map(overdue.map((o) => [o.entryId, o.drawId]));
       for (const expiredEntryId of toRelease) {
-        await cancelRewardPending(tx, tenantId, "", expiredEntryId, "payment_expired").catch((err) => {
-          logError("payment-service", `cancelRewardPending entry=${expiredEntryId}`, err);
+        const drawId = entryDrawMap.get(expiredEntryId) || "";
+        await cancelRewardPending(tx, tenantId, drawId, expiredEntryId, "payment_expired").catch((err) => {
+          logError("payment-service", `cancelRewardPending entry=${expiredEntryId} draw=${drawId}`, err);
         });
       }
     }
