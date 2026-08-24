@@ -1567,3 +1567,21 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
     return fail(c, err instanceof Error ? err.message : "补发失败", 400);
   }
 });
+
+// ── 投票/问卷结果统计（docs/267 P0）──
+// GET /api/admin/draws/:id/vote-survey-stats
+// 返回投票选项分布或问卷字段答案统计，用于管理端结果面板。
+adminLotteryRoute.get("/draws/:id/vote-survey-stats", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+  const limit = Math.min(Number(c.req.query("limit") || 20), 100);
+
+  try {
+    const { getVoteSurveyStats } = await import("../services/lottery/vote-survey-stats");
+    const stats = await getVoteSurveyStats(db, tenantId, drawId, { limit });
+    return ok(c, stats as unknown as Record<string, unknown>);
+  } catch (err) {
+    return fail(c, err instanceof Error ? err.message : "查询失败", 400);
+  }
+});
