@@ -1478,6 +1478,9 @@ adminLotteryRoute.get("/draws/:id/rewards/failures", async (c) => {
       // 防极端情况：失败记录极多时列表接口可能慢，限制最多返回 200 条
       .limit(200);
 
+    // 过滤掉 cancelRewardPending 的取消记录（status=cancelled）：
+    // 这些是支付取消/退款/超时后的正常清理，不是真正的奖励发放失败。
+    // 混入会导致运营误点"补发"，对已取消的支付触发不必要的奖励重试。
     const list = rows.map((r) => {
       let meta: Record<string, unknown> = {}
       try { meta = JSON.parse(r.metadataJson || "{}") } catch { /* ignore */ }
@@ -1492,7 +1495,7 @@ adminLotteryRoute.get("/draws/:id/rewards/failures", async (c) => {
         identityType: "",
         identityValue: "",
       }
-    })
+    }).filter((r) => r.path !== "cancelRewardPending")
 
     // 批量查询 entryId 对应的身份信息，供 decorateIdentityDisplay 解析为可读名称
     const entryIds = [...new Set(list.map((r) => r.entryId).filter(Boolean))];
@@ -1568,11 +1571,20 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
     if (entryIdFilter) {
       conditions.push(eq(activityEvents.entryId, entryIdFilter));
     }
-    const failures = await db
+    const allFailures = await db
       .select()
       .from(activityEvents)
       .where(and(...conditions))
       .orderBy(desc(activityEvents.createdAt));
+
+    // 过滤掉 cancelRewardPending 的取消记录：支付取消/退款/超时后的正常清理，
+    // 不是真正的奖励发放失败，补发无意义（支付已不存在）
+    const failures = allFailures.filter((f) => {
+      try {
+        const meta = JSON.parse(f.metadataJson || "{}");
+        return meta.path !== "cancelRewardPending";
+      } catch { return true; }
+    });
 
     if (failures.length === 0) {
       return fail(c, "该活动暂无奖励发放失败记录", 400);
