@@ -336,25 +336,20 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
           inArray(lotteryEntries.id, staleReservations.map((entry) => entry.id)),
           eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.RESERVED),
         ))
-        .returning({ drawId: lotteryEntries.drawId });
+        .returning({ drawId: lotteryEntries.drawId, id: lotteryEntries.id });
       for (const entry of releasedReserved) {
         releaseByDraw.set(entry.drawId, (releaseByDraw.get(entry.drawId) || 0) + 1);
+        // 取消对应 reward_pending 事件（docs/271）：残留预占 entry 不再有付款机会，
+        // 因此 sharer 的 pending 奖励应标记为 cancelled。
+        await cancelRewardPending(tx, tenantId, entry.drawId, entry.id, "payment_expired").catch((err) => {
+          logError("payment-service", `cancelRewardPending stale entry=${entry.id}`, err);
+        });
       }
     }
 
     // 释放名额的 entry 都属于直付秒杀；按活动分组扣减计数器，避免把多个活动混成一个 delta。
     for (const [drawId, amount] of releaseByDraw) {
       await decrementActiveFlashSaleCount(tx, tenantId, drawId, amount);
-    }
-
-    // percent 模式奖励清理：超时订单释放时，取消对应的 reward_pending 事件。
-    // 容错：单条失败不影响批量释放，catch 降级为 logError 确保运维可感知。
-    for (const order of overdue) {
-      if (order.entryId) {
-        await cancelRewardPending(tx, tenantId, order.drawId, order.entryId, "payment_expired").catch((err) => {
-          logError("payment-service", `cancelRewardPending expired order=${order.id} draw=${order.drawId}`, err);
-        });
-      }
     }
 
     return overdue.length + staleReservations.length;
