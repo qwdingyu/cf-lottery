@@ -5509,4 +5509,30 @@ onBeforeUnmount(() => {
   line-height: 1.6;
   margin: 8px 0 0;
 }
+
+/* ── 裂变数据弹窗统计卡片（与 AdminDashboardView 同样式） ── */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px;
+  background: var(--tg-secondary-bg, #151b28);
+  border-radius: var(--r-lg, 12px);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+}
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--admin-accent, #f59e0b);
+}
+.stat-label {
+  font-size: 12px;
+  color: var(--tg-hint, #9aa4b2);
+}
 </style>
