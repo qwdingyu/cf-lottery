@@ -900,6 +900,9 @@ async function maybeTriggerReward(
       await grantViralSpinsToSharer(tx, draw, attribution.sharerEntryId, attribution.shareRecordId);
     } catch (err) {
       // P1-2：奖励发放失败必须落库，供管理端补发入口查询
+      // P3 修复（docs/271）：DB 断连时 recordActivityEvent 也会失败，
+      // .catch 降级为 logError 确保运维通过 stderr/监控感知事件记录丢失，
+      // 而非静默吞掉导致管理端完全无感知。
       await recordActivityEvent(tx, {
         tenantId: draw.tenantId,
         drawId: draw.id,
@@ -911,7 +914,9 @@ async function maybeTriggerReward(
           error: err instanceof Error ? err.message : String(err),
           shareRecordId: attribution.shareRecordId,
         },
-      }).catch(() => { /* 记录失败事件本身不抛，避免影响主流程 */ });
+      }).catch((recordErr) => {
+        logError("participation", `reward_failed event also lost (grantViralSpinsToSharer) draw=${draw.id}`, recordErr);
+      });
       logError("participation", `grantViralSpinsToSharer draw=${draw.id}`, err);
     }
   }
@@ -923,6 +928,8 @@ async function maybeTriggerReward(
       await processReferralRewardsEngine(tx, draw, attribution.shareRecordId);
     } catch (err) {
       // P1-2：奖励发放失败必须落库，供管理端补发入口查询
+      // P3 修复（docs/271）：DB 断连时 recordActivityEvent 也会失败，
+      // .catch 降级为 logError 确保运维通过 stderr/监控感知事件记录丢失。
       await recordActivityEvent(tx, {
         tenantId: draw.tenantId,
         drawId: draw.id,
@@ -934,7 +941,9 @@ async function maybeTriggerReward(
           error: err instanceof Error ? err.message : String(err),
           shareRecordId: attribution.shareRecordId,
         },
-      }).catch(() => { /* 记录失败事件本身不抛，避免影响主流程 */ });
+      }).catch((recordErr) => {
+        logError("participation", `reward_failed event also lost (processReferralRewardsEngine) draw=${draw.id}`, recordErr);
+      });
       logError("participation", `processReferralRewardsEngine draw=${draw.id}`, err);
     }
   }
@@ -957,6 +966,8 @@ async function maybeTriggerReward(
   } catch (err) {
     // 奖励触发失败不影响参与成功（与 grantLoserRewards 的容错一致）
     // P1-2：奖励发放失败必须落库，供管理端补发入口查询
+    // P3 修复（docs/271）：DB 断连时 recordActivityEvent 也会失败，
+    // .catch 降级为 logError 确保运维通过 stderr/监控感知事件记录丢失。
     await recordActivityEvent(tx, {
       tenantId: draw.tenantId,
       drawId: draw.id,
@@ -968,7 +979,9 @@ async function maybeTriggerReward(
         error: err instanceof Error ? err.message : String(err),
         shareRecordId: attribution.shareRecordId,
       },
-    }).catch(() => { /* 记录失败事件本身不抛，避免影响主流程 */ });
+    }).catch((recordErr) => {
+      logError("participation", `reward_failed event also lost (triggerRewardEarned) draw=${draw.id}`, recordErr);
+    });
     logError("participation", `triggerRewardEarned draw=${draw.id}`, err);
   }
 }
