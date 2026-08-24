@@ -46,7 +46,6 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.2",
     "hono": "^4.13.0",
-    "tsx": "^4.23.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -55,6 +54,7 @@
     "@vitest/coverage-v8": "4.1.7",
     "drizzle-kit": "^0.31.10",
     "javascript-obfuscator": "^5.5.0",
+    "tsx": "^4.23.5",
     "typescript": "5.7.3",
     "vite": "6.4.3",
     "vitest": "4.1.7",
