@@ -59,6 +59,22 @@
       <small>{{ $t('adminDashboard.roiEmptyHint') }}</small>
     </div>
 
+    <!-- G-2: 裂变/邀请统计概览（仅在有数据时展示） -->
+    <div v-if="stats.viralSharers > 0" class="stats-row" style="margin-top: 0">
+      <div class="stat-card">
+        <span class="stat-value">{{ stats.viralSharers }}</span>
+        <span class="stat-label">{{ $t('adminDashboard.viralSharers') }}</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ stats.viralClicks }}</span>
+        <span class="stat-label">{{ $t('adminDashboard.viralClicks') }}</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">{{ stats.viralInvites }}</span>
+        <span class="stat-label">{{ $t('adminDashboard.viralInvites') }}</span>
+      </div>
+    </div>
+
     <!-- 待办事项：提示运营者需要处理的事项 -->
     <div v-if="hasTodos" class="todo-panel" role="region" :aria-label="$t('adminDashboard.todosAria')">
       <div class="todo-panel-title">{{ $t('adminDashboard.todosTitle') }}</div>
@@ -154,6 +170,10 @@ const stats = ref({
   activityLimit: 10 as number | null,
   participantUsage: 0,
   participantLimit: null as number | null,
+  /** G-2: 裂变统计概览 */
+  viralSharers: 0,
+  viralClicks: 0,
+  viralInvites: 0,
 })
 const recentDraws = ref<any[]>([])
 /** 待办事项（待开奖/通知失败） */
@@ -247,6 +267,12 @@ async function loadData() {
     }
     // 营销 ROI 数据
     roi.value = dashboardData?.roi ?? { totalConversions: 0, totalAmountCents: 0, byType: [] }
+    // G-2: 裂变统计概览
+    if (dashboardData?.viralStats) {
+      stats.value.viralSharers = dashboardData.viralStats.totalSharers ?? 0
+      stats.value.viralClicks = dashboardData.viralStats.totalClicks ?? 0
+      stats.value.viralInvites = dashboardData.viralStats.totalInvites ?? 0
+    }
   } catch (err: any) {
     showToast(err.message || t('adminDashboard.loadFailed'), 'error')
   }

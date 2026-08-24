@@ -377,6 +377,38 @@ adminLotteryRoute.get("/draws/:id/shares", async (c) => {
   return ok(c, { shares: rows, totalClicks, totalJoins, sharerCount: rows.length });
 });
 
+/**
+ * G-1+G-3: 裂变综合数据（分享统计 + 排行榜排名）
+ *
+ * 供管理后台"查看裂变数据"弹窗使用，聚合分享统计和排行榜数据，
+ * 避免前端分别调用两个接口。
+ */
+adminLotteryRoute.get("/draws/:id/viral-stats", async (c) => {
+  const db = getDb(c);
+  const tenantId = c.get("tenantId") as string;
+  const drawId = c.req.param("id");
+
+  // 分享统计（复用 shares 逻辑）
+  const rows = await db
+    .select()
+    .from(shareRecords)
+    .where(and(eq(shareRecords.tenantId, tenantId), eq(shareRecords.drawId, drawId)))
+    .orderBy(desc(shareRecords.createdAt));
+  const totalClicks = rows.reduce((s, r) => s + r.clickedCount, 0);
+  const totalJoins = rows.reduce((s, r) => s + r.joinedCount, 0);
+
+  // 排行榜排名（复用 buildViralLeaderboardRanking）
+  const { buildViralLeaderboardRanking } = await import("../services/lottery/viral-weight");
+  const inviteCounts = new Map(rows.map((r) => [r.sharerEntryId, r.joinedCount]));
+  const { entries: leaderboard } = buildViralLeaderboardRanking(inviteCounts, { topN: 20 });
+
+  return ok(c, {
+    shareStats: { totalClicks, totalJoins, sharerCount: rows.length },
+    leaderboard,
+    shares: rows,
+  });
+});
+
 // ═════════════════════════════════════════════════════════
 // 兑换码管理（运营者生成，终端用户兑换）
 // ═════════════════════════════════════════════════════════

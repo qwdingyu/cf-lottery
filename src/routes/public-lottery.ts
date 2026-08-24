@@ -2159,6 +2159,9 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
           tenantId: shareRecords.tenantId,
           joinedCount: shareRecords.joinedCount,
           rewardMilestonesGranted: shareRecords.rewardMilestonesGranted,
+          // G-4: 排行榜奖励发放状态
+          leaderboardRewardedAt: shareRecords.leaderboardRewardedAt,
+          leaderboardRewardedCount: shareRecords.leaderboardRewardedCount,
         })
         .from(shareRecords)
         .where(and(
@@ -2168,7 +2171,7 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
         ))
     : [];
   // 按 drawId 聚合（同一活动可能有多条 shareRecord，如多次分享）
-  const shareMap = new Map<string, { joinedCount: number; grantedMarks: string[] }>();
+  const shareMap = new Map<string, { joinedCount: number; grantedMarks: string[]; leaderboardRewardedAt: string; leaderboardRewardedCount: number }>();
   for (const sr of shareRows) {
     const key = `${sr.tenantId}:${sr.drawId}`;
     const existing = shareMap.get(key);
@@ -2177,11 +2180,16 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
       try { return JSON.parse(sr.rewardMilestonesGranted || "[]") as string[]; }
       catch { return [] as string[]; }
     })();
+    const lbAt = sr.leaderboardRewardedAt || "";
+    const lbCount = Number(sr.leaderboardRewardedCount || 0);
     if (existing) {
       existing.joinedCount += joined;
       existing.grantedMarks.push(...marks);
+      // 排行榜奖励取最新一次发放时间
+      if (lbAt > existing.leaderboardRewardedAt) existing.leaderboardRewardedAt = lbAt;
+      existing.leaderboardRewardedCount += lbCount;
     } else {
-      shareMap.set(key, { joinedCount: joined, grantedMarks: marks });
+      shareMap.set(key, { joinedCount: joined, grantedMarks: marks, leaderboardRewardedAt: lbAt, leaderboardRewardedCount: lbCount });
     }
   }
 
@@ -2237,6 +2245,9 @@ publicLotteryRoute.get("/my-rewards", async (c) => {
         nextMilestone: milestone?.nextMilestone || null,
         unlockedMilestoneCount: milestone?.unlockedCount || 0,
         grantedMilestoneCount: milestone?.grantedCount || 0,
+        // ── G-4: 排行榜奖励发放状态 ──
+        leaderboardRewardedAt: share?.leaderboardRewardedAt || "",
+        leaderboardRewardedCount: share?.leaderboardRewardedCount || 0,
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);

@@ -13,7 +13,7 @@ import type { AppEnv } from "../bindings";
 import { requireAuth, requireTenantMember } from "../middleware/auth";
 import { getDb, ok, fail, clampInteger } from "../lib/http";
 import { getEnv } from "../lib/platform";
-import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, paymentOrders, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig, activityEvents } from "../db/schema";
+import { lotteryDraws, prizes, prizeCodes, lotteryPrizeTiers, lotteryWinners, lotteryEntries, paymentOrders, tenantMembers, users, tenants, platformMembers, externalConversions, systemConfig, activityEvents, shareRecords } from "../db/schema";
 import { eq, and, desc, sql, count, inArray } from "drizzle-orm";
 import {
   createDraw,
@@ -329,6 +329,16 @@ adminLotteryRoute.get("/dashboard", async (c) => {
     }
   }
 
+  // G-2: 裂变/邀请统计概览
+  const [viralRow] = await db
+    .select({
+      totalSharers: sql<number>`COUNT(*)`,
+      totalClicks: sql<number>`COALESCE(SUM(${shareRecords.clickedCount}), 0)`,
+      totalInvites: sql<number>`COALESCE(SUM(${shareRecords.joinedCount}), 0)`,
+    })
+    .from(shareRecords)
+    .where(eq(shareRecords.tenantId, tenantId));
+
   return ok(c, {
     openCount: Number(openRow?.count || 0),
     draftCount: Number(draftRow?.count || 0),
@@ -341,6 +351,12 @@ adminLotteryRoute.get("/dashboard", async (c) => {
     criticalStockCount,
     /** 库存预警详情（含 drawId、drawTitle、prizeName、availableCount） */
     stockWarnings,
+    /** G-2: 裂变统计概览 */
+    viralStats: {
+      totalSharers: Number(viralRow?.totalSharers || 0),
+      totalClicks: Number(viralRow?.totalClicks || 0),
+      totalInvites: Number(viralRow?.totalInvites || 0),
+    },
     plan: tenantUsage.plan,
     limits: tenantUsage.limits,
     usage: tenantUsage.usage,

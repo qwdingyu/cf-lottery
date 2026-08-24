@@ -207,6 +207,10 @@ export default {
     emptyOnboardCta: "Create from template",
     roiConversions: "Conversions · {days}d",
     roiGmv: "GMV · {days}d",
+    // G-2: Viral stats overview
+    viralSharers: "Sharers",
+    viralClicks: "Total Clicks",
+    viralInvites: "Total Invites",
     roiEmpty: "💡 After conversion callbacks are configured, GMV and conversion stats appear here.",
     roiEmptyHint: "POST /api/integration/conversions with an API key to report purchases, signups, etc.",
     todosTitle: "📋 To-dos",
@@ -1141,6 +1145,14 @@ export default {
     adminReissueRewardSuccess: "Reward reissued",
     adminReissueRewardFailed: "Reissue failed: {reason}",
     adminRewardFailuresHint: "Below are reward failure records. Click \"Reissue reward\" to retry the latest failure; use \"Reissue all\" for batch retry.",
+    // G-1+G-3: Viral stats modal
+    adminViralStats: "Viral Stats",
+    adminViralSharers: "Sharers",
+    adminViralClicks: "Total Clicks",
+    adminViralJoins: "Total Joins",
+    adminViralStatsLeaderboard: "Invite Leaderboard",
+    adminViralRank: "Rank",
+    adminViralInviteCount: "Invites",
     adminEntryIdFilterPlaceholder: "Leave empty = reissue all; enter entryId to reissue that user only",
     adminFailureUser: "User",
     statusPaused: "Paused",
@@ -2049,6 +2061,8 @@ export default {
     spinsFromInvite: "+{count} spins",
     couponsFromInvite: "+{count} coupons",
     noReferralConfig: "No referral rewards configured",
+    // G-4: Leaderboard reward status
+    leaderboardRewardGranted: "🏆 Leaderboard reward granted ×{count} spins",
   },
 
   // ── Prizes (AdminPrizesView) — page already uses $t; namespace was missing ──

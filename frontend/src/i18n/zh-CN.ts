@@ -209,6 +209,10 @@ export default {
     emptyOnboardCta: "选择模板创建活动",
     roiConversions: "近 {days} 天转化",
     roiGmv: "近 {days} 天 GMV",
+    // G-2: 裂变统计概览
+    viralSharers: "分享者",
+    viralClicks: "总点击",
+    viralInvites: "总邀请",
     roiEmpty: "💡 配置外部转化回传后，这里将展示 GMV 和转化数据。",
     roiEmptyHint: "通过 API Key 调用 POST /api/integration/conversions 回传成交、注册等转化事件。",
     todosTitle: "📋 待办事项",
@@ -1116,6 +1120,14 @@ export default {
     adminRewardFailuresHint: "以下为奖励发放失败记录，点击「补发奖励」可重试最近一条失败；批量重试请使用「全部补发」。",
     adminEntryIdFilterPlaceholder: "留空=全部补发，填入 entryId 只补发该用户",
     adminFailureUser: "用户",
+    // G-1+G-3: 裂变数据弹窗
+    adminViralStats: "裂变数据",
+    adminViralSharers: "分享者",
+    adminViralClicks: "总点击",
+    adminViralJoins: "总参与",
+    adminViralStatsLeaderboard: "邀请排行榜",
+    adminViralRank: "排名",
+    adminViralInviteCount: "邀请人数",
     // 新增字段
     statusPaused: "已暂停",
     expectedCount: "预计参与",
@@ -1898,6 +1910,8 @@ export default {
     spinsFromInvite: "+{count} 次抽奖",
     couponsFromInvite: "+{count} 张优惠券",
     noReferralConfig: "该活动未配置邀请奖励",
+    // G-4: 排行榜奖励发放状态
+    leaderboardRewardGranted: "🏆 排行榜奖励已发放 ×{count} 次转盘",
   },
 
   // ── 品牌设置（BrandSettings）──

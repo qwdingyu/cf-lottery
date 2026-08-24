@@ -1874,6 +1874,50 @@
       </div>
     </AdminModal>
 
+    <!-- G-1+G-3: 裂变数据弹窗（分享统计 + 排行榜排名） -->
+    <AdminModal v-model="showViralStatsModal" :title="$t('lottery.adminViralStats')" max-width="720px">
+      <div v-if="viralStatsLoading" class="empty-text">{{ $t('lottery.adminLoading') }}</div>
+      <div v-else-if="viralStatsError" class="empty-text">{{ viralStatsError }}</div>
+      <div v-else>
+        <!-- 分享统计概览 -->
+        <div class="stats-row" style="margin-bottom: 16px">
+          <div class="stat-card">
+            <span class="stat-value">{{ viralStatsData?.shareStats?.sharerCount || 0 }}</span>
+            <span class="stat-label">{{ $t('lottery.adminViralSharers') }}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value">{{ viralStatsData?.shareStats?.totalClicks || 0 }}</span>
+            <span class="stat-label">{{ $t('lottery.adminViralClicks') }}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value">{{ viralStatsData?.shareStats?.totalJoins || 0 }}</span>
+            <span class="stat-label">{{ $t('lottery.adminViralJoins') }}</span>
+          </div>
+        </div>
+        <!-- 排行榜 -->
+        <h4 style="margin: 12px 0 8px; font-size: 14px">{{ $t('lottery.adminViralStatsLeaderboard') }}</h4>
+        <div v-if="!viralStatsData?.leaderboard?.length" class="empty-text">{{ $t('lottery.adminNoData') }}</div>
+        <div v-else class="table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>{{ $t('lottery.adminViralRank') }}</th>
+                <th>{{ $t('lottery.adminEntryId') }}</th>
+                <th>{{ $t('lottery.adminViralInviteCount') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in viralStatsData.leaderboard" :key="item.entryId">
+                <td>{{ item.rank }}</td>
+                <td class="mono-text" style="font-size: 12px">{{ item.entryId }}</td>
+                <td>{{ item.invitedCount }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </AdminModal>
+
     <ConfirmDialog
       v-model="confirmVisible"
       :message="confirmMessage"
@@ -1997,6 +2041,14 @@
             :disabled="operatingId === expandedActionDraw.id"
             @click="runMoreAction(d => openRewardFailuresModal(d.id))"
           >{{ $t('lottery.adminRewardFailures') }}</button>
+          <!-- G-1+G-3: 查看裂变数据（分享统计 + 排行榜排名） -->
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs table-actions-menu-item"
+            role="menuitem"
+            :disabled="operatingId === expandedActionDraw.id"
+            @click="runMoreAction(d => openViralStatsModal(d.id))"
+          >{{ $t('lottery.adminViralStats') }}</button>
         </div>
         <div class="table-actions-group table-actions-group--danger" role="group">
           <span class="table-actions-group-label">{{ $t('lottery.adminActionsGroupDanger') }}</span>
@@ -2679,6 +2731,11 @@ const rewardFailuresLoading = ref(false)
 const rewardFailuresDrawId = ref('')
 /** P1-2：运营可指定补发某人的失败记录，而非全部重试 */
 const reissueEntryId = ref('')
+/** G-1+G-3: 裂变数据弹窗状态 */
+const showViralStatsModal = ref(false)
+const viralStatsLoading = ref(false)
+const viralStatsError = ref('')
+const viralStatsData = ref<{ shareStats: { sharerCount: number; totalClicks: number; totalJoins: number }; leaderboard: Array<{ rank: number; entryId: string; invitedCount: number }> } | null>(null)
 const {
   showQrModal,
   qrImageUrl,
@@ -5112,6 +5169,27 @@ async function openRewardFailuresModal(id: string) {
     showRewardFailuresModal.value = false
   } finally {
     rewardFailuresLoading.value = false
+  }
+}
+
+/**
+ * G-1+G-3: 打开裂变数据弹窗（分享统计 + 排行榜排名）。
+ * 调用 GET /draws/:id/viral-stats 聚合接口。
+ */
+async function openViralStatsModal(id: string) {
+  viralStatsLoading.value = true
+  viralStatsError.value = ''
+  viralStatsData.value = null
+  showViralStatsModal.value = true
+  try {
+    const resp = await fetch(`/api/admin/draws/${id}/viral-stats`)
+    const result = await resp.json()
+    if (!result.ok) throw new Error(result.message || '加载失败')
+    viralStatsData.value = result.data || result
+  } catch (e) {
+    viralStatsError.value = toErrorMessage(e, t('lottery.adminFailed'))
+  } finally {
+    viralStatsLoading.value = false
   }
 }
 
