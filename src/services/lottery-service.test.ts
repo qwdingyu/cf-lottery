@@ -2396,7 +2396,7 @@ describe("triggerRewardEarned", () => {
   it("配置 reward 且配额充足时触发，并记录 reward_earned 事件", async () => {
     const config = JSON.stringify({
       version: 1,
-      reward: { perInviteAmount: 100, currency: "USD" },
+      reward: { perInviteAmount: 100, currency: "cny" },
       quota: { perUserPerDay: 2, globalPerDay: 100 },
     });
     const { drawId, sharerEntryId } = await setupRewardDraw(config);
@@ -2460,7 +2460,7 @@ describe("triggerRewardEarned", () => {
     // 旧数据结构：无 mode、无 perInvitePercent，只有 perInviteAmount + currency
     const config = JSON.stringify({
       version: 1,
-      reward: { perInviteAmount: 50, currency: "USD" },
+      reward: { perInviteAmount: 50, currency: "cny" },
     });
     const { drawId, sharerEntryId } = await setupRewardDraw(config);
     const result = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");

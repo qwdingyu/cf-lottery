@@ -78,6 +78,7 @@ export async function triggerRewardEarned(
   let config: {
     reward?: { mode?: string; perInviteAmount?: number; perInvitePercent?: number; currency?: string };
     quota?: { perUserPerDay?: number; globalPerDay?: number };
+    promotionConfig?: { flashSale?: { currency?: string } };
   } | null = null;
   try {
     config = draw.activityConfig ? JSON.parse(draw.activityConfig) : null;
@@ -86,6 +87,10 @@ export async function triggerRewardEarned(
   }
   const rewardConfig = config?.reward;
   const rewardMode = rewardConfig?.mode === "percent" ? "percent" : "fixed";
+
+  // 货币来源优先级：reward.currency > flashSale.currency > "cny"
+  // 与 paymentOrders 表默认值一致，不硬编码 USD
+  const derivedCurrency = rewardConfig?.currency || config?.promotionConfig?.flashSale?.currency || "cny";
 
   // 用 Number() 而非 parseInt，因为配置值可能是字符串 "100" 或数字 100。
   // NaN <= 0 为 true，会走 no_reward_config 分支，防御非法配置。
@@ -143,7 +148,7 @@ export async function triggerRewardEarned(
       metadata: {
         mode: "fixed",
         perInviteAmount,
-        currency: rewardConfig.currency || "USD",
+        currency: derivedCurrency,
         sharerEntryId,
         inviterIdentityValue,
         source: options?.source || "trigger",
@@ -163,7 +168,7 @@ export async function triggerRewardEarned(
       metadata: {
         mode: "percent",
         perInvitePercent,
-        currency: rewardConfig.currency || "USD",
+        currency: derivedCurrency,
         sharerEntryId,
         inviterIdentityValue,
         source: options?.source || "trigger",
@@ -191,7 +196,7 @@ export async function triggerRewardEarned(
         sharerEntryId,
         amount: perInviteAmount,
         mode: "fixed",
-        currency: rewardConfig.currency || "USD",
+        currency: derivedCurrency,
         refCode,
         drawId,
       },
@@ -212,10 +217,10 @@ export async function triggerRewardEarned(
       data: {
         userName: inviterIdentityValue,
         rewardLabel: rewardMode === "fixed"
-          ? (perInviteAmount > 0 ? `${perInviteAmount} ${rewardConfig.currency || "USD"}` : "奖励")
+          ? (perInviteAmount > 0 ? `${perInviteAmount} ${derivedCurrency}` : "奖励")
           : `${perInvitePercent}%（待付款确认）`,
         rewardValue: rewardMode === "fixed"
-          ? (perInviteAmount > 0 ? `${perInviteAmount} ${rewardConfig.currency || "USD"}` : "")
+          ? (perInviteAmount > 0 ? `${perInviteAmount} ${derivedCurrency}` : "")
           : `${perInvitePercent}%`,
       },
     });
@@ -339,7 +344,7 @@ export async function settleRewardByPercent(
       mode: "percent",
       percent,
       amountCents: actualAmountCents,
-      currency: pendingMeta.currency || currency || "USD",
+      currency: pendingMeta.currency || currency || "cny",
       sharerEntryId,
       inviterIdentityValue: pendingMeta.inviterIdentityValue || "",
       source: pendingMeta.source || "trigger",
@@ -360,7 +365,7 @@ export async function settleRewardByPercent(
         amount: actualAmountCents,
         mode: "percent",
         percent,
-        currency: pendingMeta.currency || currency || "USD",
+        currency: pendingMeta.currency || currency || "cny",
         refCode,
         drawId,
         status: "settled",
@@ -380,8 +385,8 @@ export async function settleRewardByPercent(
       eventType: "reward.earned",
       data: {
         userName: pendingMeta.inviterIdentityValue || "",
-        rewardLabel: `${actualAmountCents} ${pendingMeta.currency || currency || "USD"}`,
-        rewardValue: `${actualAmountCents} ${pendingMeta.currency || currency || "USD"}`,
+        rewardLabel: `${actualAmountCents} ${pendingMeta.currency || currency || "cny"}`,
+        rewardValue: `${actualAmountCents} ${pendingMeta.currency || currency || "cny"}`,
       },
     });
   } catch (err) {
