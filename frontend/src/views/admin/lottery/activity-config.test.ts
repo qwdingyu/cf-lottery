@@ -71,16 +71,16 @@ describe('activity-config normalize（lottery loserReward 保留，P0 回归）'
     }
   })
 
-  it('normalize 对 reward 非法数值做容错：perInviteAmount 非有限数字回退 0，currency 非字符串回退 USD', () => {
+  it('normalize 对 reward 非法数值做容错：perInviteAmount 非有限数字回退 0，currency 非法或缺失时不写入（由后端从 flashSale.currency 或默认 cny 获取）', () => {
     const cases: Array<{ input: any; expected: any }> = [
-      { input: { perInviteAmount: 'abc' }, expected: { perInviteAmount: 0, currency: 'USD' } },
-      { input: { perInviteAmount: NaN }, expected: { perInviteAmount: 0, currency: 'USD' } },
-      { input: { perInviteAmount: Infinity }, expected: { perInviteAmount: 0, currency: 'USD' } },
-      { input: { perInviteAmount: -5 }, expected: { perInviteAmount: 0, currency: 'USD' } },
-      { input: { perInviteAmount: 3.7 }, expected: { perInviteAmount: 3, currency: 'USD' } },
-      { input: { currency: 123 }, expected: { perInviteAmount: 0, currency: 'USD' } },
-      { input: { currency: '' }, expected: { perInviteAmount: 0, currency: 'USD' } },
-      { input: { currency: '  ' }, expected: { perInviteAmount: 0, currency: 'USD' } },
+      { input: { perInviteAmount: 'abc' }, expected: { perInviteAmount: 0 } },
+      { input: { perInviteAmount: NaN }, expected: { perInviteAmount: 0 } },
+      { input: { perInviteAmount: Infinity }, expected: { perInviteAmount: 0 } },
+      { input: { perInviteAmount: -5 }, expected: { perInviteAmount: 0 } },
+      { input: { perInviteAmount: 3.7 }, expected: { perInviteAmount: 3 } },
+      { input: { currency: 123 }, expected: { perInviteAmount: 0 } },
+      { input: { currency: '' }, expected: { perInviteAmount: 0 } },
+      { input: { currency: '  ' }, expected: { perInviteAmount: 0 } },
       { input: { currency: 'CNY' }, expected: { perInviteAmount: 0, currency: 'CNY' } },
     ]
     for (const c of cases) {

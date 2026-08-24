@@ -71,7 +71,8 @@ export type ActivityConfigForm =
         mode?: 'fixed' | 'percent'
         perInviteAmount?: number
         perInvitePercent?: number
-        currency: string
+        /** 可选——未配置时由后端从 flashSale.currency 或默认 cny 获取 */
+        currency?: string
       }
       /**
        * 奖励配额（活动级全局配置），在 activityConfig 顶层（非 reward 内部）。

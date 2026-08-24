@@ -139,11 +139,11 @@ export function normalizeActivityConfig(
             const v = Number((storedReward as { perInvitePercent?: unknown }).perInvitePercent)
             return Number.isFinite(v) ? Math.max(0, v) : 0
           })(),
-          // currency 必须是非空字符串，否则回退 USD
-          currency: (() => {
+          // currency 从 reward 配置读取，未配置时不写入（由后端从 flashSale.currency 或默认 cny 获取）
+          ...((() => {
             const v = (storedReward as { currency?: unknown }).currency
-            return typeof v === 'string' && v.trim().length > 0 ? v.trim() : 'USD'
-          })(),
+            return typeof v === 'string' && v.trim().length > 0 ? { currency: v.trim() } : {}
+          })()),
         }
       : undefined
 
