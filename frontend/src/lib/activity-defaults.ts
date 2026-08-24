@@ -40,7 +40,7 @@ export function defaultExperienceForActivity(activityKind: string, participation
  * 前端据此过滤 experienceType 下拉框选项，防止语义不匹配的组合。
  */
 export const ALLOWED_EXPERIENCE_TYPES: Record<string, readonly string[]> = {
-  lottery:       ['wheel', 'slot', 'scratch', 'card', 'grid', 'flash_sale'],
+  lottery:       ['wheel', 'slot', 'scratch', 'card', 'grid', 'flash_sale', 'submit'],
   signup_chain:  ['list', 'submit'],
   reservation:   ['calendar', 'submit'],
   vote:          ['ballot', 'form', 'submit'],
