@@ -22,3 +22,4 @@ backups/
 
 # 工具会话状态目录
 .omx/
+.qwen/

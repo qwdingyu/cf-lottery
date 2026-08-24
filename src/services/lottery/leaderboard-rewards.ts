@@ -362,7 +362,19 @@ export async function grantLeaderboardRewards(
             eq(lotteryEntries.spinsTotalGranted, granted),
           ));
         if ((updateResult.rowsAffected ?? 0) === 0) {
-          // CAS 冲突：spinsTotalGranted 已被并发修改，放弃本次发放（防超发）
+          // CAS 冲突：spinsTotalGranted 已被并发修改，放弃本次发放（防超发）。
+          // ⚠️ 必须回滚 leaderboardRewardedAt 标记（与 bonus_coupon 路径一致，docs/270 P1）：
+          // 标记在行 231-239 已写入，若不回滚，下次触发时行 226 的幂等检查会误判
+          // "已发放"而跳过，导致该分享者的 bonus_spin 奖励永久丢失（标记已写、spins 未发）。
+          // 回滚后下次触发重新计算 room/actual，不会超发（maxSpins 总顶仍约束）。
+          await tx
+            .update(shareRecords)
+            .set({ leaderboardRewardedAt: "" })
+            .where(and(
+              eq(shareRecords.tenantId, draw.tenantId),
+              eq(shareRecords.drawId, draw.id),
+              eq(shareRecords.sharerEntryId, sharerEntryId),
+            ));
           return { status: "skipped", rewardType: "bonus_spin" as const, rewardValue: 0 };
         }
 
