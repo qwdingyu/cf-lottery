@@ -15,7 +15,7 @@ import type { DbType } from "../db/client";
 import { adminLotteryRoute } from "./admin-lottery";
 import { publicLotteryRoute } from "./public-lottery";
 import { signJwt } from "../middleware/auth";
-import { lotteryDraws, tenants, users, tenantMembers, systemConfig, lotteryEntries, prizes, lotteryPrizeTiers } from "../db/schema";
+import { lotteryDraws, tenants, users, tenantMembers, systemConfig, lotteryEntries } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 import { ALLOWED_EXPERIENCE_TYPES } from "../lib/activity-utils";
@@ -103,28 +103,44 @@ async function patchDrawViaApi(
   return { status: res.status, json };
 }
 
+/**
+ * 发布活动并断言成功（docs/270 附录：全量 flaky 诊断增强）。
+ *
+ * 之前 publish 响应不检查——一旦 publish 失败（发布预检拦截等），活动停留 draft，
+ * 后续公开页/参与接口返回 400，排查者看到的是"公开页 400"而非"发布失败"根因。
+ * 断言消息携带响应体 message，把失败点定位到发布环节本身。
+ */
+async function publishAndExpect(app: Hono<AppEnv>, drawId: string, label: string) {
+  const res = await app.request(`/api/admin/draws/${drawId}/publish`, {
+    method: "POST",
+    headers: { ...(await authHeader()) },
+  }, TEST_ENV);
+  const body = await res.json() as { message?: string; ok?: boolean };
+  expect(res.status, `${label} 发布失败: ${body.message || JSON.stringify(body)}`).toBe(200);
+}
+
 /** 配置手动奖项并发布（仅 lottery 需要） */
 async function configureAndPublish(app: Hono<AppEnv>, drawId: string) {
-  // 创建奖品
+  // 创建奖品（lottery 发布前必须存在奖品）
   const prizeRes = await app.request("/api/admin/prizes", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(await authHeader()) },
     body: JSON.stringify({ name: "测试奖品", prizeType: "manual_fulfillment" }),
   }, TEST_ENV);
-  const prizeData = await prizeRes.json() as { ok: boolean; id: string };
+  const prizeData = await prizeRes.json() as { ok: boolean; id: string; message?: string };
+  expect(prizeRes.status, `创建奖品失败: ${prizeData.message || JSON.stringify(prizeData)}`).toBe(200);
 
-  // 配置奖项
-  await app.request(`/api/admin/draws/${drawId}/tiers`, {
+  // 配置奖项（lottery 发布前必须绑定奖档）
+  const tiersRes = await app.request(`/api/admin/draws/${drawId}/tiers`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(await authHeader()) },
     body: JSON.stringify({ tiers: [{ prizeId: prizeData.id, tierName: "一等奖", winnerCount: 1 }] }),
   }, TEST_ENV);
+  const tiersData = await tiersRes.json() as { message?: string };
+  expect(tiersRes.status, `配置奖项失败: ${tiersData.message || JSON.stringify(tiersData)}`).toBe(200);
 
   // 发布
-  await app.request(`/api/admin/draws/${drawId}/publish`, {
-    method: "POST",
-    headers: { ...(await authHeader()) },
-  }, TEST_ENV);
+  await publishAndExpect(app, drawId, "lottery");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -277,7 +293,7 @@ describe("冒烟：kindChanged 联动重置", () => {
       });
 
       // 切换 activityKind，不传 experienceType
-      const { status, json } = await patchDrawViaApi(app, created.id, {
+      const { status } = await patchDrawViaApi(app, created.id, {
         activityKind: toKind,
       });
       expect(status).toBe(200);
@@ -392,11 +408,8 @@ describe("冒烟：公开页 experienceType 渲染", () => {
       if (kind === "lottery") {
         await configureAndPublish(app, created.id);
       } else {
-        // 非 lottery 直接发布
-        await app.request(`/api/admin/draws/${created.id}/publish`, {
-          method: "POST",
-          headers: { ...(await authHeader()) },
-        }, TEST_ENV);
+        // 非 lottery 直接发布（断言发布成功，失败时定位到发布环节而非公开页）
+        await publishAndExpect(app, created.id, kind);
       }
 
       const [draw] = await db.select({ publicSlug: lotteryDraws.publicSlug })
@@ -468,11 +481,8 @@ describe("冒烟：端到端业务流程", () => {
       maxParticipants: 2,
     });
 
-    // 发布
-    await app.request(`/api/admin/draws/${created.id}/publish`, {
-      method: "POST",
-      headers: { ...(await authHeader()) },
-    }, TEST_ENV);
+    // 发布（断言成功：signup_chain 发布前必须配置 maxParticipants，失败会在此暴露）
+    await publishAndExpect(app, created.id, "signup_chain");
 
     const [draw] = await db.select({ publicSlug: lotteryDraws.publicSlug })
       .from(lotteryDraws).where(eq(lotteryDraws.id, created.id)).limit(1);
@@ -507,11 +517,8 @@ describe("冒烟：端到端业务流程", () => {
       participationMode: "open",
     });
 
-    // 发布
-    await app.request(`/api/admin/draws/${created.id}/publish`, {
-      method: "POST",
-      headers: { ...(await authHeader()) },
-    }, TEST_ENV);
+    // 发布（断言成功：claim 发布前需通过发布预检，失败会在此暴露）
+    await publishAndExpect(app, created.id, "claim");
 
     const [draw] = await db.select({ publicSlug: lotteryDraws.publicSlug })
       .from(lotteryDraws).where(eq(lotteryDraws.id, created.id)).limit(1);
@@ -551,11 +558,8 @@ describe("冒烟：端到端业务流程", () => {
       }),
     });
 
-    // 发布
-    await app.request(`/api/admin/draws/${created.id}/publish`, {
-      method: "POST",
-      headers: { ...(await authHeader()) },
-    }, TEST_ENV);
+    // 发布（断言成功：vote 发布前需通过发布预检，失败会在此暴露）
+    await publishAndExpect(app, created.id, "vote");
 
     const [draw] = await db.select({ publicSlug: lotteryDraws.publicSlug })
       .from(lotteryDraws).where(eq(lotteryDraws.id, created.id)).limit(1);

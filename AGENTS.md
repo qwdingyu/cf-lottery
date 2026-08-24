@@ -112,6 +112,9 @@ VPS_SSH_KEY=~/.ssh/cf-lottery-vps.pem bash local-deploy-vps.sh
 - TypeScript 类型检查: 0 errors（`npx tsc --noEmit`，**禁止接管道 `| tail`/`| grep`——会掩盖退出码，必须无管道执行并检查 `echo $?` 为 0**）
 - 前端模板类型检查: 0 errors（`cd frontend && npx vue-tsc -b --pretty false`，能捕获 .vue 模板层错误）
 - 单元测试: 全部通过（`npx vitest run`，同样禁止接管道掩盖退出码）
+- 验证纪律: 全量 `npx vitest run` **禁止与其他重命令（tsc/vue-tsc/build）并行执行**——
+  测试库是串行共享的单 SQLite 文件，CPU/IO 竞争下会偶发 SQLITE_BUSY 导致 publish 等写事务
+  重试耗尽而失败（2026-08-24 experience-type-smoke flaky 复盘，docs/270）：先跑完 vitest 再跑其他检查
 - 多租户隔离: 用户 A 看不到用户 B 的活动
 - 卡密: 不会跨租户、不会重复发放
 - 并发开奖: 不会重复中奖
