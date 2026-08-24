@@ -211,6 +211,10 @@ interface RewardItem {
   nextMilestone: MilestoneItem | null
   unlockedMilestoneCount: number
   grantedMilestoneCount: number
+  /** G-4: 排行榜奖励发放时间（聚合多条 shareRecord 取最新） */
+  leaderboardRewardedAt: string
+  /** G-4: 排行榜奖励发放次数（聚合多条 shareRecord 累加） */
+  leaderboardRewardedCount: number
 }
 
 /** 仪表盘汇总统计 */
