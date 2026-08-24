@@ -97,7 +97,9 @@ export function normalizeActivityConfig(
     kind: string
     loserReward: { enabled: boolean; couponLabel: string }
     reward?: {
-      perInviteAmount: number
+      mode?: 'fixed' | 'percent'
+      perInviteAmount?: number
+      perInvitePercent?: number
       currency: string
     }
     quota?: {
@@ -115,16 +117,27 @@ export function normalizeActivityConfig(
         }
       : undefined
 
-  // P1-3：保留 reward 配置（perInviteAmount / currency），并对非法值做容错
+  // P1-3：保留 reward 配置（mode / perInviteAmount / perInvitePercent / currency），并对非法值做容错
   // ⚠️ reward 对象只包含 per-invite 维度配置，quota 从顶层读取（见下方 parsedQuota）
+  // 旧数据兼容：无 mode 字段默认视为 fixed，优先读 perInviteAmount
   const storedReward = (raw as { reward?: unknown }).reward
   const parsedReward =
     storedReward && typeof storedReward === 'object' && !Array.isArray(storedReward)
       ? {
+          // mode: 只接受 'fixed' 或 'percent'，否则回退 fixed
+          mode: (() => {
+            const v = (storedReward as { mode?: unknown }).mode
+            return v === 'percent' ? 'percent' as const : 'fixed' as const
+          })(),
           // perInviteAmount 必须是有限非负整数，否则回退 0（避免 NaN 进入后端）
           perInviteAmount: (() => {
             const v = Number((storedReward as { perInviteAmount?: unknown }).perInviteAmount)
             return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0
+          })(),
+          // perInvitePercent: 百分比模式下的比例值（0-100），有限非负数，否则回退 0
+          perInvitePercent: (() => {
+            const v = Number((storedReward as { perInvitePercent?: unknown }).perInvitePercent)
+            return Number.isFinite(v) ? Math.max(0, v) : 0
           })(),
           // currency 必须是非空字符串，否则回退 USD
           currency: (() => {

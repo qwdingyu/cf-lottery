@@ -111,6 +111,8 @@ export type ActivityEventType =
   | "external_conversion_reported"
   /** 奖励意图已生成（通知中转站发卡时记录） */
   | "reward_earned"
+  /** 奖励待结算（percent 模式：付款确认后计算实际金额，docs/271） */
+  | "reward_pending"
   /** 奖励发放失败（docs/259 P1-2：maybeTriggerReward  catch 记录，供管理端补发） */
   | "reward_failed"
   /** 优惠券已核销（L1 自助核销或 L2 运营核销，docs/254 P2） */
@@ -202,6 +204,8 @@ export const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "attributed_join",
   "external_conversion_reported",
   "reward_earned",
+  /** 奖励待结算（percent 模式：付款确认后计算实际金额，docs/271） */
+  "reward_pending",
   /** 奖励发放失败（docs/259 P1-2：maybeTriggerReward  catch 记录，供管理端补发） */
   "reward_failed",
   /** 优惠券已核销（L1 自助核销或 L2 运营核销，docs/254 P2） */

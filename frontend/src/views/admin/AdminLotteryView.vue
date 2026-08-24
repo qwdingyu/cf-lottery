@@ -1254,14 +1254,19 @@
                 </header>
                 <div class="form-grid two-cols">
                   <label>
-                    <span>{{ $t('lottery.adminRewardPerInviteAmount') }}</span>
-                    <input v-model.number="rewardPerInviteAmount" type="number" min="0" max="10000" step="1" />
-                    <small>{{ $t('lottery.adminRewardPerInviteAmountSuffix') }}</small>
-                    <small v-if="Number(rewardPerInviteAmount || 0) === 0" class="field-hint field-hint--warn">{{ $t('lottery.adminRewardPerInviteAmountWarning') }}</small>
+                    <span>{{ $t('lottery.adminRewardMode') }}</span>
+                    <select v-model="rewardMode">
+                      <option value="fixed">{{ $t('lottery.adminRewardModeFixed') }}</option>
+                      <option value="percent">{{ $t('lottery.adminRewardModePercent') }}</option>
+                    </select>
                   </label>
                   <label>
-                    <span>{{ $t('lottery.adminRewardCurrency') }}</span>
-                    <input v-model="rewardCurrency" maxlength="10" placeholder="USD" />
+                    <span>{{ $t('lottery.adminRewardPerInviteAmount') }}</span>
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <input v-model.number="rewardPerInviteValue" type="number" min="0" :max="rewardMode === 'percent' ? 100 : 10000" :step="rewardMode === 'percent' ? 0.1 : 1" style="flex:1" />
+                      <span style="white-space:nowrap;font-size:0.85em;color:#666">{{ rewardMode === 'percent' ? '%' : $t('lottery.adminRewardModeFixedUnit') }}</span>
+                    </div>
+                    <small v-if="Number(rewardPerInviteValue || 0) === 0" class="field-hint field-hint--warn">{{ $t('lottery.adminRewardPerInviteAmountWarning') }}</small>
                   </label>
                   <label>
                     <span>{{ $t('lottery.adminRewardPerUserPerDay') }}</span>
@@ -3171,8 +3176,9 @@ const loserRewardEnabled = ref(false)
 const loserRewardCouponLabel = ref('')
 
 // ── 邀请奖励配置（docs/259 P1-3）：表单编辑用，保存时同步进 activityConfig.reward ──
-const rewardPerInviteAmount = ref(0)
-const rewardCurrency = ref('USD')
+// rewardMode: 'fixed'=固定值（每邀请奖励 N 次/张），'percent'=百分比（成交金额的 N%）
+const rewardMode = ref<'fixed' | 'percent'>('fixed')
+const rewardPerInviteValue = ref(0)
 const rewardPerUserPerDay = ref<number | undefined>(undefined)
 const rewardGlobalPerDay = ref<number | undefined>(undefined)
 
@@ -3200,8 +3206,10 @@ function initLoserRewardFromConfig() {
  * 把 reward 配置同步进 form.activityConfig。
  *
  * 数据结构约定（对齐后端 triggerRewardEarned 的读取路径）：
- * - activityConfig.reward：每邀请金额/货币（reward.ts:73 config?.reward）
- * - activityConfig.quota：个人/全局每日上限（reward.ts:84-85 config?.quota）
+ * - activityConfig.reward.mode：'fixed'=固定值，'percent'=百分比（基于成交金额）
+ * - activityConfig.reward.perInviteAmount：固定值模式的每邀请奖励数
+ * - activityConfig.reward.perInvitePercent：百分比模式的每邀请奖励比例
+ * - activityConfig.quota：个人/全局每日上限（reward.ts 读取路径）
  *
  * ⚠️ 为什么 quota 必须在顶层而非 reward 内部：
  * 后端 triggerRewardEarned 从 config?.quota?.perUserPerDay 读取配额，
@@ -3209,11 +3217,16 @@ function initLoserRewardFromConfig() {
  */
 function syncRewardConfig() {
   const config = form.value.activityConfig as any
-  // perInviteAmount 写入 reward 对象（per-invite 维度配置）
-  config.reward = {
-    perInviteAmount: Number(rewardPerInviteAmount.value || 0),
-    currency: String(rewardCurrency.value || 'USD'),
+  const mode = rewardMode.value
+  const val = Number(rewardPerInviteValue.value || 0)
+  // 按 mode 写入对应字段，未选中的字段不写入（避免脏数据）
+  const reward: Record<string, unknown> = { mode }
+  if (mode === 'percent') {
+    reward.perInvitePercent = Math.min(100, Math.max(0, val))
+  } else {
+    reward.perInviteAmount = val
   }
+  config.reward = reward
   // quota 写入 activityConfig 顶层（活动级全局配额），与后端 triggerRewardEarned 读取路径对齐
   const quota: Record<string, number> = {}
   if (rewardPerUserPerDay.value != null) quota.perUserPerDay = rewardPerUserPerDay.value
@@ -3224,12 +3237,20 @@ function syncRewardConfig() {
 /**
  * 从 form.activityConfig 回填表单状态（编辑活动时调用）。
  * 读取路径与 syncRewardConfig 写入路径对齐：reward 在 activityConfig.reward，quota 在 activityConfig.quota。
+ * 向后兼容：无 mode 字段的旧数据视为 fixed 模式，优先读 perInviteAmount，其次 perInvitePercent。
  */
 function initRewardFromConfig() {
   const config = form.value.activityConfig as any
   const r = config?.reward
-  rewardPerInviteAmount.value = Number(r?.perInviteAmount || 0)
-  rewardCurrency.value = String(r?.currency || 'USD')
+  // 兼容旧数据：无 mode 时根据存在哪个字段推断
+  const mode = (r?.mode === 'percent') ? 'percent' : 'fixed'
+  rewardMode.value = mode
+  if (mode === 'percent') {
+    rewardPerInviteValue.value = Number(r?.perInvitePercent || 0)
+  } else {
+    // 旧数据可能只有 perInviteAmount（无 mode），或新数据显式 fixed
+    rewardPerInviteValue.value = Number(r?.perInviteAmount || r?.perInvitePercent || 0)
+  }
   // quota 从 activityConfig 顶层读取（对齐后端 triggerRewardEarned 读取路径）
   rewardPerUserPerDay.value = config?.quota?.perUserPerDay != null ? Number(config.quota.perUserPerDay) : undefined
   rewardGlobalPerDay.value = config?.quota?.globalPerDay != null ? Number(config.quota.globalPerDay) : undefined

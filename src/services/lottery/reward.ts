@@ -18,7 +18,7 @@
 import type { DbType } from "../../db/client";
 import { logError } from "../../lib/logger";
 import { and, eq } from "drizzle-orm";
-import { lotteryDraws, lotteryEntries } from "../../db/schema";
+import { lotteryDraws, lotteryEntries, activityEvents } from "../../db/schema";
 import { checkDbRateLimit } from "../../lib/rate-limit";
 import { recordActivityEvent, enqueueWebhookEvent } from "./integration";
 import { enqueuePlatformEvent } from "../platform/delivery";
@@ -64,20 +64,39 @@ export async function triggerRewardEarned(
     .limit(1);
   if (!draw) return { triggered: false, reason: "no_reward_config", sharerEntryId, deliveryIds: [] };
 
-  // 宽容解析 activityConfig：只用 reward.perInviteAmount 字段判断是否触发。
+  // 宽容解析 activityConfig：只用 reward 字段判断是否触发。
   // 不依赖严格的 schema 校验——活动配置可能包含多种玩法（lottery/survey/vote），
   // 只有显式配置了 reward 规则的活动才触发，其余活动不受影响。
-  let config: { reward?: { perInviteAmount?: number; currency?: string }; quota?: { perUserPerDay?: number; globalPerDay?: number } } | null = null;
+  // 支持两种模式：
+  //   - fixed: 每邀请奖励固定金额（perInviteAmount），与旧版行为一致
+  //   - percent: 基于成交金额百分比（perInvitePercent），
+  //     实际金额在付款确认时由 cf-lottery 自己计算（paymentOrders.amountCents × percent / 100），
+  //     不依赖中转站——cf-lottery 有完整的支付系统，百分比计算是系统内部职责。
+  // 旧数据（无 mode 字段）兼容为 fixed 模式。
+  // ⚠️ 注意：triggerRewardEarned 在 joinDraw 时调用，此时付款尚未完成，
+  // 不知道成交金额。percent 模式下此函数只记录百分比配置，实际金额在付款确认后计算。
+  let config: {
+    reward?: { mode?: string; perInviteAmount?: number; perInvitePercent?: number; currency?: string };
+    quota?: { perUserPerDay?: number; globalPerDay?: number };
+  } | null = null;
   try {
     config = draw.activityConfig ? JSON.parse(draw.activityConfig) : null;
   } catch {
     config = null;
   }
   const rewardConfig = config?.reward;
+  const rewardMode = rewardConfig?.mode === "percent" ? "percent" : "fixed";
+
   // 用 Number() 而非 parseInt，因为配置值可能是字符串 "100" 或数字 100。
   // NaN <= 0 为 true，会走 no_reward_config 分支，防御非法配置。
-  const perInviteAmount = Number(rewardConfig?.perInviteAmount || 0);
-  if (!rewardConfig || perInviteAmount <= 0) {
+  let perInviteAmount = 0;
+  let perInvitePercent = 0;
+  if (rewardMode === "percent") {
+    perInvitePercent = Number(rewardConfig?.perInvitePercent || 0);
+  } else {
+    perInviteAmount = Number(rewardConfig?.perInviteAmount || 0);
+  }
+  if (!rewardConfig || (rewardMode === "fixed" && perInviteAmount <= 0) || (rewardMode === "percent" && perInvitePercent <= 0)) {
     return { triggered: false, reason: "no_reward_config", sharerEntryId, deliveryIds: [] };
   }
 
@@ -106,41 +125,82 @@ export async function triggerRewardEarned(
   const globalKey = `reward:global:${drawId}`;
   if (!(await checkDbRateLimit(tx, globalKey, globalPerDay, REWARD_QUOTA_WINDOW_MS))) {
     return { triggered: false, reason: "quota_exceeded", sharerEntryId, deliveryIds: [] };
-  }  // 记录奖励意图事件——必须先在事务内落库，再入队 webhook。
+  }  // 记录奖励意图事件（docs/271 状态机）：
+  //   fixed 模式：reward_earned（resolved），金额已知，直接通知中转站
+  //   percent 模式：reward_pending（pending），付款确认后计算实际金额再通知
+  //
   // 顺序原因：如果 enqueueWebhookEvent 失败（抛异常），recordActivityEvent 已写入。
   // 此时事务会被 maybeTriggerReward 的 catch 捕获，但事件记录保留在事务中。
   // 这是有意为之：reward_earned 事件是看板/审计的唯一真相源（source of truth），
   // webhook 投递失败可以通过事件列表人工补偿。
-  await recordActivityEvent(tx, {
-    tenantId: draw.tenantId,
-    drawId,
-    entryId: sharerEntryId,
-    eventType: "reward_earned",
-    refCode,
-    metadata: {
-      perInviteAmount,
-      currency: rewardConfig.currency || "USD",
-      sharerEntryId,
-      inviterIdentityValue,
-      source: options?.source || "trigger",
-    },
-  });
+  if (rewardMode === "fixed") {
+    await recordActivityEvent(tx, {
+      tenantId: draw.tenantId,
+      drawId,
+      entryId: sharerEntryId,
+      eventType: "reward_earned",
+      refCode,
+      metadata: {
+        mode: "fixed",
+        perInviteAmount,
+        currency: rewardConfig.currency || "USD",
+        sharerEntryId,
+        inviterIdentityValue,
+        source: options?.source || "trigger",
+        status: "resolved",
+      },
+    });
+  } else {
+    // percent 模式：付款确认前金额未知，记录 reward_pending
+    // 状态机：pending → settled（付款确认时 settleRewardByPercent 更新）
+    //         pending → cancelled（付款取消/退款时 cancelRewardPending 更新）
+    await recordActivityEvent(tx, {
+      tenantId: draw.tenantId,
+      drawId,
+      entryId: sharerEntryId,
+      eventType: "reward_pending",
+      refCode,
+      metadata: {
+        mode: "percent",
+        perInvitePercent,
+        currency: rewardConfig.currency || "USD",
+        sharerEntryId,
+        inviterIdentityValue,
+        source: options?.source || "trigger",
+        status: "pending",
+      },
+    });
+  }
 
   // 通知中转站生成兑换码（入队，HTTP 投递由调用方在事务内异步 fire-and-forget）。
   // 与 performDraw 的 webhook 模式一致：入队是写库操作（事务内），实际 HTTP 调用
   // 由 dispatchWebhookDelivery 在事务内异步执行——SQLite 同连接事务内 SELECT 可见。
-  const webhookResult = await enqueueWebhookEvent(tx, {
-    tenantId,
-    eventType: "reward.earned",
-    data: {
-      account: inviterIdentityValue,
-      sharerEntryId,
-      amount: perInviteAmount,
-      currency: rewardConfig.currency || "USD",
-      refCode,
-      drawId,
-    },
-  });
+  //
+  // percent 模式特殊处理：此时付款尚未完成（triggerRewardEarned 在 joinDraw 时调用），
+  // 不知道成交金额。webhook 只传递百分比配置，实际金额在付款确认后由 cf-lottery
+  // 自己计算（paymentOrders.amountCents × percent / 100），再通知中转站生成兑换码。
+  // cf-lottery 有完整的支付系统（Stripe），百分比计算是系统内部职责，不依赖中转站。
+  let webhookResult;
+  if (rewardMode === "fixed") {
+    // fixed 模式：金额已知，直接通知中转站
+    webhookResult = await enqueueWebhookEvent(tx, {
+      tenantId,
+      eventType: "reward.earned",
+      data: {
+        account: inviterIdentityValue,
+        sharerEntryId,
+        amount: perInviteAmount,
+        mode: "fixed",
+        currency: rewardConfig.currency || "USD",
+        refCode,
+        drawId,
+      },
+    });
+  } else {
+    // percent 模式：记录配置，付款确认后再计算金额并通知中转站
+    // 当前只记录 reward_pending 事件，付款确认时再触发 reward.earned webhook
+    webhookResult = { deliveryIds: [] as string[] };
+  }
 
   // 出站平台消息（QQ 群）：这里只做事务内入队，不做外部 HTTP 投递。
   // tx 不能 fire-and-forget 到函数返回后再用，否则事务生命周期已结束；因此 await 入队并吞掉失败。
@@ -151,8 +211,12 @@ export async function triggerRewardEarned(
       eventType: "reward.earned",
       data: {
         userName: inviterIdentityValue,
-        rewardLabel: perInviteAmount > 0 ? `${perInviteAmount} ${rewardConfig.currency || "USD"}` : "奖励",
-        rewardValue: perInviteAmount > 0 ? `${perInviteAmount} ${rewardConfig.currency || "USD"}` : "",
+        rewardLabel: rewardMode === "fixed"
+          ? (perInviteAmount > 0 ? `${perInviteAmount} ${rewardConfig.currency || "USD"}` : "奖励")
+          : `${perInvitePercent}%（待付款确认）`,
+        rewardValue: rewardMode === "fixed"
+          ? (perInviteAmount > 0 ? `${perInviteAmount} ${rewardConfig.currency || "USD"}` : "")
+          : `${perInvitePercent}%`,
       },
     });
   } catch (err) {
@@ -187,4 +251,179 @@ export async function getSharerIdentityValue(
     ))
     .limit(1);
   return row?.identityValue || "";
+}
+
+/**
+ * 付款确认后结算 percent 模式奖励（docs/271）。
+ *
+ * 调用时机：handlePaymentCallback 中 fulfillment 成功后，与付款确认同事务。
+ * 流程：
+ *   1. 从 paymentOrder.entryId 查找 attributed_join 事件，获取 sharerEntryId 和 refCode
+ *   2. 查找 sharer 的 reward_pending 事件，读取 perInvitePercent
+ *   3. 计算实际金额：amountCents × percent / 100
+ *   4. 写 reward_earned 事件 (status: settled, amount: 实际金额)
+ *   5. 入队 webhook 通知中转站
+ *
+ * @param db 事务实例（与 handlePaymentCallback 同事务）
+ * @param tenantId 租户 ID
+ * @param drawId 活动 ID
+ * @param joinerEntryId 付款人（被邀请者）的 entryId
+ * @param amountCents 实际成交金额（单位：分）
+ * @param currency 币种
+ */
+export async function settleRewardByPercent(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  joinerEntryId: string,
+  amountCents: number,
+  currency: string,
+): Promise<{ settled: boolean; reason?: string }> {
+  // 1. 查找 attributed_join 事件，获取 sharerEntryId 和 refCode
+  const [joinEvent] = await db
+    .select({ metadataJson: activityEvents.metadataJson, refCode: activityEvents.refCode })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.entryId, joinerEntryId),
+      eq(activityEvents.eventType, "attributed_join"),
+    ))
+    .limit(1);
+  if (!joinEvent) return { settled: false, reason: "attributed_join_not_found" };
+
+  let meta: { sharerEntryId?: string } = {};
+  try { meta = JSON.parse(joinEvent.metadataJson || "{}"); } catch { meta = {}; }
+  const sharerEntryId = meta.sharerEntryId;
+  const refCode = joinEvent.refCode || "";
+  if (!sharerEntryId) return { settled: false, reason: "sharer_entry_id_not_found" };
+
+  // 2. 查找 sharer 的 reward_pending 事件，读取 perInvitePercent
+  const [pendingEvent] = await db
+    .select({ metadataJson: activityEvents.metadataJson, refCode: activityEvents.refCode })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.entryId, sharerEntryId),
+      eq(activityEvents.eventType, "reward_pending"),
+    ))
+    .limit(1);
+  if (!pendingEvent) return { settled: false, reason: "reward_pending_not_found" };
+
+  let pendingMeta: { perInvitePercent?: number; currency?: string; inviterIdentityValue?: string; source?: string } = {};
+  try { pendingMeta = JSON.parse(pendingEvent.metadataJson || "{}"); } catch { pendingMeta = {}; }
+  const percent = Number(pendingMeta.perInvitePercent || 0);
+  if (percent <= 0) return { settled: false, reason: "invalid_percent" };
+
+  // 3. 计算实际金额
+  // amountCents 是支付金额（分），percent 是百分比（如 10 = 10%）
+  // 实际金额 = amountCents × percent / 100（单位：分）
+  // 保留整数，向下取整（防止超付）
+  const actualAmountCents = Math.floor(amountCents * percent / 100);
+  if (actualAmountCents <= 0) {
+    return { settled: false, reason: "amount_too_small" };
+  }
+
+  // 4. 写 reward_earned 事件（status: settled）
+  await recordActivityEvent(db, {
+    tenantId,
+    drawId,
+    entryId: sharerEntryId,
+    eventType: "reward_earned",
+    refCode,
+    metadata: {
+      mode: "percent",
+      percent,
+      amountCents: actualAmountCents,
+      currency: pendingMeta.currency || currency || "USD",
+      sharerEntryId,
+      inviterIdentityValue: pendingMeta.inviterIdentityValue || "",
+      source: pendingMeta.source || "trigger",
+      status: "settled",
+      joinerEntryId,
+      settledFrom: "reward_pending",
+    },
+  });
+
+  // 5. 入队 webhook 通知中转站
+  try {
+    await enqueueWebhookEvent(db, {
+      tenantId,
+      eventType: "reward.earned",
+      data: {
+        account: pendingMeta.inviterIdentityValue || "",
+        sharerEntryId,
+        amount: actualAmountCents,
+        mode: "percent",
+        percent,
+        currency: pendingMeta.currency || currency || "USD",
+        refCode,
+        drawId,
+        status: "settled",
+      },
+    });
+  } catch (err) {
+    // webhook 入队失败不影响结算结果（审计事件已落库，可人工补偿）
+    logError("reward", `settleRewardByPercent: enqueueWebhookEvent draw=${drawId}`, err);
+  }
+
+  return { settled: true };
+}
+
+/**
+ * 取消 pending 状态的 percent 模式奖励（docs/271）。
+ *
+ * 调用时机：支付取消/退款/超时释放时，清除对应的 reward_pending 事件。
+ * 写 reward_failed 事件记录取消原因，保留审计链。
+ *
+ * @param db 事务实例
+ * @param tenantId 租户 ID
+ * @param drawId 活动 ID
+ * @param joinerEntryId 付款人（被邀请者）的 entryId
+ * @param reason 取消原因（payment_cancelled / payment_refunded / payment_expired）
+ */
+export async function cancelRewardPending(
+  db: DbType,
+  tenantId: string,
+  drawId: string,
+  joinerEntryId: string,
+  reason: string,
+): Promise<{ cancelled: boolean }> {
+  // 查找 attributed_join 事件，获取 sharerEntryId
+  const [joinEvent] = await db
+    .select({ metadataJson: activityEvents.metadataJson })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.entryId, joinerEntryId),
+      eq(activityEvents.eventType, "attributed_join"),
+    ))
+    .limit(1);
+  if (!joinEvent) return { cancelled: false };
+
+  let meta: { sharerEntryId?: string; refCode?: string } = {};
+  try { meta = JSON.parse(joinEvent.metadataJson || "{}"); } catch { meta = {}; }
+  const sharerEntryId = meta.sharerEntryId;
+  if (!sharerEntryId) return { cancelled: false };
+
+  // 写 reward_failed 事件记录取消
+  await recordActivityEvent(db, {
+    tenantId,
+    drawId,
+    entryId: sharerEntryId,
+    eventType: "reward_failed",
+    refCode: meta.refCode || "",
+    metadata: {
+      path: "cancelRewardPending",
+      reason,
+      joinerEntryId,
+      status: "cancelled",
+    },
+  }).catch((err) => {
+    logError("reward", `cancelRewardPending: recordActivityEvent draw=${drawId}`, err);
+  });
+
+  return { cancelled: true };
 }

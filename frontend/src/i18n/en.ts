@@ -1137,6 +1137,18 @@ export default {
     adminGrantLeaderboard: "Grant leaderboard rewards",
     adminGrantLeaderboardSuccess: "Leaderboard rewards granted: {granted} granted, {skipped} skipped (already granted/no eligible)",
     adminGrantLeaderboardNone: "Leaderboard rewards not configured or no one eligible",
+    // Reward config (invite reward mode)
+    adminRewardConfigSection: "Invite Reward",
+    adminRewardConfigDesc: "Reward the inviter for each valid participation",
+    adminRewardMode: "Reward Mode",
+    adminRewardModeFixed: "Fixed Amount",
+    adminRewardModePercent: "Percentage of Transaction",
+    adminRewardPerInviteAmount: "Reward per Invite",
+    adminRewardPerInviteAmountSuffix: "Reward per invitation per person",
+    adminRewardPerInviteAmountWarning: "Amount is 0 — no reward will be triggered, please confirm",
+    adminRewardPerUserPerDay: "Per-person Daily Limit",
+    adminRewardGlobalPerDay: "Activity Daily Limit",
+    adminRewardQuotaSuffix: "Leave empty or 0 for no limit",
     // Reward failures (docs/259 P1-2)
     adminRewardFailures: "Reward failure records",
     adminReissueReward: "Reissue reward",

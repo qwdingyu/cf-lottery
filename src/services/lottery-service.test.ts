@@ -2453,6 +2453,99 @@ describe("triggerRewardEarned", () => {
     expect(second.triggered).toBe(false);
     expect(second.reason).toBe("quota_exceeded");
   });
+
+  // ── mode 字段：fixed / percent 兼容性测试 ──
+  it("旧数据（无 mode 字段）兼容为 fixed 模式，reward_earned 事件正常记录", async () => {
+    // 旧数据结构：无 mode、无 perInvitePercent，只有 perInviteAmount + currency
+    const config = JSON.stringify({
+      version: 1,
+      reward: { perInviteAmount: 50, currency: "USD" },
+    });
+    const { drawId, sharerEntryId } = await setupRewardDraw(config);
+    const result = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    expect(result.triggered).toBe(true);
+    expect(result.reason).toBe("reward_sent");
+    // 旧数据无 mode → fixed → 事件正常记录
+    const [event] = await db
+      .select({ eventType: activityEvents.eventType })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(event).toBeDefined();
+  });
+
+  it("显式 fixed 模式：事件 metadata 含 mode=fixed + status=resolved", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { mode: "fixed", perInviteAmount: 100, currency: "CNY" },
+    });
+    const { drawId, sharerEntryId } = await setupRewardDraw(config);
+    const result = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    expect(result.triggered).toBe(true);
+
+    // 事件 metadata 包含 mode=fixed 和 status=resolved
+    const [event] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(event).toBeDefined();
+    const meta = JSON.parse(event.metadataJson || "{}");
+    expect(meta.mode).toBe("fixed");
+    expect(meta.status).toBe("resolved");
+    expect(meta.perInviteAmount).toBe(100);
+  });
+
+  it("percent 模式：触发但不入队 webhook（付款确认后再通知中转站），记录 reward_pending 事件", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { mode: "percent", perInvitePercent: 10, currency: "CNY" },
+    });
+    const { drawId, sharerEntryId } = await setupRewardDraw(config);
+    const result = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    expect(result.triggered).toBe(true);
+    // percent 模式：付款尚未完成，webhook 不入队
+    expect(result.deliveryIds.length).toBe(0);
+
+    // percent 模式记录 reward_pending（非 reward_earned），metadata 含 mode=percent + status=pending
+    const [event] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_pending"),
+      ));
+    expect(event).toBeDefined();
+    const meta = JSON.parse(event.metadataJson || "{}");
+    expect(meta.mode).toBe("percent");
+    expect(meta.status).toBe("pending");
+    expect(meta.perInvitePercent).toBe(10);
+  });
+
+  it("percent 模式配额校验仍生效（perUserPerDay=2）", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { mode: "percent", perInvitePercent: 5 },
+      quota: { perUserPerDay: 2, globalPerDay: 100 },
+    });
+    const { drawId, sharerEntryId } = await setupRewardDraw(config);
+    // 前两次触发消耗配额
+    const first = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    expect(first.triggered).toBe(true);
+    const second = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    expect(second.triggered).toBe(true);
+    // 第三次：配额超限
+    const third = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc3");
+    expect(third.triggered).toBe(false);
+    expect(third.reason).toBe("quota_exceeded");
+  });
 });
 
 // ── prizeCode 状态机：issued → redeemed（docs/114 §4） ──

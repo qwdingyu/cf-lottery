@@ -32,6 +32,7 @@ import {
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "@usethink/cf-pay/catalog";
 import { decryptPaymentConfigValue, isEncryptedPaymentConfigValue } from "@usethink/cf-pay/config-store";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../../lib/flash-sale-config";
+import { settleRewardByPercent } from "../lottery/reward";
 import {
   isPaidPaymentAttemptStatus,
   isRetryablePaymentOrderStatus,
@@ -1511,6 +1512,16 @@ export async function handlePaymentCallback(
         .returning({ id: lotteryEntries.id });
       if (paidEntry.length === 0) {
         throw new Error("参与记录状态已变化，支付履约未提交");
+      }
+
+      // percent 模式奖励结算（docs/271）：付款确认后，计算邀请人应得佣金并通知中转站。
+      // 幂等性：settleRewardByPercent 内部通过查找 reward_pending 事件隐式幂等——
+      // 同一 entry 的 attributed_join 事件唯一，reward_earned 事件写入后不会重复触发。
+      // 执行失败时（如活动未配置 percent 奖励）静默跳过，不影响支付主流程。
+      if (fulfillmentOk) {
+        await settleRewardByPercent(tx, tenantId, current.drawId, current.entryId, callback.amountCents, callback.currency).catch((err) => {
+          logError("payment-service", `settleRewardByPercent draw=${current.drawId} entry=${current.entryId}`, err);
+        });
       }
     }
 
