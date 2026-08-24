@@ -2568,6 +2568,113 @@ describe("grantLeaderboardRewards bonus_coupon 发放", () => {
         eq(couponCodes.status, "available"),
       ));
     expect(Number(available?.cnt ?? 0)).toBe(0);
+
+    // docs/270 P1 修复：部分发放后回滚 leaderboardRewardedAt 标记（下次触发可续发），
+    // 且 leaderboardRewardedCount 记录已发 1 张（续发只发差额，不超发）
+    const [sr] = await db
+      .select({
+        rewardedAt: shareRecords.leaderboardRewardedAt,
+        rewardedCount: shareRecords.leaderboardRewardedCount,
+      })
+      .from(shareRecords)
+      .where(and(eq(shareRecords.tenantId, TENANT), eq(shareRecords.drawId, drawId)));
+    expect(sr?.rewardedAt).toBe("");
+    expect(Number(sr?.rewardedCount ?? 0)).toBe(1);
+  });
+
+  it("bonus_coupon 部分发放后补货：再触发按差额续发，累计发满不超发", async () => {
+    const { drawId } = await setupCouponScenario();
+    // 只留 1 张 available（配置要发 2 张）
+    await db.delete(couponCodes).where(and(
+      eq(couponCodes.tenantId, TENANT),
+      eq(couponCodes.drawId, drawId),
+    ));
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      code: `CP-FIRST-${Date.now()}`,
+      label: "general",
+      status: "available",
+    });
+
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+
+    // 第一次：只发 1 张（差 1），标记回滚
+    const r1 = await grantLeaderboardRewards(db, draw!);
+    expect(r1.granted).toBe(1);
+    expect(r1.details[0]!.rewardValue).toBe(1);
+
+    // 补货 1 张
+    await db.insert(couponCodes).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      code: `CP-SECOND-${Date.now()}`,
+      label: "general",
+      status: "available",
+    });
+
+    // 第二次：按差额续发 1 张，累计 2 张发满 → 标记保持（完成）
+    const r2 = await grantLeaderboardRewards(db, draw!);
+    expect(r2.granted).toBe(1);
+    expect(r2.details[0]!.rewardValue).toBe(1);
+
+    // 已发满 → 第三次幂等跳过，不超发
+    const r3 = await grantLeaderboardRewards(db, draw!);
+    expect(r3.granted).toBe(0);
+    expect(r3.details[0]!.status).toBe("skipped");
+
+    // 码池 0 张可用（2 张均被该分享者领走），rewardedCount=2
+    const [available] = await db
+      .select({ cnt: count() })
+      .from(couponCodes)
+      .where(and(
+        eq(couponCodes.tenantId, TENANT),
+        eq(couponCodes.drawId, drawId),
+        eq(couponCodes.status, "available"),
+      ));
+    expect(Number(available?.cnt ?? 0)).toBe(0);
+    const [sr] = await db
+      .select({ rewardedCount: shareRecords.leaderboardRewardedCount })
+      .from(shareRecords)
+      .where(and(eq(shareRecords.tenantId, TENANT), eq(shareRecords.drawId, drawId)));
+    expect(Number(sr?.rewardedCount ?? 0)).toBe(2);
+  });
+
+  it("bonus_coupon 码池完全为空：不发放不标记，补货后可正常发放", async () => {
+    const { drawId } = await setupCouponScenario();
+    // 清空码池
+    await db.delete(couponCodes).where(and(
+      eq(couponCodes.tenantId, TENANT),
+      eq(couponCodes.drawId, drawId),
+    ));
+    const [draw] = await db.select().from(lotteryDraws).where(eq(lotteryDraws.id, drawId)).limit(1);
+
+    // 第一次：一张都没发 → skipped，且标记保持为空（可重试）
+    const r1 = await grantLeaderboardRewards(db, draw!);
+    expect(r1.granted).toBe(0);
+    expect(r1.details[0]!.status).toBe("skipped");
+    const [sr1] = await db
+      .select({ rewardedAt: shareRecords.leaderboardRewardedAt })
+      .from(shareRecords)
+      .where(and(eq(shareRecords.tenantId, TENANT), eq(shareRecords.drawId, drawId)));
+    expect(sr1?.rewardedAt).toBe("");
+
+    // 补货 2 张 → 第二次正常发满
+    for (let i = 0; i < 2; i++) {
+      await db.insert(couponCodes).values({
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        drawId,
+        code: `CP-RESTOCK-${Date.now()}-${i}`,
+        label: "general",
+        status: "available",
+      });
+    }
+    const r2 = await grantLeaderboardRewards(db, draw!);
+    expect(r2.granted).toBe(1);
+    expect(r2.details[0]!.rewardValue).toBe(2);
   });
 
   it("bonus_coupon 幂等：第二次调用不重复发券", async () => {

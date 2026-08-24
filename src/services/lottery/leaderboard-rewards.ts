@@ -208,7 +208,11 @@ export async function grantLeaderboardRewards(
     const verdict = await withDbTransaction(db, async (tx): Promise<GrantVerdict> => {
       // 重新读取该分享者的记录（事务内快照最新，防止并发下读到旧标记状态）
       const records = await tx
-        .select({ id: shareRecords.id, leaderboardRewardedAt: shareRecords.leaderboardRewardedAt })
+        .select({
+          id: shareRecords.id,
+          leaderboardRewardedAt: shareRecords.leaderboardRewardedAt,
+          leaderboardRewardedCount: shareRecords.leaderboardRewardedCount,
+        })
         .from(shareRecords)
         .where(and(
           eq(shareRecords.tenantId, draw.tenantId),
@@ -262,6 +266,20 @@ export async function grantLeaderboardRewards(
       if (rewardCfg.rewardType === "bonus_coupon") {
         // 优惠券发放：通过 grantBonusCoupon 从码池 CAS 取券，与 referral-rewards-engine 同出口。
         // 幂等键 leaderboard:rank:{rank} 保证同一排名不会重复发券。
+        //
+        // docs/270 P1 修复（码池不足不再丢券）：
+        // - leaderboardRewardedCount 跨触发持久化"已发张数"，本次只发差额 remaining；
+        // - 未发满（码池不足/收件人缺失）→ 回滚 leaderboardRewardedAt 标记，
+        //   下次触发按差额续发，直至发满 rewardValue 张；
+        // - 已累计发满（rewardedCount >= rewardValue）→ 保持标记，本次跳过。
+        // 与 referral 引擎 bonus_coupon 的"码池不足保持可重试"语义对齐，
+        // 避免旧行为"标记已写、缺额永久丢失"。
+        const rewardedCount = Math.max(0, Math.floor(Number(records[0]?.leaderboardRewardedCount ?? 0)));
+        const remaining = Math.max(0, rewardCfg.rewardValue - rewardedCount);
+        if (remaining <= 0) {
+          // 累计已发满（极端：并发下另一请求刚完成）→ 保持标记跳过
+          return { status: "skipped", rewardType: "bonus_coupon", rewardValue: 0 };
+        }
         const issuedCount = await grantBonusCoupon(
           tx,
           draw.tenantId,
@@ -269,11 +287,21 @@ export async function grantLeaderboardRewards(
           entry.id,
           rewardCfg.couponLabel,
           `leaderboard:${rank}`,
-          rewardCfg.rewardValue,
+          remaining,
           "viral",
         );
-        // 记录流水日志（delta=发券张数，reason=viral，refId 含 :coupon 后缀区分）
+        const nextCount = rewardedCount + issuedCount;
         if (issuedCount > 0) {
+          // 持久化已发张数（全部记录同步写，保证下次读取一致）
+          await tx
+            .update(shareRecords)
+            .set({ leaderboardRewardedCount: nextCount })
+            .where(and(
+              eq(shareRecords.tenantId, draw.tenantId),
+              eq(shareRecords.drawId, draw.id),
+              eq(shareRecords.sharerEntryId, sharerEntryId),
+            ));
+          // 记录流水日志（delta=发券张数，reason=viral，refId 含 :coupon 后缀区分）
           const [snap] = await tx
             .select({ spinsLeft: lotteryEntries.spinsLeft })
             .from(lotteryEntries)
@@ -289,6 +317,21 @@ export async function grantLeaderboardRewards(
             refId: `leaderboard:${rank}:coupon`,
           });
         }
+        if (nextCount >= rewardCfg.rewardValue) {
+          // 已累计发满 → 保持标记（完成），后续触发幂等跳过
+          return { status: "granted", rewardType: "bonus_coupon", rewardValue: issuedCount };
+        }
+        // 未发满（码池不足/收件人缺失）→ 回滚标记，下次触发按差额续发。
+        // 事务内回滚：并发其他事务看到标记被清空后可重新抢占；
+        // rewardedCount 已持久化，续发只发差额，不会超发。
+        await tx
+          .update(shareRecords)
+          .set({ leaderboardRewardedAt: "" })
+          .where(and(
+            eq(shareRecords.tenantId, draw.tenantId),
+            eq(shareRecords.drawId, draw.id),
+            eq(shareRecords.sharerEntryId, sharerEntryId),
+          ));
         return { status: issuedCount > 0 ? "granted" : "skipped", rewardType: "bonus_coupon", rewardValue: issuedCount };
       }
 

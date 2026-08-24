@@ -806,6 +806,13 @@ export const shareRecords = sqliteTable("share_records", {
    * 同活动、同 shareRecord CAS 幂等，防止并发重复发放。
    */
   leaderboardRewardedAt: text("leaderboard_rewarded_at").notNull().default(""),
+  /**
+   * 排行榜 bonus_coupon 已发张数（docs/270 P1 修复）。
+   * 码池不足时部分发放后，下一次触发按 rewardValue - rewardedCount 续发差额，
+   * 避免"标记已写、缺额永久丢失"；全部发满后由 leaderboardRewardedAt 标记完成。
+   * 跨触发持久化（部分发放时回滚标记但保留该计数），与 referral 引擎的部分标记语义对齐。
+   */
+  leaderboardRewardedCount: integer("leaderboard_rewarded_count").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   shareDrawIdx: index("idx_share_draw").on(t.tenantId, t.drawId, t.createdAt),
