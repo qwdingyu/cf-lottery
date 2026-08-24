@@ -1086,9 +1086,12 @@
 
                   </template>
                 </div>
-                <!-- docs/218 增长玩法：保底 / 每日免费 / 排行榜奖励（仅即时开奖） -->
-                <template v-if="form.resultMode === 'instant' && form.activityKind === 'lottery'">
-                  <div class="form-grid two-cols">
+                <!-- docs/218 增长玩法 + docs/250 引擎推荐奖励：
+                     - lottery：保底/每日免费/排行榜 + referralRewardDefs（bonus_spin + bonus_coupon）
+                     - claim（限时抢购等）：仅 referralRewardDefs（bonus_coupon；bonus_spin 对 claim 是死奖励） -->
+                <template v-if="form.resultMode === 'instant' && (form.activityKind === 'lottery' || form.activityKind === 'claim')">
+                  <!-- 保底/每日免费/排行榜奖励：仅 lottery 有意义（claim 无 spins 体系） -->
+                  <div v-if="form.activityKind === 'lottery'" class="form-grid two-cols">
                     <!-- 开关+参数同排（2026-08 打磨）：保底/每日免费不再「开关整行 + 参数单列半空」 -->
                     <div class="field-span-2 toggle-with-param">
                       <label class="checkbox-label-inline">
@@ -1119,8 +1122,10 @@
                       <textarea v-model="form.leaderboardRewardsText" rows="3" :placeholder="$t('lottery.adminLeaderboardRewardsPlaceholder')"></textarea>
                       <small>{{ $t('lottery.adminLeaderboardRewardsHint') }}</small>
                     </label>
-                    <!-- docs/250/254 引擎推荐奖励：支持 bonus_spin / bonus_coupon 双出口（行编辑器，docs/255 ③），
-                         旧 referralRewards 里程碑 textarea 已收敛删除（docs/255 P1-2） -->
+                  </div>
+                  <!-- docs/250/254 引擎推荐奖励：支持 bonus_spin / bonus_coupon 双出口（行编辑器，docs/255 ③），
+                       旧 referralRewards 里程碑 textarea 已收敛删除（docs/255 P1-2）。
+                       lottery 和 claim 均可配置——bonus_spin 对 claim 是死奖励，发布预检会拦截 -->
                     <label class="field-span-2">
                       <span>{{ $t('lottery.adminReferralRewardDefs') }}</span>
                       <div class="referral-def-rows">
@@ -1237,9 +1242,10 @@
                 </div>
               </section>
 
-              <!-- 邀请奖励配置（docs/259 P1-3）：每邀请金额 / 货币 / 配额 -->
+              <!-- 邀请奖励配置（docs/259 P1-3）：每邀请金额 / 货币 / 配额
+                   lottery 和 claim（限时抢购等）均支持邀请裂变变现 -->
               <section
-                v-if="form.activityKind === 'lottery'"
+                v-if="form.activityKind === 'lottery' || form.activityKind === 'claim'"
                 class="form-section form-section--nested"
                 aria-labelledby="lottery-reward-config"
               >

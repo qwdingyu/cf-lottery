@@ -24,6 +24,7 @@ import { grantBonusSpin, grantBonusCoupon } from "./reward-exits";
 // 发放侧与 my-viral-stats 展示侧共用，避免进度与实际发放漂移（docs/259 D2 ②）。
 import { parseGrantedRewardIds, splitGrantedMarks, buildGrantedMark } from "./referral-milestones";
 import { logError } from "../../lib/logger";
+import { isViralGrowthEnabled } from "../../lib/system-config-registry";
 
 /**
  * 外部导入 @usethink/incentive-engine
@@ -446,6 +447,10 @@ export async function processReferralRewardsEngine(
 ): Promise<void> {
   // 1. 解析 referralRewardDefs 配置
   if (!shareRecordId) return;
+  // L3 平台级总开关：viral_growth_enabled=false 时跳过所有邀请奖励发放
+  // 已发放的 spins 和优惠券不受影响（只拦截新的发放）
+  const viralEnabled = await isViralGrowthEnabled(tx);
+  if (!viralEnabled) return;
   let rewardDefs: RewardDefLike[] = [];
   try {
     const pc = JSON.parse(draw.promotionConfig || "{}") as Record<string, unknown>;

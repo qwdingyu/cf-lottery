@@ -237,3 +237,13 @@ export async function isCommunityFeatureEnabled(db: DbType): Promise<boolean> {
 export async function isShopFeatureEnabled(db: DbType): Promise<boolean> {
   return readSystemConfigBoolean(db, "shop_feature_enabled");
 }
+
+/**
+ * 邀请裂变全局开关：
+ * 读取 system_config 的 viral_growth_enabled（默认 "true"）。
+ * 未配置或值为 "true" 时视为启用，仅显式 "false" 关闭。
+ * 供 referral-rewards-engine 在发放奖励前检查——关闭后跳过所有 bonus_spin / bonus_coupon 发放。
+ */
+export async function isViralGrowthEnabled(db: DbType): Promise<boolean> {
+  return readSystemConfigBoolean(db, "viral_growth_enabled");
+}
