@@ -129,9 +129,6 @@
               <span class="mr-leaderboard-reward-text">
                 {{ $t('myRewards.leaderboardRewardGranted', { count: item.leaderboardRewardedCount }) }}
               </span>
-              <span v-if="item.leaderboardRewardedAt" class="mr-leaderboard-reward-time">
-                {{ formatDateCST(item.leaderboardRewardedAt) }}
-              </span>
             </div>
 
             <!-- ═══ 实际奖励（spins + coupons） ═══ -->

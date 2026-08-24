@@ -5182,10 +5182,8 @@ async function openViralStatsModal(id: string) {
   viralStatsData.value = null
   showViralStatsModal.value = true
   try {
-    const resp = await fetch(`/api/admin/draws/${id}/viral-stats`)
-    const result = await resp.json()
-    if (!result.ok) throw new Error(result.message || '加载失败')
-    viralStatsData.value = result.data || result
+    const result = await adminRequest(`/api/admin/draws/${id}/viral-stats`)
+    viralStatsData.value = result
   } catch (e) {
     viralStatsError.value = toErrorMessage(e, t('lottery.adminFailed'))
   } finally {
