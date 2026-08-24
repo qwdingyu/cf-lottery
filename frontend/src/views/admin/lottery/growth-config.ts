@@ -477,7 +477,12 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
             const rank = Number(item?.rank)
             const rewardValue = Number(item?.rewardValue)
             if (!Number.isInteger(rank) || rank < 1 || !Number.isInteger(rewardValue) || rewardValue < 1) return []
-            return [{ rank, rewardType: 'bonus_spin' as const, rewardValue }]
+            // 回填必须读取原始 rewardType，否则 bonus_coupon 奖励在编辑保存后会退化为 bonus_spin（数据丢失）
+            const rewardType = item?.rewardType === 'bonus_coupon' ? 'bonus_coupon' as const : 'bonus_spin' as const
+            const couponLabel = typeof item?.couponLabel === 'string' && item.couponLabel.trim()
+              ? item.couponLabel.trim()
+              : undefined
+            return [{ rank, rewardType, rewardValue, ...(couponLabel ? { couponLabel } : {}) }]
           })
         : null,
     ),

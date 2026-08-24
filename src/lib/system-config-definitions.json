@@ -283,7 +283,7 @@
     "effect": "创建活动时校验，未勾选的类型拒绝创建。已有活动不受影响。",
     "scope": "admin",
     "type": "string",
-    "defaultValue": "lottery,signup_chain,claim,survey,vote,checkin,approval,reservation",
+    "defaultValue": "lottery,signup_chain,claim,survey,vote,checkin,approval,reservation,waitlist",
     "group": "平台运营",
     "order": 20,
     "difficulty": "basic",
