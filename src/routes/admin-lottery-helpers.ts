@@ -37,6 +37,7 @@ import { resolveL2MenuKeyByPath, readDisabledL2Menus } from "../lib/l2-menu-keys
 import {
   defaultExperienceForParticipation as libDefaultExperienceForParticipation,
   defaultExperienceForActivity as libDefaultExperienceForActivity,
+  isValidExperienceForActivity as libIsValidExperienceForActivity,
 } from "../lib/activity-utils";
 
 /** 单次 batch-delete 上限：防误炸与 Turso 长事务（docs/082 P2） */
@@ -412,6 +413,11 @@ export function defaultExperienceForParticipation(participationMode: string): st
 
 export function defaultExperienceForActivity(activityKind: string, participationMode: string): string {
   return libDefaultExperienceForActivity(activityKind, participationMode);
+}
+
+/** 校验 activityKind + experienceType 组合是否合法（白名单，见 lib/activity-utils.ts） */
+export function isValidExperienceForActivity(activityKind: string, experienceType: string): boolean {
+  return libIsValidExperienceForActivity(activityKind, experienceType);
 }
 
 export function tryParseJson(s: string): any {

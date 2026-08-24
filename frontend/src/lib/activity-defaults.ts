@@ -33,6 +33,34 @@ export function defaultExperienceForActivity(activityKind: string, participation
   return defaultExperienceForParticipation(participationMode)
 }
 
+/**
+ * 活动类型（activityKind）允许的体验类型（experienceType）白名单。
+ *
+ * 与后端 src/lib/activity-utils.ts 中的 ALLOWED_EXPERIENCE_TYPES 保持同步。
+ * 前端据此过滤 experienceType 下拉框选项，防止语义不匹配的组合。
+ */
+export const ALLOWED_EXPERIENCE_TYPES: Record<string, readonly string[]> = {
+  lottery:       ['wheel', 'slot', 'scratch', 'card', 'grid', 'flash_sale'],
+  signup_chain:  ['list', 'submit'],
+  reservation:   ['calendar', 'submit'],
+  vote:          ['ballot', 'form', 'submit'],
+  survey:        ['form', 'submit'],
+  checkin:       ['checkin', 'submit'],
+  waitlist:      ['queue', 'submit'],
+  approval:      ['form', 'submit'],
+  claim:         ['reveal', 'flash_sale'],
+}
+
+/**
+ * 校验 activityKind + experienceType 组合是否合法。
+ * 未知 activityKind 时放行（防御式，避免阻断未来新增类型）。
+ */
+export function isValidExperienceForActivity(activityKind: string, experienceType: string): boolean {
+  const allowed = ALLOWED_EXPERIENCE_TYPES[activityKind]
+  if (!allowed) return true
+  return allowed.includes(experienceType)
+}
+
 /** 按活动类型选默认结果模式（何时/如何产生结果） */
 export function defaultResultModeForActivity(activityKind: string): string {
   if (activityKind === 'signup_chain') return 'ordered_assignment'

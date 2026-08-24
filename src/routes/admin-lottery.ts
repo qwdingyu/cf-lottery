@@ -57,6 +57,7 @@ import {
   normalizeOptionalPositiveInteger,
   normalizeOptionalNonNegativeInteger,
   defaultExperienceForActivity,
+  isValidExperienceForActivity,
   mergeJsonTopLevel,
   decorateIdentityDisplay,
 } from "./admin-lottery-helpers";
@@ -887,14 +888,20 @@ adminLotteryRoute.post("/draws", async (c) => {
       // 未传 → createDraw 会抛「即时开奖必须设置每人抽奖次数（≥1）」兜底
     }
 
+    // 组合校验：experienceType 必须在 activityKind 的允许白名单内
+    const resolvedExperienceType = body.experienceType !== undefined
+      ? parseEnum(body.experienceType, EXPERIENCE_TYPES, "互动体验", defaultExperienceForActivity(activityKind, participationMode))
+      : defaultExperienceForActivity(activityKind, participationMode);
+    if (!isValidExperienceForActivity(activityKind, resolvedExperienceType)) {
+      return fail(c, `互动体验 "${resolvedExperienceType}" 不适用于活动类型 "${activityKind}"`, 400);
+    }
+
     const { id, publicSlug } = await createDraw(db, tenantId, {
       title: String(body.title || ""),
       description: String(body.description || ""),
       activityKind,
       participationMode,
-      experienceType: body.experienceType !== undefined
-        ? parseEnum(body.experienceType, EXPERIENCE_TYPES, "互动体验", defaultExperienceForActivity(activityKind, participationMode))
-        : undefined,
+      experienceType: resolvedExperienceType,
       drawTrigger,
       resultMode: resultModeInput !== undefined
         ? parseEnum(resultModeInput, RESULT_MODES, "结果模式", defaultResultModeForActivity(activityKind, drawTrigger))
@@ -1096,6 +1103,10 @@ adminLotteryRoute.patch("/draws/:id", async (c) => {
       : kindChanged
         ? defaultExperienceForActivity(nextActivityKind, nextParticipationMode)
         : draw.experienceType || defaultExperienceForActivity(nextActivityKind, nextParticipationMode);
+    // 组合校验：experienceType 必须在 activityKind 的允许白名单内
+    if (!isValidExperienceForActivity(nextActivityKind, nextExperienceType)) {
+      return fail(c, `互动体验 "${nextExperienceType}" 不适用于活动类型 "${nextActivityKind}"`, 400);
+    }
     // lottery + scheduled：与创建路由对齐（docs/115）——resultMode 未显式传或传 manual 时强制 scheduled，
     // 避免「Cron 只扫 scheduled 而 resultMode=manual」导致到点永不自动开奖。
     let nextResultModeInput = body.resultMode === undefined

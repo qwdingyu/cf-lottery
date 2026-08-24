@@ -477,7 +477,7 @@ export function growthFieldsFromDraw(source: Record<string, unknown>): GrowthFie
             const rank = Number(item?.rank)
             const rewardValue = Number(item?.rewardValue)
             if (!Number.isInteger(rank) || rank < 1 || !Number.isInteger(rewardValue) || rewardValue < 1) return []
-            return [{ rank, rewardValue }]
+            return [{ rank, rewardType: 'bonus_spin' as const, rewardValue }]
           })
         : null,
     ),

@@ -92,6 +92,46 @@ export function defaultExperienceForActivity(activityKind: string, participation
 }
 
 /**
+ * 活动类型（activityKind）允许的体验类型（experienceType）白名单。
+ *
+ * 设计依据：每种 activityKind 只有语义匹配的 experienceType 才有意义。
+ * 例如 vote（投票）活动不应使用 wheel（大转盘）体验。
+ *
+ * 白名单规则：
+ * - lottery: 所有游戏体验壳（wheel/slot/scratch/card/grid）+ flash_sale（秒杀）
+ * - 非 lottery 类型: 该类型的语义体验 + submit（通用提交兜底）
+ * - claim 特殊: reveal（领取）+ flash_sale（秒杀，flash-sale-rush 模板使用）
+ *
+ * 前端下拉框根据此白名单过滤选项；后端 PATCH/POST API 据此校验组合合法性。
+ */
+export const ALLOWED_EXPERIENCE_TYPES: Record<string, readonly string[]> = {
+  lottery:       ["wheel", "slot", "scratch", "card", "grid", "flash_sale"],
+  signup_chain:  ["list", "submit"],
+  reservation:   ["calendar", "submit"],
+  vote:          ["ballot", "form", "submit"],
+  survey:        ["form", "submit"],
+  checkin:       ["checkin", "submit"],
+  waitlist:      ["queue", "submit"],
+  approval:      ["form", "submit"],
+  claim:         ["reveal", "flash_sale"],
+};
+
+/**
+ * 校验 activityKind + experienceType 组合是否合法。
+ *
+ * 返回 true 表示组合合法；false 表示该体验类型不适用于此活动类型。
+ * 未知 activityKind 时放行（防御式，避免阻断未来新增类型）。
+ */
+export function isValidExperienceForActivity(
+  activityKind: string,
+  experienceType: string,
+): boolean {
+  const allowed = ALLOWED_EXPERIENCE_TYPES[activityKind];
+  if (!allowed) return true; // 未知活动类型不拦截
+  return allowed.includes(experienceType);
+}
+
+/**
  * 根据活动类型和开奖触发方式计算默认结果模式。
  *
  * 这是活动引擎的规则入口：不同 activity_kind 对应不同的结果分配方式。

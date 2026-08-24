@@ -295,7 +295,8 @@
       "vote",
       "checkin",
       "approval",
-      "reservation"
+      "reservation",
+      "waitlist"
     ],
     "enumLabels": {
       "lottery": "抽奖",
@@ -305,7 +306,8 @@
       "vote": "投票评选",
       "checkin": "签到打卡",
       "approval": "审核申请",
-      "reservation": "预约确认"
+      "reservation": "预约确认",
+      "waitlist": "候补排队"
     }
   },
   {

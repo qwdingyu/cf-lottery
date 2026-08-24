@@ -753,20 +753,20 @@
                   <label :class="showPrizeShellSelector ? '' : 'field-span-2'">
                     <span>{{ $t('lottery.adminExperienceType') }}</span>
                     <select v-model="form.experienceType" :disabled="editLocked" @change="handleExperienceChange">
-                      <option value="wheel" :disabled="form.activityKind !== 'lottery'">{{ $t('lottery.adminExpWheel') }}</option>
-                      <option value="slot">{{ $t('lottery.adminExpSlot') }}</option>
-                      <option value="scratch">{{ $t('lottery.adminExpScratch') }}</option>
-                      <option value="card">{{ $t('lottery.adminExpCard') }}</option>
-                      <option value="list">{{ $t('lottery.adminExpList') }}</option>
-                      <option value="queue">{{ $t('lottery.adminExpQueue') }}</option>
-                      <option value="form">{{ $t('lottery.adminExpForm') }}</option>
-                      <option value="ballot">{{ $t('lottery.adminExpBallot') }}</option>
-                      <option value="calendar">{{ $t('lottery.adminExpCalendar') }}</option>
-                      <option value="checkin">{{ $t('lottery.adminExpCheckin') }}</option>
-                      <option value="reveal">{{ $t('lottery.adminExpReveal') }}</option>
-                      <option value="flash_sale">{{ $t('lottery.adminExpFlashSale') }}</option>
-                      <option value="grid">{{ $t('lottery.adminExpGrid') }}</option>
-                      <option value="submit">{{ $t('lottery.adminExpSubmit') }}</option>
+                      <option value="wheel" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'wheel')">{{ $t('lottery.adminExpWheel') }}</option>
+                      <option value="slot" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'slot')">{{ $t('lottery.adminExpSlot') }}</option>
+                      <option value="scratch" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'scratch')">{{ $t('lottery.adminExpScratch') }}</option>
+                      <option value="card" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'card')">{{ $t('lottery.adminExpCard') }}</option>
+                      <option value="grid" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'grid')">{{ $t('lottery.adminExpGrid') }}</option>
+                      <option value="list" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'list')">{{ $t('lottery.adminExpList') }}</option>
+                      <option value="queue" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'queue')">{{ $t('lottery.adminExpQueue') }}</option>
+                      <option value="form" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'form')">{{ $t('lottery.adminExpForm') }}</option>
+                      <option value="ballot" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'ballot')">{{ $t('lottery.adminExpBallot') }}</option>
+                      <option value="calendar" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'calendar')">{{ $t('lottery.adminExpCalendar') }}</option>
+                      <option value="checkin" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'checkin')">{{ $t('lottery.adminExpCheckin') }}</option>
+                      <option value="reveal" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'reveal')">{{ $t('lottery.adminExpReveal') }}</option>
+                      <option value="flash_sale" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'flash_sale')">{{ $t('lottery.adminExpFlashSale') }}</option>
+                      <option value="submit" :disabled="!isValidExperienceForActivity(form.activityKind || 'lottery', 'submit')">{{ $t('lottery.adminExpSubmit') }}</option>
                     </select>
                     <small class="field-hint">{{ $t('lottery.adminExperienceHint') }}</small>
                   </label>
@@ -2274,6 +2274,7 @@ import { readAdminToken } from '@/composables/useAdminAuth'
 import {
   defaultExperienceForActivity,
   defaultResultModeForActivity,
+  isValidExperienceForActivity,
 } from '@/lib/activity-defaults'
 import type {
   ActivityConfigForm,

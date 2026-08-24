@@ -1801,8 +1801,8 @@ describe("活动编辑 PATCH 语义", () => {
     const app = createTestApp();
     const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
 
-    // 先切换为非 lottery 类型
-    await db.update(lotteryDraws).set({ activityKind: "signup_chain" }).where(eq(lotteryDraws.id, drawId));
+    // 先切换为非 lottery 类型（同步设置合法的 experienceType，避免组合校验拒绝）
+    await db.update(lotteryDraws).set({ activityKind: "signup_chain", experienceType: "list" }).where(eq(lotteryDraws.id, drawId));
 
     const res = await app.request(`/api/admin/draws/${drawId}`, {
       method: "PATCH", headers, body: JSON.stringify({ winnerCount: 0 }),
@@ -1912,6 +1912,40 @@ describe("活动编辑 PATCH 语义", () => {
     expect(draw!.activityKind).toBe("signup_chain");
     expect(draw!.experienceType).toBe("list");              // 默认体验：报名列表
     expect(draw!.resultMode).toBe("ordered_assignment");    // 默认结果：按序分配
+  });
+
+  it("PATCH experienceType 不在 activityKind 允许白名单内 → 400 拒绝", async () => {
+    const drawId = await seedDraftDraw(); // lottery + wheel
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    // 切换到 vote 活动，但传入 wheel 体验（wheel 不在 vote 的白名单中）
+    const res = await app.request(`/api/admin/draws/${drawId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ activityKind: "vote", experienceType: "wheel" }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("不适用于活动类型");
+  });
+
+  it("POST experienceType 不在 activityKind 允许白名单内 → 400 拒绝", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "core-a", "a@test.com");
+    const app = createTestApp();
+    const headers = { "Content-Type": "application/json", ...(await authHeader(OWNER_A, TENANT_A)) };
+
+    // 创建 vote 活动但传入 wheel 体验
+    const res = await app.request("/api/admin/draws", {
+      method: "POST", headers, body: JSON.stringify({
+        title: "不合法组合",
+        activityKind: "vote",
+        experienceType: "wheel",
+        startAt: new Date().toISOString(),
+        endAt: new Date(Date.now() + 3_600_000).toISOString(),
+      }),
+    }, TEST_ENV);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("不适用于活动类型");
   });
 
   it("PATCH 切换活动到非即时抽奖时联动清除 maxSpins 残留", async () => {
