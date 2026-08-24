@@ -1180,7 +1180,6 @@
                       </div>
                       <small>{{ $t('lottery.adminReferralRewardDefsHint') }}</small>
                     </label>
-                  </div>
                 </template>
               </section>
 
