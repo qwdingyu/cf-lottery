@@ -41,7 +41,7 @@ npm install
 # 本地开发
 cd frontend && npx vite
 
-# VPS 部署包上传（默认 root@38.47.198.72:/root）
+# VPS 部署（默认 root@38.47.198.72:/root/cf-lottery，自动解压+重启）
 VPS_SSH_KEY=~/.ssh/cf-lottery-vps.pem npm run deploy
 
 # 如需显式回退 Cloudflare Workers

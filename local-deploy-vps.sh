@@ -5,34 +5,34 @@
 # 背景：当前生产部署已从 Cloudflare Workers 暂停，改为 VPS 模式。
 # 本脚本执行完整部署流程：构建 → 打包 → 上传 → 远端解压 → 重启服务 → 清理临时文件。
 #
-# ⚠️ 解压路径铁律：tar 包内是相对路径（dist/server.js、public/），必须解压到
-#    /root/cf-lottery/（服务 WorkingDirectory），绝不能在 /root/ 解压——
-#    否则文件散落在 /root/dist/、/root/public/，服务读不到新文件，CSS MIME 类型报 HTML。
+# ⚠️ VPS_PATH 必须指向服务工作目录（默认 /root/cf-lottery），不是上一级目录！
+#    tar 包内是相对路径（dist/server.js、public/），解压目标就是 VPS_PATH。
+#    如果 VPS_PATH 设为 /root，文件会散落到 /root/dist/、/root/public/，
+#    服务仍从 /root/cf-lottery/ 读旧文件 → CSS MIME 类型报 HTML。
 #
 # 必填：
 #   VPS_SSH_KEY  SSH 私钥路径。私钥只从环境变量读取，禁止写入仓库。
 #
-# 默认目标：
+# 默认目标（VPS_PATH = 服务工作目录，不是父目录）：
 #   VPS_HOST=38.47.198.72
 #   VPS_USER=root
-#   VPS_PATH=/root
+#   VPS_PATH=/root/cf-lottery     ← ⚠️ 必须是服务 WorkingDirectory
 #   VPS_SSH_PORT=22
 #
 # 最常用用法：
 #   VPS_SSH_KEY=~/.ssh/jp_72_scp-key bash local-deploy-vps.sh
 #
 # 可选覆盖：
-#   VPS_HOST=38.47.198.72 VPS_USER=root VPS_PATH=/root VPS_SSH_KEY=~/.ssh/key bash local-deploy-vps.sh
 #   VPS_SSH_PORT=22 VPS_BUILD_FLAGS="--obfuscate" VPS_SSH_KEY=~/.ssh/key bash local-deploy-vps.sh
 #   SKIP_RESTART=1 VPS_SSH_KEY=~/.ssh/key bash local-deploy-vps.sh   # 只上传不重启（排查用）
 #
 # 部署流程（自动化）：
 #   1. 本地构建 + 打包 tar.gz
-#   2. 上传到 VPS /root/cf-lottery-deploy-*.tar.gz
-#   3. VPS 上：清理旧 assets → cd /root/cf-lottery → tar -xzf 解压 → npm ci → 重启服务
-#   4. 清理 VPS 上的临时 tar.gz 文件（防止磁盘堆积）
+#   2. 上传到 VPS VPS_PATH/cf-lottery-deploy-*.tar.gz
+#   3. VPS 上：清理旧 assets → tar -xzf 解压到 VPS_PATH → npm ci → 重启服务
+#   4. 清理 VPS 上的临时 tar.gz 文件（保留最近 1 个，防止磁盘堆积）
 #
-# 注意 1：server.js 启动时自动执行数据库迁移，无需单独 npm run db:migrate
+# 注意：server.js 启动时自动执行数据库迁移，无需单独 npm run db:migrate
 # ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -49,7 +49,9 @@ shell_quote() {
 
 VPS_HOST="${VPS_HOST:-38.47.198.72}"
 VPS_USER="${VPS_USER:-root}"
-VPS_PATH="${VPS_PATH:-/root}"
+# ⚠️ VPS_PATH 必须指向服务工作目录（与 systemd WorkingDirectory 一致），
+# 绝不能设为上一级目录（如 /root），否则 tar 解压后文件位置错误（docs/273 教训）。
+VPS_PATH="${VPS_PATH:-/root/cf-lottery}"
 VPS_SSH_PORT="${VPS_SSH_PORT:-22}"
 VPS_SSH_KEY="${VPS_SSH_KEY:-}"
 VPS_BUILD_FLAGS="${VPS_BUILD_FLAGS:-}"
@@ -85,14 +87,15 @@ if [ -z "$PACKAGE_FILE" ] || [ ! -f "$PACKAGE_FILE" ]; then
   exit 1
 fi
 
-REMOTE_DIR="$(shell_quote "$VPS_PATH")"
-REMOTE_PACKAGE_PATH="$(shell_quote "${VPS_PATH%/}/$PACKAGE_FILE")"
+# VPS_PATH 就是服务工作目录，所有路径以此为准
+REMOTE_PACKAGE_PATH="$(shell_quote "$VPS_PATH/$PACKAGE_FILE")"
+REMOTE_DEPLOY_DIR="$(shell_quote "$VPS_PATH")"
 
 info "步骤 2/5：上传 $PACKAGE_FILE 到 $VPS_USER@$VPS_HOST:$VPS_PATH/ ..."
-# 清理旧 assets 后创建目录（docs/245）：每次部署先清理 public/assets，
+# 清理旧 assets（docs/245）：每次部署先清理 public/assets，
 # 避免 tar -xzf 解压到已有目录时旧 hash 文件累积，导致浏览器可能加载旧 chunk。
-# 注意：部署目录是 /root/cf-lottery（不是 VPS_PATH=/root），要清理的是 /root/cf-lottery/public/assets。
-ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" "rm -rf ${REMOTE_DIR%/}/cf-lottery/public/assets && mkdir -p $REMOTE_DIR"
+ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" \
+  "rm -rf $REMOTE_DEPLOY_DIR/public/assets && mkdir -p $REMOTE_DEPLOY_DIR"
 
 # 上传：cat + SSH pipe（scp 在部分 VPS 配置下存在连接重置问题）
 # 该 VPS SSH 会话不稳，加入自动重试（最多 3 次）+ 远端文件大小校验，防止半包误判成功
@@ -118,27 +121,25 @@ if [ "$UPLOAD_OK" != "1" ]; then
 fi
 
 # ── 步骤 3/5：远端解压 ──
-# ⚠️ 铁律：必须 cd 到 /root/cf-lottery 再解压！tar 包内是相对路径（dist/、public/），
-# 在 /root/ 解压会导致文件散落到 /root/dist/、/root/public/（错误位置），
-# 服务仍从 /root/cf-lottery/ 读旧文件 → CSS MIME 类型报 HTML（docs/273 教训）。
-DEPLOY_DIR="${REMOTE_DIR%/}/cf-lottery"
-info "步骤 3/5：在远端解压到 $DEPLOY_DIR ..."
+# VPS_PATH = 服务工作目录，tar -xzf 直接解压到此目录，无需手动 cd。
+# tar 包内是相对路径（dist/server.js、public/），解压后即在正确位置。
+info "步骤 3/5：在远端解压到 $VPS_PATH ..."
 ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" \
-  "cd $DEPLOY_DIR && tar -xzf $REMOTE_PACKAGE_PATH && echo '解压完成'" || {
-    err "解压失败！请 SSH 到服务器检查：cd $DEPLOY_DIR && tar -xzf $REMOTE_PACKAGE_PATH"
+  "tar -xzf $REMOTE_PACKAGE_PATH -C $REMOTE_DEPLOY_DIR && echo '解压完成'" || {
+    err "解压失败！请 SSH 到服务器检查：cd $VPS_PATH && tar -xzf $PACKAGE_FILE"
     exit 1
   }
 info "解压完成"
 
 # ── 步骤 4/5：安装生产依赖 ──
 # server.js 启动时自动执行数据库迁移，无需单独 npm run db:migrate。
-# 若 SSH 不稳定，可改用 nohup 后台执行。
 info "步骤 4/5：安装生产依赖（npm ci --omit=dev）..."
 ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" \
-  "cd $DEPLOY_DIR && npm ci --omit=dev" || {
+  "cd $REMOTE_DEPLOY_DIR && npm ci --omit=dev" || {
     warn "npm ci 失败，尝试 nohup 后台安装..."
+    # nohup 后台执行：SSH 断连时 npm ci 仍继续，完成后自动重启服务
     ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" \
-      "nohup bash -c 'cd $DEPLOY_DIR && npm ci --omit=dev && systemctl restart cf-lottery' > /tmp/cf-lottery-deploy.log 2>&1 &"
+      "nohup bash -c 'cd $REMOTE_DEPLOY_DIR && npm ci --omit=dev && systemctl restart cf-lottery' > /tmp/cf-lottery-deploy.log 2>&1 &"
     warn "nohup 后台安装已启动，可通过 tail -f /tmp/cf-lottery-deploy.log 查看进度"
     warn "安装完成后服务将自动重启"
   }
@@ -161,7 +162,7 @@ fi
 # 保留最近 1 个备份（用于回滚排查），删除其余旧版本。
 info "清理 VPS 临时文件..."
 ssh -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" -o ServerAliveInterval=5 "$VPS_USER@$VPS_HOST" \
-  "cd $VPS_PATH && ls -t cf-lottery-deploy-*.tar.gz 2>/dev/null | tail -n +2 | xargs -r rm -f && echo '清理完成'" || \
+  "cd $REMOTE_DEPLOY_DIR && ls -t cf-lottery-deploy-*.tar.gz 2>/dev/null | tail -n +2 | xargs -r rm -f && echo '清理完成'" || \
   warn "临时文件清理失败（不影响部署结果）"
 
 echo ""
