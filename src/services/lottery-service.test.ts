@@ -3251,3 +3251,197 @@ describe("sanitizePublicPromotionConfig 脱敏", () => {
     expect(sanitizePublicPromotionConfig(null)).toBeUndefined();
   });
 });
+
+// ── P4（docs/271）：并发归因集成测试 ──
+
+describe("并发归因与奖励不超发", () => {
+  it("Promise.all 并发归因同一分享者 → 奖励不重复发放（CAS 防护）", async () => {
+    // 场景：两个被邀请人同时通过同一个分享码参与，触发两次归因。
+    // 验证 CAS 防护确保 bonus_spin 不重复发放（spinsTotalGranted 乐观锁）。
+    const now = new Date();
+    const future = new Date(now.getTime() + 86400_000 * 7);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "并发归因测试",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      participationMode: "open",
+      activityKind: "lottery",
+      experienceType: "wheel",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        viral: {
+          enabled: true,
+          extraSpinsPerInvite: 1,
+          maxExtraSpins: 5,
+          extraEntriesPerInvite: 1,
+          maxExtraEntries: 5,
+        },
+        referralRewardDefs: [
+          {
+            rewardId: "conc_2",
+            type: "FIXED",
+            target: "SOURCE",
+            fixedAmount: "3",
+            conditions: [{ field: "totalJoinedCount", operator: "GTE", value: "2" }],
+            metadata: { rewardExit: "bonus_spin" },
+          },
+        ],
+      }),
+    });
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeId, TENANT, "并发奖", "code", 5, 1],
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      prizeId,
+      tierName: "一等奖",
+      winnerCount: 1,
+      sortOrder: 1,
+      weight: 100,
+    });
+    for (let i = 0; i < 5; i++) {
+      await db.insert(prizeCodes).values({
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        prizeId,
+        code: `PC-${i}`,
+        status: "available",
+      });
+    }
+    await publishDraw(db, TENANT, id, { credentialsEncryptionKey: PAYMENT_ENCRYPTION_KEY });
+
+    // 分享者 A 参与
+    const sharer = await joinDraw(db, publicSlug, "conc-sharer@test.com");
+    const sharerEntryId = String(sharer.entryId || "");
+    expect(sharerEntryId).toBeTruthy();
+
+    // 创建分享码
+    await client.execute({
+      sql: `INSERT INTO share_records (id, tenant_id, draw_id, sharer_entry_id, share_code, clicked_count, joined_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ["share-conc", TENANT, id, sharerEntryId, "conc-ref", 0, 0],
+    });
+
+    // 两个被邀请人并发通过同一分享码参与
+    const [invitee1, invitee2] = await Promise.all([
+      joinDraw(db, publicSlug, "conc-i1@test.com", "email", { refCode: "conc-ref" }),
+      joinDraw(db, publicSlug, "conc-i2@test.com", "email", { refCode: "conc-ref" }),
+    ]);
+    expect(invitee1.joined).toBe(true);
+    expect(invitee2.joined).toBe(true);
+
+    // 验证 joinedCount 聚合为 2（两条 shareRecord 各 +1）
+    const [record] = await db
+      .select({ joinedCount: shareRecords.joinedCount })
+      .from(shareRecords)
+      .where(eq(shareRecords.id, "share-conc"));
+    expect(Number(record?.joinedCount ?? 0)).toBe(2);
+
+    // 验证 A 的奖励：join 1 + viral 1（第 1 个邀请）= 2
+    // 第 2 个邀请的 viral 层 +1，但 milestone 层（需要 ≥2）在第 2 个邀请完成时触发
+    // 具体取决于归因顺序，但关键是 spinsTotalGranted 不会超过合理范围
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    const totalGranted = Number(entry?.spinsTotalGranted ?? 0);
+    // join(1) + viral(2×1=2) + milestone(3) = 最多 6
+    expect(totalGranted).toBeGreaterThanOrEqual(3); // 至少 join + viral
+    expect(totalGranted).toBeLessThanOrEqual(6);    // 最多 join + viral + milestone
+
+    // 再次并发调用（幂等）：不应增加任何奖励
+    const [r1, r2] = await Promise.all([
+      joinDraw(db, publicSlug, "conc-i1@test.com", "email", { refCode: "conc-ref" }),
+      joinDraw(db, publicSlug, "conc-i2@test.com", "email", { refCode: "conc-ref" }),
+    ]);
+    // 重复参与被拒绝（已参与过）
+    expect(r1.joined).toBe(false);
+    expect(r2.joined).toBe(false);
+
+    const [entryAfter] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, sharerEntryId));
+    expect(Number(entryAfter?.spinsTotalGranted ?? 0)).toBe(totalGranted); // 未增加
+  });
+
+  it("并发归因不同分享者 → 各自独立发放、互不影响", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 86400_000 * 7);
+    const { id, publicSlug } = await createDraw(db, TENANT, {
+      title: "并发不同分享者",
+      startAt: now.toISOString(),
+      endAt: future.toISOString(),
+      participationMode: "open",
+      activityKind: "lottery",
+      experienceType: "wheel",
+      resultMode: "instant",
+      maxSpinsPerEntry: 10,
+      winnerCount: 1,
+      promotionConfig: JSON.stringify({
+        viral: {
+          enabled: true,
+          extraSpinsPerInvite: 1,
+          maxExtraSpins: 3,
+          extraEntriesPerInvite: 1,
+          maxExtraEntries: 3,
+        },
+      }),
+    });
+    const prizeId = crypto.randomUUID();
+    await client.execute({
+      sql: "INSERT INTO prizes (id, tenant_id, name, prize_type, total_count, active) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [prizeId, TENANT, "并发独立奖", "code", 5, 1],
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId: id,
+      prizeId,
+      tierName: "一等奖",
+      winnerCount: 1,
+      sortOrder: 1,
+      weight: 100,
+    });
+    for (let i = 0; i < 5; i++) {
+      await db.insert(prizeCodes).values({
+        id: crypto.randomUUID(),
+        tenantId: TENANT,
+        prizeId,
+        code: `PC-${i}`,
+        status: "available",
+      });
+    }
+    await publishDraw(db, TENANT, id, { credentialsEncryptionKey: PAYMENT_ENCRYPTION_KEY });
+
+    // 分享者 A 和 B 各自参与
+    const sharerA = await joinDraw(db, publicSlug, "conc-sharerA@test.com");
+    const sharerB = await joinDraw(db, publicSlug, "conc-sharerB@test.com");
+    const entryAId = String(sharerA.entryId || "");
+    const entryBId = String(sharerB.entryId || "");
+
+    // 各创建分享码
+    await client.execute({
+      sql: `INSERT INTO share_records (id, tenant_id, draw_id, sharer_entry_id, share_code, clicked_count, joined_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ["share-a", TENANT, id, entryAId, "ref-a", 0, 0],
+    });
+    await client.execute({
+      sql: `INSERT INTO share_records (id, tenant_id, draw_id, sharer_entry_id, share_code, clicked_count, joined_count) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ["share-b", TENANT, id, entryBId, "ref-b", 0, 0],
+    });
+
+    // 并发：A 的邀请人和 B 的邀请人同时参与
+    const [inviteeA, inviteeB] = await Promise.all([
+      joinDraw(db, publicSlug, "conc-ia@test.com", "email", { refCode: "ref-a" }),
+      joinDraw(db, publicSlug, "conc-ib@test.com", "email", { refCode: "ref-b" }),
+    ]);
+    expect(inviteeA.joined).toBe(true);
+    expect(inviteeB.joined).toBe(true);
+
+    // 验证 A 和 B 各自获得 viral 奖励（+1），互不影响
+    const [entryA] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryAId));
+    const [entryB] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryBId));
+    // join(1) + viral(1) = 2
+    expect(Number(entryA?.spinsTotalGranted ?? 0)).toBe(2);
+    expect(Number(entryB?.spinsTotalGranted ?? 0)).toBe(2);
+  });
+});

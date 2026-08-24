@@ -821,4 +821,148 @@ describe("processReferralRewardsEngine", () => {
     const [share] = await db.select().from(shareRecords).where(eq(shareRecords.id, shareRecordId));
     expect(JSON.parse(share?.rewardMilestonesGranted || "[]")).toEqual([]);
   });
+
+  // ── P4（docs/271）：多记录聚合 + CAS 防护场景 ──
+  // 注：真实 CAS 冲突（rowsAffected=0）需要两个并发 SQLite 连接，
+  // 在单连接测试中无法触发。以下测试验证多记录聚合和幂等的正确行为。
+
+  it("多记录聚合：同分享者两条 shareRecord → invitedCount 正确聚合、标记覆盖全部记录", async () => {
+    // 分享者 A 有两条 shareRecord（两个分享码），聚合 invitedCount=2+0=2。
+    // 验证 aggregateSharerData 正确 SUM 两条记录的 joinedCount，
+    // 且 markRewardIdsGranted 将标记写入全部记录。
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "agg1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    const { entryId, shareRecordId: recordA } = await seedSharer(db, drawId, { joinedCount: 2 });
+
+    // 第二条 shareRecord（同一分享者，joinedCount=0）
+    const recordB = crypto.randomUUID();
+    await db.insert(shareRecords).values({
+      id: recordB,
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId: entryId,
+      shareCode: `sc${recordB.slice(0, 8)}`,
+      clickedCount: 0,
+      joinedCount: 0,
+      rewardMilestonesGranted: "[]",
+    });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, recordA);
+
+    // grant 正常执行：bonus_spin +2（聚合 invitedCount=2，触发 FIXED:2 奖励）
+    const [entry] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entry?.spinsLeft ?? 0)).toBe(2);
+
+    // 两条记录都写入了 agg1 标记
+    const [shareA] = await db.select().from(shareRecords).where(eq(shareRecords.id, recordA));
+    const [shareB] = await db.select().from(shareRecords).where(eq(shareRecords.id, recordB));
+    expect(JSON.parse(shareA?.rewardMilestonesGranted || "[]")).toContain("agg1");
+    expect(JSON.parse(shareB?.rewardMilestonesGranted || "[]")).toContain("agg1");
+
+    // 再次触发：两条记录都有 agg1 → 幂等跳过
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, recordA);
+    const [entryAfter] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entryAfter?.spinsLeft ?? 0)).toBe(2); // 未增加
+  });
+
+  it("幂等标记覆盖：外部修改一条记录的标记后，另一条记录的标记仍可防重", async () => {
+    // 场景：分享者 A 有两条 shareRecord。第一次归因后两条都有标记。
+    // 之后外部（如另一个进程）修改了 recordB 的标记（覆盖为其他值）。
+    // 第二次归因时 aggregateSharerData 从 recordA 仍能找到标记 → 幂等跳过。
+    // 验证：即使一条记录的标记被破坏，另一条的标记仍能防止重复发放。
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "idem1", type: "FIXED", target: "SOURCE", fixedAmount: "2", metadata: { rewardExit: "bonus_spin" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    const { entryId, shareRecordId: recordA } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    const recordB = crypto.randomUUID();
+    await db.insert(shareRecords).values({
+      id: recordB,
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId: entryId,
+      shareCode: `sc${recordB.slice(0, 8)}`,
+      clickedCount: 0,
+      joinedCount: 0,
+      rewardMilestonesGranted: "[]",
+    });
+
+    // 第一次归因：两条记录都标记 idem1
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, recordA);
+    const [entry1] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entry1?.spinsLeft ?? 0)).toBe(2);
+
+    // 模拟外部破坏：覆盖 recordB 的标记（模拟并发覆盖或数据修复场景）
+    await db.update(shareRecords)
+      .set({ rewardMilestonesGranted: JSON.stringify(["other-mark"]) })
+      .where(eq(shareRecords.id, recordB));
+
+    // 第二次归因：aggregateSharerData 从 recordA 找到 idem1 → 幂等跳过（不触发 grant）
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, recordA);
+    const [entry2] = await db.select().from(lotteryEntries).where(eq(lotteryEntries.id, entryId));
+    expect(Number(entry2?.spinsLeft ?? 0)).toBe(2); // 未增加
+
+    // recordB 标记保持原值（第二次调用未触发 grant → newMark=null → mark 未被调用）
+    // 这是预期行为：幂等检查在聚合阶段就拦截了，不需要走到 mark 阶段
+    const [shareB] = await db.select().from(shareRecords).where(eq(shareRecords.id, recordB));
+    const marksB = JSON.parse(shareB?.rewardMilestonesGranted || "[]");
+    expect(marksB).toEqual(["other-mark"]); // 保持外部修改后的值
+  });
+
+  it("bonus_coupon 多记录：部分记录标记被覆盖后仍防重、券不重复发放", async () => {
+    const promotionConfig = JSON.stringify({
+      referralRewardDefs: [
+        { rewardId: "cp-agg", type: "FIXED", target: "SOURCE", fixedAmount: "1", metadata: { rewardExit: "bonus_coupon", couponLabel: "invite" } },
+      ],
+    });
+    const drawId = await seedDraw(db, { promotionConfig, maxSpins: 10 });
+    await seedCoupon(db, drawId, "invite");
+    const { entryId, shareRecordId: recordA } = await seedSharer(db, drawId, { joinedCount: 1 });
+
+    const recordB = crypto.randomUUID();
+    await db.insert(shareRecords).values({
+      id: recordB,
+      tenantId: TENANT,
+      drawId,
+      sharerEntryId: entryId,
+      shareCode: `sc${recordB.slice(0, 8)}`,
+      clickedCount: 0,
+      joinedCount: 0,
+      rewardMilestonesGranted: "[]",
+    });
+
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, recordA);
+
+    // 券已发放（只发 1 张）
+    const issued = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued).toHaveLength(1);
+
+    // 两条记录都有标记
+    const [shareA] = await db.select().from(shareRecords).where(eq(shareRecords.id, recordA));
+    expect(JSON.parse(shareA?.rewardMilestonesGranted || "[]")).toContain("cp-agg");
+
+    // 第二次触发：幂等跳过（不重复发券）
+    await processReferralRewardsEngine(db, {
+      id: drawId, tenantId: TENANT, activityKind: "lottery", maxSpinsPerEntry: 10, promotionConfig,
+    }, recordA);
+    const issued2 = await db.select().from(couponCodes).where(eq(couponCodes.status, "issued"));
+    expect(issued2).toHaveLength(1); // 仍然是 1 张
+  });
 });

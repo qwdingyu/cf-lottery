@@ -344,7 +344,12 @@ export async function grantLeaderboardRewards(
       const capped = actual < rewardCfg.rewardValue;
 
       if (actual > 0) {
-        await tx
+        // P4 修复（docs/271）：bonus_spin 补充显式 CAS 乐观锁。
+        // WHERE 带 spinsTotalGranted=granted 条件——并发下另一个事务若已修改该列
+        // （如路径[1] grantViralSpinsToSharer 同时触发），rowsAffected=0 跳过本次发放。
+        // 当前 SQLite 单写事务串行化下触发概率极低，但为未来迁移分布式 DB（Turso 多副本）
+        // 做防御性准备，与 grantBonusSpin 的 CAS 模式对齐。
+        const updateResult = await tx
           .update(lotteryEntries)
           .set({
             spinsLeft: sql`${lotteryEntries.spinsLeft} + ${actual}`,
@@ -354,7 +359,12 @@ export async function grantLeaderboardRewards(
             eq(lotteryEntries.id, entry.id),
             eq(lotteryEntries.tenantId, draw.tenantId),
             eq(lotteryEntries.drawId, draw.id),
+            eq(lotteryEntries.spinsTotalGranted, granted),
           ));
+        if ((updateResult.rowsAffected ?? 0) === 0) {
+          // CAS 冲突：spinsTotalGranted 已被并发修改，放弃本次发放（防超发）
+          return { status: "skipped", rewardType: "bonus_spin" as const, rewardValue: 0 };
+        }
 
         // 事务内重新读取更新后的余额，用于审计快照（与 spin-execution 同标准）
         const [updatedEntry] = await tx
