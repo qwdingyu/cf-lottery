@@ -319,6 +319,23 @@ export async function settleRewardByPercent(
     .limit(1);
   if (!pendingEvent) return { settled: false, reason: "reward_pending_not_found" };
 
+  // 幂等性检查：确认该 reward_pending 尚未被结算（避免 handlePaymentCallback 重复调用导致双倍结算）。
+  // 通过查找同 sharerEntryId + refCode 的 reward_earned 事件来判断。
+  const [alreadySettled] = await db
+    .select({ id: activityEvents.id })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.entryId, sharerEntryId),
+      eq(activityEvents.eventType, "reward_earned"),
+      eq(activityEvents.refCode, refCode),
+    ))
+    .limit(1);
+  if (alreadySettled) {
+    return { settled: false, reason: "already_settled" };
+  }
+
   let pendingMeta: { perInvitePercent?: number; currency?: string; inviterIdentityValue?: string; source?: string } = {};
   try { pendingMeta = JSON.parse(pendingEvent.metadataJson || "{}"); } catch { pendingMeta = {}; }
   const percent = Number(pendingMeta.perInvitePercent || 0);
@@ -415,9 +432,9 @@ export async function cancelRewardPending(
   joinerEntryId: string,
   reason: string,
 ): Promise<{ cancelled: boolean }> {
-  // 查找 attributed_join 事件，获取 sharerEntryId
+  // 查找 attributed_join 事件，获取 sharerEntryId 和 refCode
   const [joinEvent] = await db
-    .select({ metadataJson: activityEvents.metadataJson })
+    .select({ metadataJson: activityEvents.metadataJson, refCode: activityEvents.refCode })
     .from(activityEvents)
     .where(and(
       eq(activityEvents.tenantId, tenantId),
@@ -428,10 +445,31 @@ export async function cancelRewardPending(
     .limit(1);
   if (!joinEvent) return { cancelled: false };
 
-  let meta: { sharerEntryId?: string; refCode?: string } = {};
+  let meta: { sharerEntryId?: string } = {};
   try { meta = JSON.parse(joinEvent.metadataJson || "{}"); } catch { meta = {}; }
   const sharerEntryId = meta.sharerEntryId;
+  const refCode = joinEvent.refCode || "";
   if (!sharerEntryId) return { cancelled: false };
+
+  // 检查该 reward 是否已被结算（settleRewardByPercent 已写入 reward_earned）。
+  // 如果已结算，不再写 reward_failed——避免同一笔奖励既有 settled 又有 cancelled 的矛盾状态。
+  // 注意：同一个 sharerEntryId 可能有多条 reward_earned（不同 refCode 多次邀请），
+  // 需要用 refCode 精确匹配到同一次归因。
+  const [settledEvent] = await db
+    .select({ id: activityEvents.id })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.entryId, sharerEntryId),
+      eq(activityEvents.eventType, "reward_earned"),
+      eq(activityEvents.refCode, refCode),
+    ))
+    .limit(1);
+  if (settledEvent) {
+    // 已结算，跳过取消（reward_earned 是最终态）
+    return { cancelled: false };
+  }
 
   // 写 reward_failed 事件记录取消
   await recordActivityEvent(db, {
@@ -439,7 +477,7 @@ export async function cancelRewardPending(
     drawId,
     entryId: sharerEntryId,
     eventType: "reward_failed",
-    refCode: meta.refCode || "",
+    refCode,
     metadata: {
       path: "cancelRewardPending",
       reason,
