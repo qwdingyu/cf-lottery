@@ -397,7 +397,8 @@ export async function grantLeaderboardRewards(
         });
       }
 
-      return { status: "granted", rewardType: "bonus_spin", rewardValue: actual };
+      // actual=0 时用户已达 maxSpins 上限，标记保持（防止重试），状态记为 skipped
+      return { status: actual > 0 ? "granted" : "skipped", rewardType: "bonus_spin", rewardValue: actual };
     });
 
     if (verdict.status === "granted") result.granted++;

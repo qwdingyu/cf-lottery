@@ -402,10 +402,11 @@ adminLotteryRoute.get("/draws/:id/viral-stats", async (c) => {
   const inviteCounts = new Map(rows.map((r) => [r.sharerEntryId, r.joinedCount]));
   const { entries: leaderboard } = buildViralLeaderboardRanking(inviteCounts, { topN: 20 });
 
+  // shares 数组已移除——前端弹窗只消费 shareStats 和 leaderboard，
+  // 完整分享明细则有独立的 /draws/:id/shares 端点可用，避免响应体膨胀。
   return ok(c, {
     shareStats: { totalClicks, totalJoins, sharerCount: rows.length },
     leaderboard,
-    shares: rows,
   });
 });
 
