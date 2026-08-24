@@ -100,7 +100,7 @@ export function defaultExperienceForActivity(activityKind: string, participation
  * 白名单规则：
  * - lottery: 所有游戏体验壳（wheel/slot/scratch/card/grid）+ flash_sale（秒杀）
  * - 非 lottery 类型: 该类型的语义体验 + submit（通用提交兜底）
- * - claim 特殊: reveal（领取）+ flash_sale（秒杀，flash-sale-rush 模板使用）
+ * - claim 特殊: reveal（领取）+ flash_sale（秒杀，flash-sale-rush 模板使用）+ submit（通用表单，支付后留资等场景）
  *
  * 前端下拉框根据此白名单过滤选项；后端 PATCH/POST API 据此校验组合合法性。
  */
@@ -113,7 +113,7 @@ export const ALLOWED_EXPERIENCE_TYPES: Record<string, readonly string[]> = {
   checkin:       ["checkin", "submit"],
   waitlist:      ["queue", "submit"],
   approval:      ["form", "submit"],
-  claim:         ["reveal", "flash_sale"],
+  claim:         ["reveal", "flash_sale", "submit"],
 };
 
 /**

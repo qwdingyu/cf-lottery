@@ -48,7 +48,7 @@ export const ALLOWED_EXPERIENCE_TYPES: Record<string, readonly string[]> = {
   checkin:       ['checkin', 'submit'],
   waitlist:      ['queue', 'submit'],
   approval:      ['form', 'submit'],
-  claim:         ['reveal', 'flash_sale'],
+  claim:         ['reveal', 'flash_sale', 'submit'],
 }
 
 /**
