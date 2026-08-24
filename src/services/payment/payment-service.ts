@@ -32,7 +32,7 @@ import {
 import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "@usethink/cf-pay/catalog";
 import { decryptPaymentConfigValue, isEncryptedPaymentConfigValue } from "@usethink/cf-pay/config-store";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../../lib/flash-sale-config";
-import { settleRewardByPercent } from "../lottery/reward";
+import { settleRewardByPercent, cancelRewardPending } from "../lottery/reward";
 import {
   isPaidPaymentAttemptStatus,
   isRetryablePaymentOrderStatus,
@@ -292,6 +292,14 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
         // 释放该订单预占的卡密（P2 优化，docs/205）：reserved → available，供其他用户复用
         await releaseReservedPrizeCodes(tx, order.id, tenantId);
       }
+
+      // 4b) 取消对应 reward_pending 事件（docs/271）：已释放的 entry 不再有付款确认机会，
+      //     因此 sharer 的 pending 奖励应标记为 cancelled。仅对 toRelease 的 entry 执行。
+      for (const expiredEntryId of toRelease) {
+        await cancelRewardPending(tx, tenantId, "", expiredEntryId, "payment_expired").catch((err) => {
+          logError("payment-service", `cancelRewardPending entry=${expiredEntryId}`, err);
+        });
+      }
     }
 
     if (staleReservations.length > 0) {
@@ -312,6 +320,16 @@ export async function expireOverdueOrders(db: DbType, tenantId: string): Promise
     // 释放名额的 entry 都属于直付秒杀；按活动分组扣减计数器，避免把多个活动混成一个 delta。
     for (const [drawId, amount] of releaseByDraw) {
       await decrementActiveFlashSaleCount(tx, tenantId, drawId, amount);
+    }
+
+    // percent 模式奖励清理：超时订单释放时，取消对应的 reward_pending 事件。
+    // 容错：单条失败不影响批量释放，catch 降级为 logError 确保运维可感知。
+    for (const order of overdue) {
+      if (order.entryId) {
+        await cancelRewardPending(tx, tenantId, order.drawId, order.entryId, "payment_expired").catch((err) => {
+          logError("payment-service", `cancelRewardPending expired order=${order.id} draw=${order.drawId}`, err);
+        });
+      }
     }
 
     return overdue.length + staleReservations.length;
@@ -420,6 +438,11 @@ async function cancelPaymentOrder(
         eq(lotteryEntries.drawId, input.drawId),
         eq(lotteryEntries.paymentStatus, PAYMENT_ENTRY_STATUS.PENDING),
       ));
+
+    // 取消对应的 reward_pending 事件（docs/271）
+    await cancelRewardPending(tx, input.tenantId, input.drawId, input.entryId, "payment_cancelled").catch((err) => {
+      logError("payment-service", `cancelRewardPending entry=${input.entryId}`, err);
+    });
   });
 }
 
@@ -1518,8 +1541,8 @@ export async function handlePaymentCallback(
       // 幂等性：settleRewardByPercent 内部通过查找 reward_pending 事件隐式幂等——
       // 同一 entry 的 attributed_join 事件唯一，reward_earned 事件写入后不会重复触发。
       // 执行失败时（如活动未配置 percent 奖励）静默跳过，不影响支付主流程。
-      if (fulfillmentOk) {
-        await settleRewardByPercent(tx, tenantId, current.drawId, current.entryId, callback.amountCents, callback.currency).catch((err) => {
+      if (fulfillmentOk && current.amountCents > 0) {
+        await settleRewardByPercent(tx, tenantId, current.drawId, current.entryId, current.amountCents, current.currency).catch((err) => {
           logError("payment-service", `settleRewardByPercent draw=${current.drawId} entry=${current.entryId}`, err);
         });
       }
@@ -1646,6 +1669,13 @@ export async function retryPaymentFulfillment(
       .returning({ id: paymentOrders.id });
     if (updatedOrder.length === 0) {
       throw new Error("订单状态已变化，请刷新后重试");
+    }
+
+    // percent 模式奖励结算：补发成功后，计算邀请人应得佣金（幂等，与 handlePaymentCallback 一致）
+    if (current.amountCents > 0) {
+      await settleRewardByPercent(tx, tenantId, current.drawId, current.entryId, current.amountCents, current.currency).catch((err) => {
+        logError("payment-service", `retryPaymentFulfillment: settleRewardByPercent draw=${current.drawId} entry=${current.entryId}`, err);
+      });
     }
 
     const [updated] = await tx.select().from(paymentOrders).where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.tenantId, tenantId))).limit(1);
@@ -1854,6 +1884,12 @@ export async function refundPaymentOrder(
             ));
           const quantity = Math.max(1, Math.floor(Number(current.quantity || 1)));
           await decrementActiveFlashSaleCount(tx, tenantId, current.drawId, quantity);
+
+          // percent 模式奖励清理：退款且无其他有效订单时，取消对应的 reward_pending 事件。
+          // 容错：失败不影响退款主流程（审计事件已落库）。
+          await cancelRewardPending(tx, tenantId, current.drawId, current.entryId, "payment_refunded").catch((err) => {
+            logError("payment-service", `refundPaymentOrder cancelRewardPending order=${current.id} draw=${current.drawId}`, err);
+          });
         }
       }
     }

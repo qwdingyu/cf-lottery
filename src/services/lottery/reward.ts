@@ -368,6 +368,23 @@ export async function settleRewardByPercent(
     logError("reward", `settleRewardByPercent: enqueueWebhookEvent draw=${drawId}`, err);
   }
 
+  // 出站平台消息（QQ 群）：付款确认后通知邀请人奖励已结算。
+  // 与 triggerRewardEarned 的 fixed 模式一致——fixed 在参与时发送，percent 在付款确认后发送。
+  try {
+    await enqueuePlatformEvent(db, {
+      tenantId,
+      drawId,
+      eventType: "reward.earned",
+      data: {
+        userName: pendingMeta.inviterIdentityValue || "",
+        rewardLabel: `${actualAmountCents} ${pendingMeta.currency || currency || "USD"}`,
+        rewardValue: `${actualAmountCents} ${pendingMeta.currency || currency || "USD"}`,
+      },
+    });
+  } catch (err) {
+    logError("reward", `settleRewardByPercent: enqueuePlatformEvent draw=${drawId}`, err);
+  }
+
   return { settled: true };
 }
 
