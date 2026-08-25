@@ -2363,4 +2363,32 @@ describe("FAILURES: GET /draws/:id/rewards/failures 身份可读性", () => {
     const res = await app.request("/api/admin/draws/nonexistent/rewards/failures", { headers }, TEST_ENV);
     expect(res.status).toBe(404);
   });
+
+  it("已补发的 reward_failed 记录被过滤（docs/274 5.2）", async () => {
+    await seedDrawForFailures();
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    // 未补发的 reward_failed
+    await db.insert(activityEvents).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A, drawId: DRAW_RF, entryId: "entry-not-reissued",
+      eventType: "reward_failed", refCode: "ref-not-reissued",
+      metadataJson: JSON.stringify({ path: "grantViralSpinsToSharer", error: "模拟失败" }),
+    });
+    // 已补发的 reward_failed（metadata.reissued=true）
+    await db.insert(activityEvents).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT_A, drawId: DRAW_RF, entryId: "entry-reissued",
+      eventType: "reward_failed", refCode: "ref-reissued",
+      metadataJson: JSON.stringify({ path: "grantViralSpinsToSharer", error: "模拟失败", reissued: true, reissuedAt: new Date().toISOString() }),
+    });
+
+    const res = await app.request(`/api/admin/draws/${DRAW_RF}/rewards/failures`, { headers }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { failures: Array<{ entryId: string }> };
+    // 只返回未补发的记录
+    expect(body.failures).toHaveLength(1);
+    expect(body.failures[0]!.entryId).toBe("entry-not-reissued");
+  });
 });
