@@ -138,12 +138,17 @@ export async function triggerRewardEarned(
   // 此时事务会被 maybeTriggerReward 的 catch 捕获，但事件记录保留在事务中。
   // 这是有意为之：reward_earned 事件是看板/审计的唯一真相源（source of truth），
   // webhook 投递失败可以通过事件列表人工补偿。
+  // 顶层 source 列用于漏斗看板按来源分组（useDrawAnalytics 按 activityEvents.source 分组），
+  // 与 draw-execution.ts（loser_reward）和 leaderboard-rewards.ts（viral）的模式对齐。
+  // 不写 source 列会导致 percent 模式奖励全部落入 "unknown" 分组。
+  const eventSource = options?.source || "trigger";
   if (rewardMode === "fixed") {
     await recordActivityEvent(tx, {
       tenantId: draw.tenantId,
       drawId,
       entryId: sharerEntryId,
       eventType: "reward_earned",
+      source: eventSource,
       refCode,
       metadata: {
         mode: "fixed",
@@ -151,7 +156,6 @@ export async function triggerRewardEarned(
         currency: derivedCurrency,
         sharerEntryId,
         inviterIdentityValue,
-        source: options?.source || "trigger",
         status: "resolved",
       },
     });
@@ -164,6 +168,7 @@ export async function triggerRewardEarned(
       drawId,
       entryId: sharerEntryId,
       eventType: "reward_pending",
+      source: eventSource,
       refCode,
       metadata: {
         mode: "percent",
@@ -171,7 +176,6 @@ export async function triggerRewardEarned(
         currency: derivedCurrency,
         sharerEntryId,
         inviterIdentityValue,
-        source: options?.source || "trigger",
         status: "pending",
       },
     });
@@ -219,9 +223,11 @@ export async function triggerRewardEarned(
         rewardLabel: rewardMode === "fixed"
           ? (perInviteAmount > 0 ? `${perInviteAmount} ${derivedCurrency}` : "奖励")
           : `${perInvitePercent}%（待付款确认）`,
+        // percent 模式参与时 rewardLabel 已含百分比，rewardValue 留空避免重复显示
+        // 模板渲染：🎁 xxx 通过分享获得奖励：10%（待付款确认）而非 10%（待付款确认）（10%）
         rewardValue: rewardMode === "fixed"
           ? (perInviteAmount > 0 ? `${perInviteAmount} ${derivedCurrency}` : "")
-          : `${perInvitePercent}%`,
+          : "",
       },
     });
   } catch (err) {
@@ -351,11 +357,13 @@ export async function settleRewardByPercent(
   }
 
   // 4. 写 reward_earned 事件（status: settled）
+  // 顶层 source 列与 triggerRewardEarned 对齐，漏斗看板按 source 分组时能正确归类
   await recordActivityEvent(db, {
     tenantId,
     drawId,
     entryId: sharerEntryId,
     eventType: "reward_earned",
+    source: pendingMeta.source || "trigger",
     refCode,
     metadata: {
       mode: "percent",
@@ -364,7 +372,6 @@ export async function settleRewardByPercent(
       currency: pendingMeta.currency || currency || "cny",
       sharerEntryId,
       inviterIdentityValue: pendingMeta.inviterIdentityValue || "",
-      source: pendingMeta.source || "trigger",
       status: "settled",
       joinerEntryId,
       settledFrom: "reward_pending",
@@ -417,7 +424,8 @@ export async function settleRewardByPercent(
  * 取消 pending 状态的 percent 模式奖励（docs/271）。
  *
  * 调用时机：支付取消/退款/超时释放时，清除对应的 reward_pending 事件。
- * 写 reward_failed 事件记录取消原因，保留审计链。
+ * 写 reward_cancelled 事件记录取消原因（与 reward_failed 语义分离，docs/273），
+ * reward_failed 用于实际奖励发放失败（可补发），reward_cancelled 用于支付取消（不可补发）。
  *
  * @param db 事务实例
  * @param tenantId 租户 ID
@@ -471,12 +479,13 @@ export async function cancelRewardPending(
     return { cancelled: false };
   }
 
-  // 写 reward_failed 事件记录取消
+  // 写 reward_cancelled 事件记录取消（与 reward_failed 语义分离，docs/273）
+  // reward_failed 用于实际奖励发放失败（可补发），reward_cancelled 用于支付取消/退款/超时（不可补发）
   await recordActivityEvent(db, {
     tenantId,
     drawId,
     entryId: sharerEntryId,
-    eventType: "reward_failed",
+    eventType: "reward_cancelled",
     refCode,
     metadata: {
       path: "cancelRewardPending",
