@@ -522,7 +522,13 @@ export async function cancelRewardPending(
 
   // 写 reward_cancelled 事件记录取消（与 reward_failed 语义分离，docs/273）
   // reward_failed 用于实际奖励发放失败（可补发），reward_cancelled 用于支付取消/退款/超时（不可补发）
-  const cancelSource = reason === "payment_expired" ? "payment_expired" : reason === "payment_cancelled" ? "payment_cancelled" : "payment_refunded";
+  // source 列映射：reason → source（用于漏斗分析分组），未知 reason 直接使用 reason 本身
+  const CANCEL_SOURCE_MAP: Record<string, string> = {
+    payment_expired: "payment_expired",
+    payment_cancelled: "payment_cancelled",
+    payment_refunded: "payment_refunded",
+  };
+  const cancelSource = CANCEL_SOURCE_MAP[reason] || reason;
   await recordActivityEvent(db, {
     tenantId,
     drawId,
