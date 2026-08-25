@@ -107,11 +107,15 @@ export async function triggerRewardEarned(
 
   // 每个配额门槛单独提取，与活动配置的 JSON 字段一一对应，
   // 避免 `x || default` 将配置值 0（关闭限制）误当作 falsy 跳过。
-  // 关闭限制用 -1 或 0 表示"无限"，通过 Math.max(1, ...) 防御非正值。
+  // "不限制"语义（docs/274）：留空 / 0 / 负值 都视为关闭配额限制，
+  // 用一个超大数（MAX_SAFE_INTEGER）兜底，保证 SELECT COUNT < limit 恒真。
+  // 不能用 Math.max(1, ...) — 那会把 0/-1（意为关闭）误强转为 1，配额仍被强制。
+  const UNLIMITED = Number.MAX_SAFE_INTEGER;
   const rawPerUserDay = config?.quota?.perUserPerDay;
   const rawGlobalDay = config?.quota?.globalPerDay;
-  const perUserPerDay = rawPerUserDay != null ? Math.max(1, Number(rawPerUserDay)) : 1;
-  const globalPerDay = rawGlobalDay != null ? Math.max(1, Number(rawGlobalDay)) : 1;
+  const isUnlimited = (v: number | null | undefined) => v == null || v <= 0;
+  const perUserPerDay = isUnlimited(rawPerUserDay) ? UNLIMITED : Number(rawPerUserDay);
+  const globalPerDay = isUnlimited(rawGlobalDay) ? UNLIMITED : Number(rawGlobalDay);
 
   // 配额校验 1：邀请人（奖励受益人）每天最多 perUserPerDay 次。
   //
