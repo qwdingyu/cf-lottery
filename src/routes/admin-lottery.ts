@@ -1480,21 +1480,29 @@ adminLotteryRoute.get("/draws/:id/rewards/failures", async (c) => {
 
     // 过滤语义（docs/273）：reward_failed 只包含真正可补发的失败；
     // cancelRewardPending 的取消记录已改用 reward_cancelled 事件类型，天然不混入。
-    const list = rows.map((r) => {
-      let meta: Record<string, unknown> = {}
-      try { meta = JSON.parse(r.metadataJson || "{}") } catch { /* ignore */ }
-      return {
-        id: r.id,
-        entryId: r.entryId,
-        refCode: r.refCode,
-        createdAt: r.createdAt,
-        path: meta.path || "",
-        error: meta.error || "",
-        shareRecordId: meta.shareRecordId || "",
-        identityType: "",
-        identityValue: "",
-      }
-    })
+    // 已补发的记录（metadata.reissued=true）也排除——避免运营重复补发（docs/274 5.2）。
+    const list = rows
+      .filter((r) => {
+        try {
+          const meta = JSON.parse(r.metadataJson || "{}");
+          return !meta.reissued;
+        } catch { return true; }
+      })
+      .map((r) => {
+        let meta: Record<string, unknown> = {}
+        try { meta = JSON.parse(r.metadataJson || "{}") } catch { /* ignore */ }
+        return {
+          id: r.id,
+          entryId: r.entryId,
+          refCode: r.refCode,
+          createdAt: r.createdAt,
+          path: meta.path || "",
+          error: meta.error || "",
+          shareRecordId: meta.shareRecordId || "",
+          identityType: "",
+          identityValue: "",
+        }
+      })
 
     // 批量查询 entryId 对应的身份信息，供 decorateIdentityDisplay 解析为可读名称
     const entryIds = [...new Set(list.map((r) => r.entryId).filter(Boolean))];
@@ -1603,6 +1611,17 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
         refCode,
         { source: "reissue" },
       );
+      // 补发成功后标记原始 reward_failed 事件（docs/274 5.2）：
+      // 更新 metadata.reissued=true + reissuedAt，供失败列表过滤已补发记录。
+      // 不删除原始事件——保留审计轨迹，运营可在审计日志中追溯"何时补发"。
+      if (result.triggered) {
+        await db.update(activityEvents)
+          .set({ metadataJson: sql`json_set(COALESCE(metadata_json, '{}'), '$.reissued', 1, '$.reissuedAt', datetime('now'))` })
+          .where(and(
+            eq(activityEvents.id, f.id),
+            eq(activityEvents.tenantId, tenantId),
+          ));
+      }
       results.push({ ...result, refCode })
     }
 
