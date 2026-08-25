@@ -45,6 +45,10 @@ export function useDrawAnalytics(opts: {
         label: `${t('lottery.adminFunnelRewards')} (${source})`,
         value: count,
       })) : []),
+      // 奖励状态机漏斗（docs/274 D-1）：reward_pending（percent 待付款）→ reward_earned（已结算）| reward_cancelled（取消）
+      { key: 'reward_pending', label: t('lottery.adminFunnelRewardsPending'), value: events?.totals.reward_pending ?? 0 },
+      { key: 'reward_cancelled', label: t('lottery.adminFunnelRewardsCancelled'), value: events?.totals.reward_cancelled ?? 0 },
+      { key: 'reward_failed', label: t('lottery.adminFunnelRewardsFailed'), value: events?.totals.reward_failed ?? 0 },
     ]
   })
 
