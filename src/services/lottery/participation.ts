@@ -195,7 +195,10 @@ export async function joinDraw(
   const nowIso = now.toISOString();
 
   try {
-    return await withDbTransaction(db, async (tx) => {
+    // 收集 reward.earned 的 deliveryIds，在事务提交后用主连接 dispatch
+    // （避免 dispatchWebhookDelivery 在事务内/未提交时读不到 delivery 记录，docs/274 修正）
+    let rewardDeliveryIds: string[] = [];
+    const result = await withDbTransaction(db, async (tx) => {
       const flashParsed = parseFlashSaleConfig(draw.promotionConfig);
       const flashCap = resolveEffectiveStockLimit(flashParsed.config, draw.maxParticipants);
       const isFlashSaleJoin =
@@ -633,7 +636,8 @@ export async function joinDraw(
           ipHash: options?.ipHash,
           userAgent: options?.userAgent,
         });
-        await maybeTriggerReward(tx, db, draw, attribution);
+        const rewardIds = await maybeTriggerReward(tx, db, draw, attribution);
+        rewardDeliveryIds.push(...rewardIds);
         return { joined: true, entryId, activityKind: draw.activityKind, attribution, submissionId };
       }
 
@@ -680,7 +684,8 @@ export async function joinDraw(
         userAgent: options?.userAgent,
       });
 
-      await maybeTriggerReward(tx, db, draw, attribution);
+      const rewardIds = await maybeTriggerReward(tx, db, draw, attribution);
+      rewardDeliveryIds.push(...rewardIds);
 
       return {
         joined: true,
@@ -700,6 +705,19 @@ export async function joinDraw(
         },
       };
     });
+
+    // 事务外异步 dispatch reward.earned webhook（与 handlePaymentCallback 一致）：
+    // 事务已提交，dispatchWebhookDelivery 能读到 delivery 记录。
+    // 失败不影响参与主流程（processPendingWebhookDeliveries 定时任务会补投）。
+    if (rewardDeliveryIds.length > 0) {
+      for (const deliveryId of rewardDeliveryIds) {
+        void dispatchWebhookDelivery(db, draw.tenantId, deliveryId).catch((err) => {
+          logError("participation", `reward webhook dispatch delivery=${deliveryId}`, err);
+        });
+      }
+    }
+
+    return result;
   } catch (err: unknown) {
     if (err instanceof InviteCodeUnavailableError) {
       return { joined: false, message: "邀请码无效或已用完" };
@@ -866,10 +884,9 @@ export async function cancelSignupChainEntry(
  *   未配置或配额超限时静默跳过，不影响任何现有活动。这是设计原则：
  *   reward 是附加行为，不是参与的必要条件。如果 reward 触发失败，参与仍应成功。
  * - 与 joinDraw 同事务执行：归因、配额消耗、奖励意图入队三者原子。
- * - Webhook 投递（dispatchWebhookDelivery）使用主连接 db 而非事务 tx：
- *   该函数内含 await fetch（网络 I/O），若在事务内会阻塞事务提交；
- *   且它内含 await db.update() 更新投递状态，事务提交后 tx 已不可用。
- *   因此用主连接 db 执行 fire-and-forget（与 draw-execution.ts:383 一致）。
+ * - 返回 deliveryIds 给 joinDraw，由 joinDraw 在事务提交后异步 dispatch
+ *   dispatchWebhookDelivery（与 handlePaymentCallback 模式一致，避免事务未提交
+ *   时主连接读不到 delivery 记录，docs/274 修正）。
  *   如果 triggerRewardEarned 抛异常（catch 捕获），事务仍会提交参与记录：
  *   奖励是附加行为，参与主流程不应因奖励失败而回滚。
  *   此设计与 grantLoserRewards 的容错原则一致——"开奖成功，未中奖发券失败"不回滚开奖结果。
@@ -879,8 +896,8 @@ async function maybeTriggerReward(
   db: DbType,
   draw: { id: string; tenantId: string; activityKind?: string | null; resultMode?: string | null; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
   attribution: { attributed: boolean; sharerEntryId?: string; refCode?: string; shareRecordId?: string },
-) {
-  if (!attribution.attributed || !attribution.sharerEntryId) return;
+): Promise<string[]> {
+  if (!attribution.attributed || !attribution.sharerEntryId) return [];
 
   // ── 奖励触发条件差异（docs/254 审查确认）──
   // 路径[1] grantViralSpinsToSharer：仅 resultMode === "instant" 触发（viral.extraSpinsPerInvite）
@@ -958,15 +975,10 @@ async function maybeTriggerReward(
       sharerIdentity,
       attribution.refCode || "",
     );
-    for (const deliveryId of result.deliveryIds) {
-      // 使用主连接 db 而非事务 tx 调用 dispatchWebhookDelivery：
-      // 该函数会做 await fetch（网络 I/O），若在事务内会被阻塞；
-      // 且它内含 await db.update() 更新投递状态，事务提交后 tx 已不可用。
-      // 因此用主连接 db 执行 fire-and-forget（与 draw-execution.ts:383 一致）。
-      void dispatchWebhookDelivery(db, draw.tenantId, deliveryId).catch((err) => {
-        logError("participation", `reward webhook dispatch delivery=${deliveryId}`, err);
-      });
-    }
+    // 返回 deliveryIds 给调用方（joinDraw），由调用方在事务提交后统一 dispatch。
+    // 不能在事务内/未提交时 dispatch——dispatchWebhookDelivery 内含 fetch + 写库，
+    // 且事务未提交时主连接读不到 delivery 记录（docs/274 修正）。
+    return result.deliveryIds;
   } catch (err) {
     // 奖励触发失败不影响参与成功（与 grantLoserRewards 的容错一致）
     // P1-2：奖励发放失败必须落库，供管理端补发入口查询
@@ -987,6 +999,7 @@ async function maybeTriggerReward(
       logError("participation", `reward_failed event also lost (triggerRewardEarned) draw=${draw.id}`, recordErr);
     });
     logError("participation", `triggerRewardEarned draw=${draw.id}`, err);
+    return [];
   }
 }
 
