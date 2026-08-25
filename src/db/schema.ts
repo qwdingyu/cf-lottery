@@ -841,6 +841,16 @@ export const activityEvents = sqliteTable("activity_events", {
   drawEventIdx: index("idx_activity_events_draw_event").on(t.tenantId, t.drawId, t.eventType, t.createdAt),
   entryIdx: index("idx_activity_events_entry").on(t.tenantId, t.drawId, t.entryId, t.createdAt),
   refIdx: index("idx_activity_events_ref").on(t.tenantId, t.drawId, t.refCode, t.createdAt),
+  // 防止并发结算双倍写入（docs/274 F-1）：同一 (tenant,draw,entry,event,ref) 组合唯一。
+  // SQLite 无 PARTIAL UNIQUE INDEX，全局约束可能阻止"离开再加入"产生的重复 attributed_join。
+  // 实际保护范围：reward_earned / reward_pending / reward_cancelled——这三个事件类型
+  // 由 settleRewardByPercent / cancelRewardPending 的 SELECT-then-INSERT 写入，
+  // 并发时第一个事务提交后第二个触发约束冲突，被 .catch() 静默降级（幂等安全）。
+  // attributed_join 等事件若有重复（如重新加入），会在迁移去重后被此约束阻止——
+  // 这是可接受的行为变更：重新加入应生成新 refCode，旧 attributed_join 保留在历史中。
+  rewardUnique: uniqueIndex("idx_activity_events_reward_unique").on(
+    t.tenantId, t.drawId, t.entryId, t.eventType, t.refCode,
+  ),
 }));
 
 // ── 活动提交（问卷答案、投票选项、资料领取请求等动态表单 payload） ──

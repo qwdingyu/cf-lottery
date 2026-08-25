@@ -518,12 +518,14 @@ export async function cancelRewardPending(
 
   // 写 reward_cancelled 事件记录取消（与 reward_failed 语义分离，docs/273）
   // reward_failed 用于实际奖励发放失败（可补发），reward_cancelled 用于支付取消/退款/超时（不可补发）
+  const cancelSource = reason === "payment_expired" ? "payment_expired" : reason === "payment_cancelled" ? "payment_cancelled" : "payment_refunded";
   await recordActivityEvent(db, {
     tenantId,
     drawId,
     entryId: sharerEntryId,
     eventType: "reward_cancelled",
     refCode,
+    source: cancelSource,
     metadata: {
       path: "cancelRewardPending",
       reason,
