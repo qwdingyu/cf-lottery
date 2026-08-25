@@ -2537,10 +2537,10 @@ describe("triggerRewardEarned", () => {
       quota: { perUserPerDay: 2, globalPerDay: 100 },
     });
     const { drawId, sharerEntryId } = await setupRewardDraw(config);
-    // 前两次触发消耗配额
+    // 前两次触发消耗配额：每次使用不同的 refCode 以绕开幂等检查（docs/274 修正）
     const first = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
     expect(first.triggered).toBe(true);
-    const second = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc1");
+    const second = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc2");
     expect(second.triggered).toBe(true);
     // 第三次：配额超限
     const third = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "sc3");

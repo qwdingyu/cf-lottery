@@ -134,7 +134,27 @@ export async function triggerRewardEarned(
   const globalKey = `reward:global:${drawId}`;
   if (!(await checkDbRateLimit(tx, globalKey, globalPerDay, REWARD_QUOTA_WINDOW_MS))) {
     return { triggered: false, reason: "quota_exceeded", sharerEntryId, deliveryIds: [] };
-  }  // 记录奖励意图事件（docs/271 状态机）：
+  }
+
+  // 幂等性：检查是否已有 reward_earned/fixed 或 reward_pending/percent 事件。
+  // 防止 reissue 端点重复调用 triggerRewardEarned 时写入多个相同事件。
+  const eventType = rewardMode === "fixed" ? "reward_earned" : "reward_pending";
+  const [alreadyRecorded] = await tx
+    .select({ id: activityEvents.id })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.entryId, sharerEntryId),
+      eq(activityEvents.eventType, eventType),
+      eq(activityEvents.refCode, refCode),
+    ))
+    .limit(1);
+  if (alreadyRecorded) {
+    return { triggered: false, reason: "reward_sent", sharerEntryId, deliveryIds: [] };
+  }
+
+  // 记录奖励意图事件（docs/271 状态机）：
   //   fixed 模式：reward_earned（resolved），金额已知，直接通知中转站
   //   percent 模式：reward_pending（pending），付款确认后计算实际金额再通知
   //
@@ -542,8 +562,6 @@ export async function cancelRewardPending(
       joinerEntryId,
       status: "cancelled",
     },
-  }).catch((err) => {
-    logError("reward", `cancelRewardPending: recordActivityEvent draw=${drawId}`, err);
   });
 
   return { cancelled: true };
