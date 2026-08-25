@@ -13,6 +13,7 @@ import {
   prizes,
   tenantConfigs,
   tenants,
+  activityEvents,
 } from "../../db/schema";
 import type { PaymentProvider } from "@usethink/cf-pay/catalog";
 import { EasyPayProviderError } from "@usethink/cf-pay/catalog";
@@ -29,6 +30,7 @@ import {
   refundPaymentOrder,
 } from "./payment-service";
 import { encryptPaymentConfigValue } from "@usethink/cf-pay/config-store";
+import { recordActivityEvent } from "../lottery/integration";
 
 let client: Awaited<ReturnType<typeof getTestDb>>["client"];
 let db: DbType;
@@ -2893,5 +2895,220 @@ describe("支付并发安全性", () => {
       const [drawRow] = await db.select({ count: lotteryDraws.activeParticipantCount }).from(lotteryDraws).where(eq(lotteryDraws.id, drawId));
       expect(drawRow?.count).toBe(3);
     });
+  });
+});
+
+// ── 支付→奖励集成测试（docs/274 第三轮审计 5.4） ──
+// 验证 handlePaymentCallback / refundPaymentOrder / expireOverdueOrders
+// 正确触发 settleRewardByPercent / cancelRewardPending 并产生对应事件。
+describe("支付→奖励集成", () => {
+  const REWARD_TENANT = "tenant-reward-integration";
+  const REWARD_DRAW = "draw-reward-integration";
+  const SHARER_ENTRY = "entry-sharer-reward";
+  const JOINER_ENTRY = "entry-joiner-reward";
+  const REWARD_ORDER = "order-reward-integration";
+  const REWARD_ATTEMPT = "attempt-reward-integration";
+  const REWARD_PRIZE = "prize-reward-integration";
+  const REWARD_CODE = "code-reward-integration";
+
+  async function seedPercentRewardDraw() {
+    await db.insert(tenants).values({ id: REWARD_TENANT, name: "reward-tenant" });
+    await db.insert(lotteryDraws).values({
+      id: REWARD_DRAW,
+      tenantId: REWARD_TENANT,
+      publicSlug: "reward-integration-draw",
+      title: "奖励集成测试活动",
+      status: "open",
+      maxParticipants: 5,
+      activeParticipantCount: 2,
+      experienceType: "flash_sale",
+      activityConfig: JSON.stringify({
+        version: 1,
+        reward: { mode: "percent", perInvitePercent: 10, currency: "CNY" },
+      }),
+      promotionConfig: JSON.stringify({
+        flashSale: { enabled: true, paymentRequired: true, stockLimit: 5, priceCents: 1000, currency: "cny" },
+      }),
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+
+    // 邀请人（sharer）
+    await db.insert(lotteryEntries).values({
+      id: SHARER_ENTRY, tenantId: REWARD_TENANT, drawId: REWARD_DRAW,
+      identityType: "email", identityValue: "sharer@test.com",
+      paymentStatus: "pending",
+    });
+    // 被邀请人（joiner）= 付款人
+    await db.insert(lotteryEntries).values({
+      id: JOINER_ENTRY, tenantId: REWARD_TENANT, drawId: REWARD_DRAW,
+      identityType: "email", identityValue: "joiner@test.com",
+      paymentStatus: "pending",
+    });
+
+    // 归因事件
+    await recordActivityEvent(db, {
+      tenantId: REWARD_TENANT, drawId: REWARD_DRAW, entryId: JOINER_ENTRY,
+      eventType: "attributed_join", refCode: "INV-REWARD-001",
+      metadata: { sharerEntryId: SHARER_ENTRY, inviterIdentityValue: "sharer@test.com", source: "trigger" },
+    });
+    // reward_pending 事件
+    await recordActivityEvent(db, {
+      tenantId: REWARD_TENANT, drawId: REWARD_DRAW, entryId: SHARER_ENTRY,
+      eventType: "reward_pending", refCode: "INV-REWARD-001",
+      metadata: {
+        mode: "percent", perInvitePercent: 10, currency: "CNY",
+        sharerEntryId: SHARER_ENTRY, inviterIdentityValue: "sharer@test.com",
+        source: "trigger", status: "pending",
+      },
+    });
+
+    // 卡密和支付订单
+    await db.insert(prizes).values({
+      id: REWARD_PRIZE, tenantId: REWARD_TENANT,
+      name: "测试奖品", prizeType: "code", totalCount: 1, usedCount: 0,
+    });
+    await db.insert(lotteryPrizeTiers).values({
+      id: "tier-reward-integration", tenantId: REWARD_TENANT, drawId: REWARD_DRAW,
+      prizeId: REWARD_PRIZE,
+    });
+    await db.insert(prizeCodes).values({
+      id: REWARD_CODE, tenantId: REWARD_TENANT, prizeId: REWARD_PRIZE,
+      code: "REWARD-CODE-001", secret: "secret-001", status: "available",
+    });
+    await db.insert(paymentOrders).values({
+      id: REWARD_ORDER, tenantId: REWARD_TENANT, drawId: REWARD_DRAW,
+      entryId: JOINER_ENTRY, amountCents: 1000, currency: "cny",
+      provider: "alipay", status: "pending",
+      currentAttemptId: REWARD_ATTEMPT,
+    });
+    await db.insert(paymentOrderItems).values({
+      id: `${REWARD_ORDER}-item-1`, tenantId: REWARD_TENANT, drawId: REWARD_DRAW,
+      paymentOrderId: REWARD_ORDER, lineNo: 1, itemType: "flash_sale",
+      title: "奖励集成测试活动", quantity: 1, amountCents: 1000, currency: "cny",
+      pricingSnapshotJson: JSON.stringify({ model: "cliff_unit_price" }),
+      status: "pending", unitPriceCents: 1000,
+    });
+    await db.insert(paymentOrderAttempts).values({
+      id: REWARD_ATTEMPT, paymentOrderId: REWARD_ORDER,
+      tenantId: REWARD_TENANT, drawId: REWARD_DRAW, attemptNo: 1,
+      amountCents: 1000, currency: "cny", provider: "alipay",
+      status: "pending",
+    });
+  }
+
+  it("handlePaymentCallback 成功后产生 reward_earned 事件（percent 模式）", async () => {
+    await seedPercentRewardDraw();
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: REWARD_ATTEMPT,
+        providerTradeNo: "EP-REWARD-OK",
+        amountCents: 1000,
+        currency: "CNY",
+        paidAt: "2026-08-25T00:00:00.000Z",
+      })),
+    };
+
+    const result = await handlePaymentCallback(db, REWARD_TENANT, callbackProvider, {});
+    expect(result.processed).toBe(true);
+
+    // 验证 reward_earned 事件已产生（settleRewardByPercent 被触发）
+    const [earnedEvent] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, REWARD_TENANT),
+        eq(activityEvents.drawId, REWARD_DRAW),
+        eq(activityEvents.entryId, SHARER_ENTRY),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(earnedEvent).toBeDefined();
+    const meta = JSON.parse(earnedEvent.metadataJson || "{}");
+    expect(meta.mode).toBe("percent");
+    expect(meta.status).toBe("settled");
+    expect(meta.amountCents).toBe(100); // 1000 × 10% = 100
+  });
+
+  it("expireOverdueOrders 后产生 reward_cancelled 事件", async () => {
+    await seedPercentRewardDraw();
+    const past = new Date(Date.now() - 61 * 60_000).toISOString();
+    await db.update(paymentOrders).set({ createdAt: past }).where(eq(paymentOrders.id, REWARD_ORDER));
+    await db.update(paymentOrderAttempts).set({ createdAt: past }).where(eq(paymentOrderAttempts.id, REWARD_ATTEMPT));
+
+    await expireOverdueOrders(db, REWARD_TENANT);
+
+    // 验证 reward_cancelled 事件已产生（cancelRewardPending 被触发）
+    const [cancelledEvent] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, REWARD_TENANT),
+        eq(activityEvents.drawId, REWARD_DRAW),
+        eq(activityEvents.entryId, SHARER_ENTRY),
+        eq(activityEvents.eventType, "reward_cancelled"),
+      ));
+    expect(cancelledEvent).toBeDefined();
+    const meta = JSON.parse(cancelledEvent.metadataJson || "{}");
+    expect(meta.reason).toBe("payment_expired");
+  });
+
+  it("refundPaymentOrder 后：已结算奖励不被取消（reward_earned 是最终态）", async () => {
+    await seedPercentRewardDraw();
+    // 先模拟支付成功（触发 settleRewardByPercent → reward_earned）
+    const callbackProvider: PaymentProvider = {
+      ...providerMock,
+      verifyCallback: vi.fn(async () => ({
+        orderNo: REWARD_ATTEMPT,
+        providerTradeNo: "EP-REFUND-OK",
+        amountCents: 1000,
+        currency: "CNY",
+        paidAt: "2026-08-25T00:00:00.000Z",
+      })),
+    };
+    await handlePaymentCallback(db, REWARD_TENANT, callbackProvider, {});
+
+    // 确认 reward_earned 已产生
+    const [earnedBefore] = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, REWARD_TENANT),
+        eq(activityEvents.drawId, REWARD_DRAW),
+        eq(activityEvents.entryId, SHARER_ENTRY),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(earnedBefore).toBeDefined();
+
+    // 模拟退款
+    const refundProvider: PaymentProvider = {
+      ...providerMock,
+      refund: vi.fn(async () => ({ refundTradeNo: "REFUND-001", success: true, status: "success" })),
+    };
+    await refundPaymentOrder(db, REWARD_TENANT, REWARD_ORDER, "test-user", { reason: "测试退款", provider: refundProvider });
+
+    // 已结算的奖励不应被退款取消——reward_cancelled 不应产生
+    const cancelledEvents = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, REWARD_TENANT),
+        eq(activityEvents.drawId, REWARD_DRAW),
+        eq(activityEvents.entryId, SHARER_ENTRY),
+        eq(activityEvents.eventType, "reward_cancelled"),
+      ));
+    expect(cancelledEvents.length).toBe(0);
+
+    // reward_earned 仍然存在（未被删除）
+    const [earnedAfter] = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, REWARD_TENANT),
+        eq(activityEvents.drawId, REWARD_DRAW),
+        eq(activityEvents.entryId, SHARER_ENTRY),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(earnedAfter).toBeDefined();
   });
 });

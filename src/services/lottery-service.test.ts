@@ -2718,6 +2718,52 @@ describe("settleRewardByPercent", () => {
     const amounts = settledEvents.map(e => JSON.parse(e.metadataJson || "{}").amountCents).sort();
     expect(amounts).toEqual([50, 80]);
   });
+
+  it("幂等：同一 joinerEntryId + refCode 双重 settle → 第二次返回 already_settled", async () => {
+    const { drawId, joinerEntryId } = await setupPercentReward();
+
+    // 第一次结算
+    const r1 = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 1000, "CNY");
+    expect(r1.settled).toBe(true);
+
+    // 第二次结算（幂等）
+    const r2 = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 1000, "CNY");
+    expect(r2.settled).toBe(false);
+    expect(r2.reason).toBe("already_settled");
+
+    // 验证只有 1 条 reward_earned 事件
+    const earnedEvents = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(earnedEvents.length).toBe(1);
+  });
+
+  it("settle 后 cancel 不写入 reward_cancelled（reward_earned 是最终态）", async () => {
+    const { drawId, joinerEntryId } = await setupPercentReward();
+
+    // 先结算
+    await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 1000, "CNY");
+
+    // 再取消
+    const r = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_refunded");
+    expect(r.cancelled).toBe(false); // 已结算，跳过
+
+    // 验证无 reward_cancelled 事件
+    const cancelledEvents = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_cancelled"),
+      ));
+    expect(cancelledEvents.length).toBe(0);
+  });
 });
 
 // ── cancelRewardPending：支付取消/退款/超时后清理 pending 事件（docs/271） ──
@@ -2863,6 +2909,51 @@ describe("cancelRewardPending", () => {
     expect(event).toBeDefined();
     const meta = JSON.parse(event.metadataJson || "{}");
     expect(meta.reason).toBe("payment_refunded");
+  });
+
+  it("已结算后 cancel → 返回 cancelled=false（reward_earned 是最终态）", async () => {
+    const { drawId, joinerEntryId } = await setupPendingReward();
+
+    // 先结算（写入 reward_earned）
+    await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 1000, "CNY");
+
+    // 再取消
+    const result = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_refunded");
+    expect(result.cancelled).toBe(false);
+
+    // 验证无 reward_cancelled 事件
+    const cancelledEvents = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_cancelled"),
+      ));
+    expect(cancelledEvents.length).toBe(0);
+  });
+
+  it("双重 cancel → 幂等（第二次不重复写入 reward_cancelled）", async () => {
+    const { drawId, joinerEntryId } = await setupPendingReward();
+
+    // 第一次取消
+    const r1 = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_cancelled");
+    expect(r1.cancelled).toBe(true);
+
+    // 第二次取消（幂等：返回 cancelled=false 表示已存在，不重复写入）
+    const r2 = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_expired");
+    expect(r2.cancelled).toBe(false);
+
+    // 验证只有 1 条 reward_cancelled 事件
+    const cancelledEvents = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_cancelled"),
+      ));
+    expect(cancelledEvents.length).toBe(1);
   });
 });
 
