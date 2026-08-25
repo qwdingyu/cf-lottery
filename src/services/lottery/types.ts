@@ -115,6 +115,8 @@ export type ActivityEventType =
   | "reward_pending"
   /** 奖励发放失败（docs/259 P1-2：maybeTriggerReward  catch 记录，供管理端补发） */
   | "reward_failed"
+  /** 奖励取消（payment_expired / payment_cancelled / payment_refunded，与 reward_failed 语义分离，docs/273） */
+  | "reward_cancelled"
   /** 优惠券已核销（L1 自助核销或 L2 运营核销，docs/254 P2） */
   | "coupon_redeemed"
   /** 处罚请求已发起（波及名单计算后记录） */
@@ -208,6 +210,8 @@ export const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "reward_pending",
   /** 奖励发放失败（docs/259 P1-2：maybeTriggerReward  catch 记录，供管理端补发） */
   "reward_failed",
+  /** 奖励取消（payment_expired / payment_cancelled / payment_refunded，docs/273） */
+  "reward_cancelled",
   /** 优惠券已核销（L1 自助核销或 L2 运营核销，docs/254 P2） */
   "coupon_redeemed",
   "penalty_requested",

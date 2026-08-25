@@ -2768,19 +2768,19 @@ describe("cancelRewardPending", () => {
     return { drawId, sharerEntryId, joinerEntryId };
   }
 
-  it("happy path：支付取消后写入 reward_failed 事件", async () => {
+  it("happy path：支付取消后写入 reward_cancelled 事件", async () => {
     const { drawId, joinerEntryId } = await setupPendingReward();
     const result = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_cancelled");
     expect(result.cancelled).toBe(true);
 
-    // 验证 reward_failed 事件已记录
+    // 验证 reward_cancelled 事件已记录（docs/273：与 reward_failed 语义分离）
     const [event] = await db
       .select({ metadataJson: activityEvents.metadataJson })
       .from(activityEvents)
       .where(and(
         eq(activityEvents.tenantId, TENANT),
         eq(activityEvents.drawId, drawId),
-        eq(activityEvents.eventType, "reward_failed"),
+        eq(activityEvents.eventType, "reward_cancelled"),
       ));
     expect(event).toBeDefined();
     const meta = JSON.parse(event.metadataJson || "{}");
@@ -2800,7 +2800,7 @@ describe("cancelRewardPending", () => {
       .where(and(
         eq(activityEvents.tenantId, TENANT),
         eq(activityEvents.drawId, drawId),
-        eq(activityEvents.eventType, "reward_failed"),
+        eq(activityEvents.eventType, "reward_cancelled"),
       ));
     const meta = JSON.parse(event.metadataJson || "{}");
     expect(meta.reason).toBe("payment_expired");
@@ -2819,7 +2819,7 @@ describe("cancelRewardPending", () => {
     expect(result.cancelled).toBe(false);
   });
 
-  it("reward_pending 不存在时仍返回 cancelled: true（幂等，reward_failed 已记录）", async () => {
+  it("reward_pending 不存在时仍返回 cancelled: true（幂等，reward_cancelled 已记录）", async () => {
     const now = new Date();
     const future = new Date(now.getTime() + 3600000);
     const { id: drawId } = await createDraw(db, TENANT, {
@@ -2851,14 +2851,14 @@ describe("cancelRewardPending", () => {
     const result = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_refunded");
     expect(result.cancelled).toBe(true);
 
-    // reward_failed 事件已记录（即使没有对应的 reward_pending）
+    // reward_cancelled 事件已记录（即使没有对应的 reward_pending）
     const [event] = await db
       .select({ metadataJson: activityEvents.metadataJson })
       .from(activityEvents)
       .where(and(
         eq(activityEvents.tenantId, TENANT),
         eq(activityEvents.drawId, drawId),
-        eq(activityEvents.eventType, "reward_failed"),
+        eq(activityEvents.eventType, "reward_cancelled"),
       ));
     expect(event).toBeDefined();
     const meta = JSON.parse(event.metadataJson || "{}");
