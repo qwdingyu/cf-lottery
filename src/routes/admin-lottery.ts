@@ -37,6 +37,7 @@ import { parseFlashSaleConfig } from "../lib/flash-sale-config";
 import { readSystemConfigMap } from "../lib/system-config-registry";
 import { readSystemConfigNumber } from "../services/admin/system-config";
 import { enqueuePlatformEvent } from "../services/platform/delivery";
+import { dispatchWebhookDelivery } from "../services/lottery/integration";
 import { setupPrizeRoutes } from "./admin-lottery-prizes";
 import { setupTenantOpsRoutes } from "./admin-lottery-tenant-ops";
 import { setupIntegrationRoutes } from "./admin-lottery-integrations";
@@ -1621,6 +1622,13 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
             eq(activityEvents.id, f.id),
             eq(activityEvents.tenantId, tenantId),
           ));
+        // 事务外异步 dispatch webhook（与 handlePaymentCallback 一致）：
+        // triggerRewardEarned 已用主连接 enqueue 事件，dispatch 可直接读取。
+        for (const deliveryId of result.deliveryIds || []) {
+          void dispatchWebhookDelivery(db, tenantId, deliveryId).catch((err) => {
+            logError("admin-lottery", `reissue webhook dispatch delivery=${deliveryId}`, err);
+          });
+        }
       }
       results.push({ ...result, refCode })
     }
