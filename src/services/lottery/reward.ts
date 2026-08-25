@@ -342,6 +342,24 @@ export async function settleRewardByPercent(
     return { settled: false, reason: "already_settled" };
   }
 
+  // 防御纵深：检查该 reward_pending 是否已被取消（cancelRewardPending 已写入 reward_cancelled）。
+  // 如果已取消，不应再结算——避免 race condition 下 cancelled 被覆盖为 settled。
+  // 正常流程中 handlePaymentCallback 的 CAS 防止此场景，但 retryPaymentFulfillment 无同类保护。
+  const [cancelledBefore] = await db
+    .select({ id: activityEvents.id })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.entryId, sharerEntryId),
+      eq(activityEvents.eventType, "reward_cancelled"),
+      eq(activityEvents.refCode, refCode),
+    ))
+    .limit(1);
+  if (cancelledBefore) {
+    return { settled: false, reason: "cancelled_before_settle" };
+  }
+
   let pendingMeta: { perInvitePercent?: number; currency?: string; inviterIdentityValue?: string; source?: string } = {};
   try { pendingMeta = JSON.parse(pendingEvent.metadataJson || "{}"); } catch { pendingMeta = {}; }
   const percent = Number(pendingMeta.perInvitePercent || 0);
@@ -460,7 +478,7 @@ export async function cancelRewardPending(
   if (!sharerEntryId) return { cancelled: false };
 
   // 检查该 reward 是否已被结算（settleRewardByPercent 已写入 reward_earned）。
-  // 如果已结算，不再写 reward_failed——避免同一笔奖励既有 settled 又有 cancelled 的矛盾状态。
+  // 如果已结算，不再写 reward_cancelled——避免同一笔奖励既有 settled 又有 cancelled 的矛盾状态。
   // 注意：同一个 sharerEntryId 可能有多条 reward_earned（不同 refCode 多次邀请），
   // 需要用 refCode 精确匹配到同一次归因。
   const [settledEvent] = await db
@@ -476,6 +494,23 @@ export async function cancelRewardPending(
     .limit(1);
   if (settledEvent) {
     // 已结算，跳过取消（reward_earned 是最终态）
+    return { cancelled: false };
+  }
+
+  // 检查该 reward 是否已被取消（两次 cancelRewardPending 调用，如 expireOverdueOrders 重复触发）。
+  // 幂等性：如果同 sharerEntryId + refCode 已有 reward_cancelled，不再重复写。
+  const [alreadyCancelled] = await db
+    .select({ id: activityEvents.id })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.entryId, sharerEntryId),
+      eq(activityEvents.eventType, "reward_cancelled"),
+      eq(activityEvents.refCode, refCode),
+    ))
+    .limit(1);
+  if (alreadyCancelled) {
     return { cancelled: false };
   }
 
