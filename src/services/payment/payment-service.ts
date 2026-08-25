@@ -33,6 +33,7 @@ import { PAYMENT_PROVIDER_CATALOG, isValidProviderName } from "@usethink/cf-pay/
 import { decryptPaymentConfigValue, isEncryptedPaymentConfigValue } from "@usethink/cf-pay/config-store";
 import { parseFlashSaleConfig, resolveEffectiveStockLimit } from "../../lib/flash-sale-config";
 import { settleRewardByPercent, cancelRewardPending } from "../lottery/reward";
+import { dispatchWebhookDelivery } from "../lottery/integration";
 import {
   isPaidPaymentAttemptStatus,
   isRetryablePaymentOrderStatus,
@@ -1473,6 +1474,8 @@ export async function handlePaymentCallback(
     let newStatus: string;
     let fulfillmentOk: boolean;
     let acquiredPrizeCodeIds: string[] = [];
+    // percent 模式奖励结算：webhook deliveryIds 在事务外 dispatch（避免 fetch 阻塞事务）
+    let settleDeliveryIds: string[] = [];
 
     if (fulfillmentProvider) {
       const fulfillmentResult: FulfillmentResult = await fulfillmentProvider.fulfill({
@@ -1566,17 +1569,29 @@ export async function handlePaymentCallback(
       // 同一 entry 的 attributed_join 事件唯一，reward_earned 事件写入后不会重复触发。
       // 执行失败时（如活动未配置 percent 奖励）静默跳过，不影响支付主流程。
       if (fulfillmentOk && current.amountCents > 0) {
-        await settleRewardByPercent(tx, tenantId, current.drawId, current.entryId, current.amountCents, current.currency).catch((err) => {
+        const settleResult = await settleRewardByPercent(tx, tenantId, current.drawId, current.entryId, current.amountCents, current.currency).catch((err) => {
           logError("payment-service", `settleRewardByPercent draw=${current.drawId} entry=${current.entryId}`, err);
+          return { settled: false, deliveryIds: [] as string[] };
         });
+        settleDeliveryIds = settleResult.deliveryIds || [];
       }
     }
 
     const [updated] = await tx.select().from(paymentOrders).where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.tenantId, tenantId))).limit(1);
-    return { order: updated ?? current, handled: true };
+    return { order: updated ?? current, handled: true, settleDeliveryIds };
   });
 
   if (!result.order) return { processed: false, error: "订单不存在" };
+
+  // 事务外异步 dispatch webhook（与 maybeTriggerReward 一致：fire-and-forget，失败不影响主流程）
+  if (result.settleDeliveryIds && result.settleDeliveryIds.length > 0) {
+    for (const deliveryId of result.settleDeliveryIds) {
+      void dispatchWebhookDelivery(db, tenantId, deliveryId).catch((err) => {
+        logError("payment-service", `settleRewardByPercent webhook dispatch delivery=${deliveryId}`, err);
+      });
+    }
+  }
+
   return { processed: result.handled, order: result.order };
 }
 
@@ -1696,17 +1711,30 @@ export async function retryPaymentFulfillment(
     }
 
     // percent 模式奖励结算：补发成功后，计算邀请人应得佣金（幂等，与 handlePaymentCallback 一致）
+    let settleDeliveryIds: string[] = [];
     if (current.amountCents > 0) {
-      await settleRewardByPercent(tx, tenantId, current.drawId, current.entryId, current.amountCents, current.currency).catch((err) => {
+      const settleResult = await settleRewardByPercent(tx, tenantId, current.drawId, current.entryId, current.amountCents, current.currency).catch((err) => {
         logError("payment-service", `retryPaymentFulfillment: settleRewardByPercent draw=${current.drawId} entry=${current.entryId}`, err);
+        return { settled: false, deliveryIds: [] as string[] };
       });
+      settleDeliveryIds = settleResult.deliveryIds || [];
     }
 
     const [updated] = await tx.select().from(paymentOrders).where(and(eq(paymentOrders.id, current.id), eq(paymentOrders.tenantId, tenantId))).limit(1);
-    return { order: updated ?? current };
+    return { order: updated ?? current, settleDeliveryIds };
   });
 
   if ("error" in order) return { ok: false, error: order.error };
+
+  // 事务外异步 dispatch webhook（与 handlePaymentCallback 一致）
+  if (order.settleDeliveryIds && order.settleDeliveryIds.length > 0) {
+    for (const deliveryId of order.settleDeliveryIds) {
+      void dispatchWebhookDelivery(db, tenantId, deliveryId).catch((err) => {
+        logError("payment-service", `retryPaymentFulfillment webhook delivery=${deliveryId}`, err);
+      });
+    }
+  }
+
   return { ok: true, order: order.order };
 }
 

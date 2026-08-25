@@ -289,7 +289,7 @@ export async function settleRewardByPercent(
   joinerEntryId: string,
   amountCents: number,
   currency: string,
-): Promise<{ settled: boolean; reason?: string }> {
+): Promise<{ settled: boolean; reason?: string; deliveryIds: string[] }> {
   // 1. 查找 attributed_join 事件，获取 sharerEntryId 和 refCode
   const [joinEvent] = await db
     .select({ metadataJson: activityEvents.metadataJson, refCode: activityEvents.refCode })
@@ -301,13 +301,13 @@ export async function settleRewardByPercent(
       eq(activityEvents.eventType, "attributed_join"),
     ))
     .limit(1);
-  if (!joinEvent) return { settled: false, reason: "attributed_join_not_found" };
+  if (!joinEvent) return { settled: false, reason: "attributed_join_not_found", deliveryIds: [] };
 
   let meta: { sharerEntryId?: string } = {};
   try { meta = JSON.parse(joinEvent.metadataJson || "{}"); } catch { meta = {}; }
   const sharerEntryId = meta.sharerEntryId;
   const refCode = joinEvent.refCode || "";
-  if (!sharerEntryId) return { settled: false, reason: "sharer_entry_id_not_found" };
+  if (!sharerEntryId) return { settled: false, reason: "sharer_entry_id_not_found", deliveryIds: [] };
 
   // 2. 查找 sharer 的 reward_pending 事件，读取 perInvitePercent
   // 用 refCode 精确匹配：同一邀请人可能被多人邀请（多条 reward_pending），
@@ -323,7 +323,7 @@ export async function settleRewardByPercent(
       eq(activityEvents.refCode, refCode),
     ))
     .limit(1);
-  if (!pendingEvent) return { settled: false, reason: "reward_pending_not_found" };
+  if (!pendingEvent) return { settled: false, reason: "reward_pending_not_found", deliveryIds: [] };
 
   // 幂等性检查：确认该 reward_pending 尚未被结算（避免 handlePaymentCallback 重复调用导致双倍结算）。
   // 通过查找同 sharerEntryId + refCode 的 reward_earned 事件来判断。
@@ -339,7 +339,7 @@ export async function settleRewardByPercent(
     ))
     .limit(1);
   if (alreadySettled) {
-    return { settled: false, reason: "already_settled" };
+    return { settled: false, reason: "already_settled", deliveryIds: [] };
   }
 
   // 防御纵深：检查该 reward_pending 是否已被取消（cancelRewardPending 已写入 reward_cancelled）。
@@ -357,13 +357,13 @@ export async function settleRewardByPercent(
     ))
     .limit(1);
   if (cancelledBefore) {
-    return { settled: false, reason: "cancelled_before_settle" };
+    return { settled: false, reason: "cancelled_before_settle", deliveryIds: [] };
   }
 
   let pendingMeta: { perInvitePercent?: number; currency?: string; inviterIdentityValue?: string; source?: string } = {};
   try { pendingMeta = JSON.parse(pendingEvent.metadataJson || "{}"); } catch { pendingMeta = {}; }
   const percent = Number(pendingMeta.perInvitePercent || 0);
-  if (percent <= 0) return { settled: false, reason: "invalid_percent" };
+  if (percent <= 0) return { settled: false, reason: "invalid_percent", deliveryIds: [] };
 
   // 3. 计算实际金额
   // amountCents 是支付金额（分），percent 是百分比（如 10 = 10%）
@@ -371,7 +371,7 @@ export async function settleRewardByPercent(
   // 保留整数，向下取整（防止超付）
   const actualAmountCents = Math.floor(amountCents * percent / 100);
   if (actualAmountCents <= 0) {
-    return { settled: false, reason: "amount_too_small" };
+    return { settled: false, reason: "amount_too_small", deliveryIds: [] };
   }
 
   // 4. 写 reward_earned 事件（status: settled）
@@ -397,8 +397,9 @@ export async function settleRewardByPercent(
   });
 
   // 5. 入队 webhook 通知中转站
+  let deliveryIds: string[] = [];
   try {
-    await enqueueWebhookEvent(db, {
+    const webhookResult = await enqueueWebhookEvent(db, {
       tenantId,
       eventType: "reward.earned",
       data: {
@@ -413,6 +414,7 @@ export async function settleRewardByPercent(
         status: "settled",
       },
     });
+    deliveryIds = webhookResult.deliveryIds;
   } catch (err) {
     // webhook 入队失败不影响结算结果（审计事件已落库，可人工补偿）
     logError("reward", `settleRewardByPercent: enqueueWebhookEvent draw=${drawId}`, err);
@@ -435,7 +437,7 @@ export async function settleRewardByPercent(
     logError("reward", `settleRewardByPercent: enqueuePlatformEvent draw=${drawId}`, err);
   }
 
-  return { settled: true };
+  return { settled: true, deliveryIds };
 }
 
 /**
