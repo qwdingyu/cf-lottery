@@ -27,6 +27,7 @@
     "frontend:build": "npm --workspace frontend run build",
     "db:generate": "npx drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs",
+    "db:backfill-invite-codes": "node scripts/backfill-user-invite-codes.mjs",
     "db:studio": "npx drizzle-kit studio",
     "verify:delivery": "npm run type-check && npm run test && npm run frontend:build",
     "build:vps": "bash scripts/build-for-vps.sh",

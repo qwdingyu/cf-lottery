@@ -641,9 +641,12 @@ export async function joinDraw(
             .where(eq(users.id, normalizedValue))
             .limit(1);
           if (userRow?.inviteCode) {
+            // P1 修复：传 inviteCode 而非 userId，确保与写入端 refCode 口径一致。
+            // 幂等键 (tenantId, drawId, sharerEntryId, eventType, refCode) 中的 refCode
+            // 在直接路径和 pending 路径都使用 inviteCode，去重行为对称。
             const resolvedAttributions = await resolvePendingUserAttributions(
               tx,
-              normalizedValue,
+              userRow.inviteCode,
               entryId,
               draw.tenantId,
               draw.id,
@@ -654,11 +657,14 @@ export async function joinDraw(
                 const ids = await maybeTriggerReward(tx, db, draw, {
                   attributed: true,
                   sharerEntryId: attr.sharerEntryId,
-                  refCode: normalizedValue,
+                  refCode: userRow.inviteCode,
                   shareRecordId: attr.shareRecordId,
                 });
                 rewardDeliveryIds.push(...ids);
-              } catch { /* 奖励失败不影响参与主流程 */ }
+              } catch (err) {
+                // 奖励失败不影响参与主流程，但必须记录日志以便排查
+                logWarn("joinDraw", `pending reward failed draw=${draw.id} sharer=${attr.sharerEntryId}`, String(err));
+              }
             }
           }
         } catch (err) {
@@ -675,6 +681,7 @@ export async function joinDraw(
           refCode: options?.refCode,
           ipHash: options?.ipHash,
           userAgent: options?.userAgent,
+          identityType,
         });
         const rewardIds = await maybeTriggerReward(tx, db, draw, attribution);
         rewardDeliveryIds.push(...rewardIds);
@@ -722,6 +729,7 @@ export async function joinDraw(
         refCode: options?.refCode,
         ipHash: options?.ipHash,
         userAgent: options?.userAgent,
+        identityType,
       });
 
       const rewardIds = await maybeTriggerReward(tx, db, draw, attribution);
@@ -1163,7 +1171,7 @@ async function isSameParticipantIdentity(
 
 /**
  * 生成用户级邀请码：8 位大写字母+数字，去掉易混淆字符（0O1Il）。
- * 32^8 ≈ 1.1×10^12 种组合，碰撞概率极低；DB UNIQUE 索引兜底防重。
+ * 31^8 ≈ 8.5×10^11 种组合，碰撞概率极低；DB UNIQUE 索引兜底防重。
  * URL 安全、易读易记，适合口头传播和社交媒体分享。
  */
 const INVITE_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -1188,7 +1196,7 @@ export function generateUserInviteCode(): string {
  * 5. 返回归因信息供调用方触发推荐人奖励
  *
  * @param db 数据库实例
- * @param referrerUserId 推荐人的 users.id
+ * @param referrerInviteCode 推荐人的 users.inviteCode（用于按 pending 事件 refCode 匹配）
  * @param referrerEntryId 推荐人在当前活动的 lotteryEntries.id
  * @param tenantId 租户 ID
  * @param drawId 活动 ID（仅解析该活动的 pending 事件）
@@ -1203,12 +1211,14 @@ export type ResolvedPendingAttribution = {
 
 export async function resolvePendingUserAttributions(
   db: DbWriteScope,
-  referrerUserId: string,
+  referrerInviteCode: string,
   referrerEntryId: string,
   tenantId: string,
   drawId: string,
 ): Promise<ResolvedPendingAttribution[]> {
   // 仅解析当前活动的 pending 归因事件（跨活动的待推荐人加入对应活动时再解析）
+  // P1 修复：按 inviteCode 查询（与写入端 refCode 口径对齐）。
+  // 旧实现按 userId 查询，但写入端已改为存 inviteCode，此处需同步。
   const pendingEvents = await db
     .select({
       id: activityEvents.id,
@@ -1222,7 +1232,7 @@ export async function resolvePendingUserAttributions(
     .where(and(
       eq(activityEvents.tenantId, tenantId),
       eq(activityEvents.eventType, "pending_user_attributed_join"),
-      eq(activityEvents.refCode, referrerUserId),
+      eq(activityEvents.refCode, referrerInviteCode),
       eq(activityEvents.drawId, drawId),
     ));
 
@@ -1244,24 +1254,16 @@ export async function resolvePendingUserAttributions(
 
   const resolved: ResolvedPendingAttribution[] = [];
 
-  // 按 drawId 分组（已按 drawId 过滤，通常只有一个分组）
-  const byDraw = new Map<string, typeof pendingEvents>();
-  for (const evt of pendingEvents) {
-    const dId = String(evt.drawId || "").trim();
-    if (!dId) continue;
-    const list = byDraw.get(dId) || [];
-    list.push(evt);
-    byDraw.set(dId, list);
-  }
-
-  for (const [targetDrawId, events] of byDraw) {
+  // SQL 已按 drawId 精确过滤，结果必然属于同一 drawId，无需分组。
+  // 直接处理 pendingEvents，省去 Map 构建开销。
+  if (pendingEvents.length > 0) {
     // 查找或创建该推荐人在目标活动的 shareRecord
     const [existingShare] = await db
       .select({ id: shareRecords.id, joinedCount: shareRecords.joinedCount })
       .from(shareRecords)
       .where(and(
         eq(shareRecords.tenantId, tenantId),
-        eq(shareRecords.drawId, targetDrawId),
+        eq(shareRecords.drawId, drawId),
         eq(shareRecords.sharerEntryId, referrerEntryId),
       ))
       .limit(1);
@@ -1272,26 +1274,26 @@ export async function resolvePendingUserAttributions(
       shareId = existingShare.id;
       await db
         .update(shareRecords)
-        .set({ joinedCount: sql`${shareRecords.joinedCount} + ${events.length}` })
+        .set({ joinedCount: sql`${shareRecords.joinedCount} + ${pendingEvents.length}` })
         .where(eq(shareRecords.id, shareId));
     } else {
       // 首次为该活动创建 shareRecord（推荐码先于推荐人参与）
       // shareCode 使用合成格式确保 UNIQUE 索引不冲突（每个 draw+referrer 组合唯一）
       shareId = crypto.randomUUID();
-      const syntheticShareCode = `uc_${referrerUserId.slice(0, 8)}_${targetDrawId.slice(0, 6)}_${shareId.slice(0, 6)}`;
+      const syntheticShareCode = `uc_${referrerInviteCode.slice(0, 8)}_${drawId.slice(0, 6)}_${shareId.slice(0, 6)}`;
       await db.insert(shareRecords).values({
         id: shareId,
         tenantId,
-        drawId: targetDrawId,
+        drawId,
         sharerEntryId: referrerEntryId,
         shareCode: syntheticShareCode,
-        joinedCount: events.length,
+        joinedCount: pendingEvents.length,
       });
     }
 
     // 为每个 pending 事件写入正式的 attributed_join 事件（与正常归因链路对齐）
     // 奖励引擎通过 attributed_join 事件触发，不直接读 shareRecords
-    for (const evt of events) {
+    for (const evt of pendingEvents) {
       // 自邀请检测：推荐人 identity 与被邀请人 identity 一致时跳过
       if (referrerEntry) {
         const [joinerEntry] = await db
@@ -1303,7 +1305,7 @@ export async function resolvePendingUserAttributions(
           .where(and(
             eq(lotteryEntries.id, evt.entryId),
             eq(lotteryEntries.tenantId, tenantId),
-            eq(lotteryEntries.drawId, targetDrawId),
+            eq(lotteryEntries.drawId, drawId),
           ))
           .limit(1);
         if (joinerEntry && await isSameParticipantIdentity(db, referrerEntry, joinerEntry)) {
@@ -1318,7 +1320,7 @@ export async function resolvePendingUserAttributions(
 
       await recordActivityEvent(db, {
         tenantId,
-        drawId: targetDrawId,
+        drawId,
         entryId: evt.entryId,
         eventType: "attributed_join",
         refCode: String(evt.refCode || ""),
@@ -1334,12 +1336,12 @@ export async function resolvePendingUserAttributions(
         shareRecordId: shareId,
         sharerEntryId: referrerEntryId,
         tenantId,
-        drawId: targetDrawId,
+        drawId,
       });
     }
 
     // 清理已解析的 pending 事件（防重复解析）
-    const eventIds = events.map((e) => e.id);
+    const eventIds = pendingEvents.map((e) => e.id);
     if (eventIds.length > 0) {
       await db
         .delete(activityEvents)
@@ -1359,6 +1361,8 @@ async function recordAttributedJoin(
     refCode?: string;
     ipHash?: string;
     userAgent?: string;
+    /** 活动参与者的身份类型。非 user_id 活动无用户级邀请码，跳过 pending 事件写入 */
+    identityType?: string;
   },
 ) {
   const refCode = String(input.refCode || "").trim();
@@ -1462,21 +1466,29 @@ async function recordAttributedJoin(
     }
 
     // 推荐人尚未参与本活动 → 写入 pending 事件，推荐人加入时追溯解析
-    // refCode 存 users.id（非 inviteCode），供 resolvePendingUserAttributions 查询
-    await recordActivityEvent(db, {
-      tenantId: input.tenantId,
-      drawId: input.drawId,
-      entryId: input.entryId,
-      eventType: "pending_user_attributed_join",
-      refCode: referrerUser.id,
-      ipHash: input.ipHash,
-      userAgent: input.userAgent,
-      metadata: {
-        referrerUserId: referrerUser.id,
-        referrerInviteCode: refCode,
-        joinerEntryId: input.entryId,
-      },
-    });
+    // P1 修复：refCode 存 inviteCode（非 userId），确保与直接归因路径的幂等键口径一致。
+    // 旧实现存 userId 导致 pending 路径的幂等键与直接路径不对称——同一邀请人的多个好友
+    // 在直接路径被幂等拦截（refCode=inviteCode 恒定），在 pending 路径却不被拦截（refCode=joinerUserId 各异）。
+    //
+    // P2-1 守卫：仅 user_id 活动写入 pending 事件。
+    // 非 registered 活动（email/password/roster 等）的参与者无用户级邀请码概念，
+    // 且 resolvePendingUserAttributions 仅在 identityType === "user_id" 时触发，
+    // 写入的 pending 事件永远不会被解析，只会膨胀 activityEvents 表。
+    if (input.identityType === "user_id") {
+      await recordActivityEvent(db, {
+        tenantId: input.tenantId,
+        drawId: input.drawId,
+        entryId: input.entryId,
+        eventType: "pending_user_attributed_join",
+        refCode,
+        ipHash: input.ipHash,
+        userAgent: input.userAgent,
+        metadata: {
+          referrerUserId: referrerUser.id,
+          joinerEntryId: input.entryId,
+        },
+      });
+    }
 
     return { attributed: false, pending: true as const, refCode, referrerUserId: referrerUser.id };
   }

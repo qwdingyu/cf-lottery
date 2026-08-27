@@ -17,7 +17,7 @@
  */
 import type { DbType } from "../../db/client";
 import { logError } from "../../lib/logger";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { lotteryDraws, lotteryEntries, activityEvents } from "../../db/schema";
 import { checkDbRateLimit } from "../../lib/rate-limit";
 import { recordActivityEvent, enqueueWebhookEvent } from "./integration";
@@ -47,6 +47,14 @@ export type TriggerRewardEarnedResult = {
  * @param refCode 归因使用的分享码
  * @param options.source 事件来源标记：'trigger'=正常归因路径，'reissue'=运营补发路径。
  *   写入 reward_earned 事件的 metadata.source，便于审计日志区分补发与正常归因。
+ * @param options.joinerEntryId 被邀请人（本次归因的加入者）entryId（docs/275 P1）。
+ *   用户级邀请码是固定值、POST /share 复用最新码，同一邀请人对所有好友 refCode 恒定。
+ *   若幂等键只有 (sharer, eventType, refCode)，同一邀请码的第 2 个及以后好友会被
+ *   静默吞掉（返回 reward_sent），违背 perInviteAmount"每邀请一份"语义
+ *   （perUserPerDay 配额的存在即证明同一邀请人日内多次发放是预期行为）。
+ *   因此正常归因路径必须传入 joinerEntryId，把幂等粒度收敛到"每次邀请"；
+ *   不传（如 reissue 补发路径，失败事件无被邀请人信息）则回退为 refCode 粒度，
+ *   保守防重（docs/274 补发防重复写入的原始意图不变）。
  */
 export async function triggerRewardEarned(
   tx: DbType,
@@ -55,7 +63,7 @@ export async function triggerRewardEarned(
   sharerEntryId: string,
   inviterIdentityValue: string,
   refCode: string,
-  options?: { source?: string },
+  options?: { source?: string; joinerEntryId?: string },
 ): Promise<TriggerRewardEarnedResult> {
   const [draw] = await tx
     .select({ tenantId: lotteryDraws.tenantId, activityConfig: lotteryDraws.activityConfig })
@@ -105,6 +113,35 @@ export async function triggerRewardEarned(
     return { triggered: false, reason: "no_reward_config", sharerEntryId, deliveryIds: [] };
   }
 
+  // ── 幂等性检查（前置）──
+  // 检查是否已有 reward_earned/fixed 或 reward_pending/percent 事件。
+  // 必须在配额消耗之前执行：如果请求因幂等被拒绝，不应消耗 perUserPerDay/globalPerDay 配额。
+  // 幂等粒度（docs/275 P1）：
+  //   - 传了 joinerEntryId（正常归因路径）→ 按"每次邀请"判重：
+  //     同一邀请码的多个不同好友各自独立发放（perInviteAmount 语义），
+  //     同一好友重复归因（reissue 重放/脏路径）仍被拦截。
+  //   - 未传（reissue 补发路径）→ 回退 (sharer, refCode) 粒度防重复写入（docs/274 原意）。
+  const eventType = rewardMode === "fixed" ? "reward_earned" : "reward_pending";
+  const [alreadyRecorded] = await tx
+    .select({ id: activityEvents.id })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.drawId, drawId),
+      eq(activityEvents.entryId, sharerEntryId),
+      eq(activityEvents.eventType, eventType),
+      eq(activityEvents.refCode, refCode),
+      // json1 扩展查询：仅当事件带 joinerEntryId 元数据且与之相等才算同一次邀请
+      // （历史事件无该字段，json_extract 返回 NULL，不会误伤 reissue 回退粒度判重）
+      ...(options?.joinerEntryId
+        ? [sql`json_extract(${activityEvents.metadataJson}, '$.joinerEntryId') = ${options.joinerEntryId}`]
+        : []),
+    ))
+    .limit(1);
+  if (alreadyRecorded) {
+    return { triggered: false, reason: "reward_sent", sharerEntryId, deliveryIds: [] };
+  }
+
   // 每个配额门槛单独提取，与活动配置的 JSON 字段一一对应，
   // 避免 `x || default` 将配置值 0（关闭限制）误当作 falsy 跳过。
   // "不限制"语义（docs/274）：留空 / 0 / 负值 都视为关闭配额限制，
@@ -136,24 +173,6 @@ export async function triggerRewardEarned(
     return { triggered: false, reason: "quota_exceeded", sharerEntryId, deliveryIds: [] };
   }
 
-  // 幂等性：检查是否已有 reward_earned/fixed 或 reward_pending/percent 事件。
-  // 防止 reissue 端点重复调用 triggerRewardEarned 时写入多个相同事件。
-  const eventType = rewardMode === "fixed" ? "reward_earned" : "reward_pending";
-  const [alreadyRecorded] = await tx
-    .select({ id: activityEvents.id })
-    .from(activityEvents)
-    .where(and(
-      eq(activityEvents.tenantId, tenantId),
-      eq(activityEvents.drawId, drawId),
-      eq(activityEvents.entryId, sharerEntryId),
-      eq(activityEvents.eventType, eventType),
-      eq(activityEvents.refCode, refCode),
-    ))
-    .limit(1);
-  if (alreadyRecorded) {
-    return { triggered: false, reason: "reward_sent", sharerEntryId, deliveryIds: [] };
-  }
-
   // 记录奖励意图事件（docs/271 状态机）：
   //   fixed 模式：reward_earned（resolved），金额已知，直接通知中转站
   //   percent 模式：reward_pending（pending），付款确认后计算实际金额再通知
@@ -181,6 +200,8 @@ export async function triggerRewardEarned(
         sharerEntryId,
         inviterIdentityValue,
         status: "resolved",
+        // 被邀请人维度：幂等判重按"每次邀请"粒度反查用（docs/275 P1）
+        ...(options?.joinerEntryId ? { joinerEntryId: options.joinerEntryId } : {}),
       },
     });
   } else {
@@ -201,6 +222,8 @@ export async function triggerRewardEarned(
         sharerEntryId,
         inviterIdentityValue,
         status: "pending",
+        // 被邀请人维度：幂等判重按"每次邀请"粒度反查用（docs/275 P1）
+        ...(options?.joinerEntryId ? { joinerEntryId: options.joinerEntryId } : {}),
       },
     });
   }

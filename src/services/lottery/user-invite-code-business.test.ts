@@ -17,7 +17,6 @@ import {
 } from "../lottery-service";
 import {
   shareRecords,
-  lotteryEntries,
   activityEvents,
   users,
   lotteryPrizeTiers,
@@ -185,7 +184,7 @@ describe("recordAttributedJoin 用户级邀请码回退", () => {
         eq(activityEvents.eventType, "pending_user_attributed_join"),
       ));
     expect(pendingEvents.length).toBe(1);
-    expect(pendingEvents[0].refCode).toBe("user-a"); // refCode 存 users.id
+    expect(pendingEvents[0].refCode).toBe("CODEAAAA"); // P1 修复：refCode 存 inviteCode（与直接归因路径幂等键对齐）
 
     // 无 attributed_join 事件
     const summary = await getActivityEventSummary(db, TENANT, drawId);
