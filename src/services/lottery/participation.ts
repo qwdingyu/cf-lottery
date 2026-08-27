@@ -23,7 +23,9 @@ import {
   activitySubmissions,
   shareRecords,
   users,
+  activityEvents,
 } from "../../db/schema";
+import { logError, logWarn } from "../../lib/logger";
 import { verifyAccessPassword } from "./utils";
 import { recordActivityEvent, dispatchWebhookDelivery } from "./integration";
 import { triggerRewardEarned, getSharerIdentityValue } from "./reward";
@@ -32,7 +34,6 @@ import { grantBonusSpin } from "./reward-exits";
 import { isViralEnabled, readViralPerInvite } from "./viral-weight";
 import { processReferralRewardsEngine } from "./referral-rewards-engine";
 import { recordSpinLog } from "./spins-log";
-import { logError, logWarn } from "../../lib/logger";
 import {
   parseFlashSaleConfig,
   resolveEffectiveStockLimit,
@@ -627,6 +628,33 @@ export async function joinDraw(
         draw.activityKind === "signup_chain" ||
         draw.activityKind === "reservation" ||
         draw.activityKind === "waitlist";
+      // ── docs/272 Phase 2：解析用户级邀请码的 pending 归因 ──
+      // 当推荐人通过 ?ref={inviteCode} 分享活动，好友先于推荐人加入时，
+      // recordAttributedJoin 写入 pending_user_attributed_join 事件。
+      // 推荐人加入后，此处追溯解析：创建 shareRecord + 写入 attributed_join 事件。
+      // registered 模式下 identityType=user_id，normalizedValue 即 userId。
+      if (identityType === "user_id") {
+        try {
+          const [userRow] = await tx
+            .select({ inviteCode: users.inviteCode })
+            .from(users)
+            .where(eq(users.id, normalizedValue))
+            .limit(1);
+          if (userRow?.inviteCode) {
+            await resolvePendingUserAttributions(
+              tx,
+              normalizedValue,
+              entryId,
+              draw.tenantId,
+              draw.id,
+            );
+          }
+        } catch (err) {
+          // pending 解析失败不影响本次参与（容错设计：与 recordAttributedJoin 的 try-catch 对齐）
+          logError("joinDraw", `resolvePendingUserAttributions failed draw=${draw.id} user=${normalizedValue}`, err);
+        }
+      }
+
       if (!isAssignmentKind) {
         const attribution = await recordAttributedJoin(tx, {
           tenantId: draw.tenantId,
@@ -1117,6 +1145,185 @@ async function isSameParticipantIdentity(
   return Boolean(user?.email && String(user.email).trim().toLowerCase() === emailValue);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 用户级邀请码（docs/272）
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 生成用户级邀请码：8 位大写字母+数字，去掉易混淆字符（0O1Il）。
+ * 32^8 ≈ 1.1×10^12 种组合，碰撞概率极低；DB UNIQUE 索引兜底防重。
+ * URL 安全、易读易记，适合口头传播和社交媒体分享。
+ */
+const INVITE_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+export function generateUserInviteCode(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => INVITE_CODE_CHARS[b % INVITE_CODE_CHARS.length]).join("");
+}
+
+/**
+ * 解析用户级邀请码的 pending 归因事件（docs/272 Phase 2）。
+ *
+ * 当推荐人（referrer）通过用户级邀请码分享活动，好友在推荐人加入前就参与时，
+ * recordAttributedJoin 无法创建 shareRecord（推荐人尚无 entry），
+ * 因此写入 eventType="pending_user_attributed_join" 的活动事件。
+ *
+ * 推荐人加入活动后，本函数：
+ * 1. 查找该推荐人 inviteCode 下的所有 pending 事件
+ * 2. 按 drawId 分组，为每个活动创建 shareRecord（joinedCount=组内事件数）
+ * 3. 自邀请检测：推荐人 identity 与被邀请人 identity 一致时跳过
+ * 4. 写入 attributed_join 事件（与正常归因链路对齐，确保奖励引擎可消费）
+ *
+ * @param db 数据库实例
+ * @param referrerUserId 推荐人的 users.id
+ * @param referrerEntryId 推荐人在当前活动的 lotteryEntries.id
+ * @param tenantId 租户 ID
+ * @param drawId 活动 ID
+ * @returns 本次解析的归因数量
+ */
+export async function resolvePendingUserAttributions(
+  db: DbWriteScope,
+  referrerUserId: string,
+  referrerEntryId: string,
+  tenantId: string,
+  drawId: string,
+): Promise<number> {
+  // 查找推荐人名下所有 pending 归因事件（不限 drawId，因为推荐码是用户级的）
+  const pendingEvents = await db
+    .select({
+      id: activityEvents.id,
+      drawId: activityEvents.drawId,
+      entryId: activityEvents.entryId,
+      refCode: activityEvents.refCode,
+      ipHash: activityEvents.ipHash,
+      userAgent: activityEvents.userAgent,
+    })
+    .from(activityEvents)
+    .where(and(
+      eq(activityEvents.tenantId, tenantId),
+      eq(activityEvents.eventType, "pending_user_attributed_join"),
+      eq(activityEvents.refCode, referrerUserId),
+    ));
+
+  if (pendingEvents.length === 0) return 0;
+
+  // 读取推荐人 entry 的 identity（用于自邀请检测）
+  const [referrerEntry] = await db
+    .select({
+      identityType: lotteryEntries.identityType,
+      identityValue: lotteryEntries.identityValue,
+    })
+    .from(lotteryEntries)
+    .where(and(
+      eq(lotteryEntries.id, referrerEntryId),
+      eq(lotteryEntries.tenantId, tenantId),
+      eq(lotteryEntries.drawId, drawId),
+    ))
+    .limit(1);
+
+  let resolvedCount = 0;
+
+  // 按 drawId 分组（推荐码是用户级的，一个邀请码可能跨多个活动产生 pending 事件）
+  const byDraw = new Map<string, typeof pendingEvents>();
+  for (const evt of pendingEvents) {
+    const dId = String(evt.drawId || "").trim();
+    if (!dId) continue;
+    const list = byDraw.get(dId) || [];
+    list.push(evt);
+    byDraw.set(dId, list);
+  }
+
+  for (const [targetDrawId, events] of byDraw) {
+    // 查找或创建该推荐人在目标活动的 shareRecord
+    const [existingShare] = await db
+      .select({ id: shareRecords.id, joinedCount: shareRecords.joinedCount })
+      .from(shareRecords)
+      .where(and(
+        eq(shareRecords.tenantId, tenantId),
+        eq(shareRecords.drawId, targetDrawId),
+        eq(shareRecords.sharerEntryId, referrerEntryId),
+      ))
+      .limit(1);
+
+    let shareId: string;
+    if (existingShare) {
+      // 已有 shareRecord（推荐人先于部分被邀请人加入）→ 累加 joinedCount
+      shareId = existingShare.id;
+      await db
+        .update(shareRecords)
+        .set({ joinedCount: sql`${shareRecords.joinedCount} + ${events.length}` })
+        .where(eq(shareRecords.id, shareId));
+    } else {
+      // 首次为该活动创建 shareRecord（推荐码先于推荐人参与）
+      // shareCode 使用合成格式确保 UNIQUE 索引不冲突（每个 draw+referrer 组合唯一）
+      shareId = crypto.randomUUID();
+      const syntheticShareCode = `uc_${referrerUserId.slice(0, 8)}_${targetDrawId.slice(0, 6)}_${shareId.slice(0, 6)}`;
+      await db.insert(shareRecords).values({
+        id: shareId,
+        tenantId,
+        drawId: targetDrawId,
+        sharerEntryId: referrerEntryId,
+        shareCode: syntheticShareCode,
+        joinedCount: events.length,
+      });
+    }
+
+    // 为每个 pending 事件写入正式的 attributed_join 事件（与正常归因链路对齐）
+    // 奖励引擎通过 attributed_join 事件触发，不直接读 shareRecords
+    for (const evt of events) {
+      // 自邀请检测：推荐人 identity 与被邀请人 identity 一致时跳过
+      if (referrerEntry) {
+        const [joinerEntry] = await db
+          .select({
+            identityType: lotteryEntries.identityType,
+            identityValue: lotteryEntries.identityValue,
+          })
+          .from(lotteryEntries)
+          .where(and(
+            eq(lotteryEntries.id, evt.entryId),
+            eq(lotteryEntries.tenantId, tenantId),
+            eq(lotteryEntries.drawId, targetDrawId),
+          ))
+          .limit(1);
+        if (joinerEntry && await isSameParticipantIdentity(db, referrerEntry, joinerEntry)) {
+          // 自邀请：回滚 joinedCount 并跳过
+          await db
+            .update(shareRecords)
+            .set({ joinedCount: sql`${shareRecords.joinedCount} - 1` })
+            .where(eq(shareRecords.id, shareId));
+          continue;
+        }
+      }
+
+      await recordActivityEvent(db, {
+        tenantId,
+        drawId: targetDrawId,
+        entryId: evt.entryId,
+        eventType: "attributed_join",
+        refCode: String(evt.refCode || ""),
+        ipHash: String(evt.ipHash || ""),
+        userAgent: String(evt.userAgent || ""),
+        metadata: {
+          shareRecordId: shareId,
+          sharerEntryId: referrerEntryId,
+          resolvedFrom: "pending_user_attributed_join",
+        },
+      });
+      resolvedCount++;
+    }
+
+    // 清理已解析的 pending 事件（防重复解析）
+    const eventIds = events.map((e) => e.id);
+    if (eventIds.length > 0) {
+      await db
+        .delete(activityEvents)
+        .where(inArray(activityEvents.id, eventIds));
+    }
+  }
+
+  return resolvedCount;
+}
+
 async function recordAttributedJoin(
   db: DbWriteScope,
   input: {
@@ -1131,7 +1338,7 @@ async function recordAttributedJoin(
   const refCode = String(input.refCode || "").trim();
   if (!refCode) return { attributed: false };
 
-  const [share] = await db
+  let [share] = await db
     .select({
       id: shareRecords.id,
       sharerEntryId: shareRecords.sharerEntryId,
@@ -1143,7 +1350,86 @@ async function recordAttributedJoin(
       eq(shareRecords.shareCode, refCode),
     ))
     .limit(1);
-  if (!share) return { attributed: false };
+
+  // ── 用户级邀请码降级（docs/272 Phase 1）──
+  // shareRecords 查找失败时，尝试将 refCode 识别为 users.inviteCode。
+  // 用户注册时生成固定邀请码（如 "ABC12345"），通过 ?ref=ABC12345 分享活动链接，
+  // 无需先参与即可邀请好友。好友加入时走此降级路径完成归因。
+  if (!share) {
+    const [referrerUser] = await db
+      .select({ id: users.id, inviteCode: users.inviteCode })
+      .from(users)
+      .where(eq(users.inviteCode, refCode))
+      .limit(1);
+    if (!referrerUser) return { attributed: false };
+
+    // 查找推荐人在当前活动的 entry（可能尚未参与）
+    // registered 模式下 identityType=user_id，identityValue=users.id
+    const [referrerEntry] = await db
+      .select({ id: lotteryEntries.id })
+      .from(lotteryEntries)
+      .where(and(
+        eq(lotteryEntries.identityType, "user_id"),
+        eq(lotteryEntries.identityValue, referrerUser.id),
+        eq(lotteryEntries.drawId, input.drawId),
+        eq(lotteryEntries.tenantId, input.tenantId),
+      ))
+      .limit(1);
+
+    if (referrerEntry) {
+      // 推荐人已参与本活动 → 即时创建 shareRecord 并归因
+      // 自邀请检测：推荐人与被邀请人是同一人时跳过
+      if (referrerEntry.id === input.entryId) {
+        return { attributed: false, selfInvite: true as const, refCode };
+      }
+
+      const newShareId = crypto.randomUUID();
+      await db.insert(shareRecords).values({
+        id: newShareId,
+        tenantId: input.tenantId,
+        drawId: input.drawId,
+        sharerEntryId: referrerEntry.id,
+        shareCode: refCode,
+        joinedCount: 1,
+      });
+
+      await recordActivityEvent(db, {
+        tenantId: input.tenantId,
+        drawId: input.drawId,
+        entryId: input.entryId,
+        eventType: "attributed_join",
+        refCode,
+        ipHash: input.ipHash,
+        userAgent: input.userAgent,
+        metadata: {
+          shareRecordId: newShareId,
+          sharerEntryId: referrerEntry.id,
+          resolvedFrom: "user_invite_code",
+        },
+      });
+
+      return { attributed: true, refCode, shareRecordId: newShareId, sharerEntryId: referrerEntry.id };
+    }
+
+    // 推荐人尚未参与本活动 → 写入 pending 事件，推荐人加入时追溯解析
+    // refCode 存 users.id（非 inviteCode），供 resolvePendingUserAttributions 查询
+    await recordActivityEvent(db, {
+      tenantId: input.tenantId,
+      drawId: input.drawId,
+      entryId: input.entryId,
+      eventType: "pending_user_attributed_join",
+      refCode: referrerUser.id,
+      ipHash: input.ipHash,
+      userAgent: input.userAgent,
+      metadata: {
+        referrerUserId: referrerUser.id,
+        referrerInviteCode: refCode,
+        joinerEntryId: input.entryId,
+      },
+    });
+
+    return { attributed: false, pending: true as const, refCode, referrerUserId: referrerUser.id };
+  }
 
   /**
    * 自邀请不计分（docs/112）：

@@ -11,6 +11,7 @@
 import { and, eq } from "drizzle-orm";
 import type { DbType } from "../db/client";
 import { authIdentities, tenantMembers, tenants, users } from "../db/schema";
+import { generateUserInviteCode } from "./lottery/participation";
 
 /** 与 users.password_hash NOT NULL 兼容；verifyPassword 不会匹配真实口令 */
 export const OAUTH_PASSWORD_PLACEHOLDER = "oauth_no_password:v1";
@@ -170,6 +171,7 @@ export async function provisionIdpUser(
           emailVerified: markVerified ? 1 : 0,
           passwordHash: OAUTH_PASSWORD_PLACEHOLDER,
           status: "active",
+          inviteCode: generateUserInviteCode(),
         });
         inserted = true;
         createdUser = true;

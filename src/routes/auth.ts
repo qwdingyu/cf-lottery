@@ -16,6 +16,7 @@ import { getDb, isValidEmail } from "../lib/http";
 import { withDbTransaction } from "../db/client";
 import { users, tenantMembers, tenants, emailAccessCodes, systemConfig, platformMembers } from "../db/schema";
 import { generateCode, hashCode } from "./public-lottery-helpers";
+import { generateUserInviteCode } from "../services/lottery/participation";
 import { eq, and, sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
 import { signJwt } from "../middleware/auth";
@@ -130,7 +131,9 @@ authRoute.post("/register", async (c) => {
     // 消除"噪音租户"——租户应通过 onboarding 显式创建，而非注册附赠。
     // 历史存量用户有租户，无需迁移，逻辑天然兼容。
     const userId = crypto.randomUUID();
-    await db.insert(users).values({ id: userId, username, email, passwordHash, emailVerified: 0 });
+    // docs/272：注册时生成用户级邀请码，所有活动通用
+    const inviteCode = generateUserInviteCode();
+    await db.insert(users).values({ id: userId, username, email, passwordHash, emailVerified: 0, inviteCode });
 
     // 生成验证码并存入数据库（先标记旧码失效，避免 UNIQUE(email,draw_id) WHERE used=0 冲突）
     const code = generateCode();
@@ -496,6 +499,7 @@ authRoute.get("/me", requireAuth, async (c) => {
       username: users.username,
       email: users.email,
       status: users.status,
+      inviteCode: users.inviteCode,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -520,6 +524,8 @@ authRoute.get("/me", requireAuth, async (c) => {
       id: user.id,
       username: user.username,
       email: user.email,
+      /** docs/272：用户级邀请码，所有活动通用，通过 ?ref={inviteCode} 分享 */
+      inviteCode: user.inviteCode || "",
     },
     tenantId: jwtTenantId || null,
     platformRole,

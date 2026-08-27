@@ -46,6 +46,13 @@ export const users = sqliteTable("users", {
   emailVerified: integer("email_verified").notNull().default(0),
   passwordHash: text("password_hash").notNull(),
   status: text("status").notNull().default("active"),
+  /**
+   * 用户级邀请码（docs/272）：注册时生成，所有活动通用。
+   * 用户通过 ?ref={inviteCode} 分享活动链接，无需先参与即可邀请好友。
+   * 8 位大写字母+数字（去掉易混淆字符 0O1Il），URL 安全、易读易记。
+   * 允许 NULL：存量用户无码时为 NULL，UNIQUE 索引对 NULL 不冲突。
+   */
+  inviteCode: text("invite_code"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });

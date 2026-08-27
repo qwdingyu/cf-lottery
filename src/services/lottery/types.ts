@@ -130,7 +130,9 @@ export type ActivityEventType =
   /** 外部事件：中转站回传兑换码核销确认（标记 prizeCode redeemed，docs/114 §4） */
   | "ext:reward.redeemed"
   /** 平台签到：群助手每日签到奖励（docs/171） */
-  | "daily_checkin";
+  | "daily_checkin"
+  /** 用户级邀请码 pending 归因（docs/272）：推荐人尚未加入时暂存，加入后追溯解析为 attributed_join */
+  | "pending_user_attributed_join";
 
 export type RecordActivityEventInput = {
   tenantId: string;

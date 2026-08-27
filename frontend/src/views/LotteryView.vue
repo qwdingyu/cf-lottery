@@ -3962,9 +3962,10 @@ function toggleExpand(id: string) {
 }
 
 /**
- * 顶栏/卡内「复制分享链接」。
- * 已参与且能解析 entryId 时走 POST /share，复制带 ?ref= 的专属链（裂变主转化入口）；
- * 否则复制裸活动链（路人传播仍有价值，只是无个人归因）。
+ * docs/272：分享链接优先级
+ * 1. 已参与（有 entryId）→ POST /share 生成活动级专属链（含裂变归因）
+ * 2. 未参与但已登录 → 使用用户级邀请码 ?ref={inviteCode}（注册时生成，所有活动通用）
+ * 3. 未登录 → 裸活动链（无归因）
  */
 async function handleCopyPublicLink(drawId: string) {
   const draw = draws.value.find(d => d.id === drawId)
@@ -3972,6 +3973,7 @@ async function handleCopyPublicLink(drawId: string) {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const entryId = draw ? resolveViralEntryId(draw) : undefined
   try {
+    // 路径 1：已参与 → 活动级分享码（精确归因）
     if (entryId && draw && shouldShowInviteShareCta(draw.status)) {
       const res = await fetch(`${API_BASE}/public/draws/${encodeURIComponent(slug)}/share`, {
         method: 'POST',
@@ -3987,6 +3989,22 @@ async function handleCopyPublicLink(drawId: string) {
         return
       }
     }
+    // 路径 2：docs/272 — 未参与但已登录 → 用户级邀请码（参与前即可分享）
+    if (registeredToken.value) {
+      try {
+        const meRes = await fetch(`${API_BASE}/auth/me`, {
+          headers: { Authorization: `Bearer ${registeredToken.value}` },
+        })
+        const meData = await meRes.json()
+        if (meData.ok && meData.user?.inviteCode) {
+          const shareUrl = `${origin}/lottery/${slug}?ref=${meData.user.inviteCode}`
+          await writeClipboardText(shareUrl)
+          showToast(t('lottery.shareLinkCopied'))
+          return
+        }
+      } catch { /* /me 失败降级裸链 */ }
+    }
+    // 路径 3：未登录 → 裸活动链
     await writeClipboardText(`${origin}/lottery/${slug}`)
     showToast(t('lottery.shareLinkCopied'))
   } catch {

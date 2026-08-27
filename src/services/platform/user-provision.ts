@@ -17,6 +17,7 @@ import { and, eq } from "drizzle-orm";
 import type { DbType } from "../../db/client";
 import { authIdentities, users } from "../../db/schema";
 import { OAUTH_PASSWORD_PLACEHOLDER } from "../idp-user-provision";
+import { generateUserInviteCode } from "../lottery/participation";
 
 /** 支持平台身份的类型 */
 export type PlatformIdentityProvider = "qq" | "telegram";
@@ -103,6 +104,7 @@ export async function provisionPlatformUser(
         emailVerified: 0, // 未验证邮箱
         passwordHash: OAUTH_PASSWORD_PLACEHOLDER, // 不可密码登录
         status: "active",
+        inviteCode: generateUserInviteCode(),
       });
       inserted = true;
     } catch (err) {
