@@ -422,9 +422,21 @@ async function executeLeaderboardCommand(
       sharerEntryId: shareRecords.sharerEntryId,
       joinedCount: shareRecords.joinedCount,
       createdAt: shareRecords.createdAt,
+      leaderboardRewardedAt: shareRecords.leaderboardRewardedAt,
     })
     .from(shareRecords)
     .where(and(eq(shareRecords.tenantId, input.tenantId), eq(shareRecords.drawId, input.drawId)));
+
+  // 排行榜奖励状态聚合：与公开榜/管理端同一口径（CAS 标记非空即已发）
+  const rewardedMap = new Map<string, string>();
+  for (const row of shareRows) {
+    const id = String(row?.sharerEntryId || "").trim();
+    if (!id) continue;
+    const ts = String(row?.leaderboardRewardedAt || "").trim();
+    if (!ts) continue;
+    const existing = rewardedMap.get(id);
+    if (!existing || ts > existing) rewardedMap.set(id, ts);
+  }
 
   const ranking = buildViralLeaderboardRanking(aggregateViralInviteCounts(shareRows), {
     entryId: myEntryId,
@@ -458,7 +470,8 @@ async function executeLeaderboardCommand(
 
   const lines = ranking.entries.map((entry) => {
     const name = nameMap.get(entry.entryId) || "***";
-    return `${entry.rank}. ${name} 邀请${entry.invitedCount}人`;
+    const rewardTag = rewardedMap.has(entry.entryId) ? " 🏆" : "";
+    return `${entry.rank}. ${name} 邀请${entry.invitedCount}人${rewardTag}`;
   });
   const myRank = ranking.myRank
     ? `我的排名：${ranking.myRank.rank > 0 ? `第${ranking.myRank.rank}名` : "暂未上榜"}，邀请${ranking.myRank.invitedCount}人`
