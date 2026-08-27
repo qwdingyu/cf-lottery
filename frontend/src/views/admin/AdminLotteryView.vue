@@ -1914,6 +1914,7 @@
                 <th>{{ $t('lottery.adminViralRank') }}</th>
                 <th>{{ $t('lottery.adminEntryId') }}</th>
                 <th>{{ $t('lottery.adminViralInviteCount') }}</th>
+                <th>{{ $t('lottery.adminViralLeaderboardReward') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -1921,6 +1922,7 @@
                 <td>{{ item.rank }}</td>
                 <td class="mono-text" style="font-size: 12px">{{ item.entryId }}</td>
                 <td>{{ item.invitedCount }}</td>
+                <td>{{ item.rewarded ? '🏆' : '—' }}</td>
               </tr>
             </tbody>
           </table>
@@ -2745,7 +2747,7 @@ const reissueEntryId = ref('')
 const showViralStatsModal = ref(false)
 const viralStatsLoading = ref(false)
 const viralStatsError = ref('')
-const viralStatsData = ref<{ shareStats: { sharerCount: number; totalClicks: number; totalJoins: number }; leaderboard: Array<{ rank: number; entryId: string; invitedCount: number }> } | null>(null)
+const viralStatsData = ref<{ shareStats: { sharerCount: number; totalClicks: number; totalJoins: number }; leaderboard: Array<{ rank: number; entryId: string; invitedCount: number; rewarded?: boolean }> } | null>(null)
 const {
   showQrModal,
   qrImageUrl,

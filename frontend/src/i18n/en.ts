@@ -1054,6 +1054,7 @@ export default {
     viralGenerateLink: "🔗 Get invite link",
     viralNativeShare: "📤 Share",
     viralLeaderboardTitle: "🏆 Invite leaderboard",
+    viralLeaderboardRewarded: "Leaderboard reward granted",
     viralPeopleCount: "{n} people",
     viralSectionAria: "Invites and leaderboard",
     // Weight tickets only — never “another spin / extra chance to play” (docs/115)
@@ -1166,6 +1167,7 @@ export default {
     adminViralStatsLeaderboard: "Invite Leaderboard",
     adminViralRank: "Rank",
     adminViralInviteCount: "Invites",
+    adminViralLeaderboardReward: "Leaderboard reward",
     adminEntryIdFilterPlaceholder: "Leave empty = reissue all; enter entryId to reissue that user only",
     adminFailureUser: "User",
     statusPaused: "Paused",

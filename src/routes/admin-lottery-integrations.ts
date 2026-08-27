@@ -403,7 +403,23 @@ adminLotteryRoute.get("/draws/:id/viral-stats", async (c) => {
   const { buildViralLeaderboardRanking, aggregateViralInviteCounts, aggregateFirstSharedAt } = await import("../services/lottery/viral-weight");
   const inviteCounts = aggregateViralInviteCounts(rows);
   const firstSharedAtMap = aggregateFirstSharedAt(rows);
-  const { entries: leaderboard } = buildViralLeaderboardRanking(inviteCounts, { topN: 20, firstSharedAtMap });
+  const { entries: rankingEntries } = buildViralLeaderboardRanking(inviteCounts, { topN: 20, firstSharedAtMap });
+
+  // 排行榜奖励状态聚合：同一分享者多条 shareCode，任一行 leaderboardRewardedAt 非空即视为已发放
+  const rewardedMap = new Map<string, string>();
+  for (const row of rows) {
+    const id = String(row?.sharerEntryId || "").trim();
+    if (!id) continue;
+    const ts = String(row?.leaderboardRewardedAt || "").trim();
+    if (!ts) continue;
+    const existing = rewardedMap.get(id);
+    if (!existing || ts > existing) rewardedMap.set(id, ts);
+  }
+
+  const leaderboard = rankingEntries.map((entry) => ({
+    ...entry,
+    rewarded: rewardedMap.has(entry.entryId),
+  }));
 
   // shares 数组已移除——前端弹窗只消费 shareStats 和 leaderboard，
   // 完整分享明细则有独立的 /draws/:id/shares 端点可用，避免响应体膨胀。

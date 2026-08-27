@@ -187,6 +187,7 @@
               <em v-if="isMeOnRow(item)" class="leaderboard-me-tag">{{ $t('lottery.viralMe') }}</em>
             </span>
             <span class="leaderboard-count">{{ $t('lottery.viralPeopleCount', { n: item.invitedCount }) }}</span>
+            <span v-if="item.rewarded" class="leaderboard-rewarded" :title="$t('lottery.viralLeaderboardRewarded')" aria-label="rewarded">🏆</span>
           </li>
         </ol>
 
@@ -260,6 +261,7 @@ interface LeaderboardEntry {
   displayName: string
   invitedCount: number
   entryId?: string
+  rewarded?: boolean
 }
 interface MyViralStats {
   shareCode: string
@@ -814,6 +816,12 @@ watch(
   color: var(--tg-hint);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+.leaderboard-rewarded {
+  font-size: 13px;
+  flex-shrink: 0;
+  margin-left: 2px;
+  cursor: default;
 }
 .leaderboard-my-rank {
   display: flex;

@@ -99,12 +99,25 @@ route.get("/draws/:slug/viral-leaderboard", async (c) => {
       sharerEntryId: shareRecords.sharerEntryId,
       joinedCount: shareRecords.joinedCount,
       createdAt: shareRecords.createdAt,
+      leaderboardRewardedAt: shareRecords.leaderboardRewardedAt,
     })
     .from(shareRecords)
     .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.tenantId, draw.tenantId)));
 
   const aggMap = aggregateViralInviteCounts(shareRows);
   const firstSharedAtMap = aggregateFirstSharedAt(shareRows);
+
+  // 排行榜奖励状态聚合：同一分享者多条 shareCode，任一行 leaderboardRewardedAt 非空即视为已发放
+  const rewardedMap = new Map<string, string>();
+  for (const row of shareRows) {
+    const id = String(row?.sharerEntryId || "").trim();
+    if (!id) continue;
+    const ts = String(row?.leaderboardRewardedAt || "").trim();
+    if (!ts) continue;
+    const existing = rewardedMap.get(id);
+    // 取最新标记时间（展示用，非排序依据）
+    if (!existing || ts > existing) rewardedMap.set(id, ts);
+  }
 
   // 全量排名再截 Top20；myRank 在全量上算，未进榜也是真实名次（docs/109）
   const ranking = buildViralLeaderboardRanking(aggMap, { entryId, topN: 20, firstSharedAtMap });
@@ -139,6 +152,8 @@ route.get("/draws/:slug/viral-leaderboard", async (c) => {
     invitedCount: row.invitedCount,
     /** 供前端高亮「是我」：勿仅靠 rank 相等（并列风险） */
     entryId: row.entryId,
+    /** 排行榜奖励是否已发放（leaderboardRewardedAt 非空即视为已发） */
+    rewarded: rewardedMap.has(row.entryId),
   }));
 
   return ok(c, {

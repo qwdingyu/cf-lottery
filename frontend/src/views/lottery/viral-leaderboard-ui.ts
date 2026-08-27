@@ -19,6 +19,8 @@ export type LeaderboardRow = {
   displayName: string
   invitedCount: number
   entryId?: string
+  /** 排行榜奖励是否已发放（leaderboardRewardedAt 非空即已发） */
+  rewarded?: boolean
 }
 
 export type MyRankInfo = {
@@ -132,6 +134,7 @@ export function parseViralLeaderboardResponse(
       displayName: String(e?.displayName || '***'),
       invitedCount: Math.max(0, Math.floor(Number(e?.invitedCount) || 0)),
       entryId: e?.entryId ? String(e.entryId) : undefined,
+      rewarded: e?.rewarded === true,
     }))
     let myRank: MyRankInfo = null
     if (raw.myRank && typeof raw.myRank === 'object') {

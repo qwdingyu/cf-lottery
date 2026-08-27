@@ -1027,6 +1027,7 @@ export default {
     viralGenerateLink: "🔗 生成专属链接",
     viralNativeShare: "📤 系统分享",
     viralLeaderboardTitle: "🏆 邀请排行榜",
+    viralLeaderboardRewarded: "已获得排行榜奖励",
     viralPeopleCount: "{n} 人",
     viralSectionAria: "邀请好友与排行榜",
     // 机会 = 加权票语义，禁止「再参与 / 多一次抽奖」（docs/115 skeptic）
@@ -1128,6 +1129,7 @@ export default {
     adminViralStatsLeaderboard: "邀请排行榜",
     adminViralRank: "排名",
     adminViralInviteCount: "邀请人数",
+    adminViralLeaderboardReward: "排行榜奖励",
     // 新增字段
     statusPaused: "已暂停",
     expectedCount: "预计参与",

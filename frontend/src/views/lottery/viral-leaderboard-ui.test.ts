@@ -52,18 +52,26 @@ describe('viral-leaderboard-ui 门禁与展示', () => {
     expect(viralMyRankFooterMode({ rank: 15, invitedCount: 2 }, { meVisibleInTop: false })).toBe('footer')
   })
 
-  it('parseViralLeaderboardResponse：成功 / 业务 400 message / 空 body', () => {
+  it('parseViralLeaderboardResponse：成功 / 业务 400 message / 空 body / rewarded 字段', () => {
     const ok = parseViralLeaderboardResponse(
       true,
       {
         ok: true,
-        entries: [{ rank: 1, displayName: 'u***', invitedCount: 3, entryId: 'id1' }],
+        entries: [
+          { rank: 1, displayName: 'u***', invitedCount: 3, entryId: 'id1', rewarded: true },
+          { rank: 2, displayName: 'v***', invitedCount: 2, entryId: 'id2', rewarded: false },
+          { rank: 3, displayName: 'w***', invitedCount: 1, entryId: 'id3' },
+        ],
         myRank: { rank: 1, invitedCount: 3 },
       },
       '网络错误',
     )
     expect(ok.ok).toBe(true)
     expect(ok.entries[0]?.entryId).toBe('id1')
+    expect(ok.entries[0]?.rewarded).toBe(true)
+    expect(ok.entries[1]?.rewarded).toBe(false)
+    // 未返回 rewarded 字段时默认 false（向后兼容旧 API）
+    expect(ok.entries[2]?.rewarded).toBe(false)
     expect(ok.myRank).toEqual({ rank: 1, invitedCount: 3 })
     expect(ok.error).toBe('')
 
