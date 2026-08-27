@@ -34,7 +34,7 @@ import {
   grantLeaderboardRewards,
   cancelSignupChainEntry,
 } from "../services/lottery-service";
-import { settleRewardByPercent, cancelRewardPending } from "../services/lottery/reward";
+import { settleRewardByPercent, cancelRewardPending, parseRewardConfig } from "../services/lottery/reward";
 import {
   lotteryPrizeTiers,
   shareRecords,
@@ -2606,6 +2606,64 @@ describe("triggerRewardEarned", () => {
   });
 });
 
+// ── parseRewardConfig：宽容解析活动配置中的 reward 规则（docs/275 提取） ──
+describe("parseRewardConfig", () => {
+  it("非法 JSON → 返回 null", () => {
+    expect(parseRewardConfig("{not-json")).toBeNull();
+  });
+
+  it("无 reward 配置 → 返回 null", () => {
+    expect(parseRewardConfig(JSON.stringify({ version: 1 }))).toBeNull();
+    expect(parseRewardConfig(null)).toBeNull();
+  });
+
+  it("fixed 模式 perInviteAmount <= 0 → 返回 null", () => {
+    expect(parseRewardConfig(JSON.stringify({ reward: { perInviteAmount: 0 } }))).toBeNull();
+    expect(parseRewardConfig(JSON.stringify({ reward: { perInviteAmount: -5 } }))).toBeNull();
+  });
+
+  it("percent 模式 perInvitePercent <= 0 → 返回 null", () => {
+    expect(parseRewardConfig(JSON.stringify({ reward: { mode: "percent", perInvitePercent: 0 } }))).toBeNull();
+  });
+
+  it("旧数据无 mode 字段 → 兼容为 fixed 模式", () => {
+    const parsed = parseRewardConfig(JSON.stringify({ reward: { perInviteAmount: 100, currency: "cny" } }));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.mode).toBe("fixed");
+    expect(parsed!.perInviteAmount).toBe(100);
+  });
+
+  it("货币来源优先级：reward.currency > flashSale.currency > cny", () => {
+    // reward.currency 优先
+    const withRewardCurrency = parseRewardConfig(JSON.stringify({
+      reward: { perInviteAmount: 100, currency: "USD" },
+      promotionConfig: { flashSale: { currency: "JPY" } },
+    }));
+    expect(withRewardCurrency!.currency).toBe("USD");
+
+    // 无 reward.currency → flashSale.currency
+    const withFlashCurrency = parseRewardConfig(JSON.stringify({
+      reward: { perInviteAmount: 100 },
+      promotionConfig: { flashSale: { currency: "JPY" } },
+    }));
+    expect(withFlashCurrency!.currency).toBe("JPY");
+
+    // 都无 → 默认 cny
+    const defaultCurrency = parseRewardConfig(JSON.stringify({ reward: { perInviteAmount: 100 } }));
+    expect(defaultCurrency!.currency).toBe("cny");
+  });
+
+  it("quota 缺失时返回空对象（主函数按不限制处理）", () => {
+    const parsed = parseRewardConfig(JSON.stringify({ reward: { perInviteAmount: 100 } }));
+    expect(parsed!.quota).toEqual({ perUserPerDay: undefined, globalPerDay: undefined });
+  });
+
+  it("字符串金额容错：Number() 解析字符串 '100'", () => {
+    const parsed = parseRewardConfig(JSON.stringify({ reward: { perInviteAmount: "100" } }));
+    expect(parsed!.perInviteAmount).toBe(100);
+  });
+});
+
 // ── settleRewardByPercent：付款确认后结算 percent 模式奖励（docs/271） ──
 describe("settleRewardByPercent", () => {
   // 创建带 percent 奖励配置的活动，并预置 attributed_join + reward_pending 事件
@@ -3054,6 +3112,63 @@ describe("cancelRewardPending", () => {
     expect(r2.cancelled).toBe(false);
 
     // 验证只有 1 条 reward_cancelled 事件
+    const cancelledEvents = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_cancelled"),
+      ));
+    expect(cancelledEvents.length).toBe(1);
+  });
+
+  it("docs/275 P1：同一 refCode 下好友 X 已结算不拦截好友 Y 的取消（joinerEntryId 粒度）", async () => {
+    const { drawId, sharerEntryId, joinerEntryId } = await setupPendingReward();
+    const refCode = "INV-CANCEL-001";
+
+    // 好友2：同一 refCode 的另一条归因 + pending
+    const joiner2Id = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: joiner2Id, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "joiner2@test.com",
+      ipHash: "ip-j2", joinedAt: new Date().toISOString(),
+    });
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: joiner2Id,
+      eventType: "attributed_join", refCode,
+      metadata: { sharerEntryId, inviterIdentityValue: "sharer@test.com", source: "trigger" },
+    });
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: sharerEntryId,
+      eventType: "reward_pending", refCode,
+      metadata: {
+        mode: "percent", perInvitePercent: 10, currency: "CNY",
+        sharerEntryId, inviterIdentityValue: "sharer@test.com",
+        source: "trigger", status: "pending", joinerEntryId: joiner2Id,
+      },
+    });
+
+    // 好友1（joinerEntryId）已结算 → 写入 reward_earned（settled，带 joinerEntryId=joinerEntryId）
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: sharerEntryId,
+      eventType: "reward_earned", refCode,
+      metadata: {
+        mode: "percent", percent: 10, amountCents: 100, currency: "CNY",
+        sharerEntryId, inviterIdentityValue: "sharer@test.com",
+        status: "settled", joinerEntryId, settledFrom: "reward_pending",
+      },
+    });
+
+    // 好友2 取消 → 不应被好友1 的 reward_earned 拦截（joinerEntryId 精确匹配）
+    const r2 = await cancelRewardPending(db, TENANT, drawId, joiner2Id, "payment_cancelled");
+    expect(r2.cancelled).toBe(true);
+
+    // 好友1 取消 → 已被结算，返回 cancelled=false（reward_earned 是最终态）
+    const r1 = await cancelRewardPending(db, TENANT, drawId, joinerEntryId, "payment_cancelled");
+    expect(r1.cancelled).toBe(false);
+
+    // 只有好友2 的 reward_cancelled 事件
     const cancelledEvents = await db
       .select({ id: activityEvents.id })
       .from(activityEvents)

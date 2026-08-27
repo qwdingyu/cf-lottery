@@ -1383,7 +1383,12 @@ export async function resolvePendingUserAttributions(
         drawId,
         entryId: evt.entryId,
         eventType: "attributed_join",
-        refCode: String(evt.refCode || ""),
+        // P2-3 修复（docs/275）：refCode 统一用 referrerInviteCode 而非 evt.refCode。
+        // 旧格式 pending（refCode=userId）解析时，若沿用 evt.refCode 会写入 userId，
+        // 而 maybeTriggerReward 触发奖励时用 inviteCode，导致 reward_pending 的 refCode
+        // 与 attributed_join 不一致——settleRewardByPercent 从 attributed_join 读 refCode
+        // 匹配 reward_pending 会失败，percent 奖励无法结算。统一为 inviteCode 保证结算链路口径一致。
+        refCode: referrerInviteCode,
         ipHash: String(evt.ipHash || ""),
         userAgent: String(evt.userAgent || ""),
         metadata: {

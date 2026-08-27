@@ -59,7 +59,7 @@ type ParsedRewardConfig = {
  * 用 Number() 而非 parseInt，因为配置值可能是字符串 "100" 或数字 100。
  * NaN <= 0 为 true，会走 no_reward_config 分支，防御非法配置。
  */
-function parseRewardConfig(activityConfig: string | null): ParsedRewardConfig | null {
+export function parseRewardConfig(activityConfig: string | null): ParsedRewardConfig | null {
   let config: {
     reward?: { mode?: string; perInviteAmount?: number; perInvitePercent?: number; currency?: string };
     quota?: { perUserPerDay?: number; globalPerDay?: number };

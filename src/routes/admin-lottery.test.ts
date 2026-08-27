@@ -2275,6 +2275,80 @@ describe("REISSUE: POST /draws/:id/rewards/reissue", () => {
     // 只处理 1 条（entry-user-A 的）
     expect(body.results.length).toBe(1);
   });
+
+  it("docs/275 P1：reissue 从失败事件 metadata 读取 joinerEntryId，同一 refCode 下好友 X 已补发不误拦好友 Y", async () => {
+    await seedTenant(TENANT_A, OWNER_A, "ri-j", "ri-j@test.com");
+    const drawId = "draw-reissue-join";
+    await db.insert(lotteryDraws).values({
+      id: drawId, tenantId: TENANT_A, publicSlug: "ri-j-slug", title: "补发粒度测试",
+      status: "open", activityKind: "lottery", participationMode: "open",
+      experienceType: "wheel", resultMode: "scheduled",
+      startAt: new Date(Date.now() - 60_000).toISOString(),
+      endAt: new Date(Date.now() + 3_600_000).toISOString(),
+      winnerCount: 1, showParticipantCount: 1, showWinnerCount: 1, showWinnerList: 0, visible: 1,
+      activityConfig: JSON.stringify({ reward: { perInviteAmount: 100, currency: "cny" }, quota: { perUserPerDay: 10, globalPerDay: 100 } }),
+      promotionConfig: "{}",
+    });
+
+    // sharer entry（getSharerIdentityValue 需要）
+    const sharerEntryId = "entry-sharer-join";
+    await db.insert(lotteryEntries).values({
+      id: sharerEntryId, tenantId: TENANT_A, drawId,
+      identityType: "email", identityValue: "sharer-join@test.com",
+      ipHash: "ip-sj", joinedAt: new Date().toISOString(),
+    });
+
+    const refCode = "REF-JOIN-001";
+    const joiner1 = "joiner-1";
+    const joiner2 = "joiner-2";
+
+    // 两条 reward_failed（同一 sharer + refCode，不同 joinerEntryId）
+    await db.insert(activityEvents).values([
+      {
+        id: crypto.randomUUID(), tenantId: TENANT_A, drawId, entryId: sharerEntryId,
+        eventType: "reward_failed", refCode,
+        metadataJson: JSON.stringify({ path: "triggerRewardEarned", error: "模拟失败", joinerEntryId: joiner1 }),
+      },
+      {
+        id: crypto.randomUUID(), tenantId: TENANT_A, drawId, entryId: sharerEntryId,
+        eventType: "reward_failed", refCode,
+        metadataJson: JSON.stringify({ path: "triggerRewardEarned", error: "模拟失败", joinerEntryId: joiner2 }),
+      },
+    ]);
+
+    // 好友1 已补发成功（reward_earned 带 joinerEntryId=joiner1）
+    await db.insert(activityEvents).values({
+      id: crypto.randomUUID(), tenantId: TENANT_A, drawId, entryId: sharerEntryId,
+      eventType: "reward_earned", refCode,
+      metadataJson: JSON.stringify({ mode: "fixed", perInviteAmount: 100, currency: "cny", sharerEntryId, inviterIdentityValue: "sharer-join@test.com", status: "resolved", joinerEntryId: joiner1 }),
+    });
+
+    const app = createTestApp();
+    const headers = await authHeader(OWNER_A, TENANT_A);
+
+    const res = await app.request(`/api/admin/draws/${drawId}/rewards/reissue?all=true`, {
+      method: "POST", headers,
+    }, TEST_ENV);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { results: Array<{ triggered: boolean; reason?: string }> };
+
+    // 好友1 重试被幂等拦截（reward_sent），好友2 补发成功（triggered=true）
+    const reasons = body.results.map(r => r.reason);
+    expect(reasons).toContain("reward_sent");
+    expect(body.results.some(r => r.triggered)).toBe(true);
+
+    // 验证好友2 的 reward_earned 已写入（joinerEntryId=joiner2）
+    const earnedEvents = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT_A),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    const joiners = earnedEvents.map(e => JSON.parse(e.metadataJson || "{}").joinerEntryId);
+    expect(joiners).toContain(joiner2);
+  });
 });
 
 // ============================================================

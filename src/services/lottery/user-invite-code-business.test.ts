@@ -15,6 +15,7 @@ import {
   getActivityEventSummary,
   createPrize,
 } from "../lottery-service";
+import { settleRewardByPercent } from "./reward";
 import {
   shareRecords,
   activityEvents,
@@ -523,5 +524,74 @@ describe("docs/275 P1 回归", () => {
       .where(eq(shareRecords.tenantId, TENANT));
     expect(shares.length).toBe(1);
     expect(shares[0].joinedCount).toBe(1);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 场景 5：P2-3 回归——旧格式 pending（refCode=userId）解析后 percent 结算链路
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("P2-3 旧格式 pending + percent 结算", () => {
+  it("旧格式 pending 解析后 attributed_join 的 refCode 统一为 inviteCode，percent 可正常结算", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { mode: "percent", perInvitePercent: 10, currency: "CNY" },
+      quota: { perUserPerDay: 10, globalPerDay: 100 },
+    });
+    const { id: drawId, publicSlug } = await setupDraw(config);
+    await createRegisteredUser("user-a", "a@test.com", "CODEAAAA");
+    await createRegisteredUser("user-b", "b@test.com", "CODEBBBB");
+
+    // B 先无 ref 加入（获得 entry）
+    const bJoin = await joinDraw(db, publicSlug, "user-b", "user_id");
+    expect(bJoin.joined).toBe(true);
+    const bEntryId = "entryId" in bJoin ? String(bJoin.entryId) : "";
+
+    // 模拟 3b7e35b5~0a03e66a 旧版本写入的 pending 事件：refCode 存的是推荐人 userId
+    await db.insert(activityEvents).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      entryId: bEntryId,
+      eventType: "pending_user_attributed_join",
+      refCode: "user-a",
+      metadataJson: JSON.stringify({ referrerUserId: "user-a", referrerInviteCode: "CODEAAAA" }),
+      createdAt: new Date().toISOString(),
+    });
+
+    // A 加入 → 双值匹配解析旧格式 pending
+    await joinDraw(db, publicSlug, "user-a", "user_id");
+
+    // 断言：attributed_join 的 refCode 统一为 inviteCode（P2-3 修复），
+    // 与 reward_pending 的 refCode 一致，保证 settleRewardByPercent 能匹配到。
+    const [attrEvent] = await db
+      .select({ refCode: activityEvents.refCode })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.entryId, bEntryId),
+        eq(activityEvents.eventType, "attributed_join"),
+      ))
+      .limit(1);
+    expect(attrEvent?.refCode).toBe("CODEAAAA");
+
+    // B 付款 → percent 结算应成功（refCode 口径一致）
+    const result = await settleRewardByPercent(db, TENANT, drawId, bEntryId, 1000, "CNY");
+    expect(result.settled).toBe(true);
+
+    // 结算后 reward_earned 事件已写入（status: settled）
+    const settledEvents = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(settledEvents.length).toBe(1);
+    const meta = JSON.parse(settledEvents[0].metadataJson || "{}");
+    expect(meta.status).toBe("settled");
+    expect(meta.amountCents).toBe(100); // 1000 × 10% = 100
   });
 });
