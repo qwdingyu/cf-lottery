@@ -833,12 +833,14 @@ export function buildPromotionConfigPayload(form: {
               : {}),
             leaderboardEnabled: form.viralLeaderboardEnabled ?? true,
             // docs/218 模式三：排行榜奖励明细（rank:spins 数组，运行时归一化过滤）
+            // P0 修复：rewardType 必须透传 r.rewardType，不能硬编码 'bonus_spin'；couponLabel 同步保留
             ...(hasLeaderboardRewards
               ? {
                   leaderboardRewards: leaderboardRewards.map((r) => ({
                     rank: r.rank,
-                    rewardType: 'bonus_spin',
+                    rewardType: r.rewardType,
                     rewardValue: r.rewardValue,
+                    ...(r.couponLabel ? { couponLabel: r.couponLabel } : {}),
                   })),
                 }
               : {}),

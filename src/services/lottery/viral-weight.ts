@@ -202,6 +202,25 @@ export function aggregateViralInviteCounts(
 }
 
 /**
+ * 将 share_records 行聚合成 entryId → 最早分享时间（createdAt）。
+ * 同一 sharer 多条 shareCode 取最早 createdAt，供排行榜 tie-break 使用。
+ */
+export function aggregateFirstSharedAt(
+  rows: ReadonlyArray<{ sharerEntryId: string; createdAt: string | null | undefined }>,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    const id = String(row?.sharerEntryId || "").trim();
+    const ts = String(row?.createdAt || "").trim();
+    if (!id || !ts) continue;
+    const existing = map.get(id);
+    // 取最早时间（SQLite datetime 格式 'YYYY-MM-DD HH:MM:SS' 支持字典序比较）
+    if (!existing || ts < existing) map.set(id, ts);
+  }
+  return map;
+}
+
+/**
  * 排行榜 tie-break 比较函数（P0 修复 2026-08-23）。
  *
  * 公开榜（viral-weight）和奖励发放（leaderboard-rewards）曾使用不同的 tie-break 规则，
@@ -235,16 +254,20 @@ export function compareViralLeaderboard(
 /**
  * 排行榜：由「entryId → 邀请人数」得到 Top N + 我的真实名次。
  * 名次必须在全量（invited>0）上计算，禁止在 slice(0,20) 后再找导致「未进 Top20 恒为 21」。
+ *
+ * @param firstSharedAtMap 可选的 entryId → 最早分享时间映射，用于 tie-break 公平排序
+ *   （公开榜、管理端、平台 Bot 应传入此参数，保证排名与奖励发放一致）
  */
 export function buildViralLeaderboardRanking(
   inviteCounts: Map<string, number> | Record<string, number>,
-  options?: { entryId?: string; topN?: number },
+  options?: { entryId?: string; topN?: number; firstSharedAtMap?: Map<string, string> },
 ): {
   entries: Array<{ rank: number; entryId: string; invitedCount: number }>;
   myRank: { rank: number; invitedCount: number } | null;
 } {
   const topN = Math.max(1, Math.floor(options?.topN ?? 20));
   const entryId = String(options?.entryId || "").trim();
+  const firstSharedAtMap = options?.firstSharedAtMap;
 
   const pairs: Array<[string, number]> = [];
   if (inviteCounts instanceof Map) {
@@ -259,9 +282,14 @@ export function buildViralLeaderboardRanking(
     }
   }
 
-  // 邀请人数降序；同票 tie-break 走 compareViralLeaderboard（公开榜不含 firstSharedAt，退回 entryId 字典序）
-  // 奖励发放（leaderboard-rewards.ts）单独传入 firstSharedAt 使用同一比较函数，保证排名一致
-  pairs.sort((a, b) => compareViralLeaderboard(a[1], b[1], undefined, undefined, a[0], b[0]));
+  // tie-break 统一：邀请人数降序 → 同票 firstSharedAt 升序（先到先得）→ 兜底 entryId 字典序
+  // 与奖励发放（leaderboard-rewards.ts）使用同一比较函数，保证用户看到的排名与获奖名次一致
+  pairs.sort((a, b) => compareViralLeaderboard(
+    a[1], b[1],
+    firstSharedAtMap?.get(a[0]),
+    firstSharedAtMap?.get(b[0]),
+    a[0], b[0],
+  ));
 
   const entries = pairs.slice(0, topN).map(([id, count], index) => ({
     rank: index + 1,

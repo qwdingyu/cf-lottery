@@ -398,9 +398,10 @@ adminLotteryRoute.get("/draws/:id/viral-stats", async (c) => {
   const totalJoins = rows.reduce((s, r) => s + r.joinedCount, 0);
 
   // 排行榜排名（复用 buildViralLeaderboardRanking）
-  const { buildViralLeaderboardRanking } = await import("../services/lottery/viral-weight");
+  const { buildViralLeaderboardRanking, aggregateFirstSharedAt } = await import("../services/lottery/viral-weight");
   const inviteCounts = new Map(rows.map((r) => [r.sharerEntryId, r.joinedCount]));
-  const { entries: leaderboard } = buildViralLeaderboardRanking(inviteCounts, { topN: 20 });
+  const firstSharedAtMap = aggregateFirstSharedAt(rows);
+  const { entries: leaderboard } = buildViralLeaderboardRanking(inviteCounts, { topN: 20, firstSharedAtMap });
 
   // shares 数组已移除——前端弹窗只消费 shareStats 和 leaderboard，
   // 完整分享明细则有独立的 /draws/:id/shares 端点可用，避免响应体膨胀。

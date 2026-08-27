@@ -22,6 +22,7 @@ import { performInstantSpin, SpinBusinessError } from "../lottery/spin-execution
 import { recordSpinLog } from "../lottery/spins-log";
 import {
   aggregateViralInviteCounts,
+  aggregateFirstSharedAt,
   buildPublicSharePath,
   buildViralLeaderboardRanking,
   isViralEnabled,
@@ -420,6 +421,7 @@ async function executeLeaderboardCommand(
     .select({
       sharerEntryId: shareRecords.sharerEntryId,
       joinedCount: shareRecords.joinedCount,
+      createdAt: shareRecords.createdAt,
     })
     .from(shareRecords)
     .where(and(eq(shareRecords.tenantId, input.tenantId), eq(shareRecords.drawId, input.drawId)));
@@ -427,6 +429,7 @@ async function executeLeaderboardCommand(
   const ranking = buildViralLeaderboardRanking(aggregateViralInviteCounts(shareRows), {
     entryId: myEntryId,
     topN: 5,
+    firstSharedAtMap: aggregateFirstSharedAt(shareRows),
   });
   if (ranking.entries.length === 0) {
     return {

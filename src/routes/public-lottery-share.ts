@@ -21,6 +21,7 @@ import {
 } from "./public-lottery-helpers";
 import {
   aggregateViralInviteCounts,
+  aggregateFirstSharedAt,
   buildPublicSharePath,
   buildViralLeaderboardRanking,
   computeViralExtraEntries,
@@ -97,14 +98,16 @@ route.get("/draws/:slug/viral-leaderboard", async (c) => {
     .select({
       sharerEntryId: shareRecords.sharerEntryId,
       joinedCount: shareRecords.joinedCount,
+      createdAt: shareRecords.createdAt,
     })
     .from(shareRecords)
     .where(and(eq(shareRecords.drawId, draw.id), eq(shareRecords.tenantId, draw.tenantId)));
 
   const aggMap = aggregateViralInviteCounts(shareRows);
+  const firstSharedAtMap = aggregateFirstSharedAt(shareRows);
 
   // 全量排名再截 Top20；myRank 在全量上算，未进榜也是真实名次（docs/109）
-  const ranking = buildViralLeaderboardRanking(aggMap, { entryId, topN: 20 });
+  const ranking = buildViralLeaderboardRanking(aggMap, { entryId, topN: 20, firstSharedAtMap });
   if (ranking.entries.length === 0 && !ranking.myRank) {
     return ok(c, { entries: [], myRank: null });
   }
