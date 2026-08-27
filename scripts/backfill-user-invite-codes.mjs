@@ -4,7 +4,7 @@
  * 功能：
  * 1. 查询所有 invite_code IS NULL 的用户
  * 2. 为每个用户生成 8 位邀请码（与 generateUserInviteCode() 同逻辑）
- * 3. 逐条 UPDATE 并重试 UNIQUE 碰撞（32^8 ≈ 1.1×10^12，碰撞概率极低）
+ * 3. 逐条 UPDATE 并重试 UNIQUE 碰撞（31^8 ≈ 8.5×10^11，碰撞概率极低）
  * 4. 输出统计：成功/失败/跳过数量
  *
  * 使用方式：
@@ -56,6 +56,14 @@ const dryRun = !args.includes("--apply");
 async function main() {
   if (dryRun) {
     console.log("🔍 [dry-run] 仅预览，不写入数据库。添加 --apply 参数实际执行。\n");
+  }
+
+  // 0. 迁移预检：确认 invite_code 列存在（未运行 0067 迁移会报错）
+  try {
+    await client.execute("SELECT invite_code FROM users LIMIT 1");
+  } catch {
+    console.error("[backfill] ❌ users 表缺少 invite_code 列，请先运行数据库迁移 (npm run db:migrate)");
+    process.exit(1);
   }
 
   // 1. 查询需要回填的用户

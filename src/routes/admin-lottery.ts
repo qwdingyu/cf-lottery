@@ -1602,6 +1602,13 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
         results.push({ sharerEntryId: "", refCode, triggered: false, reason: "失败事件缺少 entryId" })
         continue
       }
+      // docs/275 P1：从失败事件 metadata 读取被邀请人 joinerEntryId，
+      // 补发幂等按"每次邀请"粒度判重——同一邀请码下好友 X 已成功不再误拦好友 Y 的补发；
+      // 历史失败事件无该字段时回退 (sharer, refCode) 粗粒度，保守防重复发放。
+      let failedJoinerEntryId: string | undefined;
+      try {
+        failedJoinerEntryId = JSON.parse(f.metadataJson || "{}").joinerEntryId || undefined;
+      } catch { /* metadata 非法 JSON：按无 joiner 维度处理 */ }
       const sharerIdentity = await getSharerIdentityValue(db, tenantId, drawId, sharerEntryId);
       const result = await triggerRewardEarned(
         db,
@@ -1610,7 +1617,7 @@ adminLotteryRoute.post("/draws/:id/rewards/reissue", async (c) => {
         sharerEntryId,
         sharerIdentity,
         refCode,
-        { source: "reissue" },
+        { source: "reissue", joinerEntryId: failedJoinerEntryId },
       );
       // 补发成功后标记原始 reward_failed 事件（docs/274 5.2）：
       // 更新 metadata.reissued=true + reissuedAt，供失败列表过滤已补发记录。

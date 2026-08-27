@@ -17,7 +17,7 @@
  */
 import type { DbType } from "../../db/client";
 import { logError } from "../../lib/logger";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import { lotteryDraws, lotteryEntries, activityEvents } from "../../db/schema";
 import { checkDbRateLimit } from "../../lib/rate-limit";
 import { recordActivityEvent, enqueueWebhookEvent } from "./integration";
@@ -32,6 +32,68 @@ export type TriggerRewardEarnedResult = {
   /** 入队的 Webhook 投递 ID（调用方在事务外异步 dispatch） */
   deliveryIds: string[];
 };
+
+/** 解析后的奖励配置（parseRewardConfig 的返回结构） */
+type ParsedRewardConfig = {
+  mode: "fixed" | "percent";
+  perInviteAmount: number;
+  perInvitePercent: number;
+  currency: string;
+  quota: { perUserPerDay?: number; globalPerDay?: number };
+};
+
+/**
+ * 宽容解析活动配置中的 reward 规则（docs/111 §5）。
+ *
+ * 从 lotteryDraws.activityConfig JSON 读取，无有效 reward 配置时返回 null，
+ * 调用方应静默跳过（不影响未配置 reward 的抽奖/接龙等活动）。
+ *
+ * 支持两种模式：
+ *   - fixed: 每邀请奖励固定金额（perInviteAmount），与旧版行为一致
+ *   - percent: 基于成交金额百分比（perInvitePercent），
+ *     实际金额在付款确认时由 cf-lottery 自己计算（paymentOrders.amountCents × percent / 100），
+ *     不依赖中转站——cf-lottery 有完整的支付系统，百分比计算是系统内部职责。
+ * 旧数据（无 mode 字段）兼容为 fixed 模式。
+ *
+ * 货币来源优先级：reward.currency > flashSale.currency > "cny"（与 paymentOrders 默认值一致）。
+ * 用 Number() 而非 parseInt，因为配置值可能是字符串 "100" 或数字 100。
+ * NaN <= 0 为 true，会走 no_reward_config 分支，防御非法配置。
+ */
+function parseRewardConfig(activityConfig: string | null): ParsedRewardConfig | null {
+  let config: {
+    reward?: { mode?: string; perInviteAmount?: number; perInvitePercent?: number; currency?: string };
+    quota?: { perUserPerDay?: number; globalPerDay?: number };
+    promotionConfig?: { flashSale?: { currency?: string } };
+  } | null = null;
+  try {
+    config = activityConfig ? JSON.parse(activityConfig) : null;
+  } catch {
+    config = null;
+  }
+  const rewardConfig = config?.reward;
+  const mode = rewardConfig?.mode === "percent" ? "percent" : "fixed";
+  const currency = rewardConfig?.currency || config?.promotionConfig?.flashSale?.currency || "cny";
+  let perInviteAmount = 0;
+  let perInvitePercent = 0;
+  if (mode === "percent") {
+    perInvitePercent = Number(rewardConfig?.perInvitePercent || 0);
+  } else {
+    perInviteAmount = Number(rewardConfig?.perInviteAmount || 0);
+  }
+  if (!rewardConfig || (mode === "fixed" && perInviteAmount <= 0) || (mode === "percent" && perInvitePercent <= 0)) {
+    return null;
+  }
+  return {
+    mode,
+    perInviteAmount,
+    perInvitePercent,
+    currency,
+    quota: {
+      perUserPerDay: config?.quota?.perUserPerDay,
+      globalPerDay: config?.quota?.globalPerDay,
+    },
+  };
+}
 
 /**
  * 归因成功后触发奖励意图。
@@ -75,43 +137,13 @@ export async function triggerRewardEarned(
   // 宽容解析 activityConfig：只用 reward 字段判断是否触发。
   // 不依赖严格的 schema 校验——活动配置可能包含多种玩法（lottery/survey/vote），
   // 只有显式配置了 reward 规则的活动才触发，其余活动不受影响。
-  // 支持两种模式：
-  //   - fixed: 每邀请奖励固定金额（perInviteAmount），与旧版行为一致
-  //   - percent: 基于成交金额百分比（perInvitePercent），
-  //     实际金额在付款确认时由 cf-lottery 自己计算（paymentOrders.amountCents × percent / 100），
-  //     不依赖中转站——cf-lottery 有完整的支付系统，百分比计算是系统内部职责。
-  // 旧数据（无 mode 字段）兼容为 fixed 模式。
   // ⚠️ 注意：triggerRewardEarned 在 joinDraw 时调用，此时付款尚未完成，
   // 不知道成交金额。percent 模式下此函数只记录百分比配置，实际金额在付款确认后计算。
-  let config: {
-    reward?: { mode?: string; perInviteAmount?: number; perInvitePercent?: number; currency?: string };
-    quota?: { perUserPerDay?: number; globalPerDay?: number };
-    promotionConfig?: { flashSale?: { currency?: string } };
-  } | null = null;
-  try {
-    config = draw.activityConfig ? JSON.parse(draw.activityConfig) : null;
-  } catch {
-    config = null;
-  }
-  const rewardConfig = config?.reward;
-  const rewardMode = rewardConfig?.mode === "percent" ? "percent" : "fixed";
-
-  // 货币来源优先级：reward.currency > flashSale.currency > "cny"
-  // 与 paymentOrders 表默认值一致，不硬编码 USD
-  const derivedCurrency = rewardConfig?.currency || config?.promotionConfig?.flashSale?.currency || "cny";
-
-  // 用 Number() 而非 parseInt，因为配置值可能是字符串 "100" 或数字 100。
-  // NaN <= 0 为 true，会走 no_reward_config 分支，防御非法配置。
-  let perInviteAmount = 0;
-  let perInvitePercent = 0;
-  if (rewardMode === "percent") {
-    perInvitePercent = Number(rewardConfig?.perInvitePercent || 0);
-  } else {
-    perInviteAmount = Number(rewardConfig?.perInviteAmount || 0);
-  }
-  if (!rewardConfig || (rewardMode === "fixed" && perInviteAmount <= 0) || (rewardMode === "percent" && perInvitePercent <= 0)) {
+  const parsed = parseRewardConfig(draw.activityConfig);
+  if (!parsed) {
     return { triggered: false, reason: "no_reward_config", sharerEntryId, deliveryIds: [] };
   }
+  const { mode: rewardMode, perInviteAmount, perInvitePercent, currency: derivedCurrency, quota } = parsed;
 
   // ── 幂等性检查（前置）──
   // 检查是否已有 reward_earned/fixed 或 reward_pending/percent 事件。
@@ -148,8 +180,8 @@ export async function triggerRewardEarned(
   // 用一个超大数（MAX_SAFE_INTEGER）兜底，保证 SELECT COUNT < limit 恒真。
   // 不能用 Math.max(1, ...) — 那会把 0/-1（意为关闭）误强转为 1，配额仍被强制。
   const UNLIMITED = Number.MAX_SAFE_INTEGER;
-  const rawPerUserDay = config?.quota?.perUserPerDay;
-  const rawGlobalDay = config?.quota?.globalPerDay;
+  const rawPerUserDay = quota?.perUserPerDay;
+  const rawGlobalDay = quota?.globalPerDay;
   const isUnlimited = (v: number | null | undefined) => v == null || v <= 0;
   const perUserPerDay = isUnlimited(rawPerUserDay) ? UNLIMITED : Number(rawPerUserDay);
   const globalPerDay = isUnlimited(rawGlobalDay) ? UNLIMITED : Number(rawGlobalDay);
@@ -357,8 +389,13 @@ export async function settleRewardByPercent(
   if (!sharerEntryId) return { settled: false, reason: "sharer_entry_id_not_found", deliveryIds: [] };
 
   // 2. 查找 sharer 的 reward_pending 事件，读取 perInvitePercent
-  // 用 refCode 精确匹配：同一邀请人可能被多人邀请（多条 reward_pending），
-  // refCode 与 attributed_join 的 refCode 一致（都来自同一次归因），确保匹配正确的 pending 记录
+  // 用 refCode + joinerEntryId 精确匹配（docs/275 P1）：用户级邀请码为固定值，
+  // 同一邀请码的多个好友会产生多条 (sharer, refCode) 相同的 reward_pending，
+  // 必须按被邀请人维度取到"本次付款对应"的那条。
+  // 兼容：改造前写入的 reward_pending 事件 metadata 无 joinerEntryId（NULL），
+  // 作为兜底参与匹配（排序上优先精确匹配，其次按时间取最旧），存量在途事件仍可结算。
+  const joinerMetaEq = sql`json_extract(${activityEvents.metadataJson}, '$.joinerEntryId') = ${joinerEntryId}`;
+  const joinerMetaNull = sql`json_extract(${activityEvents.metadataJson}, '$.joinerEntryId') IS NULL`;
   const [pendingEvent] = await db
     .select({ metadataJson: activityEvents.metadataJson })
     .from(activityEvents)
@@ -368,12 +405,20 @@ export async function settleRewardByPercent(
       eq(activityEvents.entryId, sharerEntryId),
       eq(activityEvents.eventType, "reward_pending"),
       eq(activityEvents.refCode, refCode),
+      or(joinerMetaEq, joinerMetaNull),
     ))
+    .orderBy(
+      // 精确匹配（本次付款人）优先，兜底的存量事件按创建时间正序取最旧一条
+      sql`CASE WHEN ${joinerMetaEq} THEN 0 ELSE 1 END`,
+      activityEvents.createdAt,
+    )
     .limit(1);
   if (!pendingEvent) return { settled: false, reason: "reward_pending_not_found", deliveryIds: [] };
 
   // 幂等性检查：确认该 reward_pending 尚未被结算（避免 handlePaymentCallback 重复调用导致双倍结算）。
-  // 通过查找同 sharerEntryId + refCode 的 reward_earned 事件来判断。
+  // 通过查找同 sharerEntryId + refCode + joinerEntryId 的 reward_earned 事件来判断。
+  // joinerEntryId 严格匹配是安全的：settle 写入的 reward_earned 事件 metadata 一直携带
+  // joinerEntryId（历史事件同样如此，见 docs/271 实现），不会漏判已结算。
   const [alreadySettled] = await db
     .select({ id: activityEvents.id })
     .from(activityEvents)
@@ -383,6 +428,7 @@ export async function settleRewardByPercent(
       eq(activityEvents.entryId, sharerEntryId),
       eq(activityEvents.eventType, "reward_earned"),
       eq(activityEvents.refCode, refCode),
+      joinerMetaEq,
     ))
     .limit(1);
   if (alreadySettled) {
@@ -392,6 +438,7 @@ export async function settleRewardByPercent(
   // 防御纵深：检查该 reward_pending 是否已被取消（cancelRewardPending 已写入 reward_cancelled）。
   // 如果已取消，不应再结算——避免 race condition 下 cancelled 被覆盖为 settled。
   // 正常流程中 handlePaymentCallback 的 CAS 防止此场景，但 retryPaymentFulfillment 无同类保护。
+  // 同样按 joinerEntryId 维度判重（reward_cancelled 的 metadata 自 docs/273 起即携带该字段）。
   const [cancelledBefore] = await db
     .select({ id: activityEvents.id })
     .from(activityEvents)
@@ -401,6 +448,7 @@ export async function settleRewardByPercent(
       eq(activityEvents.entryId, sharerEntryId),
       eq(activityEvents.eventType, "reward_cancelled"),
       eq(activityEvents.refCode, refCode),
+      joinerMetaEq,
     ))
     .limit(1);
   if (cancelledBefore) {
@@ -529,7 +577,10 @@ export async function cancelRewardPending(
   // 检查该 reward 是否已被结算（settleRewardByPercent 已写入 reward_earned）。
   // 如果已结算，不再写 reward_cancelled——避免同一笔奖励既有 settled 又有 cancelled 的矛盾状态。
   // 注意：同一个 sharerEntryId 可能有多条 reward_earned（不同 refCode 多次邀请），
-  // 需要用 refCode 精确匹配到同一次归因。
+  // 需要用 refCode + joinerEntryId 精确匹配到同一次归因（docs/275 P1）：
+  // 同一邀请码的多个好友各自独立，好友 X 已结算不应拦截好友 Y 的取消。
+  // reward_earned(settled) 与 reward_cancelled 的 metadata 均携带 joinerEntryId，严格匹配安全。
+  const joinerMetaEq = sql`json_extract(${activityEvents.metadataJson}, '$.joinerEntryId') = ${joinerEntryId}`;
   const [settledEvent] = await db
     .select({ id: activityEvents.id })
     .from(activityEvents)
@@ -539,6 +590,7 @@ export async function cancelRewardPending(
       eq(activityEvents.entryId, sharerEntryId),
       eq(activityEvents.eventType, "reward_earned"),
       eq(activityEvents.refCode, refCode),
+      joinerMetaEq,
     ))
     .limit(1);
   if (settledEvent) {
@@ -547,7 +599,7 @@ export async function cancelRewardPending(
   }
 
   // 检查该 reward 是否已被取消（两次 cancelRewardPending 调用，如 expireOverdueOrders 重复触发）。
-  // 幂等性：如果同 sharerEntryId + refCode 已有 reward_cancelled，不再重复写。
+  // 幂等性：同 sharerEntryId + refCode + joinerEntryId 已有 reward_cancelled 则不再重复写。
   const [alreadyCancelled] = await db
     .select({ id: activityEvents.id })
     .from(activityEvents)
@@ -557,6 +609,7 @@ export async function cancelRewardPending(
       eq(activityEvents.entryId, sharerEntryId),
       eq(activityEvents.eventType, "reward_cancelled"),
       eq(activityEvents.refCode, refCode),
+      joinerMetaEq,
     ))
     .limit(1);
   if (alreadyCancelled) {

@@ -52,7 +52,7 @@ import {
   activityOutcomes,
   users,
 } from "../db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { clearTestData, getTestDb } from "../test-setup";
 import { encryptPaymentConfigValue } from "@usethink/cf-pay/config-store";
 import { sanitizePublicPromotionConfig } from "../lib/activity-utils";
@@ -2547,6 +2547,63 @@ describe("triggerRewardEarned", () => {
     expect(third.triggered).toBe(false);
     expect(third.reason).toBe("quota_exceeded");
   });
+
+  // ── docs/275 P1：幂等键 joinerEntryId（每次邀请）粒度回归 ──
+  it("同一 refCode 多个不同好友（joinerEntryId 各异）→ 每邀请各发一份，不被幂等误拦", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { perInviteAmount: 100, currency: "cny" },
+      quota: { perUserPerDay: 10, globalPerDay: 100 },
+    });
+    const { drawId, sharerEntryId } = await setupRewardDraw(config);
+    const joiner1 = crypto.randomUUID();
+    const joiner2 = crypto.randomUUID();
+    // 用户级邀请码为固定值：两个好友归因 refCode 相同，仅 joinerEntryId 不同
+    const first = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "UCODE1", { joinerEntryId: joiner1 });
+    expect(first.triggered).toBe(true);
+    const second = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "UCODE1", { joinerEntryId: joiner2 });
+    expect(second.triggered).toBe(true);
+    expect(second.reason).toBe("reward_sent");
+
+    // 两条 reward_earned 事件各自携带不同的 joinerEntryId
+    const events = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(events.length).toBe(2);
+    const joiners = events.map((e) => JSON.parse(e.metadataJson || "{}").joinerEntryId).sort();
+    expect(joiners).toEqual([joiner1, joiner2].sort());
+  });
+
+  it("同一好友重复触发（同 refCode + 同 joinerEntryId）→ 幂等拦截，事件不重复写入", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { perInviteAmount: 100, currency: "cny" },
+      quota: { perUserPerDay: 2, globalPerDay: 100 },
+    });
+    const { drawId, sharerEntryId } = await setupRewardDraw(config);
+    const joiner = crypto.randomUUID();
+    const first = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "UCODE1", { joinerEntryId: joiner });
+    expect(first.triggered).toBe(true);
+    // 第二次：同一次邀请的重复调用（reissue 重放/脏路径）→ 幂等拦截
+    const second = await triggerRewardEarned(db, TENANT, drawId, sharerEntryId, "sharer@test.com", "UCODE1", { joinerEntryId: joiner });
+    expect(second.triggered).toBe(false);
+    expect(second.reason).toBe("reward_sent");
+    // 事件只应有一条，确保没有重复写入
+    const events = await db
+      .select({ id: activityEvents.id })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(events.length).toBe(1);
+  });
 });
 
 // ── settleRewardByPercent：付款确认后结算 percent 模式奖励（docs/271） ──
@@ -2706,6 +2763,58 @@ describe("settleRewardByPercent", () => {
     expect(r1.settled).toBe(true);
 
     // 验证有 2 条 reward_earned settled，金额各自正确
+    const settledEvents = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(settledEvents.length).toBe(2);
+    const amounts = settledEvents.map(e => JSON.parse(e.metadataJson || "{}").amountCents).sort();
+    expect(amounts).toEqual([50, 80]);
+  });
+
+  it("docs/275 P1：同一 refCode 但不同好友（joinerEntryId 各异）→ 各自独立结算，互不误拦", async () => {
+    const { drawId, sharerEntryId, joinerEntryId } = await setupPercentReward();
+
+    // 模拟用户级邀请码场景：两个好友用同一 refCode，reward_pending 事件带各自 joinerEntryId
+    const joiner2Id = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: joiner2Id, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "joiner2@test.com",
+      ipHash: "ip-j2", joinedAt: new Date().toISOString(),
+    });
+
+    // 第一条 pending（joinerEntryId 已在 metadata，之后由新写入路径产生）
+    await db.update(activityEvents)
+      .set({ metadataJson: sql`json_set(COALESCE(metadata_json, '{}'), '$.joinerEntryId', ${joinerEntryId})` })
+      .where(and(eq(activityEvents.entryId, sharerEntryId), eq(activityEvents.eventType, "reward_pending"), eq(activityEvents.refCode, "INV-CODE-001")));
+
+    // 第二条 pending（同一 refCode + joiner2）
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: joiner2Id,
+      eventType: "attributed_join", refCode: "INV-CODE-001",
+      metadata: { sharerEntryId, inviterIdentityValue: "sharer@test.com", source: "trigger" },
+    });
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: sharerEntryId,
+      eventType: "reward_pending", refCode: "INV-CODE-001",
+      metadata: {
+        mode: "percent", perInvitePercent: 10, currency: "CNY",
+        sharerEntryId, inviterIdentityValue: "sharer@test.com",
+        source: "trigger", status: "pending", joinerEntryId: joiner2Id,
+      },
+    });
+
+    // 好友2 结算（joiner2Id）→ 匹配到 joiner2 自己的 pending
+    const r2 = await settleRewardByPercent(db, TENANT, drawId, joiner2Id, 500, "CNY");
+    expect(r2.settled).toBe(true);
+    // 好友1 结算（joinerEntryId）→ 不被好友2 的 reward_earned 误拦
+    const r1 = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 800, "CNY");
+    expect(r1.settled).toBe(true);
+
     const settledEvents = await db
       .select({ metadataJson: activityEvents.metadataJson })
       .from(activityEvents)

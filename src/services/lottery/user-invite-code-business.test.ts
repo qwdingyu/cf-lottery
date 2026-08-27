@@ -38,7 +38,7 @@ beforeEach(async () => {
 });
 
 /** 创建 open 活动并发布 */
-async function setupDraw() {
+async function setupDraw(activityConfig?: string) {
   const now = new Date();
   const future = new Date(now.getTime() + 3600000);
   const { id, publicSlug } = await createDraw(db, TENANT, {
@@ -47,6 +47,7 @@ async function setupDraw() {
     endAt: future.toISOString(),
     participationMode: "open",
     winnerCount: 1,
+    activityConfig,
   });
   // 配置奖项（发布前校验需要）
   const { id: prizeId } = await createPrize(db, TENANT, { name: "测试奖品", prizeType: "manual_fulfillment" });
@@ -259,7 +260,7 @@ describe("resolvePendingUserAttributions", () => {
   });
 
   it("自邀请：pending 事件中被邀请人与推荐人同一 identity → 跳过", async () => {
-    const { publicSlug } = await setupDraw();
+    const { id: drawId, publicSlug } = await setupDraw();
     await createRegisteredUser("user-a", "a@test.com", "CODEAAAA");
 
     // A 用自己邀请码参与（触发 pending 写入逻辑但 self-invite 应被阻止）
@@ -270,7 +271,7 @@ describe("resolvePendingUserAttributions", () => {
     expect(bEntry.joined).toBe(true);
 
     // 无归因
-    const summary = await getActivityEventSummary(db, TENANT, "nonexistent");
+    const summary = await getActivityEventSummary(db, TENANT, drawId);
     expect(summary.totals.attributed_join || 0).toBe(0);
   });
 
@@ -416,5 +417,111 @@ describe("用户级邀请码端到端冒烟", () => {
 
     const summary = await getActivityEventSummary(db, TENANT, drawId);
     expect(summary.totals.attributed_join || 0).toBe(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 场景 4：docs/275 P1——per-friend 奖励粒度 + 旧格式 pending 兼容
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("docs/275 P1 回归", () => {
+  it("全链路：配置 perInviteAmount 后同一邀请码 2 个好友加入 → reward_earned 各 1 条（不被幂等误拦）", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { perInviteAmount: 100, currency: "cny" },
+      quota: { perUserPerDay: 10, globalPerDay: 100 },
+    });
+    const { id: drawId, publicSlug } = await setupDraw(config);
+    await createRegisteredUser("user-a", "a@test.com", "CODEAAAA");
+    await createRegisteredUser("user-b1", "b1@test.com", "CODEB1B1");
+    await createRegisteredUser("user-b2", "b2@test.com", "CODEB2B2");
+
+    await joinDraw(db, publicSlug, "user-a", "user_id");
+    await joinDraw(db, publicSlug, "user-b1", "user_id", { refCode: "CODEAAAA" });
+    await joinDraw(db, publicSlug, "user-b2", "user_id", { refCode: "CODEAAAA" });
+
+    // 用户级邀请码固定 → 两次归因 refCode 相同；joinerEntryId 维度必须让奖励各发一份
+    const summary = await getActivityEventSummary(db, TENANT, drawId);
+    expect(summary.totals.attributed_join || 0).toBe(2);
+    expect(summary.totals.reward_earned || 0).toBe(2);
+
+    // 两条 reward_earned 的 metadata.joinerEntryId 不同（每次邀请独立）
+    const events = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    const joiners = new Set(events.map((e) => JSON.parse(e.metadataJson || "{}").joinerEntryId));
+    expect(joiners.size).toBe(2);
+  });
+
+  it("全链路：pending 解析路径同样按好友维度发奖 → 2 个 pending 好友解析后 reward_earned=2", async () => {
+    const config = JSON.stringify({
+      version: 1,
+      reward: { perInviteAmount: 100, currency: "cny" },
+      quota: { perUserPerDay: 10, globalPerDay: 100 },
+    });
+    const { id: drawId, publicSlug } = await setupDraw(config);
+    await createRegisteredUser("user-a", "a@test.com", "CODEAAAA");
+    await createRegisteredUser("user-b1", "b1@test.com", "CODEB1B1");
+    await createRegisteredUser("user-b2", "b2@test.com", "CODEB2B2");
+
+    // B1、B2 先于 A 加入 → 各写 1 条 pending
+    await joinDraw(db, publicSlug, "user-b1", "user_id", { refCode: "CODEAAAA" });
+    await joinDraw(db, publicSlug, "user-b2", "user_id", { refCode: "CODEAAAA" });
+    // A 加入 → pending 追溯解析 + 每个归因独立触发奖励
+    await joinDraw(db, publicSlug, "user-a", "user_id");
+
+    const summary = await getActivityEventSummary(db, TENANT, drawId);
+    expect(summary.totals.attributed_join || 0).toBe(2);
+    expect(summary.totals.reward_earned || 0).toBe(2);
+  });
+
+  it("旧格式兼容：refCode=userId 的存量 pending 事件仍可被推荐人加入时解析（防孤儿）", async () => {
+    const { id: drawId, publicSlug } = await setupDraw();
+    await createRegisteredUser("user-a", "a@test.com", "CODEAAAA");
+    await createRegisteredUser("user-b", "b@test.com", "CODEBBBB");
+
+    // B 先无 ref 加入（获得 entry）
+    const bJoin = await joinDraw(db, publicSlug, "user-b", "user_id");
+    expect(bJoin.joined).toBe(true);
+    const bEntryId = "entryId" in bJoin ? String(bJoin.entryId) : "";
+
+    // 模拟 3b7e35b5~0a03e66a 旧版本写入的 pending 事件：refCode 存的是推荐人 userId
+    await db.insert(activityEvents).values({
+      id: crypto.randomUUID(),
+      tenantId: TENANT,
+      drawId,
+      entryId: bEntryId,
+      eventType: "pending_user_attributed_join",
+      refCode: "user-a",
+      metadataJson: JSON.stringify({ referrerUserId: "user-a", referrerInviteCode: "CODEAAAA" }),
+      createdAt: new Date().toISOString(),
+    });
+
+    // A 加入 → 双值匹配（inviteCode + legacyUserId）解析旧格式 pending
+    await joinDraw(db, publicSlug, "user-a", "user_id");
+
+    const pendingLeft = await db
+      .select()
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.eventType, "pending_user_attributed_join"),
+      ));
+    expect(pendingLeft.length).toBe(0);
+
+    const summary = await getActivityEventSummary(db, TENANT, drawId);
+    expect(summary.totals.attributed_join || 0).toBe(1);
+
+    const shares = await db
+      .select()
+      .from(shareRecords)
+      .where(eq(shareRecords.tenantId, TENANT));
+    expect(shares.length).toBe(1);
+    expect(shares[0].joinedCount).toBe(1);
   });
 });
