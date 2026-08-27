@@ -222,6 +222,8 @@ export const ACTIVITY_EVENT_TYPES = new Set<ActivityEventType>([
   "ext:penalty.executed",
   "ext:reward.redeemed",
   "daily_checkin",
+  /** docs/272：用户级邀请码 pending 归因（内部事件，归因逻辑在 participation.ts 服务层控制） */
+  "pending_user_attributed_join",
 ]);
 
 export const WEBHOOK_EVENT_TYPES = new Set<WebhookEventType>([

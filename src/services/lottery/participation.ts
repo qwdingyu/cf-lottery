@@ -641,13 +641,25 @@ export async function joinDraw(
             .where(eq(users.id, normalizedValue))
             .limit(1);
           if (userRow?.inviteCode) {
-            await resolvePendingUserAttributions(
+            const resolvedAttributions = await resolvePendingUserAttributions(
               tx,
               normalizedValue,
               entryId,
               draw.tenantId,
               draw.id,
             );
+            // 为每个解析的归因触发推荐人奖励（与正常归因链路对齐）
+            for (const attr of resolvedAttributions) {
+              try {
+                const ids = await maybeTriggerReward(tx, db, draw, {
+                  attributed: true,
+                  sharerEntryId: attr.sharerEntryId,
+                  refCode: normalizedValue,
+                  shareRecordId: attr.shareRecordId,
+                });
+                rewardDeliveryIds.push(...ids);
+              } catch { /* 奖励失败不影响参与主流程 */ }
+            }
           }
         } catch (err) {
           // pending 解析失败不影响本次参与（容错设计：与 recordAttributedJoin 的 try-catch 对齐）
@@ -1169,26 +1181,34 @@ export function generateUserInviteCode(): string {
  * 因此写入 eventType="pending_user_attributed_join" 的活动事件。
  *
  * 推荐人加入活动后，本函数：
- * 1. 查找该推荐人 inviteCode 下的所有 pending 事件
- * 2. 按 drawId 分组，为每个活动创建 shareRecord（joinedCount=组内事件数）
+ * 1. 查找该推荐人在当前活动的 pending 事件（仅限当前 drawId，跨活动待各自加入时解析）
+ * 2. 为该活动创建或复用 shareRecord（joinedCount=组内事件数）
  * 3. 自邀请检测：推荐人 identity 与被邀请人 identity 一致时跳过
  * 4. 写入 attributed_join 事件（与正常归因链路对齐，确保奖励引擎可消费）
+ * 5. 返回归因信息供调用方触发推荐人奖励
  *
  * @param db 数据库实例
  * @param referrerUserId 推荐人的 users.id
  * @param referrerEntryId 推荐人在当前活动的 lotteryEntries.id
  * @param tenantId 租户 ID
- * @param drawId 活动 ID
- * @returns 本次解析的归因数量
+ * @param drawId 活动 ID（仅解析该活动的 pending 事件）
+ * @returns 本次解析的归因列表（含 shareRecordId、sharerEntryId，供奖励触发使用）
  */
+export type ResolvedPendingAttribution = {
+  shareRecordId: string;
+  sharerEntryId: string;
+  tenantId: string;
+  drawId: string;
+};
+
 export async function resolvePendingUserAttributions(
   db: DbWriteScope,
   referrerUserId: string,
   referrerEntryId: string,
   tenantId: string,
   drawId: string,
-): Promise<number> {
-  // 查找推荐人名下所有 pending 归因事件（不限 drawId，因为推荐码是用户级的）
+): Promise<ResolvedPendingAttribution[]> {
+  // 仅解析当前活动的 pending 归因事件（跨活动的待推荐人加入对应活动时再解析）
   const pendingEvents = await db
     .select({
       id: activityEvents.id,
@@ -1203,9 +1223,10 @@ export async function resolvePendingUserAttributions(
       eq(activityEvents.tenantId, tenantId),
       eq(activityEvents.eventType, "pending_user_attributed_join"),
       eq(activityEvents.refCode, referrerUserId),
+      eq(activityEvents.drawId, drawId),
     ));
 
-  if (pendingEvents.length === 0) return 0;
+  if (pendingEvents.length === 0) return [];
 
   // 读取推荐人 entry 的 identity（用于自邀请检测）
   const [referrerEntry] = await db
@@ -1221,9 +1242,9 @@ export async function resolvePendingUserAttributions(
     ))
     .limit(1);
 
-  let resolvedCount = 0;
+  const resolved: ResolvedPendingAttribution[] = [];
 
-  // 按 drawId 分组（推荐码是用户级的，一个邀请码可能跨多个活动产生 pending 事件）
+  // 按 drawId 分组（已按 drawId 过滤，通常只有一个分组）
   const byDraw = new Map<string, typeof pendingEvents>();
   for (const evt of pendingEvents) {
     const dId = String(evt.drawId || "").trim();
@@ -1309,7 +1330,12 @@ export async function resolvePendingUserAttributions(
           resolvedFrom: "pending_user_attributed_join",
         },
       });
-      resolvedCount++;
+      resolved.push({
+        shareRecordId: shareId,
+        sharerEntryId: referrerEntryId,
+        tenantId,
+        drawId: targetDrawId,
+      });
     }
 
     // 清理已解析的 pending 事件（防重复解析）
@@ -1321,7 +1347,7 @@ export async function resolvePendingUserAttributions(
     }
   }
 
-  return resolvedCount;
+  return resolved;
 }
 
 async function recordAttributedJoin(
@@ -1377,21 +1403,45 @@ async function recordAttributedJoin(
       .limit(1);
 
     if (referrerEntry) {
-      // 推荐人已参与本活动 → 即时创建 shareRecord 并归因
+      // 推荐人已参与本活动 → 即时归因
       // 自邀请检测：推荐人与被邀请人是同一人时跳过
       if (referrerEntry.id === input.entryId) {
         return { attributed: false, selfInvite: true as const, refCode };
       }
 
-      const newShareId = crypto.randomUUID();
-      await db.insert(shareRecords).values({
-        id: newShareId,
-        tenantId: input.tenantId,
-        drawId: input.drawId,
-        sharerEntryId: referrerEntry.id,
-        shareCode: refCode,
-        joinedCount: 1,
-      });
+      // P0 修复：按 (sharerEntryId, drawId) 查找已有 shareRecord，而非 shareCode。
+      // 原因：用户级邀请码是固定值，多人用同一邀请码时 shareCode UNIQUE 会冲突。
+      // 改为按推荐人+活动维度查找，首个加入者创建 shareRecord，后续加入者累加 joinedCount。
+      let shareId: string;
+      const [existingShare] = await db
+        .select({ id: shareRecords.id, joinedCount: shareRecords.joinedCount })
+        .from(shareRecords)
+        .where(and(
+          eq(shareRecords.tenantId, input.tenantId),
+          eq(shareRecords.drawId, input.drawId),
+          eq(shareRecords.sharerEntryId, referrerEntry.id),
+        ))
+        .limit(1);
+
+      if (existingShare) {
+        shareId = existingShare.id;
+        await db
+          .update(shareRecords)
+          .set({ joinedCount: sql`${shareRecords.joinedCount} + 1` })
+          .where(eq(shareRecords.id, shareId));
+      } else {
+        shareId = crypto.randomUUID();
+        // shareCode 使用合成格式，避免与 inviteCode 的 UNIQUE 约束冲突
+        const syntheticShareCode = `uc_${referrerUser.id.slice(0, 8)}_${input.drawId.slice(0, 6)}_${shareId.slice(0, 6)}`;
+        await db.insert(shareRecords).values({
+          id: shareId,
+          tenantId: input.tenantId,
+          drawId: input.drawId,
+          sharerEntryId: referrerEntry.id,
+          shareCode: syntheticShareCode,
+          joinedCount: 1,
+        });
+      }
 
       await recordActivityEvent(db, {
         tenantId: input.tenantId,
@@ -1402,13 +1452,13 @@ async function recordAttributedJoin(
         ipHash: input.ipHash,
         userAgent: input.userAgent,
         metadata: {
-          shareRecordId: newShareId,
+          shareRecordId: shareId,
           sharerEntryId: referrerEntry.id,
           resolvedFrom: "user_invite_code",
         },
       });
 
-      return { attributed: true, refCode, shareRecordId: newShareId, sharerEntryId: referrerEntry.id };
+      return { attributed: true, refCode, shareRecordId: shareId, sharerEntryId: referrerEntry.id };
     }
 
     // 推荐人尚未参与本活动 → 写入 pending 事件，推荐人加入时追溯解析
