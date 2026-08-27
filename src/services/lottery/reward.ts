@@ -397,7 +397,7 @@ export async function settleRewardByPercent(
   const joinerMetaEq = sql`json_extract(${activityEvents.metadataJson}, '$.joinerEntryId') = ${joinerEntryId}`;
   const joinerMetaNull = sql`json_extract(${activityEvents.metadataJson}, '$.joinerEntryId') IS NULL`;
   const [pendingEvent] = await db
-    .select({ metadataJson: activityEvents.metadataJson })
+    .select({ id: activityEvents.id, metadataJson: activityEvents.metadataJson })
     .from(activityEvents)
     .where(and(
       eq(activityEvents.tenantId, tenantId),
@@ -490,6 +490,17 @@ export async function settleRewardByPercent(
       settledFrom: "reward_pending",
     },
   });
+
+  // P2-2 优化：结算后把存量 null-joinerEntryId 的 pending 绑定到当前付款人。
+  // 问题：alreadySettled 按 joinerEntryId 严格判重，但存量 null pending 结算时写入的
+  // reward_earned 带当前付款人的 joinerEntryId，其他付款人按各自 joinerEntryId 查不到
+  // 已结算，会再次命中同一条 null pending 并重复结算。
+  // 解决：结算后把 pending 的 joinerEntryId 更新为当前付款人，后续付款的
+  // or(joinerMetaEq, joinerMetaNull) 查询自然排除（joinerEntryId 已设置且不匹配）。
+  // 新格式 pending（已带 joinerEntryId）更新为相同值，无害。
+  await db.update(activityEvents)
+    .set({ metadataJson: sql`json_set(COALESCE(metadata_json, '{}'), '$.joinerEntryId', ${joinerEntryId})` })
+    .where(eq(activityEvents.id, pendingEvent.id));
 
   // 5. 入队 webhook 通知中转站
   let deliveryIds: string[] = [];

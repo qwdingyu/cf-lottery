@@ -2931,6 +2931,45 @@ describe("settleRewardByPercent", () => {
       ));
     expect(cancelledEvents.length).toBe(0);
   });
+
+  it("P2-2：存量 null-joinerEntryId 的 pending 结算后绑定付款人，其他付款人不重复结算", async () => {
+    const { drawId, sharerEntryId, joinerEntryId, refCode } = await setupPercentReward();
+
+    // 好友2：同一 sharer + refCode 的另一条归因（无独立 pending，共享存量 null pending）
+    const joiner2Id = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: joiner2Id, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "joiner2@test.com",
+      ipHash: "ip-j2", joinedAt: new Date().toISOString(),
+    });
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: joiner2Id,
+      eventType: "attributed_join", refCode,
+      metadata: { sharerEntryId, inviterIdentityValue: "sharer@test.com", source: "trigger" },
+    });
+
+    // 好友1 付款 → 结算存量 null pending，成功后 pending 绑定到 joinerEntryId
+    const r1 = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 1000, "CNY");
+    expect(r1.settled).toBe(true);
+
+    // 好友2 付款 → 不应重复结算同一笔 pending（已绑定到好友1，查询自然排除）
+    const r2 = await settleRewardByPercent(db, TENANT, drawId, joiner2Id, 1000, "CNY");
+    expect(r2.settled).toBe(false);
+    expect(r2.reason).toBe("reward_pending_not_found");
+
+    // 只有 1 条 reward_earned 事件（好友1 的）
+    const earnedEvents = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(earnedEvents.length).toBe(1);
+    const meta = JSON.parse(earnedEvents[0].metadataJson || "{}");
+    expect(meta.joinerEntryId).toBe(joinerEntryId);
+  });
 });
 
 // ── cancelRewardPending：支付取消/退款/超时后清理 pending 事件（docs/271） ──
