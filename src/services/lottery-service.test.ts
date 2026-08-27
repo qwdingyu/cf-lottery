@@ -2952,6 +2952,18 @@ describe("settleRewardByPercent", () => {
     const r1 = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 1000, "CNY");
     expect(r1.settled).toBe(true);
 
+    // 直接断言：结算后 pending 的 joinerEntryId 已绑定到好友1（P2-2 优化核心行为）
+    const [boundPending] = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.entryId, sharerEntryId),
+        eq(activityEvents.eventType, "reward_pending"),
+      ));
+    expect(JSON.parse(boundPending!.metadataJson || "{}").joinerEntryId).toBe(joinerEntryId);
+
     // 好友2 付款 → 不应重复结算同一笔 pending（已绑定到好友1，查询自然排除）
     const r2 = await settleRewardByPercent(db, TENANT, drawId, joiner2Id, 1000, "CNY");
     expect(r2.settled).toBe(false);
@@ -2969,6 +2981,55 @@ describe("settleRewardByPercent", () => {
     expect(earnedEvents.length).toBe(1);
     const meta = JSON.parse(earnedEvents[0].metadataJson || "{}");
     expect(meta.joinerEntryId).toBe(joinerEntryId);
+  });
+
+  it("P2-2 边界：两条独立 null pending 被两个不同付款人各结算一次（优化不过度排除）", async () => {
+    const { drawId, sharerEntryId, joinerEntryId, refCode } = await setupPercentReward();
+
+    // 好友2：同一 sharer + refCode 的另一条归因
+    const joiner2Id = crypto.randomUUID();
+    await db.insert(lotteryEntries).values({
+      id: joiner2Id, tenantId: TENANT, drawId,
+      identityType: "email", identityValue: "joiner2@test.com",
+      ipHash: "ip-j2", joinedAt: new Date().toISOString(),
+    });
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: joiner2Id,
+      eventType: "attributed_join", refCode,
+      metadata: { sharerEntryId, inviterIdentityValue: "sharer@test.com", source: "trigger" },
+    });
+
+    // 第二条独立 null pending（模拟两次 reissue 补发 percent 奖励产生两条 pending）
+    await recordActivityEvent(db, {
+      tenantId: TENANT, drawId, entryId: sharerEntryId,
+      eventType: "reward_pending", refCode,
+      metadata: {
+        mode: "percent", perInvitePercent: 10, currency: "CNY",
+        sharerEntryId, inviterIdentityValue: "sharer@test.com",
+        source: "trigger", status: "pending",
+      },
+    });
+
+    // 好友1 结算第一条 null pending
+    const r1 = await settleRewardByPercent(db, TENANT, drawId, joinerEntryId, 1000, "CNY");
+    expect(r1.settled).toBe(true);
+
+    // 好友2 结算第二条 null pending → 应成功（优化只排除已绑定的第一条，不过度排除）
+    const r2 = await settleRewardByPercent(db, TENANT, drawId, joiner2Id, 1000, "CNY");
+    expect(r2.settled).toBe(true);
+
+    // 有 2 条 reward_earned，各自绑定不同付款人
+    const earnedEvents = await db
+      .select({ metadataJson: activityEvents.metadataJson })
+      .from(activityEvents)
+      .where(and(
+        eq(activityEvents.tenantId, TENANT),
+        eq(activityEvents.drawId, drawId),
+        eq(activityEvents.eventType, "reward_earned"),
+      ));
+    expect(earnedEvents.length).toBe(2);
+    const joiners = earnedEvents.map(e => JSON.parse(e.metadataJson || "{}").joinerEntryId).sort();
+    expect(joiners).toEqual([joinerEntryId, joiner2Id].sort());
   });
 });
 
