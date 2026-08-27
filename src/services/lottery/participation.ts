@@ -659,6 +659,7 @@ export async function joinDraw(
                   sharerEntryId: attr.sharerEntryId,
                   refCode: userRow.inviteCode,
                   shareRecordId: attr.shareRecordId,
+                  joinerEntryId: attr.joinerEntryId,
                 });
                 rewardDeliveryIds.push(...ids);
               } catch (err) {
@@ -943,7 +944,7 @@ async function maybeTriggerReward(
   tx: DbType,
   db: DbType,
   draw: { id: string; tenantId: string; activityKind?: string | null; resultMode?: string | null; maxSpinsPerEntry?: number | null; promotionConfig?: string | null },
-  attribution: { attributed: boolean; sharerEntryId?: string; refCode?: string; shareRecordId?: string },
+  attribution: { attributed: boolean; sharerEntryId?: string; refCode?: string; shareRecordId?: string; joinerEntryId?: string },
 ): Promise<string[]> {
   if (!attribution.attributed || !attribution.sharerEntryId) return [];
 
@@ -1022,6 +1023,7 @@ async function maybeTriggerReward(
       attribution.sharerEntryId,
       sharerIdentity,
       attribution.refCode || "",
+      { joinerEntryId: attribution.joinerEntryId },
     );
     // 返回 deliveryIds 给调用方（joinDraw），由调用方在事务提交后统一 dispatch。
     // 不能在事务内/未提交时 dispatch——dispatchWebhookDelivery 内含 fetch + 写库，
@@ -1207,6 +1209,8 @@ export type ResolvedPendingAttribution = {
   sharerEntryId: string;
   tenantId: string;
   drawId: string;
+  /** 被邀请人（最初创建 pending 事件的加入者）entryId，用于奖励幂等粒度 */
+  joinerEntryId: string;
 };
 
 export async function resolvePendingUserAttributions(
@@ -1337,6 +1341,7 @@ export async function resolvePendingUserAttributions(
         sharerEntryId: referrerEntryId,
         tenantId,
         drawId,
+        joinerEntryId: evt.entryId,
       });
     }
 
@@ -1462,7 +1467,7 @@ async function recordAttributedJoin(
         },
       });
 
-      return { attributed: true, refCode, shareRecordId: shareId, sharerEntryId: referrerEntry.id };
+      return { attributed: true, refCode, shareRecordId: shareId, sharerEntryId: referrerEntry.id, joinerEntryId: input.entryId };
     }
 
     // 推荐人尚未参与本活动 → 写入 pending 事件，推荐人加入时追溯解析
@@ -1560,7 +1565,7 @@ async function recordAttributedJoin(
     },
   });
 
-  return { attributed: true, refCode, shareRecordId: share.id, sharerEntryId: share.sharerEntryId };
+  return { attributed: true, refCode, shareRecordId: share.id, sharerEntryId: share.sharerEntryId, joinerEntryId: input.entryId };
 }
 
 /**
