@@ -398,8 +398,10 @@ adminLotteryRoute.get("/draws/:id/viral-stats", async (c) => {
   const totalJoins = rows.reduce((s, r) => s + r.joinedCount, 0);
 
   // 排行榜排名（复用 buildViralLeaderboardRanking）
-  const { buildViralLeaderboardRanking, aggregateFirstSharedAt } = await import("../services/lottery/viral-weight");
-  const inviteCounts = new Map(rows.map((r) => [r.sharerEntryId, r.joinedCount]));
+  // G-5 修复：必须用 aggregateViralInviteCounts 做 SUM 聚合，
+  // 不能用 new Map(rows.map(...)) 覆盖——同一 sharer 多条 shareCode 时 inviteCount 会丢失
+  const { buildViralLeaderboardRanking, aggregateViralInviteCounts, aggregateFirstSharedAt } = await import("../services/lottery/viral-weight");
+  const inviteCounts = aggregateViralInviteCounts(rows);
   const firstSharedAtMap = aggregateFirstSharedAt(rows);
   const { entries: leaderboard } = buildViralLeaderboardRanking(inviteCounts, { topN: 20, firstSharedAtMap });
 

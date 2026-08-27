@@ -260,7 +260,17 @@ export async function grantLeaderboardRewards(
         ))
         .limit(1);
       if (!entry) {
-        // entry 不存在（已删除）→ 不发放，但记录已标记；状态 skipped 提示运营
+        // P2-3 修复：entry 已删除（用户取消接龙参与等）→ 必须回滚 CAS 标记，
+        // 否则该分享者若重新参与，leaderboardRewardedAt 永远非空导致奖励永久 skipped。
+        // 回滚后下次触发可重新抢占发放（若 entry 恢复）。
+        await tx
+          .update(shareRecords)
+          .set({ leaderboardRewardedAt: "" })
+          .where(and(
+            eq(shareRecords.tenantId, draw.tenantId),
+            eq(shareRecords.drawId, draw.id),
+            eq(shareRecords.sharerEntryId, sharerEntryId),
+          ));
         return { status: "skipped", rewardType: rewardCfg.rewardType, rewardValue: rewardCfg.rewardValue };
       }
 
@@ -326,6 +336,28 @@ export async function grantLeaderboardRewards(
         // 未发满（码池不足/收件人缺失）→ 回滚标记，下次触发按差额续发。
         // 事务内回滚：并发其他事务看到标记被清空后可重新抢占；
         // rewardedCount 已持久化，续发只发差额，不会超发。
+        // P2-1 修复：issuedCount=0 表示码池完全为空，是真实发放失败，写入 reward_failed 事件
+        if (issuedCount === 0) {
+          try {
+            await recordActivityEvent(tx, {
+              tenantId: draw.tenantId,
+              drawId: draw.id,
+              entryId: entry.id,
+              eventType: "reward_failed",
+              metadata: {
+                path: "leaderboard:bonus_coupon:empty_pool",
+                rank,
+                rewardValue: rewardCfg.rewardValue,
+                couponLabel: rewardCfg.couponLabel || "",
+                remaining,
+                error: "No available coupons in pool",
+                shareRecordId: sharerEntryId,
+              },
+            });
+          } catch (recordErr) {
+            logError("leaderboard-rewards", `reward_failed event lost draw=${draw.id} entry=${entry.id}`, recordErr);
+          }
+        }
         await tx
           .update(shareRecords)
           .set({ leaderboardRewardedAt: "" })
@@ -369,6 +401,24 @@ export async function grantLeaderboardRewards(
           // 标记在行 231-239 已写入，若不回滚，下次触发时行 226 的幂等检查会误判
           // "已发放"而跳过，导致该分享者的 bonus_spin 奖励永久丢失（标记已写、spins 未发）。
           // 回滚后下次触发重新计算 room/actual，不会超发（maxSpins 总顶仍约束）。
+          // P2-1 修复：CAS 冲突是真实发放失败，写入 reward_failed 事件供运营追踪
+          try {
+            await recordActivityEvent(tx, {
+              tenantId: draw.tenantId,
+              drawId: draw.id,
+              entryId: entry.id,
+              eventType: "reward_failed",
+              metadata: {
+                path: "leaderboard:bonus_spin:cas_conflict",
+                rank,
+                rewardValue: rewardCfg.rewardValue,
+                error: "CAS conflict: spinsTotalGranted was modified concurrently",
+                shareRecordId: sharerEntryId,
+              },
+            });
+          } catch (recordErr) {
+            logError("leaderboard-rewards", `reward_failed event lost draw=${draw.id} entry=${entry.id}`, recordErr);
+          }
           await tx
             .update(shareRecords)
             .set({ leaderboardRewardedAt: "" })
