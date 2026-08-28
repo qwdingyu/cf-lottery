@@ -4,8 +4,8 @@
  * 模板管理：src/services/templates/*.ts —— 业务模板保留项目内（不纳入 cf-core）
  * 发送管道（重试/超时/escapeHtml/remote/Resend/CF Email）由 cf-core EmailService 统一提供。
  *
- * 通道优先级：cf-auth 邮件网关 → Cloudflare Email → Resend
- * cf-auth 网关自动从 CF_AUTH_ISSUER/CLIENT_ID/CLIENT_SECRET 推导，无需额外 env 变量。
+ * 通道优先级：独立远程邮件网关 → cf-auth 邮件网关 → Cloudflare Email → Resend
+ * 远程网关优先于 cf-auth，适配 VPS 生产部署；cf-auth 网关自动从 CF_AUTH_* 推导。
  */
 import { EmailService, escapeHtml, interpolate } from "@usethink/cf-core/features/email";
 export { escapeHtml, interpolate };

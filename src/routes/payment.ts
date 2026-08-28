@@ -844,6 +844,9 @@ paymentCallbackRoute.all("/:tenantId/:provider/callback", async (c) => {
       });
       if (!queued.enqueued) return;
       await dispatchEmailDeliveries(db, {
+        remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || "",
+        remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || "",
+        remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || "",
         cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
         cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
         cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
