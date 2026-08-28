@@ -1099,36 +1099,81 @@
   min-width: 160px;
 }
 
-/* ── 引擎推荐奖励行编辑器（docs/255 ③） ── */
+/* ── 引擎推荐奖励行编辑器（docs/255 ③） ──
+ * 与奖项配置一致：表头和每一行使用同一组明确列轨道。动态的数值警告
+ * 被固定到第二行，不能再作为 flex 子项挤走券标签或删除按钮。
+ */
 .referral-def-rows {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
+  min-width: 0;
 }
+.referral-def-header,
 .referral-def-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(64px, 0.65fr) minmax(128px, 1.2fr) minmax(76px, 0.7fr) minmax(120px, 1fr) 32px;
+  gap: 8px;
+  align-items: start;
   width: 100%;
+  min-width: 0;
 }
-.referral-def-count {
-  width: 70px;
-  flex: 0 0 auto;
+.referral-def-header {
+  padding: 0 2px;
+  color: var(--tg-hint, #9aa4b2);
+  font-size: 12px;
+  line-height: 1.3;
 }
-.referral-def-exit {
-  width: 110px;
-  flex: 0 0 auto;
-}
-.referral-def-value {
-  width: 70px;
-  flex: 0 0 auto;
-}
+.referral-def-header span { min-width: 0; }
+.referral-def-count,
+.referral-def-exit,
+.referral-def-value,
 .referral-def-label {
-  flex: 1 1 auto;
-  min-width: 100px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.referral-def-count { grid-column: 1; grid-row: 1; }
+.referral-def-exit { grid-column: 2; grid-row: 1; }
+.referral-def-value { grid-column: 3; grid-row: 1; }
+.referral-def-label { grid-column: 4; grid-row: 1; }
+.referral-def-row .field-hint--warn {
+  grid-column: 3;
+  grid-row: 2;
+  min-width: 0;
+  margin: -4px 0 0;
+  line-height: 1.25;
 }
 .referral-def-remove {
-  flex: 0 0 auto;
+  grid-column: 5;
+  grid-row: 1;
+  min-width: 32px;
   padding: 0 6px;
+}
+
+@media (max-width: 720px) {
+  .referral-def-header { display: none; }
+  .referral-def-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+    border-radius: 6px;
+    background: var(--surface, rgba(255, 255, 255, 0.04));
+  }
+  .referral-def-count { grid-column: 1; grid-row: 1; }
+  .referral-def-exit { grid-column: 2; grid-row: 1; }
+  .referral-def-value { grid-column: 1 / -1; grid-row: 2; }
+  .referral-def-label { grid-column: 1 / -1; grid-row: 3; }
+  .referral-def-row .field-hint--warn {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    margin: -2px 0 0;
+  }
+  .referral-def-remove {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+  }
 }

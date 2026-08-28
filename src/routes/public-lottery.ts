@@ -1587,9 +1587,14 @@ publicLotteryRoute.post("/draws/:slug/spin", async (c) => {
         remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || undefined,
         remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || undefined,
       };
-      void notifyInstantSpinWinner(db, draw.tenantId, draw.id, result.spinId, emailEnv).catch((err) => {
+      const notificationTask = notifyInstantSpinWinner(db, draw.tenantId, draw.id, result.spinId, emailEnv).catch((err) => {
         logError("public-lottery", `notifyInstantSpinWinner failed for ${result.spinId}`, err);
       });
+      // Cloudflare Worker 请求返回后可能立即冻结 isolate；必须交给 waitUntil，
+      // 否则邮件队列虽已入库，实际 dispatch 可能来不及执行，运营端长期看到 pending。
+      const executionCtx = c.get("executionCtx");
+      if (executionCtx?.waitUntil) executionCtx.waitUntil(notificationTask);
+      else void notificationTask;
 
       void enqueuePlatformEvent(db, {
         tenantId: draw.tenantId,

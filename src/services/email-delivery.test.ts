@@ -63,6 +63,38 @@ describe("email delivery queue", () => {
     expect(sent?.providerMessageId).toBe("mail-queued-1");
   });
 
+  it("独立远程邮件网关配置可发送队列邮件", async () => {
+    const queued = await enqueueEmailDelivery(db, {
+      tenantId: "tenant-email-delivery",
+      drawId: "draw-remote",
+      sourceType: "lottery_winner",
+      sourceId: "winner-remote",
+      recipientEmail: "remote@test.com",
+      template: "lottery_winner",
+      templateData: { drawName: "远程网关活动", productName: "AAA", accountLabel: "CODE", deliverySecret: "SECRET" },
+    });
+    let called = false;
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      expect(String(url)).toBe("https://mail.test/send");
+      expect(init?.headers).toMatchObject({ Authorization: `Basic ${btoa("client:secret")}` });
+      called = true;
+      return new Response(JSON.stringify({ ok: true, provider: "remote-test" }), { status: 200 });
+    });
+
+    const result = await dispatchEmailDeliveries(db, {
+      remoteEmailUrl: "https://mail.test/send",
+      remoteEmailClientId: "client",
+      remoteEmailClientSecret: "secret",
+      emailFrom: "noreply@test.com",
+    });
+
+    expect(result).toEqual({ sent: 1, failed: 0, errors: [] });
+    expect(called).toBe(true);
+    const [sent] = await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, queued.deliveryId));
+    expect(sent?.status).toBe("sent");
+  });
+
+
   it("同一业务来源重复入队不会重复发送已 sent 邮件", async () => {
     const input = {
       tenantId: "tenant-email-delivery",

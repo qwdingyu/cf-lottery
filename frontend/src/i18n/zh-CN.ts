@@ -1450,6 +1450,7 @@ export default {
     adminReferralRewardDefsPlaceholder: "1:bonus_spin:2\n3:bonus_coupon:1:invite",
     adminReferralRewardDefsHint: "bonus_spin=抽奖次数（仅抽奖即时）；bonus_coupon=优惠券（需先导入码池）",
     adminReferralRewardDefsCount: "邀请数",
+    adminReferralRewardDefsType: "奖励类型",
     adminReferralRewardDefsSpin: "抽奖次数",
     adminReferralRewardDefsCoupon: "优惠券",
     adminReferralRewardDefsValue: "数量",

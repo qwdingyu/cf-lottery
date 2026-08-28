@@ -719,6 +719,9 @@ route.post("/draws/:id/winners/:winnerId/resend", async (c) => {
   const result = await sendWinnerNotifications(db, tenantId, drawId, {
     resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
     emailFrom: getEnv(c, "EMAIL_FROM") || "",
+    remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || "",
+    remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || "",
+    remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || "",
   });
   await recordTenantAudit(c, "draw.winner_resend", "lottery_winner", winner.id);
   return ok(c, { retry: true, sent: result.sent, failed: result.failed });
@@ -749,6 +752,9 @@ route.post("/draws/:id/retry-email", async (c) => {
   const result = await sendWinnerNotifications(db, tenantId, drawId, {
     resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
     emailFrom: getEnv(c, "EMAIL_FROM") || "",
+    remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || "",
+    remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || "",
+    remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || "",
   });
   await recordTenantAudit(c, "draw.retry_email", "lottery_draw", drawId);
   return ok(c, { sent: result.sent, failed: result.failed });

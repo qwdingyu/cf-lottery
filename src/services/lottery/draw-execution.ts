@@ -714,7 +714,13 @@ export async function notifyInstantSpinWinner(
   spinId: string,
   emailEnv: EmailEnv,
 ): Promise<void> {
-  if (!emailEnv || (!emailEnv.resendApiKey && !emailEnv.email && !(emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret)) || !spinId) return;
+  const hasRemoteGateway = Boolean(
+    emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret,
+  );
+  const hasCfAuthGateway = Boolean(
+    emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret,
+  );
+  if (!emailEnv || (!emailEnv.resendApiKey && !emailEnv.email && !hasRemoteGateway && !hasCfAuthGateway) || !spinId) return;
 
   const [notifyCfg] = await db
     .select({ value: systemConfig.value })

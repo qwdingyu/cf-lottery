@@ -1489,6 +1489,7 @@ export default {
     adminReferralRewardDefsPlaceholder: "1:bonus_spin:2\n3:bonus_coupon:1:invite",
     adminReferralRewardDefsHint: "bonus_spin=spin count (lottery instant only); bonus_coupon=coupon (import code pool first)",
     adminReferralRewardDefsCount: "Invites",
+    adminReferralRewardDefsType: "Type",
     adminReferralRewardDefsSpin: "Spins",
     adminReferralRewardDefsCoupon: "Coupon",
     adminReferralRewardDefsValue: "Value",

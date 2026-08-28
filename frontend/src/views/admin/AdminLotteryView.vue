@@ -1129,6 +1129,13 @@
                     <label class="field-span-2">
                       <span>{{ $t('lottery.adminReferralRewardDefs') }}</span>
                       <div class="referral-def-rows">
+                         <div v-if="referralRewardDefsRows.length > 0" class="referral-def-header" aria-hidden="true">
+                           <span>{{ $t('lottery.adminReferralRewardDefsCount') }}</span>
+                           <span>{{ $t('lottery.adminReferralRewardDefsType') }}</span>
+                           <span>{{ $t('lottery.adminReferralRewardDefsValue') }}</span>
+                           <span>{{ $t('lottery.adminReferralRewardDefsLabel') }}</span>
+                           <span></span>
+                         </div>
                         <div
                           v-for="(row, ri) in referralRewardDefsRows"
                           :key="ri"

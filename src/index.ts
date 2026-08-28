@@ -66,6 +66,9 @@ export interface MaintenanceEnv {
   emailFrom?: string;
   appOrigin?: string;
   credentialsEncryptionKey?: string;
+  remoteEmailUrl?: string;
+  remoteEmailClientId?: string;
+  remoteEmailClientSecret?: string;
   cfAuthIssuer?: string;
   cfAuthClientId?: string;
   cfAuthClientSecret?: string;
@@ -390,6 +393,9 @@ app.get("/api/cron/draw", async (c) => {
       emailEnv: {
         resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
         emailFrom: getEnv(c, "EMAIL_FROM") || "",
+        remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || "",
+        remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || "",
+        remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || "",
         appOrigin: getEnv(c, "APP_ORIGIN") || "",
       },
     });
@@ -422,6 +428,9 @@ app.post("/api/cron/maintenance", async (c) => {
       resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
       emailFrom: getEnv(c, "EMAIL_FROM") || "",
       credentialsEncryptionKey: getEnv(c, "CREDENTIALS_ENCRYPTION_KEY") || "",
+      remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || "",
+      remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || "",
+      remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || "",
       cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
       cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
       cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
@@ -514,6 +523,9 @@ const worker: ExportedHandler<Bindings> = {
           resendApiKey: env.RESEND_API_KEY || "",
           emailFrom: env.EMAIL_FROM || "",
           credentialsEncryptionKey: env.CREDENTIALS_ENCRYPTION_KEY || "",
+          remoteEmailUrl: env.REMOTE_EMAIL_URL || "",
+          remoteEmailClientId: env.REMOTE_EMAIL_CLIENT_ID || "",
+          remoteEmailClientSecret: env.REMOTE_EMAIL_CLIENT_SECRET || "",
           cfAuthIssuer: env.CF_AUTH_ISSUER || "",
           cfAuthClientId: env.CF_AUTH_CLIENT_ID || "",
           cfAuthClientSecret: env.CF_AUTH_CLIENT_SECRET || "",

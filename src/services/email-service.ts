@@ -54,6 +54,10 @@ export type EmailEnv = {
   /** 公开邮件链接使用的服务端配置域名，禁止信任请求 Host。 */
   appOrigin?: string;
   email?: CloudflareEmailBinding;
+  /** 独立远程邮件网关；与 cf-auth 网关并存，适配 VPS 生产部署。 */
+  remoteEmailUrl?: string;
+  remoteEmailClientId?: string;
+  remoteEmailClientSecret?: string;
   cfAuthIssuer?: string;
   cfAuthClientId?: string;
   cfAuthClientSecret?: string;
@@ -76,10 +80,21 @@ function createEmailService(emailEnv: EmailEnv): EmailService {
   const from = emailEnv.emailFromName
     ? `${emailEnv.emailFromName} <${emailEnv.emailFrom || "noreply@eforge.xyz"}>`
     : (emailEnv.emailFrom || "noreply@eforge.xyz");
+  const remote = emailEnv.remoteEmailUrl && emailEnv.remoteEmailClientId && emailEnv.remoteEmailClientSecret
+    ? {
+        url: emailEnv.remoteEmailUrl,
+        clientId: emailEnv.remoteEmailClientId,
+        clientSecret: emailEnv.remoteEmailClientSecret,
+      }
+    : emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret
+      ? {
+          url: `${emailEnv.cfAuthIssuer}/api/email/send`,
+          clientId: emailEnv.cfAuthClientId,
+          clientSecret: emailEnv.cfAuthClientSecret,
+        }
+      : undefined;
   return new EmailService({
-    ...(emailEnv.cfAuthIssuer && emailEnv.cfAuthClientId && emailEnv.cfAuthClientSecret
-      ? { remote: { url: `${emailEnv.cfAuthIssuer}/api/email/send`, clientId: emailEnv.cfAuthClientId, clientSecret: emailEnv.cfAuthClientSecret } }
-      : {}),
+    ...(remote ? { remote } : {}),
     ...(emailEnv.resendApiKey ? { apiKey: emailEnv.resendApiKey } : {}),
     ...(emailEnv.email ? { emailBinding: emailEnv.email } : {}),
     from,
