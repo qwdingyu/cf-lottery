@@ -719,6 +719,9 @@ route.post("/draws/:id/winners/:winnerId/resend", async (c) => {
   const result = await sendWinnerNotifications(db, tenantId, drawId, {
     resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
     emailFrom: getEnv(c, "EMAIL_FROM") || "",
+    cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
+    cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
+    cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
     remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || "",
     remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || "",
     remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || "",
@@ -752,6 +755,9 @@ route.post("/draws/:id/retry-email", async (c) => {
   const result = await sendWinnerNotifications(db, tenantId, drawId, {
     resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
     emailFrom: getEnv(c, "EMAIL_FROM") || "",
+    cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
+    cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
+    cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
     remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || "",
     remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || "",
     remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || "",

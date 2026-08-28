@@ -1432,6 +1432,9 @@ adminLotteryRoute.post("/draws/:id/draw", async (c) => {
     const result = await performDraw(db, tenantId, drawId, userId, {
       resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
       emailFrom: getEnv(c, "EMAIL_FROM") || "",
+      cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
+      cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
+      cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
       remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || "",
       remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || "",
       remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || "",

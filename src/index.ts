@@ -90,6 +90,9 @@ export async function runScheduledMaintenance(
       resendApiKey: env.resendApiKey || "",
       emailFrom: env.emailFrom || "",
       appOrigin: env.appOrigin || "",
+      cfAuthIssuer: env.cfAuthIssuer || "",
+      cfAuthClientId: env.cfAuthClientId || "",
+      cfAuthClientSecret: env.cfAuthClientSecret || "",
     },
   });
   const webhooks = await processPendingWebhookDeliveriesForAllTenants(db, options?.fetcher ?? fetch, {
@@ -393,6 +396,9 @@ app.get("/api/cron/draw", async (c) => {
       emailEnv: {
         resendApiKey: getEnv(c, "RESEND_API_KEY") || "",
         emailFrom: getEnv(c, "EMAIL_FROM") || "",
+        cfAuthIssuer: getEnv(c, "CF_AUTH_ISSUER") || "",
+        cfAuthClientId: getEnv(c, "CF_AUTH_CLIENT_ID") || "",
+        cfAuthClientSecret: getEnv(c, "CF_AUTH_CLIENT_SECRET") || "",
         remoteEmailUrl: getEnv(c, "REMOTE_EMAIL_URL") || "",
         remoteEmailClientId: getEnv(c, "REMOTE_EMAIL_CLIENT_ID") || "",
         remoteEmailClientSecret: getEnv(c, "REMOTE_EMAIL_CLIENT_SECRET") || "",
